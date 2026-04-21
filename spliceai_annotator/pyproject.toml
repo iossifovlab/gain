@@ -32,9 +32,12 @@ spliceai_annotator = "spliceai_annotator:build_spliceai_annotator"
 [dependency-groups]
 dev = [
     "mypy==1.15.0",
+    "pylint",
+    "pylint-junit",
     "pytest",
     "pytest-cov",
     "pytest-mock",
+    "pytest-xdist",
     "ruff==0.14.6",
 ]
 

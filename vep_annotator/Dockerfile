@@ -17,11 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never \
-    SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0.dev0
+    PYTHONHASHSEED=0
 
 WORKDIR /workspace
 
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock ruff.toml pylintrc ./
 COPY core/pyproject.toml core/README.md ./core/
 COPY demo_annotator/pyproject.toml ./demo_annotator/
 COPY vep_annotator/pyproject.toml ./vep_annotator/

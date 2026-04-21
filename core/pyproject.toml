@@ -105,6 +105,8 @@ dev = [
     "mypy==1.15.0",
     "pandas-stubs",
     "pyarrow-stubs",
+    "pylint",
+    "pylint-junit",
     "pytest",
     "pytest-cov",
     "pytest-doctestplus>=1.2",
@@ -119,6 +121,7 @@ dev = [
 
 [tool.hatch.version]
 source = "vcs"
+fallback-version = "0.0.0.dev0"
 
 [tool.hatch.version.raw-options]
 root = ".."

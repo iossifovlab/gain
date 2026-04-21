@@ -39,9 +39,12 @@ external_demo_genome_annotator = "demo_annotator.demo_annotate_ref_res_adapter:b
 [dependency-groups]
 dev = [
     "mypy==1.15.0",
+    "pylint",
+    "pylint-junit",
     "pytest",
     "pytest-cov",
     "pytest-mock",
+    "pytest-xdist",
     "ruff==0.14.6",
 ]
 

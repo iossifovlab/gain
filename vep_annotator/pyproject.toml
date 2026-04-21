@@ -34,9 +34,12 @@ vep_effect_annotator = "vep_annotator.vep_annotator:build_vep_effect_annotator"
 [dependency-groups]
 dev = [
     "mypy==1.15.0",
+    "pylint",
+    "pylint-junit",
     "pytest",
     "pytest-cov",
     "pytest-mock",
+    "pytest-xdist",
     "ruff==0.14.6",
 ]
 
