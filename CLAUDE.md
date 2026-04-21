@@ -13,25 +13,31 @@ annotator plugins.
 
 ## Environment Setup
 
-**This project requires conda/mamba.** All tools must be
-installed via conda, not system pip.
+Two supported workflows — pick one.
+
+### Conda/Mamba
 
 ```bash
 mamba env create --name gain --file ./environment.yml
 mamba env update --name gain --file ./dev-environment.yml
 conda activate gain
 
-# Install core package in editable mode
 pip install -e core
+pip install -e demo_annotator     # optional
+pip install -e vep_annotator      # optional
+pip install -e spliceai_annotator # optional
 ```
 
-Annotator plugins are optional; install only the ones
-you plan to use or develop:
+### uv workspace
+
+The repo root declares a `[tool.uv.workspace]` with the
+four sub-projects as members. Runtime deps are in each
+member's pyproject; dev tools live in the root `dev`
+dependency group. `uv.lock` is committed.
 
 ```bash
-pip install -e demo_annotator
-pip install -e vep_annotator
-pip install -e spliceai_annotator
+uv sync --all-packages --all-groups
+source .venv/bin/activate   # optional; `uv run` works without activation
 ```
 
 ## Commands

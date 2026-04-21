@@ -55,7 +55,8 @@ dependencies:
   - pydantic=2.8.2
   - requests=2.32.2
   - requests-oauthlib=2.0.0
-  - versioneer=0.29
+  - hatchling
+  - hatch-vcs
   - docker-py=7.1.0
   # pin the version of pyopenssl to pass the build
   - pyopenssl=24.2.1

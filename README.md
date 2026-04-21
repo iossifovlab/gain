@@ -24,44 +24,46 @@ duckdb, pysam, pytest, mypy, ruff.
 
 ## Development
 
-We recommend using a Conda/Mamba environment. All
-development tools (pytest, ruff, mypy) are installed via
-Conda, not system pip.
+Two supported workflows: Conda/Mamba (long-standing) and
+uv (pyproject-driven). Pick one.
 
-### 1) Create and activate the environment
-
-From the repository root:
+### Option A: Conda/Mamba
 
 ```bash
 mamba env create --name gain --file ./environment.yml
 mamba env update --name gain --file ./dev-environment.yml
-
 conda activate gain
-```
 
-Notes:
-- Prefer `environment.yml` over the legacy
-  `requirements.txt`.
-- Always activate the `gain` environment before running
-  tools or tests.
-
-### 2) Install core package in editable mode
-
-```bash
 pip install -e core
-```
-
-Annotator plugins are optional; install only the ones
-you plan to use or develop:
-
-```bash
+# Optional annotator plugins:
 pip install -e demo_annotator
 pip install -e vep_annotator
 pip install -e spliceai_annotator
 ```
 
-Tip: after changing package code, re-run the editable
-installs if imports fail.
+Notes:
+- Always activate the `gain` environment before running
+  tools or tests.
+- After changing package code, re-run the editable
+  installs if imports fail.
+
+### Option B: uv workspace
+
+This repo is a uv workspace (see root `pyproject.toml`).
+Runtime dependencies are declared per sub-project;
+dev tools (pytest, ruff, mypy, stubs) live in the root
+`dev` dependency group.
+
+```bash
+# Create .venv and install every workspace member + dev tools
+uv sync --all-packages --all-groups
+
+# Activate the venv (optional; `uv run` works without it)
+source .venv/bin/activate
+```
+
+The lockfile (`uv.lock`) is committed. Use `uv lock
+--upgrade` to refresh.
 
 ### 3) Run tests
 
@@ -109,12 +111,12 @@ git commit --no-verify
 
 ## Common pitfalls
 
-- Always activate the `gain` Conda environment before
-  running commands: `conda activate gain`.
-- Prefer `environment.yml` over `requirements.txt`
-  (legacy).
-- If imports fail after changes, re-run
-  `pip install -e core`.
+- Conda users: always activate the `gain` environment
+  before running commands (`conda activate gain`), and
+  re-run `pip install -e core` if imports fail.
+- uv users: prefer `uv run <cmd>` over activating the
+  venv, and re-run `uv sync --all-packages --all-groups`
+  after pulling changes to pick up lockfile updates.
 - Some tests may be flaky with high parallelism; reduce
   `-n` or run without it.
 

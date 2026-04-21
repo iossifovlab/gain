@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gain-spliceai-annotator"
+description = "GAIn SpliceAI annotator plugin"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [
+    { name = "Lubomir Chorbadjiev", email = "lubomir.chorbadjiev@gmail.com" },
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "gain-core",
+    "numpy>=2.2",
+    "tensorflow>=2.18",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/IossifovLab/gpf"
+
+[project.entry-points."gain.annotation.annotators"]
+spliceai_annotator = "spliceai_annotator:build_spliceai_annotator"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+root = ".."
+version_scheme = "no-guess-dev"
+
+[tool.hatch.build.targets.wheel]
+packages = ["spliceai_annotator"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/spliceai_annotator"]
