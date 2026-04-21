@@ -18,7 +18,7 @@ from typing import Any, TextIO, cast
 
 from pysam import TabixFile, tabix_compress, tabix_index
 
-from gain import __version__  # type: ignore
+from gain import __version__
 from gain.annotation.annotate_utils import (
     add_common_annotation_arguments,
     add_input_files_to_task_graph,

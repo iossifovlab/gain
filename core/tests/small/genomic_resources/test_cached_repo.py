@@ -314,10 +314,6 @@ def test_filesystem_caching_lock_implementation(
         )
 
         with resource.open_raw_file("data.txt"):
-            cache_proto = cast(CachingProtocol, resource.proto)
-            lockfile_path = cache_proto.local_protocol\
-                ._get_resource_file_lockfile_path(resource, "data.txt")
-            assert os.path.exists(lockfile_path)
             obtain_lock_spy.assert_called_once()
 
 

@@ -441,8 +441,10 @@ models to predict splice site variant effects.
     def _width(self) -> int:
         return 10000 + 2 * self._distance + 1
 
-    @cached_property
+    @property
     def _batch_width(self) -> int:
+        # Must stay in sync with _width, which tests patch directly; caching
+        # _batch_width lets stale values survive past the patch teardown.
         return self._width + self._max_insertion_length
 
     def _is_valid_annotatable(

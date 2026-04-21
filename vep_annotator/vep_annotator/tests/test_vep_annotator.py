@@ -177,17 +177,26 @@ def test_mock_annotate(
         "run_vep",
         return_value=None,
     )
+    # VEPCacheAnnotator.run invokes `client.containers.run(...)` against
+    # the host docker daemon; short-circuit it so the test stays hermetic.
+    mocker.patch.object(
+        vep_annotator,
+        "run",
+        return_value=None,
+    )
     mocker.patch.object(
         vep_annotator,
         "prepare_input",
         return_value=None,
     )
+    # open_files returns (TextIO, Path); the Path is re-opened in
+    # _do_batch_annotate via `out_path.open("r")`.
     mocker.patch.object(
         vep_annotator,
         "open_files",
         return_value=(
             (vep_fixtures / "input.tsv").open("r"),
-            (vep_fixtures / "output.tsv").open("r"),
+            vep_fixtures / "output.tsv",
         ),
     )
     annotatables: list[Annotatable | None] = [

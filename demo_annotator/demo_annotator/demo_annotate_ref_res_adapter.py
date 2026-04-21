@@ -27,17 +27,7 @@ class DemoAnnotateGenomeAdapter(AnnotatorBase):
         self, pipeline: AnnotationPipeline,
         info: AnnotatorInfo,
     ):
-        super().__init__(
-            pipeline, info, {
-                "ref_sequence": AttributeDesc(
-                    source="ref_sequence",
-                    type="object",
-                    description="Sequence in the reference genome",
-                    internal=False,
-                    default=True,
-                ),
-            },
-        )
+        super().__init__(pipeline, info)
         self.cache_repo = GenomicResourceCachedRepo(
             pipeline.repository, str(self.work_dir / "grr_cache"),
         )
@@ -50,6 +40,17 @@ class DemoAnnotateGenomeAdapter(AnnotatorBase):
 
         self.genome_filename = \
             self.genome_resource.get_config()["filename"]
+
+    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
+        return {
+            "ref_sequence": AttributeDesc(
+                source="ref_sequence",
+                type="object",
+                description="Sequence in the reference genome",
+                internal=False,
+                default=True,
+            ),
+        }
 
     def _do_annotate(
         self, annotatable: Annotatable | None,

@@ -23,7 +23,7 @@ from pysam import (
     tabix_index,
 )
 
-from gain import __version__  # type: ignore
+from gain import __version__
 from gain.annotation.annotatable import VCFAllele
 from gain.annotation.annotate_utils import (
     add_common_annotation_arguments,

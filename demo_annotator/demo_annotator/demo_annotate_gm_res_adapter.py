@@ -27,18 +27,7 @@ class DemoAnnotateGeneModelsAdapter(AnnotatorBase):
         self, pipeline: AnnotationPipeline,
         info: AnnotatorInfo,
     ):
-        super().__init__(
-            pipeline, info, {
-                "gene_symbols": AttributeDesc(
-                    source="gene_symbols",
-                    type="object",
-                    description="Gene symbols overlapping with the "
-                    "annotatable",
-                    internal=False,
-                    default=True,
-                ),
-            },
-        )
+        super().__init__(pipeline, info)
         self.cache_repo = GenomicResourceCachedRepo(
             pipeline.repository, str(self.work_dir / "grr_cache"),
         )
@@ -55,6 +44,18 @@ class DemoAnnotateGeneModelsAdapter(AnnotatorBase):
             self.gene_models_resource.get_config()["filename"]
         self.gene_model_format = \
             self.gene_models_resource.get_config()["format"]
+
+    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
+        return {
+            "gene_symbols": AttributeDesc(
+                source="gene_symbols",
+                type="object",
+                description="Gene symbols overlapping with the "
+                "annotatable",
+                internal=False,
+                default=True,
+            ),
+        }
 
     def _do_annotate(
         self,

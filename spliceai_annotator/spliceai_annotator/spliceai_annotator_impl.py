@@ -1,21 +1,19 @@
 import gc
+from importlib.resources import as_file, files
 from typing import cast
 
 import numpy as np
 import tensorflow as tf
-from pkg_resources import resource_filename
 
 
 def spliceai_load_models() -> list:
     """Open SpliceAI annotator implementation."""
-    model_paths = [
-        f"models/spliceai{i}.h5" for i in range(1, 6)
-    ]
-    return [
-        tf.keras.models.load_model(
-            resource_filename(__name__, path))
-        for path in model_paths
-    ]
+    package = files(__package__)
+    models = []
+    for i in range(1, 6):
+        with as_file(package / "models" / f"spliceai{i}.h5") as model_path:
+            models.append(tf.keras.models.load_model(str(model_path)))
+    return models
 
 
 def spliceai_close() -> None:

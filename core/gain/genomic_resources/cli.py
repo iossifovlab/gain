@@ -17,7 +17,7 @@ import yaml
 from cerberus.schema import SchemaError
 from jinja2 import Template
 
-from gain import __version__  # type: ignore
+from gain import __version__
 from gain.genomic_resources.cached_repository import GenomicResourceCachedRepo
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,

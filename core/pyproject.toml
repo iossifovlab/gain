@@ -138,3 +138,6 @@ include = [
     "/gain",
     "/README.md",
 ]
+
+[tool.coverage.run]
+omit = ["*/_version.py"]

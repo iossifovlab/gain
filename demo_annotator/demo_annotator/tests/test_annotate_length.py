@@ -2,6 +2,7 @@
 import shutil
 import tempfile
 import textwrap
+from collections.abc import Generator
 from pathlib import Path
 
 import pandas as pd
@@ -12,12 +13,12 @@ from demo_annotator.annotate_length import annotate_length_cli
 
 
 @pytest.fixture
-def sample_input_output() -> tuple[str, str]:
+def sample_input_output() -> Generator[tuple[str, str], None, None]:
     test_files_dirname = tempfile.mkdtemp(
         prefix="annotate_length", suffix="_test",
     )
 
-    setup_directories(test_files_dirname, {
+    setup_directories(Path(test_files_dirname), {
         "input.tsv": textwrap.dedent("""
             VCFAllele(chr1,10,C,T)
             VCFAllele(chr1,11,G,C)
@@ -39,7 +40,7 @@ def sample_input_output() -> tuple[str, str]:
     shutil.rmtree(test_files_dirname)
 
 
-def test_annotate_length_cli(sample_input_output):
+def test_annotate_length_cli(sample_input_output: tuple[str, str]) -> None:
     input_file, output_file = sample_input_output
 
     annotate_length_cli([input_file, output_file])

@@ -9,7 +9,7 @@ from gain.genomic_resources.reference_genome import (
 )
 
 
-def annotate_genome_cli(raw_args: list[str] | None = None):
+def annotate_genome_cli(raw_args: list[str] | None = None) -> None:
     """Dummy tool which outputs genes for an annotatable."""
     if raw_args is None:
         raw_args = sys.argv[1:]

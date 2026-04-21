@@ -10,14 +10,15 @@
 // JUnit plugin reads the XML and marks the build UNSTABLE on failures.
 
 def runProject(Map args) {
-    String name       = args.name                              // dir name, e.g. "demo_annotator"
-    String pkg        = args.pkg                               // importable Python package, e.g. "demo_annotator"
-    String tests      = args.tests                             // pytest target relative to project dir
-    String mypyTarget = args.mypyTarget ?: pkg
-    String mypyExtra  = args.mypyExtra ?: ''                   // e.g. "--config-file /workspace/mypy.ini"
-    String pytestArgs = args.pytestArgs ?: ''                  // e.g. "-n auto"
-    String distName   = name.replace('_', '-')
-    String imageTag   = "gain-${distName}-ci:${env.BUILD_NUMBER}"
+    String name           = args.name                          // dir name, e.g. "demo_annotator"
+    String pkg            = args.pkg                           // importable Python package, e.g. "demo_annotator"
+    String tests          = args.tests                         // pytest target relative to project dir
+    String mypyTarget     = args.mypyTarget ?: pkg
+    String mypyExtra      = args.mypyExtra ?: ''               // e.g. "--config-file /workspace/mypy.ini"
+    String pytestArgs     = args.pytestArgs ?: ''              // e.g. "-n auto"
+    String dockerRunExtra = args.dockerRunExtra ?: ''          // extra flags for `docker run` (network, -v, -e, ...)
+    String distName       = name.replace('_', '-')
+    String imageTag       = "gain-${distName}-ci:${env.BUILD_NUMBER}"
 
     sh label: "Build ${name} image", script: """
         docker build -f ${name}/Dockerfile -t ${imageTag} .
@@ -27,18 +28,25 @@ def runProject(Map args) {
         mkdir -p reports/${name}
         docker run --rm \\
             -v \$PWD/reports/${name}:/reports \\
+            ${dockerRunExtra} \\
             ${imageTag} \\
             sh -c '
                 set +e
                 ruff check --output-format=junit --output-file=/reports/ruff.xml .
                 mypy ${mypyExtra} ${mypyTarget} --junit-xml=/reports/mypy.xml
-                pylint --load-plugins=pylint_junit \\
+                pylint --rcfile=/workspace/pylintrc \\
+                       --load-plugins=pylint_junit \\
                        --output-format=pylint_junit.JUnitReporter \\
                        --exit-zero ${pkg} > /reports/pylint.xml
                 pytest ${pytestArgs} \\
                     --junitxml=/reports/pytest.xml \\
                     --cov=${pkg} --cov-report=xml:/reports/coverage.xml \\
                     ${tests}
+                # Rewrite container-absolute <source>/workspace/...</source> to a
+                # path relative to the Jenkins workspace so recordCoverage can
+                # resolve source files.
+                sed -i "s#<source>/workspace/\\([^<]*\\)</source>#<source>\\1</source>#g" \\
+                    /reports/coverage.xml 2>/dev/null || true
                 chmod -R a+rw /reports
                 exit 0
             '
@@ -72,16 +80,45 @@ pipeline {
         stage('Sub-projects') {
             parallel {
                 stage('core') {
+                    environment {
+                        COMPOSE_PROJECT = "gain-ci-${env.BUILD_NUMBER}"
+                        COMPOSE_NETWORK = "gain-ci-${env.BUILD_NUMBER}_default"
+                    }
                     steps {
                         script {
-                            runProject(
-                                name: 'core',
-                                pkg: 'gain',
-                                tests: 'tests',
-                                mypyTarget: 'gain',
-                                mypyExtra: '--config-file /workspace/mypy.ini',
-                                pytestArgs: '-n 5',
-                            )
+                            try {
+                                // Bring up apache (HTTP fixture on :28080 inside the
+                                // network) and minio (S3 fixture on :9000). Core tests
+                                // reach them by service name via the compose network.
+                                // minio-client is a one-shot bucket setup job — run it
+                                // inline instead of via `up --wait`, which races with
+                                // short-lived services.
+                                sh '''
+                                    mkdir -p core/tests/.test_grr
+                                    docker compose -p "$COMPOSE_PROJECT" \
+                                        up -d --wait apache minio
+                                    docker compose -p "$COMPOSE_PROJECT" \
+                                        run --rm minio-client
+                                '''
+
+                                runProject(
+                                    name: 'core',
+                                    pkg: 'gain',
+                                    tests: 'tests',
+                                    mypyTarget: 'gain',
+                                    mypyExtra: '--config-file /workspace/mypy.ini',
+                                    pytestArgs: '-n 5 --enable-http-testing --enable-s3-testing',
+                                    dockerRunExtra:
+                                        '--network "$COMPOSE_NETWORK" ' +
+                                        '-e HTTP_HOST=apache:80 ' +
+                                        '-e MINIO_HOST=minio ' +
+                                        '-v $PWD/core/tests/.test_grr:/workspace/core/tests/.test_grr',
+                                )
+                            } finally {
+                                sh '''
+                                    docker compose -p "$COMPOSE_PROJECT" down -v --remove-orphans || true
+                                '''
+                            }
                         }
                     }
                     post { always { script { publishReports('core') } } }
@@ -90,11 +127,15 @@ pipeline {
                 stage('demo_annotator') {
                     steps {
                         script {
+                            // demo tests spawn helper containers via the Python
+                            // docker SDK; mount the host socket so the SDK can
+                            // reach the daemon.
                             runProject(
                                 name: 'demo_annotator',
                                 pkg: 'demo_annotator',
                                 tests: 'demo_annotator/tests',
                                 pytestArgs: '-n 5',
+                                dockerRunExtra: '-v /var/run/docker.sock:/var/run/docker.sock',
                             )
                         }
                     }
@@ -104,11 +145,15 @@ pipeline {
                 stage('vep_annotator') {
                     steps {
                         script {
+                            // vep tests spawn helper containers via the Python
+                            // docker SDK; mount the host socket so the SDK can
+                            // reach the daemon.
                             runProject(
                                 name: 'vep_annotator',
                                 pkg: 'vep_annotator',
                                 tests: 'vep_annotator/tests',
                                 pytestArgs: '-n 5',
+                                dockerRunExtra: '-v /var/run/docker.sock:/var/run/docker.sock',
                             )
                         }
                     }
