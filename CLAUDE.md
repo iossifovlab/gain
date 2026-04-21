@@ -8,7 +8,7 @@ with code in this repository.
 GAIn (Genomic Annotation Infrastructure) is the
 annotation engine and genomic resource framework used by
 the GPF (Genotypes and Phenotypes in Families) system.
-This repository hosts `gain_core` plus a set of
+This repository hosts `core` plus a set of
 annotator plugins.
 
 ## Environment Setup
@@ -22,16 +22,16 @@ mamba env update --name gain --file ./dev-environment.yml
 conda activate gain
 
 # Install core package in editable mode
-pip install -e gain_core
+pip install -e core
 ```
 
 Annotator plugins are optional; install only the ones
 you plan to use or develop:
 
 ```bash
-pip install -e gain_demo_annotator
-pip install -e gain_vep_annotator
-pip install -e gain_spliceai_annotator
+pip install -e demo_annotator
+pip install -e vep_annotator
+pip install -e spliceai_annotator
 ```
 
 ## Commands
@@ -40,16 +40,16 @@ pip install -e gain_spliceai_annotator
 
 ```bash
 # Run a single test file
-cd gain_core && pytest -v tests/small/path/to/test_file.py
+cd core && pytest -v tests/small/path/to/test_file.py
 
 # Run a test module
-cd gain_core && pytest -v tests/small/module/
+cd core && pytest -v tests/small/module/
 
 # Run GAIn tests in parallel
-cd gain_core && pytest -v -n 10 tests/
+cd core && pytest -v -n 10 tests/
 ```
 
-Test markers in `gain_core/pytest.ini`: `grr_rw`,
+Test markers in `core/pytest.ini`: `grr_rw`,
 `grr_ro`, `grr_full`, `grr_http`, `grr_tabix`.
 
 All tests run with `PYTHONHASHSEED=0`.
@@ -61,8 +61,8 @@ All tests run with `PYTHONHASHSEED=0`.
 ruff check --fix .
 
 # Type checking (slow)
-mypy gain --exclude gain_core/docs/ \
-    --exclude gain_core/gain/docs/
+mypy gain --exclude core/docs/ \
+    --exclude core/gain/docs/
 ```
 
 Config: `ruff.toml` (line-length: 80, target: py310),
@@ -91,26 +91,26 @@ Services defined in `docker-compose.yaml`:
   `minioadmin/minioadmin`, bucket `test-bucket`
 - **Apache httpd** (port 28080) — HTTP fixture server
   for `grr_http` tests; serves
-  `gain_core/tests/.test_grr/`
+  `core/tests/.test_grr/`
 
 ## Architecture
 
 ### Package Structure
 
-- **`gain_core/`** — GAIn (Genomic Annotation
+- **`core/`** — GAIn (Genomic Annotation
   Infrastructure): annotation engine, genomic resources,
   effect annotation, task graph, gene scores/sets.
   Python package: `gain`.
-- **`gain_spliceai_annotator/`**,
-  **`gain_vep_annotator/`**,
-  **`gain_demo_annotator/`** — external annotation
+- **`spliceai_annotator/`**,
+  **`vep_annotator/`**,
+  **`demo_annotator/`** — external annotation
   plugins (Docker-based)
 
 ### Plugin System
 
 GAIn uses Python entry points for extensibility.
 
-**Defined in `gain_core/setup.py`:**
+**Defined in `core/setup.py`:**
 
 1. **`gain.genomic_resources.plugins`** — genomic
    context providers (DefaultRepository, CLI,
@@ -127,7 +127,7 @@ GAIn uses Python entry points for extensibility.
 Annotator plugins in this repo register additional
 annotators via their own entry points.
 
-### GAIn Submodules (`gain_core/gain/`)
+### GAIn Submodules (`core/gain/`)
 
 - **`annotation/`** — annotation pipeline engine,
   annotator base classes, all built-in annotators,
@@ -158,7 +158,7 @@ annotators via their own entry points.
 
 ### Test Structure
 
-`gain_core` uses a `tests/small/` vs `tests/integration/`
+`core` uses a `tests/small/` vs `tests/integration/`
 split:
 - `tests/small/` — unit/fast tests (default for
   development and CI)
@@ -171,13 +171,13 @@ Key conftest patterns:
   are automatically parametrized across GRR protocols
   (inmemory, file, s3, http). Enable S3/HTTP with
   `--enable-s3-testing` / `--enable-http-testing`.
-- Architecture tests in `gain_core/tests/` use
+- Architecture tests in `core/tests/` use
   `pytestarch` to enforce the package's internal
   structure.
 
 ### CLI Tools
 
-**gain_core CLIs:**
+**core CLIs:**
 - `grr_manage` — genomic resource repository management
 - `grr_browse` — GRR browser
 - `annotate_columns` / `annotate_vcf` / `annotate_doc`

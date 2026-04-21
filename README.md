@@ -11,12 +11,12 @@ https://iossifovlab.com/gpfuserdocs/.
 
 ## Repository overview
 
-- **`gain_core/`** — GAIn core: annotation engine,
+- **`core/`** — GAIn core: annotation engine,
   genomic resources, effect annotation, task graph,
   gene scores/sets. Python package: `gain`.
-- **`gain_spliceai_annotator/`**,
-  **`gain_vep_annotator/`**,
-  **`gain_demo_annotator/`** — external annotation
+- **`spliceai_annotator/`**,
+  **`vep_annotator/`**,
+  **`demo_annotator/`** — external annotation
   plugins (Docker-based).
 
 Primary stack: Python 3.12, dask, pandas, pyarrow,
@@ -48,16 +48,16 @@ Notes:
 ### 2) Install core package in editable mode
 
 ```bash
-pip install -e gain_core
+pip install -e core
 ```
 
 Annotator plugins are optional; install only the ones
 you plan to use or develop:
 
 ```bash
-pip install -e gain_demo_annotator
-pip install -e gain_vep_annotator
-pip install -e gain_spliceai_annotator
+pip install -e demo_annotator
+pip install -e vep_annotator
+pip install -e spliceai_annotator
 ```
 
 Tip: after changing package code, re-run the editable
@@ -68,7 +68,7 @@ installs if imports fail.
 Quick cycles (examples):
 
 ```bash
-cd gain_core
+cd core
 pytest -v tests/small/test_file.py
 pytest -v tests/small/module/
 ```
@@ -76,20 +76,20 @@ pytest -v tests/small/module/
 Full suite (parallel):
 
 ```bash
-cd gain_core
+cd core
 conda run -n gain pytest -v -n 10 tests/
 ```
 
 Test markers and configuration are defined in
-`gain_core/pytest.ini` (e.g., `grr_rw`, `grr_ro`,
+`core/pytest.ini` (e.g., `grr_rw`, `grr_ro`,
 `grr_full`, `grr_http`, `grr_tabix`).
 
 ### 4) Linting and type checking
 
 ```bash
 ruff check --fix .
-mypy gain --exclude gain_core/docs/ \
-    --exclude gain_core/gain/docs/
+mypy gain --exclude core/docs/ \
+    --exclude core/gain/docs/
 ```
 
 ### Pre-commit lint check hook
@@ -114,7 +114,7 @@ git commit --no-verify
 - Prefer `environment.yml` over `requirements.txt`
   (legacy).
 - If imports fail after changes, re-run
-  `pip install -e gain_core`.
+  `pip install -e core`.
 - Some tests may be flaky with high parallelism; reduce
   `-n` or run without it.
 
