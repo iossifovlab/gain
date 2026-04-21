@@ -99,6 +99,24 @@ cnv_collection_annotator = "gain.annotation.cnv_collection_annotator:build_cnv_c
 chrom_mapping = "gain.annotation.chrom_mapping_annotator:build_chrom_mapping_annotator"
 debug_annotator = "gain.annotation.debug_annotator:build_annotator"
 
+[dependency-groups]
+dev = [
+    "coverage",
+    "mypy==1.15.0",
+    "pandas-stubs",
+    "pyarrow-stubs",
+    "pytest",
+    "pytest-cov",
+    "pytest-doctestplus>=1.2",
+    "pytest-mock",
+    "pytest-xdist",
+    "pytestarch",
+    "ruff==0.14.6",
+    "types-docker",
+    "types-psutil",
+    "types-pyyaml",
+]
+
 [tool.hatch.version]
 source = "vcs"
 

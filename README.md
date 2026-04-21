@@ -42,6 +42,7 @@ pip install -e spliceai_annotator
 ```
 
 Notes:
+
 - Always activate the `gain` environment before running
   tools or tests.
 - After changing package code, re-run the editable

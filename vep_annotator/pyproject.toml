@@ -31,6 +31,15 @@ install_vep_cache = "vep_annotator.install_vep_cache:main"
 vep_full_annotator = "vep_annotator.vep_annotator:build_vep_cache_annotator"
 vep_effect_annotator = "vep_annotator.vep_annotator:build_vep_effect_annotator"
 
+[dependency-groups]
+dev = [
+    "mypy==1.15.0",
+    "pytest",
+    "pytest-cov",
+    "pytest-mock",
+    "ruff==0.14.6",
+]
+
 [tool.hatch.version]
 source = "vcs"
 

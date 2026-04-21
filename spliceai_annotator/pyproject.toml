@@ -29,6 +29,15 @@ Homepage = "https://github.com/IossifovLab/gpf"
 [project.entry-points."gain.annotation.annotators"]
 spliceai_annotator = "spliceai_annotator:build_spliceai_annotator"
 
+[dependency-groups]
+dev = [
+    "mypy==1.15.0",
+    "pytest",
+    "pytest-cov",
+    "pytest-mock",
+    "ruff==0.14.6",
+]
+
 [tool.hatch.version]
 source = "vcs"
 

@@ -11,25 +11,3 @@ gain-core = { workspace = true }
 gain-demo-annotator = { workspace = true }
 gain-vep-annotator = { workspace = true }
 gain-spliceai-annotator = { workspace = true }
-
-[dependency-groups]
-dev = [
-    "coverage",
-    "mypy==1.15.0",
-    "pandas-stubs",
-    "pyarrow-stubs",
-    "pytest",
-    "pytest-cov",
-    "pytest-doctestplus>=1.2",
-    "pytest-mock",
-    "pytest-xdist",
-    "pytestarch",
-    "ruff==0.14.6",
-    "types-docker",
-    "types-psutil",
-    "types-python-dateutil",
-    "types-pyyaml",
-    "types-requests",
-    "types-setuptools",
-    "types-toml",
-]

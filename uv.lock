@@ -21,28 +21,6 @@ members = [
     "gain-vep-annotator",
 ]
 
-[manifest.dependency-groups]
-dev = [
-    { name = "coverage" },
-    { name = "mypy", specifier = "==1.15.0" },
-    { name = "pandas-stubs" },
-    { name = "pyarrow-stubs" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "pytest-doctestplus", specifier = ">=1.2" },
-    { name = "pytest-mock" },
-    { name = "pytest-xdist" },
-    { name = "pytestarch" },
-    { name = "ruff", specifier = "==0.14.6" },
-    { name = "types-docker" },
-    { name = "types-psutil" },
-    { name = "types-python-dateutil" },
-    { name = "types-pyyaml" },
-    { name = "types-requests" },
-    { name = "types-setuptools" },
-    { name = "types-toml" },
-]
-
 [[package]]
 name = "absl-py"
 version = "2.4.0"
@@ -978,6 +956,24 @@ dependencies = [
     { name = "sqlglot" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "coverage" },
+    { name = "mypy" },
+    { name = "pandas-stubs" },
+    { name = "pyarrow-stubs" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-doctestplus" },
+    { name = "pytest-mock" },
+    { name = "pytest-xdist" },
+    { name = "pytestarch" },
+    { name = "ruff" },
+    { name = "types-docker" },
+    { name = "types-psutil" },
+    { name = "types-pyyaml" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "apsw", specifier = ">=3.52" },
@@ -1008,6 +1004,24 @@ requires-dist = [
     { name = "sqlglot", specifier = ">=28" },
 ]
 
+[package.metadata.requires-dev]
+dev = [
+    { name = "coverage" },
+    { name = "mypy", specifier = "==1.15.0" },
+    { name = "pandas-stubs" },
+    { name = "pyarrow-stubs" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-doctestplus", specifier = ">=1.2" },
+    { name = "pytest-mock" },
+    { name = "pytest-xdist" },
+    { name = "pytestarch" },
+    { name = "ruff", specifier = "==0.14.6" },
+    { name = "types-docker" },
+    { name = "types-psutil" },
+    { name = "types-pyyaml" },
+]
+
 [[package]]
 name = "gain-demo-annotator"
 source = { editable = "demo_annotator" }
@@ -1016,10 +1030,28 @@ dependencies = [
     { name = "gain-core" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-mock" },
+    { name = "ruff" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "fsspec", specifier = ">=2026.2" },
     { name = "gain-core", editable = "core" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = "==1.15.0" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-mock" },
+    { name = "ruff", specifier = "==0.14.6" },
 ]
 
 [[package]]
@@ -1031,11 +1063,29 @@ dependencies = [
     { name = "tensorflow" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-mock" },
+    { name = "ruff" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "gain-core", editable = "core" },
     { name = "numpy", specifier = ">=2.2" },
     { name = "tensorflow", specifier = ">=2.18" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = "==1.15.0" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-mock" },
+    { name = "ruff", specifier = "==0.14.6" },
 ]
 
 [[package]]
@@ -1045,8 +1095,26 @@ dependencies = [
     { name = "gain-core" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-mock" },
+    { name = "ruff" },
+]
+
 [package.metadata]
 requires-dist = [{ name = "gain-core", editable = "core" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = "==1.15.0" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-mock" },
+    { name = "ruff", specifier = "==0.14.6" },
+]
 
 [[package]]
 name = "gast"
@@ -2736,15 +2804,6 @@ wheels = [
 ]
 
 [[package]]
-name = "types-python-dateutil"
-version = "2.9.0.20260408"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/88/f3/2427775f80cd5e19a0a71ba8e5ab7645a01a852f43a5fd0ffc24f66338e0/types_python_dateutil-2.9.0.20260408.tar.gz", hash = "sha256:8b056ec01568674235f64ecbcef928972a5fac412f5aab09c516dfa2acfbb582", size = 16981, upload-time = "2026-04-08T04:28:10.995Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/fd/c6/eeba37bfee282a6a97f889faef9352d6172c6a5088eb9a4daf570d9d748d/types_python_dateutil-2.9.0.20260408-py3-none-any.whl", hash = "sha256:473139d514a71c9d1fbd8bb328974bedcb1cc3dba57aad04ffa4157f483c216f", size = 18437, upload-time = "2026-04-08T04:28:10.095Z" },
-]
-
-[[package]]
 name = "types-pyyaml"
 version = "6.0.12.20260408"
 source = { registry = "https://pypi.org/simple" }
@@ -2763,24 +2822,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/69/6a/749dc53a54a3f35842c1f8197b3ca6b54af6d7458a1bfc75f6629b6da666/types_requests-2.33.0.20260408.tar.gz", hash = "sha256:95b9a86376807a216b2fb412b47617b202091c3ea7c078f47cc358d5528ccb7b", size = 23882, upload-time = "2026-04-08T04:34:49.33Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/90/b8/78fd6c037de4788c040fdd323b3369804400351b7827473920f6c1d03c10/types_requests-2.33.0.20260408-py3-none-any.whl", hash = "sha256:81f31d5ea4acb39f03be7bc8bed569ba6d5a9c5d97e89f45ac43d819b68ca50f", size = 20739, upload-time = "2026-04-08T04:34:48.325Z" },
-]
-
-[[package]]
-name = "types-setuptools"
-version = "82.0.0.20260408"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c3/12/3464b410c50420dd4674fa5fe9d3880711c1dbe1a06f5fe4960ee9067b9e/types_setuptools-82.0.0.20260408.tar.gz", hash = "sha256:036c68caf7e672a699f5ebbf914708d40644c14e05298bc49f7272be91cf43d3", size = 44861, upload-time = "2026-04-08T04:29:33.292Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3d/e1/46a4fc3ef03aabf5d18bac9df5cf37c6b02c3bddf3e05c3533f4b4588331/types_setuptools-82.0.0.20260408-py3-none-any.whl", hash = "sha256:ece0a215cdfa6463a65fd6f68bd940f39e455729300ddfe61cab1147ed1d2462", size = 68428, upload-time = "2026-04-08T04:29:32.175Z" },
-]
-
-[[package]]
-name = "types-toml"
-version = "0.10.8.20260408"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/71/9b/887564a51a84c96ba08b715570e546f0ea793df6372b736bfbc596ca5536/types_toml-0.10.8.20260408.tar.gz", hash = "sha256:6b30b031235565a12febb1388900b129f1adeabfcfa594da46d0372b2ac107ad", size = 9341, upload-time = "2026-04-08T04:27:54.394Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/56/f1/942d95ba026779bc6e3064f8b094216588dc3276cc328cf8e03a0541918d/types_toml-0.10.8.20260408-py3-none-any.whl", hash = "sha256:e958d4c660385e548705a298f17dc162baf44c8b6d6aff79aeefe75f4f77ac87", size = 9677, upload-time = "2026-04-08T04:27:53.526Z" },
 ]
 
 [[package]]
