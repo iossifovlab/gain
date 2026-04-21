@@ -1,38 +1,26 @@
-# GPF: Genotypes and Phenotypes in Families
+# GAIn: Genomic Annotation Infrastructure
 
-The Genotypes and Phenotypes in Families (GPF) system
-manages large databases of genetic variants and phenotypic
-measurements from family collections.
+GAIn is the annotation engine and genomic resource
+framework used by the GPF (Genotypes and Phenotypes in
+Families) system. It provides the annotation pipeline,
+the Genomic Resource Repository (GRR), effect annotation,
+task graph orchestration, and gene scores/sets.
 
 User documentation: see the GPF documentation at
 https://iossifovlab.com/gpfuserdocs/.
 
 ## Repository overview
 
-- **`gain_core/`** — GAIn (Genomic Annotation
-  Infrastructure): annotation engine, genomic resources,
-  effect annotation, task graph, gene scores/sets.
-  Python package: `gain`.
-- **`gpf_core/`** — GPF core library: genotype storage,
-  studies, pedigrees, pheno, import tools, query API.
-  Python package: `gpf`. Depends on `gain`.
-- **`gpf_web/`** — Web application and REST API
-  (Django 5.2). Python package: `gpf_web`. Depends on
-  `gpf` and `gain`.
-- **`gpf_impala_storage/`**, **`gpf_impala2_storage/`**,
-  **`gpf_gcp_storage/`** — optional genotype storages
-- **`gpf_federation/`**, **`gpf_rest_client/`** — federation and
-  REST client
+- **`gain_core/`** — GAIn core: annotation engine,
+  genomic resources, effect annotation, task graph,
+  gene scores/sets. Python package: `gain`.
 - **`gain_spliceai_annotator/`**,
   **`gain_vep_annotator/`**,
   **`gain_demo_annotator/`** — external annotation
-  plugins
-- **`docs/`** — documentation sources
+  plugins (Docker-based).
 
-Primary stack: Python 3.12, Django 5.2, dask, pandas,
-pyarrow, duckdb, pysam, pytest, mypy, ruff.
-
-Release notes live in `docs/changes.rst`.
+Primary stack: Python 3.12, dask, pandas, pyarrow,
+duckdb, pysam, pytest, mypy, ruff.
 
 ## Development
 
@@ -45,26 +33,31 @@ Conda, not system pip.
 From the repository root:
 
 ```bash
-mamba env create --name gpf --file ./environment.yml
-mamba env update --name gpf --file ./dev-environment.yml
+mamba env create --name gain --file ./environment.yml
+mamba env update --name gain --file ./dev-environment.yml
 
-conda activate gpf
+conda activate gain
 ```
 
 Notes:
 - Prefer `environment.yml` over the legacy
   `requirements.txt`.
-- Always activate the `gpf` environment before running
+- Always activate the `gain` environment before running
   tools or tests.
 
-### 2) Install core packages in editable mode
-
-Install GPF packages into the active `gpf` environment:
+### 2) Install core package in editable mode
 
 ```bash
 pip install -e gain_core
-pip install -e gpf_core
-pip install -e gpf_web
+```
+
+Annotator plugins are optional; install only the ones
+you plan to use or develop:
+
+```bash
+pip install -e gain_demo_annotator
+pip install -e gain_vep_annotator
+pip install -e gain_spliceai_annotator
 ```
 
 Tip: after changing package code, re-run the editable
@@ -75,28 +68,21 @@ installs if imports fail.
 Quick cycles (examples):
 
 ```bash
-cd gpf_core
+cd gain_core
 pytest -v tests/small/test_file.py
 pytest -v tests/small/module/
 ```
 
-Full suites (parallel):
+Full suite (parallel):
 
 ```bash
 cd gain_core
-conda run -n gpf pytest -v -n 10 tests/
-
-cd ../gpf_core
-conda run -n gpf pytest -v -n 10 tests/
-
-cd ../gpf_web
-conda run -n gpf pytest -v -n 5 gpf_web/
+conda run -n gain pytest -v -n 10 tests/
 ```
 
 Test markers and configuration are defined in
-`gain_core/pytest.ini` and `gpf_core/pytest.ini` (e.g.,
-`gs_inmemory`, `gs_duckdb`, `gs_duckdb_parquet`,
-`grr_rw`, `grr_ro`, `grr_http`).
+`gain_core/pytest.ini` (e.g., `grr_rw`, `grr_ro`,
+`grr_full`, `grr_http`, `grr_tabix`).
 
 ### 4) Linting and type checking
 
@@ -104,74 +90,6 @@ Test markers and configuration are defined in
 ruff check --fix .
 mypy gain --exclude gain_core/docs/ \
     --exclude gain_core/gain/docs/
-mypy gpf --exclude gpf_core/docs/
-mypy gpf_web --exclude gpf_web/docs/ \
-    --exclude gpf_web/conftest.py
-```
-
-### REST Client and Federation (optional)
-
-If you want to work with `gpf_federation` and `gpf_rest_client`
-modules, install additional dependencies and then the
-packages:
-
-```bash
-mamba env update --name gpf \
-    --file ./gpf_federation/federation-environment.yml
-pip install -e gpf_rest_client
-pip install -e gpf_federation
-```
-
-### Additional genotype storages (optional)
-
-Some storages are not included in the default installation.
-Install their dependencies only if you plan to use or
-develop them.
-
-#### Apache Impala genotype storage
-
-```bash
-mamba env update --name gpf \
-    --file ./impala_storage/impala-environment.yml
-pip install -e impala_storage
-```
-
-#### Apache Impala2 genotype storage
-
-```bash
-mamba env update --name gpf \
-    --file ./impala2_storage/impala2-environment.yml
-pip install -e impala2_storage
-```
-
-#### GCP (BigQuery) genotype storage
-
-```bash
-mamba env update --name gpf \
-    --file ./gcp_storage/gcp-environment.yml
-pip install -e gcp_storage
-```
-
-Authenticate for the `seqpipe-gcp-storage-testing` project
-before running tests:
-
-```bash
-gcloud config list project
-gcloud auth application-default login
-```
-
-Run GCP storage tests (from the `gpf_gcp_storage/` directory):
-
-```bash
-pytest -v gcp_storage/tests/
-```
-
-Run integration tests against the GCP genotype storage
-definition:
-
-```bash
-pytest -v ../gpf_core/tests/ \
-    --gsf gcp_storage/tests/gcp_storage.yaml
 ```
 
 ### Pre-commit lint check hook
@@ -191,13 +109,12 @@ git commit --no-verify
 
 ## Common pitfalls
 
-- Always activate the `gpf` Conda environment before
-  running commands: `conda activate gpf`.
+- Always activate the `gain` Conda environment before
+  running commands: `conda activate gain`.
 - Prefer `environment.yml` over `requirements.txt`
   (legacy).
 - If imports fail after changes, re-run
-  `pip install -e gain_core`, `pip install -e gpf_core`,
-  and/or `pip install -e gpf_web`.
+  `pip install -e gain_core`.
 - Some tests may be flaky with high parallelism; reduce
   `-n` or run without it.
 

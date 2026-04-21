@@ -4,7 +4,7 @@
 # conda create -c conda-forge -c bioconda -n <env name> --file <this file>
 # - conda-forge 
 
-name: gpf
+name: gain
 channels:
   - conda-forge
   - bioconda

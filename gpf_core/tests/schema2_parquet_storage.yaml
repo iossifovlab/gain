@@ -1,3 +1,0 @@
-id: schema2_parquet
-storage_type: parquet
-dir: /tmp/genotype_schema2_parquet_data

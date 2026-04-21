@@ -1,9 +1,0 @@
-- md5: 3b5976564667852f52398b66fdc2a0a8
-  name: genomic_resource.yaml
-  size: 49
-- md5: 28b566deda58135d67a67ed504e52973
-  name: liftover.chain.gz
-  size: 80
-- md5: 6a99c575ab87f8c7d1ed1e52e7e349ce
-  name: statistics/stats_hash
-  size: 11

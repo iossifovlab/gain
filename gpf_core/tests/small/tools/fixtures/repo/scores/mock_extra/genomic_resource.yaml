@@ -1,7 +1,0 @@
-type: position_score
-table:
-  filename: mock_file
-scores:
-  - id: mock_extra
-    index: 0
-    type: float
