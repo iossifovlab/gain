@@ -32,6 +32,15 @@ pipeline {
     }
 
     stages {
+        stage('Start') {
+            steps {
+                zulipSend(
+                    message: "Started build #${env.BUILD_NUMBER} of project ${env.JOB_NAME} (${env.BUILD_URL})",
+                    topic: "${env.JOB_NAME}",
+                )
+            }
+        }
+
         stage('Prepare workspace') {
             steps {
                 sh 'rm -rf reports && mkdir -p reports/integration'
@@ -83,15 +92,21 @@ pipeline {
 
     post {
         always {
-            junit(
-                allowEmptyResults: true,
-                testResults: 'reports/integration/*.xml',
-            )
-            archiveArtifacts(
-                artifacts: 'reports/integration/*.xml',
-                allowEmptyArchive: true,
-                fingerprint: false,
-            )
+            script {
+                try {
+                    junit(
+                        allowEmptyResults: true,
+                        testResults: 'reports/integration/*.xml',
+                    )
+                    archiveArtifacts(
+                        artifacts: 'reports/integration/*.xml',
+                        allowEmptyArchive: true,
+                        fingerprint: false,
+                    )
+                } finally {
+                    zulipNotification(topic: "${env.JOB_NAME}")
+                }
+            }
         }
         cleanup {
             sh 'docker rmi ${IMAGE_TAG} 2>/dev/null || true'

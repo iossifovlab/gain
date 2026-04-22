@@ -81,6 +81,15 @@ pipeline {
     }
 
     stages {
+        stage('Start') {
+            steps {
+                zulipSend(
+                    message: "Started build #${env.BUILD_NUMBER} of project ${env.JOB_NAME} (${env.BUILD_URL})",
+                    topic: "${env.JOB_NAME}",
+                )
+            }
+        }
+
         stage('Prepare workspace') {
             steps {
                 sh 'rm -rf reports dist conda && mkdir -p reports dist conda'
@@ -240,21 +249,27 @@ pipeline {
 
     post {
         always {
-            archiveArtifacts(
-                artifacts: 'reports/**/*.xml',
-                allowEmptyArchive: true,
-                fingerprint: false,
-            )
-            archiveArtifacts(
-                artifacts: 'dist/**/*.whl, dist/**/*.tar.gz',
-                allowEmptyArchive: true,
-                fingerprint: true,
-            )
-            archiveArtifacts(
-                artifacts: 'dist/conda/*.conda',
-                allowEmptyArchive: true,
-                fingerprint: true,
-            )
+            script {
+                try {
+                    archiveArtifacts(
+                        artifacts: 'reports/**/*.xml',
+                        allowEmptyArchive: true,
+                        fingerprint: false,
+                    )
+                    archiveArtifacts(
+                        artifacts: 'dist/**/*.whl, dist/**/*.tar.gz',
+                        allowEmptyArchive: true,
+                        fingerprint: true,
+                    )
+                    archiveArtifacts(
+                        artifacts: 'dist/conda/*.conda',
+                        allowEmptyArchive: true,
+                        fingerprint: true,
+                    )
+                } finally {
+                    zulipNotification(topic: "${env.JOB_NAME}")
+                }
+            }
         }
         cleanup {
             sh '''
