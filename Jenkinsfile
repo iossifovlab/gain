@@ -248,6 +248,28 @@ pipeline {
                 '''
             }
         }
+
+        stage('Trigger VEP integration') {
+            // Downstream gate for the gain-vep-integration job (DSL
+            // at vep_annotator/jenkins-jobs/integration.groovy). Runs
+            // only on master and only when something under
+            // vep_annotator/ actually changed - the integration job
+            // pulls ensembl-vep and primes a multi-GB cache, so we
+            // don't want every master commit to trigger it.
+            when {
+                allOf {
+                    branch 'master'
+                    changeset 'vep_annotator/**'
+                }
+            }
+            steps {
+                build(
+                    job: '/iossifovlab/gain-vep-integration',
+                    wait: false,
+                    propagate: false,
+                )
+            }
+        }
     }
 
     post {
