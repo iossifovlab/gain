@@ -15,6 +15,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.3 /uv /uvx /usr/local/bin/
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         libcurl4-openssl-dev \
+        git \
     && rm -rf /var/lib/apt/lists/*
 
 ENV UV_LINK_MODE=copy \

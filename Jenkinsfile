@@ -18,16 +18,22 @@ def runProject(Map args) {
     String pytestArgs     = args.pytestArgs ?: ''              // e.g. "-n auto"
     String dockerRunExtra = args.dockerRunExtra ?: ''          // extra flags for `docker run` (network, -v, -e, ...)
     String distName       = name.replace('_', '-')
+    String distPkg        = "gain-${distName}"                 // PyPI-style name, e.g. "gain-demo-annotator"
     String imageTag       = "gain-${distName}-ci:${env.BUILD_NUMBER}"
 
     sh label: "Build ${name} image", script: """
         docker build -f ${name}/Dockerfile -t ${imageTag} .
     """
 
+    // Mount .git read-only so hatch-vcs can derive the version during
+    // `uv build`. .git is excluded from the Docker build context via
+    // .dockerignore, which keeps the test image small and cacheable;
+    // it's only needed at distribution-build time.
     sh label: "Run ${name} CI", script: """
         mkdir -p reports/${name}
         docker run --rm \\
             -v \$PWD/reports/${name}:/reports \\
+            -v \$PWD/.git:/workspace/.git:ro \\
             ${dockerRunExtra} \\
             ${imageTag} \\
             sh -c '
@@ -47,6 +53,9 @@ def runProject(Map args) {
                 # resolve source files.
                 sed -i "s#<source>/workspace/\\([^<]*\\)</source>#<source>\\1</source>#g" \\
                     /reports/coverage.xml 2>/dev/null || true
+                # Build wheel + sdist for this project. hatch-vcs reads the
+                # mounted .git to produce a proper PEP 440 version.
+                uv build --package ${distPkg} --out-dir /reports/dist
                 chmod -R a+rw /reports
                 exit 0
             '
@@ -179,7 +188,16 @@ pipeline {
 
     post {
         always {
-            archiveArtifacts artifacts: 'reports/**/*.xml', allowEmptyArchive: true, fingerprint: false
+            archiveArtifacts(
+                artifacts: 'reports/**/*.xml',
+                allowEmptyArchive: true,
+                fingerprint: false,
+            )
+            archiveArtifacts(
+                artifacts: 'reports/**/dist/*.whl, reports/**/dist/*.tar.gz',
+                allowEmptyArchive: true,
+                fingerprint: true,
+            )
         }
         cleanup {
             sh '''
