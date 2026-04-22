@@ -264,7 +264,7 @@ pipeline {
             }
             steps {
                 build(
-                    job: '/iossifovlab/gain-vep-integration',
+                    job: '/gain-vep-integration',
                     wait: false,
                     propagate: false,
                 )

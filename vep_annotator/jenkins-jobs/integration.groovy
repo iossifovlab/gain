@@ -7,7 +7,10 @@
 // `Trigger VEP integration` stage whenever `vep_annotator/**` changes.
 // It can also be triggered manually from the Jenkins UI.
 
-pipelineJob('iossifovlab/gain-vep-integration') {
+// Declared at the Jenkins root (not under `iossifovlab/`): that path
+// is a GitHub Organization Folder and rejects Job-DSL-managed
+// children. Sibling of the `gain-seed` seed job.
+pipelineJob('gain-vep-integration') {
     description(
         'Integration tests for gain-vep-annotator against a real VEP ' +
         'stack. Triggered downstream of iossifovlab/gain/master when ' +
