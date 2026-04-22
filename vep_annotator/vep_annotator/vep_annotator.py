@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, TextIO, cast
 
+import pysam
 from gain.annotation.annotatable import Annotatable, VCFAllele
 from gain.annotation.annotation_factory import AnnotationConfigParser
 from gain.annotation.annotation_pipeline import (
@@ -34,8 +35,6 @@ from gain.genomic_resources.repository import GenomicResource
 from vep_annotator.vep_attributes import effect_attributes, full_attributes
 
 logger = logging.getLogger(__name__)
-
-# ruff: noqa: S607
 
 CONSEQUENCES: dict[str, int] = {t[1]: t[0] for t in enumerate([
     "sequence_variant",
@@ -518,11 +517,10 @@ class VEPEffectAnnotator(VEPAnnotatorBase):
 
             self.gtf_path.write_text(gtf_content)
 
-            subprocess.run(["bgzip", str(self.gtf_path)], check=True)
-            subprocess.run(
-                ["tabix", "-p", "gff", str(self.gtf_path_gz)],
-                check=True,
+            pysam.tabix_compress(
+                str(self.gtf_path), str(self.gtf_path_gz),
             )
+            pysam.tabix_index(str(self.gtf_path_gz), preset="gff")
 
         return super().open()
 
