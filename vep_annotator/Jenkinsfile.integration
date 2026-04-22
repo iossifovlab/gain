@@ -26,6 +26,14 @@ pipeline {
         disableConcurrentBuilds()
     }
 
+    triggers {
+        // Nightly run so regressions against a live VEP + GRR surface
+        // even when vep_annotator/ itself hasn't changed on master.
+        // `H` hashes on the job name so the minute/hour is stable per
+        // job but spread across any other nightlies on the controller.
+        cron('H H(0-5) * * *')
+    }
+
     environment {
         // Persistent across builds — the VEP cache is multi-GB and
         // mostly reused (`install_vep_cache --continue`).
