@@ -1,0 +1,58 @@
+// Seed pipeline for Jenkins Job DSL files in this repo.
+//
+// A single Jenkins-side pipeline job (e.g. `iossifovlab/gain-seed`)
+// points at this script and tracks master; polling kicks the seed
+// on every master change, so any job declared under
+// `<project>/jenkins-jobs/*.groovy` is created or updated in place
+// without anyone clicking in the UI.
+//
+// First-run setup on the Jenkins controller:
+//   1. Manage Jenkins → Plugins: confirm "Job DSL" is installed.
+//   2. New Item → Pipeline → name `gain-seed` (inside the
+//      `iossifovlab` folder so generated job paths line up).
+//      - Pipeline script from SCM → Git
+//        - Repo: https://github.com/iossifovlab/gain.git
+//        - Branch: */master
+//      - Script Path: jenkins-jobs/Jenkinsfile.seed
+//   3. Build Now once to bootstrap. If the first run errors with
+//      "script not yet approved", approve the jobDsl script under
+//      Manage Jenkins → In-process Script Approval, then rerun.
+//
+// After bootstrap the seed is idempotent: jobs whose .groovy
+// definition hasn't changed get no-op updates. Currently manages:
+//   - iossifovlab/gain-vep-integration
+//     (defined in vep_annotator/jenkins-jobs/integration.groovy)
+
+pipeline {
+    agent any
+
+    options {
+        timeout(time: 10, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
+    triggers {
+        // Reseed when master changes. Pair with a webhook later if
+        // polling latency is a problem.
+        pollSCM('H/10 * * * *')
+    }
+
+    stages {
+        stage('Apply Job DSL') {
+            steps {
+                // Glob is restricted to `*.groovy` so this
+                // Jenkinsfile.seed (no .groovy suffix, intentional)
+                // is not re-processed as a Job DSL script.
+                jobDsl(
+                    targets: '**/jenkins-jobs/*.groovy',
+                    // Keep manually-created or out-of-tree jobs
+                    // intact if their .groovy ever disappears from
+                    // this repo - flip to DELETE only after we're
+                    // confident the seed owns every job it sees.
+                    removedJobAction: 'IGNORE',
+                    removedViewAction: 'IGNORE',
+                )
+            }
+        }
+    }
+}
