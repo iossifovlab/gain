@@ -22,7 +22,7 @@ dependencies = [
 dynamic = ["version"]
 
 [project.urls]
-Homepage = "https://github.com/IossifovLab/gpf"
+Homepage = "https://github.com/IossifovLab/gain"
 
 [project.scripts]
 install_vep_cache = "vep_annotator.install_vep_cache:main"

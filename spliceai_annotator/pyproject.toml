@@ -24,7 +24,7 @@ dependencies = [
 dynamic = ["version"]
 
 [project.urls]
-Homepage = "https://github.com/IossifovLab/gpf"
+Homepage = "https://github.com/IossifovLab/gain"
 
 [project.entry-points."gain.annotation.annotators"]
 spliceai_annotator = "spliceai_annotator:build_spliceai_annotator"

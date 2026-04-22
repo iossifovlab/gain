@@ -24,7 +24,6 @@ dependencies = [
     "dask-jobqueue>=0.9",
     "distributed>=2026.1",
     "docker>=7.1",
-    "duckdb>=1.5",
     "filelock>=3.19",
     "fsspec>=2026.2",
     "intervaltree",
@@ -43,12 +42,11 @@ dependencies = [
     "python-box>=7.1",
     "pyyaml>=6",
     "s3fs>=2026.2",
-    "sqlglot>=28",
 ]
 dynamic = ["version"]
 
 [project.urls]
-Homepage = "https://github.com/IossifovLab/gpf"
+Homepage = "https://github.com/IossifovLab/gain"
 
 [project.scripts]
 demo_graphs_cli = "gain.task_graph.demo_graphs_cli:main"

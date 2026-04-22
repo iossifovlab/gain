@@ -23,7 +23,7 @@ dependencies = [
 dynamic = ["version"]
 
 [project.urls]
-Homepage = "https://github.com/IossifovLab/gpf"
+Homepage = "https://github.com/IossifovLab/gain"
 
 [project.scripts]
 annotate_length = "demo_annotator.annotate_length:annotate_length_cli"
