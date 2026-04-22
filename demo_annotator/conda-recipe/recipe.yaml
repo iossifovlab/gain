@@ -1,0 +1,41 @@
+schema_version: 1
+
+context:
+  name: gain-demo-annotator
+  version: ${{ env.get("VCS_VERSION") | default("0.0.0.dev0") }}
+
+package:
+  name: ${{ name }}
+  version: ${{ version }}
+
+source:
+  # `uv build` writes a `.gitignore` with `*` into the dist dir; rattler-build
+  # honours .gitignore by default and would skip every wheel/sdist, so we
+  # opt out here.
+  - path: ../../dist/demo_annotator
+    use_gitignore: false
+  - path: ../../LICENSE
+
+build:
+  noarch: python
+  number: 0
+  script:
+    interpreter: bash
+    content: |
+      set -euo pipefail
+      "$PYTHON" -m pip install --no-deps --no-build-isolation -vv ./*.whl
+
+requirements:
+  host:
+    - python >=3.12
+    - pip
+  run:
+    - python >=3.12
+    - gain-core
+    - fsspec >=2026.2
+
+about:
+  homepage: https://github.com/IossifovLab/gain
+  summary: GAIn External Demo Annotator
+  license: MIT
+  license_file: LICENSE

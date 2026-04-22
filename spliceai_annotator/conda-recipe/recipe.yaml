@@ -1,0 +1,42 @@
+schema_version: 1
+
+context:
+  name: gain-spliceai-annotator
+  version: ${{ env.get("VCS_VERSION") | default("0.0.0.dev0") }}
+
+package:
+  name: ${{ name }}
+  version: ${{ version }}
+
+source:
+  # `uv build` writes a `.gitignore` with `*` into the dist dir; rattler-build
+  # honours .gitignore by default and would skip every wheel/sdist, so we
+  # opt out here.
+  - path: ../../dist/spliceai_annotator
+    use_gitignore: false
+  - path: ../../LICENSE
+
+build:
+  noarch: python
+  number: 0
+  script:
+    interpreter: bash
+    content: |
+      set -euo pipefail
+      "$PYTHON" -m pip install --no-deps --no-build-isolation -vv ./*.whl
+
+requirements:
+  host:
+    - python >=3.12
+    - pip
+  run:
+    - python >=3.12
+    - gain-core
+    - numpy >=2.2
+    - tensorflow >=2.18
+
+about:
+  homepage: https://github.com/IossifovLab/gain
+  summary: GAIn SpliceAI annotator plugin
+  license: MIT
+  license_file: LICENSE

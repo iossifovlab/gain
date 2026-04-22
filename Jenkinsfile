@@ -83,7 +83,16 @@ pipeline {
     stages {
         stage('Prepare workspace') {
             steps {
-                sh 'rm -rf reports dist && mkdir -p reports dist'
+                sh 'rm -rf reports dist conda && mkdir -p reports dist conda'
+            }
+        }
+
+        stage('Conda builder image') {
+            steps {
+                sh '''
+                    docker build -f conda-builder/Dockerfile \
+                        -t gain-conda-builder-ci:${BUILD_NUMBER} conda-builder
+                '''
             }
         }
 
@@ -185,6 +194,32 @@ pipeline {
                 }
             }
         }
+
+        stage('Conda packages') {
+            steps {
+                sh '''
+                    # Derive the hatch-vcs PEP 440 version from any wheel name;
+                    # pass it to rattler-build via env so the conda package
+                    # version matches the wheel's.
+                    VCS_VERSION=$(ls dist/core/*.whl | head -1 \
+                        | sed 's#.*gain_core-##' \
+                        | sed 's#-py3-none-any.whl$##')
+                    echo "VCS_VERSION=$VCS_VERSION"
+
+                    for proj in core demo_annotator vep_annotator spliceai_annotator; do
+                        mkdir -p conda/$proj
+                        docker run --rm \
+                            -v $PWD:/workspace \
+                            -w /workspace \
+                            -e VCS_VERSION="$VCS_VERSION" \
+                            gain-conda-builder-ci:${BUILD_NUMBER} \
+                            rattler-build build \
+                                --recipe $proj/conda-recipe/recipe.yaml \
+                                --output-dir conda/$proj
+                    done
+                '''
+            }
+        }
     }
 
     post {
@@ -199,10 +234,15 @@ pipeline {
                 allowEmptyArchive: true,
                 fingerprint: true,
             )
+            archiveArtifacts(
+                artifacts: 'conda/**/*.conda',
+                allowEmptyArchive: true,
+                fingerprint: true,
+            )
         }
         cleanup {
             sh '''
-                for img in gain-core-ci gain-demo-annotator-ci gain-vep-annotator-ci gain-spliceai-annotator-ci; do
+                for img in gain-core-ci gain-demo-annotator-ci gain-vep-annotator-ci gain-spliceai-annotator-ci gain-conda-builder-ci; do
                     docker rmi "$img:${BUILD_NUMBER}" 2>/dev/null || true
                 done
             '''
