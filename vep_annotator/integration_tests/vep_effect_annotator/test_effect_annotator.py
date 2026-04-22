@@ -10,6 +10,7 @@ from gain.genomic_resources.genomic_context import (
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
+
 from vep_annotator.vep_annotator import VEPEffectAnnotator
 
 
