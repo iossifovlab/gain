@@ -216,15 +216,20 @@ pipeline {
                     echo "VCS_VERSION=$VCS_VERSION"
 
                     mkdir -p dist/conda
+                    # Run the conda-builder container as the Jenkins user
+                    # (instead of the image's default `mambauser`, UID
+                    # 57439). rattler-build creates its output `.conda`
+                    # via a 0600-mode tempfile, so files produced by
+                    # mambauser end up unreadable to Jenkins on the host;
+                    # matching UIDs sidesteps that entirely. HOME is
+                    # redirected to /tmp because /home/mambauser is not
+                    # writable by an arbitrary UID.
+                    DOCKER_USER="$(id -u):$(id -g)"
                     for proj in core demo_annotator vep_annotator spliceai_annotator; do
-                        # The conda-builder image runs as non-root `mambauser`
-                        # (UID 57439), so make the bind-mounted output dir
-                        # world-writable before docker run - otherwise
-                        # rattler-build fails with EACCES creating
-                        # `.condapackageignore` inside it.
                         mkdir -p conda/$proj
-                        chmod 0777 conda/$proj
                         docker run --rm \
+                            --user "$DOCKER_USER" \
+                            -e HOME=/tmp \
                             -v $PWD:/workspace \
                             -w /workspace \
                             -e VCS_VERSION="$VCS_VERSION" \
@@ -234,12 +239,10 @@ pipeline {
                                 --output-dir conda/$proj
                         # Promote the final .conda artefact(s) out of
                         # rattler-build's working tree. conda/$proj/bld/
-                        # contains ~1000+ symlinks into build-env
-                        # prefixes (owned by mambauser), and
+                        # holds 1000+ symlinks into build-env prefixes;
                         # archiveArtifacts walking that tree has raced
-                        # against it and corrupted the remoting tar
-                        # stream. dist/conda/ stays clean, Jenkins-owned,
-                        # and holds only the published packages.
+                        # with it. dist/conda/ stays clean and holds
+                        # only the published packages.
                         cp conda/$proj/noarch/*.conda dist/conda/
                     done
                 '''
