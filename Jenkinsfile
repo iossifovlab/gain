@@ -30,9 +30,10 @@ def runProject(Map args) {
     // .dockerignore, which keeps the test image small and cacheable;
     // it's only needed at distribution-build time.
     sh label: "Run ${name} CI", script: """
-        mkdir -p reports/${name}
+        mkdir -p reports/${name} dist/${name}
         docker run --rm \\
             -v \$PWD/reports/${name}:/reports \\
+            -v \$PWD/dist/${name}:/dist \\
             -v \$PWD/.git:/workspace/.git:ro \\
             ${dockerRunExtra} \\
             ${imageTag} \\
@@ -55,8 +56,8 @@ def runProject(Map args) {
                     /reports/coverage.xml 2>/dev/null || true
                 # Build wheel + sdist for this project. hatch-vcs reads the
                 # mounted .git to produce a proper PEP 440 version.
-                uv build --package ${distPkg} --out-dir /reports/dist
-                chmod -R a+rw /reports
+                uv build --package ${distPkg} --out-dir /dist
+                chmod -R a+rw /reports /dist
                 exit 0
             '
     """
@@ -82,7 +83,7 @@ pipeline {
     stages {
         stage('Prepare workspace') {
             steps {
-                sh 'rm -rf reports && mkdir -p reports'
+                sh 'rm -rf reports dist && mkdir -p reports dist'
             }
         }
 
@@ -194,7 +195,7 @@ pipeline {
                 fingerprint: false,
             )
             archiveArtifacts(
-                artifacts: 'reports/**/dist/*.whl, reports/**/dist/*.tar.gz',
+                artifacts: 'dist/**/*.whl, dist/**/*.tar.gz',
                 allowEmptyArchive: true,
                 fingerprint: true,
             )
