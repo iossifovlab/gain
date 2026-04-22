@@ -47,7 +47,8 @@ def runProject(Map args) {
                        --exit-zero ${pkg} > /reports/pylint.xml
                 pytest ${pytestArgs} \\
                     --junitxml=/reports/pytest.xml \\
-                    --cov=${pkg} --cov-report=xml:/reports/coverage.xml \\
+                    --cov=${pkg} --cov-branch \\
+                    --cov-report=xml:/reports/coverage.xml \\
                     ${tests}
                 # Rewrite container-absolute <source>/workspace/...</source> to a
                 # path relative to the Jenkins workspace so recordCoverage can
@@ -65,8 +66,13 @@ def runProject(Map args) {
 
 def publishReports(String name) {
     junit allowEmptyResults: true, testResults: "reports/${name}/*.xml"
+    // `id` gives each sub-project its own coverage URL + sidebar action
+    // and `name` the chart title — otherwise every report collides at
+    // `/coverage` and is labelled "Code Coverage Trend".
     recordCoverage(
         tools: [[parser: 'COBERTURA', pattern: "reports/${name}/coverage.xml"]],
+        id: "${name}-coverage",
+        name: "${name} coverage",
         skipPublishingChecks: true,
         failOnError: false,
     )
