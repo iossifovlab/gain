@@ -207,7 +207,13 @@ pipeline {
                     echo "VCS_VERSION=$VCS_VERSION"
 
                     for proj in core demo_annotator vep_annotator spliceai_annotator; do
+                        # The conda-builder image runs as non-root `mambauser`
+                        # (UID 57439), so make the bind-mounted output dir
+                        # world-writable before docker run - otherwise
+                        # rattler-build fails with EACCES creating
+                        # `.condapackageignore` inside it.
                         mkdir -p conda/$proj
+                        chmod 0777 conda/$proj
                         docker run --rm \
                             -v $PWD:/workspace \
                             -w /workspace \
