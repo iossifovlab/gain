@@ -1,0 +1,4 @@
+- vep_effect_annotator:
+    genome: hg38/genomes/GRCh38.p13
+    gene_models: hg38/gene_models/MANE/1.2
+    vep_version: "113.4"

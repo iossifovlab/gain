@@ -1,0 +1,3 @@
+- vep_full_annotator:
+    cache_dir: /data/jenkins/vep_cache
+    vep_version: "113.4"

@@ -13,6 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         libcurl4-openssl-dev \
         git \
+        wget \
+        tar \
     && rm -rf /var/lib/apt/lists/*
 
 ENV UV_LINK_MODE=copy \

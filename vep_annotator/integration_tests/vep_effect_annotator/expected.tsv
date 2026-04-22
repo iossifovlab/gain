@@ -1,0 +1,13 @@
+CHROM	POS	REF	ALT	person_ids	Gene	Feature	Feature_type	Consequence	worst_consequence	highest_impact	gene_consequence
+chr13	21391016	A	AT	p2	ZDHHC20	ENST00000400590.8	Transcript	intron_variant	intron_variant	MODIFIER	ZDHHC20:intron_variant
+chr13	21393484	TCTTC	T	p2	ZDHHC20	ENST00000400590.8	Transcript	intron_variant	intron_variant	MODIFIER	ZDHHC20:intron_variant
+chr13	21402010	G	A	p1	ZDHHC20	ENST00000400590.8	Transcript	intron_variant	intron_variant	MODIFIER	ZDHHC20:intron_variant
+chr13	21403019	G	A	p2	ZDHHC20	ENST00000400590.8	Transcript	intron_variant	intron_variant	MODIFIER	ZDHHC20:intron_variant
+chr13	21403214	T	C	p1	ZDHHC20	ENST00000400590.8	Transcript	intron_variant	intron_variant	MODIFIER	ZDHHC20:intron_variant
+chr13	21431459	G	C	p1	ZDHHC20	ENST00000400590.8	Transcript	intron_variant	intron_variant	MODIFIER	ZDHHC20:intron_variant
+chr14	21391016	A	AT	p2	CHD8	ENST00000646647.2	Transcript	frameshift_variant	frameshift_variant	HIGH	CHD8:frameshift_variant
+chr14	21393484	TCTTC	T	p2	CHD8	ENST00000646647.2	Transcript	frameshift_variant	frameshift_variant	HIGH	CHD8:frameshift_variant
+chr14	21402010	G	A	p1	CHD8	ENST00000646647.2	Transcript	stop_gained	stop_gained	HIGH	CHD8:stop_gained
+chr14	21403019	G	A	p2	CHD8	ENST00000646647.2	Transcript	stop_gained,splice_region_variant	stop_gained	HIGH	CHD8:stop_gained,splice_region_variant
+chr14	21403214	T	C	p1	CHD8	ENST00000646647.2	Transcript	splice_acceptor_variant	splice_acceptor_variant	HIGH	CHD8:splice_acceptor_variant
+chr14	21431459	G	C	p1	CHD8	ENST00000646647.2	Transcript	stop_gained	stop_gained	HIGH	CHD8:stop_gained

@@ -1,0 +1,3 @@
+- vep_effect_annotator:
+    gene_models: hg38/gene_models/MANE/1.2
+    vep_version: "113.4"

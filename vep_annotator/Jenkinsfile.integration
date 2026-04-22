@@ -1,0 +1,100 @@
+// Dedicated Jenkins pipeline for the gain-vep-annotator integration
+// test suite. Builds the regular vep_annotator CI image, provisions a
+// persistent VEP cache on the agent (/data/jenkins/vep_cache), and runs
+// pytest against the real VEP stack — `VEPCacheAnnotator.run` spawns
+// `ensemblorg/ensembl-vep:<version>` containers via the host docker
+// daemon.
+//
+// Expected Jenkins job setup:
+//   - Script path: vep_annotator/Jenkinsfile.integration
+//   - Point at any branch that carries the vep_annotator sub-project.
+//
+// DinD path alignment: every path that can end up as a Docker volume
+// source (pytest tmp_path, the VEP cache) is bind-mounted at the same
+// absolute path in the CI test container and on the host.
+
+pipeline {
+    agent any
+
+    options {
+        timeout(time: 2, unit: 'HOURS')
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        // The shared cache dir + the single ensembl-vep image pull can
+        // race across concurrent runs; serialise builds on the agent.
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        // Persistent across builds — the VEP cache is multi-GB and
+        // mostly reused (`install_vep_cache --continue`).
+        VEP_CACHE_DIR = '/data/jenkins/vep_cache'
+        IMAGE_TAG = "gain-vep-annotator-ci:${env.BUILD_NUMBER}"
+    }
+
+    stages {
+        stage('Prepare workspace') {
+            steps {
+                sh 'rm -rf reports && mkdir -p reports/integration'
+            }
+        }
+
+        stage('Build image') {
+            steps {
+                sh '''
+                    docker build -f vep_annotator/Dockerfile \
+                        -t ${IMAGE_TAG} .
+                '''
+            }
+        }
+
+        stage('Provision VEP cache') {
+            steps {
+                sh '''
+                    mkdir -p ${VEP_CACHE_DIR}
+                    docker run --rm \
+                        -v ${VEP_CACHE_DIR}:${VEP_CACHE_DIR} \
+                        ${IMAGE_TAG} \
+                        install_vep_cache ${VEP_CACHE_DIR} --force --continue
+                '''
+            }
+        }
+
+        stage('Integration tests') {
+            steps {
+                sh '''
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v /tmp:/tmp \
+                        -v ${VEP_CACHE_DIR}:${VEP_CACHE_DIR} \
+                        -v $PWD/reports/integration:/reports \
+                        ${IMAGE_TAG} \
+                        sh -c '
+                            set +e
+                            pytest -v \
+                                integration_tests/ \
+                                --junitxml=/reports/pytest.xml
+                            chmod -R a+rw /reports
+                            exit 0
+                        '
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            junit(
+                allowEmptyResults: true,
+                testResults: 'reports/integration/*.xml',
+            )
+            archiveArtifacts(
+                artifacts: 'reports/integration/*.xml',
+                allowEmptyArchive: true,
+                fingerprint: false,
+            )
+        }
+        cleanup {
+            sh 'docker rmi ${IMAGE_TAG} 2>/dev/null || true'
+        }
+    }
+}
