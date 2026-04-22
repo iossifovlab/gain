@@ -397,9 +397,6 @@ models to predict splice site variant effects.
 
         self.genome.close()
         self.gene_models.close()
-        if self._models is not None:
-            for model in self._models:
-                del model
         self._models = None
 
         # pylint: disable=import-outside-toplevel

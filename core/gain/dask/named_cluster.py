@@ -50,8 +50,8 @@ def set_up_slurm_cluster(cluster_conf: dict[str, Any]) -> Cluster:
 
 def set_up_kubernetes_cluster(cluster_conf: dict[str, Any]) -> Cluster:
     """Create a kubernetes cluster."""
-    # pylint: disable=import-outside-toplevel
-    from dask_kubernetes.operator.kubecluster import (
+    # pylint: disable=import-outside-toplevel,import-error
+    from dask_kubernetes.operator.kubecluster import (  # pyright: ignore
         KubeCluster,
         make_cluster_spec,
     )

@@ -209,18 +209,18 @@ def test_mock_annotate(
 
     vep_annotator.batch_annotate(annotatables, contexts)
 
-    assert len(contexts[0]) == 82
+    assert len(contexts[0]) == 86
     assert contexts[0]["worst_consequence"] == "splice_acceptor_variant"
     assert contexts[0]["highest_impact"] == "HIGH"
 
-    assert len(contexts[1]) == 82
+    assert len(contexts[1]) == 86
     assert contexts[1]["worst_consequence"] == "stop_gained"
     assert contexts[1]["highest_impact"] == "HIGH"
 
-    assert len(contexts[2]) == 82
+    assert len(contexts[2]) == 86
     assert contexts[2]["worst_consequence"] == "frameshift_variant"
     assert contexts[2]["highest_impact"] == "HIGH"
 
-    assert len(contexts[3]) == 82
+    assert len(contexts[3]) == 86
     assert contexts[3]["worst_consequence"] == "stop_gained"
     assert contexts[3]["highest_impact"] == "HIGH"
