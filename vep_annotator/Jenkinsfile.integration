@@ -14,7 +14,9 @@
 // absolute path in the CI test container and on the host.
 
 pipeline {
-    agent any
+    // Pinned to `pooh`: the multi-GB VEP cache under /data/jenkins/vep_cache
+    // is maintained on that agent and reused across builds.
+    agent { label 'pooh' }
 
     options {
         timeout(time: 2, unit: 'HOURS')
