@@ -206,6 +206,7 @@ pipeline {
                         | sed 's#-py3-none-any.whl$##')
                     echo "VCS_VERSION=$VCS_VERSION"
 
+                    mkdir -p dist/conda
                     for proj in core demo_annotator vep_annotator spliceai_annotator; do
                         # The conda-builder image runs as non-root `mambauser`
                         # (UID 57439), so make the bind-mounted output dir
@@ -222,6 +223,15 @@ pipeline {
                             rattler-build build \
                                 --recipe $proj/conda-recipe/recipe.yaml \
                                 --output-dir conda/$proj
+                        # Promote the final .conda artefact(s) out of
+                        # rattler-build's working tree. conda/$proj/bld/
+                        # contains ~1000+ symlinks into build-env
+                        # prefixes (owned by mambauser), and
+                        # archiveArtifacts walking that tree has raced
+                        # against it and corrupted the remoting tar
+                        # stream. dist/conda/ stays clean, Jenkins-owned,
+                        # and holds only the published packages.
+                        cp conda/$proj/noarch/*.conda dist/conda/
                     done
                 '''
             }
@@ -241,7 +251,7 @@ pipeline {
                 fingerprint: true,
             )
             archiveArtifacts(
-                artifacts: 'conda/**/*.conda',
+                artifacts: 'dist/conda/*.conda',
                 allowEmptyArchive: true,
                 fingerprint: true,
             )
