@@ -1,0 +1,236 @@
+// Dedicated Jenkins pipeline for the gain web_e2e (Playwright)
+// suite. Triggered downstream from
+// `iossifovlab/gain/<branch>`'s `Trigger web_e2e` stage after
+// the parent build's `Conda packages` stage finishes; runs for
+// every branch the parent triggers from. Can also be run
+// manually from the Jenkins UI with explicit BRANCH_NAME /
+// COMMIT_SHA params.
+//
+// Expected Jenkins job setup:
+//   - Script path: web_e2e/Jenkinsfile.e2e
+//   - Defined by web_e2e/jenkins-jobs/e2e.groovy as the
+//     `gain-web-e2e` pipelineJob (loaded via the seed job).
+//
+// Self-contained: clones the gain monorepo at the requested
+// branch/commit, copies the wheels the parent build archived
+// (`dist/core/*.whl` + `dist/web_api/*.whl`), builds the
+// Phase-8 wheel-based backend image and Apache-based frontend
+// image, then runs the Playwright suite via the existing
+// `web_infra/compose-jenkins.yaml` e2e stack.
+
+pipeline {
+    // Excludes `dory` (matches the root Jenkinsfile's choice).
+    // Any other agent has docker + the standard tools.
+    agent { label '!dory' }
+
+    parameters {
+        string(
+            name: 'BRANCH_NAME',
+            defaultValue: 'master',
+            description: 'Branch the upstream gain build was ' +
+                'triggered from. The pipeline checks out ' +
+                'this branch unless COMMIT_SHA is set.',
+        )
+        string(
+            name: 'COMMIT_SHA',
+            defaultValue: '',
+            description: 'Specific commit SHA to test (takes ' +
+                'precedence over BRANCH_NAME). Empty = use ' +
+                'BRANCH_NAME HEAD.',
+        )
+        string(
+            name: 'UPSTREAM_PROJECT',
+            defaultValue: '',
+            description: 'Upstream Jenkins project name ' +
+                '(e.g. iossifovlab/gain/master) the wheel ' +
+                'artefacts are copied from. Empty = build ' +
+                'the wheels from source instead.',
+        )
+        string(
+            name: 'UPSTREAM_BUILD',
+            defaultValue: '',
+            description: 'Upstream build number to copy ' +
+                'wheel artefacts from. Empty = use the ' +
+                'last successful build of UPSTREAM_PROJECT.',
+        )
+    }
+
+    options {
+        timeout(time: 1, unit: 'HOURS')
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
+    environment {
+        BACKEND_IMAGE  = "gain-web-api-prod:${env.BUILD_NUMBER}"
+        FRONTEND_IMAGE = "gain-web-ui-prod:${env.BUILD_NUMBER}"
+        COMPOSE_PROJECT =
+            "gain-web-e2e-${env.BUILD_NUMBER}"
+        COMPOSE_NETWORK =
+            "gain-web-e2e-${env.BUILD_NUMBER}_default"
+    }
+
+    stages {
+        stage('Start') {
+            steps {
+                zulipSend(
+                    message: "Started build #${env.BUILD_NUMBER} of project ${env.JOB_NAME} (${env.BUILD_URL})",
+                    topic: "${env.JOB_NAME}",
+                )
+            }
+        }
+
+        stage('Prepare workspace') {
+            steps {
+                sh 'rm -rf dist reports web_e2e/reports && ' +
+                   'mkdir -p reports/web_e2e'
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                script {
+                    String ref = params.COMMIT_SHA?.trim() ?: \
+                                 params.BRANCH_NAME
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: ref]],
+                        userRemoteConfigs: [[
+                            url: 'https://github.com/iossifovlab/gain.git',
+                        ]],
+                        extensions: [[$class: 'CloneOption',
+                                      shallow: true,
+                                      noTags: true,
+                                      depth: 1]],
+                    ])
+                }
+            }
+        }
+
+        stage('Wheels') {
+            // Two paths: copy the wheels the upstream gain
+            // build already archived (fast, guarantees
+            // bit-for-bit match with what the parent built);
+            // OR build them fresh from source (when the job
+            // is run manually without an upstream link).
+            steps {
+                script {
+                    if (params.UPSTREAM_PROJECT?.trim()) {
+                        copyArtifacts(
+                            filter: 'dist/core/*.whl, ' +
+                                    'dist/web_api/*.whl',
+                            fingerprintArtifacts: true,
+                            projectName: params.UPSTREAM_PROJECT,
+                            selector:
+                                params.UPSTREAM_BUILD?.trim()
+                                    ? specific(params.UPSTREAM_BUILD)
+                                    : lastSuccessful(),
+                        )
+                    } else {
+                        sh '''
+                            mkdir -p dist/core dist/web_api
+                            docker run --rm \
+                                -v "$PWD:/wd" -w /wd \
+                                -u "$(id -u):$(id -g)" \
+                                -e HOME=/tmp \
+                                python:3.12-slim \
+                                sh -c "
+                                    pip install --no-cache-dir uv \
+                                    && uv build --package gain-core \
+                                            --out-dir dist/core \
+                                    && uv build --package django-gpf-web-annotation \
+                                            --out-dir dist/web_api
+                                "
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Build images') {
+            steps {
+                sh '''
+                    docker build \
+                        -f web_api/Dockerfile.production \
+                        -t "$BACKEND_IMAGE" .
+                    docker build \
+                        -f web_ui/Dockerfile.production \
+                        --build-arg BACKEND_IMAGE="$BACKEND_IMAGE" \
+                        -t "$FRONTEND_IMAGE" .
+                    docker compose \
+                        -p "$COMPOSE_PROJECT" \
+                        -f web_infra/compose-jenkins.yaml \
+                        build e2e-tests
+                '''
+            }
+        }
+
+        stage('Run e2e') {
+            steps {
+                script {
+                    try {
+                        sh '''
+                            mkdir -p web_e2e/reports
+                            # `compose run --rm e2e-tests` honours
+                            # backend-e2e-migrate / backend-e2e /
+                            # frontend-e2e healthcheck dependencies
+                            # (declared in compose-jenkins.yaml),
+                            # so it brings the stack up itself and
+                            # only invokes `npx playwright test`
+                            # once everything is ready.
+                            #
+                            # `|| TEST_RC=$?` keeps the script
+                            # going on test failure so the JUnit
+                            # report still gets copied — the build
+                            # #39 lesson.
+                            TEST_RC=0
+                            docker compose \
+                                -p "$COMPOSE_PROJECT" \
+                                -f web_infra/compose-jenkins.yaml \
+                                run --rm e2e-tests \
+                                    || TEST_RC=$?
+                            cp web_e2e/reports/junit-report.xml \
+                                reports/web_e2e/junit.xml \
+                                2>/dev/null || true
+                            exit $TEST_RC
+                        '''
+                    } finally {
+                        sh '''
+                            docker compose \
+                                -p "$COMPOSE_PROJECT" \
+                                -f web_infra/compose-jenkins.yaml \
+                                down -v --remove-orphans || true
+                        '''
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                try {
+                    junit(
+                        allowEmptyResults: true,
+                        testResults: 'reports/web_e2e/*.xml',
+                    )
+                    archiveArtifacts(
+                        artifacts: 'reports/web_e2e/*.xml, ' +
+                                   'web_e2e/reports/**',
+                        allowEmptyArchive: true,
+                        fingerprint: false,
+                    )
+                } finally {
+                    zulipNotification(topic: "${env.JOB_NAME}")
+                }
+            }
+        }
+        cleanup {
+            sh '''
+                for img in "$BACKEND_IMAGE" "$FRONTEND_IMAGE"; do
+                    docker rmi "$img" 2>/dev/null || true
+                done
+            '''
+        }
+    }
+}
