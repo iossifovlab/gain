@@ -42,6 +42,7 @@ The destination shape is:
 | 4.5 | Pay down 690 lint findings + 8 mypy errors + empty `pylint.xml` so master master returns SUCCESS; wire `pylint-django` into web_api CI | DONE | `docs/2026-04-25-phase-4.5-lint-debt-cleanup.md` |
 | 5 | `web_ui` (Angular) on root CI: `node:22.14.0-alpine` CI image pinned to production, committed `package-lock.json`, ESLint + Stylelint + Jest in one inline stage; retire `frontend-tests`/`frontend-linters` compose services | DONE | `docs/2026-04-25-phase-5-frontend-ci.md` |
 | 6 | `web_e2e` (Playwright) on root CI: deterministic Playwright image (`npm ci`), sequential stage after `Conda packages` that publishes the in-monorepo `gain-*.conda` artefacts to a local channel for `gpf-image`; retire `web_infra/Jenkinsfile` and the upstream `gpf-conda-packaging` coupling for the e2e flow | DONE | `docs/2026-04-25-phase-6-e2e-ci.md` |
+| 7 | Tail cleanup: retire orphaned `backend-dev` development image (`web_api/Dockerfile.dev` + `web_api/scripts/backend_run.sh` + `web_api/dev-environment.yml` + `backend-dev` compose service) and stale pre-merge `web_infra/Makefile` / `web_infra/README.md`. Conda dev workflow stays documented as a supported flow | DONE | `docs/2026-04-25-phase-7-tail-cleanup.md` |
 
 Original Phase 1 roadmap drift summary (for the curious): the
 original Phase 4 was "consolidate conda environments" — that's
@@ -54,7 +55,7 @@ Phase 6 ("frontend tooling") and Phase 7 ("e2e") got renumbered
 down to 5 and 6 respectively. Phase 4.5 was inserted reactively
 when Phase 4's CI rollout surfaced previously hidden lint debt.
 
-## Current state (post-Phase 6)
+## Current state (post-Phase 7)
 
 - Root `Jenkinsfile` parallel block runs: `core`,
   `demo_annotator`, `vep_annotator`, `spliceai_annotator`,
@@ -66,12 +67,19 @@ when Phase 4's CI rollout surfaced previously hidden lint debt.
   then `web_e2e`, which publishes the gain-*.conda artefacts to
   a local conda channel and drives the production-image stack
   through Playwright.
-- `web_infra/Jenkinsfile` is gone. `web_infra/` retains only the
-  compose YAMLs (`compose-jenkins.yaml`, `compose.yaml`,
+- `web_infra/Jenkinsfile` is gone (Phase 6); the stale
+  pre-merge `web_infra/Makefile` and `web_infra/README.md` are
+  also gone (Phase 7). `web_infra/` retains only the compose
+  YAMLs (`compose-jenkins.yaml`, `compose.yaml`,
   `compose-iossifovweb.yaml`, `compose-wigclust.yaml`) and the
-  supporting Dockerfiles (`Dockerfile.gpf`, `Dockerfile.ubuntu`,
-  `Makefile`, `README.md`); these still describe the production
+  two production-base Dockerfiles (`Dockerfile.gpf`,
+  `Dockerfile.ubuntu`); these still describe the production
   deployment story and the e2e fixture stack consumed by root.
+- `web_api/Dockerfile.dev` + `web_api/scripts/backend_run.sh` +
+  `web_api/dev-environment.yml` + the `backend-dev` compose
+  service are also retired (Phase 7); local-dev backend
+  workflow is now `uv run python web_api/manage.py runserver`,
+  matching `npm start` for `web_ui`.
 - `runProject()` (root `Jenkinsfile`) is the shared helper for
   the five Python projects: builds the project's `Dockerfile`,
   runs ruff/mypy/pylint/pytest with JUnit output, then
@@ -95,39 +103,35 @@ when Phase 4's CI rollout surfaced previously hidden lint debt.
 
 ## Phases remaining
 
-### Phase 7 — Tail cleanup
-
-No plan doc yet. Likely items, none of which block production:
-
-- Retire conda env files (`environment.yml`,
-  `dev-environment.yml`, `web_api/environment.yml`,
-  `web_api/dev-environment.yml`) now that uv covers Python
-  workflows.
-- Decide on `web_api/Dockerfile.dev` and the `backend-dev`
-  compose service. Currently `backend-dev` is the only
-  consumer; if we keep `npm start` as the local dev story for
-  `web_ui` (Phase 5 chose this), the backend equivalent is
-  `uv run python manage.py runserver` and `Dockerfile.dev`
-  becomes deletable.
-- Consider whether `web_infra/Dockerfile.gpf` /
-  `Dockerfile.ubuntu` still make sense once Phase 6 has moved
-  the e2e flow to root, or whether they can be folded into the
-  e2e compose stack.
-
-### Phase 8 — Optional: retire upstream `gpf-conda-packaging` coupling
+### Phase 8 — Optional: residual cleanup tail
 
 No plan doc yet. **Phase 6 already removes the e2e flow's
 runtime dependency** on
 `iossifovlab/gpf-conda-packaging/master` (e2e now builds
 `gpf-image` from the root build's own `dist/conda/*.conda`).
-What remains for Phase 8 is whatever residual coupling exists
-elsewhere in the monorepo's conda-recipe story — e.g., does the
-root `Conda packages` stage still depend on upstream-published
-parent packages, do any sub-project recipes pin
-`gpf-conda-packaging`'s outputs, etc. Investigate and decide
-once Phase 6 has settled. Optional and lower priority — the
-upstream job is stable and the residual coupling (if any) is
-harmless.
+**Phase 7 already retires** the orphaned `backend-dev`
+development stack and the stale pre-merge `web_infra/`
+Makefile/README.
+
+What remains for Phase 8, if/when the team wants to commit
+fully to uv:
+
+- Retire the conda dev workflow itself — root
+  `environment.yml` + `dev-environment.yml`, plus the
+  matching Conda/Mamba section in CLAUDE.md / README.md.
+  Phase 7 deliberately kept these because CLAUDE.md still
+  documents conda as one of two supported flows.
+- Audit the repo-root `Dockerfile` and `Dockerfile.seqpipe`
+  legacy seqpipe-flow images. The current root Jenkinsfile
+  doesn't invoke them, but out-of-tree deployment automation
+  may.
+- Investigate any residual `gpf-conda-packaging` coupling in
+  the conda-recipe story (do sub-project recipes pin
+  upstream-published parent packages?).
+
+Optional and lower priority — the upstream job is stable, the
+conda dev workflow is harmless, and these legacy images don't
+break anything.
 
 ## Updates to this doc
 
