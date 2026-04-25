@@ -383,113 +383,40 @@ pipeline {
             }
         }
 
-        stage('web_e2e') {
-            // Browser-driven end-to-end suite: builds the wheel-
-            // based backend production image and the Apache-based
-            // frontend production image (which multi-stages Django
-            // collectstatic from the backend image), then brings
-            // up db + mail + backend-e2e + frontend-e2e and runs
-            // Playwright against them.
-            //
-            // Sequential rather than parallel because the backend
-            // image consumes the wheels produced by the parallel
-            // `Sub-projects` stage; those need to be on disk
-            // (dist/core/*.whl + dist/web_api/*.whl) before this
-            // stage starts.
-            environment {
-                COMPOSE_PROJECT =
-                    "gain-ci-web-e2e-${env.BUILD_NUMBER}"
-                COMPOSE_NETWORK =
-                    "gain-ci-web-e2e-${env.BUILD_NUMBER}_default"
-                BACKEND_IMAGE =
-                    "gain-web-api-prod:${env.BUILD_NUMBER}"
-                FRONTEND_IMAGE =
-                    "gain-web-ui-prod:${env.BUILD_NUMBER}"
-            }
+        stage('Trigger web_e2e') {
+            // Downstream gate for the gain-web-e2e job (DSL at
+            // web_e2e/jenkins-jobs/e2e.groovy). Runs on every
+            // branch — the e2e job clones the same branch /
+            // commit and copies the wheel artefacts the parent
+            // archived (`dist/core/*.whl` + `dist/web_api/*.whl`).
+            // `wait: false, propagate: false` matches the VEP
+            // integration shape: the parent build moves on while
+            // e2e runs separately, and an e2e regression doesn't
+            // FAILURE the parent.
             steps {
-                script {
-                    try {
-                        sh '''
-                            mkdir -p web_e2e/reports reports/web_e2e
-                            # 1. Build the wheel-based backend
-                            # production image. Inputs are
-                            # dist/core/*.whl and dist/web_api/*.whl
-                            # produced by the parallel Sub-projects
-                            # stage above.
-                            docker build \
-                                -f web_api/Dockerfile.production \
-                                -t "$BACKEND_IMAGE" .
-                            # 2. Build the Apache-based frontend
-                            # production image. Multi-stage: it
-                            # needs the just-built backend image so
-                            # the django-static stage can run
-                            # collectstatic. We pass the backend
-                            # image tag via --build-arg.
-                            docker build \
-                                -f web_ui/Dockerfile.production \
-                                --build-arg BACKEND_IMAGE="$BACKEND_IMAGE" \
-                                -t "$FRONTEND_IMAGE" .
-                            # 3. Build the Playwright runner via
-                            # compose (image is service-local and
-                            # cheap to rebuild).
-                            docker compose \
-                                -p "$COMPOSE_PROJECT" \
-                                -f web_infra/compose-jenkins.yaml \
-                                build e2e-tests
-                            # 4. `compose run --rm e2e-tests`
-                            # honours the depends_on conditions on
-                            # backend-e2e-migrate
-                            # (service_completed_successfully),
-                            # backend-e2e (service_healthy),
-                            # frontend-e2e (service_healthy), and
-                            # mail (service_started), so it brings
-                            # the stack up itself and only invokes
-                            # `npx playwright test` once everything
-                            # is ready.  We do NOT use `up -d
-                            # --wait` because that watches every
-                            # service in the dep graph including
-                            # busybox one-shots, which trip a
-                            # non-zero `--wait` exit on docker
-                            # compose v2.x agents.
-                            #
-                            # `|| TEST_RC=$?` keeps the script
-                            # going on test failure so the JUnit
-                            # report still gets copied into
-                            # reports/web_e2e/ for `publishReports`
-                            # to surface specific failures (the
-                            # build #39 lesson).
-                            TEST_RC=0
-                            docker compose \
-                                -p "$COMPOSE_PROJECT" \
-                                -f web_infra/compose-jenkins.yaml \
-                                run --rm e2e-tests \
-                                    || TEST_RC=$?
-                            cp web_e2e/reports/junit-report.xml \
-                                reports/web_e2e/junit.xml \
-                                2>/dev/null || true
-                            exit $TEST_RC
-                        '''
-                    } finally {
-                        sh '''
-                            docker compose \
-                                -p "$COMPOSE_PROJECT" \
-                                -f web_infra/compose-jenkins.yaml \
-                                down -v --remove-orphans || true
-                        '''
-                    }
-                }
-            }
-            post {
-                always {
-                    script {
-                        publishReports('web_e2e')
-                        archiveArtifacts(
-                            artifacts: 'web_e2e/reports/**',
-                            allowEmptyArchive: true,
-                            fingerprint: false,
-                        )
-                    }
-                }
+                build(
+                    job: '/gain-web-e2e',
+                    parameters: [
+                        string(
+                            name: 'BRANCH_NAME',
+                            value: env.BRANCH_NAME,
+                        ),
+                        string(
+                            name: 'COMMIT_SHA',
+                            value: env.GIT_COMMIT ?: '',
+                        ),
+                        string(
+                            name: 'UPSTREAM_PROJECT',
+                            value: env.JOB_NAME,
+                        ),
+                        string(
+                            name: 'UPSTREAM_BUILD',
+                            value: env.BUILD_NUMBER,
+                        ),
+                    ],
+                    wait: false,
+                    propagate: false,
+                )
             }
         }
 
@@ -542,7 +469,7 @@ pipeline {
         }
         cleanup {
             sh '''
-                for img in gain-core-ci gain-demo-annotator-ci gain-vep-annotator-ci gain-spliceai-annotator-ci gain-web-api-ci gain-web-ui-ci gain-conda-builder-ci gain-web-api-prod gain-web-ui-prod; do
+                for img in gain-core-ci gain-demo-annotator-ci gain-vep-annotator-ci gain-spliceai-annotator-ci gain-web-api-ci gain-web-ui-ci gain-conda-builder-ci; do
                     docker rmi "$img:${BUILD_NUMBER}" 2>/dev/null || true
                 done
             '''

@@ -66,9 +66,17 @@ when Phase 4's CI rollout surfaced previously hidden lint debt.
 - After the parallel block, the root `Jenkinsfile` runs
   `Conda packages` (rattler-build for each gain-* recipe;
   release artefacts only — no longer feed any in-tree image)
-  and then `web_e2e`, which builds the wheel-based backend
-  prod image + Apache-based frontend prod image and runs
-  Playwright against them.
+  and then `Trigger web_e2e`, which kicks off the downstream
+  `gain-web-e2e` Jenkins job (DSL at
+  `web_e2e/jenkins-jobs/e2e.groovy`, pipeline at
+  `web_e2e/Jenkinsfile.e2e`). That job clones the same
+  branch / commit, copies the parent's wheel artefacts via
+  `copyArtifacts`, builds the wheel-based backend prod image
+  + Apache-based frontend prod image, and runs Playwright
+  against them. `wait: false, propagate: false` — same
+  shape as `Trigger VEP integration` — so the parent build
+  moves on, and an e2e regression doesn't FAILURE the
+  parent.
 - **Production images**: `python:3.12-slim` backend with
   `gain-core` + `django-gpf-web-annotation` wheels (single
   foreground daphne); `httpd:2.4-alpine` frontend with the
