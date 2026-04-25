@@ -380,6 +380,97 @@ pipeline {
             }
         }
 
+        stage('web_e2e') {
+            // Browser-driven end-to-end suite: brings up the full
+            // production stack (db + mail + backend-e2e + frontend-e2e)
+            // and runs Playwright against it. Sequential rather than
+            // parallel because it consumes the in-monorepo conda
+            // packages produced by the `Conda packages` stage above —
+            // those become gpf-image's local conda channel, replacing
+            // the pre-Phase-6 dependency on
+            // iossifovlab/gpf-conda-packaging/master.
+            environment {
+                COMPOSE_PROJECT =
+                    "gain-ci-web-e2e-${env.BUILD_NUMBER}"
+                COMPOSE_NETWORK =
+                    "gain-ci-web-e2e-${env.BUILD_NUMBER}_default"
+            }
+            steps {
+                script {
+                    try {
+                        sh '''
+                            mkdir -p web_e2e/reports reports/web_e2e
+                            # Re-create the channel from scratch so a
+                            # stale .conda from a previous build can't
+                            # leak into this build's gpf-image.
+                            rm -rf web_infra/conda-channel
+                            mkdir -p web_infra/conda-channel/noarch
+                            # rattler-build publish refuses to write to
+                            # an unindexed channel, so seed an empty
+                            # noarch repodata.json before publishing —
+                            # the publish step then overwrites it with
+                            # the real index.
+                            echo '{"packages": {}, "packages.conda": {}, "info": {"subdir": "noarch"}}' \
+                                > web_infra/conda-channel/noarch/repodata.json
+                            # Publish the gain-*.conda artefacts from
+                            # `dist/conda/` into the local channel.
+                            # `rattler-build publish --to file://...`
+                            # both stages the packages and writes the
+                            # repodata.json that Dockerfile.gpf's
+                            # `mamba install -c file:///conda-channel`
+                            # expects.
+                            DOCKER_USER="$(id -u):$(id -g)"
+                            docker run --rm \
+                                --user "$DOCKER_USER" \
+                                -e HOME=/tmp \
+                                -v $PWD:/workspace \
+                                -w /workspace \
+                                gain-conda-builder-ci:${BUILD_NUMBER} \
+                                rattler-build publish \
+                                    --to file:///workspace/web_infra/conda-channel \
+                                    dist/conda/*.conda
+                            docker compose \
+                                -p "$COMPOSE_PROJECT" \
+                                -f web_infra/compose-jenkins.yaml \
+                                build ubuntu-image gpf-image \
+                                      backend-e2e frontend-e2e \
+                                      e2e-tests
+                            docker compose \
+                                -p "$COMPOSE_PROJECT" \
+                                -f web_infra/compose-jenkins.yaml \
+                                up -d --wait \
+                                    backend-e2e frontend-e2e mail
+                            docker compose \
+                                -p "$COMPOSE_PROJECT" \
+                                -f web_infra/compose-jenkins.yaml \
+                                run --rm e2e-tests
+                            cp web_e2e/reports/junit-report.xml \
+                                reports/web_e2e/junit.xml
+                        '''
+                    } finally {
+                        sh '''
+                            docker compose \
+                                -p "$COMPOSE_PROJECT" \
+                                -f web_infra/compose-jenkins.yaml \
+                                down -v --remove-orphans || true
+                        '''
+                    }
+                }
+            }
+            post {
+                always {
+                    script {
+                        publishReports('web_e2e')
+                        archiveArtifacts(
+                            artifacts: 'web_e2e/reports/**',
+                            allowEmptyArchive: true,
+                            fingerprint: false,
+                        )
+                    }
+                }
+            }
+        }
+
         stage('Trigger VEP integration') {
             // Downstream gate for the gain-vep-integration job (DSL
             // at vep_annotator/jenkins-jobs/integration.groovy). Runs
