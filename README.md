@@ -55,11 +55,11 @@ Runtime dependencies are declared per sub-project; dev
 tools live in each sub-project's own `dev` dependency
 group. The root `pyproject.toml` is a virtual coordinator
 (`[tool.uv] package = false`) that defaults to installing
-just `gain-core` + `django-gpf-web-annotation` — the
+just `gain-core` + `gain-web-api` — the
 annotator plugins are workspace members but optional.
 
 ```bash
-# Default: install gain-core + django-gpf-web-annotation
+# Default: install gain-core + gain-web-api
 # (no annotators, no dev tools)
 uv sync
 

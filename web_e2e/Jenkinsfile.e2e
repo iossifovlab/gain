@@ -196,7 +196,7 @@ pipeline {
                                         pip install --no-cache-dir uv
                                         uv build --package gain-core \
                                                 --out-dir dist/core
-                                        uv build --package django-gpf-web-annotation \
+                                        uv build --package gain-web-api \
                                                 --out-dir dist/web_api
                                         chown -R "$HOST_UID:$HOST_GID" dist
                                     '

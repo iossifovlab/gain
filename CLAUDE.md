@@ -37,7 +37,7 @@ The repo root is a virtual `gain-monorepo` project
 Runtime deps live in each member's pyproject; dev tools
 live in each member's own `dev` dependency group.
 `uv.lock` is committed. Default `uv sync` installs only
-`gain-core` + `django-gpf-web-annotation`; the annotator
+`gain-core` + `gain-web-api`; the annotator
 plugins are workspace members but optional.
 
 ```bash

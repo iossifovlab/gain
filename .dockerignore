@@ -19,7 +19,7 @@
 # in from `dist/core/` and `dist/web_api/`, produced by the
 # root Jenkinsfile parallel block.
 !dist/core/gain_core-*.whl
-!dist/web_api/django_gpf_web_annotation-*.whl
+!dist/web_api/gain_web_api-*.whl
 # Restore the parent dirs so the un-ignore patterns above can
 # actually descend into them. (Docker .dockerignore needs the
 # parent dirs to be reachable for negation patterns to work.)

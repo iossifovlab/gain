@@ -1,4 +1,4 @@
-# CI image for `django-gpf-web-annotation` (web_api).
+# CI image for `gain-web-api` (web_api).
 #
 # Build from the repo root so the workspace manifests and uv.lock are in the
 # build context:
@@ -43,12 +43,12 @@ COPY web_api/pyproject.toml ./web_api/
 COPY core/gain/ ./core/gain/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --package django-gpf-web-annotation --group dev --frozen --no-install-project
+    uv sync --package gain-web-api --group dev --frozen --no-install-project
 
 COPY web_api/ ./web_api/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --package django-gpf-web-annotation --group dev --frozen
+    uv sync --package gain-web-api --group dev --frozen
 
 ENV PATH="/workspace/.venv/bin:$PATH"
 WORKDIR /workspace/web_api

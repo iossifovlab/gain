@@ -3,8 +3,8 @@ requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
-name = "django-gpf-web-annotation"
-description = "A Django app to contain GPF Web Annotation."
+name = "gain-web-api"
+description = "GAIn Web API — Django backend (the GPF Web Annotation app)."
 readme = "README.rst"
 requires-python = ">=3.12"
 license = { text = "BSD-3-Clause" }

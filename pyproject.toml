@@ -11,7 +11,7 @@ requires-python = ">=3.12"
 # Dockerfiles do exactly this) or `uv sync --all-packages`.
 dependencies = [
     "gain-core",
-    "django-gpf-web-annotation",
+    "gain-web-api",
 ]
 
 [tool.uv]
@@ -33,4 +33,4 @@ gain-core = { workspace = true }
 gain-demo-annotator = { workspace = true }
 gain-vep-annotator = { workspace = true }
 gain-spliceai-annotator = { workspace = true }
-django-gpf-web-annotation = { workspace = true }
+gain-web-api = { workspace = true }

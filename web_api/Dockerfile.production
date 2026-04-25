@@ -8,7 +8,7 @@
 #         -t gain-web-api-prod:<tag> .
 #
 # The image installs only `gain-core` and
-# `django-gpf-web-annotation` — the three annotators are
+# `gain-web-api` — the three annotators are
 # CLI/docker plugins and aren't needed at the Django runtime.
 # Single foreground process: daphne on 9001.
 
@@ -25,7 +25,7 @@ RUN python -m venv /opt/gpf \
 
 WORKDIR /wheels
 COPY dist/core/gain_core-*.whl ./
-COPY dist/web_api/django_gpf_web_annotation-*.whl ./
+COPY dist/web_api/gain_web_api-*.whl ./
 
 RUN /opt/gpf/bin/pip install --no-cache-dir /wheels/*.whl
 

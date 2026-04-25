@@ -3,7 +3,7 @@
 # Build from the repo root, passing the just-built backend
 # image as a build-arg so the django-static stage can run
 # `collectstatic` against the same gain-core /
-# django-gpf-web-annotation install that's about to ship in
+# gain-web-api install that's about to ship in
 # production:
 #
 #     docker build -f web_api/Dockerfile.production \
@@ -35,7 +35,7 @@ RUN npm run build
 
 
 # 2) Django collectstatic — uses the just-built backend image
-#    so the same gain-core / django-gpf-web-annotation install
+#    so the same gain-core / gain-web-api install
 #    that's about to ship in production produces the static
 #    output. settings_daphne pins STATIC_ROOT='/static/gpf/static'
 #    (env vars don't override Python settings assignments, so

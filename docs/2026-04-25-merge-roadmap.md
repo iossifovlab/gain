@@ -81,8 +81,8 @@ when Phase 4's CI rollout surfaced previously hidden lint debt.
   moves on, and an e2e regression doesn't FAILURE the
   parent.
 - **Production images**: `python:3.12-slim` backend with
-  `gain-core` + `django-gpf-web-annotation` wheels (single
-  foreground daphne); `httpd:2.4-alpine` frontend with the
+  `gain-core` + `gain-web-api` wheels (single foreground
+  daphne); `httpd:2.4-alpine` frontend with the
   Angular SPA + Django collectstatic baked in via multi-stage
   from the backend image. No shared `/static` volume.
   Migrations run as a one-shot `backend-migrate` compose

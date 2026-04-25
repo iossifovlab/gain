@@ -255,7 +255,7 @@ pipeline {
                                     mypyTarget: 'web_annotation',
                                     mypyExtra: '--config-file /workspace/web_api/mypy.ini',
                                     pytestArgs: '--mailhog http://mail:8025',
-                                    distPkg: 'django-gpf-web-annotation',
+                                    distPkg: 'gain-web-api',
                                     dockerRunExtra:
                                         '--network "$COMPOSE_NETWORK" ' +
                                         '-e GPFWA_EMAIL_HOST=mail ' +

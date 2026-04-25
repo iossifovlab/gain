@@ -15,12 +15,12 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "django-gpf-web-annotation",
     "gain-core",
     "gain-demo-annotator",
     "gain-monorepo",
     "gain-spliceai-annotator",
     "gain-vep-annotator",
+    "gain-web-api",
 ]
 
 [[package]]
@@ -876,74 +876,6 @@ wheels = [
 ]
 
 [[package]]
-name = "django-gpf-web-annotation"
-source = { editable = "web_api" }
-dependencies = [
-    { name = "asgiref" },
-    { name = "channels" },
-    { name = "daphne" },
-    { name = "django" },
-    { name = "django-cors-headers" },
-    { name = "djangorestframework" },
-    { name = "gain-core" },
-    { name = "psycopg" },
-    { name = "python-magic" },
-    { name = "pyyaml" },
-    { name = "requests" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "django-stubs" },
-    { name = "mypy" },
-    { name = "pylint" },
-    { name = "pylint-django" },
-    { name = "pylint-junit" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "pytest-django" },
-    { name = "pytest-mock" },
-    { name = "pytest-xdist" },
-    { name = "ruff" },
-    { name = "types-channels" },
-    { name = "types-requests" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "asgiref" },
-    { name = "channels", specifier = ">=4" },
-    { name = "daphne", specifier = ">=4" },
-    { name = "django", specifier = ">=5.2,<5.3" },
-    { name = "django-cors-headers", specifier = ">=4.7" },
-    { name = "djangorestframework", specifier = ">=3.16" },
-    { name = "gain-core", editable = "core" },
-    { name = "psycopg", specifier = ">=3.1.18" },
-    { name = "python-magic" },
-    { name = "pyyaml" },
-    { name = "requests" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "django-stubs", specifier = "==5.2.2" },
-    { name = "mypy", specifier = "==1.15.0" },
-    { name = "pylint" },
-    { name = "pylint-django" },
-    { name = "pylint-junit" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "pytest-django" },
-    { name = "pytest-mock" },
-    { name = "pytest-xdist" },
-    { name = "ruff", specifier = "==0.14.6" },
-    { name = "types-channels" },
-    { name = "types-requests" },
-]
-
-[[package]]
 name = "django-stubs"
 version = "5.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1303,14 +1235,14 @@ name = "gain-monorepo"
 version = "0"
 source = { virtual = "." }
 dependencies = [
-    { name = "django-gpf-web-annotation" },
     { name = "gain-core" },
+    { name = "gain-web-api" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "django-gpf-web-annotation", editable = "web_api" },
     { name = "gain-core", editable = "core" },
+    { name = "gain-web-api", editable = "web_api" },
 ]
 
 [[package]]
@@ -1385,6 +1317,74 @@ dev = [
     { name = "pytest-mock" },
     { name = "pytest-xdist" },
     { name = "ruff", specifier = "==0.14.6" },
+]
+
+[[package]]
+name = "gain-web-api"
+source = { editable = "web_api" }
+dependencies = [
+    { name = "asgiref" },
+    { name = "channels" },
+    { name = "daphne" },
+    { name = "django" },
+    { name = "django-cors-headers" },
+    { name = "djangorestframework" },
+    { name = "gain-core" },
+    { name = "psycopg" },
+    { name = "python-magic" },
+    { name = "pyyaml" },
+    { name = "requests" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "django-stubs" },
+    { name = "mypy" },
+    { name = "pylint" },
+    { name = "pylint-django" },
+    { name = "pylint-junit" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "pytest-django" },
+    { name = "pytest-mock" },
+    { name = "pytest-xdist" },
+    { name = "ruff" },
+    { name = "types-channels" },
+    { name = "types-requests" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "asgiref" },
+    { name = "channels", specifier = ">=4" },
+    { name = "daphne", specifier = ">=4" },
+    { name = "django", specifier = ">=5.2,<5.3" },
+    { name = "django-cors-headers", specifier = ">=4.7" },
+    { name = "djangorestframework", specifier = ">=3.16" },
+    { name = "gain-core", editable = "core" },
+    { name = "psycopg", specifier = ">=3.1.18" },
+    { name = "python-magic" },
+    { name = "pyyaml" },
+    { name = "requests" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "django-stubs", specifier = "==5.2.2" },
+    { name = "mypy", specifier = "==1.15.0" },
+    { name = "pylint" },
+    { name = "pylint-django" },
+    { name = "pylint-junit" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "pytest-django" },
+    { name = "pytest-mock" },
+    { name = "pytest-xdist" },
+    { name = "ruff", specifier = "==0.14.6" },
+    { name = "types-channels" },
+    { name = "types-requests" },
 ]
 
 [[package]]
