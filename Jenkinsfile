@@ -435,11 +435,21 @@ pipeline {
                                 build ubuntu-image gpf-image \
                                       backend-e2e frontend-e2e \
                                       e2e-tests
-                            docker compose \
-                                -p "$COMPOSE_PROJECT" \
-                                -f web_infra/compose-jenkins.yaml \
-                                up -d --wait \
-                                    backend-e2e frontend-e2e mail
+                            # `compose run --rm e2e-tests` honours the
+                            # depends_on conditions on backend-e2e
+                            # (service_healthy), frontend-e2e
+                            # (service_healthy), and mail
+                            # (service_started) declared in
+                            # compose-jenkins.yaml, so it starts the
+                            # whole stack and blocks on the
+                            # healthchecks before invoking
+                            # `npx playwright test`.  We deliberately
+                            # do NOT call `compose up -d --wait`
+                            # first: `--wait` watches every service
+                            # in the dependency graph including the
+                            # one-shot `static-data` busybox, which
+                            # exits 0 and trips a non-zero `--wait`
+                            # exit on docker compose v2.x agents.
                             docker compose \
                                 -p "$COMPOSE_PROJECT" \
                                 -f web_infra/compose-jenkins.yaml \
