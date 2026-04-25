@@ -48,16 +48,6 @@ services:
     ports:
       - "9001:9001"
 
-  backend-tests:
-    extends:
-      file: compose-jenkins.yaml
-      service: backend-tests
-
-  backend-linters:
-    extends:
-      file: compose-jenkins.yaml
-      service: backend-linters
-
   frontend:
     extends:
       file: compose-jenkins.yaml

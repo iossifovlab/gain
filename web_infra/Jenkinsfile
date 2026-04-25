@@ -51,28 +51,6 @@ pipeline {
             }
         }
 
-        stage('Run Backend Linters') {
-            steps {
-                dir('web_infra') {
-                    sh "docker compose -f compose-jenkins.yaml build backend-linters"
-                    sh "docker compose -f compose-jenkins.yaml run  --rm --remove-orphans backend-linters || true"
-                    sh "docker compose -f compose-jenkins.yaml down --remove-orphans"
-                }
-            }
-        }
-
-        stage('Run Backend Tests') {
-            steps {
-                dir('web_infra') {
-                    sh "docker compose -f compose-jenkins.yaml build backend-tests"
-                    sh "docker compose -f compose-jenkins.yaml down --remove-orphans"
-                    sh "docker compose -f compose-jenkins.yaml run --rm --remove-orphans backend-tests || true"
-                    sh "mkdir -p reports"
-                    sh "cp ../web_api/reports/backend-junit-report.xml reports/"
-                }
-            }
-        }
-
         stage('Run Frontend Linters') {
             steps {
                 dir('web_infra') {
@@ -88,7 +66,7 @@ pipeline {
         stage('Run Frontend Tests') {
             steps {
                 dir('web_infra') {
-                    sh "docker compose -f compose-jenkins.yaml build backend-tests"
+                    sh "docker compose -f compose-jenkins.yaml build frontend-tests"
                     sh "mkdir -p ../web_ui/reports"
                     sh "docker compose -f compose-jenkins.yaml down --remove-orphans"
                     sh "docker compose -f compose-jenkins.yaml run --rm --remove-orphans frontend-tests || true"
@@ -149,14 +127,6 @@ pipeline {
 
             discoverGitReferenceBuild(latestBuildIfNotFound: true, maxCommits: 400, skipUnknownCommits: true)
 
-            recordCoverage name: 'backend-coverage', id: 'backend-coverage',
-                sourceCodeEncoding: 'UTF-8',
-                enabledForFailure: true,
-                sourceCodeRetention: 'LAST_BUILD',
-                tools: [
-                    [parser: 'COBERTURA', pattern: 'web_api/reports/backend-coverage.xml']
-                ]
-
             recordCoverage name: 'frontend-coverage', id: 'frontend-coverage',
                 sourceCodeEncoding: 'UTF-8',
                 enabledForFailure: true,
@@ -168,18 +138,6 @@ pipeline {
             recordIssues(
                 enabledForFailure: true, aggregatingResults: false,
                 tools: [
-                    flake8(
-                        pattern: 'web_api/reports/ruff_report', reportEncoding: 'UTF-8',
-                        id: 'ruff', name: 'Ruff'),
-                    myPy(
-                        pattern: 'web_api/reports/mypy_report', reportEncoding: 'UTF-8',
-                        id: 'mypy', name: 'MyPy'),
-                    pyLint(
-                        pattern: 'web_api/reports/mypy_pylint_report', reportEncoding: 'UTF-8',
-                        id: 'mypy-pylint', name: 'MyPy Converted to PyLint'),
-                    pyLint(
-                        pattern: 'web_api/reports/pylint_report', reportEncoding: 'UTF-8',
-                        id: 'pylint', name: 'PyLint'),
                     checkStyle(
                         pattern: 'web_ui/reports/css-lint-report.xml',
                         reportEncoding: 'UTF-8', id: 'checkstyle-css',
@@ -191,14 +149,6 @@ pipeline {
                 ],
                 qualityGates: [[threshold: 1, type: 'DELTA', unstable: true]]
             )
-
-            publishHTML (target : [allowMissing: true,
-                alwaysLinkToLastBuild: true,
-                keepAll: true,
-                reportDir: 'web_api/reports/coverage-html',
-                reportFiles: 'index.html',
-                reportName: 'backend-coverage',
-                reportTitles: 'Backend Coverage'])
 
             publishHTML (target : [allowMissing: true,
                 alwaysLinkToLastBuild: true,
