@@ -126,30 +126,33 @@ pipeline {
                                     : lastSuccessful(),
                         )
                     } else {
-                        // Without `-u`, pip installs uv into
-                        // /usr/local/lib/...; with `-u 1002:1002 -e
-                        // HOME=/tmp` (so docker can write into the
-                        // host workspace), pip falls back to
-                        // `--user` and puts `uv` at
-                        // /tmp/.local/bin/uv — which isn't on the
-                        // default container PATH. Set PATH
-                        // explicitly so the subsequent `uv build`
-                        // resolves.
+                        // Run as root inside the container so we
+                        // can `apt-get install git` (uv build →
+                        // hatch-vcs needs git to derive the PEP
+                        // 440 version; without it, wheels get the
+                        // `0.0.0.dev0` fallback). chown the
+                        // outputs back to the host UID at the end
+                        // so the rest of the pipeline can read
+                        // them without root permissions.
                         sh '''
                             mkdir -p dist/core dist/web_api
                             docker run --rm \
                                 -v "$PWD:/wd" -w /wd \
-                                -u "$(id -u):$(id -g)" \
                                 -e HOME=/tmp \
-                                -e PATH=/tmp/.local/bin:/usr/local/bin:/usr/bin:/bin \
+                                -e HOST_UID="$(id -u)" \
+                                -e HOST_GID="$(id -g)" \
                                 python:3.12-slim \
-                                sh -c "
-                                    pip install --user --no-cache-dir uv \
-                                    && uv build --package gain-core \
-                                            --out-dir dist/core \
-                                    && uv build --package django-gpf-web-annotation \
+                                sh -c '
+                                    set -eu
+                                    apt-get update -qq
+                                    apt-get install -y --no-install-recommends -qq git
+                                    pip install --no-cache-dir uv
+                                    uv build --package gain-core \
+                                            --out-dir dist/core
+                                    uv build --package django-gpf-web-annotation \
                                             --out-dir dist/web_api
-                                "
+                                    chown -R "$HOST_UID:$HOST_GID" dist
+                                '
                         '''
                     }
                 }
