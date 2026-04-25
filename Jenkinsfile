@@ -18,7 +18,7 @@ def runProject(Map args) {
     String pytestArgs     = args.pytestArgs ?: ''              // e.g. "-n auto"
     String dockerRunExtra = args.dockerRunExtra ?: ''          // extra flags for `docker run` (network, -v, -e, ...)
     String distName       = name.replace('_', '-')
-    String distPkg        = "gain-${distName}"                 // PyPI-style name, e.g. "gain-demo-annotator"
+    String distPkg        = args.distPkg ?: "gain-${distName}" // PyPI-style name, e.g. "gain-demo-annotator"
     String imageTag       = "gain-${distName}-ci:${env.BUILD_NUMBER}"
 
     sh label: "Build ${name} image", script: """
@@ -207,6 +207,23 @@ pipeline {
                     }
                     post { always { script { publishReports('spliceai_annotator') } } }
                 }
+
+                stage('web_api') {
+                    steps {
+                        script {
+                            runProject(
+                                name: 'web_api',
+                                pkg: 'web_annotation',
+                                tests: 'web_annotation/tests',
+                                mypyTarget: 'web_annotation',
+                                mypyExtra: '--config-file /workspace/web_api/mypy.ini',
+                                pytestArgs: '-n 5',
+                                distPkg: 'django-gpf-web-annotation',
+                            )
+                        }
+                    }
+                    post { always { script { publishReports('web_api') } } }
+                }
             }
         }
 
@@ -304,7 +321,7 @@ pipeline {
         }
         cleanup {
             sh '''
-                for img in gain-core-ci gain-demo-annotator-ci gain-vep-annotator-ci gain-spliceai-annotator-ci gain-conda-builder-ci; do
+                for img in gain-core-ci gain-demo-annotator-ci gain-vep-annotator-ci gain-spliceai-annotator-ci gain-web-api-ci gain-conda-builder-ci; do
                     docker rmi "$img:${BUILD_NUMBER}" 2>/dev/null || true
                 done
             '''
