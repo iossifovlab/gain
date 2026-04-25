@@ -1,3 +1,24 @@
+[project]
+name = "gain-monorepo"
+version = "0"
+description = "GAIn monorepo virtual root — uv workspace coordinator"
+requires-python = ">=3.12"
+# Dependencies a fresh `uv sync` (no --package, no
+# --all-packages) installs by default. Limited to the two
+# always-needed members; the annotator plugins are workspace
+# members but optional, install via
+# `uv sync --package gain-<name> --group dev` (their CI
+# Dockerfiles do exactly this) or `uv sync --all-packages`.
+dependencies = [
+    "gain-core",
+    "django-gpf-web-annotation",
+]
+
+[tool.uv]
+# Virtual root — no source code to build / install. Without
+# this, uv would try to build a wheel for `gain-monorepo`.
+package = false
+
 [tool.uv.workspace]
 members = [
     "core",

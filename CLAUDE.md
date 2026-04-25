@@ -30,13 +30,20 @@ pip install -e spliceai_annotator # optional
 
 ### uv workspace
 
-The repo root declares a `[tool.uv.workspace]` with the
-four sub-projects as members. Runtime deps are in each
-member's pyproject; dev tools live in the root `dev`
-dependency group. `uv.lock` is committed.
+The repo root is a virtual `gain-monorepo` project
+(`[tool.uv] package = false`) that coordinates a
+`[tool.uv.workspace]` of five members: `core`, `web_api`,
+`demo_annotator`, `vep_annotator`, `spliceai_annotator`.
+Runtime deps live in each member's pyproject; dev tools
+live in each member's own `dev` dependency group.
+`uv.lock` is committed. Default `uv sync` installs only
+`gain-core` + `django-gpf-web-annotation`; the annotator
+plugins are workspace members but optional.
 
 ```bash
-uv sync --all-packages --all-groups
+uv sync                              # core + web_api only
+uv sync --all-packages --all-groups  # everything
+uv sync --package gain-spliceai-annotator --group dev   # just one
 source .venv/bin/activate   # optional; `uv run` works without activation
 ```
 

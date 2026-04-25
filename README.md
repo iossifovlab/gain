@@ -51,13 +51,23 @@ Notes:
 ### Option B: uv workspace
 
 This repo is a uv workspace (see root `pyproject.toml`).
-Runtime dependencies are declared per sub-project;
-dev tools (pytest, ruff, mypy, stubs) live in the root
-`dev` dependency group.
+Runtime dependencies are declared per sub-project; dev
+tools live in each sub-project's own `dev` dependency
+group. The root `pyproject.toml` is a virtual coordinator
+(`[tool.uv] package = false`) that defaults to installing
+just `gain-core` + `django-gpf-web-annotation` — the
+annotator plugins are workspace members but optional.
 
 ```bash
-# Create .venv and install every workspace member + dev tools
+# Default: install gain-core + django-gpf-web-annotation
+# (no annotators, no dev tools)
+uv sync
+
+# Everything: all workspace members + every dev group
 uv sync --all-packages --all-groups
+
+# A single sub-project (matches the per-project CI Dockerfiles)
+uv sync --package gain-spliceai-annotator --group dev
 
 # Activate the venv (optional; `uv run` works without it)
 source .venv/bin/activate
@@ -116,8 +126,10 @@ git commit --no-verify
   before running commands (`conda activate gain`), and
   re-run `pip install -e core` if imports fail.
 - uv users: prefer `uv run <cmd>` over activating the
-  venv, and re-run `uv sync --all-packages --all-groups`
-  after pulling changes to pick up lockfile updates.
+  venv, and re-run `uv sync` (or `uv sync --all-packages
+  --all-groups` if you've installed the optional annotator
+  members) after pulling changes to pick up lockfile
+  updates.
 - Some tests may be flaky with high parallelism; reduce
   `-n` or run without it.
 

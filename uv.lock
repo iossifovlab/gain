@@ -18,6 +18,7 @@ members = [
     "django-gpf-web-annotation",
     "gain-core",
     "gain-demo-annotator",
+    "gain-monorepo",
     "gain-spliceai-annotator",
     "gain-vep-annotator",
 ]
@@ -1295,6 +1296,21 @@ dev = [
     { name = "pytest-mock" },
     { name = "pytest-xdist" },
     { name = "ruff", specifier = "==0.14.6" },
+]
+
+[[package]]
+name = "gain-monorepo"
+version = "0"
+source = { virtual = "." }
+dependencies = [
+    { name = "django-gpf-web-annotation" },
+    { name = "gain-core" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "django-gpf-web-annotation", editable = "web_api" },
+    { name = "gain-core", editable = "core" },
 ]
 
 [[package]]
