@@ -46,6 +46,7 @@ The destination shape is:
 | 8 | Production-image modernization: wheel-based `python:3.12-slim` backend image (gain-core + django-gpf-web-annotation only, single-process daphne); `httpd:2.4-alpine` frontend image with Django collectstatic baked in via multi-stage from the backend image (no shared `static-data` volume); one-shot `backend-migrate` compose service; retire `gpf-image` / `ubuntu-image` / supervisord / `environment.yml` | DONE | `docs/2026-04-25-phase-8-prod-image-modernization.md` |
 | 9.1 | Build prod images in the root `Jenkinsfile` and push them to `registry.seqpipe.org` (tags: build number, 8-char git short SHA, `latest`); master-only push, branch builds validate Dockerfiles without pushing | DONE | `docs/2026-04-25-phase-9-image-push.md` |
 | 9.2 | Default prod compose files (`web_infra/compose-iossifovweb.yaml`, `compose-wigclust.yaml`) to `registry.seqpipe.org/gain-web-{api,ui}:latest`; `${BACKEND_IMAGE:-...}` indirection retained for pinning. Prod operators run `docker compose pull && up -d` instead of build-on-host | DONE | `docs/2026-04-25-phase-9.2-pull-deploy.md` |
+| 9.3 | `gain-web-e2e` pulls the parent-pushed prod images from `registry.seqpipe.org` on master triggers (~30s) instead of rebuilding from wheels (~5 min). Branch triggers and manual runs keep the build-from-wheels fallback | DONE | `docs/2026-04-25-phase-9.3-e2e-pull.md` |
 
 Original Phase 1 roadmap drift summary (for the curious): the
 original Phase 4 was "consolidate conda environments" — that's
@@ -161,11 +162,15 @@ What remains for Phase 9, if/when the team wants more:
     Prod hosts run `docker compose pull && up -d` instead
     of build-on-host. See
     `docs/2026-04-25-phase-9.2-pull-deploy.md`.
-  - **9.3: e2e pulls instead of rebuilds**. Rewire
-    `gain-web-e2e` to `docker pull
-    registry.seqpipe.org/gain-web-{api,ui}:${UPSTREAM_BUILD_NUMBER}`
-    (or `:${GIT_SHORT}`) instead of rebuilding from wheels.
-    Saves ~5 min per e2e run. Not started.
+  - **9.3: e2e pulls instead of rebuilds (DONE)**.
+    `gain-web-e2e` now detects when it's triggered
+    downstream of a master parent (`BRANCH_NAME=='master'`
+    and `UPSTREAM_BUILD` set) and `docker pull`s the
+    parent-pushed `:${UPSTREAM_BUILD}` tag from
+    `registry.seqpipe.org`, saving ~5 min per e2e run.
+    Branch triggers and manual no-upstream runs still use
+    the build-from-wheels path. See
+    `docs/2026-04-25-phase-9.3-e2e-pull.md`.
 - **TLS modernization**. Caddy or Traefik in front for
   automatic TLS + cleaner reverse-proxy config.
 - **Observability lite**. Loki + Promtail + Grafana as a
