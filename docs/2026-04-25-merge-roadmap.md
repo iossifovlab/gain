@@ -43,6 +43,7 @@ The destination shape is:
 | 5 | `web_ui` (Angular) on root CI: `node:22.14.0-alpine` CI image pinned to production, committed `package-lock.json`, ESLint + Stylelint + Jest in one inline stage; retire `frontend-tests`/`frontend-linters` compose services | DONE | `docs/2026-04-25-phase-5-frontend-ci.md` |
 | 6 | `web_e2e` (Playwright) on root CI: deterministic Playwright image (`npm ci`), sequential stage after `Conda packages` that publishes the in-monorepo `gain-*.conda` artefacts to a local channel for `gpf-image`; retire `web_infra/Jenkinsfile` and the upstream `gpf-conda-packaging` coupling for the e2e flow | DONE | `docs/2026-04-25-phase-6-e2e-ci.md` |
 | 7 | Tail cleanup: retire orphaned `backend-dev` development image (`web_api/Dockerfile.dev` + `web_api/scripts/backend_run.sh` + `web_api/dev-environment.yml` + `backend-dev` compose service) and stale pre-merge `web_infra/Makefile` / `web_infra/README.md`. Conda dev workflow stays documented as a supported flow | DONE | `docs/2026-04-25-phase-7-tail-cleanup.md` |
+| 8 | Production-image modernization: wheel-based `python:3.12-slim` backend image (gain-core + django-gpf-web-annotation only, single-process daphne); `httpd:2.4-alpine` frontend image with Django collectstatic baked in via multi-stage from the backend image (no shared `static-data` volume); one-shot `backend-migrate` compose service; retire `gpf-image` / `ubuntu-image` / supervisord / `environment.yml` | DONE | `docs/2026-04-25-phase-8-prod-image-modernization.md` |
 
 Original Phase 1 roadmap drift summary (for the curious): the
 original Phase 4 was "consolidate conda environments" — that's
@@ -55,7 +56,7 @@ Phase 6 ("frontend tooling") and Phase 7 ("e2e") got renumbered
 down to 5 and 6 respectively. Phase 4.5 was inserted reactively
 when Phase 4's CI rollout surfaced previously hidden lint debt.
 
-## Current state (post-Phase 7)
+## Current state (post-Phase 8)
 
 - Root `Jenkinsfile` parallel block runs: `core`,
   `demo_annotator`, `vep_annotator`, `spliceai_annotator`,
@@ -63,23 +64,37 @@ when Phase 4's CI rollout surfaced previously hidden lint debt.
   `reports/<project>/`. The post block archives reports +
   wheels + sdists + conda packages.
 - After the parallel block, the root `Jenkinsfile` runs
-  `Conda packages` (rattler-build for each gain-* recipe) and
-  then `web_e2e`, which publishes the gain-*.conda artefacts to
-  a local conda channel and drives the production-image stack
-  through Playwright.
+  `Conda packages` (rattler-build for each gain-* recipe;
+  release artefacts only — no longer feed any in-tree image)
+  and then `web_e2e`, which builds the wheel-based backend
+  prod image + Apache-based frontend prod image and runs
+  Playwright against them.
+- **Production images**: `python:3.12-slim` backend with
+  `gain-core` + `django-gpf-web-annotation` wheels (single
+  foreground daphne); `httpd:2.4-alpine` frontend with the
+  Angular SPA + Django collectstatic baked in via multi-stage
+  from the backend image. No shared `/static` volume.
+  Migrations run as a one-shot `backend-migrate` compose
+  service.
 - `web_infra/Jenkinsfile` is gone (Phase 6); the stale
-  pre-merge `web_infra/Makefile` and `web_infra/README.md` are
-  also gone (Phase 7). `web_infra/` retains only the compose
-  YAMLs (`compose-jenkins.yaml`, `compose.yaml`,
-  `compose-iossifovweb.yaml`, `compose-wigclust.yaml`) and the
-  two production-base Dockerfiles (`Dockerfile.gpf`,
-  `Dockerfile.ubuntu`); these still describe the production
-  deployment story and the e2e fixture stack consumed by root.
+  pre-merge `web_infra/Makefile` and `web_infra/README.md`
+  are also gone (Phase 7); `web_infra/Dockerfile.gpf` /
+  `Dockerfile.ubuntu` are gone (Phase 8 — superseded by the
+  wheel-based backend and Apache-only frontend). `web_infra/`
+  now contains only the four compose YAMLs.
 - `web_api/Dockerfile.dev` + `web_api/scripts/backend_run.sh` +
   `web_api/dev-environment.yml` + the `backend-dev` compose
-  service are also retired (Phase 7); local-dev backend
-  workflow is now `uv run python web_api/manage.py runserver`,
+  service are retired (Phase 7); local-dev backend
+  workflow is `uv run python web_api/manage.py runserver`,
   matching `npm start` for `web_ui`.
+- supervisord and the `web_api/scripts/{supervisord*,
+  wait-for-it.sh}` + `web_ui/scripts/{localhost.conf,
+  supervisord*,wait-for-it.sh}` retired (Phase 8); each
+  production container runs a single foreground process
+  (daphne / httpd-foreground).
+- `web_api/environment.yml` retired (Phase 8 — the production
+  image now installs from the wheels the root Jenkinsfile
+  produces).
 - `runProject()` (root `Jenkinsfile`) is the shared helper for
   the five Python projects: builds the project's `Dockerfile`,
   runs ruff/mypy/pylint/pytest with JUnit output, then
@@ -103,25 +118,37 @@ when Phase 4's CI rollout surfaced previously hidden lint debt.
 
 ## Phases remaining
 
-### Phase 8 — Optional: residual cleanup tail
+### Phase 9 — Optional: deployment modernization tail
 
-No plan doc yet. **Phase 6 already removes the e2e flow's
-runtime dependency** on
-`iossifovlab/gpf-conda-packaging/master` (e2e now builds
-`gpf-image` from the root build's own `dist/conda/*.conda`).
-**Phase 7 already retires** the orphaned `backend-dev`
-development stack and the stale pre-merge `web_infra/`
-Makefile/README.
+No plan doc yet. Most of the originally-imagined Phase 8 has
+landed already:
+- **Phase 6** removed the e2e flow's runtime dependency on
+  `iossifovlab/gpf-conda-packaging/master`.
+- **Phase 7** retired the orphaned `backend-dev` development
+  stack and the stale pre-merge `web_infra/` Makefile/README.
+- **Phase 8** retired the entire conda-pack production stack
+  (gpf-image / ubuntu-image / supervisord / web_api's
+  `environment.yml`) — production images are now wheel-based
+  `python:3.12-slim` (backend) + `httpd:2.4-alpine` (frontend
+  with Django collectstatic baked in).
 
-What remains for Phase 8, if/when the team wants to commit
-fully to uv:
+What remains for Phase 9, if/when the team wants more:
 
-- Retire the conda dev workflow itself — root
+- **Image registry + pull-deploy**. Push the
+  `gain-web-api-prod` and `gain-web-ui-prod` images to a
+  registry (GHCR, Harbor, etc.) on master, switch the prod
+  hosts to `docker compose pull && up -d` rather than
+  build-on-host.
+- **TLS modernization**. Caddy or Traefik in front for
+  automatic TLS + cleaner reverse-proxy config.
+- **Observability lite**. Loki + Promtail + Grafana as a
+  small stack for container logs / metrics.
+- **Retire the conda dev workflow** itself — root
   `environment.yml` + `dev-environment.yml`, plus the
   matching Conda/Mamba section in CLAUDE.md / README.md.
   Phase 7 deliberately kept these because CLAUDE.md still
   documents conda as one of two supported flows.
-- Audit the repo-root `Dockerfile` and `Dockerfile.seqpipe`
+- **Audit repo-root `Dockerfile` and `Dockerfile.seqpipe`**
   legacy seqpipe-flow images. The current root Jenkinsfile
   doesn't invoke them, but out-of-tree deployment automation
   may.
