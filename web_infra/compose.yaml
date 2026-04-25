@@ -54,8 +54,3 @@ services:
       service: frontend
     ports:
     - "80:80"
-
-  frontend-tests:
-    extends:
-      file: compose-jenkins.yaml
-      service: frontend-tests

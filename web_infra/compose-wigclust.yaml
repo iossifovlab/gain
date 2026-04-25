@@ -91,7 +91,7 @@ services:
   frontend:
     build:
       context: ../web_ui
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.production
       args:
         COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
     depends_on:

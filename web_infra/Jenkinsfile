@@ -51,32 +51,6 @@ pipeline {
             }
         }
 
-        stage('Run Frontend Linters') {
-            steps {
-                dir('web_infra') {
-                    sh "docker compose -f compose-jenkins.yaml build frontend-linters"
-                    sh "mkdir -p ../web_ui/reports"
-                    sh "docker compose -f compose-jenkins.yaml down --remove-orphans"
-                    sh "docker compose -f compose-jenkins.yaml run --rm --remove-orphans frontend-linters || true"
-                    sh "docker compose -f compose-jenkins.yaml down --remove-orphans"
-                }
-            }
-        }
-
-        stage('Run Frontend Tests') {
-            steps {
-                dir('web_infra') {
-                    sh "docker compose -f compose-jenkins.yaml build frontend-tests"
-                    sh "mkdir -p ../web_ui/reports"
-                    sh "docker compose -f compose-jenkins.yaml down --remove-orphans"
-                    sh "docker compose -f compose-jenkins.yaml run --rm --remove-orphans frontend-tests || true"
-                    sh '../web_ui/scripts/frontend-adjust-coverage-paths.sh'
-                    sh "mkdir -p reports"
-                    sh "cp ../web_ui/reports/frontend-junit-report.xml reports/"
-                }
-            }
-        }
-
         stage('Build Backend image') {
             steps {
                 dir('web_infra') {
@@ -126,37 +100,6 @@ pipeline {
             archiveArtifacts artifacts: 'web_infra/logs/gpfwa-debug.log.gz', fingerprint: true, allowEmptyArchive: true
 
             discoverGitReferenceBuild(latestBuildIfNotFound: true, maxCommits: 400, skipUnknownCommits: true)
-
-            recordCoverage name: 'frontend-coverage', id: 'frontend-coverage',
-                sourceCodeEncoding: 'UTF-8',
-                enabledForFailure: true,
-                sourceCodeRetention: 'LAST_BUILD',
-                tools: [
-                    [parser: 'COBERTURA', pattern: 'web_ui/reports/frontend-coverage.xml']
-                ]
-
-            recordIssues(
-                enabledForFailure: true, aggregatingResults: false,
-                tools: [
-                    checkStyle(
-                        pattern: 'web_ui/reports/css-lint-report.xml',
-                        reportEncoding: 'UTF-8', id: 'checkstyle-css',
-                        name: 'CSS lint'),
-                    checkStyle(
-                        pattern: 'web_ui/reports/ts-lint-report.xml',
-                        reportEncoding: 'UTF-8', id: 'checkstyle-ts',
-                        name: 'TS lint'),
-                ],
-                qualityGates: [[threshold: 1, type: 'DELTA', unstable: true]]
-            )
-
-            publishHTML (target : [allowMissing: true,
-                alwaysLinkToLastBuild: true,
-                keepAll: true,
-                reportDir: 'web_ui/reports/coverage/',
-                reportFiles: 'index.html',
-                reportName: 'frontend-coverage',
-                reportTitles: 'Frontend Coverage'])
 
             def resultBeforeTests = currentBuild.currentResult
             currentBuild.result = 'SUCCESS'

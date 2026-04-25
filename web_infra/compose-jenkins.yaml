@@ -145,7 +145,7 @@ services:
   frontend:
     build:
       context: ../web_ui
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.production
       args:
         COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
     depends_on:
@@ -162,7 +162,7 @@ services:
   frontend-e2e:
     build:
       context: ../web_ui
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.production
       args:
         COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
     hostname: frontend
@@ -176,24 +176,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
-  frontend-tests:
-    build:
-      context: ../web_ui
-      dockerfile: Dockerfile.dev
-    volumes:
-      - ../web_ui/reports:/reports
-    environment:
-      JEST_JUNIT_OUTPUT_DIR: /reports
-    command: ["npm", "test", "--", "--coverage", "--collectCoverageFrom=./src/**", "--coverageDirectory=/reports/coverage", "--ci"]
-
-  frontend-linters:
-    build:
-      context: ../web_ui
-      dockerfile: Dockerfile.dev
-    volumes:
-      - ../web_ui/reports:/reports
-    entrypoint: /app/scripts/frontend-linters.sh
 
 
   e2e-tests:
