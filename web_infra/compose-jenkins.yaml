@@ -1,28 +1,9 @@
 name: gpfwa
 services:
 
-  ubuntu-image:
-    build:
-      context: .
-      dockerfile: Dockerfile.ubuntu
-
-  gpf-image:
-    build:
-      context: .
-      dockerfile: Dockerfile.gpf
-    depends_on:
-      ubuntu-image:
-        condition: service_completed_successfully
-
   pg-data:
     image: busybox:latest
     command: echo "PostgreSQL data only container"
-
-  static-data:
-    image: busybox:latest
-    command: echo "Static data only container"
-    volumes:
-      - ./gpfwa-static-data:/static
 
   db:
     image: postgres
@@ -44,14 +25,45 @@ services:
     image: mailhog/mailhog
     hostname: mail
 
-  backend:
-    build:
-      context: ../web_api
-      dockerfile: Dockerfile.production
-      args:
-        COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+  # One-shot: runs `python manage.py migrate` against the
+  # production backend image and exits 0. The long-running
+  # `backend` service depends on this completing.
+  backend-migrate:
+    image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
     depends_on:
-      gpf-image:
+      db:
+        condition: service_healthy
+    environment:
+      DJANGO_SETTINGS_MODULE: web_annotation.settings_daphne
+      GPFWA_DB_NAME: gpfwa
+      GPFWA_DB_USER: postgres
+      GPFWA_DB_PASSWORD: secret
+      GPFWA_DB_HOST: db
+      GPFWA_DB_PORT: 5432
+      GPFWA_SECRET_KEY: "django-insecure-3rz4n(_u+x8r+n%&xr-(vg83v8&llq7pin*x%@%y@d8af%iphk"
+    entrypoint: ["python", "-m", "django", "migrate", "--noinput"]
+    restart: "no"
+
+  backend-e2e-migrate:
+    image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
+      GPFWA_DB_NAME: gpfwa
+      GPFWA_DB_USER: postgres
+      GPFWA_DB_PASSWORD: secret
+      GPFWA_DB_HOST: db
+      GPFWA_DB_PORT: 5432
+      GPFWA_SECRET_KEY: "django-insecure-3rz4n(_u+x8r+n%&xr-(vg83v8&llq7pin*x%@%y@d8af%iphk"
+    entrypoint: ["python", "-m", "django", "migrate", "--noinput"]
+    restart: "no"
+
+  backend:
+    image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
+    depends_on:
+      backend-migrate:
         condition: service_completed_successfully
       db:
         condition: service_healthy
@@ -61,8 +73,6 @@ services:
       - ./gpfwa-data:/data
       - ./gpfwa-logs:/logs
       - /mnt/cephfs/seqpipe/grr:/grr
-    volumes_from:
-      - static-data
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_daphne
       GPFWA_EMAIL_HOST: mail
@@ -84,14 +94,10 @@ services:
       retries: 5
 
   backend-e2e:
-    build:
-      context: ../web_api
-      dockerfile: Dockerfile.production
-      args:
-        COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+    image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
     hostname: backend
     depends_on:
-      gpf-image:
+      backend-e2e-migrate:
         condition: service_completed_successfully
       db:
         condition: service_healthy
@@ -101,8 +107,6 @@ services:
       - ./gpfwa-data:/data
       - ./gpfwa-logs:/logs
       - /mnt/cephfs/seqpipe/grr:/grr
-    volumes_from:
-      - static-data
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
       GPFWA_EMAIL_HOST: mail
@@ -125,36 +129,24 @@ services:
 
 
   frontend:
-    build:
-      context: ../web_ui
-      dockerfile: Dockerfile.production
-      args:
-        COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+    image: ${FRONTEND_IMAGE:-gain-web-ui-prod:latest}
     depends_on:
       backend:
         condition: service_healthy
-    volumes_from:
-      - static-data
     healthcheck:
-      test: ["CMD", "curl", "http://localhost/"]
+      test: ["CMD", "wget", "-qO-", "http://localhost/"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   frontend-e2e:
-    build:
-      context: ../web_ui
-      dockerfile: Dockerfile.production
-      args:
-        COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+    image: ${FRONTEND_IMAGE:-gain-web-ui-prod:latest}
     hostname: frontend
     depends_on:
       backend-e2e:
         condition: service_healthy
-    volumes_from:
-      - static-data
     healthcheck:
-      test: ["CMD", "curl", "http://localhost/"]
+      test: ["CMD", "wget", "-qO-", "http://localhost/"]
       interval: 10s
       timeout: 5s
       retries: 5

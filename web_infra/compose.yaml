@@ -1,27 +1,12 @@
 name: gpfwa
 services:
 
-  ubuntu-image:
-    extends:
-      file: compose-jenkins.yaml
-      service: ubuntu-image
-
-  gpf-image:
-    extends:
-      file: compose-jenkins.yaml
-      service: gpf-image
-
   pg-data:
     extends:
       file: compose-jenkins.yaml
       service: pg-data
     volumes:
       - ./gpfwa-pg-data:/var/lib/postgresql
-
-  static-data:
-    extends:
-      file: compose-jenkins.yaml
-      service: static-data
 
   db:
     extends:
@@ -37,6 +22,11 @@ services:
     ports:
       - "1025:1025"
       - "8025:8025"
+
+  backend-migrate:
+    extends:
+      file: compose-jenkins.yaml
+      service: backend-migrate
 
   backend:
     extends:
