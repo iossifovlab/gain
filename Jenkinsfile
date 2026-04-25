@@ -383,6 +383,63 @@ pipeline {
             }
         }
 
+        stage('Build & push prod images') {
+            // Phase 9 slice 1: build the wheel-based backend +
+            // Apache-based frontend prod images here in the
+            // root build, tag them for registry.seqpipe.org, and
+            // push on master. Branch builds build-but-don't-push
+            // (validates the Dockerfiles + that the wheels
+            // install). Tags pushed on master:
+            //   :${BUILD_NUMBER}  — Jenkins build identity
+            //   :${GIT_SHORT}     — immutable git-anchored handle
+            //   :latest           — moving pointer for prod
+            environment {
+                REGISTRY      = 'registry.seqpipe.org'
+                BACKEND_REPO  = "${env.REGISTRY}/gain-web-api"
+                FRONTEND_REPO = "${env.REGISTRY}/gain-web-ui"
+                GIT_SHORT     = "${env.GIT_COMMIT.take(8)}"
+            }
+            steps {
+                sh '''
+                    # Build backend; tag with build number first
+                    # so the frontend's --build-arg can reference
+                    # it.
+                    docker build \
+                        -f web_api/Dockerfile.production \
+                        -t "$BACKEND_REPO:$BUILD_NUMBER" .
+                    docker tag "$BACKEND_REPO:$BUILD_NUMBER" \
+                               "$BACKEND_REPO:$GIT_SHORT"
+
+                    # Build frontend; multi-stages collectstatic
+                    # from the backend image we just built.
+                    docker build \
+                        -f web_ui/Dockerfile.production \
+                        --build-arg BACKEND_IMAGE="$BACKEND_REPO:$BUILD_NUMBER" \
+                        -t "$FRONTEND_REPO:$BUILD_NUMBER" .
+                    docker tag "$FRONTEND_REPO:$BUILD_NUMBER" \
+                               "$FRONTEND_REPO:$GIT_SHORT"
+                '''
+                script {
+                    if (env.BRANCH_NAME == 'master') {
+                        sh '''
+                            docker tag "$BACKEND_REPO:$BUILD_NUMBER" \
+                                       "$BACKEND_REPO:latest"
+                            docker tag "$FRONTEND_REPO:$BUILD_NUMBER" \
+                                       "$FRONTEND_REPO:latest"
+                            for repo in "$BACKEND_REPO" "$FRONTEND_REPO"; do
+                                docker push "$repo:$BUILD_NUMBER"
+                                docker push "$repo:$GIT_SHORT"
+                                docker push "$repo:latest"
+                            done
+                        '''
+                    } else {
+                        echo "Skipping registry push: " +
+                             "branch is ${env.BRANCH_NAME}, not master"
+                    }
+                }
+            }
+        }
+
         stage('Trigger web_e2e') {
             // Downstream gate for the gain-web-e2e job (DSL at
             // web_e2e/jenkins-jobs/e2e.groovy). Runs on every
@@ -471,6 +528,16 @@ pipeline {
             sh '''
                 for img in gain-core-ci gain-demo-annotator-ci gain-vep-annotator-ci gain-spliceai-annotator-ci gain-web-api-ci gain-web-ui-ci gain-conda-builder-ci; do
                     docker rmi "$img:${BUILD_NUMBER}" 2>/dev/null || true
+                done
+                # Phase 9: registry-prefixed prod images. `:latest`
+                # only exists on master but the rmi is harmless on
+                # branches.
+                GIT_SHORT="${GIT_COMMIT:0:8}"
+                for repo in registry.seqpipe.org/gain-web-api \
+                            registry.seqpipe.org/gain-web-ui; do
+                    for tag in "$BUILD_NUMBER" "$GIT_SHORT" latest; do
+                        docker rmi "$repo:$tag" 2>/dev/null || true
+                    done
                 done
             '''
         }
