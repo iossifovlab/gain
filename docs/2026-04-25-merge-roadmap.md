@@ -45,6 +45,7 @@ The destination shape is:
 | 7 | Tail cleanup: retire orphaned `backend-dev` development image (`web_api/Dockerfile.dev` + `web_api/scripts/backend_run.sh` + `web_api/dev-environment.yml` + `backend-dev` compose service) and stale pre-merge `web_infra/Makefile` / `web_infra/README.md`. Conda dev workflow stays documented as a supported flow | DONE | `docs/2026-04-25-phase-7-tail-cleanup.md` |
 | 8 | Production-image modernization: wheel-based `python:3.12-slim` backend image (gain-core + django-gpf-web-annotation only, single-process daphne); `httpd:2.4-alpine` frontend image with Django collectstatic baked in via multi-stage from the backend image (no shared `static-data` volume); one-shot `backend-migrate` compose service; retire `gpf-image` / `ubuntu-image` / supervisord / `environment.yml` | DONE | `docs/2026-04-25-phase-8-prod-image-modernization.md` |
 | 9.1 | Build prod images in the root `Jenkinsfile` and push them to `registry.seqpipe.org` (tags: build number, 8-char git short SHA, `latest`); master-only push, branch builds validate Dockerfiles without pushing | DONE | `docs/2026-04-25-phase-9-image-push.md` |
+| 9.2 | Default prod compose files (`web_infra/compose-iossifovweb.yaml`, `compose-wigclust.yaml`) to `registry.seqpipe.org/gain-web-{api,ui}:latest`; `${BACKEND_IMAGE:-...}` indirection retained for pinning. Prod operators run `docker compose pull && up -d` instead of build-on-host | DONE | `docs/2026-04-25-phase-9.2-pull-deploy.md` |
 
 Original Phase 1 roadmap drift summary (for the curious): the
 original Phase 4 was "consolidate conda environments" — that's
@@ -151,13 +152,15 @@ What remains for Phase 9, if/when the team wants more:
     8-char git SHA, `latest`) on master. Branch builds
     validate the Dockerfiles without pushing. See
     `docs/2026-04-25-phase-9-image-push.md`.
-  - **9.2: Pull-deploy on prod hosts**. Switch
+  - **9.2: Pull-deploy on prod hosts (DONE)**. Defaults in
     `web_infra/compose-iossifovweb.yaml` and
-    `compose-wigclust.yaml` from `build:` to `image:
-    registry.seqpipe.org/gain-web-{api,ui}:latest` (or a
-    pinned tag), drop the `image: ${BACKEND_IMAGE:-...}`
-    env-var indirection. Prod hosts run `docker compose pull
-    && up -d` instead of build-on-host. Not started.
+    `compose-wigclust.yaml` now point at
+    `registry.seqpipe.org/gain-web-{api,ui}:latest`. The
+    `${BACKEND_IMAGE:-...}` env-var indirection is kept so
+    operators can pin a specific tag for rollout/rollback.
+    Prod hosts run `docker compose pull && up -d` instead
+    of build-on-host. See
+    `docs/2026-04-25-phase-9.2-pull-deploy.md`.
   - **9.3: e2e pulls instead of rebuilds**. Rewire
     `gain-web-e2e` to `docker pull
     registry.seqpipe.org/gain-web-{api,ui}:${UPSTREAM_BUILD_NUMBER}`
