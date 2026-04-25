@@ -41,6 +41,7 @@ The destination shape is:
 | 4 | uv-based CI Dockerfile for `web_api`; wire it into root `Jenkinsfile`; MailHog sidecar for email-flow tests | DONE | `docs/2026-04-25-phase-4-uv-based-ci.md` |
 | 4.5 | Pay down 690 lint findings + 8 mypy errors + empty `pylint.xml` so master master returns SUCCESS; wire `pylint-django` into web_api CI | DONE | `docs/2026-04-25-phase-4.5-lint-debt-cleanup.md` |
 | 5 | `web_ui` (Angular) on root CI: `node:22.14.0-alpine` CI image pinned to production, committed `package-lock.json`, ESLint + Stylelint + Jest in one inline stage; retire `frontend-tests`/`frontend-linters` compose services | DONE | `docs/2026-04-25-phase-5-frontend-ci.md` |
+| 6 | `web_e2e` (Playwright) on root CI: deterministic Playwright image (`npm ci`), sequential stage after `Conda packages` that publishes the in-monorepo `gain-*.conda` artefacts to a local channel for `gpf-image`; retire `web_infra/Jenkinsfile` and the upstream `gpf-conda-packaging` coupling for the e2e flow | DONE | `docs/2026-04-25-phase-6-e2e-ci.md` |
 
 Original Phase 1 roadmap drift summary (for the curious): the
 original Phase 4 was "consolidate conda environments" — that's
@@ -53,13 +54,24 @@ Phase 6 ("frontend tooling") and Phase 7 ("e2e") got renumbered
 down to 5 and 6 respectively. Phase 4.5 was inserted reactively
 when Phase 4's CI rollout surfaced previously hidden lint debt.
 
-## Current state (post-Phase 5)
+## Current state (post-Phase 6)
 
 - Root `Jenkinsfile` parallel block runs: `core`,
   `demo_annotator`, `vep_annotator`, `spliceai_annotator`,
   `web_api`, `web_ui`. Each writes JUnit + coverage to
   `reports/<project>/`. The post block archives reports +
   wheels + sdists + conda packages.
+- After the parallel block, the root `Jenkinsfile` runs
+  `Conda packages` (rattler-build for each gain-* recipe) and
+  then `web_e2e`, which publishes the gain-*.conda artefacts to
+  a local conda channel and drives the production-image stack
+  through Playwright.
+- `web_infra/Jenkinsfile` is gone. `web_infra/` retains only the
+  compose YAMLs (`compose-jenkins.yaml`, `compose.yaml`,
+  `compose-iossifovweb.yaml`, `compose-wigclust.yaml`) and the
+  supporting Dockerfiles (`Dockerfile.gpf`, `Dockerfile.ubuntu`,
+  `Makefile`, `README.md`); these still describe the production
+  deployment story and the e2e fixture stack consumed by root.
 - `runProject()` (root `Jenkinsfile`) is the shared helper for
   the five Python projects: builds the project's `Dockerfile`,
   runs ruff/mypy/pylint/pytest with JUnit output, then
@@ -67,13 +79,6 @@ when Phase 4's CI rollout surfaced previously hidden lint debt.
   when one exists.
 - `web_ui` runs ESLint + Stylelint + Jest inline in the stage
   body (no shared helper — single JS caller).
-- `web_infra/Jenkinsfile` still owns the e2e flow: copy the
-  upstream `gpf-conda-packaging` `conda-channel.tar.gz`, build
-  `ubuntu-image` and `gpf-image`, build `backend-e2e` and
-  `frontend-e2e` from the production Dockerfiles, run the
-  `e2e-tests` Playwright service, archive
-  `web_e2e/reports/junit-report.xml`. Triggers on the upstream
-  conda packaging job's success.
 - Conventions in effect:
   - `<project>/Dockerfile` is the **CI image**.
   - `<project>/Dockerfile.production` is the production image
@@ -89,29 +94,6 @@ when Phase 4's CI rollout surfaced previously hidden lint debt.
     `NODE_VERSION` ARG in `web_ui/Dockerfile`(`.production`)).
 
 ## Phases remaining
-
-### Phase 6 — `web_e2e` (Playwright) on root CI; retire `web_infra/Jenkinsfile`
-
-Plan: `docs/2026-04-25-phase-6-e2e-ci.md` (NEXT).
-
-Move the existing e2e flow off `web_infra/Jenkinsfile` and into
-a sequential `web_e2e` stage in the root `Jenkinsfile`, placed
-after the existing `Conda packages` stage. Generate a
-deterministic `web_e2e/package-lock.json`, switch
-`web_e2e/Dockerfile.playwright` to `npm ci`, and have the root
-`Jenkinsfile` orchestrate the `compose-jenkins.yaml` services it
-already declares (`backend-e2e`, `frontend-e2e`, `mail`,
-`gpf-image`, `db`, `e2e-tests`) under a unique compose project
-name. The e2e flow's only "external" inputs are the in-repo
-subprojects' build artefacts: `gain-*.conda` packages from
-`dist/conda/` (built by the existing `Conda packages` stage),
-plus `web_api/Dockerfile.production` and
-`web_ui/Dockerfile.production` for the backend/frontend images
-— **no upstream `gpf-conda-packaging` trigger, no
-`copyArtifacts` from outside this repo**. Once the move is
-verified, `git rm web_infra/Jenkinsfile` — every remaining stage
-in it exists solely to support e2e and the upstream coupling
-goes away in the same change.
 
 ### Phase 7 — Tail cleanup
 
