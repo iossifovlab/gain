@@ -1,2 +1,0 @@
-recursive-include gpf_web_annotation_frontend/static *
-recursive-include gpf_web_annotation_frontend/templates *

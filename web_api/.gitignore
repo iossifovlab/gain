@@ -4,3 +4,4 @@ dist/
 .coverage*
 coverage.xml
 /reports
+web_annotation/tests/fixtures/grr/grr_definition.yaml

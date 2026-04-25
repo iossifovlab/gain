@@ -4,6 +4,7 @@ members = [
     "demo_annotator",
     "vep_annotator",
     "spliceai_annotator",
+    "web_api",
 ]
 
 [tool.uv.sources]
@@ -11,3 +12,4 @@ gain-core = { workspace = true }
 gain-demo-annotator = { workspace = true }
 gain-vep-annotator = { workspace = true }
 gain-spliceai-annotator = { workspace = true }
+django-gpf-web-annotation = { workspace = true }

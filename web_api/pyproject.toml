@@ -1,35 +1,42 @@
 [build-system]
-requires = ["setuptools>=69.3"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
 
 [project]
 name = "django-gpf-web-annotation"
-version = "0.1"
-dependencies = [
-    "django>=5.2",
-]
 description = "A Django app to contain GPF Web Annotation."
 readme = "README.rst"
-requires-python = ">= 3.12"
+requires-python = ">=3.12"
+license = { text = "BSD-3-Clause" }
 authors = [
-    {name = "Seqpipe Ltd.", email = "lubomir.chorbadjiev@gmail.com"},
+    { name = "Seqpipe Ltd.", email = "lubomir.chorbadjiev@gmail.com" },
 ]
 classifiers = [
     "Environment :: Web Environment",
     "Framework :: Django",
-    "Framework :: Django :: 5.2",  # Replace "X.Y" as appropriate
+    "Framework :: Django :: 5.2",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: BSD License",
     "Operating System :: OS Independent",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Topic :: Internet :: WWW/HTTP",
 ]
+dependencies = [
+    "asgiref",
+    "channels>=4",
+    "daphne>=4",
+    "django>=5.2,<5.3",
+    "django-cors-headers>=4.7",
+    "djangorestframework>=3.16",
+    "psycopg>=3.1.18",
+    "python-magic",
+    "pyyaml",
+    "requests",
+]
+dynamic = ["version"]
 
 [project.urls]
 Homepage = "https://www.iossifovlab.com/"
@@ -37,10 +44,33 @@ Homepage = "https://www.iossifovlab.com/"
 [project.scripts]
 validate_vcf_file = "web_annotation.jobs.validate_vcf_file:main"
 
-[tool.setuptools.packages.find]
-where = ["."]
-exclude = ["**tests*"]
-namespaces = false
+[dependency-groups]
+dev = [
+    "django-stubs==5.2.2",
+    "mypy==1.15.0",
+    "pylint",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "pytest-django",
+    "pytest-mock",
+    "pytest-xdist",
+    "ruff==0.14.6",
+    "types-channels",
+]
 
-[tool.setuptools.package-data]
-web_annotation = ["templates/*.html", "static/*", "about.md"]
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.0.0.dev0"
+
+[tool.hatch.version.raw-options]
+root = ".."
+version_scheme = "no-guess-dev"
+
+[tool.hatch.build.targets.wheel]
+packages = ["web_annotation"]
+exclude = ["web_annotation/tests"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/web_annotation"]
+exclude = ["web_annotation/tests"]
