@@ -1,47 +1,66 @@
-ARG COMPOSE_PROJECT_NAME=gpfwa
-FROM ${COMPOSE_PROJECT_NAME}-gpf-image:latest AS build
+# Production image for the web_api Django backend.
+#
+# Build from the repo root so the COPY paths into the build
+# context resolve to dist/core/ and dist/web_api/ (where the
+# root Jenkinsfile's parallel block writes the wheels):
+#
+#     docker build -f web_api/Dockerfile.production \
+#         -t gain-web-api-prod:<tag> .
+#
+# The image installs only `gain-core` and
+# `django-gpf-web-annotation` — the three annotators are
+# CLI/docker plugins and aren't needed at the Django runtime.
+# Single foreground process: daphne on 9001.
 
-RUN mamba install -y -n base -c conda-forge conda-pack=0.9.1
+# syntax=docker/dockerfile:1.7
 
-WORKDIR /app
-
-COPY environment.yml .
-RUN mamba env update -y -n gpf --file ./environment.yml
-
-# Copy the rest of the application source code into the container
-COPY . .
-
-RUN mamba run -n gpf pip install .
-
-RUN conda-pack -n gpf -o /tmp/gpf.tar && \
-  mkdir /gpf && cd /gpf && tar xf /tmp/gpf.tar && \
-  rm /tmp/gpf.tar
-
-RUN /gpf/bin/conda-unpack
+ARG PYTHON_VERSION=3.12-slim
 
 
-FROM ${COMPOSE_PROJECT_NAME}-ubuntu-image:latest AS runtime
+# 1) Builder: install the wheels into an isolated venv at /opt/gpf.
+FROM python:${PYTHON_VERSION} AS builder
 
-COPY --from=build /gpf /gpf
+RUN python -m venv /opt/gpf \
+ && /opt/gpf/bin/pip install --no-cache-dir --upgrade pip
 
-RUN mkdir -p /logs
+WORKDIR /wheels
+COPY dist/core/gain_core-*.whl ./
+COPY dist/web_api/django_gpf_web_annotation-*.whl ./
+
+RUN /opt/gpf/bin/pip install --no-cache-dir /wheels/*.whl
 
 
-COPY ./scripts/supervisord.conf /etc/
-COPY ./scripts/supervisord-bootstrap.sh /
-COPY ./scripts/wait-for-it.sh /
-RUN chmod +x /*.sh
+# 2) Runtime: minimal slim image, just libmagic1 + the venv.
+FROM python:${PYTHON_VERSION} AS runtime
 
-# When image is run, run the code with the environment
-# activated:
-RUN echo "source /gpf/bin/activate" >> /etc/bash.bashrc
-# Explicitly add gpf/bin to the path to aid certain tools 
-# (like dask)in finding the needed executables
-ENV PATH=/gpf/bin:$PATH
+# python-magic needs libmagic at runtime; psycopg (3) needs
+# libpq when installed without the [binary] extra (which is
+# the case here since gain-core's pyproject pins plain
+# `psycopg>=3.1.18`); curl is for the compose healthcheck
+# (`curl http://localhost:9001/api/user_info`) — slim ships
+# without any HTTP client.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        libmagic1 \
+        libpq5 \
+        curl \
+ && rm -rf /var/lib/apt/lists/*
 
-EXPOSE 80 443
+COPY --from=builder /opt/gpf /opt/gpf
+ENV PATH=/opt/gpf/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    DJANGO_SETTINGS_MODULE=web_annotation.settings_daphne
 
-ADD ./scripts/grr-definition.yaml /
-ADD ./scripts/grr-definition-dir.yaml /
+# GRR config files (env var GRR_DEFINITION_FILE selects which
+# one each compose file consumes).
+COPY web_api/scripts/grr-definition.yaml \
+     web_api/scripts/grr-definition-dir.yaml /
 
-ENTRYPOINT ["supervisord", "-c", "/etc/supervisord.conf", "-n"]
+EXPOSE 9001
+
+ENTRYPOINT ["daphne", \
+            "--bind", "0.0.0.0", \
+            "--port", "9001", \
+            "--proxy-headers", \
+            "--http-timeout", "1200", \
+            "web_annotation.asgi:application"]
