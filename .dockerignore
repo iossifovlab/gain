@@ -7,6 +7,14 @@
 **/.pytest_cache/
 **/.mypy_cache/
 
+# JS / Angular build artefacts. node_modules in particular is
+# hundreds of MB and is reinstalled inside web_ui's CI image
+# from package-lock.json, so it has no business being shipped
+# in any docker build context.
+**/node_modules/
+**/dist/
+**/.angular/
+
 containers/
 coverage/
 *.tar.gz
