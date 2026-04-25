@@ -3,24 +3,24 @@
 /opt/conda/bin/conda run --no-capture-output -n gpf \
     pip install --root-user-action ignore -e /wd/web_api
 
-cd /wd/
+cd /wd/web_api/
 mkdir -p /wd/web_api/reports
 
 /opt/conda/bin/conda run --no-capture-output -n gpf ruff check \
     --exit-zero \
     --output-format=pylint \
-    --output-file=/wd/web_api/reports/ruff_report web_api/web_annotation || true
+    --output-file=/wd/web_api/reports/ruff_report web_annotation || true
 
 /opt/conda/bin/conda run --no-capture-output -n gpf \
-    pylint web_api/web_annotation -f parseable --reports=no -j 4 \
+    pylint web_annotation -f parseable --reports=no -j 4 \
     --exit-zero > /wd/web_api/reports/pylint_report || true
 
 /opt/conda/bin/conda run --no-capture-output -n gpf mypy \
-    web_api/web_annotation \
+    web_annotation \
     --pretty \
     --show-error-context \
     --no-incremental > /wd/web_api/reports/mypy_report || true
 
 /opt/conda/bin/conda run --no-capture-output -n gpf \
-    python web_api/scripts/convert_mypy_output.py \
-    web_api/reports/mypy_report > web_api/reports/mypy_pylint_report || true
+    python scripts/convert_mypy_output.py \
+    /wd/web_api/reports/mypy_report > /wd/web_api/reports/mypy_pylint_report || true

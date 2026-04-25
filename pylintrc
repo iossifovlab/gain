@@ -416,6 +416,8 @@ ignored-modules=
 # of finding the hint is based on edit distance.
 missing-member-hint=yes
 
+max-returns=8
+
 # The minimum edit distance a name should have in order to be considered a
 # similar match for a missing member name.
 missing-member-hint-distance=1
