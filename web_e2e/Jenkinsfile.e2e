@@ -81,8 +81,19 @@ pipeline {
 
         stage('Prepare workspace') {
             steps {
-                sh 'rm -rf dist reports web_e2e/reports && ' +
-                   'mkdir -p reports/web_e2e'
+                // Playwright writes traces / videos to
+                // web_e2e/reports as root (the e2e-tests
+                // container has no USER directive), so the host
+                // Jenkins user can't `rm` them on the next build.
+                // Run the cleanup inside an alpine container as
+                // root to sidestep that. Then mkdir runs on the
+                // host so the new reports dir is Jenkins-owned and
+                // the post-stage host-side `cp` can write into it.
+                sh '''
+                    docker run --rm -v "$PWD:/wd" -w /wd alpine \
+                        rm -rf dist reports web_e2e/reports
+                    mkdir -p reports/web_e2e
+                '''
             }
         }
 
