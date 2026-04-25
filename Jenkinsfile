@@ -451,7 +451,20 @@ pipeline {
                         // ensures docker logout runs even if a
                         // push fails — agents are shared, don't
                         // leave registry auth lying around.
+                        //
+                        // The wc -c lines are diagnostics — Jenkins
+                        // masks the secret value but the byte
+                        // count itself is just an integer and is
+                        // safe to print. Useful when debugging a
+                        // 401: a length mismatch against the
+                        // expected user/password points at a
+                        // mis-saved credential (trailing CR/LF or
+                        // a "user:pass" combined value where a
+                        // bare value was expected).
                         sh '''
+                            echo "REGISTRY_USER bytes: $(printf '%s' "$REGISTRY_USER" | wc -c)"
+                            echo "REGISTRY_PASS bytes: $(printf '%s' "$REGISTRY_PASS" | wc -c)"
+                            echo "agent: $(uname -n)"
                             printf '%s' "$REGISTRY_PASS" | docker login \
                                 -u "$REGISTRY_USER" \
                                 --password-stdin "$REGISTRY"
