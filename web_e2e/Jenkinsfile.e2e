@@ -12,11 +12,14 @@
 //     `gain-web-e2e` pipelineJob (loaded via the seed job).
 //
 // Self-contained: clones the gain monorepo at the requested
-// branch/commit, copies the wheels the parent build archived
-// (`dist/core/*.whl` + `dist/web_api/*.whl`), builds the
-// Phase-8 wheel-based backend image and Apache-based frontend
-// image, then runs the Playwright suite via the existing
-// `web_infra/compose-jenkins.yaml` e2e stack.
+// branch/commit, then either (a) on master: pulls the prod
+// images the parent already pushed to `registry.seqpipe.org`
+// (Phase 9.3, ~30s) or (b) on branches: copies the wheels
+// the parent archived (`dist/core/*.whl` + `dist/web_api/*.whl`)
+// and builds the Phase-8 wheel-based backend image and
+// Apache-based frontend image locally (~5 min). Either way,
+// the Playwright suite runs against the resulting images via
+// the `web_infra/compose-jenkins.yaml` e2e stack.
 
 pipeline {
     // Excludes `dory` (matches the root Jenkinsfile's choice).
@@ -117,69 +120,108 @@ pipeline {
             }
         }
 
-        stage('Wheels') {
-            // Two paths: copy the wheels the upstream gain
-            // build already archived (fast, guarantees
-            // bit-for-bit match with what the parent built);
-            // OR build them fresh from source (when the job
-            // is run manually without an upstream link).
+        stage('Prepare backend/frontend images') {
+            // Three paths:
+            //   1. Master triggered downstream of the parent —
+            //      the parent already pushed the prod images to
+            //      `registry.seqpipe.org` (Phase 9.1) tagged with
+            //      its BUILD_NUMBER, which is passed in via
+            //      UPSTREAM_BUILD. Pull and retag locally;
+            //      ~30s vs ~5 min for the wheels+build path.
+            //   2. Branch triggered downstream — the parent does
+            //      not push images for non-master builds, so the
+            //      registry has nothing to pull. Copy the wheels
+            //      the parent archived and build prod images
+            //      locally.
+            //   3. Manual run with no upstream link — container-
+            //      build the wheels from source, then build
+            //      prod images locally.
+            // After either build path, the local images are tagged
+            // as $BACKEND_IMAGE / $FRONTEND_IMAGE so the
+            // compose-jenkins stack and `post.cleanup` don't have
+            // to care which path produced them.
             steps {
                 script {
-                    if (params.UPSTREAM_PROJECT?.trim()) {
-                        copyArtifacts(
-                            filter: 'dist/core/*.whl, ' +
-                                    'dist/web_api/*.whl',
-                            fingerprintArtifacts: true,
-                            projectName: params.UPSTREAM_PROJECT,
-                            selector:
-                                params.UPSTREAM_BUILD?.trim()
-                                    ? specific(params.UPSTREAM_BUILD)
-                                    : lastSuccessful(),
-                        )
+                    boolean canPull = \
+                        params.BRANCH_NAME == 'master' \
+                        && params.UPSTREAM_BUILD?.trim()
+                    if (canPull) {
+                        String tag = params.UPSTREAM_BUILD
+                        sh """
+                            docker pull \
+                                'registry.seqpipe.org/gain-web-api:${tag}'
+                            docker pull \
+                                'registry.seqpipe.org/gain-web-ui:${tag}'
+                            docker tag \
+                                'registry.seqpipe.org/gain-web-api:${tag}' \
+                                "\$BACKEND_IMAGE"
+                            docker tag \
+                                'registry.seqpipe.org/gain-web-ui:${tag}' \
+                                "\$FRONTEND_IMAGE"
+                        """
                     } else {
-                        // Run as root inside the container so we
-                        // can `apt-get install git` (uv build →
-                        // hatch-vcs needs git to derive the PEP
-                        // 440 version; without it, wheels get the
-                        // `0.0.0.dev0` fallback). chown the
-                        // outputs back to the host UID at the end
-                        // so the rest of the pipeline can read
-                        // them without root permissions.
+                        if (params.UPSTREAM_PROJECT?.trim()) {
+                            copyArtifacts(
+                                filter: 'dist/core/*.whl, ' +
+                                        'dist/web_api/*.whl',
+                                fingerprintArtifacts: true,
+                                projectName: params.UPSTREAM_PROJECT,
+                                selector:
+                                    params.UPSTREAM_BUILD?.trim()
+                                        ? specific(params.UPSTREAM_BUILD)
+                                        : lastSuccessful(),
+                            )
+                        } else {
+                            // Run as root inside the container so
+                            // we can `apt-get install git` (uv
+                            // build → hatch-vcs needs git to
+                            // derive the PEP 440 version; without
+                            // it, wheels get the `0.0.0.dev0`
+                            // fallback). chown the outputs back to
+                            // the host UID at the end so the rest
+                            // of the pipeline can read them
+                            // without root permissions.
+                            sh '''
+                                mkdir -p dist/core dist/web_api
+                                docker run --rm \
+                                    -v "$PWD:/wd" -w /wd \
+                                    -e HOME=/tmp \
+                                    -e HOST_UID="$(id -u)" \
+                                    -e HOST_GID="$(id -g)" \
+                                    python:3.12-slim \
+                                    sh -c '
+                                        set -eu
+                                        apt-get update -qq
+                                        apt-get install -y --no-install-recommends -qq git
+                                        pip install --no-cache-dir uv
+                                        uv build --package gain-core \
+                                                --out-dir dist/core
+                                        uv build --package django-gpf-web-annotation \
+                                                --out-dir dist/web_api
+                                        chown -R "$HOST_UID:$HOST_GID" dist
+                                    '
+                            '''
+                        }
                         sh '''
-                            mkdir -p dist/core dist/web_api
-                            docker run --rm \
-                                -v "$PWD:/wd" -w /wd \
-                                -e HOME=/tmp \
-                                -e HOST_UID="$(id -u)" \
-                                -e HOST_GID="$(id -g)" \
-                                python:3.12-slim \
-                                sh -c '
-                                    set -eu
-                                    apt-get update -qq
-                                    apt-get install -y --no-install-recommends -qq git
-                                    pip install --no-cache-dir uv
-                                    uv build --package gain-core \
-                                            --out-dir dist/core
-                                    uv build --package django-gpf-web-annotation \
-                                            --out-dir dist/web_api
-                                    chown -R "$HOST_UID:$HOST_GID" dist
-                                '
+                            docker build \
+                                -f web_api/Dockerfile.production \
+                                -t "$BACKEND_IMAGE" .
+                            docker build \
+                                -f web_ui/Dockerfile.production \
+                                --build-arg BACKEND_IMAGE="$BACKEND_IMAGE" \
+                                -t "$FRONTEND_IMAGE" .
                         '''
                     }
                 }
             }
         }
 
-        stage('Build images') {
+        stage('Build e2e image') {
+            // Playwright runner image — always built locally; not
+            // pushed to the registry (only its inputs are: the
+            // committed package-lock.json and the test sources).
             steps {
                 sh '''
-                    docker build \
-                        -f web_api/Dockerfile.production \
-                        -t "$BACKEND_IMAGE" .
-                    docker build \
-                        -f web_ui/Dockerfile.production \
-                        --build-arg BACKEND_IMAGE="$BACKEND_IMAGE" \
-                        -t "$FRONTEND_IMAGE" .
                     docker compose \
                         -p "$COMPOSE_PROJECT" \
                         -f web_infra/compose-jenkins.yaml \
