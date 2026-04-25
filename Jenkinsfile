@@ -412,6 +412,11 @@ pipeline {
                 BACKEND_REPO  = "${env.REGISTRY}/gain-web-api"
                 FRONTEND_REPO = "${env.REGISTRY}/gain-web-ui"
                 GIT_SHORT     = "${env.GIT_COMMIT.take(8)}"
+                // Two secret-text credentials, set up in Jenkins.
+                // Bound here for the whole stage but only used by
+                // the master-only push path below.
+                REGISTRY_USER = credentials('jenkins-registry.seqpipe.org.user')
+                REGISTRY_PASS = credentials('jenkins-registry.seqpipe.org.passwd')
             }
             steps {
                 sh '''
@@ -435,7 +440,16 @@ pipeline {
                 '''
                 script {
                     if (env.BRANCH_NAME == 'master') {
+                        // `--password-stdin` keeps the secret out
+                        // of the process list / shell trace. The
+                        // trap ensures docker logout runs even if
+                        // a push fails — agents are shared, don't
+                        // leave registry auth lying around.
                         sh '''
+                            echo "$REGISTRY_PASS" | docker login \
+                                -u "$REGISTRY_USER" \
+                                --password-stdin "$REGISTRY"
+                            trap 'docker logout "$REGISTRY" || true' EXIT
                             docker tag "$BACKEND_REPO:$BUILD_NUMBER" \
                                        "$BACKEND_REPO:latest"
                             docker tag "$FRONTEND_REPO:$BUILD_NUMBER" \

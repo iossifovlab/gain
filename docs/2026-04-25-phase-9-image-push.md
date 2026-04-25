@@ -153,34 +153,42 @@ while the prod-image cleanup handles three tags per repo.)
 
 ## Auth
 
-The plan assumes Jenkins agents already have
-`docker login registry.seqpipe.org` configured. Evidence:
-the dask cluster config at `core/gain/dask/named_cluster.yaml`
-already references `registry.seqpipe.org/iossifovlab-gpf:latest`
-without any explicit Jenkins-side credential plumbing, which
-implies the registry is reachable from the agents' docker
-daemons.
+The push uses two pre-provisioned secret-text credentials in
+Jenkins:
 
-If the first master push surfaces a 401, the fix is to wrap
-the push in a `withCredentials` block keyed off a Jenkins
-credential id (something like `seqpipe-registry`):
+- `jenkins-registry.seqpipe.org.user` — registry username
+- `jenkins-registry.seqpipe.org.passwd` — registry password
+
+Both are bound declaratively in the stage's `environment`
+block:
 
 ```groovy
-withCredentials([usernamePassword(
-    credentialsId: 'seqpipe-registry',
-    usernameVariable: 'REG_USER',
-    passwordVariable: 'REG_PASS',
-)]) {
-    sh '''
-        echo "$REG_PASS" | docker login -u "$REG_USER" \\
-            --password-stdin "$REGISTRY"
-        docker push ...
-    '''
+environment {
+    REGISTRY_USER = credentials('jenkins-registry.seqpipe.org.user')
+    REGISTRY_PASS = credentials('jenkins-registry.seqpipe.org.passwd')
 }
 ```
 
-That credential needs to be provisioned by the infra team
-first; out of scope for this commit.
+The push step does login + push + logout in a single shell
+so the registry auth state is short-lived (agents are
+shared across jobs):
+
+```sh
+echo "$REGISTRY_PASS" | docker login \
+    -u "$REGISTRY_USER" --password-stdin "$REGISTRY"
+trap 'docker logout "$REGISTRY" || true' EXIT
+# tag :latest, then push three tags × two repos
+```
+
+`--password-stdin` keeps the secret out of the process list
+and shell trace; the `trap` ensures `docker logout` runs even
+if a `docker push` fails.
+
+The `environment` block evaluates on every build (master and
+branches), so the credentials must be readable from the
+multibranch context. Branch builds bind the env vars but
+never use them — the `if (env.BRANCH_NAME == 'master')` gate
+is the only caller.
 
 ## Verification
 
