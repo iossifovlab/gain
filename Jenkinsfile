@@ -441,12 +441,18 @@ pipeline {
                 script {
                     if (env.BRANCH_NAME == 'master') {
                         // `--password-stdin` keeps the secret out
-                        // of the process list / shell trace. The
-                        // trap ensures docker logout runs even if
-                        // a push fails — agents are shared, don't
+                        // of the process list / shell trace. Use
+                        // `printf '%s'` (not `echo`) so the
+                        // password is sent byte-for-byte: echo
+                        // appends a trailing newline and POSIX
+                        // /bin/sh's echo also interprets backslash
+                        // escapes — both can silently mangle a
+                        // valid password into a 401. The trap
+                        // ensures docker logout runs even if a
+                        // push fails — agents are shared, don't
                         // leave registry auth lying around.
                         sh '''
-                            echo "$REGISTRY_PASS" | docker login \
+                            printf '%s' "$REGISTRY_PASS" | docker login \
                                 -u "$REGISTRY_USER" \
                                 --password-stdin "$REGISTRY"
                             trap 'docker logout "$REGISTRY" || true' EXIT
