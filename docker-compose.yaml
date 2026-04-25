@@ -34,3 +34,10 @@ services:
       - "80"
     volumes:
       - ./core/tests/.test_grr:/usr/local/apache2/htdocs/
+
+  mail:
+    image: mailhog/mailhog:latest
+    hostname: mail
+    expose:
+      - "1025"
+      - "8025"

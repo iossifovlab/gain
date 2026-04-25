@@ -209,17 +209,38 @@ pipeline {
                 }
 
                 stage('web_api') {
+                    environment {
+                        COMPOSE_PROJECT = "gain-ci-web-api-${env.BUILD_NUMBER}"
+                        COMPOSE_NETWORK = "gain-ci-web-api-${env.BUILD_NUMBER}_default"
+                    }
                     steps {
                         script {
-                            runProject(
-                                name: 'web_api',
-                                pkg: 'web_annotation',
-                                tests: 'web_annotation/tests',
-                                mypyTarget: 'web_annotation',
-                                mypyExtra: '--config-file /workspace/web_api/mypy.ini',
-                                pytestArgs: '-n 5',
-                                distPkg: 'django-gpf-web-annotation',
-                            )
+                            try {
+                                // MailHog catches password-reset and account-
+                                // activation emails so the user-flow tests can
+                                // assert against them via --mailhog.
+                                sh '''
+                                    docker compose -p "$COMPOSE_PROJECT" \
+                                        up -d --wait mail
+                                '''
+
+                                runProject(
+                                    name: 'web_api',
+                                    pkg: 'web_annotation',
+                                    tests: 'web_annotation/tests',
+                                    mypyTarget: 'web_annotation',
+                                    mypyExtra: '--config-file /workspace/web_api/mypy.ini',
+                                    pytestArgs: '--mailhog http://mail:8025',
+                                    distPkg: 'django-gpf-web-annotation',
+                                    dockerRunExtra:
+                                        '--network "$COMPOSE_NETWORK" ' +
+                                        '-e GPFWA_EMAIL_HOST=mail',
+                                )
+                            } finally {
+                                sh '''
+                                    docker compose -p "$COMPOSE_PROJECT" down -v --remove-orphans || true
+                                '''
+                            }
                         }
                     }
                     post { always { script { publishReports('web_api') } } }
