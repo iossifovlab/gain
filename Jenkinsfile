@@ -99,6 +99,20 @@ pipeline {
     stages {
         stage('Start') {
             steps {
+                // Grant the gain-web-e2e downstream job
+                // permission to copy artefacts from this
+                // per-branch job. Without this, the e2e job's
+                // `copyArtifacts(projectName: 'iossifovlab/gain/<branch>')`
+                // call fails with "Unable to find project for
+                // artifact copy" (Jenkins's permission-denied
+                // disguise). Idempotent — applied on every build.
+                // BranchJobProperty (set by the multibranch scan)
+                // is preserved.
+                script {
+                    properties([
+                        copyArtifactPermission('gain-web-e2e'),
+                    ])
+                }
                 zulipSend(
                     message: "Started build #${env.BUILD_NUMBER} of project ${env.JOB_NAME} (${env.BUILD_URL})",
                     topic: "${env.JOB_NAME}",
