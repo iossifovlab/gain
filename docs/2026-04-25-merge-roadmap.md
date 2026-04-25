@@ -175,22 +175,36 @@ What remains for Phase 9, if/when the team wants more:
   automatic TLS + cleaner reverse-proxy config.
 - **Observability lite**. Loki + Promtail + Grafana as a
   small stack for container logs / metrics.
-- **Retire the conda dev workflow** itself — root
-  `environment.yml` + `dev-environment.yml`, plus the
-  matching Conda/Mamba section in CLAUDE.md / README.md.
-  Phase 7 deliberately kept these because CLAUDE.md still
-  documents conda as one of two supported flows.
 - **Audit repo-root `Dockerfile` and `Dockerfile.seqpipe`**
-  legacy seqpipe-flow images. The current root Jenkinsfile
-  doesn't invoke them, but out-of-tree deployment automation
-  may.
-- Investigate any residual `gpf-conda-packaging` coupling in
-  the conda-recipe story (do sub-project recipes pin
-  upstream-published parent packages?).
+  legacy seqpipe-flow images — partial:
+  - The orphaned `spliceai_annotator/{docker-compose.yaml,
+    docker-compose-jenkins.yaml,Dockerfile.runner}` chain
+    was the only in-tree consumer of the repo-root
+    `Dockerfile`. The chain was already broken (stale
+    paths post the `gain_` directory rename, references
+    to a non-existent `spliceai-base` image and `gpf`
+    mamba env) and has been deleted.
+  - Repo-root `Dockerfile` and `Dockerfile.seqpipe`
+    themselves are kept pending out-of-tree consumer
+    audit. `Dockerfile.seqpipe`'s `REGISTRY` /
+    `BASE_IMAGE_TAG` / `SOURCE_DIR` ARGs strongly suggest
+    iossifovlab seqpipe-flow build automation consumes
+    them. Neither is mentioned in CLAUDE.md or README.md.
+- **`gpf-conda-packaging` coupling in conda recipes** —
+  audited; nothing to remove. Each `recipe.yaml` (core +
+  three annotators) sources `dist/<project>` for its wheel
+  and lists `gain-core` (in-repo) plus standard
+  conda-forge deps in run-requires; no upstream
+  `gpf-conda-packaging` package is referenced anywhere in
+  the recipe set.
 
-Optional and lower priority — the upstream job is stable, the
-conda dev workflow is harmless, and these legacy images don't
-break anything.
+Optional and lower priority — the upstream job is stable
+and the remaining legacy images don't break anything.
+
+The conda dev workflow stays — `environment.yml`,
+`dev-environment.yml`, repo-root `Dockerfile`,
+`Dockerfile.seqpipe`, and the conda/mamba documentation in
+CLAUDE.md / README.md remain a supported flow alongside uv.
 
 ## Updates to this doc
 
