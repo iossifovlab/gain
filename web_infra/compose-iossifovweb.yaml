@@ -45,7 +45,7 @@ services:
   backend:
     restart: always
     build:
-      context: backend
+      context: ../web_api
       dockerfile: Dockerfile
       args:
         COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
@@ -95,7 +95,7 @@ services:
   frontend:
     restart: always
     build:
-      context: frontend
+      context: ../web_ui
       dockerfile: Dockerfile
       args:
         COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}

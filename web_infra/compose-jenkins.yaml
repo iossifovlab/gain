@@ -46,7 +46,7 @@ services:
 
   backend:
     build:
-      context: backend
+      context: ../web_api
       dockerfile: Dockerfile
       args:
         COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
@@ -85,7 +85,7 @@ services:
 
   backend-e2e:
     build:
-      context: backend
+      context: ../web_api
       dockerfile: Dockerfile
       args:
         COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
@@ -126,7 +126,7 @@ services:
 
   backend-tests:
     build:
-      context: backend
+      context: ../web_api
       dockerfile: Dockerfile.dev
       args:
         COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
@@ -138,12 +138,12 @@ services:
       GPFWA_EMAIL_HOST: mail
       GRR_DEFINITION_FILE: /grr-definition-tests.yaml
     volumes:
-      - .:/wd
-    entrypoint: /wd/backend/scripts/backend_tests.sh
+      - ..:/wd
+    entrypoint: /wd/web_api/scripts/backend_tests.sh
 
   backend-dev:
     build:
-      context: backend
+      context: ../web_api
       dockerfile: Dockerfile.dev
       args:
         COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
@@ -155,12 +155,12 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - .:/wd
-    entrypoint: /wd/backend/scripts/backend_run.sh
+      - ..:/wd
+    entrypoint: /wd/web_api/scripts/backend_run.sh
 
   backend-linters:
     build:
-      context: backend
+      context: ../web_api
       dockerfile: Dockerfile.dev
       args:
         COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
@@ -170,13 +170,13 @@ services:
       GPFWA_EMAIL_HOST: mail
       GRR_DEFINITION_FILE: /grr-definition.yaml
     volumes:
-      - .:/wd
-    entrypoint: /wd/backend/scripts/backend_linters.sh
+      - ..:/wd
+    entrypoint: /wd/web_api/scripts/backend_linters.sh
 
 
   frontend:
     build:
-      context: frontend
+      context: ../web_ui
       dockerfile: Dockerfile
       args:
         COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
@@ -193,7 +193,7 @@ services:
 
   frontend-e2e:
     build:
-      context: frontend
+      context: ../web_ui
       dockerfile: Dockerfile
       args:
         COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
@@ -211,29 +211,29 @@ services:
 
   frontend-tests:
     build:
-      context: frontend
+      context: ../web_ui
       dockerfile: Dockerfile.dev
     volumes:
-      - ./frontend/reports:/reports
+      - ../web_ui/reports:/reports
     environment:
       JEST_JUNIT_OUTPUT_DIR: /reports
     command: ["npm", "test", "--", "--coverage", "--collectCoverageFrom=./src/**", "--coverageDirectory=/reports/coverage", "--ci"]
 
   frontend-linters:
     build:
-      context: frontend
+      context: ../web_ui
       dockerfile: Dockerfile.dev
     volumes:
-      - ./frontend/reports:/reports
+      - ../web_ui/reports:/reports
     entrypoint: /app/scripts/frontend-linters.sh
 
 
   e2e-tests:
     build:
-      context: e2e-tests
+      context: ../web_e2e
       dockerfile: Dockerfile.playwright
     volumes:
-      - ./e2e-tests/reports:/reports
+      - ../web_e2e/reports:/reports
     depends_on:
       mail:
         condition: service_started

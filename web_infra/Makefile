@@ -3,7 +3,7 @@ all: frontend_ package run
 frontend_:
 	set -e; \
 	set -x; \
-	cd frontend; \
+	cd ../web_ui; \
 	npm i; \
 	npx ng build --configuration development --base-href "/static/" --source-map; \
 	rm -rf ../django-gpf-web-annotation/gpf_web_annotation_frontend/static; \
@@ -13,7 +13,7 @@ frontend_:
 frontend_prod:
 	set -e; \
 	set -x; \
-	cd frontend; \
+	cd ../web_ui; \
 	rm -rf dist; \
 	npm i; \
 	npx ng build --aot --configuration 'production' --base-href '/' --deploy-url '/' --source-map

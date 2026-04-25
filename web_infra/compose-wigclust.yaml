@@ -50,7 +50,7 @@ services:
 
   backend:
     build:
-      context: backend
+      context: ../web_api
       dockerfile: Dockerfile
       args:
         COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
@@ -90,7 +90,7 @@ services:
 
   frontend:
     build:
-      context: frontend
+      context: ../web_ui
       dockerfile: Dockerfile
       args:
         COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
