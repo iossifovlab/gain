@@ -41,7 +41,14 @@ def runProject(Map args) {
                 set +e
                 ruff check --output-format=junit --output-file=/reports/ruff.xml .
                 mypy ${mypyExtra} ${mypyTarget} --junit-xml=/reports/mypy.xml
-                pylint --rcfile=/workspace/pylintrc \\
+                # Prefer a per-project pylintrc when one exists (e.g. web_api
+                # ships its own to load pylint_django). Falls back to the
+                # repo-root pylintrc otherwise.
+                pylint_rcfile=/workspace/${name}/pylintrc
+                if [ ! -f "\$pylint_rcfile" ]; then
+                    pylint_rcfile=/workspace/pylintrc
+                fi
+                pylint --rcfile="\$pylint_rcfile" \\
                        --load-plugins=pylint_junit \\
                        --output-format=pylint_junit.JUnitReporter \\
                        --exit-zero ${pkg} > /reports/pylint.xml
@@ -234,7 +241,9 @@ pipeline {
                                     distPkg: 'django-gpf-web-annotation',
                                     dockerRunExtra:
                                         '--network "$COMPOSE_NETWORK" ' +
-                                        '-e GPFWA_EMAIL_HOST=mail',
+                                        '-e GPFWA_EMAIL_HOST=mail ' +
+                                        '-e DJANGO_SETTINGS_MODULE=' +
+                                        'web_annotation.test_settings',
                                 )
                             } finally {
                                 sh '''
