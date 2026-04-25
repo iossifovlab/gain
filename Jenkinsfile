@@ -384,81 +384,90 @@ pipeline {
         }
 
         stage('web_e2e') {
-            // Browser-driven end-to-end suite: brings up the full
-            // production stack (db + mail + backend-e2e + frontend-e2e)
-            // and runs Playwright against it. Sequential rather than
-            // parallel because it consumes the in-monorepo conda
-            // packages produced by the `Conda packages` stage above —
-            // those become gpf-image's local conda channel, replacing
-            // the pre-Phase-6 dependency on
-            // iossifovlab/gpf-conda-packaging/master.
+            // Browser-driven end-to-end suite: builds the wheel-
+            // based backend production image and the Apache-based
+            // frontend production image (which multi-stages Django
+            // collectstatic from the backend image), then brings
+            // up db + mail + backend-e2e + frontend-e2e and runs
+            // Playwright against them.
+            //
+            // Sequential rather than parallel because the backend
+            // image consumes the wheels produced by the parallel
+            // `Sub-projects` stage; those need to be on disk
+            // (dist/core/*.whl + dist/web_api/*.whl) before this
+            // stage starts.
             environment {
                 COMPOSE_PROJECT =
                     "gain-ci-web-e2e-${env.BUILD_NUMBER}"
                 COMPOSE_NETWORK =
                     "gain-ci-web-e2e-${env.BUILD_NUMBER}_default"
+                BACKEND_IMAGE =
+                    "gain-web-api-prod:${env.BUILD_NUMBER}"
+                FRONTEND_IMAGE =
+                    "gain-web-ui-prod:${env.BUILD_NUMBER}"
             }
             steps {
                 script {
                     try {
                         sh '''
                             mkdir -p web_e2e/reports reports/web_e2e
-                            # Re-create the channel from scratch so a
-                            # stale .conda from a previous build can't
-                            # leak into this build's gpf-image.
-                            rm -rf web_infra/conda-channel
-                            mkdir -p web_infra/conda-channel/noarch
-                            # rattler-build publish refuses to write to
-                            # an unindexed channel, so seed an empty
-                            # noarch repodata.json before publishing —
-                            # the publish step then overwrites it with
-                            # the real index.
-                            echo '{"packages": {}, "packages.conda": {}, "info": {"subdir": "noarch"}}' \
-                                > web_infra/conda-channel/noarch/repodata.json
-                            # Publish the gain-*.conda artefacts from
-                            # `dist/conda/` into the local channel.
-                            # `rattler-build publish --to file://...`
-                            # both stages the packages and writes the
-                            # repodata.json that Dockerfile.gpf's
-                            # `mamba install -c file:///conda-channel`
-                            # expects.
-                            DOCKER_USER="$(id -u):$(id -g)"
-                            docker run --rm \
-                                --user "$DOCKER_USER" \
-                                -e HOME=/tmp \
-                                -v $PWD:/workspace \
-                                -w /workspace \
-                                gain-conda-builder-ci:${BUILD_NUMBER} \
-                                rattler-build publish \
-                                    --to file:///workspace/web_infra/conda-channel \
-                                    dist/conda/*.conda
+                            # 1. Build the wheel-based backend
+                            # production image. Inputs are
+                            # dist/core/*.whl and dist/web_api/*.whl
+                            # produced by the parallel Sub-projects
+                            # stage above.
+                            docker build \
+                                -f web_api/Dockerfile.production \
+                                -t "$BACKEND_IMAGE" .
+                            # 2. Build the Apache-based frontend
+                            # production image. Multi-stage: it
+                            # needs the just-built backend image so
+                            # the django-static stage can run
+                            # collectstatic. We pass the backend
+                            # image tag via --build-arg.
+                            docker build \
+                                -f web_ui/Dockerfile.production \
+                                --build-arg BACKEND_IMAGE="$BACKEND_IMAGE" \
+                                -t "$FRONTEND_IMAGE" .
+                            # 3. Build the Playwright runner via
+                            # compose (image is service-local and
+                            # cheap to rebuild).
                             docker compose \
                                 -p "$COMPOSE_PROJECT" \
                                 -f web_infra/compose-jenkins.yaml \
-                                build ubuntu-image gpf-image \
-                                      backend-e2e frontend-e2e \
-                                      e2e-tests
-                            # `compose run --rm e2e-tests` honours the
-                            # depends_on conditions on backend-e2e
-                            # (service_healthy), frontend-e2e
-                            # (service_healthy), and mail
-                            # (service_started) declared in
-                            # compose-jenkins.yaml, so it starts the
-                            # whole stack and blocks on the
-                            # healthchecks before invoking
-                            # `npx playwright test`.  We deliberately
-                            # do NOT call `compose up -d --wait`
-                            # first: `--wait` watches every service
-                            # in the dependency graph including the
-                            # one-shot `static-data` busybox, which
-                            # exits 0 and trips a non-zero `--wait`
-                            # exit on docker compose v2.x agents.
+                                build e2e-tests
+                            # 4. `compose run --rm e2e-tests`
+                            # honours the depends_on conditions on
+                            # backend-e2e-migrate
+                            # (service_completed_successfully),
+                            # backend-e2e (service_healthy),
+                            # frontend-e2e (service_healthy), and
+                            # mail (service_started), so it brings
+                            # the stack up itself and only invokes
+                            # `npx playwright test` once everything
+                            # is ready.  We do NOT use `up -d
+                            # --wait` because that watches every
+                            # service in the dep graph including
+                            # busybox one-shots, which trip a
+                            # non-zero `--wait` exit on docker
+                            # compose v2.x agents.
+                            #
+                            # `|| TEST_RC=$?` keeps the script
+                            # going on test failure so the JUnit
+                            # report still gets copied into
+                            # reports/web_e2e/ for `publishReports`
+                            # to surface specific failures (the
+                            # build #39 lesson).
+                            TEST_RC=0
                             docker compose \
                                 -p "$COMPOSE_PROJECT" \
                                 -f web_infra/compose-jenkins.yaml \
-                                run --rm e2e-tests
+                                run --rm e2e-tests \
+                                    || TEST_RC=$?
                             cp web_e2e/reports/junit-report.xml \
-                                reports/web_e2e/junit.xml
+                                reports/web_e2e/junit.xml \
+                                2>/dev/null || true
+                            exit $TEST_RC
                         '''
                     } finally {
                         sh '''
@@ -533,7 +542,7 @@ pipeline {
         }
         cleanup {
             sh '''
-                for img in gain-core-ci gain-demo-annotator-ci gain-vep-annotator-ci gain-spliceai-annotator-ci gain-web-api-ci gain-web-ui-ci gain-conda-builder-ci; do
+                for img in gain-core-ci gain-demo-annotator-ci gain-vep-annotator-ci gain-spliceai-annotator-ci gain-web-api-ci gain-web-ui-ci gain-conda-builder-ci gain-web-api-prod gain-web-ui-prod; do
                     docker rmi "$img:${BUILD_NUMBER}" 2>/dev/null || true
                 done
             '''
