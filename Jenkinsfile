@@ -412,11 +412,6 @@ pipeline {
                 BACKEND_REPO  = "${env.REGISTRY}/gain-web-api"
                 FRONTEND_REPO = "${env.REGISTRY}/gain-web-ui"
                 GIT_SHORT     = "${env.GIT_COMMIT.take(8)}"
-                // Two secret-text credentials, set up in Jenkins.
-                // Bound here for the whole stage but only used by
-                // the master-only push path below.
-                REGISTRY_USER = credentials('jenkins-registry.seqpipe.org.user')
-                REGISTRY_PASS = credentials('jenkins-registry.seqpipe.org.passwd')
             }
             steps {
                 sh '''
@@ -440,35 +435,22 @@ pipeline {
                 '''
                 script {
                     if (env.BRANCH_NAME == 'master') {
-                        // `--password-stdin` keeps the secret out
-                        // of the process list / shell trace. Use
-                        // `printf '%s'` (not `echo`) so the
-                        // password is sent byte-for-byte: echo
-                        // appends a trailing newline and POSIX
-                        // /bin/sh's echo also interprets backslash
-                        // escapes — both can silently mangle a
-                        // valid password into a 401. The trap
-                        // ensures docker logout runs even if a
-                        // push fails — agents are shared, don't
-                        // leave registry auth lying around.
-                        //
-                        // The wc -c lines are diagnostics — Jenkins
-                        // masks the secret value but the byte
-                        // count itself is just an integer and is
-                        // safe to print. Useful when debugging a
-                        // 401: a length mismatch against the
-                        // expected user/password points at a
-                        // mis-saved credential (trailing CR/LF or
-                        // a "user:pass" combined value where a
-                        // bare value was expected).
+                        // Push relies on the agent's pre-existing
+                        // `~/.docker/config.json` being authenticated
+                        // for `registry.seqpipe.org` — that's how
+                        // master #45 succeeded before any explicit
+                        // `docker login` plumbing was attempted.
+                        // Builds #46–#48 added an explicit
+                        // `withCredentials` + `docker login` block;
+                        // the credentials were rejected with a
+                        // 401 (REGISTRY_PASS was 139 bytes — likely
+                        // a token / wrapped blob, not a bare
+                        // password). Reverted to the implicit-auth
+                        // shape until the credential value is
+                        // verified separately. Re-add the explicit
+                        // login block once that's done if the team
+                        // wants the dependency codified in-repo.
                         sh '''
-                            echo "REGISTRY_USER bytes: $(printf '%s' "$REGISTRY_USER" | wc -c)"
-                            echo "REGISTRY_PASS bytes: $(printf '%s' "$REGISTRY_PASS" | wc -c)"
-                            echo "agent: $(uname -n)"
-                            printf '%s' "$REGISTRY_PASS" | docker login \
-                                -u "$REGISTRY_USER" \
-                                --password-stdin "$REGISTRY"
-                            trap 'docker logout "$REGISTRY" || true' EXIT
                             docker tag "$BACKEND_REPO:$BUILD_NUMBER" \
                                        "$BACKEND_REPO:latest"
                             docker tag "$FRONTEND_REPO:$BUILD_NUMBER" \

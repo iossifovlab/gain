@@ -153,42 +153,58 @@ while the prod-image cleanup handles three tags per repo.)
 
 ## Auth
 
-The push uses two pre-provisioned secret-text credentials in
-Jenkins:
+The push relies on the Jenkins agent's pre-existing
+`~/.docker/config.json` being authenticated for
+`registry.seqpipe.org`. Build #45 confirmed this works:
+that build pushed all three tags × two repos cleanly with
+no explicit `docker login` plumbing in the Jenkinsfile.
 
-- `jenkins-registry.seqpipe.org.user` — registry username
-- `jenkins-registry.seqpipe.org.passwd` — registry password
+An attempt to plumb explicit credentials
+(`jenkins-registry.seqpipe.org.user` and
+`jenkins-registry.seqpipe.org.passwd` as Secret-Text
+credentials, bound via `environment { ... = credentials(...) }`)
+was made in builds #46–#48. All three failed with a 401:
 
-Both are bound declaratively in the stage's `environment`
-block:
+```
+Error response from daemon: login attempt to
+https://registry.seqpipe.org/v2/ failed with status:
+401 Unauthorized
+```
+
+Diagnostics added in the third attempt printed the bound
+byte counts: `REGISTRY_USER` was 16 bytes (plausible),
+`REGISTRY_PASS` was 139 bytes (anomalous — far too long
+for a bare password; characteristic of a token, JSON blob,
+or wrapped credential). The most likely explanation is
+that the password Jenkins credential contains something
+other than the literal registry password. Until the
+credential value is verified out-of-band, the explicit-
+login plumbing is left out and the push uses the agent's
+`~/.docker/config.json` directly.
+
+If/when the team wants the auth codified in-repo, the
+shape to re-add inside the master-only `script` block is:
 
 ```groovy
-environment {
-    REGISTRY_USER = credentials('jenkins-registry.seqpipe.org.user')
-    REGISTRY_PASS = credentials('jenkins-registry.seqpipe.org.passwd')
+withCredentials([
+    string(credentialsId: 'jenkins-registry.seqpipe.org.user',
+           variable: 'REGISTRY_USER'),
+    string(credentialsId: 'jenkins-registry.seqpipe.org.passwd',
+           variable: 'REGISTRY_PASS'),
+]) {
+    sh '''
+        printf '%s' "$REGISTRY_PASS" | docker login \
+            -u "$REGISTRY_USER" --password-stdin "$REGISTRY"
+        trap 'docker logout "$REGISTRY" || true' EXIT
+        # tag :latest, then push three tags × two repos
+    '''
 }
 ```
 
-The push step does login + push + logout in a single shell
-so the registry auth state is short-lived (agents are
-shared across jobs):
-
-```sh
-echo "$REGISTRY_PASS" | docker login \
-    -u "$REGISTRY_USER" --password-stdin "$REGISTRY"
-trap 'docker logout "$REGISTRY" || true' EXIT
-# tag :latest, then push three tags × two repos
-```
-
-`--password-stdin` keeps the secret out of the process list
-and shell trace; the `trap` ensures `docker logout` runs even
-if a `docker push` fails.
-
-The `environment` block evaluates on every build (master and
-branches), so the credentials must be readable from the
-multibranch context. Branch builds bind the env vars but
-never use them — the `if (env.BRANCH_NAME == 'master')` gate
-is the only caller.
+`printf '%s'` (not `echo`) is the right primitive: `echo`
+appends a trailing newline and POSIX `/bin/sh`'s `echo`
+interprets backslash escapes, both of which can silently
+turn a valid password into a 401.
 
 ## Verification
 
