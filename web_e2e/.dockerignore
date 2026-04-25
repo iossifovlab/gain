@@ -1,0 +1,15 @@
+node_modules
+dist
+test-results
+playwright-report
+reports
+.git
+.gitignore
+.vscode
+.idea
+.DS_Store
+*.log
+*.tsbuildinfo
+Dockerfile
+Dockerfile.*
+.dockerignore
