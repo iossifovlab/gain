@@ -10,23 +10,24 @@ https://docs.djangoproject.com/en/5.2/howto/deployment/asgi/
 import os
 from typing import Any, cast
 
-from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.auth import (
-    UserLazyObject, get_user,
     AuthMiddlewareStack,
+    UserLazyObject,
+    get_user,
 )
 from channels.middleware import BaseMiddleware
+from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.security.websocket import AllowedHostsOriginValidator
 from django.core.asgi import get_asgi_application
 
 os.environ.setdefault(
-    'DJANGO_SETTINGS_MODULE', 'web_annotation.settings')
+    "DJANGO_SETTINGS_MODULE", "web_annotation.settings")
 
 django_asgi_app = get_asgi_application()
 
 # pylint: disable=wrong-import-position
-from web_annotation.urls import websocket_urlpatterns  # noqa: E402
 from web_annotation.models import WebAnnotationAnonymousUser  # noqa: E402
+from web_annotation.urls import websocket_urlpatterns  # noqa: E402
 
 
 class AnonymousAuthMiddleware(BaseMiddleware):
@@ -41,7 +42,7 @@ class AnonymousAuthMiddleware(BaseMiddleware):
         if "session" not in scope:
             raise ValueError(
                 "AuthMiddleware cannot find session in scope. "
-                "SessionMiddleware must be above it."
+                "SessionMiddleware must be above it.",
             )
         # Add it to the scope if it's not there already
         if "user" not in scope:
@@ -52,7 +53,7 @@ class AnonymousAuthMiddleware(BaseMiddleware):
         user = await get_user(scope)
         if user.is_anonymous:
             user = WebAnnotationAnonymousUser(scope["session"].session_key)
-        scope["user"]._wrapped = user  # pylint: disable=protected-access
+        scope["user"]._wrapped = user  # noqa: SLF001
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> Any:
         scope = dict(scope)
@@ -73,6 +74,6 @@ application = ProtocolTypeRouter({
     "http": django_asgi_app,
     "websocket": AllowedHostsOriginValidator(
         custom_middleware_stack(
-            URLRouter(cast(Any, websocket_urlpatterns)))
+            URLRouter(cast(Any, websocket_urlpatterns))),
     ),
 })

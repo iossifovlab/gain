@@ -1,7 +1,12 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pytest
 
-from web_annotation.models import AnonymousUserQuota, User, UserQuota
+from web_annotation.models import (
+    AnonymousUserQuota,
+    User,
+    UserQuota,
+    WebAnnotationAnonymousUser,
+)
 
 
 @pytest.fixture
@@ -389,7 +394,7 @@ def test_single_allele_query_complete_does_not_consume_extras_when_sufficient(
     assert anonymous_quota.extra_attributes == before_extra_attributes
 
 
-def test_single_allele_query_complete_does_not_consume_extras_when_monthly_covers(
+def test_single_allele_query_complete_does_not_consume_extras_when_monthly_covers(  # noqa: E501
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
     anonymous_quota.daily_attributes = 0
@@ -400,7 +405,7 @@ def test_single_allele_query_complete_does_not_consume_extras_when_monthly_cover
     assert anonymous_quota.extra_attributes == before_extra
 
 
-def test_single_allele_query_complete_consumes_extras_when_both_periods_exhausted(
+def test_single_allele_query_complete_consumes_extras_when_both_periods_exhausted(  # noqa: E501
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
     anonymous_quota.daily_attributes = 0
@@ -412,7 +417,7 @@ def test_single_allele_query_complete_consumes_extras_when_both_periods_exhauste
     assert anonymous_quota.extra_attributes == 40
 
 
-def test_single_allele_query_complete_consumes_extras_for_remainder_beyond_max_period(
+def test_single_allele_query_complete_consumes_extras_for_remainder_beyond_max_period(  # noqa: E501
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
     # daily=4, monthly=4 → max=4, amount=10 → extras cover 6
@@ -441,7 +446,7 @@ def test_single_allele_query_complete_zeros_all_extras_when_extra_exhausted(
     assert anonymous_quota.extra_allele_queries == 0
 
 
-def test_single_allele_query_complete_does_not_zero_extras_when_partial_consumption(
+def test_single_allele_query_complete_does_not_zero_extras_when_partial_consumption(  # noqa: E501
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
     anonymous_quota.daily_attributes = 0
@@ -504,7 +509,9 @@ def test_add_units_increments_extra_jobs(
 ) -> None:
     before = anonymous_quota.extra_jobs
     anonymous_quota.add_units()
-    assert anonymous_quota.extra_jobs == before + anonymous_quota.get_monthly_job_max()
+    assert anonymous_quota.extra_jobs == (
+        before + anonymous_quota.get_monthly_job_max()
+    )
 
 
 def test_add_units_increments_extra_allele_queries(
@@ -545,7 +552,9 @@ def test_add_units_clamps_negative_extras_before_adding(
     assert anonymous_quota.extra_jobs == anonymous_quota.get_monthly_job_max()
     assert anonymous_quota.extra_allele_queries == \
         anonymous_quota.get_monthly_allele_query_max()
-    assert anonymous_quota.extra_variants == anonymous_quota.get_monthly_variant_max()
+    assert anonymous_quota.extra_variants == (
+        anonymous_quota.get_monthly_variant_max()
+    )
     assert anonymous_quota.extra_attributes == \
         anonymous_quota.get_monthly_attribute_max()
 
@@ -555,7 +564,9 @@ def test_add_units_accumulates_on_repeated_calls(
 ) -> None:
     anonymous_quota.add_units()
     anonymous_quota.add_units()
-    assert anonymous_quota.extra_jobs == 2 * anonymous_quota.get_monthly_job_max()
+    assert anonymous_quota.extra_jobs == (
+        2 * anonymous_quota.get_monthly_job_max()
+    )
     assert anonymous_quota.extra_variants == \
         2 * anonymous_quota.get_monthly_variant_max()
 
@@ -567,7 +578,9 @@ def test_add_units_persisted(anonymous_quota: AnonymousUserQuota) -> None:
     assert refreshed.extra_allele_queries == \
         anonymous_quota.get_monthly_allele_query_max()
     assert refreshed.extra_variants == anonymous_quota.get_monthly_variant_max()
-    assert refreshed.extra_attributes == anonymous_quota.get_monthly_attribute_max()
+    assert refreshed.extra_attributes == (
+        anonymous_quota.get_monthly_attribute_max()
+    )
 
 
 # --- User.get_quota ---
@@ -617,7 +630,6 @@ def test_user_get_quota_does_not_duplicate(user_quota: UserQuota) -> None:
 # --- WebAnnotationAnonymousUser.get_quota ---
 
 def test_anonymous_user_get_quota_creates_when_missing() -> None:
-    from web_annotation.models import WebAnnotationAnonymousUser
     anon = WebAnnotationAnonymousUser(session_id="test-session", ip="10.0.0.1")
     assert not AnonymousUserQuota.objects.filter(ip="10.0.0.1").exists()
 
@@ -628,7 +640,6 @@ def test_anonymous_user_get_quota_creates_when_missing() -> None:
 
 
 def test_anonymous_user_get_quota_initializes_values() -> None:
-    from web_annotation.models import WebAnnotationAnonymousUser
     anon = WebAnnotationAnonymousUser(session_id="test-session", ip="10.0.0.2")
 
     quota = anon.get_quota()
@@ -646,7 +657,6 @@ def test_anonymous_user_get_quota_initializes_values() -> None:
 def test_anonymous_user_get_quota_returns_existing(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
-    from web_annotation.models import WebAnnotationAnonymousUser
     anon = WebAnnotationAnonymousUser(session_id="test-session", ip="127.0.0.1")
 
     quota = anon.get_quota()
@@ -657,7 +667,6 @@ def test_anonymous_user_get_quota_returns_existing(
 def test_anonymous_user_get_quota_does_not_duplicate(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
-    from web_annotation.models import WebAnnotationAnonymousUser
     anon = WebAnnotationAnonymousUser(session_id="test-session", ip="127.0.0.1")
 
     anon.get_quota()

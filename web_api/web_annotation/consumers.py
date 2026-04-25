@@ -1,6 +1,7 @@
 # pylint: disable=W0201
 import json
 from typing import Any, cast
+
 from asgiref.sync import async_to_sync
 from channels.generic.websocket import WebsocketConsumer
 from channels.layers import InMemoryChannelLayer
@@ -26,7 +27,7 @@ class AnnotationStateConsumer(WebsocketConsumer):
             "global", self.channel_name)
         self.accept()
 
-    def disconnect(self, code: Any) -> None:
+    def disconnect(self, _code: Any) -> None:
         async_to_sync(self.channel_layer.group_discard)(
             self.user_id, self.channel_name)
 
@@ -43,7 +44,7 @@ class AnnotationStateConsumer(WebsocketConsumer):
 
     def annotation_notify(self, event: Any) -> None:
         self.send(
-            text_data=json.dumps({"message": event["message"]})
+            text_data=json.dumps({"message": event["message"]}),
         )
 
     def pipeline_status(self, event: Any) -> None:
@@ -52,7 +53,7 @@ class AnnotationStateConsumer(WebsocketConsumer):
                 "type": "pipeline_status",
                 "pipeline_id": event["pipeline_id"],
                 "status": event["status"],
-            })
+            }),
         )
 
     def job_status(self, event: Any) -> None:
@@ -61,5 +62,5 @@ class AnnotationStateConsumer(WebsocketConsumer):
                 "type": "job_status",
                 "job_id": event["job_id"],
                 "status": event["status"],
-            })
+            }),
         )

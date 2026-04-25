@@ -1,9 +1,11 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import re
+
+import pytest
 from django.conf import LazySettings
 from django.test import Client
-import pytest
+
 from web_annotation.models import User
-import re
 from web_annotation.tests.mailhog_client import (
     MailhogClient,
 )
@@ -69,7 +71,7 @@ def test_register_and_activate_account(
         in message["Content"]["Body"]
 
     confirmation_link_search = re.search(
-        "new account:\r\n (.*)",
+        r"new account:\r\n (.*)",
         message["Content"]["Body"],
     )
     assert confirmation_link_search is not None
@@ -77,13 +79,13 @@ def test_register_and_activate_account(
     confirmation_link = confirmation_link_search.group(1)
     response = client.get(confirmation_link)
     assert response.status_code == 302
-    assert response['Location'] == (
+    assert response["Location"] == (
         "http://testserver//login?activation_successful=True"
     )
 
     assert client.login(
         email="temp@example.com",
-        password="secret"
+        password="secret",
     ) is True
 
 
@@ -261,7 +263,7 @@ def test_load_reset_password_form(
 
     message = mail_client.find_message_to_user("user@example.com")
     link_search = re.search(
-        ":8000(.*)\r\n",
+        r":8000(.*)\r\n",
         message["Content"]["Body"],
     )
     assert link_search is not None
@@ -275,7 +277,7 @@ def test_load_reset_password_form(
     template_html = response.content.decode("utf-8")
 
     form_action_search = re.search(
-        '<form method="post" action="(.*)">\n',
+        r'<form method="post" action="(.*)">\n',
         template_html,
     )
     assert form_action_search is not None
@@ -304,7 +306,7 @@ def test_reset_password_form(
 
     message = mail_client.find_message_to_user("temp@example.com")
     code_search = re.search(
-        "code=(.*)\r\n",
+        r"code=(.*)\r\n",
         message["Content"]["Body"],
     )
     assert code_search is not None
@@ -320,10 +322,10 @@ def test_reset_password_form(
         },
     )
     assert response.status_code == 302
-    assert response['Location'] == "http://testserver//login"
+    assert response["Location"] == "http://testserver//login"
     assert client.login(
         email="temp@example.com",
-        password="newsecret"
+        password="newsecret",
     ) is True
 
 
@@ -350,7 +352,7 @@ def test_reset_password_form_with_invalid_code(
 
     message = mail_client.find_message_to_user("temp@example.com")
     code_search = re.search(
-        "code=(.*)\r\n",
+        r"code=(.*)\r\n",
         message["Content"]["Body"],
     )
     assert code_search is not None
@@ -408,7 +410,7 @@ def test_activation_of_account_through_reset_password(
 
     message = mail_client.find_message_to_user("temp@example.com")
     code_search = re.search(
-        "code=(.*)\r\n",
+        r"code=(.*)\r\n",
         message["Content"]["Body"],
     )
     assert code_search is not None
@@ -426,7 +428,7 @@ def test_activation_of_account_through_reset_password(
     assert response.status_code == 302
     assert client.login(
         email="temp@example.com",
-        password="newsecret"
+        password="newsecret",
     ) is True
 
 
@@ -444,7 +446,7 @@ def test_get_user_info(user_client: Client, settings: LazySettings) -> None:
             "variantCount": 1000,
             "todayJobsCount": 1,
             "diskSpace": "10.0 MB / 2.0 GB",
-        }
+        },
     }
 
 
@@ -455,12 +457,12 @@ def test_get_user_info_unauthorized(anonymous_client: Client) -> None:
     assert response.json() == {
         "loggedIn": False,
         "email": None,
-        'limitations': {
-            'dailyJobs': 5,
-            'diskSpace': '0.1 KB / 2.0 GB',
-            'filesize': '64M',
-            'todayJobsCount': 0,
-            'variantCount': 1000,
+        "limitations": {
+            "dailyJobs": 5,
+            "diskSpace": "0.1 KB / 2.0 GB",
+            "filesize": "64M",
+            "todayJobsCount": 0,
+            "variantCount": 1000,
         },
     }
 

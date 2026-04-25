@@ -1,16 +1,16 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-import pytest
 from datetime import timedelta
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
-from pytest_mock import MockerFixture
+import pytest
 from django.test import Client
 from django.utils import timezone
-
 from gain.annotation.annotation_config import AttributeInfo
 from gain.genomic_resources.repository import GenomicResourceRepo
+from pytest_mock import MockerFixture
+
 from web_annotation.models import AlleleQuery, User
 from web_annotation.pipeline_cache import LRUPipelineCache
 from web_annotation.single_allele_annotation.views import SingleAnnotation
@@ -59,7 +59,7 @@ def test_build_attribute_description_with_histogram(
 ) -> None:
     view = SingleAnnotation()
     resource = DummyResource("dummy_resource")
-    setattr(view, "_grr", DummyRepo(resource))
+    view._grr = cast(GenomicResourceRepo, DummyRepo(resource))
 
     attribute_info = AttributeInfo(
         "attr_name",
@@ -107,7 +107,7 @@ def test_build_attribute_description_stringifies_non_mapping_objects(
 ) -> None:
     view = SingleAnnotation()
     resource = DummyResource("dummy_resource")
-    setattr(view, "_grr", DummyRepo(resource))
+    view._grr = cast(GenomicResourceRepo, DummyRepo(resource))
 
     attribute_info = AttributeInfo(
         "attr_name",
@@ -363,7 +363,7 @@ def test_different_annotatables(
         "/api/single_allele/annotate",
         {
             "annotatable": annotatable,
-            "pipeline_id": "t4c8/t4c8_pipeline"
+            "pipeline_id": "t4c8/t4c8_pipeline",
         },
         content_type="application/json",
     )
@@ -376,8 +376,7 @@ def test_different_annotatables(
 @pytest.fixture
 def allele_query() -> AlleleQuery:
     user = User.objects.get(email="user@example.com")
-    query = AlleleQuery.objects.create(allele="chr1:100:A:T", owner=user)
-    return query
+    return AlleleQuery.objects.create(allele="chr1:100:A:T", owner=user)
 
 
 def test_update_note_sets_note_on_allele(

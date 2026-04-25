@@ -2,12 +2,13 @@
 import csv
 import io
 import pathlib
+
 import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
-from web_annotation.models import AnonymousUserQuota, User, UserQuota
 from web_annotation.management.commands.export_quotas import HEADER
+from web_annotation.models import AnonymousUserQuota, User, UserQuota
 
 
 @pytest.fixture
@@ -73,7 +74,10 @@ def test_refreshdaily_resets_anonymous_quota_daily_fields(
 
     anonymous_quota.refresh_from_db()
     assert anonymous_quota.daily_jobs == anonymous_quota.get_daily_job_max()
-    assert anonymous_quota.daily_variants == anonymous_quota.get_daily_variant_max()
+    assert (
+        anonymous_quota.daily_variants
+        == anonymous_quota.get_daily_variant_max()
+    )
 
 
 def test_refreshdaily_does_not_reset_monthly_fields(
@@ -171,7 +175,10 @@ def test_export_quotas_includes_anonymous_row(
 def test_export_quotas_user_row_quota_values(user_quota: UserQuota) -> None:
     rows = _run_export()
     user = User.objects.get(email="user@example.com")
-    row = next(r for r in rows if r["type"] == "user" and r["id"] == str(user.pk))
+    row = next(
+        r for r in rows
+        if r["type"] == "user" and r["id"] == str(user.pk)
+    )
     assert int(row["daily_jobs"]) == user_quota.daily_jobs
     assert int(row["monthly_jobs"]) == user_quota.monthly_jobs
     assert int(row["daily_variants"]) == user_quota.daily_variants
@@ -185,7 +192,10 @@ def test_export_quotas_anonymous_row_quota_values(
     row = next(r for r in rows if r["id"] == "127.0.0.1")
     assert int(row["daily_jobs"]) == anonymous_quota.daily_jobs
     assert int(row["monthly_jobs"]) == anonymous_quota.monthly_jobs
-    assert int(row["extra_allele_queries"]) == anonymous_quota.extra_allele_queries
+    assert (
+        int(row["extra_allele_queries"])
+        == anonymous_quota.extra_allele_queries
+    )
 
 
 def test_export_quotas_writes_to_file(

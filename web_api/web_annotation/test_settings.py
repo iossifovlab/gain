@@ -1,12 +1,12 @@
 # pylint: disable=wildcard-import,unused-wildcard-import
-import pathlib
-
-import tempfile
 import os
+import pathlib
+import tempfile
 import time
-import yaml
-from .settings import *  # noqa
 
+import yaml
+
+from .settings import *  # noqa
 
 # Dir for all data storage
 DATA_STORAGE_DIR = \

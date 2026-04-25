@@ -1,22 +1,21 @@
 """Views for annotator editor API."""
+from itertools import islice
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import yaml
-from itertools import islice
-from rest_framework.views import Request, Response, status
-
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotationConfigurationError,
     AnnotatorInfo,
 )
 from gain.annotation.annotation_factory import (
+    build_pipeline_annotator,
     check_for_repeated_attributes_in_pipeline,
     get_annotator_factory,
     get_available_annotator_types,
-    build_pipeline_annotator,
 )
+from rest_framework.views import Request, Response, status
 
 from web_annotation.annotation_base_view import AnnotationBaseView
 from web_annotation.authentication import WebAnnotationAuthentication
@@ -250,7 +249,7 @@ class AnnotatorConfig(EditorView):
         if "annotator_type" not in data:
             return Response(
                 {"error": "annotator_type is required"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         annotator_type = data.pop("annotator_type", None)
@@ -258,7 +257,7 @@ class AnnotatorConfig(EditorView):
         if not isinstance(annotator_type, str):
             return Response(
                 {"error": "annotator_type must be a string"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         result = self._get_annotator_config_template(annotator_type)
@@ -272,7 +271,7 @@ class AnnotatorConfig(EditorView):
 
 class AnnotatorTypes(EditorView):
     """View for available annotator types."""
-    def get(self, request: Request) -> Response:
+    def get(self, _request: Request) -> Response:
         """GET method to retrieve available annotator types."""
         annotator_types = self._get_annotator_types()
         return Response(annotator_types, status=status.HTTP_200_OK)
@@ -283,7 +282,7 @@ class AnnotatorAttributes(EditorView):
 
     ATTRIBUTE_PAGE_SIZE = 50
 
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
     def post(self, request: Request) -> Response:
         """POST method to get annotator attributes."""
@@ -292,7 +291,7 @@ class AnnotatorAttributes(EditorView):
         if "annotator_type" not in data:
             return Response(
                 {"error": "annotator_type is required"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         annotator_type = data.pop("annotator_type")
@@ -300,33 +299,33 @@ class AnnotatorAttributes(EditorView):
         if not isinstance(annotator_type, str):
             return Response(
                 {"error": "annotator_type must be a string"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         pipeline_id = data.pop("pipeline_id", None)
         if pipeline_id is None or not isinstance(pipeline_id, str):
             return Response(
                 {"error": "A pipeline_id string is required"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         page = data.pop("page", 0)
 
-        assert isinstance(page, int) and page >= 0, \
-            "Page must be a non-negative integer"
+        assert isinstance(page, int), "Page must be an integer"
+        assert page >= 0, "Page must be non-negative"
 
         search_term = data.pop("search", None)
 
         pipeline = self.get_pipeline(pipeline_id, request.user)
 
-        data["work_dir"] = "/tmp"
+        data["work_dir"] = "/tmp"  # noqa: S108
 
         annotator_config = AnnotatorInfo(annotator_type, [], data)
 
         if annotator_type not in get_available_annotator_types():
             return Response(
                 {"error": f"Unknown annotator_type: {annotator_type}"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         factory = get_annotator_factory(annotator_type)
@@ -334,8 +333,8 @@ class AnnotatorAttributes(EditorView):
             annotator = factory(pipeline, annotator_config)
         except AnnotationConfigurationError as e:
             return Response(
-                {"error": f"Invalid annotator configuration: {str(e)}"},
-                status=status.HTTP_400_BAD_REQUEST
+                {"error": f"Invalid annotator configuration: {e!s}"},
+                status=status.HTTP_400_BAD_REQUEST,
             )
         annotator_info = annotator.get_info()
         annotator_type = annotator_info.type
@@ -346,7 +345,7 @@ class AnnotatorAttributes(EditorView):
             if not isinstance(search_term, str):
                 return Response(
                     {"error": "Search term must be a string"},
-                    status=status.HTTP_400_BAD_REQUEST
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
             attribute_descs = list(filter(
                 lambda desc:
@@ -358,7 +357,7 @@ class AnnotatorAttributes(EditorView):
         page_attributes = islice(
             attribute_descs,
             page * self.ATTRIBUTE_PAGE_SIZE,
-            (page + 1) * self.ATTRIBUTE_PAGE_SIZE
+            (page + 1) * self.ATTRIBUTE_PAGE_SIZE,
         )
         attributes_result = []
         used_attributes = set()
@@ -390,7 +389,7 @@ class AnnotatorAttributes(EditorView):
 class PipelineAttributes(EditorView):
     """View for annotator attributes."""
 
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
     def get(self, request: Request) -> Response:
         """GET method to get pipeline attributes."""
@@ -398,7 +397,7 @@ class PipelineAttributes(EditorView):
         if pipeline_id is None:
             return Response(
                 {"error": "pipeline_id is required"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         pipeline = self.get_pipeline(pipeline_id, request.user)
@@ -408,7 +407,7 @@ class PipelineAttributes(EditorView):
             if not isinstance(attribute_type, str):
                 return Response(
                     {"error": "attribute_type must be a string"},
-                    status=status.HTTP_400_BAD_REQUEST
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
 
             attributes = pipeline.get_attributes_by_type(attribute_type)
@@ -423,7 +422,7 @@ class PipelineAttributes(EditorView):
 class AnnotatorYAML(EditorView):
     """View for annotator configuration in YAML format."""
 
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
     def post(self, request: Request) -> Response:
         """POST method to get annotator config in YAML format."""
@@ -432,19 +431,19 @@ class AnnotatorYAML(EditorView):
         if "annotator_type" not in data:
             return Response(
                 {"error": "annotator_type is required"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
         if "pipeline_id" not in data:
             return Response(
                 {"error": "pipeline_id is required"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         pipeline_id = data.pop("pipeline_id")
         if not isinstance(pipeline_id, str):
             return Response(
                 {"error": "pipeline_id must be a string"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         pipeline = self.get_pipeline(pipeline_id, request.user)
@@ -454,13 +453,13 @@ class AnnotatorYAML(EditorView):
         if not isinstance(annotator_type, str):
             return Response(
                 {"error": "annotator_type must be a string"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         if annotator_type not in get_available_annotator_types():
             return Response(
                 {"error": f"Unknown annotator_type: {annotator_type}"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         _, annotator_configs = AnnotationConfigParser.parse_raw(
@@ -478,8 +477,8 @@ class AnnotatorYAML(EditorView):
             )
         except AnnotationConfigurationError as e:
             return Response(
-                {"error": f"Invalid annotator configuration: {str(e)}"},
-                status=status.HTTP_400_BAD_REQUEST
+                {"error": f"Invalid annotator configuration: {e!s}"},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         config_dict = annotator_config.to_dict()
@@ -506,7 +505,7 @@ class ResourceAnnotators(EditorView):
         if resource_id is None:
             return Response(
                 {"error": "resource_id is required"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
@@ -514,7 +513,7 @@ class ResourceAnnotators(EditorView):
         except ValueError:
             return Response(
                 {"error": f"Resource '{resource_id}' not found"},
-                status=status.HTTP_404_NOT_FOUND
+                status=status.HTTP_404_NOT_FOUND,
             )
 
         configs = {}
@@ -573,7 +572,7 @@ class ResourceAnnotators(EditorView):
 class PipelineStatus(EditorView):
     """View for pipeline status and statistics."""
 
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
     def get(self, request: Request) -> Response:
         """GET method to retrieve pipeline status."""
@@ -581,7 +580,7 @@ class PipelineStatus(EditorView):
         if pipeline_id is None:
             return Response(
                 {"error": "pipeline_id is required"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         pipeline = self.get_pipeline(pipeline_id, request.user)

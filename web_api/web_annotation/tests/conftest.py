@@ -1,18 +1,21 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pathlib
 import shutil
+from collections.abc import Generator
+from typing import cast
+from urllib.parse import urlparse
+
 import pytest
 import pytest_mock
+from django.conf import LazySettings, settings
 from django.test import Client
-from django.conf import settings, LazySettings
-from typing import Generator, cast
-from urllib.parse import urlparse
 from gain.genomic_resources.repository import GenomicResourceRepo
-from gain.genomic_resources.repository_factory import \
-    build_genomic_resource_repository
+from gain.genomic_resources.repository_factory import (
+    build_genomic_resource_repository,
+)
 
-from web_annotation.tests.mailhog_client import MailhogClient
 from web_annotation.models import Job, User
+from web_annotation.tests.mailhog_client import MailhogClient
 
 
 @pytest.fixture(autouse=True)
@@ -42,19 +45,17 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def test_grr(mocker: pytest_mock.MockFixture) -> GenomicResourceRepo:
     """Genomic resource repository fixture."""
     grr_dir = pathlib.Path(__file__).parent / "fixtures" / "grr"
-    grr = build_genomic_resource_repository(
+    return build_genomic_resource_repository(
         {
             "id": "test",
             "type": "dir",
-            "directory": str(grr_dir)
-        }
+            "directory": str(grr_dir),
+        },
     )
-
-    return grr
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -140,8 +141,7 @@ def user_client() -> Client:
 
 @pytest.fixture
 def anonymous_client() -> Client:
-    client = Client()
-    return client
+    return Client()
 
 
 @pytest.fixture
@@ -164,6 +164,7 @@ def mail_client(mailhog_url: str, settings: LazySettings) -> MailhogClient:
     # always set up a locmem backend
     settings.EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
     return MailhogClient(mailhog_url)
+
 
 @pytest.fixture
 def mailhog_url(request: pytest.FixtureRequest) -> str:

@@ -50,6 +50,8 @@ dev = [
     "django-stubs==5.2.2",
     "mypy==1.15.0",
     "pylint",
+    "pylint-django",
+    "pylint-junit",
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
@@ -58,6 +60,7 @@ dev = [
     "pytest-xdist",
     "ruff==0.14.6",
     "types-channels",
+    "types-requests",
 ]
 
 [tool.hatch.version]

@@ -188,7 +188,7 @@ def contexts(
 
 
 def test_register_context(
-    context_fixture: PriorityGenomicContext,  # noqa: ARG001
+    context_fixture: PriorityGenomicContext,
     contexts: tuple[SimpleGenomicContext, SimpleGenomicContext],
 ) -> None:
     # Given:

@@ -1,5 +1,7 @@
 
 
+from typing import ClassVar
+
 from rest_framework.views import Request, Response, status
 
 from web_annotation.annotation_base_view import AnnotationBaseView
@@ -9,7 +11,7 @@ from web_annotation.authentication import WebAnnotationAuthentication
 class QuotasView(AnnotationBaseView):
     """View to get the quotas for the current user."""
 
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
     def get(self, request: Request) -> Response:
         """Get the quotas for the current user."""

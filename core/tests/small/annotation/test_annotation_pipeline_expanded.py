@@ -708,8 +708,8 @@ def test_value_transform_decorator_annotate() -> None:
 
         def annotate(
             self,
-            annotatable: Annotatable | None,  # noqa: ARG002
-            context: dict[str, Any],  # noqa: ARG002
+            annotatable: Annotatable | None,
+            context: dict[str, Any],
         ) -> dict[str, Any]:
             return {"doubled": 5, "normal": 10}
 

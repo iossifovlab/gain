@@ -88,7 +88,7 @@ def test_compute_and_save_statistics(
 
 def test_resource_info(
     tmp_path: pathlib.Path,
-    gene_sets_repo: GenomicResourceRepo,  # noqa: ARG001
+    gene_sets_repo: GenomicResourceRepo,
 ) -> None:
     assert not (tmp_path / "test/index.html").exists()
     assert not (tmp_path / "index.html").exists()
@@ -104,7 +104,7 @@ def test_resource_info(
 
 def test_repo_info(
     tmp_path: pathlib.Path,
-    gene_sets_repo: GenomicResourceRepo,  # noqa: ARG001
+    gene_sets_repo: GenomicResourceRepo,
 ) -> None:
     assert not (tmp_path / "test/index.html").exists()
     assert not (tmp_path / "index.html").exists()

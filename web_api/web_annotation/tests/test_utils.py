@@ -1,14 +1,19 @@
 
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import textwrap
 from pathlib import Path
 from subprocess import CalledProcessError
-import textwrap
+
 import pytest
 from pytest_mock import MockerFixture
 
-from web_annotation.utils import bytes_to_readable, convert_size, validate_vcf
-from web_annotation.utils import get_ip_from_request
-from web_annotation.utils import calculate_used_disk_space
+from web_annotation.utils import (
+    bytes_to_readable,
+    calculate_used_disk_space,
+    convert_size,
+    get_ip_from_request,
+    validate_vcf,
+)
 
 
 @pytest.mark.parametrize(
@@ -22,7 +27,7 @@ from web_annotation.utils import calculate_used_disk_space
         (15600, "15.6 KB"),
         (3333, "3.3 KB"),
         (150, "0.1 KB"),
-    ]
+    ],
 )
 def test_bytes_to_readable(
   raw_bytes: int,
@@ -43,7 +48,7 @@ def test_bytes_to_readable(
         ("3.3 KB", 3300),
         ("0.1 KB", 100),
         (679, 679),
-    ]
+    ],
 )
 def test_readable_to_bytes(
   readable: str,
@@ -133,7 +138,7 @@ def test_validate_vcf_file_invalid_header(
         ("203.0.113.45, 198.51.100.20, 192.0.2.1", None, "203.0.113.45"),
         (None, "192.168.1.50", "192.168.1.50"),
         ("", "10.0.0.5", "10.0.0.5"),
-    ]
+    ],
 )
 def test_get_ip_from_request(
     mocker: MockerFixture,
@@ -146,7 +151,7 @@ def test_get_ip_from_request(
         "HTTP_X_FORWARDED_FOR": x_forwarded_for,
         "REMOTE_ADDR": remote_addr,
     }
-    
+
     assert get_ip_from_request(mock_request) == expected_ip
 
 
@@ -194,4 +199,3 @@ def test_calculate_used_disk_space_with_numeric_disk_sizes(
     mock_user.get_jobs.return_value = [mock_job1, mock_job2]
 
     assert calculate_used_disk_space(mock_user) == 4000
-

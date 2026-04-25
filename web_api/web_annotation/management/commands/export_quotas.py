@@ -6,7 +6,6 @@ from django.core.management.base import BaseCommand
 
 from web_annotation.models import AnonymousUserQuota, UserQuota
 
-
 FIELDS = [
     "daily_jobs",
     "monthly_jobs",
@@ -24,7 +23,7 @@ FIELDS = [
     "last_monthly_reset",
 ]
 
-HEADER = ["type", "id", "email"] + FIELDS
+HEADER = ["type", "id", "email", *FIELDS]
 
 
 class Command(BaseCommand):
@@ -38,7 +37,7 @@ class Command(BaseCommand):
             help="Output file path. Defaults to stdout (-).",
         )
 
-    def handle(self, *args: Any, **options: Any) -> None:
+    def handle(self, *_args: Any, **options: Any) -> None:
         output_path = options["output"]
         if output_path == "-":
             self._write(self.stdout)
@@ -50,14 +49,14 @@ class Command(BaseCommand):
         writer = csv.writer(stream)
         writer.writerow(HEADER)
 
-        for quota in UserQuota.objects.select_related("user").all():
+        for user_quota in UserQuota.objects.select_related("user").all():
             writer.writerow(
-                ["user", quota.user.pk, quota.user.email]
-                + [getattr(quota, f) for f in FIELDS],
+                ["user", user_quota.user.pk, user_quota.user.email]
+                + [getattr(user_quota, f) for f in FIELDS],
             )
 
-        for quota in AnonymousUserQuota.objects.all():
+        for anon_quota in AnonymousUserQuota.objects.all():
             writer.writerow(
-                ["anonymous", quota.ip, ""]
-                + [getattr(quota, f) for f in FIELDS],
+                ["anonymous", anon_quota.ip, ""]
+                + [getattr(anon_quota, f) for f in FIELDS],
             )

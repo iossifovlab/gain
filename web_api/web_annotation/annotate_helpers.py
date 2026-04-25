@@ -6,7 +6,7 @@ from django.core.files.uploadedfile import UploadedFile
 
 
 def is_compressed_filename(path: str) -> bool:
-    return path.endswith(".gz") or path.endswith(".bgz")
+    return path.endswith((".gz", ".bgz"))
 
 
 def extract_header(path: str, input_separator: str) -> list[str]:
@@ -67,9 +67,8 @@ def check_separator(separator: str, lines: list[str]) -> bool:
 
     if longest_line_len in (0, 1):
         return False
-    if longest_line_len == shortest_line_len:
-        return True
-    return False
+    return longest_line_len == shortest_line_len
+
 
 def get_separator(lines: list[str]) -> str | None:
     for separator in [",", "\t"]:
@@ -85,7 +84,9 @@ def columns_file_preview(
     """Generate a preview of the columns file."""
     if infile.name and (
             infile.name.endswith(".gz") or infile.name.endswith(".bgz")):
-        raw_content: UploadedFile | gzip.GzipFile = gzip.open(infile, "rb")
+        raw_content: UploadedFile | gzip.GzipFile = gzip.open(  # noqa: SIM115
+            infile, "rb",
+        )
     else:
         raw_content = infile
 

@@ -1,18 +1,22 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import operator
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, cast
-import pytest
-from pytest_mock import MockerFixture
+from typing import cast
 
+import pytest
 from gain.annotation.annotatable import VCFAllele
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.genomic_resources.repository import GenomicResourceRepo
+from pytest_mock import MockerFixture
+
 from web_annotation.executor import (
     SequentialTaskExecutor,
     ThreadedTaskExecutor,
 )
 from web_annotation.pipeline_cache import (
+    LoadingDetails,
     LRUPipelineCache,
     ThreadSafePipeline,
 )
@@ -78,7 +82,7 @@ def test_thread_safe_pipeline_concurrent(
         future.result() for future in as_completed(futures)
     ]
 
-    assert sorted(results, key=lambda x: x["pos1"]) == expected_results
+    assert sorted(results, key=operator.itemgetter("pos1")) == expected_results
 
     pipeline.close()
     assert not pipeline._is_open  # pylint: disable=protected-access
@@ -106,7 +110,7 @@ def test_lru_pipeline_cache_uses_executor(
 
 
 def test_lru_pipeline_cache_basic_sources(
-    test_grr: GenomicResourceRepo
+    test_grr: GenomicResourceRepo,
 ) -> None:
     lru_cache = LRUPipelineCache(test_grr, 2)
 
@@ -169,7 +173,7 @@ def test_lru_pipeline_cache_callbacks(
     )
     deleted_pipelines = []
 
-    def delete_callback(pipeline: ThreadSafePipeline) -> None:
+    def delete_callback(pipeline: LoadingDetails) -> None:
         deleted_pipelines.append(pipeline)
 
     lru_cache.put_pipeline(

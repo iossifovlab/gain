@@ -55,7 +55,7 @@ class CustomWebsocketCommunicator(ApplicationCommunicator):
         """
         # Make sure we have exactly one of the arguments
         assert bool(text_data) != bool(
-            bytes_data
+            bytes_data,
         ), "You must supply exactly one of text_data or bytes_data"
         # Send the right kind of event
         if text_data:
@@ -65,7 +65,7 @@ class CustomWebsocketCommunicator(ApplicationCommunicator):
                 {"type": "websocket.receive", "text": text_data})
         else:
             assert isinstance(
-                bytes_data, bytes
+                bytes_data, bytes,
             ), "The bytes_data argument must be bytes"
             await self.send_input(
                 {"type": "websocket.receive", "bytes": bytes_data})
@@ -94,11 +94,11 @@ class CustomWebsocketCommunicator(ApplicationCommunicator):
         # Pull out the right key and typecheck it for our users
         if "text" in response:
             assert isinstance(
-                response["text"], str
+                response["text"], str,
             ), f"Text frame payload is not str, it is {type(response['text'])}"
             return response["text"]
         assert isinstance(
-            response["bytes"], bytes
+            response["bytes"], bytes,
         ), (
             "Binary frame payload is not bytes, "
             f"it is {type(response['bytes'])}"
@@ -111,7 +111,7 @@ class CustomWebsocketCommunicator(ApplicationCommunicator):
         """
         payload = await self.receive_from(timeout)
         assert isinstance(
-            payload, str
+            payload, str,
         ), f"JSON data is not a text frame, it is {type(payload)}"
         return cast(dict, json.loads(payload))
 

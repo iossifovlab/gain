@@ -3,6 +3,8 @@ import logging
 from datetime import timedelta
 from typing import Any
 
+from django.conf import settings
+from django.utils import timezone
 from gain.annotation.annotate_columns import annotate_columns
 from gain.annotation.annotate_vcf import annotate_vcf
 from gain.annotation.annotation_pipeline import AnnotationPipeline
@@ -10,9 +12,6 @@ from gain.genomic_resources.reference_genome import (
     ReferenceGenome,
     build_reference_genome_from_resource,
 )
-from django.conf import settings
-
-from django.utils import timezone
 
 from .models import AnonymousJob, AnonymousJobDetails, BaseJob, Job, JobDetails
 
@@ -33,7 +32,7 @@ def specify_job(  # pylint: disable=too-many-arguments
     col_vcf_like: str = "",
     col_variant: str = "",
     col_location: str = "",
-) -> Job| AnonymousJob:
+) -> Job | AnonymousJob:
     """Specify and update a job's annotation columns."""
     details = job.get_job_details()
     if job.status != Job.Status.WAITING:
@@ -66,7 +65,7 @@ def get_args_vcf(
         "output_path": str(job.result_path),
         "args": {
             "work_dir": storage_dir,
-        }
+        },
     }
 
 
@@ -154,7 +153,7 @@ def get_args_columns(
     }
     if job.reference_genome != "":
         fn_args["reference_genome"] = build_reference_genome_from_resource(
-            pipeline.repository.get_resource(job.reference_genome)
+            pipeline.repository.get_resource(job.reference_genome),
         )
 
     return fn_args
@@ -173,6 +172,8 @@ def run_columns_job(  # pylint: disable=too-many-branches
     annotate_columns(
         input_path, pipeline, output_path,
         args, reference_genome=reference_genome)
+
+
 def clean_old_jobs() -> None:
     """Task for running annotation."""
     delete_old_jobs(settings.JOB_CLEANUP_INTERVAL_DAYS)

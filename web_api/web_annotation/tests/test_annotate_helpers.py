@@ -91,12 +91,12 @@ def test_columns_file_preview_bad_separator_handling() -> None:
     preview = columns_file_preview(uploaded_file, separator=",")
 
     assert preview["separator"] == ","
-    assert preview["columns"] == ['col1\tcol2']
+    assert preview["columns"] == ["col1\tcol2"]
     assert preview["preview"] == [
-        {'col1\tcol2': '1\t2'},
-        {'col1\tcol2': '3,4\t4'},
-        {'col1\tcol2': '5,1\t6'},
-        {'col1\tcol2': '7\t8'},
+        {"col1\tcol2": "1\t2"},
+        {"col1\tcol2": "3,4\t4"},
+        {"col1\tcol2": "5,1\t6"},
+        {"col1\tcol2": "7\t8"},
     ]
 
 

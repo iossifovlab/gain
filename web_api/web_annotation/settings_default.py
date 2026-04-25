@@ -12,9 +12,10 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 import os
 import pathlib
 from typing import Any
-from gain.genomic_resources.repository_factory import \
-    get_default_grr_definition_path
 
+from gain.genomic_resources.repository_factory import (
+    get_default_grr_definition_path,
+)
 
 DEFAULT_DATA_DIR = str(pathlib.Path(__file__).parent.parent / "data")
 if not os.path.exists(DEFAULT_DATA_DIR):
@@ -76,8 +77,8 @@ APPEND_SLASH = False
 
 SECRET_KEY = os.environ.get(
     "GPFWA_SECRET_KEY",
-    'Ohze5Led4wi5xeirochee7mai8daet4thae7ZuquahmeeXaph6Ai5Riphiazohchaed8eec'
-    'aena6jongietoh9Ohye2ahpee7iduequ5iboovo8lue1phaib',
+    "Ohze5Led4wi5xeirochee7mai8daet4thae7ZuquahmeeXaph6Ai5Riphiazohchaed8eec"
+    "aena6jongietoh9Ohye2ahpee7iduequ5iboovo8lue1phaib",
 )
 
 # SECURITY WARNING: don't run with debug turned on in production!
@@ -92,16 +93,16 @@ if os.environ.get("GPFWA_PUBLIC_NAME"):
 # Application definition
 
 INSTALLED_APPS = [
-    'daphne',
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
-    'rest_framework',
-    'corsheaders',
-    'web_annotation.apps.WebAnnotationConfig',
+    "daphne",
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "rest_framework",
+    "corsheaders",
+    "web_annotation.apps.WebAnnotationConfig",
 ]
 
 # List of finder classes that know how to find static files in
@@ -112,39 +113,39 @@ STATICFILES_FINDERS = [
 ]
 
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
-    'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-ROOT_URLCONF = 'web_annotation.urls'
+ROOT_URLCONF = "web_annotation.urls"
 
 TEMPLATES = [
     {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
-        'APP_DIRS': True,
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
             ],
         },
     },
 ]
 
-WSGI_APPLICATION = 'web_annotation.wsgi.application'
-ASGI_APPLICATION = 'web_annotation.asgi.application'
+WSGI_APPLICATION = "web_annotation.wsgi.application"
+ASGI_APPLICATION = "web_annotation.asgi.application"
 
 CHANNEL_LAYERS = {
     "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer"
+        "BACKEND": "channels.layers.InMemoryChannelLayer",
     },
 }
 
@@ -180,21 +181,21 @@ else:
 
 AUTH_PASSWORD_VALIDATORS = [
     {
-        'NAME':
-        'django.contrib.auth.password_validation'
-        '.UserAttributeSimilarityValidator',
+        "NAME":
+        "django.contrib.auth.password_validation"
+        ".UserAttributeSimilarityValidator",
     },
     {
-        'NAME':
-        'django.contrib.auth.password_validation.MinimumLengthValidator',
+        "NAME":
+        "django.contrib.auth.password_validation.MinimumLengthValidator",
     },
     {
-        'NAME':
-        'django.contrib.auth.password_validation.CommonPasswordValidator',
+        "NAME":
+        "django.contrib.auth.password_validation.CommonPasswordValidator",
     },
     {
-        'NAME':
-        'django.contrib.auth.password_validation.NumericPasswordValidator',
+        "NAME":
+        "django.contrib.auth.password_validation.NumericPasswordValidator",
     },
 ]
 
@@ -202,39 +203,36 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = "en-us"
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = "UTC"
 
 USE_I18N = True
 
 USE_TZ = True
 
 
-# Static files (CSS, JavaScript, Images)
+# Static files (CSS, JavaScript, Images).
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
-
-# STATIC_URL = '/static/'
-# STATIC_ROOT = 'static-root'
 
 # Uploaded static files
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT = 'media-root'
+MEDIA_URL = "/media/"
+MEDIA_ROOT = "media-root"
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
-    'DEFAULT_PAGINATION_CLASS': None,
-    'PAGE_SIZE': None,
-    'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework.authentication.BasicAuthentication',
+    "DEFAULT_PAGINATION_CLASS": None,
+    "PAGE_SIZE": None,
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework.authentication.BasicAuthentication",
     ),
-    'DEFAULT_THROTTLE_RATES': {
-        'user': '10/minute'
+    "DEFAULT_THROTTLE_RATES": {
+        "user": "10/minute",
     },
 }
 
@@ -266,8 +264,8 @@ EMAIL_REDIRECT_ENDPOINT = os.environ.get(
     "GPFWA_EMAIL_REDIRECT_ENDPOINT", "http://localhost:4200")
 
 
-STATIC_URL = '/static/'
-STATIC_ROOT = 'static-root'
+STATIC_URL = "/static/"
+STATIC_ROOT = "static-root"
 
 LOG_DIR = os.environ.get("GPFWA_LOG_DIR", f"{DATA_STORAGE_DIR}/logs")
 if not os.path.exists(LOG_DIR):

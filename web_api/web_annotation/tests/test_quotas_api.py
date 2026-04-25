@@ -1,6 +1,8 @@
+# pylint: disable=W0621,C0114,C0116,W0212,W0613
 from typing import Any
-from django.test import Client
+
 import pytest
+from django.test import Client
 
 
 @pytest.mark.parametrize("client,expected_limits", [

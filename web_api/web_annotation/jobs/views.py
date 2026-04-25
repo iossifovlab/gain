@@ -1,29 +1,32 @@
 """Module with views for job operations."""
 import gzip
 import logging
+import time
 from pathlib import Path
 from subprocess import CalledProcessError
-import time
-from typing import Any, cast
-from gain.annotation.annotation_factory import build_annotation_pipeline
-from gain.annotation.record_to_annotatable import build_record_to_annotatable
+from typing import Any, ClassVar, cast
+
 from django.core.files.uploadedfile import UploadedFile
 from django.db.models import ObjectDoesNotExist, QuerySet
 from django.http import FileResponse, QueryDict
 from django.shortcuts import get_object_or_404
+from gain.annotation.annotation_factory import build_annotation_pipeline
+from gain.annotation.record_to_annotatable import build_record_to_annotatable
 from pysam import VariantFile
-from rest_framework import generics
-from rest_framework import views, permissions
+from rest_framework import generics, permissions, views
 from rest_framework.parsers import MultiPartParser
 from rest_framework.request import MultiValueDict
 from rest_framework.views import Request, Response
+
 from web_annotation.annotate_helpers import (
     columns_file_preview,
     extract_head,
     is_compressed_filename,
 )
-from web_annotation.annotation_base_view import AnnotationBaseView, \
-    count_input_variants
+from web_annotation.annotation_base_view import (
+    AnnotationBaseView,
+    count_input_variants,
+)
 from web_annotation.authentication import WebAnnotationAuthentication
 from web_annotation.models import (
     AnonymousJob,
@@ -35,7 +38,6 @@ from web_annotation.models import (
 )
 from web_annotation.permissions import has_job_permission
 from web_annotation.serializers import JobSerializer
-from web_annotation.utils import bytes_to_readable, validate_vcf
 from web_annotation.tasks import (
     get_args_columns,
     get_args_vcf,
@@ -43,7 +45,7 @@ from web_annotation.tasks import (
     run_vcf_job,
     specify_job,
 )
-
+from web_annotation.utils import bytes_to_readable, validate_vcf
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +64,7 @@ ANNOTATABLES = {
 class ListGenomePipelines(AnnotationBaseView):
     """View for listing available single annotation genomes."""
 
-    def get(self, request: Request) -> Response:
+    def get(self, _request: Request) -> Response:
         """Return list of genome pipelines for single annotation."""
         return Response(
             self.grr_genomes,
@@ -72,15 +74,15 @@ class ListGenomePipelines(AnnotationBaseView):
 
 class JobAll(generics.ListAPIView):
     """Generic view for listing all jobs."""
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
     queryset = Job.objects.filter(is_active=True)
     serializer_class = JobSerializer
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes: ClassVar = [permissions.IsAdminUser]
 
 
 class JobList(generics.ListAPIView):
     """Generic view for listing jobs for the user."""
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
     def get_queryset(self) -> QuerySet:
         assert isinstance(
@@ -91,13 +93,13 @@ class JobList(generics.ListAPIView):
                 owner=cast(User, self.request.user.as_owner), is_active=True)
 
     serializer_class = JobSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes: ClassVar = [permissions.IsAuthenticated]
 
 
 class JobDetail(AnnotationBaseView):
     """View for listing job details."""
 
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
     def get_job(
         self,
@@ -127,14 +129,14 @@ class JobDetail(AnnotationBaseView):
 
         response = {
             "id": job.pk,
-            "name": job.name \
+            "name": job.name
                 if isinstance(job, Job) else "anonymous_job",
             "owner": request.user.identifier,
             "created": str(job.created),
             "duration": job.duration,
             "command_line": job.command_line,
             "status": Job.Status(job.status).name.lower(),
-            "result_filename": Path(job.result_path).name \
+            "result_filename": Path(job.result_path).name
                 if isinstance(job, Job) else "result",
             "error": job.error,
             "size": bytes_to_readable(int(job.disk_size)),
@@ -178,9 +180,9 @@ class JobDetail(AnnotationBaseView):
 class AnnotateVCF(AnnotationBaseView):
     """View for creating jobs."""
 
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
-    parser_classes = [MultiPartParser]
+    parser_classes: ClassVar = [MultiPartParser]
 
     def _validate_vcf(
         self,
@@ -188,10 +190,7 @@ class AnnotateVCF(AnnotationBaseView):
         user: User,
     ) -> bool:
         """Check if a variants file does not exceed the variants limit."""
-        if not user.is_superuser:
-            limit = self.max_variants
-        else:
-            limit = None
+        limit = self.max_variants if not user.is_superuser else None
 
         return validate_vcf(file_path, limit)
 
@@ -241,17 +240,19 @@ class AnnotateVCF(AnnotationBaseView):
             variants_count = count_input_variants(
                 job.input_path, job.annotation_type,
             )
-            request.user.get_quota().job_complete(variants_count, attributes_count)
+            request.user.get_quota().job_complete(
+                variants_count, attributes_count,
+            )
 
         def on_failure(exception: BaseException) -> None:
             """Callback when annotation fails."""
             logger.error(
-                "VCF annotation job failed with exception: %s", str(exception)
+                "VCF annotation job failed with exception: %s", exception,
             )
             job.duration = time.time() - start_time
             reason = (
                 f"Unexpected error, {type(exception)}\n"
-                f"{str(exception)}"
+                f"{exception!s}"
             )
             if isinstance(exception, CalledProcessError):
                 reason = (
@@ -263,7 +264,7 @@ class AnnotateVCF(AnnotationBaseView):
             ):
                 reason = (
                     "Failed to execute annotate_vcf\n"
-                    f"{str(exception)}"
+                    f"{exception!s}"
                 )
             logger.error("VCF annotation job failed!\n%s", reason)
             job.update_job_failed(str(args), str(exception))
@@ -292,9 +293,9 @@ class AnnotateVCF(AnnotationBaseView):
 class AnnotateColumns(AnnotationBaseView):
     """View for creating jobs."""
 
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
-    parser_classes = [MultiPartParser]
+    parser_classes: ClassVar = [MultiPartParser]
 
     def is_vcf_file(self, file: UploadedFile, input_path: Path) -> bool:
         """Check if a file is a VCF file."""
@@ -318,12 +319,12 @@ class AnnotateColumns(AnnotationBaseView):
         if user.is_superuser:
             return True
 
-        if is_compressed_filename(str(filepath)):
-            file = gzip.open(filepath, "rt")
-        else:
-            file = filepath.open("rt")
-
-        with file:
+        opener = (
+            gzip.open(filepath, "rt")  # noqa: SIM115
+            if is_compressed_filename(str(filepath))
+            else filepath.open("rt")
+        )
+        with opener as file:
             for i, _ in enumerate(file, start=-1):
                 if i >= self.max_variants:
                     logger.debug(
@@ -396,7 +397,9 @@ class AnnotateColumns(AnnotationBaseView):
             variants_count = count_input_variants(
                 job.input_path, job.annotation_type,
             )
-            request.user.get_quota().job_complete(variants_count, attributes_count)
+            request.user.get_quota().job_complete(
+                variants_count, attributes_count,
+            )
 
         def on_failure(exception: BaseException) -> None:
             job.duration = time.time() - start_time
@@ -414,7 +417,7 @@ class AnnotateColumns(AnnotationBaseView):
             ):
                 reason = (
                     "Failed to execute annotate_vcf\n"
-                    f"{str(exception)}"
+                    f"{exception!s}"
                 )
             logger.error("columns annotation job failed!\n%s", reason)
             job.update_job_failed(str(args), str(exception))
@@ -442,9 +445,9 @@ class AnnotateColumns(AnnotationBaseView):
 class ColumnValidation(AnnotationBaseView):
     """Validate if column selection returns annotatable."""
 
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
-    ANNOTATABLES = {
+    ANNOTATABLES: ClassVar = {
         "RecordToCNVAllele": "CNV Allele",
         "RecordToRegion": "Region",
         "RecordToVcfAllele": "VCF Allele",
@@ -466,7 +469,7 @@ class ColumnValidation(AnnotationBaseView):
                     "errors": (
                         "File header must be provided "
                         "for column validation!"
-                    )
+                    ),
                 },
                 status=views.status.HTTP_200_OK)
         assert isinstance(all_columns, list)
@@ -485,7 +488,7 @@ class ColumnValidation(AnnotationBaseView):
                 build_record_to_annotatable(
                     column_mapping,
                     set(all_columns),
-                )
+                ),
             ).__name__
             annotatable_name = self.ANNOTATABLES.get(
                 annotatable_name,
@@ -507,14 +510,14 @@ class ColumnValidation(AnnotationBaseView):
                 annotatable_name,
                 annotatable_name,
             ), "errors": ""},
-            status=views.status.HTTP_200_OK
+            status=views.status.HTTP_200_OK,
         )
 
 
 class JobGetFile(views.APIView):
     """View for downloading job files."""
 
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
     def get(
         self, request: Request, pk: int, file: str,
@@ -554,7 +557,7 @@ class JobGetFile(views.APIView):
 class PreviewFileUpload(AnnotationBaseView):
     """Try to determine the separator of a file split into columns"""
 
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
     def post(self, request: Request) -> Response:
         """Determine the separator of a file split into columns."""

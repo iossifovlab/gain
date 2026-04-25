@@ -1,11 +1,12 @@
 """Module for thread-safe annotation utilities."""
+import logging
+import time
+from collections.abc import Callable, Sequence
 from concurrent.futures import CancelledError, Future
 from dataclasses import dataclass
-import logging
 from threading import Lock, RLock
-import time
 from types import TracebackType
-from typing import Callable, Sequence
+
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
     AnnotationPreamble,
@@ -13,13 +14,11 @@ from gain.annotation.annotation_config import (
     AttributeInfo,
     RawPipelineConfig,
 )
+from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline, Annotator
 from gain.genomic_resources.repository import GenomicResourceRepo
 
-from gain.annotation.annotation_factory import load_pipeline_from_yaml
-
 from web_annotation.executor import ThreadedTaskExecutor
-
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +55,7 @@ class ThreadSafePipeline(AnnotationPipeline):
     @property
     def _is_open(self) -> bool:  # type: ignore
         """Return whether the pipeline is open."""
-        return self.pipeline._is_open  # pylint: disable=protected-access
+        return self.pipeline._is_open  # noqa: SLF001
 
     def get_info(self) -> list[AnnotatorInfo]:
         return self.pipeline.get_info()
@@ -192,8 +191,8 @@ class LRUPipelineCache:
         *,
         begin_load_callback: Callable[[], None] | None = None,
         finish_load_callback: Callable[[], None] | None = None,
-        delete_callback: Callable[[ThreadSafePipeline], None] | None = None,
-        force: bool = False
+        delete_callback: Callable[[LoadingDetails], None] | None = None,
+        force: bool = False,
     ) -> None:
         """Put a pipeline into the cache."""
         pipeline_config_hash = hash(pipeline_config)
@@ -217,7 +216,7 @@ class LRUPipelineCache:
                 time_started=started,
                 pipeline_id=pipeline_id,
                 config_hash=pipeline_config_hash,
-                future=pipeline_future
+                future=pipeline_future,
             )
 
             if len(self._cache) >= self.capacity:

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from abc import abstractmethod
-import time
-import uuid
+import logging
 import os
 import pathlib
-import logging
+import time
+import uuid
+from abc import abstractmethod
 from datetime import timedelta
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, AnonymousUser
@@ -21,7 +21,7 @@ from web_annotation.mail import send_email
 logger = logging.getLogger(__name__)
 
 
-class BaseUser():
+class BaseUser:
     """Base user class for helper functions."""
 
     @property
@@ -197,7 +197,7 @@ class User(AbstractUser):
     """Model for user accounts."""
     email = models.EmailField(("email address"), unique=True)
     USERNAME_FIELD = "email"
-    REQUIRED_FIELDS = []
+    REQUIRED_FIELDS: ClassVar = []
     job_counter = models.IntegerField(default=0)
 
     @property
@@ -246,11 +246,10 @@ class User(AbstractUser):
 
     def create_job(self, **kwargs: Any) -> Job:
         """Create a new job for the user."""
-        job = self.job_class(
+        return self.job_class(
             owner=self,
             **kwargs,
         )
-        return job
 
     def get_jobs(self) -> list[Job]:
         """Get user's jobs."""
@@ -292,15 +291,12 @@ class User(AbstractUser):
             hour=0, minute=0, second=0, microsecond=0)
         jobs_made = self.job_class.objects.filter(
             created__gte=today, owner__exact=self.pk)
-        if len(jobs_made) >= cast(int, settings.QUOTAS["daily_jobs"]):
-            return False
-        return True
+        return not len(jobs_made) >= cast(int, settings.QUOTAS["daily_jobs"])
 
     def get_quota(self) -> Quota:
         """Get the quota for this user."""
         try:
-            quota = UserQuota.objects.get(user=self)
-            return quota
+            return UserQuota.objects.get(user=self)
         except UserQuota.DoesNotExist:
             quota = UserQuota(user=self)
             quota.reset_daily()
@@ -347,12 +343,11 @@ class WebAnnotationAnonymousUser(BaseUser, AnonymousUser):
 
     def create_job(self, **kwargs: Any) -> AnonymousJob:
         """Create a new job for the anonymous user."""
-        job = self.job_class(
+        return self.job_class(
             owner=self.identifier,
             ip=self.ip,
             **kwargs,
         )
-        return job
 
     def get_jobs(self) -> list[AnonymousJob]:
         """Get user's jobs."""
@@ -375,15 +370,12 @@ class WebAnnotationAnonymousUser(BaseUser, AnonymousUser):
             hour=0, minute=0, second=0, microsecond=0)
         jobs_made = self.job_class.objects.filter(
             created__gte=today, ip=self.ip)
-        if len(jobs_made) >= cast(int, settings.QUOTAS["daily_jobs"]):
-            return False
-        return True
+        return not len(jobs_made) >= cast(int, settings.QUOTAS["daily_jobs"])
 
     def get_quota(self) -> Quota:
         """Get the quota for this IP."""
         try:
-            quota = AnonymousUserQuota.objects.get(ip=self.ip)
-            return quota
+            return AnonymousUserQuota.objects.get(ip=self.ip)
         except AnonymousUserQuota.DoesNotExist:
             quota = AnonymousUserQuota(ip=self.ip)
             quota.reset_daily()
@@ -442,8 +434,8 @@ class BasePipeline(models.Model):
 class Pipeline(BasePipeline):
     """Model for saving user created pipeline configs"""
     owner = models.ForeignKey(
-        'web_annotation.User',
-        related_name='pipelines',
+        "web_annotation.User",
+        related_name="pipelines",
         on_delete=models.CASCADE,
 
     )
@@ -480,8 +472,8 @@ class AlleleQuery(models.Model):
     """Model for saving user created pipeline configs"""
     allele = models.CharField(max_length=1024)
     owner = models.ForeignKey(
-        'web_annotation.User',
-        related_name='allele_query',
+        "web_annotation.User",
+        related_name="allele_query",
         on_delete=models.CASCADE,
     )
     note = models.CharField(max_length=1024, default="")
@@ -576,8 +568,8 @@ class Job(BaseJob):
     """Model for storing job data."""
 
     owner = models.ForeignKey(
-        'web_annotation.User',
-        related_name='jobs',
+        "web_annotation.User",
+        related_name="jobs",
         on_delete=models.CASCADE,
     )
 
@@ -657,26 +649,26 @@ class JobDetails(BaseJobDetails):
     """Model for storing job details for tsv files."""
     class Meta(BaseJobDetails.Meta):  # pylint: disable=too-few-public-methods
         """Meta class for details model."""
-        constraints = [
-            models.UniqueConstraint(fields=["job"], name="unique_job_details")
+        constraints: ClassVar = [
+            models.UniqueConstraint(fields=["job"], name="unique_job_details"),
         ]
     job = models.ForeignKey(
-        'web_annotation.Job', related_name='details', on_delete=models.CASCADE)
+        "web_annotation.Job", related_name="details", on_delete=models.CASCADE)
 
 
 class AnonymousJobDetails(BaseJobDetails):
     """Model for storing job details for tsv files."""
     class Meta(BaseJobDetails.Meta):  # pylint: disable=too-few-public-methods
         """Meta class for details model."""
-        constraints = [
+        constraints: ClassVar = [
             models.UniqueConstraint(
                 fields=["job"],
                 name="unique_anonymous_job_details",
-            )
+            ),
         ]
     job = models.ForeignKey(
-        'web_annotation.AnonymousJob',
-        related_name='details',
+        "web_annotation.AnonymousJob",
+        related_name="details",
         on_delete=models.CASCADE)
 
 
@@ -742,9 +734,7 @@ class ResetPasswordCode(BaseVerificationCode):
         # pylint: disable=import-outside-toplevel
         max_delta = timedelta(
             hours=getattr(settings, "RESET_PASSWORD_TIMEOUT_HOURS", 24))
-        if timezone.now() - self.created_at > max_delta:
-            return False
-        return True
+        return not timezone.now() - self.created_at > max_delta
 
 
 class AccountConfirmationCode(BaseVerificationCode):
@@ -862,31 +852,30 @@ class Quota(models.Model):
         """Check if the user has quota for a single allele query."""
         if self.extra_allele_queries > 0:
             return True
-        if self.daily_allele_queries <= 0 or self.monthly_allele_queries <= 0:
-            return False
-        return True
+        return not (
+            self.daily_allele_queries <= 0
+            or self.monthly_allele_queries <= 0
+        )
 
     def check_job_quota(self) -> bool:
         """Check if the user has quota for a job."""
         if self.extra_jobs > 0:
             return True
-        if self.daily_jobs <= 0 or self.monthly_jobs <= 0:
-            return False
-        return True
+        return not (self.daily_jobs <= 0 or self.monthly_jobs <= 0)
 
     def check_variant_quota(self, variants_count: int) -> bool:
         """Check if the user has the necessary variant quota."""
-        if self.extra_variants > 0:
-            if self.monthly_variants + self.extra_variants >= variants_count:
-                return True
+        if (
+            self.extra_variants > 0
+            and self.monthly_variants + self.extra_variants >= variants_count
+        ):
+            return True
         if self.daily_variants <= 0 or self.monthly_variants <= 0:
             return False
-        if (
+        return not (
             self.daily_variants < variants_count
             or self.monthly_variants < variants_count
-        ):
-            return False
-        return True
+        )
 
     def check_attribute_quota(self, attributes_count: int) -> bool:
         """Check if the user has the necessary attribute quota."""
@@ -896,12 +885,10 @@ class Quota(models.Model):
                 return True
         if self.daily_attributes <= 0 or self.monthly_attributes <= 0:
             return False
-        if (
+        return not (
             self.daily_attributes < attributes_count
             or self.monthly_attributes < attributes_count
-        ):
-            return False
-        return True
+        )
 
     def single_allele_allowed(self, attributes_count: int) -> bool:
         """Check if a single query is allowed."""
@@ -983,8 +970,8 @@ class UserQuota(Quota):
     """Quota limits for authenticated users."""
 
     user = models.ForeignKey(
-        'web_annotation.User',
-        related_name='quota',
+        "web_annotation.User",
+        related_name="quota",
         on_delete=models.CASCADE,
     )
 

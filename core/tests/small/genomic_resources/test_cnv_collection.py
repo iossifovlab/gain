@@ -255,7 +255,7 @@ def test_cnv_collection_implementation_do_min_max(
 
 def test_cli_manage_cnv_collection_histograms(
     tmp_path: pathlib.Path,
-    test_grr: GenomicResourceRepo,  # noqa: ARG001
+    test_grr: GenomicResourceRepo,
 ) -> None:
     grr_path = tmp_path / "grr"
     assert not (grr_path / "/score_one/statistics").exists()

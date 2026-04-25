@@ -1,7 +1,7 @@
+import operator
 import subprocess
-
 from functools import reduce
-from typing import Any
+from typing import Any, ClassVar
 
 from django import forms
 from django.conf import settings
@@ -13,6 +13,7 @@ from django.utils.translation import gettext_lazy
 from django.views.decorators.debug import sensitive_variables
 from rest_framework.request import Request
 
+from web_annotation.mail import send_email
 from web_annotation.models import (
     AccountConfirmationCode,
     BaseVerificationCode,
@@ -20,8 +21,6 @@ from web_annotation.models import (
     User,
     WebAnnotationAnonymousUser,
 )
-from web_annotation.mail import send_email
-
 
 EMAIL_ACCOUNT_CONFIRMATION_PATH = "/api/confirm_account?code={}"
 EMAIL_VERIFICATION_RESET_PATH = "/api/reset_password?code={}"
@@ -71,9 +70,11 @@ class PasswordForgottenForm(forms.Form):
         widget=forms.EmailInput(attrs={"autocomplete": "email"}),
     )
 
+
 def reset_password(user: User) -> None:
     verif_code = ResetPasswordCode.create(user)
     send_reset_email(user, verif_code)
+
 
 def deauthenticate(user: User) -> None:
     all_sessions = Session.objects.all()
@@ -81,6 +82,7 @@ def deauthenticate(user: User) -> None:
         session_data = session.get_decoded()
         if user.pk == session_data.get("_auth_user_id"):
             session.delete()
+
 
 def send_reset_email(
     user: User, verif_path: BaseVerificationCode,
@@ -93,6 +95,7 @@ def send_reset_email(
         str(verif_path.path),
     )
     send_email(email["subject"], email["message"], [user.email])
+
 
 def _create_reset_mail(
     endpoint: str, path: str, verification_path: str,
@@ -115,6 +118,7 @@ def _create_reset_mail(
 
     return _build_email_template(email_settings)
 
+
 def _build_email_template(email_settings: dict[str, str]) -> dict[str, str]:
     subject = email_settings["subject"]
     message = email_settings["initial_message"]
@@ -126,9 +130,10 @@ def _build_email_template(email_settings: dict[str, str]) -> dict[str, str]:
 
     return {"subject": subject, "message": message}
 
+
 def create_password_fields(
-    label1: Any = gettext_lazy("Password"),
-    label2: Any = gettext_lazy("Password confirmation"),
+    label1: Any = gettext_lazy("Password"),  # noqa: B008
+    label2: Any = gettext_lazy("Password confirmation"),  # noqa: B008
 ) -> tuple[forms.CharField, forms.CharField]:
     """Create two password fields."""
     password1 = forms.CharField(
@@ -160,9 +165,9 @@ class SetPasswordForm(forms.Form):
         label1=gettext_lazy("New password"),
         label2=gettext_lazy("New password confirmation"),
     )
-    error_messages = {
+    error_messages: ClassVar = {
         "password_mismatch": gettext_lazy(
-            "The two password fields didn’t match.",
+            "The two password fields didn't match.",
         ),
     }
 
@@ -175,7 +180,7 @@ class SetPasswordForm(forms.Form):
         self.validate_password_for_user(self.user, "new_password2")
         return super().clean()
 
-    def save(self, commit: bool = True) -> User:
+    def save(self, *, commit: bool = True) -> User:
         return self.set_password_and_save(
             self.user,
             "new_password1",
@@ -203,7 +208,7 @@ class SetPasswordForm(forms.Form):
     def validate_password_for_user(
         self,
         user: User,
-        password_field_name: str = "password2",
+        password_field_name: str = "password2",  # noqa: S107
     ) -> None:
         """Validate the password."""
         password = self.cleaned_data.get(password_field_name)
@@ -216,7 +221,8 @@ class SetPasswordForm(forms.Form):
     def set_password_and_save(
         self,
         user: User,
-        password_field_name: str = "password1",
+        password_field_name: str = "password1",  # noqa: S107
+        *,
         commit: bool = True,
     ) -> User:
         """Set the user's password and save the user."""
@@ -229,7 +235,7 @@ class SetPasswordForm(forms.Form):
 class ResetPasswordForm(SetPasswordForm):
     """A form for users to reset their password when forgotten."""
 
-    error_messages = {
+    error_messages: ClassVar = {
         "password_invalid": gettext_lazy(
             "Your password is either too short "
             "(less than 10 symbols) or too weak.",
@@ -292,12 +298,11 @@ def convert_size(filesize: str | int) -> int:
 def calculate_used_disk_space(user: User | WebAnnotationAnonymousUser) -> int:
     """Calculate used job disk space for a user."""
     user_jobs = user.get_jobs()
-    used_disk_space = reduce(
-        lambda x, y: x + y,
+    return reduce(
+        operator.add,
         [int(job.disk_size) for job in user_jobs],
         0,
     )
-    return used_disk_space
 
 
 def bytes_to_readable(raw_bytes: int) -> str:
@@ -318,13 +323,15 @@ def bytes_to_readable(raw_bytes: int) -> str:
             break
     return result
 
+
 def get_ip_from_request(request: Request) -> str:
-    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
     if x_forwarded_for:
-        ip = x_forwarded_for.split(',')[0]
+        ip = x_forwarded_for.split(",")[0]
     else:
-        ip = request.META.get('REMOTE_ADDR')
+        ip = request.META.get("REMOTE_ADDR")
     return str(ip)
+
 
 def validate_vcf(
     file_path: str,

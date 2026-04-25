@@ -69,7 +69,7 @@ def test_vcf_allele(
 ])
 def test_parsimonious_vcf_allele(
     allele: tuple, expected: tuple, length: int,
-    end_pos: int,  # noqa: ARG001
+    end_pos: int,
     allele_type: Annotatable.Type,
 ) -> None:
 

@@ -1,5 +1,6 @@
 """Custom permissions for job access in the web annotation system."""
 from typing import Any
+
 from rest_framework import permissions
 from rest_framework.views import APIView, Request
 
@@ -14,6 +15,6 @@ def has_job_permission(job: Job, user: User) -> bool:
 class IsOwner(permissions.BasePermission):
     """Custom permission to only allow owners of a job to access it."""
     def has_object_permission(
-        self, request: Request, view: APIView, obj: Any,
+        self, request: Request, _view: APIView, obj: Any,
     ) -> bool:
         return has_job_permission(obj, request.user)

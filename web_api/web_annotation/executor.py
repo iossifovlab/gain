@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import abc
 import logging
 import threading
@@ -35,7 +36,7 @@ class TaskExecutor(abc.ABC):
         """Return the number of pending tasks."""
 
 
-class FakeFuture():
+class FakeFuture:
     """Create fake future that can be used in sequentialy"""
     def __init__(self, result: Any) -> None:
         """Initializes fake future."""
@@ -47,7 +48,7 @@ class FakeFuture():
             try:
                 callback(self)
             except Exception:
-                logger.exception('exception calling callback for %r', self)
+                logger.exception("exception calling callback for %r", self)
 
     def cancel(self) -> None:
         return
@@ -65,10 +66,10 @@ class FakeFuture():
         self._done_callbacks.append(fn)
         self._invoke_callbacks()
 
-    def result(self, timeout: Any=None) -> Any:
+    def result(self, timeout: Any = None) -> Any:  # noqa: ARG002
         return self._result
 
-    def exception(self, timeout: Any=None) -> None:
+    def exception(self, timeout: Any = None) -> None:  # noqa: ARG002
         return None
 
     def set_running_or_notify_cancel(self) -> None:
@@ -78,7 +79,7 @@ class FakeFuture():
         self._result = result
         self._invoke_callbacks()
 
-    def set_exception(self, exception: Any) -> None:
+    def set_exception(self, exception: Any) -> None:  # noqa: ARG002
         self._invoke_callbacks()
 
 
@@ -101,12 +102,12 @@ class SequentialTaskExecutor(TaskExecutor):
                 callback_success()
             return cast(Future, FakeFuture(result))
         except BaseException as e:
-            logger.error("Task failed with exception: %s", e)
+            logger.exception("Task failed with exception")
             if callback_failure is not None:
                 callback_failure(e)
         return cast(Future, FakeFuture(result))
 
-    def wait_all(self, timeout: float) -> None:
+    def wait_all(self, timeout: float) -> None:  # noqa: ARG002
         return
 
     def shutdown(self) -> None:
@@ -119,7 +120,7 @@ class SequentialTaskExecutor(TaskExecutor):
 class ThreadedTaskExecutor(TaskExecutor):
     """Thread pool based job executor."""
     def __init__(
-        self, max_workers: int = 4, job_timeout: float = 2*60*60,
+        self, max_workers: int = 4, job_timeout: float = 2 * 60 * 60,
     ) -> None:
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
         self._futures: list[tuple[float, Future]] = []
@@ -201,12 +202,13 @@ class ThreadedTaskExecutor(TaskExecutor):
                 future.result(timeout=timeout - elapsed)
             except TimeoutError as ex:
                 raise TimeoutError("Task timed out") from ex
-            except BaseException:
+            except BaseException:  # noqa: BLE001, S110
+                # Task error already surfaces via the callback_failure
+                # path; wait_all only blocks on completion.
                 pass
             elapsed = time.time() - start
             if elapsed >= timeout:
                 raise TimeoutError("Waiting for tasks timed out")
-
 
     def shutdown(self) -> None:
         self._executor.shutdown(wait=True, cancel_futures=True)

@@ -46,7 +46,7 @@ def test_score_line_get_score_value_parser_exception(
 ) -> None:
     """Test ScoreLine.get_score() when value parser raises exception."""
 
-    def bad_parser(value: str) -> float:  # noqa
+    def bad_parser(value: str) -> float:
         raise ValueError("Parse error")
 
     raw_line = ("chr1", 1, 10, "invalid")

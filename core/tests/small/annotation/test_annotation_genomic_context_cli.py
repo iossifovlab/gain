@@ -45,7 +45,7 @@ def grr_dirname(t4c8_grr: GenomicResourceRepo) -> str:
 
 @pytest.fixture
 def context_providers(
-    clean_genomic_context_providers: None,  # noqa:ARG001
+    clean_genomic_context_providers: None,
 ) -> None:
     register_context_provider(CLIGenomicContextProvider())
     register_context_provider(CLIAnnotationContextProvider())
@@ -92,7 +92,7 @@ def wrong_pipeline_resource(
 def test_cli_genomic_context_provider_reference_genome(
     tmp_path: pathlib.Path,
     grr_dirname: str,
-    context_providers: None,  # noqa:ARG001
+    context_providers: None,
 ) -> None:
     # Given
     parser = argparse.ArgumentParser(
@@ -133,7 +133,7 @@ def test_cli_genomic_context_provider_reference_genome(
 def test_cli_genomic_context_provider_reference_genome_and_gene_moels(
     tmp_path: pathlib.Path,
     grr_dirname: str,
-    context_providers: None,  # noqa:ARG001
+    context_providers: None,
 ) -> None:
     # Given
     parser = argparse.ArgumentParser(
@@ -168,7 +168,7 @@ def test_cli_genomic_context_provider_reference_genome_and_gene_moels(
 
 def test_cli_genomic_context_provider_no_grr(
     tmp_path: pathlib.Path,
-    context_providers: None,  # noqa:ARG001
+    context_providers: None,
 ) -> None:
     # Given
     parser = argparse.ArgumentParser(
@@ -200,7 +200,7 @@ def test_cli_genomic_context_provider_no_grr(
 
 def test_cli_genomic_context_provider_pipeline_resource(
     grr_dirname: str,
-    context_providers: None,  # noqa:ARG001
+    context_providers: None,
     pipeline_resource: str,
 ) -> None:
     # Given
@@ -231,7 +231,7 @@ def test_cli_genomic_context_provider_pipeline_resource(
 
 def test_cli_genomic_context_provider_wrong_pipeline_resource(
     grr_dirname: str,
-    context_providers: None,  # noqa:ARG001
+    context_providers: None,
     wrong_pipeline_resource: str,
 ) -> None:
     # Given
@@ -257,7 +257,7 @@ def test_cli_genomic_context_provider_wrong_pipeline_resource(
 
 def test_cli_genomic_context_provider_bad_pipeline(
     grr_dirname: str,
-    context_providers: None,  # noqa:ARG001
+    context_providers: None,
 ) -> None:
     # Given
     parser = argparse.ArgumentParser(
@@ -293,7 +293,7 @@ def test_cli_get_context_bad_pipeline() -> None:
 
 def test_cli_genomic_context_provider_sources(
     grr_dirname: str,
-    context_providers: None,  # noqa:ARG001
+    context_providers: None,
     pipeline_resource: str,
 ) -> None:
     # Given

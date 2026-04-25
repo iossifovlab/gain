@@ -1,13 +1,16 @@
+from collections.abc import Iterable
 from itertools import islice
+from typing import ClassVar
+
+from gain.genomic_resources.repository import GenomicResource
 from rest_framework import status
 from rest_framework.views import Request, Response
-from gain.genomic_resources.repository import GenomicResource
-from collections.abc import Iterable
+
 from web_annotation.annotation_base_view import AnnotationBaseView
 
 
 class ResourcesAPIView(AnnotationBaseView):
-    SUPPORTED_RESOURCE_TYPES = {
+    SUPPORTED_RESOURCE_TYPES: ClassVar = {
         "gene_score", "position_score",
         "gene_set_collection", "genome",
         "gene_models", "allele_score",
@@ -63,7 +66,7 @@ class ResourceTypes(ResourcesAPIView):
     API endpoint that allows resource types to be listed.
     """
 
-    def get(self, request: Request) -> Response:
+    def get(self, _request: Request) -> Response:
         """List all available resource types."""
         return Response(
             list(self.SUPPORTED_RESOURCE_TYPES),

@@ -14,30 +14,30 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
-from typing import Sequence, cast
-from django.urls import URLResolver, path, include, re_path
+from collections.abc import Sequence
+from typing import cast
+
+from django.urls import URLResolver, include, path, re_path
 
 from web_annotation import views
-
+from web_annotation.consumers import AnnotationStateConsumer
+from web_annotation.editor.urls import (
+    urlpatterns as editor_urls,
+)
 from web_annotation.jobs.urls import urlpatterns as job_urls
 from web_annotation.pipelines.urls import urlpatterns as pipeline_urls
-from web_annotation.single_allele_annotation.urls import (
-    urlpatterns as single_allele_urls,
+from web_annotation.quotas.urls import (
+    urlpatterns as quotas_urls,
 )
 from web_annotation.resources.urls import (
     urlpatterns as resources_urls,
 )
-from web_annotation.editor.urls import (
-    urlpatterns as editor_urls,
+from web_annotation.single_allele_annotation.urls import (
+    urlpatterns as single_allele_urls,
 )
-from web_annotation.quotas.urls import (
-    urlpatterns as quotas_urls,
-)
-from web_annotation.consumers import AnnotationStateConsumer
-
 
 urlpatterns = [
-    path('api-auth', include('rest_framework.urls')),
+    path("api-auth", include("rest_framework.urls")),
 
     *job_urls,
     *single_allele_urls,
@@ -46,16 +46,16 @@ urlpatterns = [
     *editor_urls,
     *quotas_urls,
 
-    path('api/about', views.AboutPage.as_view()),
+    path("api/about", views.AboutPage.as_view()),
 
-    path('api/users', views.UserList.as_view()),
-    path('api/users/<int:pk>', views.UserDetail.as_view()),
+    path("api/users", views.UserList.as_view()),
+    path("api/users/<int:pk>", views.UserDetail.as_view()),
 
-    path('api/login', views.Login.as_view()),
-    path('api/logout', views.Logout.as_view()),
-    path('api/register', views.Registration.as_view()),
-    path('api/user_info', views.UserInfo.as_view()),
-    path('api/confirm_account', views.ConfirmAccount.as_view()),
+    path("api/login", views.Login.as_view()),
+    path("api/logout", views.Logout.as_view()),
+    path("api/register", views.Registration.as_view()),
+    path("api/user_info", views.UserInfo.as_view()),
+    path("api/confirm_account", views.ConfirmAccount.as_view()),
     path(
         "api/forgotten_password",
         views.ForgotPassword.as_view(),

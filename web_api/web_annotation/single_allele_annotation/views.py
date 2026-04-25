@@ -1,11 +1,16 @@
 """Module for single allele annotation views."""
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
-from gain.annotation.record_to_annotatable import build_annotatable_from_dict
+from django.conf import settings
+from django.db.models import QuerySet
+from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django.views.decorators.http import last_modified
 from gain.annotation.annotation_config import AttributeInfo
 from gain.annotation.annotation_pipeline import Annotator
 from gain.annotation.gene_score_annotator import GeneScoreAnnotator
+from gain.annotation.record_to_annotatable import build_annotatable_from_dict
 from gain.annotation.score_annotator import GenomicScoreAnnotatorBase
 from gain.gene_scores.gene_scores import (
     _build_gene_score_help,
@@ -18,11 +23,6 @@ from gain.genomic_resources.histogram import (
     NullHistogramConfig,
 )
 from gain.genomic_resources.repository import GenomicResource
-from django.conf import settings
-from django.db.models import QuerySet
-from django.utils import timezone
-from django.utils.decorators import method_decorator
-from django.views.decorators.http import last_modified
 from rest_framework import generics, permissions, views
 from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import Request, Response
@@ -105,8 +105,8 @@ def always_cache(
 class SingleAnnotation(AnnotationBaseView):
     """Single annotation view."""
 
-    throttle_classes = [UserRateThrottle]
-    authentication_classes = [WebAnnotationAuthentication]
+    throttle_classes: ClassVar = [UserRateThrottle]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
     def generate_annotator_help(
         self,
@@ -178,7 +178,7 @@ class SingleAnnotation(AnnotationBaseView):
 
         annotators_data = []
         if (
-            getattr(settings, "RESOURCES_BASE_URL") is None
+            settings.RESOURCES_BASE_URL is None
             or settings.RESOURCES_BASE_URL is None
         ):
             base_url = ""
@@ -207,7 +207,7 @@ class SingleAnnotation(AnnotationBaseView):
                 attributes.append(
                     self._build_attribute_description(
                         annotation, annotator,
-                        attribute_info)
+                        attribute_info),
                 )
             if len(attributes) == 0:
                 continue
@@ -222,12 +222,12 @@ class SingleAnnotation(AnnotationBaseView):
             allele = str(annotatable)
             allele_query = AlleleQuery.objects.filter(
                 allele=allele,
-                owner=request.user.as_owner,
+                owner=cast(User, request.user.as_owner),
             ).first()
             if allele_query is None:
                 allele_query = AlleleQuery(
                     allele=allele,
-                    owner=request.user.as_owner,
+                    owner=cast(User, request.user.as_owner),
                 )
             else:
                 allele_query.last_used = timezone.now()
@@ -247,7 +247,7 @@ class SingleAnnotation(AnnotationBaseView):
             attribute_info: AttributeInfo,
     ) -> dict[str, Any]:
         resource = self.grr.get_resource(
-                    list(annotator.resource_ids)[0])
+                    next(iter(annotator.resource_ids)))
         if has_histogram(resource, attribute_info.source):
             histogram_path = (
                         f"histograms/{resource.resource_id}"
@@ -262,9 +262,11 @@ class SingleAnnotation(AnnotationBaseView):
                     attribute_info,
                 )
 
-        if attribute_info.value_type in ["object", "annotatable"]:
-            if not isinstance(value, (dict, list)):
-                value = str(value)
+        if (
+            attribute_info.value_type in ["object", "annotatable"]
+            and not isinstance(value, (dict, list))
+        ):
+            value = str(value)
         return {
             "name": attribute_info.name,
             "description": attribute_info.description,
@@ -317,8 +319,8 @@ class HistogramView(AnnotationBaseView):
 class AlleleHistory(generics.ListAPIView):
     """View for managing a user's allele annotation history."""
 
-    authentication_classes = [WebAnnotationAuthentication]
-    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
+    permission_classes: ClassVar = [permissions.IsAuthenticated]
     serializer_class = AlleleSerializer
 
     def get_queryset(self) -> QuerySet:
@@ -355,8 +357,8 @@ class AlleleHistory(generics.ListAPIView):
 class UpdateAlleleNote(views.APIView):
     """View for updating a user's note on an allele query."""
 
-    authentication_classes = [WebAnnotationAuthentication]
-    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
+    permission_classes: ClassVar = [permissions.IsAuthenticated]
 
     def post(self, request: Request) -> Response:
         """Update the note for an allele query."""

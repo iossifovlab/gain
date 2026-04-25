@@ -896,6 +896,8 @@ dev = [
     { name = "django-stubs" },
     { name = "mypy" },
     { name = "pylint" },
+    { name = "pylint-django" },
+    { name = "pylint-junit" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -904,6 +906,7 @@ dev = [
     { name = "pytest-xdist" },
     { name = "ruff" },
     { name = "types-channels" },
+    { name = "types-requests" },
 ]
 
 [package.metadata]
@@ -926,6 +929,8 @@ dev = [
     { name = "django-stubs", specifier = "==5.2.2" },
     { name = "mypy", specifier = "==1.15.0" },
     { name = "pylint" },
+    { name = "pylint-django" },
+    { name = "pylint-junit" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -934,6 +939,7 @@ dev = [
     { name = "pytest-xdist" },
     { name = "ruff", specifier = "==0.14.6" },
     { name = "types-channels" },
+    { name = "types-requests" },
 ]
 
 [[package]]
@@ -2754,6 +2760,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pylint-django"
+version = "2.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pylint" },
+    { name = "pylint-plugin-utils" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e5/0d/d775fec0dde8ca5d20e9170a2ca332dfa21b77f7e7e47fc3ab9b2261773c/pylint_django-2.7.0-py3-none-any.whl", hash = "sha256:76ef7e7bbbcf7ee86adbb2beac0ffaa7232509a17bf4a488d81467a1bbaa215b", size = 42892, upload-time = "2026-01-01T11:17:04.292Z" },
+]
+
+[[package]]
 name = "pylint-junit"
 version = "0.3.5"
 source = { registry = "https://pypi.org/simple" }
@@ -2764,6 +2782,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/55/4d/efeea9c27f91bab652cc3e10029ae86af41775d55088a23b40ff77754227/pylint_junit-0.3.5.tar.gz", hash = "sha256:a7cbeebfaf392e79cbecc76b244589ffb81771bfeb15df5596fbe25700a96b5e", size = 4603, upload-time = "2025-01-21T15:57:17.057Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ac/af/a295465974ae64327694f595692565a9fb3861ca9623b4b20a4f502b55e5/pylint_junit-0.3.5-py2.py3-none-any.whl", hash = "sha256:6f6554a357ba7b6c3329c3f350150585bd9031374eb78bcb7c407ce32399e036", size = 3781, upload-time = "2025-01-21T15:57:15.29Z" },
+]
+
+[[package]]
+name = "pylint-plugin-utils"
+version = "0.9.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pylint" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/73/85/24eaf5d0d078fc8799ae6d89faf326d6e4d27d862fc9a710a52ab07b7bb5/pylint_plugin_utils-0.9.0.tar.gz", hash = "sha256:5468d763878a18d5cc4db46eaffdda14313b043c962a263a7d78151b90132055", size = 10474, upload-time = "2025-06-24T07:14:00.534Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5e/c9/a3b871b0b590c49e38884af6dab58ab9711053bd5c39b8899b72e367b9f6/pylint_plugin_utils-0.9.0-py3-none-any.whl", hash = "sha256:16e9b84e5326ba893a319a0323fcc8b4bcc9c71fc654fcabba0605596c673818", size = 11129, upload-time = "2025-06-24T07:13:58.993Z" },
 ]
 
 [[package]]

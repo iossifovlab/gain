@@ -54,7 +54,7 @@ class DummyAnnotator(Annotator):
 
     def annotate(
         self, annotatable: Annotatable | None,
-        context: dict[str, Any],  # noqa: ARG002
+        context: dict[str, Any],
     ) -> dict[str, Any]:
         """Produce annotation attributes for an annotatable."""
         if annotatable is None:

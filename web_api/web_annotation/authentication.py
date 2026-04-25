@@ -5,8 +5,8 @@ from rest_framework.authentication import SessionAuthentication
 from web_annotation.models import (
     BaseUser,
     User,
+    UserWrapper,
     WebAnnotationAnonymousUser,
-    UserWrapper
 )
 
 
@@ -36,16 +36,16 @@ class WebAnnotationAuthentication(SessionAuthentication):
 
         (user, _) = successful_auth
         if not isinstance(user, User):
-            raise exceptions.AuthenticationFailed('User type not recognized')
+            raise exceptions.AuthenticationFailed("User type not recognized")
 
         return (UserWrapper(user, session_id), None)
 
     def get_ip_from_request(self, request: HttpRequest) -> str:
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
         if x_forwarded_for:
-            ip = x_forwarded_for.split(',')[0]
+            ip = x_forwarded_for.split(",")[0]
         else:
-            ip = request.META.get('REMOTE_ADDR')
+            ip = request.META.get("REMOTE_ADDR")
         return str(ip)
 
 
@@ -63,6 +63,6 @@ class RequiredSessionAuthentication(SessionAuthentication):
         session_id = request.session.session_key
         if session_id is None:
             raise exceptions.AuthenticationFailed(
-                'A session ID was not provided!')
+                "A session ID was not provided!")
 
         return None

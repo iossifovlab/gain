@@ -40,7 +40,7 @@ class SomeTestImplementation(GenomicResourceImplementation):
         return b"somehash"
 
     def create_statistics_build_tasks(
-        self, **kwargs: Any,  # noqa: ARG002
+        self, **kwargs: Any,
     ) -> list[TaskDesc]:
         """Add tasks for calculating resource statistics to a task graph."""
         task = TaskGraph.make_task(
@@ -66,7 +66,7 @@ class SomeTestImplementation(GenomicResourceImplementation):
         """Compute and return the info hash."""
         return b"infohash"
 
-    def get_info(self, **kwargs: Any) -> str:  # noqa: ARG002
+    def get_info(self, **kwargs: Any) -> str:
         """Construct the contents of the implementation's HTML info page."""
         return textwrap.dedent(
             """
@@ -74,7 +74,7 @@ class SomeTestImplementation(GenomicResourceImplementation):
             """,
         )
 
-    def get_statistics_info(self, **kwargs: Any) -> str:  # noqa: ARG002
+    def get_statistics_info(self, **kwargs: Any) -> str:
         """Construct the contents of the implementation's statistics
         HTML info page."""
         return textwrap.dedent(
@@ -104,7 +104,7 @@ def register_test_implementation() -> None:
 
 
 def test_cli_stats(
-    tmp_path: pathlib.Path, register_test_implementation: None,  # noqa: ARG001
+    tmp_path: pathlib.Path, register_test_implementation: None,
 ) -> None:
     setup_directories(tmp_path, {
         "one": {

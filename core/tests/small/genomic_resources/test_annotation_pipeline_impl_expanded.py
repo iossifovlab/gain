@@ -419,7 +419,7 @@ def test_get_template_data_raises_without_pipeline(
     )
     # The actual error has no message, so we verify it's a ValueError
     # by catching any ValueError type
-    with pytest.raises(ValueError):  # noqa: PT011
+    with pytest.raises(ValueError):
         impl._get_template_data()
 
 

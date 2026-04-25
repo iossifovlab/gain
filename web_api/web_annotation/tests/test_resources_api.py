@@ -1,6 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-from django.test import Client
 import pytest
+from django.test import Client
 
 
 @pytest.mark.parametrize("current_client", ["admin", "user", "anonymous"])
@@ -23,8 +23,8 @@ import pytest
                     "t4c8/t4c8_genes",
                     "t4c8/t4c8_genome",
                     "cnv_collections/test_collection",
-                }
-            }
+                },
+            },
         ),
         (
             "genome", None,
@@ -35,8 +35,8 @@ import pytest
                 "resources": {
                     "hg38/GRCh38-hg38/genome",
                     "t4c8/t4c8_genome",
-                }
-            }
+                },
+            },
         ),
         (
             "gene_set_collection", None,
@@ -46,8 +46,8 @@ import pytest
                  "total_resources": 1,
                  "resources": {
                     "t4c8/gene_sets/main",
-                 }
-            }
+                 },
+            },
         ),
         (
             "position_score", None,
@@ -59,8 +59,8 @@ import pytest
                     "scores/pos1",
                     "scores/pos2",
                     "t4c8/genomic_scores/score_one",
-                 }
-            }
+                 },
+            },
         ),
         (
             "position_score", "score_one",
@@ -70,8 +70,8 @@ import pytest
                  "total_resources": 1,
                  "resources": {
                     "t4c8/genomic_scores/score_one",
-                 }
-            }
+                 },
+            },
         ),
         (
             None, "score_one",
@@ -81,7 +81,7 @@ import pytest
                  "total_resources": 1,
                  "resources": {
                     "t4c8/genomic_scores/score_one",
-                 }
+                 },
             },
         ),
         (
@@ -96,7 +96,7 @@ import pytest
                     "t4c8/genomic_scores/score_one",
                     "t4c8/t4c8_genes",
                     "t4c8/t4c8_genome",
-                 }
+                 },
             },
         ),
     ],

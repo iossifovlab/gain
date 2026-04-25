@@ -2,7 +2,7 @@
 """View classes for web annotation."""
 import logging
 import pathlib
-from typing import cast
+from typing import ClassVar, cast
 
 from django import forms
 from django.conf import settings
@@ -23,8 +23,9 @@ from rest_framework import generics, permissions, views
 from rest_framework.parsers import JSONParser
 from rest_framework.request import QueryDict, Request
 from rest_framework.response import Response
-from web_annotation.serializers import UserSerializer
+
 from web_annotation.authentication import WebAnnotationAuthentication
+from web_annotation.serializers import UserSerializer
 from web_annotation.utils import (
     PasswordForgottenForm,
     ResetPasswordForm,
@@ -36,7 +37,6 @@ from web_annotation.utils import (
     reset_password,
     verify_user,
 )
-
 
 from .models import (
     AccountConfirmationCode,
@@ -52,22 +52,22 @@ class UserList(generics.ListAPIView):
     """Generic view for listing users."""
     queryset = User.objects.all()
     serializer_class = UserSerializer
-    authentication_classes = [WebAnnotationAuthentication]
-    permission_classes = [permissions.IsAdminUser]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
+    permission_classes: ClassVar = [permissions.IsAdminUser]
 
 
 class UserDetail(generics.RetrieveAPIView):
     """Generic view for listing a user's details"""
     queryset = User.objects.all()
     serializer_class = UserSerializer
-    authentication_classes = [WebAnnotationAuthentication]
-    permission_classes = [permissions.IsAdminUser]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
+    permission_classes: ClassVar = [permissions.IsAdminUser]
 
 
 class UserInfo(views.APIView):
     """View that returns the request session's user information."""
 
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
     def get_user_daily_limit(self, user: User | None = None) -> int | None:
         """Return the daily job limit for a user."""
@@ -91,11 +91,10 @@ class UserInfo(views.APIView):
         """Return the number of jobs a user created today."""
         today = timezone.now().replace(
             hour=0, minute=0, second=0, microsecond=0)
-        jobs_count = user.job_class.objects.filter(
+        return user.job_class.objects.filter(
             created__gte=today,
             owner__exact=user.pk,
         ).count()
-        return jobs_count
 
     def get(self, request: Request) -> Response:
         """Get a user's info and limitations."""
@@ -109,13 +108,13 @@ class UserInfo(views.APIView):
                 "variantCount": self.get_user_variant_limit(user),
                 "todayJobsCount": self.get_today_jobs_count(user),
                 "diskSpace": (
+                    f"{bytes_to_readable(calculate_used_disk_space(user))}"
+                    " / "
                     f"{bytes_to_readable(
-                        calculate_used_disk_space(user)
-                    )} "
-                    f"/ {bytes_to_readable(
-                        convert_size(str(settings.QUOTAS["disk_space"])))}"
+                        convert_size(str(settings.QUOTAS['disk_space']))
+                    )}"
                 ),
-            }
+            },
         }
         if user.is_authenticated:
             info["loggedIn"] = True
@@ -127,7 +126,7 @@ class UserInfo(views.APIView):
 class Logout(views.APIView):
     """View for logging out."""
 
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
     def get(self, request: Request) -> Response:
         logout(cast(HttpRequest, request))
@@ -138,9 +137,9 @@ class Logout(views.APIView):
 
 class Login(views.APIView):
     """View for logging in."""
-    parser_classes = [JSONParser]
+    parser_classes: ClassVar = [JSONParser]
 
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
     def post(self, request: Request) -> Response:
         """Log in a user."""
@@ -181,8 +180,8 @@ class Login(views.APIView):
 
 class Registration(views.APIView):
     """Registration related view."""
-    parser_classes = [JSONParser]
-    authentication_classes = [WebAnnotationAuthentication]
+    parser_classes: ClassVar = [JSONParser]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
     def post(self, request: Request) -> Response:
         """Register a new user."""
@@ -233,9 +232,8 @@ class ConfirmAccount(views.APIView):  # USE
                 self.verification_code_model,
             )
 
-        if msg is not None:
-            if verif_code is not None:
-                verif_code.delete()
+        if msg is not None and verif_code is not None:
+            verif_code.delete()
 
         activated = False
         if verif_code is not None:
@@ -254,7 +252,7 @@ class ConfirmAccount(views.APIView):  # USE
 class ForgotPassword(views.APIView):
     """View for forgotten password."""
 
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
     def get(self, request: Request) -> HttpResponse:
         form = PasswordForgottenForm()

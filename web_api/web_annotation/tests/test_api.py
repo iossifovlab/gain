@@ -7,12 +7,13 @@ from typing import cast
 from unittest.mock import ANY
 
 import pytest
-from gain.genomic_resources.repository import GenomicResourceRepo
 from django.conf import LazySettings
 from django.core.files.base import ContentFile
 from django.test import Client
 from django.utils import timezone
+from gain.genomic_resources.repository import GenomicResourceRepo
 from pytest_mock import MockerFixture
+
 from web_annotation.annotation_base_view import AnnotationBaseView
 from web_annotation.executor import SequentialTaskExecutor
 from web_annotation.models import AnonymousJob, BaseUser, Job, User, UserWrapper
@@ -126,7 +127,7 @@ def test_annotate_columns_job_details(user_client: Client) -> None:
         "pipeline_id": "pipeline/test_pipeline",
         "data": ContentFile(
             textwrap.dedent("""chr,pos_beg,pos_end,cnv\nchr1,7,20,cnv+"""),
-            "test_input.csv"
+            "test_input.csv",
         ),
         "col_chrom": "chr",
         "col_pos_beg": "pos_beg",
@@ -155,10 +156,10 @@ def test_annotate_columns_job_details(user_client: Client) -> None:
     assert result["owner"] == "user@example.com"
     assert result["head"] == [
         {
-            'chr': 'chr1',
-            'cnv': 'cnv+',
-            'pos_beg': '7',
-            'pos_end': '20',
+            "chr": "chr1",
+            "cnv": "cnv+",
+            "pos_beg": "7",
+            "pos_end": "20",
         },
     ]
     assert result["size"] == "0.1 KB"
@@ -232,13 +233,13 @@ def test_user_list(admin_client: Client) -> None:
     assert response.status_code == 200
     assert response.json() == [
         {
-            'email': 'user@example.com',
-            'jobs': [1]
+            "email": "user@example.com",
+            "jobs": [1],
         },
         {
-            'email': 'admin@example.com',
-            'jobs': [2]
-        }
+            "email": "admin@example.com",
+            "jobs": [2],
+        },
     ]
 
 
@@ -282,7 +283,7 @@ def test_daily_user_quota(
         {
             "genome": "hg38/GRCh38-hg38/genome",
             "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(vcf)
+            "data": ContentFile(vcf),
         },
     )
     assert response.status_code == 200
@@ -292,7 +293,7 @@ def test_daily_user_quota(
         {
             "genome": "hg38/GRCh38-hg38/genome",
             "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(vcf)
+            "data": ContentFile(vcf),
         },
     )
 
@@ -333,7 +334,7 @@ def test_daily_admin_quota(
         {
             "genome": "hg38/GRCh38-hg38/genome",
             "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(vcf)
+            "data": ContentFile(vcf),
         },
     )
     assert response.status_code == 200
@@ -343,7 +344,7 @@ def test_daily_admin_quota(
         {
             "genome": "hg38/GRCh38-hg38/genome",
             "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(vcf)
+            "data": ContentFile(vcf),
          },
     )
 
@@ -374,15 +375,15 @@ def test_daily_anonymous_quota(
             config_path="test",
             result_path="test",
             created=job_created_at,
-            owner='anon_127.0.0.1',
-            ip='127.0.0.1',
+            owner="anon_127.0.0.1",
+            ip="127.0.0.1",
         ).save()
     response = anonymous_client.post(
         "/api/jobs/annotate_vcf",
         {
             "genome": "hg38/GRCh38-hg38/genome",
             "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(vcf)
+            "data": ContentFile(vcf),
         },
     )
     assert response.status_code == 200
@@ -392,7 +393,7 @@ def test_daily_anonymous_quota(
         {
             "genome": "hg38/GRCh38-hg38/genome",
             "pipeline": "pipeline/test_pipeline",
-            "data": ContentFile(vcf)
+            "data": ContentFile(vcf),
         },
     )
 
@@ -449,7 +450,7 @@ def test_filesize_limit_user(
         {
             "genome": "hg38/GRCh38-hg38/genome",
             "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(vcf)
+            "data": ContentFile(vcf),
         },
     )
     assert response.status_code == 413
@@ -502,7 +503,7 @@ def test_filesize_limit_admin(
         {
             "genome": "hg38/GRCh38-hg38/genome",
             "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(vcf)
+            "data": ContentFile(vcf),
         },
     )
     assert response.status_code == 200
@@ -558,7 +559,7 @@ def test_variant_limit_user(
         {
             "genome": "hg38/GRCh38-hg38/genome",
             "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(vcf)
+            "data": ContentFile(vcf),
         },
     )
     assert response.status_code == 413
@@ -611,7 +612,7 @@ def test_variant_limit_admin(
         {
             "genome": "hg38/GRCh38-hg38/genome",
             "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(vcf)
+            "data": ContentFile(vcf),
         },
     )
     assert response.status_code == 200
@@ -678,7 +679,7 @@ def test_single_annotation(admin_client: Client) -> None:
             "pipeline_id": "pipeline/test_pipeline",
             "annotatable": {
                 "chrom": "chr1", "pos": 1, "ref": "C", "alt": "A",
-            }
+            },
         },
         content_type="application/json",
     )
@@ -705,9 +706,9 @@ def test_single_annotation(admin_client: Client) -> None:
         "description": (
             "\n\nAnnotator to use with genomic scores depending on genomic"
             " position like\nphastCons, phyloP, FitCons2, etc.\n"
-            "\n<a href=\"https://www.iossifovlab.com/gpfuserdocs/"
-            "administration/annotation.html#position-score\" "
-            "target=\"_blank\">More info</a>\n\n"
+            '\n<a href="https://www.iossifovlab.com/gpfuserdocs/'
+            'administration/annotation.html#position-score" '
+            'target="_blank">More info</a>\n\n'
         ),
         "resources": [
             {
@@ -725,7 +726,7 @@ def test_single_annotation(admin_client: Client) -> None:
     assert annotators_data[0]["attributes"][0]["type"] == "float"
     assert annotators_data[0]["attributes"][0]["result"] == {
         "value": 0.1,
-        "histogram": "histograms/scores/pos1?score_id=pos1"
+        "histogram": "histograms/scores/pos1?score_id=pos1",
     }
     assert "test position score" in annotators_data[0]["attributes"][0]["help"]
     assert (
@@ -741,7 +742,7 @@ def test_single_annotation_unauthorized(anonymous_client: Client) -> None:
             "pipeline_id": "pipeline/test_pipeline",
             "annotatable": {
                 "chrom": "chr1", "pos": 1, "ref": "C", "alt": "A",
-            }
+            },
         },
         content_type="application/json",
     )
@@ -768,9 +769,9 @@ def test_single_annotation_unauthorized(anonymous_client: Client) -> None:
         "description": (
             "\n\nAnnotator to use with genomic scores depending on genomic"
             " position like\nphastCons, phyloP, FitCons2, etc.\n"
-            "\n<a href=\"https://www.iossifovlab.com/gpfuserdocs/"
-            "administration/annotation.html#position-score\" "
-            "target=\"_blank\">More info</a>\n\n"
+            '\n<a href="https://www.iossifovlab.com/gpfuserdocs/'
+            'administration/annotation.html#position-score" '
+            'target="_blank">More info</a>\n\n'
         ),
         "resources": [
             {
@@ -788,7 +789,7 @@ def test_single_annotation_unauthorized(anonymous_client: Client) -> None:
     assert annotators_data[0]["attributes"][0]["type"] == "float"
     assert annotators_data[0]["attributes"][0]["result"] == {
         "value": 0.1,
-        "histogram": "histograms/scores/pos1?score_id=pos1"
+        "histogram": "histograms/scores/pos1?score_id=pos1",
     }
     assert "test position score" in annotators_data[0]["attributes"][0]["help"]
     assert (
@@ -815,7 +816,7 @@ def test_single_annotation_no_pipeline(admin_client: Client) -> None:
         {
             "annotatable": {
                 "chrom": "chr1", "pos": 1, "ref": "C", "alt": "A",
-            }
+            },
         },
         content_type="application/json",
     )
@@ -873,7 +874,7 @@ def test_histogram_view(admin_client: Client) -> None:
             "number_of_bins": 10,
             "x_log_scale": False,
             "y_log_scale": False,
-            "x_min_log": None
+            "x_min_log": None,
         },
         "bins": [
             pytest.approx(0.0),
@@ -915,7 +916,7 @@ def test_single_annotation_throttled(user_client: Client) -> None:
                 "pipeline_id": "pipeline/test_pipeline",
                 "annotatable": {
                     "chrom": "chr1", "pos": 1, "ref": "C", "alt": "A",
-                }
+                },
             },
             content_type="application/json",
         )
@@ -927,7 +928,7 @@ def test_single_annotation_throttled(user_client: Client) -> None:
             "pipeline_id": "pipeline/test_pipeline",
             "annotatable": {
                 "chrom": "chr1", "pos": 1, "ref": "C", "alt": "A",
-            }
+            },
         },
         content_type="application/json",
     )
@@ -937,7 +938,7 @@ def test_single_annotation_throttled(user_client: Client) -> None:
 @pytest.mark.django_db
 def test_job_deactivate(
     tmp_path: pathlib.Path,
-    user_client: Client
+    user_client: Client,
 ) -> None:
     user = User.objects.get(email="user@example.com")
 
@@ -1029,7 +1030,7 @@ def test_preview_delimeter_forced(
         "/api/jobs/preview",
         {
             "data": ContentFile(file),
-            "separator": ","
+            "separator": ",",
         },
     )
 
@@ -1128,7 +1129,7 @@ def test_single_annotation_t4c8(admin_client: Client) -> None:
             "pipeline_id": "t4c8/t4c8_pipeline",
             "annotatable": {
                 "chrom": "chr1", "pos": 53, "ref": "C", "alt": "A",
-            }
+            },
         },
         content_type="application/json",
     )
@@ -1184,7 +1185,7 @@ def test_single_annotation_t4c8(admin_client: Client) -> None:
             "pipeline_id": "t4c8/t4c8_pipeline",
             "annotatable": {
                 "chrom": "chr1", "pos": 102, "ref": "C", "alt": "A",
-            }
+            },
         },
         content_type="application/json",
     )
@@ -1242,7 +1243,7 @@ def test_single_annotation_save_query_in_history(admin_client: Client) -> None:
             "pipeline_id": "t4c8/t4c8_pipeline",
             "annotatable": {
                 "chrom": "chr1", "pos": 53, "ref": "C", "alt": "A",
-            }
+            },
         },
         content_type="application/json",
     )
@@ -1254,7 +1255,7 @@ def test_single_annotation_save_query_in_history(admin_client: Client) -> None:
             "pipeline_id": "t4c8/t4c8_pipeline",
             "annotatable": {
                 "chrom": "chr2", "pos": 62, "ref": "T", "alt": "G",
-            }
+            },
         },
         content_type="application/json",
     )
@@ -1289,7 +1290,7 @@ def test_single_annotation_save_duplicate_query_in_history(
             "pipeline_id": "t4c8/t4c8_pipeline",
             "annotatable": {
                 "chrom": "chr1", "pos": 53, "ref": "C", "alt": "A",
-            }
+            },
         },
         content_type="application/json",
     )
@@ -1301,7 +1302,7 @@ def test_single_annotation_save_duplicate_query_in_history(
             "pipeline_id": "t4c8/t4c8_pipeline",
             "annotatable": {
                 "chrom": "chr1", "pos": 53, "ref": "C", "alt": "A",
-            }
+            },
         },
         content_type="application/json",
     )
@@ -1327,7 +1328,7 @@ def test_user_delete_allele_query_from_history(admin_client: Client) -> None:
             "pipeline_id": "t4c8/t4c8_pipeline",
             "annotatable": {
                 "chrom": "chr1", "pos": 53, "ref": "C", "alt": "A",
-            }
+            },
         },
         content_type="application/json",
     )

@@ -7,7 +7,7 @@ from gain.task_graph.graph import TaskDesc, TaskGraph, chain_tasks
 def test_creating_two_tasks_with_the_same_id() -> None:
     graph = TaskGraph()
     graph.create_task("ID", lambda: None, args=[], deps=[])
-    with pytest.raises(ValueError):  # noqa
+    with pytest.raises(ValueError):
         graph.create_task("ID", lambda: None, args=[], deps=[])
 
 

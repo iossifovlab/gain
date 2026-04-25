@@ -1,11 +1,16 @@
 """Module containing base view for annotation work."""
-from functools import partial
 import gzip
 import logging
+from functools import partial
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
+
+import yaml
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+from django.conf import settings
+from django.core.files.uploadedfile import UploadedFile
+from django.http import QueryDict
 from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.genomic_resources.implementations.annotation_pipeline_impl import (
     AnnotationPipelineImplementation,
@@ -14,13 +19,9 @@ from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
-from django.conf import settings
-from django.core.files.uploadedfile import UploadedFile
-from django.http import QueryDict
 from rest_framework import views
-from rest_framework.views import Request, Response
 from rest_framework.request import MultiValueDict
-import yaml
+from rest_framework.views import Request, Response
 
 from web_annotation.executor import (
     TaskExecutor,
@@ -74,12 +75,11 @@ def count_input_variants(input_path: str, annotation_type: str) -> int:
 
 def get_grr_genomes(grr: GenomicResourceRepo) -> list[str]:
     """Return pipelines used for file annotation."""
-    genomes: list[str] = []
-    for resource in grr.get_all_resources():
-        if resource.get_type() == "genome":
-            genomes.append(resource.get_id())
-
-    return genomes
+    return [
+        resource.get_id()
+        for resource in grr.get_all_resources()
+        if resource.get_type() == "genome"
+    ]
 
 
 GRR_GENOMES = get_grr_genomes(GRR)
@@ -95,7 +95,7 @@ class AnnotationBaseView(views.APIView):
             job_timeout=settings.ANNOTATION_TASK_TIMEOUT)\
 
     """Base view for views which access annotation resources."""
-    tool_columns = [
+    tool_columns: ClassVar = [
         "col_chrom",
         "col_pos",
         "col_ref",
@@ -237,9 +237,7 @@ class AnnotationBaseView(views.APIView):
         def finish_load_callback() -> None:
             notify_function(pipeline_id, "loaded")
 
-        def delete_callback(
-            *args: Any  # pylint: disable=unused-argument
-        ) -> None:
+        def delete_callback(*_args: Any) -> None:
             notify_function(pipeline_id, "unloaded")
 
         self.lru_cache.put_pipeline(
@@ -281,11 +279,11 @@ class AnnotationBaseView(views.APIView):
         try:
             pipeline_id = request.data["pipeline_id"]
             if not isinstance(pipeline_id, str):
-                raise ValueError("Pipeline id is not a string!")
+                raise TypeError("Pipeline id is not a string!")  # noqa: TRY301
             pipeline = self.get_pipeline(pipeline_id, request.user)
             if pipeline is None:
                 raise KeyError(f"Pipeline {pipeline_id} not found!")
-        except ValueError as e:
+        except (ValueError, TypeError) as e:
             return Response(
                 {"reason": str(e)},
                 status=views.status.HTTP_400_BAD_REQUEST,

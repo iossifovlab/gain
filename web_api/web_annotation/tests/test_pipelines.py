@@ -1,10 +1,10 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import textwrap
-from django.core.files.base import ContentFile
-from django.test import Client
+
 import pytest
 import pytest_mock
-
+from django.core.files.base import ContentFile
+from django.test import Client
 from gain.genomic_resources.repository import GenomicResourceRepo
 
 from web_annotation.models import Pipeline, User

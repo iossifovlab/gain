@@ -1,14 +1,15 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-import pytest
 import threading
 import time
+from unittest.mock import MagicMock
+
+import pytest
+
 from web_annotation.executor import (
+    FakeFuture,
     SequentialTaskExecutor,
     ThreadedTaskExecutor,
 )
-from unittest.mock import MagicMock
-from web_annotation.executor import FakeFuture
-
 
 
 def test_sequential_task_executor_execute() -> None:
@@ -477,7 +478,9 @@ def test_sequential_task_executor_with_kwargs_only() -> None:
     fn = MagicMock(return_value="result")
     callback_success = MagicMock()
 
-    executor.execute(fn, callback_success=callback_success, key1="val1", key2="val2")
+    executor.execute(
+        fn, callback_success=callback_success, key1="val1", key2="val2",
+    )
 
     fn.assert_called_once_with(key1="val1", key2="val2")
     callback_success.assert_called_once()
@@ -491,7 +494,9 @@ def test_sequential_task_executor_exception_propagation() -> None:
 
     callback_failure = MagicMock()
 
-    executor.execute(raise_keyboard_interrupt, callback_failure=callback_failure)
+    executor.execute(
+        raise_keyboard_interrupt, callback_failure=callback_failure,
+    )
 
     assert callback_failure.call_count == 1
     args, _ = callback_failure.call_args
@@ -660,7 +665,7 @@ def test_fake_future_set_result() -> None:
 
 def test_sequential_task_executor_callback_start() -> None:
     executor = SequentialTaskExecutor()
-    
+
     fn = MagicMock(return_value="result")
     callback_start = MagicMock()
 

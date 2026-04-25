@@ -38,7 +38,7 @@ def test_min_max_value_merge_with_min_max_statistics() -> None:
 def test_min_max_value_merge_with_different_scores() -> None:
     min_max_value = MinMaxValue("test_score", 5, 10)
     other_min_max_value = MinMaxValue("other_test_score", 7, 15)
-    with pytest.raises(ValueError) as error_msg:  # noqa: PT011
+    with pytest.raises(ValueError) as error_msg:
         min_max_value.merge(other_min_max_value)
     assert "different scores" in str(error_msg.value)
 

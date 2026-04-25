@@ -1,8 +1,10 @@
 
 import argparse
-import sys
 import itertools
+import sys
+
 from pysam import VariantFile
+
 
 def _build_argument_parser() -> argparse.ArgumentParser:
     """Construct and configure argument parser."""
@@ -47,5 +49,5 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

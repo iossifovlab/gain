@@ -1,12 +1,11 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import textwrap
 from typing import Any
-import yaml
-
 from unittest.mock import ANY
 
-from django.test import Client
 import pytest
+import yaml
+from django.test import Client
 
 
 @pytest.mark.parametrize("current_client", ["admin", "user", "anonymous"])
@@ -111,7 +110,7 @@ def test_annotator_attributes_position_score(
             "description": "test position score",
             "default": True,
             "internal": False,
-        }]
+        }],
     }
 
 
@@ -229,8 +228,8 @@ def test_annotator_yaml_position_score(
                 "name": "pos1",
                 "source": "pos1",
                 "internal": False,
-            }
-        ]
+            },
+        ],
     }, content_type="application/json")
 
     assert response.status_code == 200
@@ -245,9 +244,9 @@ def test_annotator_yaml_position_score(
                     "name": "pos1",
                     "source": "pos1",
                     "internal": False,
-                }
+                },
             ],
-        }
+        },
     }]
 
 
@@ -266,8 +265,8 @@ def test_annotator_yaml_position_score_exact_format(
                 "name": "pos1",
                 "source": "pos1",
                 "internal": False,
-            }
-        ]
+            },
+        ],
     }, content_type="application/json")
 
     assert response.status_code == 200
@@ -298,8 +297,8 @@ def test_annotator_yaml_position_score_errors_on_name_clash(
                 "name": "position_1",
                 "source": "pos1",
                 "internal": False,
-            }
-        ]
+            },
+        ],
     }, content_type="application/json")
 
     assert response.status_code == 400
@@ -390,9 +389,9 @@ def test_annotator_creation_workflow(
                     "name": "pos1_score",
                     "source": "pos1",
                     "internal": False,
-                }
+                },
             ],
-        }
+        },
     }]
     assert output == expected
 
@@ -479,9 +478,9 @@ def test_annotator_creation_resource_workflow(
                     "name": "pos1_score",
                     "source": "pos1",
                     "internal": False,
-                }
+                },
             ],
-        }
+        },
     }]
     assert output == expected
 
@@ -531,7 +530,7 @@ def test_pipeline_status_t4c8(
 ) -> None:
     client = clients[current_client]
     response = client.get(
-        "/api/editor/pipeline_status?pipeline_id=t4c8/t4c8_pipeline"
+        "/api/editor/pipeline_status?pipeline_id=t4c8/t4c8_pipeline",
     )
     assert response.status_code == 200
 

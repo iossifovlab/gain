@@ -1,17 +1,20 @@
 """Views for pipeline creation and manipulation."""
 import logging
 from pathlib import Path
+from typing import ClassVar
+
+from django.conf import settings
+from django.core.files.uploadedfile import UploadedFile
+from django.http import QueryDict
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotationConfigurationError,
 )
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
-from django.conf import settings
-from django.core.files.uploadedfile import UploadedFile
-from django.http import QueryDict
 from rest_framework import views
 from rest_framework.request import MultiValueDict
 from rest_framework.views import Request, Response
+
 from web_annotation.annotation_base_view import AnnotationBaseView
 from web_annotation.authentication import WebAnnotationAuthentication
 from web_annotation.models import (
@@ -21,14 +24,13 @@ from web_annotation.models import (
     WebAnnotationAnonymousUser,
 )
 
-
 logger = logging.getLogger(__name__)
 
 
 class UserPipeline(AnnotationBaseView):
     """View for saving user annotation pipelines."""
 
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
     def _save_user_pipeline(
         self,
@@ -45,7 +47,7 @@ class UserPipeline(AnnotationBaseView):
         except UnicodeDecodeError as e:
             logger.exception("Unicode decode error in pipeline config file")
             return Response(
-                {"reason": f"Invalid pipeline configuration file: {str(e)}"},
+                {"reason": f"Invalid pipeline configuration file: {e!s}"},
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
 
@@ -63,7 +65,7 @@ class UserPipeline(AnnotationBaseView):
                 {"errors": f"Invalid configuration, reason: {error}"},
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
-        except Exception:  # pylint: disable=broad-exception-caught
+        except Exception:  # noqa: BLE001
             return Response(
                 {"errors": "Invalid configuration"},
                 status=views.status.HTTP_400_BAD_REQUEST,
@@ -105,7 +107,7 @@ class UserPipeline(AnnotationBaseView):
             temporary = True
 
         if temporary:
-            pipeline_name = f'pipeline-{request.user.session_id}.yaml'
+            pipeline_name = f"pipeline-{request.user.session_id}.yaml"
 
         if not temporary and pipeline_name in self.grr_pipelines:
             return Response(
@@ -122,7 +124,7 @@ class UserPipeline(AnnotationBaseView):
                 status=views.status.HTTP_401_UNAUTHORIZED,
             )
 
-        config_filename = f'{pipeline_name}.yaml'
+        config_filename = f"{pipeline_name}.yaml"
 
         if pipeline_id:  # Update
             pipeline = request.user.get_temporary_pipeline(pipeline_id)
@@ -137,17 +139,16 @@ class UserPipeline(AnnotationBaseView):
                     request.user.identifier,
                     config_filename,
                 )
-                if pipeline_name is not None:
-                    if Pipeline.objects.filter(
-                        owner=request.user.user,
-                        name=pipeline_name,
-                    ):
-                        return Response({
-                            "reason": (
-                                "Pipeline with name "
-                                f"{pipeline_name} already exists!"
-                            ),
-                        }, status=views.status.HTTP_400_BAD_REQUEST)
+                if pipeline_name is not None and Pipeline.objects.filter(
+                    owner=request.user.user,
+                    name=pipeline_name,
+                ):
+                    return Response({
+                        "reason": (
+                            "Pipeline with name "
+                            f"{pipeline_name} already exists!"
+                        ),
+                    }, status=views.status.HTTP_400_BAD_REQUEST)
                 pipeline = Pipeline(
                     name=pipeline_name,
                     config_path=config_path,
@@ -246,7 +247,7 @@ class UserPipeline(AnnotationBaseView):
 class ListPipelines(AnnotationBaseView):
     """View for listing all annotation pipelines for files."""
 
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
     def _get_grr_pipelines(self) -> list[dict[str, str]]:
         return [
@@ -274,7 +275,7 @@ class ListPipelines(AnnotationBaseView):
                 "name": pipeline.name,
                 "type": "user",
                 "content": Path(
-                    pipeline.config_path
+                    pipeline.config_path,
                 ).read_text(encoding="utf-8"),
                 "status": "loaded" if super().lru_cache.is_pipeline_loaded(
                     pipeline.identifier) else "unloaded",
@@ -316,7 +317,7 @@ class PipelineValidation(AnnotationBaseView):
                 result = {"errors": "Invalid configuration"}
             else:
                 result = {"errors": f"Invalid configuration, reason: {error}"}
-        except Exception:  # pylint: disable=broad-exception-caught
+        except Exception:  # noqa: BLE001
             result = {"errors": "Invalid configuration"}
 
         return Response(result, status=views.status.HTTP_200_OK)
@@ -325,7 +326,7 @@ class PipelineValidation(AnnotationBaseView):
 class LoadPipeline(AnnotationBaseView):
     """Validate annotation config."""
 
-    authentication_classes = [WebAnnotationAuthentication]
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
     def post(self, request: Request) -> Response:
         """Validate annotation config."""

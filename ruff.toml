@@ -62,8 +62,19 @@ fixable = ["ALL"]
 preview = true
 
 [lint.per-file-ignores]
-"test*.py" = ["S101", "SLF", "FBT001"]
-"conftest.py" = ["D"]
+# Test-only relaxations: fixtures pulled in for setup side-effects
+# trip ARG001/ARG002; placeholder credentials trip S106/S107;
+# `pytest.raises(...)` without `match=` trips PT011; one-line
+# `assert a and b` trips PT018; bool positionals (FBT001/002) are
+# fine in test helpers.
+"test*.py" = [
+    "S101", "S106", "S107",
+    "SLF",
+    "FBT001", "FBT002",
+    "ARG001", "ARG002",
+    "PT011", "PT018",
+]
+"conftest.py" = ["D", "S101", "S106", "S107", "ARG001", "ARG002"]
 "setup.py" = ["INP001"]
 
 [lint.mccabe]

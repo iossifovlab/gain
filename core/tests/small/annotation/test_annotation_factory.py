@@ -10,7 +10,7 @@ from gain.genomic_resources.repository import GenomicResourceRepo
         "pipeline_ext", [".yaml", ".yml"],
 )
 def test_load_pipeline_from_file(
-    annotate_directory_fixture: pathlib.Path,  # noqa: ARG001
+    annotate_directory_fixture: pathlib.Path,
     annotation_grr: GenomicResourceRepo,
     tmp_path: pathlib.Path,
     pipeline_ext: str,

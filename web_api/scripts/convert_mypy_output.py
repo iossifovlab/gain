@@ -1,3 +1,4 @@
+# ruff: noqa: INP001  # standalone helper script, not a package member.
 import pathlib
 import re
 import sys

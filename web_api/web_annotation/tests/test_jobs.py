@@ -1,34 +1,34 @@
-# pylint: disable=W0621,C0114,C0116,W0212,W0613
+# pylint: disable=W0621,C0114,C0116,C0302,W0212,W0613
 import datetime
 import gzip
 import pathlib
 import textwrap
 from typing import Any
 from unittest.mock import MagicMock
-from asgiref.sync import sync_to_async
-from pysam import tabix_compress
 
 import pytest
 import pytest_mock
-from gain.genomic_resources.repository import GenomicResourceRepo
+from asgiref.sync import sync_to_async
 from django.conf import LazySettings, settings
 from django.core.files.base import ContentFile
 from django.test import Client
 from django.utils import timezone
+from gain.genomic_resources.repository import GenomicResourceRepo
+from pysam import tabix_compress
 from pytest_mock import MockerFixture
 
 from web_annotation.consumers import AnnotationStateConsumer
 from web_annotation.executor import SequentialTaskExecutor
-from web_annotation.pipeline_cache import LRUPipelineCache
+from web_annotation.mail import send_email
 from web_annotation.models import (
     AnonymousJob,
     Job,
+    Pipeline,
     TemporaryPipeline,
     User,
-    Pipeline,
     WebAnnotationAnonymousUser,
 )
-from web_annotation.mail import send_email
+from web_annotation.pipeline_cache import LRUPipelineCache
 from web_annotation.tasks import clean_old_jobs
 from web_annotation.testing import CustomWebsocketCommunicator
 from web_annotation.tests.mailhog_client import (
@@ -141,7 +141,7 @@ def test_send_email(mail_client: MailhogClient) -> None:
         "TEST SUBJECT",
         "TEST MESSAGE",
         ["recipient1@mail.com", "recipient2@mail.com"],
-        "sender@mail.com"
+        "sender@mail.com",
     )
 
     assert email_result == 1
@@ -149,7 +149,7 @@ def test_send_email(mail_client: MailhogClient) -> None:
 
 @pytest.mark.django_db
 def test_job_failure_starts_email_task(
-    monkeypatch: pytest.MonkeyPatch,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mocked = MagicMock()
     monkeypatch.setattr("web_annotation.models.send_email", mocked)
@@ -166,12 +166,12 @@ def test_job_failure_starts_email_task(
     subject, message, recipient = mocked.call_args_list[0].args
     assert "GPFWA" in subject
     assert "try running it again: http://testserver//jobs" in message
-    assert ['user@example.com'] == recipient
+    assert recipient == ["user@example.com"]
 
 
 @pytest.mark.django_db
 def test_job_success_starts_email_task(
-    monkeypatch: pytest.MonkeyPatch,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mocked = MagicMock()
     monkeypatch.setattr("web_annotation.models.send_email", mocked)
@@ -189,7 +189,7 @@ def test_job_success_starts_email_task(
     subject, message, recipient = mocked.call_args_list[0].args
     assert "GPFWA" in subject
     assert "results: http://testserver//jobs" in message
-    assert ['user@example.com'] == recipient
+    assert recipient == ["user@example.com"]
 
 
 @pytest.mark.django_db
@@ -347,17 +347,16 @@ def test_annotate_vcf_bad_input_data(user_client: Client) -> None:
 
     assert Job.objects.filter(owner=user).count() == 1
 
-    with open(str(
+    raw_img = pathlib.Path(str(
             pathlib.Path(__file__).parent /
-            "fixtures" / "GIMP_Pepper.png"), "rb") as image:
-        raw_img = image.read()
+            "fixtures" / "GIMP_Pepper.png")).read_bytes()
 
     assert len(Job.objects.all()) == 2
     response = user_client.post(
         "/api/jobs/annotate_vcf",
         {
             "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(raw_img)
+            "data": ContentFile(raw_img),
          },
     )
     assert len(Job.objects.all()) == 2
@@ -375,7 +374,7 @@ def test_annotate_vcf_non_vcf_input_data(user_client: Client) -> None:
         "/api/jobs/annotate_vcf",
         {
             "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile("blabla random text")
+            "data": ContentFile("blabla random text"),
          },
     )
     assert len(Job.objects.all()) == 2
@@ -585,7 +584,6 @@ def test_validate_columns_with_partial_mapping(
                 "col_chrom": "chrom",
                 "col_pos": "pos",
                 "col_ref": "ref",
-                # "col_alt": "alt",
             },
         },
         content_type="application/json",
@@ -606,7 +604,6 @@ def test_validate_columns_with_partial_mapping(
         "annotatable": "Position",
         "errors": "",
     }
-
 
 
 @pytest.mark.django_db
@@ -661,8 +658,8 @@ def test_validate_columns_with_partial_mapping(
                 "genome": "hg38/GRCh38-hg38/genome",
             },
             [
-                ['loc', 'var', 'position_1'],
-                ['chr1:999', 'del(3)', '']
+                ["loc", "var", "position_1"],
+                ["chr1:999", "del(3)", ""],
             ],
             ".csv",
         ),
@@ -677,8 +674,8 @@ def test_validate_columns_with_partial_mapping(
                 "col_pos": "ps",
             },
             [
-                ['chr', 'ps', 'position_1'],
-                ['chr1', '666', '']
+                ["chr", "ps", "position_1"],
+                ["chr1", "666", ""],
             ],
             ".csv",
         ),
@@ -695,8 +692,8 @@ def test_validate_columns_with_partial_mapping(
                 "genome": "hg38/GRCh38-hg38/genome",
             },
             [
-                ['chr', 'pos', 'vr', 'position_1'],
-                ['chr1', '999', 'sub(T->C)', '']
+                ["chr", "pos", "vr", "position_1"],
+                ["chr1", "999", "sub(T->C)", ""],
             ],
             ".csv",
         ),
@@ -712,8 +709,8 @@ def test_validate_columns_with_partial_mapping(
                 "col_pos_end": "end",
             },
             [
-                ['chr', 'beg', 'end', 'position_1'],
-                ['chr1', '5', '10', '0.35']
+                ["chr", "beg", "end", "position_1"],
+                ["chr1", "5", "10", "0.35"],
             ],
             ".csv",
         ),
@@ -730,8 +727,8 @@ def test_validate_columns_with_partial_mapping(
                 "col_cnv_type": "end",
             },
             [
-                ['chr', 'pos_beg', 'pos_end', 'cnv', 'position_1'],
-                ['chr1', '7', '20', 'cnv+', '0.483']
+                ["chr", "pos_beg", "pos_end", "cnv", "position_1"],
+                ["chr1", "7", "20", "cnv+", "0.483"],
             ],
             ".csv",
         ),
@@ -745,8 +742,8 @@ def test_validate_columns_with_partial_mapping(
                 "col_vcf_like": "vcf",
             },
             [
-                ['vcf,position_1'],
-                ['chr1:5:C:CT,0.25']
+                ["vcf,position_1"],
+                ["chr1:5:C:CT,0.25"],
             ],
             ".txt",
         ),
@@ -829,8 +826,8 @@ def test_annotate_columns_t4c8(
     output = pathlib.Path(job.result_path).read_text(encoding="utf-8")
     lines = [line.split(",") for line in output.strip().split("\n")]
     assert lines == [
-        ['chrom', 'pos', 'var', 'position_1'],
-        ['chr1', '9', 'del(3)', '0.425']
+        ["chrom", "pos", "var", "position_1"],
+        ["chr1", "9", "del(3)", "0.425"],
     ]
 
 
@@ -868,8 +865,8 @@ def test_annotate_columns_anonymous_t4c8(
     output = pathlib.Path(job.result_path).read_text(encoding="utf-8")
     lines = [line.split(",") for line in output.strip().split("\n")]
     assert lines == [
-        ['chrom', 'pos', 'var', 'position_1'],
-        ['chr1', '9', 'del(3)', '0.425']
+        ["chrom", "pos", "var", "position_1"],
+        ["chr1", "9", "del(3)", "0.425"],
     ]
 
 
@@ -1064,8 +1061,8 @@ def test_annotate_columns_t4c8_gzipped(
         pathlib.Path(job.result_path).read_bytes()).decode("utf-8")
     lines = [line.split(",") for line in output.strip().split("\n")]
     assert lines == [
-        ['chrom', 'pos', 'var', 'position_1'],
-        ['chr1', '9', 'del(3)', '0.425']
+        ["chrom", "pos", "var", "position_1"],
+        ["chr1", "9", "del(3)", "0.425"],
     ]
 
 
@@ -1088,7 +1085,7 @@ def test_annotate_vcf_gzip_fails(
         "/api/jobs/annotate_vcf",
         {
         "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(vcf, "test_input.vcf.gz")
+            "data": ContentFile(vcf, "test_input.vcf.gz"),
         },
     )
     assert response.status_code == 400
@@ -1130,7 +1127,7 @@ def test_annotate_vcf_bgzip(
         "/api/jobs/annotate_vcf",
         {
             "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(vcf, "test_input.vcf.gz")
+            "data": ContentFile(vcf, "test_input.vcf.gz"),
         },
     )
     assert response.status_code == 200
@@ -1157,12 +1154,16 @@ def test_annotate_vcf_bgzip(
     assert result_path.exists(), result_path
     assert job.result_path.endswith(".vcf.gz")
     output = gzip.decompress(result_path.read_bytes()).decode("utf-8").strip()
-    expected = textwrap.dedent("""
+    info_line = (
+        '##INFO=<ID=position_1,Number=A,Type=String,'
+        'Description="test position score">'
+    )
+    expected = textwrap.dedent(f"""
         ##fileformat=VCFv4.1
         ##FILTER=<ID=PASS,Description="All filters passed">
         ##contig=<ID=chr1>
         ##pipeline_annotation_tool=GPF variant annotation.
-        ##INFO=<ID=position_1,Number=A,Type=String,Description="test position score">
+        {info_line}
         #CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
         chr1	1	.	C	A	.	.	position_1=0.1
      """).strip()
@@ -1179,7 +1180,7 @@ def test_annotate_columns_bad_request(admin_client: Client) -> None:
         "/api/jobs/annotate_columns",
         {
             "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(input_file)
+            "data": ContentFile(input_file),
         },
     )
 
@@ -1239,6 +1240,7 @@ def test_user_create_pipeline(
     assert pipeline.name == "test_pipeline"
     output = pathlib.Path(pipeline.config_path).read_text(encoding="utf-8")
     assert output == "- position_score: scores/pos1"
+
 
 @pytest.mark.django_db
 def test_user_create_pipeline_does_not_duplicate(
@@ -1312,7 +1314,7 @@ def test_create_job_for_pipeline_with_preamble(
         "/api/jobs/annotate_vcf",
         {
             "pipeline_id": str(pipeline.pk),
-            "data": ContentFile(vcf, "test_input.vcf")
+            "data": ContentFile(vcf, "test_input.vcf"),
         },
     )
 
@@ -1384,7 +1386,7 @@ def test_user_create_pipeline_with_unicode_error(
     user_client: Client,
 ) -> None:
     user = User.objects.get(email="user@example.com")
-    pipeline_config = "\x80\x81".encode('latin-1')
+    pipeline_config = "\x80\x81".encode("latin-1")
 
     params = {
         "config": ContentFile(pipeline_config),
@@ -1401,7 +1403,7 @@ def test_user_create_pipeline_with_unicode_error(
         "reason": (
             "Invalid pipeline configuration file: 'utf-8' codec can't decode "
             "byte 0x80 in position 0: invalid start byte"
-        )
+        ),
     }
 
 
@@ -1411,8 +1413,8 @@ def test_user_create_pipeline_with_os_error(
     mocker: MockerFixture,
 ) -> None:
     mocker.patch(
-        'pathlib.Path.write_text',
-        side_effect=OSError("Permission denied")
+        "pathlib.Path.write_text",
+        side_effect=OSError("Permission denied"),
     )
     user = User.objects.get(email="user@example.com")
     pipeline_config = "- position_score: scores/pos1"
@@ -1469,6 +1471,7 @@ def test_user_update_pipeline(
     assert pipeline.name == "test_pipeline"
     output = pathlib.Path(pipeline.config_path).read_text(encoding="utf-8")
     assert output == "- position_score: scores/pos2"
+
 
 @pytest.mark.django_db
 def test_user_delete_pipeline(
@@ -1681,7 +1684,7 @@ def test_annotate_vcf_user_pipeline(
         "/api/jobs/annotate_vcf",
         {
             "pipeline_id": pipeline_id,
-            "data": ContentFile(vcf, "test_input.vcf")
+            "data": ContentFile(vcf, "test_input.vcf"),
         },
     )
     assert response.status_code == 200
@@ -1718,7 +1721,7 @@ def test_annotate_vcf_variant_quota(
         "/api/jobs/annotate_vcf",
         {
             "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(vcf, "test_input.vcf")
+            "data": ContentFile(vcf, "test_input.vcf"),
         },
     )
     assert response.status_code == 200
@@ -1736,7 +1739,7 @@ def test_annotate_vcf_variant_quota(
         "/api/jobs/annotate_vcf",
         {
             "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(vcf, "test_input.vcf")
+            "data": ContentFile(vcf, "test_input.vcf"),
         },
     )
     assert response.status_code == 413
@@ -2229,7 +2232,7 @@ def test_job_failure_stores_exception(
         "/api/jobs/annotate_vcf",
         {
             "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(vcf, "test_input.vcf")
+            "data": ContentFile(vcf, "test_input.vcf"),
         },
     )
     assert response.status_code == 200
@@ -2264,14 +2267,14 @@ def test_job_failure_read_stored_exception(
         "/api/jobs/annotate_vcf",
         {
             "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(vcf, "test_input.vcf")
+            "data": ContentFile(vcf, "test_input.vcf"),
         },
     )
     assert response.status_code == 200
     job_id = response.json()["job_id"]
 
     response = user_client.get(
-        f"/api/jobs/{job_id}"
+        f"/api/jobs/{job_id}",
     )
 
     assert response.status_code == 200
@@ -2417,7 +2420,7 @@ async def test_clean_up_anonymous_jobs(
             "col_pos": "pos",
             "col_ref": "ref",
             "col_alt": "alt",
-        }
+        },
     )
     assert annotate_response.status_code == 200
 

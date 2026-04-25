@@ -15,7 +15,7 @@ from .mocks import TranscriptModelMock
 
 @pytest.fixture(scope="session")
 def transcript_model(
-    exons: list[Exon],  # noqa: ARG001
+    exons: list[Exon],
     coding: list[Exon],
 ) -> TranscriptModel:
     return cast(

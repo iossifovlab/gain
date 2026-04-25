@@ -1,7 +1,9 @@
-from typing import Any
-from django.core.management.base import BaseCommand, CommandError
-from web_annotation.models import User
 import argparse
+from typing import Any
+
+from django.core.management.base import BaseCommand, CommandError
+
+from web_annotation.models import User
 
 
 class Command(BaseCommand):
@@ -13,7 +15,7 @@ class Command(BaseCommand):
             help="User to add units to",
         )
 
-    def handle(self, *args: Any, **options: Any) -> None:
+    def handle(self, *_args: Any, **options: Any) -> None:
         user_id = options["user_id"]
         try:
             user = User.objects.get(id=user_id)
