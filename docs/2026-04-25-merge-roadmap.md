@@ -44,6 +44,7 @@ The destination shape is:
 | 6 | `web_e2e` (Playwright) on root CI: deterministic Playwright image (`npm ci`), sequential stage after `Conda packages` that publishes the in-monorepo `gain-*.conda` artefacts to a local channel for `gpf-image`; retire `web_infra/Jenkinsfile` and the upstream `gpf-conda-packaging` coupling for the e2e flow | DONE | `docs/2026-04-25-phase-6-e2e-ci.md` |
 | 7 | Tail cleanup: retire orphaned `backend-dev` development image (`web_api/Dockerfile.dev` + `web_api/scripts/backend_run.sh` + `web_api/dev-environment.yml` + `backend-dev` compose service) and stale pre-merge `web_infra/Makefile` / `web_infra/README.md`. Conda dev workflow stays documented as a supported flow | DONE | `docs/2026-04-25-phase-7-tail-cleanup.md` |
 | 8 | Production-image modernization: wheel-based `python:3.12-slim` backend image (gain-core + django-gpf-web-annotation only, single-process daphne); `httpd:2.4-alpine` frontend image with Django collectstatic baked in via multi-stage from the backend image (no shared `static-data` volume); one-shot `backend-migrate` compose service; retire `gpf-image` / `ubuntu-image` / supervisord / `environment.yml` | DONE | `docs/2026-04-25-phase-8-prod-image-modernization.md` |
+| 9.1 | Build prod images in the root `Jenkinsfile` and push them to `registry.seqpipe.org` (tags: build number, 8-char git short SHA, `latest`); master-only push, branch builds validate Dockerfiles without pushing | DONE | `docs/2026-04-25-phase-9-image-push.md` |
 
 Original Phase 1 roadmap drift summary (for the curious): the
 original Phase 4 was "consolidate conda environments" — that's
@@ -128,8 +129,9 @@ when Phase 4's CI rollout surfaced previously hidden lint debt.
 
 ### Phase 9 — Optional: deployment modernization tail
 
-No plan doc yet. Most of the originally-imagined Phase 8 has
-landed already:
+First slice (image registry push, 9.1) landed; remaining
+slices are still optional. Most of the originally-imagined
+Phase 8 has landed already:
 - **Phase 6** removed the e2e flow's runtime dependency on
   `iossifovlab/gpf-conda-packaging/master`.
 - **Phase 7** retired the orphaned `backend-dev` development
@@ -142,11 +144,25 @@ landed already:
 
 What remains for Phase 9, if/when the team wants more:
 
-- **Image registry + pull-deploy**. Push the
-  `gain-web-api-prod` and `gain-web-ui-prod` images to a
-  registry (GHCR, Harbor, etc.) on master, switch the prod
-  hosts to `docker compose pull && up -d` rather than
-  build-on-host.
+- **Image registry + pull-deploy** —
+  - **9.1: Push (DONE)**. Root `Jenkinsfile` now builds and
+    pushes `registry.seqpipe.org/gain-web-api` and
+    `registry.seqpipe.org/gain-web-ui` (tags: build number,
+    8-char git SHA, `latest`) on master. Branch builds
+    validate the Dockerfiles without pushing. See
+    `docs/2026-04-25-phase-9-image-push.md`.
+  - **9.2: Pull-deploy on prod hosts**. Switch
+    `web_infra/compose-iossifovweb.yaml` and
+    `compose-wigclust.yaml` from `build:` to `image:
+    registry.seqpipe.org/gain-web-{api,ui}:latest` (or a
+    pinned tag), drop the `image: ${BACKEND_IMAGE:-...}`
+    env-var indirection. Prod hosts run `docker compose pull
+    && up -d` instead of build-on-host. Not started.
+  - **9.3: e2e pulls instead of rebuilds**. Rewire
+    `gain-web-e2e` to `docker pull
+    registry.seqpipe.org/gain-web-{api,ui}:${UPSTREAM_BUILD_NUMBER}`
+    (or `:${GIT_SHORT}`) instead of rebuilding from wheels.
+    Saves ~5 min per e2e run. Not started.
 - **TLS modernization**. Caddy or Traefik in front for
   automatic TLS + cleaner reverse-proxy config.
 - **Observability lite**. Loki + Promtail + Grafana as a
