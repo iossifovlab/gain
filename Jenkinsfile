@@ -86,7 +86,10 @@ def publishReports(String name) {
 }
 
 pipeline {
-    agent any
+    // Run on any agent except `dory` — its docker daemon /
+    // resource profile doesn't fit the root build's compose
+    // stacks. Other agents are interchangeable.
+    agent { label '!dory' }
 
     options {
         timeout(time: 1, unit: 'HOURS')
