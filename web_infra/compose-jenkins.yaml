@@ -124,24 +124,6 @@ services:
       retries: 5
 
 
-  backend-dev:
-    build:
-      context: ../web_api
-      dockerfile: Dockerfile.dev
-      args:
-        COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
-    environment:
-      DJANGO_SETTINGS_MODULE: web_annotation.test_settings
-      GPFWA_EMAIL_HOST: mail
-      TESTING_CONTAINER: true
-      GRR_DEFINITION_FILE: /grr-definition.yaml
-    ports:
-      - "8000:8000"
-    volumes:
-      - ..:/wd
-    entrypoint: /wd/web_api/scripts/backend_run.sh
-
-
   frontend:
     build:
       context: ../web_ui
