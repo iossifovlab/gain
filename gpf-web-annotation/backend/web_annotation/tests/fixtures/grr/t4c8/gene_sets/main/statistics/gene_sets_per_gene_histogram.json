@@ -1,0 +1,11 @@
+{
+  "config": {
+    "type": "categorical",
+    "value_order": null,
+    "y_log_scale": false,
+    "label_rotation": 0
+  },
+  "values": {
+    "2": 2
+  }
+}

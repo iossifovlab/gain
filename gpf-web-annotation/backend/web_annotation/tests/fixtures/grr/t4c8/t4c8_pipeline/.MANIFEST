@@ -1,0 +1,9 @@
+- md5: cfc75acbeea59ade1a1200e6c0d46349
+  name: genomic_resource.yaml
+  size: 56
+- md5: 6a99c575ab87f8c7d1ed1e52e7e349ce
+  name: statistics/stats_hash
+  size: 11
+- md5: 3e60597d6b89b15a77ece0c8d88ea276
+  name: t4c8_pipeline.yaml
+  size: 479

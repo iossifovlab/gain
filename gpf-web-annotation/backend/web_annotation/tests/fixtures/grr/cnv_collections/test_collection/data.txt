@@ -1,0 +1,7 @@
+chrom	pos_begin	pos_end	frequency	collection	affected_status
+1	10	20	0.02	col1	affected
+1	50	100	0.1	col1	affected
+2	1	8	0.00001	col2	unaffected
+2	16	20	0.3	col1	affected
+2	200	203	0.0002	col2	unaffected
+15	16	20	0.2	col2	affected

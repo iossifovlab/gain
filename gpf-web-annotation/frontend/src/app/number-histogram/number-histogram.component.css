@@ -1,0 +1,19 @@
+label {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+#values-description {
+  margin-left: 45px;
+  display: flex;
+  justify-content: space-around;
+  gap: 40%;
+  font-style: italic;
+  color: #acacac;
+  font-size: 14px;
+  max-width: 600px;
+}
+
+.percentage-text {
+  font-size: 14px;
+}

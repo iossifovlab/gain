@@ -1,0 +1,30 @@
+<div id="container" *ngIf="fileContent">
+  <span id="instructions">Please map each column with the corresponding one.</span>
+  <div id="table" [ngStyle]="{ 'grid-template-columns': `repeat(${fileContent.columns.length}, auto)` }">
+    <div class="row">
+      <div class="header" [id]="header + '-header'" *ngFor="let header of fileContent.columns">
+        <mat-form-field>
+          <mat-select matNativeControl [placeholder]="'- select -'" [value]="getFileColumnNewName(header)">
+            <mat-option (click)="onSelectName('None', header)">None</mat-option>
+            <mat-option
+              *ngFor="let col of columnNames"
+              (click)="onSelectName(col, header)"
+              [value]="col"
+              [title]="col"
+              [disabled]="mappedColumns.has(col)"
+              >{{ col }}</mat-option
+            >
+          </mat-select>
+        </mat-form-field>
+        <div class="file-header">{{ header }}</div>
+      </div>
+    </div>
+    <div *ngFor="let row of fileContent.rows" class="row">
+      <span *ngFor="let cell of row" class="cell" [id]="cell + '-cell'" [title]="cell">{{ cell | textShorten }}</span>
+    </div>
+  </div>
+  <span class="error-message">{{ error }}</span>
+  <span class="annotatable-message" *ngIf="annotatable"
+    >Current columns build <strong>{{ annotatable }}</strong></span
+  >
+</div>

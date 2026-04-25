@@ -1,0 +1,33 @@
+.mat-mdc-dialog-actions {
+  justify-content: end;
+}
+
+.label {
+  color: #b9d3e7;
+  font-weight: bold;
+}
+
+.data {
+  color: #5b778c;
+}
+
+.error {
+  color: #8d6b6b;
+}
+
+.error-block {
+  background-color: #f8d7da;
+  border-color: #f5c6cb;
+  color: #721c24;
+  padding: 10px;
+}
+
+.time {
+  color: #c8dae7;
+}
+
+mat-dialog-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}

@@ -1,0 +1,30 @@
+{
+  "config": {
+    "type": "number",
+    "view_range": {
+      "min": 10.123456789,
+      "max": 20.0
+    },
+    "number_of_bins": 3,
+    "x_log_scale": false,
+    "y_log_scale": false,
+    "x_min_log": null
+  },
+  "bins": [
+    10.123456789,
+    13.415637859333334,
+    16.707818929666665,
+    20.0
+  ],
+  "bars": [
+    1,
+    0,
+    1
+  ],
+  "out_of_range_bins": [
+    0,
+    0
+  ],
+  "min_value": 10.123456789,
+  "max_value": 20.0
+}

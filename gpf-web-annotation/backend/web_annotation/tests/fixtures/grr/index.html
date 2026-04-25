@@ -1,0 +1,569 @@
+
+<html>
+    <head>
+    <style>
+        * {
+          font-family: sans-serif
+        }
+
+        th {
+          background: #ecf1f6;
+        }
+
+        td, th {
+          border: 1px solid #cfd8df;
+          padding: 5px;
+          max-width: 100px;
+        }
+
+        tr {
+          height: 38px;
+        }
+
+        table, td, th {
+          border-collapse: collapse;
+        }
+
+        a {
+          text-decoration: none;
+          color: #24699E;
+        }
+
+        a:hover {
+          color: #4C93C9;
+        }
+
+        a:visited {
+          color: #829dbe;
+        }
+
+        a:visited:hover {
+          color: #a1bddf;
+        }
+
+        #search-container {
+          margin-top: 80px;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          gap: 15px;
+          position: sticky;
+          top: 0;
+          background-color: white;
+          height: 70px;
+        }
+
+        #type-label {
+          color: #5b778c;
+        }
+
+        #type-filter {
+          border: 1px solid #85a2b9;
+          height: 40px;
+          border-radius: 5px;
+          font-size: 18px;
+          padding-left: 10px;
+          background: white;
+        }
+
+        #type-filter:hover {
+          cursor: pointer;
+        }
+
+        #search-field {
+          width: 40%;
+          border: 1px solid #85a2b9;
+          height: 40px;
+          border-radius: 5px;
+          font-size: 18px;
+          padding: 0 10px;
+        }
+
+        input::placeholder {
+          color: #ababab;
+        }
+
+        #type-filter:focus-visible,
+        #search-field:focus-visible,
+        #type-filter:focus,
+        #search-field:focus {
+          outline-color: #85a2b9;
+        }
+
+        .nowrap {
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .search-info {
+          text-align: center;
+          font-size: 0.9em;
+          color: #ababab;
+          font-style: italic;
+          word-break: break-word;
+          margin: 0 10%;
+        }
+
+        .loading,
+        .searching {
+          text-align: center;
+          font-size: larger;
+        }
+
+        .pageButton {
+          border: none;
+          background: none;
+          color: blue;
+          cursor: pointer;
+          padding: 3px;
+          margin: 0px 3px;
+        }
+
+        .pageButton.active {
+          color: black;
+          cursor: default;
+        }
+
+        .pageButton.hide {
+          display: none;
+        }
+
+        #status,
+        #status-error {
+          margin-left: 10%;
+          margin-top: 15px;
+          color: #5b778c;
+        }
+
+        #status-error {
+          color: #d74b59;
+          text-align: center;
+        }
+
+        #resource-table {
+          margin: 10px 10%;
+          width: 80%;
+          border: 1px solid black;
+        }
+
+      .version-cell {
+        width: 5%;
+      }
+
+      .size-cell,
+      .type-cell {
+        width: 10%;
+      }
+
+      .id-cell {
+        width: 30%;
+      }
+    </style>
+ </head>    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+    <script type="module">
+        import sqlite3 from "https://cdn.jsdelivr.net/npm/@sqlite.org/sqlite-wasm@3.51.2-build6/dist/index.mjs";
+
+
+        const start = async (sqlite3) => {
+          const response = await fetch(`${window.location.origin}/.CONTENTS.sqlite3.gz`)
+          const ds = new DecompressionStream('gzip');
+          const decompressedResponse = new Response(response.body.pipeThrough(ds));
+          const arrayBuffer = await decompressedResponse.arrayBuffer()
+          const p = await sqlite3.wasm.allocFromTypedArray(arrayBuffer)
+          const db = new sqlite3.oo1.DB();
+          let deserialize_flags = sqlite3.capi.SQLITE_DESERIALIZE_FREEONCLOSE;
+          const rc = await sqlite3.capi.sqlite3_deserialize(db.pointer, 'main', p, arrayBuffer.byteLength, arrayBuffer.byteLength, deserialize_flags);
+          await db.checkRc(rc);
+          window.sqlite3 = db;
+          window.sqlite3.query = (sql) => {
+            const rows =  window.sqlite3.exec({sql: sql, returnValue: "resultRows"});
+            console.log(`Executed query: ${sql}, got ${rows.length} rows`);
+            console.log(rows);
+            return rows;
+          }
+          // window.sqlite3.query = (sql) => {
+          //  return window.sqlite3.exec({sql: sql, returnValue: "resultRows"})
+          //}
+        };
+
+        const initializeSQLite = async () => {
+          try {
+            console.log('Loading and initializing SQLite3 module...');
+            const sqlite3 = await sqlite3InitModule();
+            console.log('Done initializing.');
+            await start(sqlite3);
+          } catch (err) {
+            console.error('Initialization error:', err.name, err.message);
+          }
+        };
+
+
+        const rowData = {}
+        $(".contents > tbody > tr").each((index, row) => {
+            const id = $(row).attr("id");
+            const children = $(row).find("td");
+            rowData[id] = {
+                "type": children[0].textContent.trim(),
+                "id": children[1].textContent.trim(),
+                "version": children[2].textContent.trim(),
+                "sizeInBytes": children[3].textContent.trim(),
+                "summary": children[4].textContent.trim(),
+                "url": $(children[1]).children("a").attr("href").trim(),
+            };
+        })
+        window.rowData = rowData;
+
+
+        function UpdateStatus() {
+            const status = $(`#status`);
+            const statusError = $(`#status-error`);
+            if (window.last_error) {
+                statusError.show();
+                statusError.text(`Query failed due to syntax error, debugging information is in the console.`);
+            }
+            else {
+                statusError.text("");
+                statusError.hide();
+            }
+            status.text(`${window.currentIds.length} resources`);
+        }
+
+        function refreshData(ids) {
+            window.currentIds = ids;
+
+            const rows = $(".contents > tbody > tr")
+            rows.hide();
+            for (const [index, rowId] of ids.entries()) {
+                let row = $(rows[index]);
+                let rowData = window.rowData[rowId];
+                let cells = row.children("td");
+                cells[0].textContent = rowData.type;
+                $(cells[1]).children("a").attr("href", rowData.url).text(rowData.id);
+                cells[2].textContent = rowData.version;
+                cells[3].textContent = rowData.sizeInBytes;
+                cells[4].textContent = rowData.summary;
+                row.show();
+            }
+
+            UpdateStatus();
+        }
+
+        window.dbLoaded = new Promise(async (resolve) => {
+            await initializeSQLite()
+            const all_ids_result = await window.sqlite3.query("SELECT full_id FROM contents;")
+            window.all_ids = new Set(all_ids_result.map((row) => row[0]))
+            const all_types_result = await window.sqlite3.query("SELECT DISTINCT type FROM contents ORDER BY type ASC;")
+            const typeFilter = $("#type-filter");
+            for (const row of all_types_result) {
+                const type = row[0];
+                const option = document.createElement("option");
+                option.value = type;
+                option.textContent = type;
+                typeFilter.append(option);
+            }
+            refreshData(Array.from(window.all_ids))
+
+            resolve(window.sqlite3)
+        });
+
+        $(".loading").hide()
+
+        $("#search-container").show()
+
+        async function doSearch() {
+            await window.dbLoaded;
+            const searchValue = $("#search-field").val().trim();
+            const typeFilter = $("#type-filter").val();
+            if (searchValue === "" && typeFilter === "all") {
+                window.last_error = null;
+                refreshData(Array.from(window.all_ids))
+                return;
+            }
+
+            $(".contents > tbody > tr").hide()
+            $(".searching").show()
+
+            const ids = new Set();
+
+            let query = "";;
+            if (searchValue !== "" && typeFilter !== "all") {
+                query = `SELECT full_id FROM contents WHERE contents MATCH '${searchValue}' AND type = '${typeFilter}'`
+            }
+            else if (searchValue !== "") {
+                query = `SELECT full_id FROM contents WHERE contents MATCH '${searchValue}'`
+            }
+            else {
+                query = `SELECT full_id FROM contents WHERE type = '${typeFilter}'`
+            }
+
+            window.last_error = null;
+            try {
+                const displayIds = window.sqlite3.query(query).map((row) => row[0]);
+                refreshData(displayIds);
+            }
+            catch (error) {
+                window.last_error = error;
+                console.error("Error during search:", error);
+                refreshData(Array.from(window.all_ids))
+            }
+            finally {
+                $(".searching").hide()
+            }
+        }
+
+        $("#type-filter").on("change", (e) => {
+            doSearch();
+        })
+
+        $("#search-field").on("change", async (e) => {
+            doSearch();
+        });
+
+        function debounce(func, wait, immediate) {
+            var timeout;
+            return function() {
+                var context = this, args = arguments;
+                var later = function() {
+                    timeout = null;
+                    if (!immediate) func.apply(context, args);
+                };
+                var callNow = immediate && !timeout;
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+                if (callNow) func.apply(context, args);
+            };
+        };
+
+        var debouncedSearch = debounce(doSearch, 400, false);
+
+        $("#search-field").on("keydown", (e) => {
+            if (e.key === "Enter") {
+                doSearch();
+            }
+            else {
+                debouncedSearch();
+            }
+        });
+
+    </script>
+
+ <body>
+     <div>
+        <p class="loading">Loading search</p>
+        <div id="search-container" style="display: none;">
+          <span id="type-label">Resource type</span>
+          <div id="type-cell">
+            <select id="type-filter">
+                <option value="all">All</option>
+            </select>
+          </div>
+          <input type="text" id="search-field" placeholder="Search">
+        </div>
+        <div class="search-info">
+          <div>
+            use AND to perform 'and',
+            use OR to perform 'or',
+            use spaces to separate strings,
+            surround strings in "" to use spaces inside the string
+          </div>
+          The search uses
+          <a
+            href="https://sqlite.org/fts5.html#full_text_query_syntax"
+            target="_blank">
+            SQLite's FTS syntax.</a>
+        </div>
+        <p id="status-error"></p>
+        <div id="status"></div>
+        <table id="resource-table" class="contents">
+          <thead>
+            <tr>
+              <th class="nowrap type-cell">Type</th>
+              <th class="nowrap id-cell">ID</th>
+              <th class="nowrap version-cell">Version</th>
+              <th
+                class="nowrap size-cell"
+                title="Total size (bytes)"
+              >Total size (bytes)</th>
+              <th class="nowrap">Summary</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr id="cnv_collections/test_collection">
+              <td
+                class="nowrap type-cell"
+                title="cnv_collection"
+              >cnv_collection</td>
+              <td class="nowrap id-cell" title="cnv_collections/test_collection">
+                <a href='cnv_collections/test_collection/index.html'>cnv_collections/test_collection</a>
+              </td>
+              <td class="nowrap version-cell">0</td>
+              <td class="nowrap size-cell">47.42 KB</td>
+              <td
+                class="nowrap"
+                title=""
+              ></td>
+              </tr>
+            <tr id="hg38/GRCh38-hg38/genome">
+              <td
+                class="nowrap type-cell"
+                title="genome"
+              >genome</td>
+              <td class="nowrap id-cell" title="hg38/GRCh38-hg38/genome">
+                <a href='hg38/GRCh38-hg38/genome/index.html'>hg38/GRCh38-hg38/genome</a>
+              </td>
+              <td class="nowrap version-cell">0</td>
+              <td class="nowrap size-cell">2.71 MB</td>
+              <td
+                class="nowrap"
+                title="## HG38 Reference Genome 
+
+Default HG38 reference genome used by GPF
+"
+              >## HG38 Reference Genome 
+
+Default HG38 reference genome used by GPF
+</td>
+              </tr>
+            <tr id="pipeline/test_pipeline">
+              <td
+                class="nowrap type-cell"
+                title="annotation_pipeline"
+              >annotation_pipeline</td>
+              <td class="nowrap id-cell" title="pipeline/test_pipeline">
+                <a href='pipeline/test_pipeline/index.html'>pipeline/test_pipeline</a>
+              </td>
+              <td class="nowrap version-cell">0</td>
+              <td class="nowrap size-cell">177.0 B</td>
+              <td
+                class="nowrap"
+                title=""
+              ></td>
+              </tr>
+            <tr id="scores/pos1">
+              <td
+                class="nowrap type-cell"
+                title="position_score"
+              >position_score</td>
+              <td class="nowrap id-cell" title="scores/pos1">
+                <a href='scores/pos1/index.html'>scores/pos1</a>
+              </td>
+              <td class="nowrap version-cell">0</td>
+              <td class="nowrap size-cell">14.04 KB</td>
+              <td
+                class="nowrap"
+                title=""
+              ></td>
+              </tr>
+            <tr id="scores/pos2">
+              <td
+                class="nowrap type-cell"
+                title="position_score"
+              >position_score</td>
+              <td class="nowrap id-cell" title="scores/pos2">
+                <a href='scores/pos2/index.html'>scores/pos2</a>
+              </td>
+              <td class="nowrap version-cell">0</td>
+              <td class="nowrap size-cell">15.05 KB</td>
+              <td
+                class="nowrap"
+                title=""
+              ></td>
+              </tr>
+            <tr id="t4c8/gene_scores/t4c8_score">
+              <td
+                class="nowrap type-cell"
+                title="gene_score"
+              >gene_score</td>
+              <td class="nowrap id-cell" title="t4c8/gene_scores/t4c8_score">
+                <a href='t4c8/gene_scores/t4c8_score/index.html'>t4c8/gene_scores/t4c8_score</a>
+              </td>
+              <td class="nowrap version-cell">0</td>
+              <td class="nowrap size-cell">12.75 KB</td>
+              <td
+                class="nowrap"
+                title="t4c8 gene score"
+              >t4c8 gene score</td>
+              </tr>
+            <tr id="t4c8/gene_sets/main">
+              <td
+                class="nowrap type-cell"
+                title="gene_set_collection"
+              >gene_set_collection</td>
+              <td class="nowrap id-cell" title="t4c8/gene_sets/main">
+                <a href='t4c8/gene_sets/main/index.html'>t4c8/gene_sets/main</a>
+              </td>
+              <td class="nowrap version-cell">0</td>
+              <td class="nowrap size-cell">25.75 KB</td>
+              <td
+                class="nowrap"
+                title="t4c8 main gene sets"
+              >t4c8 main gene sets</td>
+              </tr>
+            <tr id="t4c8/genomic_scores/score_one">
+              <td
+                class="nowrap type-cell"
+                title="position_score"
+              >position_score</td>
+              <td class="nowrap id-cell" title="t4c8/genomic_scores/score_one">
+                <a href='t4c8/genomic_scores/score_one/index.html'>t4c8/genomic_scores/score_one</a>
+              </td>
+              <td class="nowrap version-cell">0</td>
+              <td class="nowrap size-cell">14.59 KB</td>
+              <td
+                class="nowrap"
+                title=""
+              ></td>
+              </tr>
+            <tr id="t4c8/t4c8_genes">
+              <td
+                class="nowrap type-cell"
+                title="gene_models"
+              >gene_models</td>
+              <td class="nowrap id-cell" title="t4c8/t4c8_genes">
+                <a href='t4c8/t4c8_genes/index.html'>t4c8/t4c8_genes</a>
+              </td>
+              <td class="nowrap version-cell">0</td>
+              <td class="nowrap size-cell">666.0 B</td>
+              <td
+                class="nowrap"
+                title=""
+              ></td>
+              </tr>
+            <tr id="t4c8/t4c8_genome">
+              <td
+                class="nowrap type-cell"
+                title="genome"
+              >genome</td>
+              <td class="nowrap id-cell" title="t4c8/t4c8_genome">
+                <a href='t4c8/t4c8_genome/index.html'>t4c8/t4c8_genome</a>
+              </td>
+              <td class="nowrap version-cell">0</td>
+              <td class="nowrap size-cell">1.35 KB</td>
+              <td
+                class="nowrap"
+                title=""
+              ></td>
+              </tr>
+            <tr id="t4c8/t4c8_pipeline">
+              <td
+                class="nowrap type-cell"
+                title="annotation_pipeline"
+              >annotation_pipeline</td>
+              <td class="nowrap id-cell" title="t4c8/t4c8_pipeline">
+                <a href='t4c8/t4c8_pipeline/index.html'>t4c8/t4c8_pipeline</a>
+              </td>
+              <td class="nowrap version-cell">0</td>
+              <td class="nowrap size-cell">546.0 B</td>
+              <td
+                class="nowrap"
+                title=""
+              ></td>
+              </tr>
+          </tbody>
+        </table>
+        <p class="searching" style="display: none;">Searching</p>
+     </div>
+     <div class="pagination"></div>
+ </body>
+</html>

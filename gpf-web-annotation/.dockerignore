@@ -1,0 +1,15 @@
+__pycache__
+*.sqlite3
+data
+.pytest_cache
+/backend
+/frontend
+*.egg-info
+conda-channel.tar.gz
+*.tbi
+/pg_data
+/gpfwa_data
+/results
+/gpfwa*
+/.mypy_cache
+/.ruff_cache

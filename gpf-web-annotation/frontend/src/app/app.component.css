@@ -1,0 +1,128 @@
+#app-header {
+  display: flex;
+  justify-content: space-between;
+  margin: 10px 15px;
+  margin-bottom: 0;
+  gap: 20px;
+}
+
+#header-logo {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+}
+
+#app-title {
+  font-size: 20px;
+  font-weight: 500;
+  margin-left: 10px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#user-email {
+  font-size: 16px;
+  margin-right: 10px;
+}
+
+#login-register-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+#register-button {
+  text-decoration: underline;
+  text-decoration-color: #435869;
+  color: #435869;
+  font-size: 16px;
+  border: none;
+  background-color: transparent;
+}
+
+#login-button {
+  padding: 8px 15px;
+  font-size: 16px;
+  white-space: nowrap;
+  border: none;
+  background: #435869;
+  border-radius: 10px;
+  color: white;
+  float: right;
+}
+
+#logout-button {
+  padding: 8px 10px;
+  font-size: 16px;
+  white-space: nowrap;
+  border: 1px solid #cfd8df;
+  background: #fff;
+  border-radius: 10px;
+}
+
+#logout-button:hover {
+  background: #f4f7fb;
+  cursor: pointer;
+}
+
+#login-button:hover {
+  background: #5b778c;
+  cursor: pointer;
+}
+
+#register-button:hover {
+  color: #5b778c;
+  cursor: pointer;
+}
+
+#header-right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-shrink: 0;
+}
+
+#header-left {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+#page-links {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+#page-links a {
+  text-decoration: none;
+  color: #85a2b9;
+  background-color: #ecf1f6;
+  border: 1px solid #ecf1f6;
+  border-radius: 5px 5px 0 0;
+  padding: 8px 10px 5px;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 24px;
+  width: 8.5vw;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+
+#page-links a.active-link {
+  color: #435869;
+  background-color: #fff;
+  border: 2px solid #435869;
+  border-bottom: 1px solid white;
+  position: relative;
+  top: 2px;
+}
+
+#separator {
+  border-top: 2px solid #435869;
+}

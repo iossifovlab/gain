@@ -1,0 +1,17 @@
+preamble:
+   input_reference_genome: t4c8/t4c8_genome
+   summary: T4C8 Annotation Pipeline
+   description: Test pipeline with dummy resources
+annotators:
+  - effect_annotator:
+      gene_models: t4c8/t4c8_genes
+      genome: t4c8/t4c8_genome
+      attributes:
+      - worst_effect
+      - gene_effects
+      - effect_details
+      - name: gene_list 
+        internal: true
+  - gene_score_annotator:
+      resource_id: t4c8/gene_scores/t4c8_score
+      input_gene_list: gene_list

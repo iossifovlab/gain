@@ -1,0 +1,23 @@
+FROM  mcr.microsoft.com/playwright:v1.51.1-jammy
+
+# RUN mkdir -p /root
+# ADD package.json /root
+# RUN bash -c 'cd /root; cat package.json | jq ".dependencies * .devDependencies"  | sed -n -e "s/^\s\+\"//" -e "s|\": \"|@|" -e "s|\",\?$||p" | xargs -d "\n" npm install --global'
+# ENV NODE_PATH=/usr/lib/node_modules
+
+ENV NODE_ENV=development
+
+# Set the working directory inside the container
+WORKDIR /app
+
+# Copy only the dependency files first to optimize Docker caching
+COPY package.json ./
+
+# Install dependencies using npm with caching to speed up subsequent builds
+RUN --mount=type=cache,target=/root/.npm npm install
+
+# Copy all application source files into the container
+COPY . .
+
+
+SHELL ["/bin/bash", "-c"]

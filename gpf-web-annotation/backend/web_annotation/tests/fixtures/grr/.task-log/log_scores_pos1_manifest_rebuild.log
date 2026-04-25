@@ -1,0 +1,1 @@
+scores_pos1_manifest_rebuild: 2025-10-07 13:08:07,508 grr_manage WARNING manifest of <scores/pos1> should be updated; entries to update in manifest ['statistics/histogram_pos1.json', 'statistics/histogram_pos1.png', 'statistics/stats_hash']

@@ -1,0 +1,6 @@
+
+type: gene_models
+
+filename: genes.txt
+
+format: "refflat"

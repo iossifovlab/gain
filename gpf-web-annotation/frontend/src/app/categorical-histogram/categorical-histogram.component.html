@@ -1,0 +1,32 @@
+<div class="histogram">
+  <div style="position: relative">
+    <svg
+      style="max-width: 600px; display: block"
+      [attr.width]="'100%'"
+      [attr.height]="histogram.smallValuesDesc && histogram.largeValuesDesc ? '130' : '240'"
+      [attr.viewBox]="histogram.smallValuesDesc && histogram.largeValuesDesc ? '-100 0 600 120' : '-100 0 600 150'">
+      <g
+        [attr.transform]="
+          histogram.smallValuesDesc && histogram.largeValuesDesc ? 'translate(10, 50)' : 'translate(10, 10)'
+        ">
+        <g #histogramContainer style="transform: 'translate(0px, 0px)'"></g>
+        <g *ngIf="scoreValues.length">
+          <ng-container *ngFor="let score of scoreValues">
+            <line
+              class="single-score-marker"
+              style="stroke: rgb(255, 0, 0); stroke-width: 2"
+              [attr.x1]="getCoordinate(score)"
+              [attr.y1]="scaleYAxis(1)"
+              [attr.x2]="getCoordinate(score)"
+              [attr.y2]="-5" />
+          </ng-container>
+        </g>
+      </g>
+    </svg>
+
+    <div *ngIf="histogram.smallValuesDesc && histogram.largeValuesDesc" id="values-description">
+      <span>{{ histogram.smallValuesDesc }}</span>
+      <span>{{ histogram.largeValuesDesc }}</span>
+    </div>
+  </div>
+</div>

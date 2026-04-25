@@ -1,0 +1,16 @@
+type: position_score
+table:
+    filename: data.tsv
+scores:
+  - id: pos2
+    column_name: s2
+    type: float
+    desc: "test position score"
+    large_values_desc: "large values"
+    small_values_desc: "small values"
+    histogram:
+      type: number
+      number_of_bins: 10
+      view_range:
+        min: 0.0
+        max: 1.0

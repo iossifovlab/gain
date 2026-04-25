@@ -1,0 +1,21 @@
+##fileformat=VCFv4.1
+##FILTER=<ID=PASS,Description="All filters passed">
+##reference=GRCh38-hg38
+##contig=<ID=chr1>
+##pipeline_annotation_tool=GPF variant annotation.
+##INFO=<ID=worst_effect,Number=A,Type=String,Description="Worst effect accross all transcripts.">
+##INFO=<ID=gene_effects,Number=A,Type=String,Description="`<gene_1>:<effect_1>|...` A gene can be repeated.">
+##INFO=<ID=effect_details,Number=A,Type=String,Description="Effect details for each affected transcript. Format: `< transcript 1 >:<gene 1>:<effect 1>:<details 1>|...`">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+chr1	1287138	.	C	A	.	.	worst_effect=nonsense;gene_effects=SCNN1D:nonsense;effect_details=ENST00000325425.12:SCNN1D:nonsense:285/704(Tyr->End)|ENST00000338555.6:SCNN1D:nonsense:219/638(Tyr->End)|ENST00000379116.10:SCNN1D:nonsense:383/802(Tyr->End)|ENST00000400928.7:SCNN1D:nonsense:219/638(Tyr->End)
+chr1	3602485	.	AC	A	.	.	worst_effect=frame-shift;gene_effects=MEGF6:frame-shift;effect_details=ENST00000356575.9:MEGF6:frame-shift:82/1541
+chr1	12115730	.	G	A	.	.	worst_effect=splice-site;gene_effects=TNFRSF8:splice-site;effect_details=ENST00000417814.3:TNFRSF8:splice-site:205/483|ENST00000263932.7:TNFRSF8:splice-site:316/595
+chr1	15929267	.	G	GA	.	.	worst_effect=frame-shift;gene_effects=SPEN:frame-shift;effect_details=ENST00000375759.8:SPEN:frame-shift:1010/3664
+chr1	20639952	.	C	T	.	.	worst_effect=nonsense;gene_effects=PINK1:nonsense;effect_details=ENST00000321556.5:PINK1:nonsense:246/581(Arg->End)
+chr1	21257524	.	C	T	.	.	worst_effect=splice-site;gene_effects=ECE1:splice-site;effect_details=ENST00000264205.10:ECE1:splice-site:274/767|ENST00000436918.6:ECE1:splice-site:277/738|ENST00000357071.8:ECE1:splice-site:265/758|ENST00000649812.1:ECE1:splice-site:261/842|ENST00000415912.6:ECE1:splice-site:261/754|ENST00000374893.11:ECE1:splice-site:277/770
+chr1	22910448	.	C	T	.	.	worst_effect=nonsense;gene_effects=EPHB2:nonsense;effect_details=ENST00000400191.7:EPHB2:nonsense:857/1055(Gln->End)|ENST00000374627.1:EPHB2:nonsense:852/946(Gln->End)|ENST00000374630.8:EPHB2:nonsense:857/986(Gln->End)|ENST00000374632.7:EPHB2:nonsense:858/987(Gln->End)
+chr1	27550357	.	G	GT	.	.	worst_effect=frame-shift;gene_effects=AHDC1:frame-shift|ENSG00000300470:non-coding-intron;effect_details=ENST00000374011.6:AHDC1:frame-shift:586/1603|ENST00000772091.1:ENSG00000300470:non-coding-intron:None/None[None]|ENST00000247087.10:AHDC1:frame-shift:586/1603|ENST00000642416.1:AHDC1:frame-shift:586/1603|ENST00000673934.1:AHDC1:frame-shift:586/1603|ENST00000644989.1:AHDC1:frame-shift:586/1603|ENST00000642245.1:AHDC1:frame-shift:586/1603
+chr1	32077257	.	C	T	.	.	worst_effect=nonsense;gene_effects=TMEM39B:nonsense;effect_details=ENST00000336294.10:TMEM39B:nonsense:177/492(Arg->End)
+chr1	34165789	.	CG	C	.	.	worst_effect=frame-shift;gene_effects=CSMD2:frame-shift;effect_details=ENST00000619121.4:CSMD2:frame-shift:8/3591|ENST00000373388.7:CSMD2:frame-shift:8/3487
+chr1	40409787	.	T	A	.	.	worst_effect=nonsense;gene_effects=SMAP2:nonsense;effect_details=ENST00000372718.8:SMAP2:nonsense:118/429(Tyr->End)|ENST00000539317.2:SMAP2:nonsense:38/349(Tyr->End)|ENST00000614549.4:SMAP2:nonsense:113/424(Tyr->End)
+chr1	41583044	.	C	CG	.	.	worst_effect=frame-shift;gene_effects=HIVEP3:frame-shift;effect_details=ENST00000372584.5:HIVEP3:frame-shift:585/2405|ENST00000372583.6:HIVEP3:frame-shift:585/2406|ENST00000643665.1:HIVEP3:frame-shift:585/2405

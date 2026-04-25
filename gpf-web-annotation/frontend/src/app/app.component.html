@@ -1,0 +1,46 @@
+@if (currentUserData) {
+<div id="app-container" style="max-width: 100%">
+  @if(isAppHeaderVisible()){
+  <div id="app-header">
+    <div id="header-left">
+      <img src="{{ environment.imgPathPrefix }}/gain-logo.png" alt="GPF Logo" id="header-logo" />
+      <span id="app-title">GAIn: Genomic Annotation Infrastructure</span>
+      <div id="page-links">
+        <a
+          routerLink="/single-allele-annotation"
+          routerLinkActive="active-link"
+          [routerLinkActiveOptions]="{ exact: true }"
+          title="Single Allele Annotation"
+          >Single Allele Annotation</a
+        >
+        <a
+          routerLink="/annotation-jobs"
+          routerLinkActive="active-link"
+          [routerLinkActiveOptions]="{ exact: true }"
+          title="Annotation Jobs"
+          >Annotation Jobs</a
+        >
+        <a routerLink="/about" routerLinkActive="active-link" [routerLinkActiveOptions]="{ exact: true }" title="About"
+          >About</a
+        >
+      </div>
+    </div>
+    <div id="header-right">
+      @if(currentUserData.loggedIn) {
+      <div id="user-data">
+        <span id="user-email">{{ currentUserData.email }}</span>
+        <button id="logout-button" (click)="logout()">Logout</button>
+      </div>
+      } @if(!currentUserData.loggedIn) {
+      <div id="login-register-buttons">
+        <button id="login-button" (click)="login()">Login</button>
+        <button id="register-button" (click)="register()">Register</button>
+      </div>
+      }
+    </div>
+  </div>
+  <div id="separator"></div>
+  }
+  <router-outlet></router-outlet>
+</div>
+}

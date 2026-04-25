@@ -1,0 +1,157 @@
+<div *ngIf="report" id="report">
+  <div id="annotatable">
+    <div id="report-header">
+      <div id="toggle-view-container">
+        <input class="switch" type="checkbox" [checked]="!showFullReport" (change)="toggleView()" />
+        <label [ngStyle]="{ color: showFullReport ? '#5b778c' : '#85a2b9' }">full report</label>
+      </div>
+      <span id="download-report" download>
+        <button (click)="saveReport()" id="download-report-button"
+          ><span class="material-symbols-outlined download-icon">download</span>Download report</button
+        >
+      </span>
+    </div>
+    <div id="annotatable-data-container">
+      @if(report.annotatable.chromosome) {
+      <div>
+        <div class="annotatable-data-label">chromosome</div>
+        <div class="annotatable-data" id="annotatable-chromosome">{{ report.annotatable.chromosome }}</div>
+      </div>
+      } @if(report.annotatable.position) {
+      <hr />
+      <div>
+        <div class="annotatable-data-label">position</div>
+        <div class="annotatable-data" id="annotatable-position">{{ report.annotatable.position }}</div>
+      </div>
+      } @if(report.annotatable.positionStart) {
+      <hr />
+      <div>
+        <div class="annotatable-data-label">position begin</div>
+        <div class="annotatable-data" id="position-start">{{ report.annotatable.positionStart }}</div>
+      </div>
+      } @if(report.annotatable.positionEnd) {
+      <hr />
+      <div>
+        <div class="annotatable-data-label">position end</div>
+        <div class="annotatable-data" id="position-end">{{ report.annotatable.positionEnd }}</div>
+      </div>
+      } @if(report.annotatable.reference) {
+      <hr />
+      <div>
+        <div class="annotatable-data-label">reference</div>
+        <div class="annotatable-data" id="annotatable-reference">{{ report.annotatable.reference }}</div>
+      </div>
+      } @if(report.annotatable.alternative) {
+      <hr />
+      <div>
+        <div class="annotatable-data-label">alternative</div>
+        <div class="annotatable-data" id="annotatable-alternate">{{ report.annotatable.alternative }}</div>
+      </div>
+      } @if(report.annotatable.variantType) {
+      <hr />
+      <div>
+        <div class="annotatable-data-label">type</div>
+        <div class="annotatable-data" id="annotatable-type">{{ report.annotatable.variantType }}</div>
+      </div>
+      }
+    </div>
+  </div>
+
+  <div id="annotators">
+    <div *ngFor="let annotator of report.annotators" class="annotator">
+      <div class="attributes">
+        <div *ngFor="let attribute of annotator.attributes" class="attribute-container">
+          <div class="attribute">
+            <div class="attribute-header">{{ attribute.name }}</div>
+            @if(showFullReport) {
+            <div class="attribute-result">
+              @if(!tableViewSources.includes(attribute.source)) { @if(isValueArray(attribute.result.value)) {
+              <div class="value-grid-container" style="grid-template-columns: auto">
+                @for(item of asArray(attribute.result.value); track $index) {
+                <div class="value-grid-cell" [title]="item">{{ item }}</div>
+                }
+              </div>
+              } @else if(isValueMap(attribute.result.value)) {
+              <div class="value-grid-container" style="grid-template-columns: repeat(2, auto)">
+                @for(entry of asMapEntries(attribute.result.value); track entry[0]) {
+                <div class="value-grid-cell" [title]="entry[0]">{{ entry[0] }}</div>
+                <div class="value-grid-cell" [title]="entry[1] | formatResultValue : 3">{{
+                  entry[1] | formatResultValue : 3
+                }}</div>
+                }
+              </div>
+              } @else {
+              <div class="value-result">{{ attribute.result.value | formatResultValue : 3 }}</div>
+              } } @if(tableViewSources.includes(attribute.source) && (annotator.details.name === 'effect_annotator' ||
+              annotator.details.name === 'simple_effect_annotator') && attribute.result.value) {
+              <app-effect-table
+                [rawEffectDetails]="attribute.result.value.toString()"
+                [source]="attribute.source"
+                [annotator]="annotator.details.name"></app-effect-table>
+              }
+            </div>
+            } @else {
+            <div class="attribute-result">
+              <div class="compact-value-result" [title]="attribute.result.value">{{
+                attribute.result.value | formatResultValue : 3
+              }}</div>
+            </div>
+            }
+          </div>
+          @if(showFullReport) {
+          <div class="attribute-description">{{ attribute.description }}</div>
+          }
+          <div style="display: flex; justify-content: center">
+            @if(showFullReport && attribute.result.histogramLink) {
+            <app-histogram-wrapper
+              [histogramUrl]="attribute.result.histogramLink"
+              [value]="attribute.result.value"></app-histogram-wrapper>
+            }
+          </div>
+        </div>
+      </div>
+
+      <div id="compact-report">
+        <span class="material-symbols-outlined info-icon" (click)="showInfo(annotator)">info</span>
+
+        <ng-template #infoModal let-annotator>
+          <div id="modal-content">
+            <div style="width: 100%">
+              <div *ngFor="let attribute of annotator.attributes" class="attribute-container-modal">
+                <div class="attribute-header">{{ attribute.name }}</div>
+                <div class="attribute-description">{{ attribute.description }}</div>
+                <div class="attribute-source">source: {{ attribute.source }}</div>
+                <div>
+                  <app-histogram-wrapper
+                    *ngIf="attribute.result.histogramLink"
+                    [histogramUrl]="attribute.result.histogramLink"
+                    [value]="attribute.result.value"></app-histogram-wrapper>
+                </div>
+              </div>
+            </div>
+            <div class="annotator-details">
+              <div>
+                <div class="annotator-label"
+                  ><span class="annotator-header">{{ annotator.details.name }}</span></div
+                >
+                <markdown class="annotator-description">{{ annotator.details.description }}</markdown>
+              </div>
+
+              <div *ngIf="annotator.details.resources.length" class="resources">
+                <div *ngFor="let resource of annotator.details.resources" class="resource">
+                  <div class="resource-label">Resource</div>
+                  <div
+                    ><span class="id-label">id: </span>
+                    <a target="_blank" [href]="resource.resourceUrl" class="annotator-resource">{{
+                      resource.resourceId
+                    }}</a></div
+                  >
+                </div>
+              </div>
+            </div>
+          </div>
+        </ng-template>
+      </div>
+    </div>
+  </div>
+</div>

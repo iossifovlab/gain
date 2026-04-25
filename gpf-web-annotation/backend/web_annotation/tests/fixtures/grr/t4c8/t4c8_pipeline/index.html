@@ -1,0 +1,564 @@
+
+
+<html>
+<head>
+<style>
+h3,h4 {
+    margin-top:0.5em;
+    margin-bottom:0.5em;
+}
+table {
+    border-collapse: collapse;
+}
+th, td {
+    padding: 10px;
+}
+th {
+    font-size: 20px;
+}
+td {
+    font-size: 18px;
+}
+
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1;
+    padding-top: 100px;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    justify-content: center;
+}
+.modal-content {
+    margin: auto;
+    display: block;
+    width: 80%;
+    max-width: 700px;
+}
+.close {
+    float: right;
+    font-size: 40px;
+    font-weight: bold;
+}
+.close:hover,
+.close:focus {
+    color: #bbb;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+</style>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+        document.querySelectorAll("[data-modal-trigger]").forEach(function (trigger) {
+            trigger.addEventListener("click", function () {
+                var modalId = this.getAttribute("data-modal-trigger");
+                var modal = document.getElementById(modalId);
+                if (modal) {
+                    modal.style.display = "block";
+                    document.currentOpenModal = modal;
+                }
+            });
+        });
+
+        document.querySelectorAll(".close").forEach(function (closeButton) {
+            closeButton.addEventListener("click", function () {
+                this.closest(".modal").style.display = "none";
+                document.currentOpenModal = null;
+            });
+        });
+
+        window.addEventListener("click", function (event) {
+            if (event.target.classList.contains("modal")) {
+                event.target.style.display = "none";
+                document.currentOpenModal = null;
+            }
+        });
+
+        document.addEventListener("keydown", function (event) {
+            if (event.key === "Escape" && document.currentOpenModal) {
+                document.currentOpenModal.style.display = "none";
+                document.currentOpenModal = null;
+            }
+        });
+    });
+</script>
+</head>
+    <body>
+    <h1>Resource</h1>
+    <div>
+        <table border="1">
+            <tr>
+                <td>
+                    <b>Id:</b>
+                </td>
+                <td>t4c8/t4c8_pipeline</td>
+            </tr>
+            <tr>
+                <td>
+                    <b>Type:</b>
+                </td>
+                <td>annotation_pipeline</td>
+            </tr>
+            <tr>
+                <td>
+                    <b>Version:</b>
+                </td>
+                <td>0</td>
+            </tr>
+            <tr>
+                <td><b>Summary:</b></td>
+                <td>
+                    <div>
+                        <template shadowrootmode="open">N/A
+                        </template>
+                    </div>
+                </td>
+            </tr>
+            <tr>
+                <td>
+                    <b>Description:</b>
+                </td>
+                <td>
+                    <div>
+                        <template shadowrootmode="open">N/A
+                        </template>
+                    </div>
+                </td>
+            </tr>
+            <tr>
+                <td>
+                    <b>Labels:</b>
+                </td>
+                <td>
+                
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    
+<html>
+  <head>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100;0,300;0,400;0,500;0,700;0,900;1,100;1,300;1,400;1,500;1,700;1,900&display=swap" rel="stylesheet">
+
+    <style>
+      * {
+        font-family: Roboto, FontAwesome;
+      }
+
+      p {
+        margin: 8px;
+      }
+
+      body {
+        width: 70%;
+        margin: auto;
+      }
+
+      h1,
+      h2,
+      h3,
+      h4 {
+        margin-top: 0.5em;
+        margin-bottom: 0.5em;
+        font-size: 24px;
+      }
+
+      .preamble-header,
+      .annotator-list-header,
+      .pipeline-header {
+        margin-top: 40px;
+        margin-bottom: 20px;
+      }
+
+      .preamble-header,
+      .annotator-list-header {
+        font-size: 30px;
+      }
+
+      .pipeline-header {
+        font-size: 36px;
+      }
+
+      table {
+        border-collapse: collapse;
+      }
+
+      th, td {
+        padding: 10px;
+      }
+
+      th {
+        font-size: 20px;
+      }
+
+      td {
+        font-size: 18px;
+      }
+
+      .annotator-doc {
+        display: flex;
+        flex-direction: row;
+        border: 1px solid rgb(218,218,218);
+      }
+
+      .annotator-line {
+        font-size: 18px;
+        vertical-align: top;
+        width: 40%;
+        position: -webkit-sticky;
+        align-self: flex-start;
+        word-break: break-word;
+      }
+
+      .sticky-line {
+        position: sticky;
+        top: 0px;
+      }
+
+      .annotator {
+        background-color: #eee;
+        padding: 10px 8px;
+      }
+
+      .annotator-title {
+        font-size: 24px;
+        font-weight: 500;
+      }
+
+      .attribute-list {
+        width: 60%;
+        border-right: 1px solid rgb(218,218,218);
+      }
+      
+      .attribute {
+        padding: 0 0 20px;
+        border-bottom: 1px solid rgb(218,218,218);
+      }
+
+      .attribute:last-child {
+        border-bottom: none;
+      }
+
+      .attribute-name {
+        font-size: 22px;
+        font-weight: 500;
+        padding: 10px 8px;
+        word-break: break-word;
+      }
+
+      .resource-id {
+        font-size: 18px;
+        margin: 8px;
+      }
+
+      .attribute-type {
+        font-size: 18px;
+        padding: 10px 8px;
+      }
+
+      .attribute-description {
+        font-size: 18px;
+        margin-right: 20px;
+      }
+
+      .attribute-info {
+        font-size: 24px;
+        align-self: center;
+        display: flex;
+        flex-direction: row;
+        justify-content: space-between;
+        background-color: #f7f7f7;
+        margin-bottom: 12px;
+      }
+
+      .attribute-internal {
+        background-color: #f7efe4;
+      }
+
+      .attribute-source, .pipeline_path {
+        color: rgb(145,145,145);
+        margin: 8px;
+      }
+
+      .pipeline_path {
+        float: right;
+        font-size: 18px;
+      }
+
+      .no-description {
+        font-style: italic;
+        color: #9c9c9c;
+        padding: 10px 8px;
+      }
+
+      .resource-info {
+        font-style: italic;
+        padding: 10px 0 0 0;
+      }
+
+      .resource {
+        padding: 10px 8px;
+      }
+
+      summary {
+        padding-top: 10px; 
+      }
+
+      img {
+        height: auto; 
+        width: auto; 
+        max-width: 95%; 
+        max-height: 95%;
+      }
+
+      table, th, td {
+        border:1px solid rgb(218,218,218);
+      }
+
+      th {
+        background-color: #eee;
+      }
+    </style>
+  </head>
+
+  <body>
+    <h1 class="pipeline-header">Pipeline Documentation</h1>
+    
+      <h2 class="preamble-header">preamble</h2>
+      <table style="width: 100%">
+      
+        <tr>
+          <th>Summary</th>
+          <td>T4C8 Annotation Pipeline</td>
+        </tr>
+      
+      
+        <tr>
+          <th>Description</th>
+          <td>Test pipeline with dummy resources</td>
+        </tr>
+      
+      
+        <tr>
+          <th>Input reference genome</th>
+          <td>
+            <a href="../../t4c8/t4c8_genome/index.html">
+              t4c8/t4c8_genome
+            </a>
+          </td>
+        </tr>
+      
+      
+      </table>
+    
+
+    
+    <div class="pipeline_path">
+      Pipeline path: 
+    </div>
+    
+
+    <h2 class="annotator-list-header">Annotators</h2>
+    
+      <div class="annotator-doc">
+        <div class="attribute-list">
+          
+            <div class="attribute">
+              <div class="attribute-info ">
+                <div class="attribute-name">
+                  worst_effect
+                </div>
+                <div class="attribute-type">Type:  </div>
+              </div>
+              <div class="attribute-description">
+                <p>Worst effect across all transcripts.</p>
+
+                
+                <div class="attribute-source">source: worst_effect</div>
+              </div>
+            </div>
+          
+            <div class="attribute">
+              <div class="attribute-info ">
+                <div class="attribute-name">
+                  gene_effects
+                </div>
+                <div class="attribute-type">Type:  </div>
+              </div>
+              <div class="attribute-description">
+                <p><code>&lt;gene_1&gt;:&lt;effect_1&gt;|...</code> A gene can be repeated.</p>
+
+                
+                <div class="attribute-source">source: gene_effects</div>
+              </div>
+            </div>
+          
+            <div class="attribute">
+              <div class="attribute-info ">
+                <div class="attribute-name">
+                  effect_details
+                </div>
+                <div class="attribute-type">Type:  </div>
+              </div>
+              <div class="attribute-description">
+                <p>Effect details for each affected transcript. Format: <code>&lt; transcript 1 &gt;:&lt;gene 1&gt;:&lt;effect 1&gt;:&lt;details 1&gt;|...</code></p>
+
+                
+                <div class="attribute-source">source: effect_details</div>
+              </div>
+            </div>
+          
+            <div class="attribute">
+              <div class="attribute-info attribute-internal">
+                <div class="attribute-name">
+                  gene_list
+                </div>
+                <div class="attribute-type">Type:  (Internal)</div>
+              </div>
+              <div class="attribute-description">
+                <p>List of all genes</p>
+
+                
+                <div class="attribute-source">source: gene_list</div>
+              </div>
+            </div>
+          
+        </div>
+
+        <div class="annotator-line sticky-line">
+          <div class="annotator">
+            <div class="annotator-title">Annotator type: effect_annotator</div>
+          </div>
+
+          
+            <div class="annotator-description">
+              <p>Annotator to identify the effect of the variant on protein coding.</p>
+
+<p><a href="https://iossifovlab.com/gpfuserdocs/administration/annotation.html#effect-annotator" target="_blank">More info</a></p>
+
+            </div>
+          
+
+          
+            <div class="resource">
+              <div><b>Resource</b></div>
+              <div class="resource-info">Id: <a href="../../t4c8/t4c8_genome/index.html">
+                      t4c8/t4c8_genome</a></div>
+              <div class="resource-info">Type: genome</div>
+              
+            </div>
+          
+            <div class="resource">
+              <div><b>Resource</b></div>
+              <div class="resource-info">Id: <a href="../../t4c8/t4c8_genes/index.html">
+                      t4c8/t4c8_genes</a></div>
+              <div class="resource-info">Type: gene_models</div>
+              
+            </div>
+          
+        </div>
+      </div>
+    
+      <div class="annotator-doc">
+        <div class="attribute-list">
+          
+            <div class="attribute">
+              <div class="attribute-info ">
+                <div class="attribute-name">
+                  t4c8_score
+                </div>
+                <div class="attribute-type">Type:  </div>
+              </div>
+              <div class="attribute-description">
+                <p><strong>gene_aggregator</strong>: dict [default]</p>
+
+                
+                  <img src="../../t4c8/gene_scores/t4c8_score/statistics/histogram_t4c8_score.png" alt="HISTOGRAM">
+                
+                <div class="attribute-source">source: t4c8_score</div>
+              </div>
+            </div>
+          
+        </div>
+
+        <div class="annotator-line ">
+          <div class="annotator">
+            <div class="annotator-title">Annotator type: gene_score_annotator</div>
+          </div>
+
+          
+            <div class="no-description">
+              No description
+            </div>
+          
+
+          
+            <div class="resource">
+              <div><b>Resource</b></div>
+              <div class="resource-info">Id: <a href="../../t4c8/gene_scores/t4c8_score/index.html">
+                      t4c8/gene_scores/t4c8_score</a></div>
+              <div class="resource-info">Type: gene_score</div>
+              
+                <div class="resource-info">Summary:</div>
+                <div>
+                  t4c8 gene score
+                </div>
+              
+            </div>
+          
+        </div>
+      </div>
+    
+  </body>
+<html>
+
+
+    <h1>Files</h1>
+    <table>
+    <thead>
+        <tr>
+            <th>Filename</th>
+            <th>Size</th>
+            <th>md5</th>
+        </tr>
+    </thead>
+    <tbody>
+            <tr>
+                
+                    <td class="nowrap">
+                        <a href='genomic_resource.yaml'>genomic_resource.yaml</a>
+                    </td>
+                
+                <td class="nowrap">56.0 B</td>
+                <td class="nowrap">cfc75acbeea59ade1a1200e6c0d46349</td>
+            </tr>
+            <tr>
+                
+                    <td class="nowrap">
+                        <a href='t4c8_pipeline.yaml'>t4c8_pipeline.yaml</a>
+                    </td>
+                
+                <td class="nowrap">479.0 B</td>
+                <td class="nowrap">3e60597d6b89b15a77ece0c8d88ea276</td>
+            </tr>
+            <tr>
+                
+                    <td class="nowrap">
+                        <a href='statistics/index.html'>statistics/</a>
+                    </td>
+                
+                <td class="nowrap"></td>
+                <td class="nowrap"></td>
+            </tr>
+    </tbody>
+    </table>
+    </body>
+</html>

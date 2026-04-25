@@ -1,0 +1,38 @@
+<div id="wrapper-container">
+  <div id="annotation-container">
+    <div class="sticky-elements">
+      @if(hideComponents) {
+      <button id="show-components" (click)="showComponents()"
+        ><span class="material-symbols-outlined show-components-icon">right_panel_open</span></button
+      >
+      }
+      <app-annotation-pipeline (tiggerHidingComponents)="updateComponentsVisibility($event)"></app-annotation-pipeline>
+    </div>
+
+    <div
+      [style.display]="hideComponents ? 'none' : 'flex'"
+      style="display: flex; flex-direction: column; width: auto; min-width: 0; flex-grow: 1">
+      <app-single-annotation
+        style="width: 100%"
+        (alleleUpdateEmit)="refreshAllelesTable()"
+        (autoSaveTrigger)="autoSavePipeline()"></app-single-annotation>
+    </div>
+  </div>
+
+  @if(isUserLoggedIn) {
+  <div [style.display]="hideComponents ? 'none' : 'block'" id="history-table" class="sticky-elements">
+    <div>
+      <button id="toggle-history" (click)="this.hideHistory = !this.hideHistory"
+        ><span
+          class="material-symbols-outlined"
+          [ngStyle]="{ transform: this.hideHistory ? 'rotate(0deg)' : 'rotate(180deg)' }"
+          >right_panel_open</span
+        ></button
+      >
+    </div>
+    @if(!hideHistory) {
+    <app-alleles-table (emitAllele)="triggerSingleAlleleAnnotation($event)"></app-alleles-table>
+    }
+  </div>
+  }
+</div>

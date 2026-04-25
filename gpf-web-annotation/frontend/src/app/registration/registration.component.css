@@ -1,0 +1,139 @@
+#front-page-container {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  height: 100vh;
+  gap: 4vw;
+}
+
+#front-page-logo {
+  width: 128px;
+  height: 128px;
+}
+
+#front-page-header {
+  background-color: rgb(244, 247, 251);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  width: 50%;
+  height: 100vh;
+}
+
+input {
+  border: 1px solid #cfd8df;
+  border-radius: 10px;
+  height: 35px;
+  width: 22vw;
+  max-width: 22vw;
+  padding: 5px;
+  font-size: 18px;
+  margin: 10px;
+  margin-left: 0;
+  color: #252e34;
+}
+
+input:focus {
+  border-color: #85a2b9;
+  outline: 0;
+  box-shadow: 0 0 0 0.2rem #b9d3e7;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+label {
+  color: #5b778c;
+  font-size: 18px;
+}
+
+#divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 22vw;
+}
+
+hr {
+  width: 12vw;
+  border: 0.5px solid #eef2f7;
+}
+
+#or-text {
+  color: #cfd8df;
+  font-size: 18px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 10px;
+}
+
+button {
+  padding: 10px 25px;
+  border-radius: 10px;
+}
+
+button:hover {
+  cursor: pointer;
+}
+
+#login-button {
+  background-color: #435869;
+  color: white;
+  font-size: 18px;
+  align-self: center;
+  border: none;
+}
+
+#login-button:hover {
+  background-color: #5b778c;
+}
+
+#google-login-button {
+  color: #5b778c;
+  border: 1px solid #cfd8df;
+  background-color: white;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+#google-login-button:hover {
+  background-color: #f4f7fb;
+}
+
+#google-icon {
+  width: 15px;
+  height: 15px;
+}
+
+#login-options {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+#register-link {
+  color: #24699e;
+}
+
+input:invalid:focus {
+  outline: rgb(255, 0, 0);
+  border-color: rgb(255, 0, 0);
+  box-shadow: 0 0 0 4px rgba(244, 15, 15, 30%);
+}
+
+#validation-message {
+  color: red;
+  font-size: 16px;
+  margin-bottom: 10px;
+  text-align: center;
+}

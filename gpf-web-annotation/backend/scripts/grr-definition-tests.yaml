@@ -1,0 +1,3 @@
+id: "test"
+type: "directory"
+directory: "/wd/backend/web_annotation/tests/fixtures/grr"

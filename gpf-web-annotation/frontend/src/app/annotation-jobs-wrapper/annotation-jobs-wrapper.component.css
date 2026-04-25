@@ -1,0 +1,143 @@
+#wrapper-container {
+  display: flex;
+  justify-content: flex-start;
+  margin: 60px 2%;
+  min-width: 715px;
+  max-width: 3000px;
+}
+
+#create-button {
+  padding: 8px 10px;
+  font-size: 16px;
+  white-space: nowrap;
+  border: none;
+  background: #435869;
+  border-radius: 10px;
+  color: white;
+  float: right;
+}
+
+#create-button:hover {
+  background: #5b778c;
+  cursor: pointer;
+}
+
+#create-button:disabled {
+  opacity: 30%;
+}
+
+#create-button:disabled:hover {
+  cursor: auto;
+  background-color: #435869;
+}
+
+#annotation-container {
+  display: flex;
+  width: 82%;
+  justify-content: flex-start;
+  gap: 50px;
+  padding-right: 25px;
+}
+
+#annotation-mode button {
+  border: none;
+  background-color: transparent;
+  font-size: 16px;
+}
+
+#annotation-mode button:hover {
+  cursor: pointer;
+}
+
+#annotation-mode {
+  display: flex;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+.active-view {
+  font-weight: bold;
+  text-decoration: underline;
+  text-decoration-thickness: 3px;
+  text-underline-offset: 5px;
+  color: #435869;
+}
+
+.inactive-view {
+  text-decoration: none;
+  color: #85a2b9;
+}
+
+#new-job-button {
+  color: #435869;
+  border: none;
+  background-color: transparent;
+  display: flex;
+  align-items: center;
+  font-size: 16px;
+}
+
+#new-job-button:hover {
+  color: #5b778c;
+  cursor: pointer;
+}
+
+#result {
+  margin-top: 40px;
+}
+
+#current-job-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#new-job-section {
+  border-top: 1px solid #dde4e8;
+  margin-top: 10px;
+}
+
+.job-name,
+#file-name {
+  margin-right: 10px;
+}
+
+#show-components,
+#toggle-history {
+  background-color: transparent;
+  border: none;
+  color: #435869;
+  font-size: 15px;
+  float: right;
+}
+
+#toggle-history {
+  float: left;
+  margin-top: 0;
+  padding: 0;
+  position: absolute;
+}
+
+.show-icon {
+  vertical-align: middle;
+  font-size: 22px;
+}
+
+#show-components:hover,
+#toggle-history:hover {
+  cursor: pointer;
+  color: #5b778c;
+}
+
+#history-table {
+  width: fit-content;
+  border-left: 1px solid #e1e9ef;
+  padding-left: 25px;
+}
+
+.sticky-elements {
+  position: sticky;
+  top: 10px;
+  height: fit-content;
+}

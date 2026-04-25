@@ -1,0 +1,246 @@
+name: gpfwa
+services:
+
+  ubuntu-image:
+    build:
+      context: .
+      dockerfile: Dockerfile.ubuntu
+
+  gpf-image:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpf
+    depends_on:
+      ubuntu-image:
+        condition: service_completed_successfully
+
+  pg-data:
+    image: busybox:latest
+    command: echo "PostgreSQL data only container"
+
+  static-data:
+    image: busybox:latest
+    command: echo "Static data only container"
+    volumes:
+      - ./gpfwa-static-data:/static
+
+  db:
+    image: postgres
+    restart: always
+    # set shared memory limit when using docker compose
+    shm_size: 128mb
+    volumes_from:
+      - pg-data
+    environment:
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: gpfwa
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mail:
+    image: mailhog/mailhog
+    hostname: mail
+
+  backend:
+    build:
+      context: backend
+      dockerfile: Dockerfile
+      args:
+        COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+    depends_on:
+      gpf-image:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      mail:
+        condition: service_started
+    volumes:
+      - ./gpfwa-data:/data
+      - ./gpfwa-logs:/logs
+      - /mnt/cephfs/seqpipe/grr:/grr
+    volumes_from:
+      - static-data
+    environment:
+      DJANGO_SETTINGS_MODULE: web_annotation.settings_daphne
+      GPFWA_EMAIL_HOST: mail
+      GRR_DEFINITION_FILE: /grr-definition.yaml
+      GPFWA_DB_NAME: gpfwa
+      GPFWA_DB_USER: postgres
+      GPFWA_DB_PASSWORD: secret
+      GPFWA_DB_HOST: db
+      GPFWA_DB_PORT: 5432
+      GPFWA_DATA_STORAGE: /data
+      GPFWA_LOG_DIR: /logs
+      GPFWA_SECRET_KEY: "django-insecure-3rz4n(_u+x8r+n%&xr-(vg83v8&llq7pin*x%@%y@d8af%iphk"
+      GPFWA_EMAIL_VERIFICATION_ENDPOINT: "http://frontend"
+      GPFWA_EMAIL_REDIRECT_ENDPOINT: "http://frontend"
+    healthcheck:
+      test: ["CMD", "curl", "http://localhost:9001/api/user_info"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend-e2e:
+    build:
+      context: backend
+      dockerfile: Dockerfile
+      args:
+        COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+    hostname: backend
+    depends_on:
+      gpf-image:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      mail:
+        condition: service_started
+    volumes:
+      - ./gpfwa-data:/data
+      - ./gpfwa-logs:/logs
+      - /mnt/cephfs/seqpipe/grr:/grr
+    volumes_from:
+      - static-data
+    environment:
+      DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
+      GPFWA_EMAIL_HOST: mail
+      GRR_DEFINITION_FILE: /grr-definition.yaml
+      GPFWA_DB_NAME: gpfwa
+      GPFWA_DB_USER: postgres
+      GPFWA_DB_PASSWORD: secret
+      GPFWA_DB_HOST: db
+      GPFWA_DB_PORT: 5432
+      GPFWA_DATA_STORAGE: /data
+      GPFWA_LOG_DIR: /logs
+      GPFWA_SECRET_KEY: "django-insecure-3rz4n(_u+x8r+n%&xr-(vg83v8&llq7pin*x%@%y@d8af%iphk"
+      GPFWA_EMAIL_VERIFICATION_ENDPOINT: "http://frontend"
+      GPFWA_EMAIL_REDIRECT_ENDPOINT: "http://frontend"
+    healthcheck:
+      test: ["CMD", "curl", "http://localhost:9001/api/user_info"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
+  backend-tests:
+    build:
+      context: backend
+      dockerfile: Dockerfile.dev
+      args:
+        COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+    depends_on:
+      mail:
+        condition: service_started
+    environment:
+      DJANGO_SETTINGS_MODULE: web_annotation.test_settings
+      GPFWA_EMAIL_HOST: mail
+      GRR_DEFINITION_FILE: /grr-definition-tests.yaml
+    volumes:
+      - .:/wd
+    entrypoint: /wd/backend/scripts/backend_tests.sh
+
+  backend-dev:
+    build:
+      context: backend
+      dockerfile: Dockerfile.dev
+      args:
+        COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+    environment:
+      DJANGO_SETTINGS_MODULE: web_annotation.test_settings
+      GPFWA_EMAIL_HOST: mail
+      TESTING_CONTAINER: true
+      GRR_DEFINITION_FILE: /grr-definition.yaml
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/wd
+    entrypoint: /wd/backend/scripts/backend_run.sh
+
+  backend-linters:
+    build:
+      context: backend
+      dockerfile: Dockerfile.dev
+      args:
+        COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+
+    environment:
+      DJANGO_SETTINGS_MODULE: web_annotation.test_settings
+      GPFWA_EMAIL_HOST: mail
+      GRR_DEFINITION_FILE: /grr-definition.yaml
+    volumes:
+      - .:/wd
+    entrypoint: /wd/backend/scripts/backend_linters.sh
+
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+      args:
+        COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes_from:
+      - static-data
+    healthcheck:
+      test: ["CMD", "curl", "http://localhost/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend-e2e:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+      args:
+        COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+    hostname: frontend
+    depends_on:
+      backend-e2e:
+        condition: service_healthy
+    volumes_from:
+      - static-data
+    healthcheck:
+      test: ["CMD", "curl", "http://localhost/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend-tests:
+    build:
+      context: frontend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./frontend/reports:/reports
+    environment:
+      JEST_JUNIT_OUTPUT_DIR: /reports
+    command: ["npm", "test", "--", "--coverage", "--collectCoverageFrom=./src/**", "--coverageDirectory=/reports/coverage", "--ci"]
+
+  frontend-linters:
+    build:
+      context: frontend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./frontend/reports:/reports
+    entrypoint: /app/scripts/frontend-linters.sh
+
+
+  e2e-tests:
+    build:
+      context: e2e-tests
+      dockerfile: Dockerfile.playwright
+    volumes:
+      - ./e2e-tests/reports:/reports
+    depends_on:
+      mail:
+        condition: service_started
+      backend-e2e:
+        condition: service_healthy
+      frontend-e2e:
+        condition: service_healthy
+    environment:
+      CI: "1"
+    command: ["npx", "playwright", "test"]

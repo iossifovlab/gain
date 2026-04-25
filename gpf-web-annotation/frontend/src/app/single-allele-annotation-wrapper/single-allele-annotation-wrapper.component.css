@@ -1,0 +1,54 @@
+#wrapper-container {
+  display: flex;
+  justify-content: flex-start;
+  margin: 60px 2%;
+  min-width: 715px;
+  max-width: 3000px;
+}
+
+#annotation-container {
+  display: flex;
+  width: 82%;
+  justify-content: flex-start;
+  gap: 50px;
+  padding-right: 25px;
+}
+
+#show-components,
+#toggle-history {
+  background-color: transparent;
+  border: none;
+  color: #435869;
+  font-size: 15px;
+  float: right;
+}
+
+#toggle-history {
+  float: left;
+  margin-top: 0;
+  padding: 0;
+  position: absolute;
+}
+
+.show-icon {
+  vertical-align: middle;
+  font-size: 22px;
+}
+
+#show-components:hover,
+#toggle-history:hover {
+  cursor: pointer;
+  color: #5b778c;
+}
+
+#history-table {
+  width: fit-content;
+  border-left: 1px solid #e1e9ef;
+  padding-left: 25px;
+}
+
+.sticky-elements {
+  position: sticky;
+  top: 10px;
+  height: fit-content;
+}

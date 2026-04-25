@@ -1,0 +1,8 @@
+
+chrom	pos_begin	score
+chr1	4	0.01
+chr1	54	0.02
+chr1	90	0.03
+chr1	100	0.04
+chr1	119	0.05
+chr1	122	0.06

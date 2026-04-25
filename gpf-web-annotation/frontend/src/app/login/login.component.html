@@ -1,0 +1,50 @@
+<div id="front-page-container">
+  <div id="front-page-header">
+    <img src="{{ environment.imgPathPrefix }}/gain-logo.png" alt="GPF Logo" id="front-page-logo" />
+    <h1>GAIn: Genomic Annotation Infrastructure</h1>
+    <p>GAIn Web description</p>
+  </div>
+  <div id="login-container">
+    <div *ngIf="activationStatus === 'failed'" class="activation-message" id="activation-failure">
+      <b>User account activation failed!</b>
+      <div
+        >Either your account is already active or you need to try again. Click on forgotten password to retry activating
+        the account.</div
+      >
+    </div>
+    <div *ngIf="activationStatus === 'successful'" class="activation-message" id="activation-success">
+      <b>User account activation successful!</b>
+      <div>Please sign in.</div>
+    </div>
+
+    <h1>Login</h1>
+    <form>
+      <div class="form-group">
+        <label for="email">email</label>
+        <input #emailInput id="email" name="email" type="email" spellcheck="false" />
+      </div>
+      <div class="form-group">
+        <label for="password">password</label>
+        <input #passwordInput type="password" id="password" name="password" required />
+      </div>
+
+      <button id="login-button" type="submit" (click)="login()">Login</button>
+    </form>
+
+    <div id="login-options">
+      <div id="response-message" *ngIf="responseMessage">{{ responseMessage }}</div>
+      <a [href]="resetPasswordUrl" id="reset-password-link">Forgotten password</a>
+      <a routerLink="/register" id="register-link">Create an account</a>
+      <div id="divider">
+        <hr />
+        <span id="or-text">or</span>
+        <hr />
+      </div>
+
+      <button id="google-login-button">
+        <img src="{{ environment.imgPathPrefix }}/google_logo.svg.png" alt="Google Icon" id="google-icon" />
+        Continue with Google
+      </button>
+    </div>
+  </div>
+</div>

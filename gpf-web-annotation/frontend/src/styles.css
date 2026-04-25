@@ -1,0 +1,69 @@
+body {
+  font-family: Roboto, sans-serif, "Noto Sans Symbols 2", "Noto Sans Math";
+  overflow-y: scroll;
+  margin: 0;
+}
+
+.status-label {
+  font-weight: bold;
+  padding: 0 12px;
+  border: 1.5px solid;
+  border-radius: 13px;
+}
+
+.in-progress-status {
+  color: #5f9ec8;
+  background-color: #d3edff;
+  border-color: #5f9ec8;
+}
+
+.waiting-status {
+  color: #dfb434;
+  background-color: #fff5d6;
+  border-color: #dfb434;
+}
+
+.success-status {
+  color: #589f35;
+  background-color: #e8f7e8;
+  border-color: #589f35;
+}
+
+.fail-status {
+  color: #d74b59;
+  background-color: #ffedef;
+  border-color: #d74b59;
+}
+
+.error-message {
+  font-size: 14px;
+  color: #d74b59;
+  font-weight: normal;
+}
+
+.annotatable-message {
+  font-size: 14px;
+  font-weight: normal;
+}
+
+.no-download-icon {
+  color: #cfd8df;
+}
+
+.download-icon,
+.delete-icon {
+  color: #435869;
+  vertical-align: middle;
+}
+
+.download-icon:hover,
+.delete-icon:hover {
+  color: #85a2b9;
+  cursor: pointer;
+}
+
+#history-header {
+  font-weight: bold;
+  color: #435869;
+  text-align: center;
+}

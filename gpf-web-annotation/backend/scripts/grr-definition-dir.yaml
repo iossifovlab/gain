@@ -1,0 +1,13 @@
+id: "local"
+type: group
+children:
+- id: "grr.sync"
+  type: "directory"
+  directory: /grr
+  public_url: "https://grr.iossifovlab.com"
+  read_only: true
+- id: "grr_encode.sync"
+  type: "directory"
+  directory: /grr_encode
+  public_url: "https://grr-encode.iossifovlab.com"
+  read_only: true

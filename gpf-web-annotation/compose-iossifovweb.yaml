@@ -1,0 +1,115 @@
+name: gpfwa
+services:
+
+  ubuntu-image:
+    build:
+      context: .
+      dockerfile: Dockerfile.ubuntu
+
+  gpf-image:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpf
+    depends_on:
+      ubuntu-image:
+        condition: service_completed_successfully
+
+  pg-data:
+    image: busybox:latest
+    command: echo "PostgreSQL data only container"
+    volumes:
+      - ${WD:-.}/gpfwa-pg-data:/var/lib/postgresql
+
+  static-data:
+    image: busybox:latest
+    command: echo "Static data only container"
+    volumes:
+      - ${WD:-.}/gpfwa-static-data:/static
+
+  db:
+    restart: always
+    image: postgres
+    # set shared memory limit when using docker compose
+    shm_size: 128mb
+    volumes_from:
+      - pg-data
+    environment:
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: gpfwa
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    restart: always
+    build:
+      context: backend
+      dockerfile: Dockerfile
+      args:
+        COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+    depends_on:
+      gpf-image:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+    volumes:
+      - ${WD:-.}/gpfwa-data:/data
+      - ${WD:-.}/gpfwa-logs:/logs
+      - ${GRR}:/grr
+      - ${GRR_ENCODE}:/grr_encode
+    volumes_from:
+      - static-data
+    environment:
+      DJANGO_SETTINGS_MODULE: web_annotation.settings_gunicorn
+      GRR_DEFINITION_FILE: /grr-definition-dir.yaml
+      GPFWA_DB_NAME: gpfwa
+      GPFWA_DB_USER: postgres
+      GPFWA_DB_PASSWORD: secret
+      GPFWA_DB_HOST: db
+      GPFWA_DB_PORT: 5432
+      GPFWA_DATA_STORAGE: /data
+      GPFWA_LOG_DIR: /logs
+      GPFWA_SECRET_KEY: "${SECRET_KEY:-django-insecure-3rz4n(_u+x8r+n%&xr-(vg83v8&llq7pin*x%@%y@d8af%iphk}"
+
+      GPFWA_EMAIL_VERIFICATION_ENDPOINT: "${PUBLIC_ENDPOINT:-http://localhost:9002}"
+      GPFWA_EMAIL_REDIRECT_ENDPOINT: "${PUBLIC_ENDPOINT:-http://localhost:9002}"
+
+      GPFWA_DEFAULT_FROM_EMAIL: "${DEFAULT_FROM_EMAIL:-no-reply@iossifovlab.com}"
+      GPFWA_EMAIL_HOST: "${EMAIL_HOST:-in-v3.mailjet.com}"
+      GPFWA_EMAIL_HOST_USER: "${EMAIL_HOST_USER:-}"
+      GPFWA_EMAIL_HOST_PASSWORD: "${EMAIL_HOST_PASSWORD:-}"
+      GPFWA_EMAIL_PORT: "${EMAIL_PORT:-587}"
+      GPFWA_EMAIL_USE_TLS: "${EMAIL_USE_TLS:-True}"
+
+      GPFWA_PUBLIC_NAME: "${PUBLIC_NAME:-localhost}"
+
+    healthcheck:
+      test: ["CMD", "curl", "http://localhost:9001/api/jobs/genomes"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
+  frontend:
+    restart: always
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+      args:
+        COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes_from:
+      - static-data
+    volumes:
+      - ${WD:-.}/gpfwa-apache:/var/log/apache2
+    healthcheck:
+      test: ["CMD", "curl", "http://localhost/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+    - "9002:80"

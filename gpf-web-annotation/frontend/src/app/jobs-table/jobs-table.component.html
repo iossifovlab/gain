@@ -1,0 +1,24 @@
+<div *ngIf="jobs.length">
+  <div id="history-header">History</div>
+  <div id="grid-container">
+    <div class="grid-header">Job</div>
+    <div class="grid-header">Actions</div>
+
+    <ng-container *ngFor="let j of jobs">
+      <div class="grid-cell job-name" [ngClass]="getStatusClass(j.status)"
+        >{{ j.name }}<span class="material-symbols-outlined info-icon" (click)="openDetailsModal(j.id)">info</span></div
+      >
+      <div class="grid-cell actions" [ngClass]="getStatusClass(j.status)">
+        <a *ngIf="j.status === 'success'" id="download-result" [href]="getDownloadLink(j.id)" download
+          ><span class="material-symbols-outlined download-icon">download</span></a
+        >
+        <span *ngIf="j.status !== 'success'" class="material-symbols-outlined no-download-icon">file_download_off</span>
+        <button id="delete-job" (click)="onDelete(j.id)"
+          ><span class="material-symbols-outlined delete-icon">delete</span></button
+        >
+      </div>
+    </ng-container>
+  </div>
+
+  <span id="note">Note: Jobs are stored for 30 days</span>
+</div>

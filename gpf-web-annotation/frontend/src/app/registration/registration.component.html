@@ -1,0 +1,52 @@
+<div id="front-page-container">
+  <div id="front-page-header">
+    <img src="{{ environment.imgPathPrefix }}/gain-logo.png" alt="GPF Logo" id="front-page-logo" />
+    <h1>GAIn: Genomic Annotation Infrastructure</h1>
+    <p>GAIn Web description</p>
+  </div>
+  <div id="login-container">
+    <h1>Registration</h1>
+    <form>
+      <div class="form-group">
+        <label for="email">email</label>
+        <input
+          #emailInput
+          id="email"
+          name="email"
+          type="email"
+          spellcheck="false"
+          pattern="^\w+([\.\-]?\w+)*@\w+([\.\-]?\w+)*(\.\w{2,3})+$" />
+      </div>
+      <div class="form-group">
+        <label for="password">password</label>
+        <input #passwordInput type="password" id="password" name="password" minlength="6" required />
+      </div>
+      <div id="validation-message">{{ validationMessage }}</div>
+      <button id="login-button" type="submit" (click)="register()">Create</button>
+    </form>
+
+    <div id="login-options">
+      <div
+        *ngIf="responseMessage"
+        id="registration-messaage"
+        [ngStyle]="responseMessage.includes('success') ? { color: 'green' } : { color: 'red' }"
+        >{{ responseMessage }}</div
+      >
+      <div>
+        <span>Already have an account? </span>
+        <a routerLink="/login" id="login-link">Login</a>
+      </div>
+
+      <div id="divider">
+        <hr />
+        <span id="or-text">or</span>
+        <hr />
+      </div>
+
+      <button id="google-login-button">
+        <img src="{{ environment.imgPathPrefix }}/google_logo.svg.png" alt="Google Icon" id="google-icon" />
+        Continue with Google
+      </button>
+    </div>
+  </div>
+</div>

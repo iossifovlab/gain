@@ -1,0 +1,235 @@
+<div id="pipelines-container">
+  <div cdkOverlayOrigin id="selecting-container">
+    <div id="pipelines-header">Select pipeline</div>
+    <input
+      [title]="selectedPipeline ? selectedPipeline.name : ''"
+      id="pipelines-input"
+      matInput
+      #pipelineInput="matAutocompleteTrigger"
+      [matAutocomplete]="pipelinesDropdown"
+      cdkOverlayOrigin
+      #pipelineChange="cdkOverlayOrigin"
+      [formControl]="dropdownControl"
+      (focus)="clearPipelineInput()" />
+    <span (click)="clearPipelineInput()" class="material-symbols-outlined dropdown-icon">keyboard_arrow_down</span>
+  </div>
+
+  <ng-template
+    cdkConnectedOverlay
+    [cdkConnectedOverlayOrigin]="pipelineChange"
+    [cdkConnectedOverlayOpen]="showConfimPipelineChangePopup"
+    [cdkConnectedOverlayPositions]="[{
+      originX: 'end',
+      originY: 'top',
+      overlayX: 'center',
+      overlayY: 'bottom',
+      offsetX: -22,
+      offsetY: 5,
+    }]"
+    [cdkConnectedOverlayHeight]="115"
+    [cdkConnectedOverlayPush]="true"
+    [cdkConnectedOverlayHasBackdrop]="true"
+    (detach)="confirmChange(false)"
+    (backdropClick)="confirmChange(false)"
+    [cdkConnectedOverlayBackdropClass]="'transparent-backdrop'">
+    <div id="change-confirmation-popover">
+      <p>Are you sure? You are going to lose your changes.</p>
+      <div>
+        <button id="confirm-change" (click)="confirmChange(true)">Continue</button>
+        <button id="cancel-change" (click)="confirmChange(false)">Cancel</button>
+      </div>
+      <div class="popover-arrow"></div>
+    </div>
+  </ng-template>
+
+  <mat-autocomplete
+    #pipelinesDropdown="matAutocomplete"
+    (closed)="displayPipelineNameInInput()"
+    (optionSelected)="selectPipelineByName($event.option.value)">
+    @for (group of ['default', 'user']; track group) {
+    <mat-optgroup [label]="group === 'user' ? 'User pipelines' : 'Public pipelines'">
+      @for (pipeline of filteredPipelines; track pipeline.id) {
+      <mat-option
+        *ngIf="pipeline.type === group"
+        class="pipeline-option"
+        [title]="pipeline.name"
+        [value]="pipeline.name">
+        <span id="socket-notification">
+          <span [ngClass]="pipeline.status + '-circle'" class="material-symbols-outlined pipeline-status-icon"
+            >circle</span
+          ></span
+        >
+        {{ pipeline.name }}
+      </mat-option>
+      }
+    </mat-optgroup>
+    }
+  </mat-autocomplete>
+
+  <div class="editor-wrapper">
+    <ngx-monaco-editor
+      #pipelineEditor
+      id="pipeline-editor"
+      [ngClass]="[
+        configError
+          ? 'invalid-config'
+          : selectedPipeline
+          ? selectedPipeline.status + '-editor'
+          : currentTemporaryPipelineStatus
+          ? currentTemporaryPipelineStatus + '-editor'
+          : ''
+      ]"
+      [style.width]="editorWidth()"
+      [style.height]="editorHeight()"
+      [options]="yamlEditorOptions"
+      (onInit)="onEditorInit()"
+      [(ngModel)]="currentPipelineText"
+      (ngModelChange)="isConfigValid()"></ngx-monaco-editor>
+    <div id="status-bar">
+      <span class="status-item">
+        <span class="material-symbols-outlined">menu</span>{{ pipelineInfo?.annotatorsCount || '?' }} annotators</span
+      >
+      <span class="status-item"
+        ><span class="material-symbols-outlined">menu_open</span
+        >{{ pipelineInfo?.attributesCount || '?' }} attributes</span
+      >
+      <span
+        class="status-item"
+        #tooltip="matTooltip"
+        [matTooltip]="pipelineInfo?.annotatables.join('\n') || '?'"
+        matTooltipShowDelay="200"
+        ><span class="material-symbols-outlined">edit_note</span
+        >{{ pipelineInfo?.annotatables?.length || '?' }} annotatables</span
+      >
+      <span
+        class="status-item"
+        #tooltip="matTooltip"
+        [matTooltip]="pipelineInfo?.geneLists.join('\n') || '?'"
+        matTooltipShowDelay="200"
+        ><span class="material-symbols-outlined">grain</span>{{ pipelineInfo?.geneLists?.length || '?' }} gene
+        list</span
+      >
+    </div>
+  </div>
+  @if(configError) {
+  <div class="error-message">{{ configError }}</div>
+  }
+</div>
+
+<div id="pipeline-actions">
+  <div>
+    <button (click)="openAnnotatorFormModal(true)" id="add-resource-button" [disabled]="configError || disableActions"
+      ><span class="material-symbols-outlined add-resource-icon">add</span>New resource</button
+    >
+    <button (click)="openAnnotatorFormModal()" id="add-annotator-button" [disabled]="configError || disableActions"
+      ><span class="material-symbols-outlined add-annotator-icon">add</span>New annotator</button
+    >
+    <button
+      (click)="clearPipeline()"
+      id="new-pipeline-button"
+      [disabled]="disableActions"
+      cdkOverlayOrigin
+      #pipelineCreate="cdkOverlayOrigin"
+      ><span class="material-symbols-outlined new-pipeline-icon">draft</span>New pipeline</button
+    >
+    <button *ngIf="isUserLoggedIn" (click)="saveAs()" id="save-as-button" [disabled]="configError || disableActions"
+      ><span class="material-symbols-outlined save-as-icon">save_as</span>Save as</button
+    >
+    <button
+      *ngIf="isUserLoggedIn && selectedPipeline && selectedPipeline.type === 'user'"
+      (click)="save()"
+      id="save-button"
+      [disabled]="!isPipelineChanged() || configError || disableActions"
+      ><span class="material-symbols-outlined save-icon">save</span>Save</button
+    >
+
+    <span cdkOverlayOrigin #pipelineDelete="cdkOverlayOrigin">
+      <button
+        *ngIf="isUserLoggedIn && selectedPipeline && selectedPipeline.type === 'user'"
+        (click)="showConfimDeletePopup = true"
+        id="delete-button"
+        [disabled]="disableActions"
+        ><span class="material-symbols-outlined delete-icon">delete</span>Delete</button
+      >
+    </span>
+  </div>
+  <div>
+    <button *ngIf="displayResetScreenButton" (click)="shrinkTextarea()" id="shrink-button"
+      ><span class="material-symbols-outlined shrink-icon">close_fullscreen</span>Reset</button
+    >
+    <button *ngIf="displayFullScreenButton" (click)="expandTextarea()" id="expand-button"
+      ><span class="material-symbols-outlined expand-icon">open_in_full</span>Full screen</button
+    >
+  </div>
+</div>
+
+<ng-template
+  cdkConnectedOverlay
+  [cdkConnectedOverlayOrigin]="pipelineDelete"
+  [cdkConnectedOverlayOpen]="showConfimDeletePopup"
+  [cdkConnectedOverlayPositions]="[{
+    originX: 'center',
+    originY: 'top',
+    overlayX: 'center',
+    overlayY: 'bottom',
+    offsetX: 0,
+    offsetY: -5,
+  }]"
+  [cdkConnectedOverlayMinHeight]="115"
+  [cdkConnectedOverlayMinWidth]="130"
+  [cdkConnectedOverlayPush]="true"
+  [cdkConnectedOverlayHasBackdrop]="true"
+  (detach)="showConfimDeletePopup = false"
+  (backdropClick)="showConfimDeletePopup = false"
+  [cdkConnectedOverlayBackdropClass]="'transparent-backdrop'">
+  <div id="change-confirmation-popover">
+    <p>Are you sure you want to delete the pipeline?</p>
+    <div>
+      <button id="confirm-delete" (click)="delete()">Delete</button>
+      <button id="cancel-delete" (click)="showConfimDeletePopup = false">Cancel</button>
+    </div>
+    <div class="popover-arrow"></div>
+  </div>
+</ng-template>
+
+<ng-template
+  cdkConnectedOverlay
+  [cdkConnectedOverlayOrigin]="pipelineCreate"
+  [cdkConnectedOverlayOpen]="showConfimPipelineCreatePopup"
+  [cdkConnectedOverlayPositions]="[{
+    originX: 'center',
+    originY: 'top',
+    overlayX: 'center',
+    overlayY: 'bottom',
+    offsetX: 0,
+    offsetY: -5,
+  }]"
+  [cdkConnectedOverlayHeight]="115"
+  [cdkConnectedOverlayPush]="true"
+  [cdkConnectedOverlayHasBackdrop]="true"
+  (detach)="confirmCreate(false)"
+  (backdropClick)="confirmCreate(false)"
+  [cdkConnectedOverlayBackdropClass]="'transparent-backdrop'">
+  <div id="change-confirmation-popover">
+    <p>Are you sure? You are going to lose your changes.</p>
+    <div>
+      <button id="confirm-change" (click)="confirmCreate(true)">Continue</button>
+      <button id="cancel-change" (click)="confirmCreate(false)">Cancel</button>
+    </div>
+    <div class="popover-arrow"></div>
+  </div>
+</ng-template>
+
+<ng-template #nameInput>
+  <div id="name-modal">
+    <div>Set pipeline name</div>
+    <input #inputRef (keydown.enter)="saveName(inputRef.value)" />
+    @if(invalidPipelineName) {
+    <span class="error-message">Pipeline with this name already exists.</span>
+    }
+    <div id="buttons-wrapper">
+      <button id="save-name-button" (click)="saveName(inputRef.value)">Save</button>
+      <button id="cancel-button" (click)="cancel()">Cancel</button>
+    </div>
+  </div>
+</ng-template>

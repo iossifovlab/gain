@@ -1,0 +1,6 @@
+- position_score:
+    resource_id: scores/pos1
+    attributes:
+      - name: position_1
+        source: pos1
+

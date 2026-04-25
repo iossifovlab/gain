@@ -1,0 +1,13 @@
+
+                type: gene_score
+                filename: t4c8_gene_score.csv
+                scores:
+                - id: t4c8_score
+                  histogram:
+                    type: number
+                    number_of_bins: 3
+                    x_log_scale: false
+                    y_log_scale: false
+                meta:
+                  description: t4c8 gene score
+                

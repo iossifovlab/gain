@@ -1,0 +1,71 @@
+<div id="wrapper-container">
+  <div id="annotation-container">
+    <div class="sticky-elements">
+      @if(hideComponents) {
+      <button id="show-components" (click)="showComponents()"
+        ><span class="material-symbols-outlined show-components-icon">right_panel_open</span></button
+      >
+      }
+
+      <app-annotation-pipeline (tiggerHidingComponents)="updateComponentsVisibility($event)"></app-annotation-pipeline>
+    </div>
+
+    <div
+      [style.display]="hideComponents ? 'none' : 'flex'"
+      style="display: flex; flex-direction: column; width: auto; min-width: 0; flex-grow: 1">
+      <div>
+        @if(isCreationFormVisible) {
+        <app-job-creation
+          (emitFile)="setFile($event)"
+          (emitFileSeparator)="setFileSeparator($event)"
+          (emitGenome)="setGenome($event)"
+          (emitUpdatedFileHeader)="setUpdatedFileHeader($event)"></app-job-creation>
+        <div style="margin-top: 10px">
+          <span class="error-message">{{ creationError }}</span>
+          <button id="create-button" (click)="autoSavePipeline()" tabindex="1" [disabled]="disableCreate()"
+            >Create</button
+          >
+        </div>
+        } @if(!isCreationFormVisible && currentJob) {
+        <div id="result">
+          <div id="current-job-info">
+            <div>
+              <span class="job-name">Job name: {{ currentJob.name }}</span>
+              <span class="status-label" [ngClass]="getStatusClass()">{{ currentJob.status }}</span>
+            </div>
+            <div *ngIf="currentJob.status === 'success'">
+              <span id="file-name">{{ currentJob.annotatedFileName }}</span>
+              <a id="download-result" [href]="downloadLink" download
+                ><span class="material-symbols-outlined download-icon">download</span></a
+              >
+            </div>
+          </div>
+
+          <div id="new-job-section">
+            <button id="new-job-button" (click)="showCreateMode()"
+              ><span class="material-symbols-outlined">add</span>new job</button
+            >
+          </div>
+        </div>
+        }
+      </div>
+    </div>
+  </div>
+
+  @if(isUserLoggedIn) {
+  <div [style.display]="hideComponents ? 'none' : 'block'" id="history-table" class="sticky-elements">
+    <div>
+      <button id="toggle-history" (click)="this.hideHistory = !this.hideHistory"
+        ><span
+          class="material-symbols-outlined"
+          [ngStyle]="{ transform: this.hideHistory ? 'rotate(0deg)' : 'rotate(180deg)' }"
+          >right_panel_open</span
+        ></button
+      >
+    </div>
+    @if(!hideHistory) {
+    <app-jobs-table (jobDelete)="refreshUserQuota()"></app-jobs-table>
+    }
+  </div>
+  }
+</div>

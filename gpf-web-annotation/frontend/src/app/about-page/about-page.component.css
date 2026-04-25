@@ -1,0 +1,35 @@
+#page-content {
+  margin: 60px 20%;
+}
+
+* {
+  color: #252e34;
+  line-height: 25px;
+}
+
+:host::ng-deep a {
+  color: #24699e;
+  text-decoration: none;
+}
+
+:host::ng-deep a:hover {
+  color: rgb(84, 146, 194) !important;
+  cursor: pointer;
+}
+
+:host::ng-deep h1,
+:host::ng-deep h2,
+:host::ng-deep h3,
+:host::ng-deep h4,
+:host::ng-deep h5,
+:host::ng-deep h6 {
+  color: #5b778c;
+}
+
+:host::ng-deep h2 {
+  margin-top: 65px;
+}
+
+:host::ng-deep ul {
+  list-style-type: "-  ";
+}

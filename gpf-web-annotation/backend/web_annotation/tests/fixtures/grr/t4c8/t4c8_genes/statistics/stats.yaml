@@ -1,0 +1,13 @@
+resource_id: t4c8_genes
+chromosome_count: 1
+global:
+  transcript_number: 2
+  protein_coding_transcript_number: 2
+  gene_number: 2
+  protein_coding_gene_number: 2
+chromosomes:
+  chr1:
+    transcript_number: 2
+    protein_coding_transcript_number: 2
+    gene_number: 2
+    protein_coding_gene_number: 2

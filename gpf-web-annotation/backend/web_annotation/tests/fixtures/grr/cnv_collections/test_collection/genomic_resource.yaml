@@ -1,0 +1,26 @@
+type: cnv_collection
+table:
+    filename: data.txt
+scores:
+    - id: freq
+      name: frequency
+      type: float
+      histogram:
+        type: number
+        number_of_bins: 3
+        view_range:
+          min: 0
+          max: 1
+        x_log_scale: false
+        y_log_scale: true
+      desc: some populaton frequency
+    - id: collection
+      name: collection
+      type: str
+      desc: col1 or col2
+    - id: status
+      name: affected_status
+      type: str
+      desc: |
+        shows if the child that has the de novo
+        is affected or unaffected

@@ -1,0 +1,13 @@
+__pycache__
+*.sqlite3
+data
+.pytest_cache
+gpf
+gpf-web-annotation-frontend
+*.egg-info
+dist
+conda-channel.tar.gz
+*.tbi
+/pg_data
+/gpfwa_data
+

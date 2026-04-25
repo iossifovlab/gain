@@ -1,0 +1,22 @@
+{
+  "config": {
+    "histograms": [],
+    "table": {
+      "config": {
+        "filename": "data.txt"
+      },
+      "files_md5": {
+        "data.txt": "b5252de51485ea7f904f53afea52b77c"
+      }
+    }
+  },
+  "score_config": [
+    {
+      "id": "score_one",
+      "type": "float",
+      "name": "score",
+      "index": null,
+      "na_values": "['', '.', 'NA', 'nan']"
+    }
+  ]
+}

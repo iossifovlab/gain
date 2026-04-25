@@ -1,0 +1,317 @@
+
+
+<html>
+<head>
+<style>
+h3,h4 {
+    margin-top:0.5em;
+    margin-bottom:0.5em;
+}
+table {
+    border-collapse: collapse;
+}
+th, td {
+    padding: 10px;
+}
+th {
+    font-size: 20px;
+}
+td {
+    font-size: 18px;
+}
+
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1;
+    padding-top: 100px;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    justify-content: center;
+}
+.modal-content {
+    margin: auto;
+    display: block;
+    width: 80%;
+    max-width: 700px;
+}
+.close {
+    float: right;
+    font-size: 40px;
+    font-weight: bold;
+}
+.close:hover,
+.close:focus {
+    color: #bbb;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+#gene-sets-table {
+    border-collapse: separate;
+    border-spacing: 0;
+    width: 1200px;
+    table-layout: fixed;
+}
+#gene-sets-table th {
+    word-break: break-word;
+    max-width: 200px;
+    border-top: 1px solid;
+    border-bottom: 1px solid;
+    border-right: 1px solid;
+}
+#gene-sets-table td {
+    word-break: break-word;
+    max-width: 200px;
+    border-bottom: 1px solid;
+    border-right: 1px solid;
+}
+#gene-sets-table th:first-child,
+#gene-sets-table td:first-child {
+    border-left: 1px solid;
+}
+#gene-sets-table thead tr:nth-of-type(2) th {
+    border-top: none;
+}
+#gene-sets-table thead {
+    position: sticky; top: 0; background-color: white;
+}
+.histogram {
+    margin-bottom: 16px;
+}
+
+</style>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+        document.querySelectorAll("[data-modal-trigger]").forEach(function (trigger) {
+            trigger.addEventListener("click", function () {
+                var modalId = this.getAttribute("data-modal-trigger");
+                var modal = document.getElementById(modalId);
+                if (modal) {
+                    modal.style.display = "block";
+                    document.currentOpenModal = modal;
+                }
+            });
+        });
+
+        document.querySelectorAll(".close").forEach(function (closeButton) {
+            closeButton.addEventListener("click", function () {
+                this.closest(".modal").style.display = "none";
+                document.currentOpenModal = null;
+            });
+        });
+
+        window.addEventListener("click", function (event) {
+            if (event.target.classList.contains("modal")) {
+                event.target.style.display = "none";
+                document.currentOpenModal = null;
+            }
+        });
+
+        document.addEventListener("keydown", function (event) {
+            if (event.key === "Escape" && document.currentOpenModal) {
+                document.currentOpenModal.style.display = "none";
+                document.currentOpenModal = null;
+            }
+        });
+    });
+</script>
+</head>
+    <body>
+    <h1>Resource</h1>
+    <div>
+        <table border="1">
+            <tr>
+                <td>
+                    <b>Id:</b>
+                </td>
+                <td>t4c8/gene_sets/main</td>
+            </tr>
+            <tr>
+                <td>
+                    <b>Type:</b>
+                </td>
+                <td>gene_set_collection</td>
+            </tr>
+            <tr>
+                <td>
+                    <b>Version:</b>
+                </td>
+                <td>0</td>
+            </tr>
+            <tr>
+                <td><b>Summary:</b></td>
+                <td>
+                    <div>
+                        <template shadowrootmode="open"><p>t4c8 main gene sets</p>
+
+                        </template>
+                    </div>
+                </td>
+            </tr>
+            <tr>
+                <td>
+                    <b>Description:</b>
+                </td>
+                <td>
+                    <div>
+                        <template shadowrootmode="open"><p>t4c8 main gene sets</p>
+
+                        </template>
+                    </div>
+                </td>
+            </tr>
+            <tr>
+                <td>
+                    <b>Labels:</b>
+                </td>
+                <td>
+                
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    
+
+<hr>
+<h2>Gene set ID: main</h2>
+<h3>Statistics:</h3>
+<p>Number of gene sets: 3</p>
+<p>Number of unique genes: 2</p>
+<div style="display: flex; padding-top: 8px;">
+    <div style="display: flex; flex-direction: column; align-items: center;">
+        <span>Count of genes per gene set</span>
+        <div class="histogram">
+            <img src="statistics/genes_per_gene_set_histogram.png"
+                style="width: 300px; cursor: pointer;"
+                alt=main
+                title="genes-per-gene-set"
+                data-modal-trigger="genes-per-gene-set">
+        </div>
+    </div>
+    <div style="display: flex; flex-direction: column; align-items: center; padding-left: 38px;">
+        <span>Count of gene sets per gene</span>
+        <div class="histogram">
+            <img src="statistics/gene_sets_per_gene_histogram.png"
+                style="width: 300px; cursor: pointer;"
+                alt=main
+                title="gene-sets-per-gene"
+                data-modal-trigger="gene-sets-per-gene">
+        </div>
+    </div>
+</div>
+<div id="genes-per-gene-set" class="modal">
+    <div class="modal-content"
+        style="padding: 10px 20px; background-color: #fff; height: fit-content; width: fit-content;">
+        <span class="close">&times;</span>
+        <img src="statistics/genes_per_gene_set_histogram.png"
+            alt="genes per gene set histogram"
+            title="genes-per-gene-set">
+    </div>
+</div>
+<div id="gene-sets-per-gene" class="modal">
+    <div class="modal-content"
+        style="padding: 10px 20px; background-color: #fff; height: fit-content; width: fit-content;">
+        <span class="close">&times;</span>
+        <img src="statistics/gene_sets_per_gene_histogram.png"
+            alt="genes per gene set histogram"
+            title="gene-sets-per-gene">
+    </div>
+</div>
+<div style="max-height: 50%; overflow-y: auto; width: fit-content; margin-bottom: 16px;">
+    <table id="gene-sets-table">
+        <thead>
+            <tr>
+                <th>Gene Set</th>
+                <th style="width: 110px">Gene Count</th>
+                <th>Description</th>
+            </tr>
+        </thead><tr>
+                <td>all_candidates</td>
+                <td>2</td>
+                <td>All Candidates</td>
+            </tr><tr>
+                <td>c8_candidates</td>
+                <td>1</td>
+                <td>C8 Candidates</td>
+            </tr><tr>
+                <td>t4_candidates</td>
+                <td>1</td>
+                <td>T4 Candidates</td>
+            </tr></table>
+</div>
+
+<h3>Gene sets directory:</h3>
+<a href="main_gene_sets">main_gene_sets</a>
+
+<p>Format: directory</p>
+<p>Web label: Main</p>
+
+<p>Web label: key| (|count|): |desc</p>
+
+
+
+    <h1>Files</h1>
+    <table>
+    <thead>
+        <tr>
+            <th>Filename</th>
+            <th>Size</th>
+            <th>md5</th>
+        </tr>
+    </thead>
+    <tbody>
+            <tr>
+                
+                    <td class="nowrap">
+                        <a href='genomic_resource.yaml'>genomic_resource.yaml</a>
+                    </td>
+                
+                <td class="nowrap">177.0 B</td>
+                <td class="nowrap">1bfdcc6208ad2d2faed3383f7b66dd52</td>
+            </tr>
+            <tr>
+                
+                    <td class="nowrap">
+                        <a href='main_gene_sets/all_candidates.txt'>main_gene_sets/all_candidates.txt</a>
+                    </td>
+                
+                <td class="nowrap">96.0 B</td>
+                <td class="nowrap">125b5f9f783376a442a9be776953d375</td>
+            </tr>
+            <tr>
+                
+                    <td class="nowrap">
+                        <a href='main_gene_sets/c8_candidates.txt'>main_gene_sets/c8_candidates.txt</a>
+                    </td>
+                
+                <td class="nowrap">71.0 B</td>
+                <td class="nowrap">89490290a622908ad919154f67620c2f</td>
+            </tr>
+            <tr>
+                
+                    <td class="nowrap">
+                        <a href='main_gene_sets/t4_candidates.txt'>main_gene_sets/t4_candidates.txt</a>
+                    </td>
+                
+                <td class="nowrap">71.0 B</td>
+                <td class="nowrap">a0ea09a083f36691e5ce598ced0e144b</td>
+            </tr>
+            <tr>
+                
+                    <td class="nowrap">
+                        <a href='statistics/index.html'>statistics/</a>
+                    </td>
+                
+                <td class="nowrap"></td>
+                <td class="nowrap"></td>
+            </tr>
+    </tbody>
+    </table>
+    </body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "score_config": [
+    {
+      "hist_conf": {
+        "number_of_bins": 3,
+        "type": "number",
+        "view_range": {
+          "max": 20.0,
+          "min": 10.123456789
+        },
+        "x_log_scale": false,
+        "x_min_log": null,
+        "y_log_scale": false
+      },
+      "id": "t4c8_score"
+    }
+  ],
+  "score_file": "b003a0cd20d6c7c0b48ab150f370fb95"
+}

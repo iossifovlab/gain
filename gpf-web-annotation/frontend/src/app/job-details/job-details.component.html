@@ -1,0 +1,57 @@
+<mat-dialog-content *ngIf="job">
+  <div>
+    <span class="label">User: </span>
+    <span class="data owner">{{ job.owner }}</span>
+  </div>
+  <div>
+    <span class="label">Name: </span>
+    <span class="data name">{{ job.name }}</span>
+  </div>
+  <div>
+    <span class="label">Created: </span>
+    <span class="data">
+      <span class="date">{{ job.created.toDateString() }} </span>
+      <span class="time">{{ job.created.toLocaleTimeString('en-US') }}</span>
+    </span>
+  </div>
+  <div>
+    <span class="label">Status: </span>
+    <span class="status-label" [ngClass]="getStatusClass(job.status)">{{ job.status }}</span>
+  </div>
+  <div>
+    <span class="label">Started: </span>
+    <span class="data started">-</span>
+  </div>
+  <div>
+    <span class="label">Duration: </span>
+    <span class="data duration">
+      <ng-container *ngIf="job.duration">{{ job.duration * 1000 | date : 'HH:mm:ss' : 'UTC' }}</ng-container>
+      <ng-container *ngIf="!job.duration">-</ng-container>
+    </span>
+  </div>
+  <div *ngIf="job.status === 'success'">
+    <span class="label">Annotated file: </span>
+    <a id="download-annotated" [href]="annotatedFileLink" download>
+      <span class="material-symbols-outlined download-icon">download</span>
+    </a>
+  </div>
+  <div>
+    <span class="label">Uploaded file: </span>
+    <a id="download-input" [href]="uploadedFileLink" download>
+      <span class="material-symbols-outlined download-icon">download</span>
+    </a>
+  </div>
+  <div>
+    <span class="label">Pipeline configuration file: </span>
+    <a id="download-config" [href]="configFileLink" download>
+      <span class="material-symbols-outlined download-icon">download</span>
+    </a>
+  </div>
+  <div>
+    <span class="label">Job size: </span>
+    <span id="data-size">{{ job.size }}</span>
+  </div>
+  <div class="error-block" *ngIf="job.error">
+    <span id="data-error">{{ job.error }}</span>
+  </div>
+</mat-dialog-content>

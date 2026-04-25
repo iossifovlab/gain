@@ -1,0 +1,27 @@
+preamble:
+  input_reference_genome: hg38/genomes/GRCh38-hg38
+  summary: Clinical Annotation Pipeline
+  description: This is a pipeline to annotate with Clinical resources
+
+annotators:
+  - allele_score: hg38/scores/CADD_v1.4
+
+  - effect_annotator:
+      gene_models: hg38/gene_models/GENCODE/48/basic/ALL
+      genome: hg38/genomes/GRCh38.p13
+      attributes:
+        - worst_effect
+        - gene_effects
+        - effect_details
+        - name: gene_list
+          internal: true
+
+  - gene_set_annotator:
+      resource_id: gene_properties/gene_sets/autism
+      input_gene_list: gene_list
+      attributes:
+        - "autism candidates from Iossifov PNAS 2015"
+        - "autism candidates from Sanders Neuron 2015"
+        - "Yuen Scherer Nature 2017"
+        - "Turner Eichler ajhg 2019"
+        - "Satterstrom Buxbaum Cell 2020 top"

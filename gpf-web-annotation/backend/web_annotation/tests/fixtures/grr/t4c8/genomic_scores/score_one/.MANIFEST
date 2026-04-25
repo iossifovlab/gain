@@ -1,0 +1,15 @@
+- md5: b5252de51485ea7f904f53afea52b77c
+  name: data.txt
+  size: 103
+- md5: 63e6fb0f1fd704457aa299354671f97c
+  name: genomic_resource.yaml
+  size: 109
+- md5: fc1fd807cb1542fa937257608f4174eb
+  name: statistics/histogram_score_one.json
+  size: 2617
+- md5: 0f595187438c8077ef29112993bf0f4f
+  name: statistics/histogram_score_one.png
+  size: 11731
+- md5: 4791fa397173207d319d5d4697baa353
+  name: statistics/stats_hash
+  size: 379

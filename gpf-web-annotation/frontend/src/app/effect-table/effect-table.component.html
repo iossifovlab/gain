@@ -1,0 +1,29 @@
+<div
+  class="grid-container"
+  [ngStyle]="
+    isEffectDetails
+      ? isEffectAnnotator
+        ? { 'grid-template-columns': 'repeat(4, auto)' }
+        : { 'grid-template-columns': 'repeat(3, auto)' }
+      : { 'grid-template-columns': 'repeat(2, auto)' }
+  ">
+  <div class="grid-header">Gene</div>
+  @if(isEffectDetails) {
+  <div class="grid-header">Transript</div>
+  }
+  <div class="grid-header">Effect</div>
+  @if(isEffectDetails && isEffectAnnotator) {
+  <div class="grid-header">Details</div>
+  } @for(detail of effectDetails; track detail) {
+  <ng-container>
+    <div class="grid-cell">{{ detail.gene }}</div>
+    @if(isEffectDetails ) {
+    <div class="grid-cell">{{ detail.transcript }}</div>
+    }
+    <div class="grid-cell">{{ detail.effect }}</div>
+    @if(isEffectDetails && isEffectAnnotator) {
+    <div class="grid-cell">{{ detail.details }}</div>
+    }
+  </ng-container>
+  }
+</div>

@@ -1,0 +1,38 @@
+<div class="histogram" style="overflow: auto">
+  <div style="position: relative" [attr.width]="'600'">
+    <svg
+      style="max-width: 600px; display: block"
+      [attr.width]="'100%'"
+      [attr.height]="'150'"
+      [attr.viewBox]="'-100 0 600 50'">
+      <g [attr.transform]="'translate(' + 10 + ',' + 10 + ')'">
+        <g #histogramContainer style="transform: 'translate(0px, 0px)'"></g>
+        @if(scoreValues.length) {
+        <g>
+          @for(score of scoreValues; track $index) {
+          <ng-container>
+            <line
+              class="single-score-marker"
+              style="stroke: rgb(255, 0, 0); stroke-width: 2"
+              [attr.x1]="scaleXAxis(score)"
+              [attr.y1]="scaleYAxis(1)"
+              [attr.x2]="scaleXAxis(score)"
+              [attr.y2]="-20" />
+            <text [attr.x]="scaleXAxis(score) - 5" y="-15" dy=".35em" class="percentage-text" text-anchor="end">
+              {{ scorePercentages[score] | formatResultValue : 4 }}%
+            </text>
+          </ng-container>
+          }
+        </g>
+        }
+      </g>
+    </svg>
+
+    @if(histogram.smallValuesDesc && histogram.largeValuesDesc) {
+    <div id="values-description">
+      <span>{{ histogram.smallValuesDesc }}</span>
+      <span>{{ histogram.largeValuesDesc }}</span>
+    </div>
+    }
+  </div>
+</div>

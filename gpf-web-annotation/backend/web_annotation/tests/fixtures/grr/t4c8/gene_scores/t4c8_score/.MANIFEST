@@ -1,0 +1,15 @@
+- md5: c302215e3afff57884efddeb8bcf8638
+  name: genomic_resource.yaml
+  size: 400
+- md5: be415ced279a7ff110ef27e64cb98ebb
+  name: statistics/histogram_t4c8_score.json
+  size: 436
+- md5: ae0ebb62aab56ddd14895235e341ee1e
+  name: statistics/histogram_t4c8_score.png
+  size: 11805
+- md5: 19292f82aa275aa9632a4df7877eac4b
+  name: statistics/stats_hash
+  size: 375
+- md5: b003a0cd20d6c7c0b48ab150f370fb95
+  name: t4c8_gene_score.csv
+  size: 41

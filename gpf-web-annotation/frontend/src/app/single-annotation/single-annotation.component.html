@@ -1,0 +1,27 @@
+<div id="single-annotation-container">
+  <div id="annotation-wrapper">
+    <span id="examples-button" [matMenuTriggerFor]="tooltip" title="Examples"
+      ><span class="material-symbols-outlined">info</span></span
+    >
+    <input
+      [formControl]="alleleInput"
+      type="text"
+      placeholder="Type annotatable..."
+      (keydown.enter)="triggerPipelineAutoSave()" />
+    <button (click)="triggerPipelineAutoSave()" [disabled]="disableGo()">Go</button>
+
+    <mat-menu #tooltip="matMenu">
+      @for(e of examples; track e) {
+      <a mat-menu-item disableRipple class="example" (click)="setAllele(e); triggerPipelineAutoSave()">{{ e }}</a>
+      }
+    </mat-menu>
+  </div>
+  @if(!alleleInput.valid) {
+  <span id="validation-message">Invalid allele format!</span>
+  } @if (loading) {
+  <mat-progress-spinner mode="indeterminate" diameter="40"></mat-progress-spinner>
+  <span id="loading-text">Loading...</span>
+  } @if (report) {
+  <app-single-annotation-report [report]="report" style="width: 100%"></app-single-annotation-report>
+  }</div
+>

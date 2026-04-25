@@ -1,0 +1,108 @@
+name: gpfwa
+services:
+
+  ubuntu-image:
+    build:
+      context: .
+      dockerfile: Dockerfile.ubuntu
+
+  gpf-image:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpf
+    depends_on:
+      ubuntu-image:
+        condition: service_completed_successfully
+
+  pg-data:
+    image: busybox:latest
+    command: echo "PostgreSQL data only container"
+    volumes:
+      - ./gpfwa-pg-data:/var/lib/postgresql
+
+  static-data:
+    image: busybox:latest
+    command: echo "Static data only container"
+    volumes:
+      - ./gpfwa-static-data:/static
+
+  db:
+    image: postgres
+    restart: always
+    # set shared memory limit when using docker compose
+    shm_size: 128mb
+    volumes_from:
+      - pg-data
+    environment:
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: gpfwa
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mail:
+    image: mailhog/mailhog
+    hostname: mail
+    ports:
+      - "8025:8025"
+
+  backend:
+    build:
+      context: backend
+      dockerfile: Dockerfile
+      args:
+        COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+    depends_on:
+      gpf-image:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      mail:
+        condition: service_started
+    volumes:
+      - ./gpfwa-data:/data
+      - ./gpfwa-logs:/logs
+      - /mnt/wigclust3/data/unsafe/chorbadj/grr.sync:/grr
+    volumes_from:
+      - static-data
+    environment:
+      DJANGO_SETTINGS_MODULE: web_annotation.settings_gunicorn
+      GPFWA_EMAIL_HOST: mail
+      GRR_DEFINITION_FILE: /grr-definition-dir.yaml
+      GPFWA_DB_NAME: gpfwa
+      GPFWA_DB_USER: postgres
+      GPFWA_DB_PASSWORD: secret
+      GPFWA_DB_HOST: db
+      GPFWA_DB_PORT: 5432
+      GPFWA_DATA_STORAGE: /data
+      GPFWA_LOG_DIR: /logs
+      GPFWA_SECRET_KEY: "django-insecure-3rz4n(_u+x8r+n%&xr-(vg83v8&llq7pin*x%@%y@d8af%iphk"
+      GPFWA_EMAIL_VERIFICATION_ENDPOINT: "http://wigclust3.cshl.edu:8000"
+      GPFWA_EMAIL_REDIRECT_ENDPOINT: "http://wigclust3.cshl.edu:8000"
+    healthcheck:
+      test: ["CMD", "curl", "http://localhost:9001/api/user_info"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+      args:
+        COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes_from:
+      - static-data
+    healthcheck:
+      test: ["CMD", "curl", "http://localhost/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+    - "8000:80"

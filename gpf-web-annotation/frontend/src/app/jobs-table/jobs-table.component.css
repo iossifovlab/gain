@@ -1,0 +1,94 @@
+#grid-container {
+  display: grid;
+  width: max-content;
+  grid-template-columns: repeat(2, minmax(80px, max-content));
+  border: 1px solid #cfd8df;
+  border-radius: 15px;
+  margin-bottom: 5px;
+  margin-top: 5px;
+}
+
+.grid-header {
+  background-color: #435869;
+  min-height: 2rem;
+  line-height: 3rem;
+  text-align: center;
+  font-weight: bold;
+  color: white;
+}
+
+.grid-header:first-child {
+  border-top-left-radius: 15px;
+}
+
+.grid-header:nth-child(2) {
+  border-top-right-radius: 15px;
+}
+
+.grid-cell {
+  border-top: 1px solid #cfd8df;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  line-height: 2rem;
+  padding: 8px 0 5px;
+}
+
+.info-icon {
+  font-size: 20px;
+  color: #5b778c;
+  margin-left: 5px;
+}
+
+.info-icon:hover {
+  color: #85a2b9;
+  cursor: pointer;
+}
+
+#delete-job {
+  background: none;
+  border: none;
+}
+
+#download-result {
+  background-color: transparent;
+  border: none;
+}
+
+#note {
+  font-style: italic;
+  color: #5b778c;
+  margin-top: 5px;
+}
+
+.in-progress-status,
+.waiting-status,
+.success-status,
+.fail-status {
+  color: #435869;
+  border-color: inherit;
+}
+
+.in-progress-status {
+  background-color: #d3edff;
+}
+
+.waiting-status {
+  background-color: #fff5d6;
+}
+
+.success-status {
+  background-color: white;
+}
+
+.fail-status {
+  background-color: #ffedef;
+}
+
+.actions:last-child {
+  border-bottom-right-radius: 15px;
+}
+
+#grid-container > div:nth-last-child(2) {
+  border-bottom-left-radius: 15px;
+}

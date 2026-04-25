@@ -1,0 +1,20 @@
+{
+  "name": "e2e-tests",
+  "version": "0.0.0",
+  "scripts": {},
+  "private": true,
+  "dependencies": {
+    "nodejs-polars": "^0.8.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.51.1",
+    "@types/node": "^22.13.10",
+    "@typescript-eslint/eslint-plugin": "5.42.1",
+    "@typescript-eslint/parser": "5.42.1",
+    "eslint": "8.27.0",
+    "eslint-plugin-import": "2.26.0",
+    "eslint-plugin-node": "11.1.0",
+    "eslint-plugin-only-warn": "1.0.3",
+    "eslint-plugin-promise": "6.1.1"
+  }
+}

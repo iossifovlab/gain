@@ -1,0 +1,10 @@
+Attribute name	Value	Description
+chromosome	chr1
+position	11796321
+reference	G
+alternative	A
+dbSNP_RS	1801133	dbSNP ID (i.e. rs number)
+gnomad_v4_exome_ALL_af	0.32269200682640076	Alternate allele frequency
+gnomad_v4_genome_ALL_af	0.2751699984073639	Alternate allele frequency
+CLNSIG	drug_response	Aggregate germline classification for this single variant; multiple values are separated by a vertical bar
+CLNDN	methotrexate_response_-_Toxicity|MTHFR_THERMOLABILE_POLYMORPHISM|Neoplasm_of_stomach|See_cases|Homocystinuria_due_to_methylene_tetrahydrofolate_reductase_deficiency|not_specified|not_provided|Gastrointestinal_stromal_tumor|Neural_tube_defects|_folate-sensitive|Thrombophilia_due_to_thrombin_defect	ClinVar's preferred disease name for the concept specified by disease identifiers in CLNDISDB

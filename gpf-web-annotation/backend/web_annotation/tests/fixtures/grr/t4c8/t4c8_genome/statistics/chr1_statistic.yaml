@@ -1,0 +1,34 @@
+chrom: chr1
+length: 210
+nucleotide_counts:
+  A: 49
+  C: 47
+  G: 51
+  N: 10
+  T: 53
+nucleotide_pair_counts:
+  AA: 12
+  AC: 10
+  AG: 14
+  AN: 1
+  AT: 12
+  CA: 15
+  CC: 17
+  CG: 2
+  CN: 0
+  CT: 13
+  GA: 14
+  GC: 6
+  GG: 17
+  GN: 1
+  GT: 13
+  NA: 1
+  NC: 0
+  NG: 0
+  NN: 8
+  NT: 0
+  TA: 7
+  TC: 14
+  TG: 18
+  TN: 0
+  TT: 14

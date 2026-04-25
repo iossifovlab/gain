@@ -1,0 +1,120 @@
+#single-annotation-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px;
+  padding-top: 13px;
+}
+
+#single-annotation-logo {
+  width: 100px;
+  height: 100px;
+  margin-bottom: 20px;
+}
+
+h1 {
+  font-size: 3em;
+}
+
+select {
+  padding: 5px 10px;
+  font-size: 16px;
+  border: 1.5px solid #5b778c;
+  border-radius: 10px;
+  color: #5b778c;
+  background-color: white;
+}
+
+input[type="text"] {
+  padding: 0 10px;
+  font-size: 18px;
+  width: 20vw;
+  min-width: 250px;
+  max-width: 600px;
+  border: 1.5px solid #cfd8df;
+  border-radius: 5px;
+  height: 40px;
+}
+
+input:focus {
+  border-color: #85a2b9;
+  outline: 0;
+  box-shadow: 0 0 0 0.2rem #b9d3e7;
+}
+
+input::placeholder {
+  color: #85a2b9;
+}
+
+button {
+  padding: 10px 20px;
+  font-size: 18px;
+  cursor: pointer;
+  color: white;
+  background-color: #5b778c;
+  border: none;
+  border-radius: 10px;
+}
+
+button:disabled {
+  opacity: 30%;
+}
+
+button:disabled:hover {
+  cursor: auto;
+}
+
+#validation-message {
+  color: #d74b59;
+}
+
+#examples-button {
+  color: #b4b4b4;
+}
+
+#examples-button span {
+  vertical-align: middle;
+}
+
+#examples-button:hover {
+  cursor: pointer;
+  color: #7392a9;
+}
+
+.example {
+  color: #5b778c;
+  text-decoration: underline;
+}
+
+.example:hover {
+  cursor: pointer;
+  color: #85a2b9;
+}
+
+mat-progress-spinner {
+  stroke: #24699e;
+  stroke-width: 20px;
+  margin-top: 60px;
+}
+
+#loading-text {
+  color: #b9d3e7;
+  font-style: italic;
+  margin-top: 10px;
+}
+
+mat-menu {
+  --mat-menu-item-hover-state-layer-color: none;
+  --mat-menu-item-label-text-line-height: 15px;
+}
+
+::ng-deep .mat-mdc-menu-item {
+  min-height: 30px !important;
+}
+
+#annotation-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+}

@@ -1,0 +1,48 @@
+{
+  "config": {
+    "histograms": [
+      {
+        "type": "number",
+        "view_range": {
+          "min": 0,
+          "max": 1
+        },
+        "number_of_bins": 3,
+        "x_log_scale": false,
+        "y_log_scale": true,
+        "x_min_log": null
+      }
+    ],
+    "table": {
+      "config": {
+        "filename": "data.txt"
+      },
+      "files_md5": {
+        "data.txt": "bfa45393fe1e9347d27cf5ca5374934f"
+      }
+    }
+  },
+  "score_config": [
+    {
+      "id": "freq",
+      "type": "float",
+      "name": "frequency",
+      "index": null,
+      "na_values": "['', '.', 'NA', 'nan']"
+    },
+    {
+      "id": "collection",
+      "type": "str",
+      "name": "collection",
+      "index": null,
+      "na_values": "[]"
+    },
+    {
+      "id": "status",
+      "type": "str",
+      "name": "affected_status",
+      "index": null,
+      "na_values": "[]"
+    }
+  ]
+}

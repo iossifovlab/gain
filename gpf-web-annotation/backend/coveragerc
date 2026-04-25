@@ -1,0 +1,11 @@
+[report]
+exclude_also=
+    raise NotImplementedError
+
+[run]
+omit=
+    *test*
+    **/tests/*
+    **/migrations/*
+
+branch=true

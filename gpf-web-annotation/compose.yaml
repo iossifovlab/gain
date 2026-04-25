@@ -1,0 +1,71 @@
+name: gpfwa
+services:
+
+  ubuntu-image:
+    extends:
+      file: compose-jenkins.yaml
+      service: ubuntu-image
+
+  gpf-image:
+    extends:
+      file: compose-jenkins.yaml
+      service: gpf-image
+
+  pg-data:
+    extends:
+      file: compose-jenkins.yaml
+      service: pg-data
+    volumes:
+      - ./gpfwa-pg-data:/var/lib/postgresql
+
+  static-data:
+    extends:
+      file: compose-jenkins.yaml
+      service: static-data
+
+  db:
+    extends:
+      file: compose-jenkins.yaml
+      service: db
+    ports:
+      - "5432:5432"
+
+  mail:
+    extends:
+      file: compose-jenkins.yaml
+      service: mail
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  backend:
+    extends:
+      file: compose-jenkins.yaml
+      service: backend
+    environment:
+      GPFWA_EMAIL_VERIFICATION_ENDPOINT: "http://localhost"
+      GPFWA_EMAIL_REDIRECT_ENDPOINT: "http://localhost"
+    ports:
+      - "9001:9001"
+
+  backend-tests:
+    extends:
+      file: compose-jenkins.yaml
+      service: backend-tests
+
+  backend-linters:
+    extends:
+      file: compose-jenkins.yaml
+      service: backend-linters
+
+  frontend:
+    extends:
+      file: compose-jenkins.yaml
+      service: frontend
+    ports:
+    - "80:80"
+
+  frontend-tests:
+    extends:
+      file: compose-jenkins.yaml
+      service: frontend-tests

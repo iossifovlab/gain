@@ -1,0 +1,9 @@
+- md5: e107c1a722e7aed3aff0e3c075c8b0d4
+  name: genomic_resource.yaml
+  size: 56
+- md5: 6a99c575ab87f8c7d1ed1e52e7e349ce
+  name: statistics/stats_hash
+  size: 11
+- md5: 9b9d2a2b9af0c382ed09b2856f962d20
+  name: test_pipeline.yaml
+  size: 110

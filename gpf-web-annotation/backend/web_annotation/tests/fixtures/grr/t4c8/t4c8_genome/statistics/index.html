@@ -1,0 +1,83 @@
+
+
+<html>
+<head>
+<style>
+h3,h4 {
+    margin-top:0.5em;
+    margin-bottom:0.5em;
+}
+table {
+    border-collapse: collapse;
+}
+th, td {
+    padding: 10px;
+}
+th {
+    font-size: 20px;
+}
+td {
+    font-size: 18px;
+}
+
+#chromosomes-table {
+    border-collapse: separate;
+    border-spacing: 0;
+}
+#chromosomes-table th {
+    border-top: 1px solid;
+    border-bottom: 1px solid;
+    border-right: 1px solid;
+}
+#chromosomes-table td {
+    border-bottom: 1px solid;
+    border-right: 1px solid;
+}
+#chromosomes-table th:first-child,
+#chromosomes-table td:first-child {
+    border-left: 1px solid;
+}
+#chromosomes-table thead tr:nth-of-type(2) th {
+    border-top: none;
+}
+#chromosomes-table thead {
+    position: sticky; top: 0; background-color: white;
+}
+
+</style>
+</head>
+<body>
+    <table>
+        <thead>
+            <tr>
+                <th>Filename</th>
+                <th>Size</th>
+                <th>md5</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td class="nowrap">
+                    <a href='chr1_statistic.yaml'>chr1_statistic.yaml</a>
+                </td>
+                <td class="nowrap">320.0 B</td>
+                <td class="nowrap">698dd24afcc41fb1e0cff3b1e5b0a239</td>
+            </tr>
+            <tr>
+                <td class="nowrap">
+                    <a href='reference_genome_statistic.yaml'>reference_genome_statistic.yaml</a>
+                </td>
+                <td class="nowrap">738.0 B</td>
+                <td class="nowrap">096f00d59868f6a99720377b9a5b5a96</td>
+            </tr>
+            <tr>
+                <td class="nowrap">
+                    <a href='stats_hash'>stats_hash</a>
+                </td>
+                <td class="nowrap">54.0 B</td>
+                <td class="nowrap">00d1975b9f9f73d146fd516fa5b2bfa1</td>
+            </tr>
+        </tbody>
+    </table>
+</body>
+</html>

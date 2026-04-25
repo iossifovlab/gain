@@ -1,0 +1,90 @@
+- config:
+    filename: test_pipeline.yaml
+    type: annotation_pipeline
+  id: pipeline/test_pipeline
+  manifest:
+  - md5: e107c1a722e7aed3aff0e3c075c8b0d4
+    name: genomic_resource.yaml
+    size: 56
+  - md5: 6a99c575ab87f8c7d1ed1e52e7e349ce
+    name: statistics/stats_hash
+    size: 11
+  - md5: fb8e370216d6008ce9970b91b36c9b65
+    name: test_pipeline.yaml
+    size: 30
+  version: '0'
+- config:
+    scores:
+    - desc: test position score
+      histogram:
+        number_of_bins: 10
+        type: number
+        view_range:
+          max: 1.0
+          min: 0.0
+      id: pos1
+      name: s1
+      type: float
+    table:
+      filename: data.tsv
+    type: position_score
+  id: scores/pos1
+  manifest:
+  - md5: 42b339e8ab0c06d4d81ed02eed8cc92a
+    name: data.tsv
+    size: 127
+  - md5: 6a2192fbdaec5ca785f2bf279d9105a5
+    name: genomic_resource.yaml
+    size: 244
+  - md5: 0bdeda8634efc9bf94aa88a634a01447
+    name: statistics/histogram_pos1.json
+    size: 535
+  - md5: 2ba2767058aaef36b9bb4211b6ea509b
+    name: statistics/histogram_pos1.png
+    size: 10915
+  - md5: 3674e8d558b37e215e4360e1e7af000e
+    name: statistics/stats_hash
+    size: 612
+  version: '0'
+- config:
+    PARS:
+      X:
+      - chrX:10000-2781479
+      - chrX:155701382-156030895
+      Y:
+      - chrY:10000-2781479
+      - chrY:56887902-57217415
+    chrom_prefix: ''
+    filename: GRCh38_full_analysis_set_plus_decoy_hla.fa
+    meta:
+      description: "## HG38 Reference Genome \n\nDefault HG38 reference genome used\
+        \ by GPF\n"
+      labels: null
+    type: genome
+  id: hg38/GRCh38-hg38/genome
+  manifest:
+  - md5: e00929f659f77c5d04d0a881cf6f3033
+    name: GRCh38_full_analysis_set_plus_decoy_hla.fa
+    size: 2840225
+  - md5: 2e3b716901f9da348a3ea6a424d54006
+    name: GRCh38_full_analysis_set_plus_decoy_hla.fa.fai
+    size: 50
+  - md5: b151ecdcef68d9014ab78823b5147711
+    name: genomic_resource.yaml
+    size: 339
+  - md5: d2b8b5b7c69cecbf91e9bbf25ea778b7
+    name: index.html
+    size: 3169
+  - md5: 7ee8ab1286a0dd818843b2a28bcf39cd
+    name: statistics/chr1_statistic.yaml
+    size: 401
+  - md5: fdfeaa0a99e580414c5b0c20306a744c
+    name: statistics/chr2_statistic.yaml
+    size: 401
+  - md5: eb2b395af839a16a36f003d69e252aad
+    name: statistics/reference_genome_statistic.yaml
+    size: 771
+  - md5: 160e5784ac6c6e266ab261b64c4ae02a
+    name: statistics/stats_hash
+    size: 54
+  version: '0'

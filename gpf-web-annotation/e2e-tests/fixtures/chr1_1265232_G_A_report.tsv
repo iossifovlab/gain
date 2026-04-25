@@ -1,0 +1,27 @@
+Attribute name	Value	Description
+chromosome	chr1
+position	1265232
+reference	G
+alternative	A
+dbSNP_RS		dbSNP ID (i.e. rs number)
+gnomad_v4_exome_ALL_af		Alternate allele frequency
+gnomad_v4_genome_ALL_af		Alternate allele frequency
+CLNSIG		Aggregate germline classification for this single variant; multiple values are separated by a vertical bar
+CLNDN		ClinVar's preferred disease name for the concept specified by disease identifiers in CLNDISDB
+cadd_raw		CADD raw score for functional prediction of a SNP. The larger the score  the more likely the SNP has damaging effect
+cadd_phred		CADD phred-like score. This is phred-like rank score based on whole genome CADD raw scores. The larger the score the more likely the SNP has damaging effect.
+am_pathogenicity		AlphaMissense Pathogenicity score is a deleteriousness score for missense variants
+mpc		Missense badness, PolyPhen-2, and Constraint. A deleteriousness prediction score for missense variants"
+worst_effect_GENCODE_48		Worst effect accross all transcripts.
+effect_details_GENCODE_48		Effect details for each affected transcript. Format: `< transcript 1 >:<gene 1>:<effect 1>:<details 1>|...`
+gene_effects_GENCODE_48		`<gene_1>:<effect_1>|...` A gene can be repeated.
+worst_effect_MANE_1.3		Worst effect accross all transcripts.
+effect_details_MANE_1.3		Effect details for each affected transcript. Format: `< transcript 1 >:<gene 1>:<effect 1>:<details 1>|...`
+gene_effects_MANE_1.3		`<gene_1>:<effect_1>|...` A gene can be repeated.
+pLI_rank_all		Gene rank after sorting by pLI intolerance score
+pLI_rank_min		Gene rank after sorting by pLI intolerance score
+LOEUF_rank_all		Gene ranks after sorting by LOEUF scores
+LOEUF_rank_min		Gene ranks after sorting by LOEUF scores
+worst_effect	5'UTR-intron	Worst effect accross all transcripts.
+gene_effects	GNB1:5'UTR-intron	`<gene_1>:<effect_1>|...` A gene can be repeated.
+effect_details	NM_001282538.2:GNB1:5'UTR-intron:2/9[5345]|NM_001282539.2:GNB1:5'UTR-intron:1/10[5345]|NM_002074.5:GNB1:5'UTR-intron:2/11[5345]	Effect details for each affected transcript. Format: `< transcript 1 >:<gene 1>:<effect 1>:<details 1>|...`

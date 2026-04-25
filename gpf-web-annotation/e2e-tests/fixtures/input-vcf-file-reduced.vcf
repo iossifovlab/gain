@@ -1,0 +1,6 @@
+##fileformat=VCFv4.1
+##reference=GRCh38-hg38
+##contig=<ID=chr1>
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+chr1	1287138	.	C	A	.	.	.
+chr1	3602485	.	AC	A	.	.	.

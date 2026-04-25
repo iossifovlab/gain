@@ -1,0 +1,9 @@
+- effect_annotator:
+    gene_models: hg38/gene_models/GENCODE/48/basic/ALL
+    genome: hg38/genomes/GRCh38.p13
+    attributes:
+    - worst_effect
+    - gene_effects
+    - effect_details
+    - name: gene_list
+      internal: true

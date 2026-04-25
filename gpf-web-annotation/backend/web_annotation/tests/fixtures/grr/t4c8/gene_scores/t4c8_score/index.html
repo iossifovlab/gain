@@ -1,0 +1,240 @@
+
+
+<html>
+<head>
+<style>
+h3,h4 {
+    margin-top:0.5em;
+    margin-bottom:0.5em;
+}
+table {
+    border-collapse: collapse;
+}
+th, td {
+    padding: 10px;
+}
+th {
+    font-size: 20px;
+}
+td {
+    font-size: 18px;
+}
+
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1;
+    padding-top: 100px;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    justify-content: center;
+}
+.modal-content {
+    margin: auto;
+    display: block;
+    width: 80%;
+    max-width: 700px;
+}
+.close {
+    float: right;
+    font-size: 40px;
+    font-weight: bold;
+}
+.close:hover,
+.close:focus {
+    color: #bbb;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+</style>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+        document.querySelectorAll("[data-modal-trigger]").forEach(function (trigger) {
+            trigger.addEventListener("click", function () {
+                var modalId = this.getAttribute("data-modal-trigger");
+                var modal = document.getElementById(modalId);
+                if (modal) {
+                    modal.style.display = "block";
+                    document.currentOpenModal = modal;
+                }
+            });
+        });
+
+        document.querySelectorAll(".close").forEach(function (closeButton) {
+            closeButton.addEventListener("click", function () {
+                this.closest(".modal").style.display = "none";
+                document.currentOpenModal = null;
+            });
+        });
+
+        window.addEventListener("click", function (event) {
+            if (event.target.classList.contains("modal")) {
+                event.target.style.display = "none";
+                document.currentOpenModal = null;
+            }
+        });
+
+        document.addEventListener("keydown", function (event) {
+            if (event.key === "Escape" && document.currentOpenModal) {
+                document.currentOpenModal.style.display = "none";
+                document.currentOpenModal = null;
+            }
+        });
+    });
+</script>
+</head>
+    <body>
+    <h1>Resource</h1>
+    <div>
+        <table border="1">
+            <tr>
+                <td>
+                    <b>Id:</b>
+                </td>
+                <td>t4c8/gene_scores/t4c8_score</td>
+            </tr>
+            <tr>
+                <td>
+                    <b>Type:</b>
+                </td>
+                <td>gene_score</td>
+            </tr>
+            <tr>
+                <td>
+                    <b>Version:</b>
+                </td>
+                <td>0</td>
+            </tr>
+            <tr>
+                <td><b>Summary:</b></td>
+                <td>
+                    <div>
+                        <template shadowrootmode="open"><p>t4c8 gene score</p>
+
+                        </template>
+                    </div>
+                </td>
+            </tr>
+            <tr>
+                <td>
+                    <b>Description:</b>
+                </td>
+                <td>
+                    <div>
+                        <template shadowrootmode="open"><p>t4c8 gene score</p>
+
+                        </template>
+                    </div>
+                </td>
+            </tr>
+            <tr>
+                <td>
+                    <b>Labels:</b>
+                </td>
+                <td>
+                
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    
+
+
+
+<h1>Scores</h1>
+    <table border="1">
+        <tr>
+            <th>ID</th>
+            <th>Type</th>
+            <th>Description</th>
+            <th>Histograms</th>
+            <th>Range</th>
+        </tr>
+
+        
+            <tr>
+                <td>t4c8_score</td>
+
+                <td></td>
+
+                <td>
+                    <div></div>
+                    
+                    
+                </td>
+
+                
+                <td>
+                
+                    <div class="histogram">
+                        <img src="statistics/histogram_t4c8_score.png"
+                            style="width: 200px; cursor: pointer;"
+                            alt=t4c8_score
+                            title=" t4c8_score"
+                            data-modal-trigger="modal-t4c8_score">
+                    </div>
+                
+                </td>
+
+                <td>
+                    [10.1, 20]</td>
+            </tr>
+        <div id="modal-t4c8_score" class="modal">
+                <div class="modal-content"
+                    style="padding: 10px 20px; background-color: #fff; height: fit-content; width: fit-content;">
+                    <span class="close">&times;</span>
+                    <img src="statistics/histogram_t4c8_score.png"
+                        alt="HISTOGRAM FOR t4c8_score"
+                        title="t4c8_score">
+                </div>
+            </div>
+    </table>
+
+
+    <h1>Files</h1>
+    <table>
+    <thead>
+        <tr>
+            <th>Filename</th>
+            <th>Size</th>
+            <th>md5</th>
+        </tr>
+    </thead>
+    <tbody>
+            <tr>
+                
+                    <td class="nowrap">
+                        <a href='genomic_resource.yaml'>genomic_resource.yaml</a>
+                    </td>
+                
+                <td class="nowrap">400.0 B</td>
+                <td class="nowrap">c302215e3afff57884efddeb8bcf8638</td>
+            </tr>
+            <tr>
+                
+                    <td class="nowrap">
+                        <a href='t4c8_gene_score.csv'>t4c8_gene_score.csv</a>
+                    </td>
+                
+                <td class="nowrap">41.0 B</td>
+                <td class="nowrap">b003a0cd20d6c7c0b48ab150f370fb95</td>
+            </tr>
+            <tr>
+                
+                    <td class="nowrap">
+                        <a href='statistics/index.html'>statistics/</a>
+                    </td>
+                
+                <td class="nowrap"></td>
+                <td class="nowrap"></td>
+            </tr>
+    </tbody>
+    </table>
+    </body>
+</html>

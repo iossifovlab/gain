@@ -1,0 +1,360 @@
+<div id="modal-header">{{ data.isResourceWorkflow ? 'New resource' : 'New annotator' }}</div>
+<div style="height: 100%">
+  <mat-stepper #stepper [linear]="true" class="custom-stepper">
+    @if(data.isResourceWorkflow) {
+    <mat-step label="Select resource" [stepControl]="resourceStep">
+      <form [formGroup]="resourceStep" id="resource-input-form">
+        <div class="resource-fields-wrapper">
+          <mat-form-field [appearance]="'outline'" id="resource-type">
+            <mat-select matNativeControl [value]="selectedResourceType" formControlName="resourceType">
+              @for (type of resourceTypes; track type) {
+              <mat-option [value]="type" [title]="type">{{ type }}</mat-option>
+              }
+            </mat-select>
+          </mat-form-field>
+
+          <input
+            placeholder="Search resource"
+            type="text"
+            autocomplete="off"
+            id="resource-search-input"
+            formControlName="resourceId"
+            #resourceInputValue
+            [title]="resourceInputValue.value"
+            (keydown.enter)="$event.stopPropagation()" />
+
+          <span
+            class="material-symbols-outlined info-icon"
+            #tooltip="matTooltip"
+            [matTooltip]="tooltipContent"
+            matTooltipClass="multiline-tooltip"
+            matTooltipShowDelay="200"
+            >info</span
+          >
+        </div>
+
+        <span class="error-message">{{ searchError }}</span>
+
+        <div style="flex: 1 1 0; overflow: auto">
+          <div>
+            <div class="grid-container" id="resource-list">
+              <div class="grid-header" title="Actions">Actions</div>
+              <div class="grid-header" title="Resource">Resource</div>
+              <div class="grid-header" title="Resource type">Resource type</div>
+              <div class="grid-header" title="Summary">Summary</div>
+              @for (resource of resources(); track $index) {
+              <ng-container>
+                <span class="resource-select grid-cell">
+                  <button
+                    [attr.id]="resource.id + '-resource-details-button'"
+                    class="material-symbols-outlined action-button"
+                    title="Visit resource details"
+                    ><a [href]="resource.url" target="_blank">open_in_new</a></button
+                  >
+                  <button
+                    [attr.id]="resource.id + '-continue-button'"
+                    class="material-symbols-outlined action-button"
+                    (click)="selectResource(resource.fullId)"
+                    title="Continue"
+                    >settings</button
+                  >
+                  <button
+                    [attr.id]="resource.id + '-finish-button'"
+                    class="material-symbols-outlined action-button"
+                    (click)="selectResource(resource.fullId, true)"
+                    title="Finish with defaults"
+                    [ngClass]="
+                      resource.fullId === resourceStep.get('resourceId').value && errorMessage
+                        ? 'error-action-button'
+                        : ''
+                    "
+                    >task_alt</button
+                  >
+                </span>
+                <span class="resource-full-id grid-cell" [title]="resource.fullId">{{ resource.fullId }}</span>
+                <span class="resource-type grid-cell" [title]="resource.type">{{ resource.type }}</span>
+                <span class="resource-summary grid-cell" [title]="resource.summary">{{ resource.summary }}</span>
+              </ng-container>
+              }
+              <div id="load-page-indicator" #loadPageIndicator style="height: 1px"></div>
+            </div>
+          </div>
+        </div>
+        <div style="display: flex; gap: 15px">
+          <span id="resource-count">{{ resourcePage?.totalResources }} resources</span>
+          @if (createWithDefaults) {
+          <span class="error-message">{{ errorMessage }}</span>
+          }
+        </div>
+      </form>
+    </mat-step>
+    }
+
+    <mat-step label="Select annotator" [stepControl]="annotatorStep">
+      <ng-template matStepContent>
+        @if(data.isResourceWorkflow) {
+        <div class="summary-content">
+          <div class="resource-type-display-text" style="margin-bottom: 10px">{{
+            'resource type\n' + getResourceById().type
+          }}</div>
+          <div class="resource-type-display-text" [title]="resourceStep.get('resourceId').value">
+            {{ 'resource id\n' + resourceStep.get('resourceId').value }}
+          </div>
+        </div>
+        }
+        <div class="left-content">
+          <form [formGroup]="annotatorStep" id="annotator-input-form">
+            <mat-form-field [appearance]="'outline'">
+              <input
+                type="text"
+                placeholder="Select annotator"
+                autocomplete="off"
+                matInput
+                formControlName="annotator"
+                [matAutocomplete]="annotatorsDropdown"
+                #annotatorInput="matAutocompleteTrigger"
+                #annotatorInputValue
+                [title]="annotatorInputValue.value"
+                (click)="clearAnnotator()"
+                (keydown.enter)="annotatorInput.closePanel()" />
+              <span
+                (click)="annotatorInput.openPanel(); clearAnnotator()"
+                class="material-symbols-outlined dropdown-icon"
+                >keyboard_arrow_down</span
+              >
+
+              <mat-autocomplete #annotatorsDropdown="matAutocomplete">
+                @for (annotator of filteredAnnotatorTypes; track annotator) {
+                <mat-option class="annotator-option" [value]="annotator" [title]="annotator">{{
+                  annotator
+                }}</mat-option>
+                }
+              </mat-autocomplete>
+            </mat-form-field>
+
+            <div>
+              <button matButton [disabled]="annotatorStep.invalid" class="next-button" (click)="requestResources()"
+                >Next</button
+              >
+              @if(data.isResourceWorkflow) {
+              <button mat-button matStepperPrevious class="back-button">Back</button>
+              }
+            </div>
+          </form>
+        </div>
+      </ng-template>
+    </mat-step>
+
+    <mat-step label="Configure annotator" [stepControl]="configurationStep">
+      <ng-template matStepContent>
+        <div class="summary-content">
+          @if (data.isResourceWorkflow) {
+          <div class="resource-type-display-text">{{ 'resource type\n' + getResourceById().type }}</div>
+          <div class="resource-type-display-text" [title]="resourceStep.get('resourceId').value">
+            {{ 'resource id\n' + resourceStep.get('resourceId').value }}</div
+          >
+          }
+          <div class="annotator-display-text" [title]="annotatorStep.get('annotator').value">
+            <div>annotator</div>
+            <a [href]="annotatorConfig.annotatorUrl" target="_blank">{{ annotatorStep.get('annotator').value }}</a></div
+          >
+        </div>
+
+        <div class="left-content">
+          <form [formGroup]="configurationStep" id="resources-form">
+            <div>
+              @for (resource of annotatorConfig.resources; track resource.key) {
+              <div class="field">
+                <div class="labels-wrapper">
+                  <span class="resource field-label"> {{ resource.key }}</span>
+                  @if(resource.optional) {
+                  <span class="optional-label">(optional)</span>
+                  }
+                </div>
+
+                @if(resource.fieldType === 'resource' || resource.fieldType === 'attribute') {
+                <mat-form-field [appearance]="'outline'" class="resource-input" [attr.id]="resource.key + '-dropdown'">
+                  <input
+                    type="text"
+                    placeholder="Select or search resource"
+                    autocomplete="off"
+                    matInput
+                    [formControlName]="resource.key"
+                    [matAutocomplete]="resourcesDropdown"
+                    #resourceInput="matAutocompleteTrigger"
+                    #resourceInputValue
+                    [title]="resourceInputValue.value"
+                    (click)="clearResource(resource.key)" />
+                  <span
+                    (click)="resourceInput.openPanel(); clearResource(resource.key)"
+                    class="material-symbols-outlined dropdown-icon"
+                    >keyboard_arrow_down</span
+                  >
+
+                  <mat-autocomplete #resourcesDropdown="matAutocomplete">
+                    @for (r of filteredResourceValues.get(resource.key); track $index) {
+                    <mat-option class="resource-option" [value]="r" [title]="r">{{ r }}</mat-option>
+                    }
+                  </mat-autocomplete>
+                </mat-form-field>
+                } @else if(resource.fieldType === 'string') {
+                <input
+                  class="resource-field"
+                  type="text"
+                  [formControlName]="resource.key"
+                  autocomplete="off"
+                  [attr.id]="resource.key + '-input'"
+                  [ngClass]="{ 'invalid-field': resource.key === 'cnv_filter' && errorMessage }" />
+                } @else if(resource.fieldType === 'bool') {
+                <div>
+                  <input type="radio" [formControlName]="resource.key" for="true" />
+                  <label name="true">True</label>
+                  <input type="radio" [formControlName]="resource.key" for="false" />
+                  <label name="false">False</label>
+                </div>
+                }
+              </div>
+              }
+            </div>
+            <div class="modal-footer">
+              @if(errorMessage) {
+              <div class="error-message">{{ errorMessage }}</div>
+              }
+              <button mat-button matStepperPrevious class="back-button" (click)="clearErrorMessage()">Back</button>
+              <button matButton [disabled]="configurationStep.invalid" (click)="requestAttributes()" class="next-button"
+                >Next</button
+              >
+            </div>
+          </form>
+        </div>
+      </ng-template>
+    </mat-step>
+
+    <mat-step label="Configure attributes" [stepControl]="attributeStep">
+      <ng-template matStepContent>
+        <div class="summary-content">
+          @if (data.isResourceWorkflow) {
+          <div class="resource-type-display-text" style="margin-bottom: 10px">{{
+            'resource type\n' + getResourceById().type
+          }}</div>
+          <div class="resource-type-display-text" [title]="resourceStep.get('resourceId').value">
+            {{ 'resource id\n' + resourceStep.get('resourceId').value }}</div
+          >
+          }
+          <div class="annotator-display-text" [title]="annotatorStep.get('annotator').value">
+            <div>annotator</div>
+            <a [href]="annotatorConfig.annotatorUrl" target="_blank">{{ annotatorStep.get('annotator').value }}</a></div
+          >
+          @for (entry of configurationStep.value | keyvalue; track entry.key) { @if (!data.isResourceWorkflow ||
+          entry.value && resourceStep.get('resourceId').value !== entry.value) {
+          <div class="resources-display-text">{{ entry.key + '\n' + entry.value }}</div>
+          } }
+        </div>
+
+        <div class="left-content">
+          <div style="display: flex; flex-direction: column; flex: 1 1 0; min-height: 0">
+            <form [formGroup]="attributeStep" id="attribute-form">
+              <mat-form-field [appearance]="'outline'" class="attribute-input" id="attributes-dropdown">
+                <input
+                  type="text"
+                  placeholder="Select or search attribute"
+                  autocomplete="off"
+                  matInput
+                  [formControlName]="'attribute'"
+                  [matAutocomplete]="attributesDropdown"
+                  #attributeInput="matAutocompleteTrigger"
+                  #attributeInputValue
+                  [title]="attributeInputValue.value"
+                  (click)="clearAttributeInput()"
+                  (keydown.enter)="attributeInput.closePanel()" />
+                <span
+                  (click)="attributeInput.openPanel(); clearAttributeInput()"
+                  class="material-symbols-outlined dropdown-icon"
+                  >keyboard_arrow_down</span
+                >
+
+                <mat-autocomplete
+                  #attributesDropdown="matAutocomplete"
+                  (optionSelected)="onSelectAttribute($event.option.value)">
+                  @for (attribute of filteredAttributes; track attribute.name) {
+                  <mat-option
+                    class="attribute-option"
+                    [value]="attribute"
+                    [title]="
+                      attribute.description ? attribute.source + ' - ' + attribute.description : attribute.source
+                    "
+                    >{{
+                      attribute.description ? attribute.source + ' - ' + attribute.description : attribute.source
+                    }}</mat-option
+                  >
+                  }
+                </mat-autocomplete>
+              </mat-form-field>
+            </form>
+            @if(selectedAttributes.length) {
+            <span>Selected attributes:</span>
+            <div class="grid-container" id="attributes-list">
+              <div class="grid-header" title="Name">Name</div>
+              <div class="grid-header" title="Source">Source</div>
+              <div class="grid-header" title="Internal">Internal</div>
+              <div class="grid-header" title="Description">Description</div>
+              <div class="grid-header" title="Delete">Delete</div>
+              @for (selectedAttribute of selectedAttributes; track $index) {
+              <ng-container>
+                <span
+                  class="attribute-name grid-cell"
+                  [title]="selectedAttribute.name"
+                  [ngClass]="!isAttributeValid(selectedAttribute) ? 'duplicate-name' : ''">
+                  <input
+                    class="editable-name"
+                    type="text"
+                    #attributeNameInput
+                    [title]="selectedAttribute.name"
+                    [ngModel]="selectedAttribute.name"
+                    (ngModelChange)="onAttributeNameChange(selectedAttribute, attributeNameInput.value)"
+                    [ngClass]="!isAttributeValid(selectedAttribute) ? 'duplicate-name-input' : ''" />
+                </span>
+                <span class="attribute-source grid-cell" [title]="selectedAttribute.source">{{
+                  selectedAttribute.source
+                }}</span>
+                <span class="attribute-internal grid-cell center-cell"
+                  ><input
+                    type="checkbox"
+                    [checked]="selectedAttribute.internal"
+                    (change)="toggleAttributeInternal(selectedAttribute)" />
+                </span>
+                <span class="attribute-description grid-cell" [title]="selectedAttribute.description">{{
+                  selectedAttribute.description
+                }}</span>
+                <div class="delete-buttons grid-cell center-cell">
+                  <span
+                    [attr.id]="selectedAttribute.name + '-remove-button'"
+                    class="material-symbols-outlined remove-attribute"
+                    (click)="removeSelectedAttribute(selectedAttribute)"
+                    >delete</span
+                  >
+                </div>
+              </ng-container>
+              }
+            </div>
+            }
+          </div>
+          <div class="modal-footer">
+            @if(!areAttributesValid) {
+            <div class="error-message">Attribute with this name already exists</div>
+            }@if(errorMessage) {
+            <div class="error-message">{{ errorMessage }}</div>
+            }
+            <button mat-button matStepperPrevious class="back-button" (click)="clearErrorMessage()">Back</button>
+            @if(areAttributesValid) {
+            <button matButton (click)="onFinish()" class="finish-button">Finish</button>
+            }
+          </div>
+        </div>
+      </ng-template>
+    </mat-step>
+    <ng-template matStepperIcon="edit" let-index="index">
+      {{ index + 1 }}
+    </ng-template>
+  </mat-stepper>
+</div>
