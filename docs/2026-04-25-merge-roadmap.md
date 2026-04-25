@@ -175,8 +175,8 @@ What remains for Phase 9, if/when the team wants more:
   automatic TLS + cleaner reverse-proxy config.
 - **Observability lite**. Loki + Promtail + Grafana as a
   small stack for container logs / metrics.
-- **Audit repo-root `Dockerfile` and `Dockerfile.seqpipe`**
-  legacy seqpipe-flow images — partial:
+- **Repo-root `Dockerfile` and `Dockerfile.seqpipe` (DONE)**.
+  Both retired:
   - The orphaned `spliceai_annotator/{docker-compose.yaml,
     docker-compose-jenkins.yaml,Dockerfile.runner}` chain
     was the only in-tree consumer of the repo-root
@@ -184,12 +184,14 @@ What remains for Phase 9, if/when the team wants more:
     paths post the `gain_` directory rename, references
     to a non-existent `spliceai-base` image and `gpf`
     mamba env) and has been deleted.
-  - Repo-root `Dockerfile` and `Dockerfile.seqpipe`
-    themselves are kept pending out-of-tree consumer
-    audit. `Dockerfile.seqpipe`'s `REGISTRY` /
-    `BASE_IMAGE_TAG` / `SOURCE_DIR` ARGs strongly suggest
-    iossifovlab seqpipe-flow build automation consumes
-    them. Neither is mentioned in CLAUDE.md or README.md.
+  - Repo-root `Dockerfile` (mamba dev image) and
+    `Dockerfile.seqpipe` (parameterized for the
+    iossifovlab seqpipe-flow build automation) are also
+    deleted; conda dev workflow continues via
+    `mamba env create --file environment.yml` directly,
+    no docker wrapper needed in-tree. If out-of-tree
+    seqpipe automation needs a Dockerfile, it can carry
+    its own.
 - **`gpf-conda-packaging` coupling in conda recipes** —
   audited; nothing to remove. Each `recipe.yaml` (core +
   three annotators) sources `dist/<project>` for its wheel
@@ -202,9 +204,9 @@ Optional and lower priority — the upstream job is stable
 and the remaining legacy images don't break anything.
 
 The conda dev workflow stays — `environment.yml`,
-`dev-environment.yml`, repo-root `Dockerfile`,
-`Dockerfile.seqpipe`, and the conda/mamba documentation in
-CLAUDE.md / README.md remain a supported flow alongside uv.
+`dev-environment.yml`, and the conda/mamba documentation
+in CLAUDE.md / README.md remain a supported flow alongside
+uv.
 
 ## Updates to this doc
 
