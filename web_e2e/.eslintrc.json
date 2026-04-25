@@ -11,7 +11,7 @@
       ],
       "parserOptions": {
         "project": [
-          "e2e-tests/tsconfig.json"
+          "web_e2e/tsconfig.json"
         ],
         "createDefaultProgram": true
       },
