@@ -126,15 +126,25 @@ pipeline {
                                     : lastSuccessful(),
                         )
                     } else {
+                        // Without `-u`, pip installs uv into
+                        // /usr/local/lib/...; with `-u 1002:1002 -e
+                        // HOME=/tmp` (so docker can write into the
+                        // host workspace), pip falls back to
+                        // `--user` and puts `uv` at
+                        // /tmp/.local/bin/uv — which isn't on the
+                        // default container PATH. Set PATH
+                        // explicitly so the subsequent `uv build`
+                        // resolves.
                         sh '''
                             mkdir -p dist/core dist/web_api
                             docker run --rm \
                                 -v "$PWD:/wd" -w /wd \
                                 -u "$(id -u):$(id -g)" \
                                 -e HOME=/tmp \
+                                -e PATH=/tmp/.local/bin:/usr/local/bin:/usr/bin:/bin \
                                 python:3.12-slim \
                                 sh -c "
-                                    pip install --no-cache-dir uv \
+                                    pip install --user --no-cache-dir uv \
                                     && uv build --package gain-core \
                                             --out-dir dist/core \
                                     && uv build --package django-gpf-web-annotation \
