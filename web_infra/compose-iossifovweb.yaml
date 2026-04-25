@@ -24,7 +24,7 @@ services:
       retries: 5
 
   backend-migrate:
-    image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
+    image: ${BACKEND_IMAGE:-registry.seqpipe.org/gain-web-api:latest}
     depends_on:
       db:
         condition: service_healthy
@@ -41,7 +41,7 @@ services:
 
   backend:
     restart: always
-    image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
+    image: ${BACKEND_IMAGE:-registry.seqpipe.org/gain-web-api:latest}
     depends_on:
       backend-migrate:
         condition: service_completed_successfully
@@ -85,7 +85,7 @@ services:
 
   frontend:
     restart: always
-    image: ${FRONTEND_IMAGE:-gain-web-ui-prod:latest}
+    image: ${FRONTEND_IMAGE:-registry.seqpipe.org/gain-web-ui:latest}
     depends_on:
       backend:
         condition: service_healthy
