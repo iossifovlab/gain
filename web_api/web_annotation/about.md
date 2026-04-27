@@ -52,11 +52,45 @@ Signed-in users can access additional web features such as saved pipelines
 and annotation history. GAIn's web interface applies quotas (more stringent
 for guest users) for interactive use and job submission.
 
-## Need more quota?
 
-If your project needs higher limits, please contact us and briefly describe
-your use case, expected scale, and whether the work is academic, clinical, or
-internal research. We may be able to increase the quota for appropriate
-projects.
+To ensure fair use and reliable performance, the GAIn web interface applies
+different quotas for guest and registered users. 
 
-Contact: gain@iossifovlab.com
+These quotas include limits per job, per day, and per month, as well as disk
+space for stored results, with no storage for guests and 2 GB for registered
+users. Registered users can use this storage to keep and revisit their
+annotation history.
+
+Daily quotas reset at 12 AM EST, and monthly quotas reset at 12 AM EST on the
+first day of each month.
+
+Daily and monthly resets refill quotas to the usual limit, unless the user
+already has a higher available balance.
+Guests and registered users have different limits for annotatables, attributes,
+jobs, single-annotatable queries, input file size, and storage, as shown in
+the quota tab. 
+
+If a job exceeds any available quota, it will be rejected with a message
+showing the quota limits that were exceeded. 
+
+For annotation needs larger than the registered-user limits, please contact us
+at gain@iossifovlab.com. 
+
+We may be able to provide additional quota for larger annotation projects.
+
+### Guest user limits
+
+|                | annotatables | attributes | jobs | single annotatables | input file size |
+| -------------- | ------------ | ---------- | ---- | ------------------- | --------------- |
+| Per job limits | 100K         | 1M         | X    | X                   | 100M            |
+| Daily limits   | 1M           | 10M        | 100  | 1000                | X               |
+| Monthly limits | 10M          | 100M       | 1000 | 10000               | X               |
+
+
+### Registered user limits
+
+|                | annotatables | attributes | jobs | single annotatables | input file size |
+| -------------- | ------------ | ---------- | ---- | ------------------- | --------------- |
+| Per job limits | 10K          | 100K       | X    | X                   | 10M             |
+| Daily limits   | 100K         | 1M         | 10   | 100                 | X               |
+| Monthly limits | 1M           | 10M        | 100  | 1000                | X               |
