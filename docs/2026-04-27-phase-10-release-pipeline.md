@@ -452,3 +452,136 @@ before the first real release runs.
   CalVer regex rejects it. Consider a one-time `RELEASE_DRY_RUN`
   Jenkins job parameter that runs the build stages but skips
   publish; not in V1 scope but worth noting.
+
+## Addendum: extraction into a separate pipelineJob
+
+Phase 10 originally embedded the release pipeline as a
+`stage('Release') { when { buildingTag() } ... }` inside the
+root `Jenkinsfile`. After it shipped (commit `1d527c36f`), the
+embedded form turned out to be the wrong delivery vehicle: the
+root `Jenkinsfile` ballooned past 1000 lines, and the
+`when { not { buildingTag() } }` guards needed to keep CI
+stages from running on tag builds proliferated across five
+sibling stages. The release was extracted into a dedicated
+pipelineJob, `gain-release`, on top of the same 15 D1–D15
+decisions captured above. None of those decisions changed in
+substance — only their *location*. This addendum records the
+move and adds D16.
+
+### What moved
+
+- The Release stage (and its sub-stages D8 master CI gate,
+  D14 tag freshness, D10 pre-flight credentials, fetch
+  base-images.lock, build wheels + sdists, build conda
+  packages, build prod Docker, D13 publish lock, notify)
+  moved verbatim into a new `Jenkinsfile.release` at repo
+  root.
+- A new Jenkins Job DSL definition at
+  `jenkins-jobs/release.groovy` declares the `gain-release`
+  pipelineJob (declared at the Jenkins root, sibling of
+  `gain-seed`, `gain-web-e2e`, and `gain-vep-integration`,
+  for the same Org-Folder reason).
+- The `Jenkinsfile.seed`'s existing
+  `**/jenkins-jobs/*.groovy` glob picks up the new file
+  with no seed change.
+
+### What changed in substance
+
+- **Master-build lookup.** The embedded version used
+  `currentBuild.rawBuild.parent.parent.getItem('master')`,
+  which works only because the embedded Release ran inside
+  the multibranch. `gain-release` is a separate
+  pipelineJob, so it uses
+  `Jenkins.instance.getItemByFullName(params.UPSTREAM_PROJECT)`
+  with `UPSTREAM_PROJECT` defaulted to
+  `iossifovlab/gain/master`. D8 semantics unchanged; D8
+  mechanics newer.
+- **Workspace checkout.** The embedded version got the
+  tagged commit checked out for free by Jenkins's
+  multibranch tag-build automatic SCM step. `gain-release`
+  declares `options { skipDefaultCheckout(true) }` and a
+  dedicated `Validate + checkout tag` stage that does an
+  explicit `checkout` of `refs/tags/${TAG_NAME}` with
+  `shallow: false, noTags: false` so hatch-vcs's
+  `git describe --tags` resolves the clean tag version.
+- **Conda builder image.** The embedded version reused the
+  multibranch's `Conda builder image` stage. `gain-release`
+  builds its own copy in a `Setup` stage (placed after the
+  master CI gate so doomed releases don't pay the docker
+  build cost).
+- **`copyArtifactPermission`.** The root `Jenkinsfile` now
+  grants both `gain-web-e2e,gain-release` (was just
+  `gain-web-e2e`); `gain-release`'s `Fetch
+  base-images.lock` step uses `copyArtifacts` against the
+  master build, which would otherwise hit Jenkins's
+  permission-denied disguise ("Unable to find project for
+  artifact copy").
+- **Failure announcements.** The embedded Release shared the
+  multibranch's `post { always { ... zulipNotification ... } }`
+  failure path. `gain-release` declares its own
+  `post { failure { zulipSend(topic: 'releases', ...) } }`
+  so a tag-driven release failure still surfaces to Zulip
+  even though the multibranch's tag-build (now a 5-line
+  shim) exits SUCCESS once the dispatch fires.
+
+### What changed in shape (root Jenkinsfile)
+
+- All per-branch CI stages were wrapped in a single
+  `stage('CI') { when { not { buildingTag() } } stages { ... } }`,
+  collapsing five scattered `when { not { buildingTag() } }`
+  guards (Sub-projects, Conda packages, Build & push prod
+  images, Trigger web_e2e, Trigger VEP integration) into one.
+- A new sibling `stage('Dispatch release')` was added with
+  `when { buildingTag(); expression { TAG_NAME ==~ /^\d{4}\.\d+\.\d+$/ } }`,
+  whose only step is
+  `build job: '/gain-release', parameters: [string(name: 'TAG_NAME', value: env.TAG_NAME)], wait: false, propagate: false`.
+- The embedded `stage('Release') { ... }` (≈380 lines) was
+  deleted.
+
+### D16 — Extract release into a dedicated pipelineJob
+
+The release runs in `gain-release` (declared via
+`jenkins-jobs/release.groovy`, script
+`Jenkinsfile.release`), triggered by a thin dispatcher
+stage in the root `Jenkinsfile` on tag builds matching the
+CalVer regex.
+
+**Why:**
+- Keeps the root `Jenkinsfile` focused on per-branch CI; the
+  root file shrunk from ~1040 to ~690 lines and lost five
+  `when { not { buildingTag() } }` guards.
+- Mirrors the established pattern of `gain-web-e2e` and
+  `gain-vep-integration` (both declared at the Jenkins root,
+  both kicked off via `build job:` from the multibranch with
+  `wait: false, propagate: false`).
+- Makes `gain-release` self-contained: a manual UI re-run
+  needs only `TAG_NAME` (after a transient publish failure,
+  for example), independent of the multibranch.
+- Allows `Jenkinsfile.release` itself to be patched on
+  master without retagging, while the *workspace* stays
+  pinned to the tag — the cpsScm fetches the script from
+  master tip, but the pipeline's first stage explicitly
+  checks out the tagged commit.
+
+**Downsides accepted:**
+- The conda-builder docker image is built twice (once in
+  master CI, once in `gain-release`). Docker layer caching
+  makes the second build near-instant on a warm agent;
+  worth the small DRY violation to keep the two pipelines
+  decoupled.
+- `gain-release`'s `Pre-flight: master CI gate` triggers
+  in-process script approval the first time it runs (one-
+  time admin step in "Manage Jenkins" → "In-process Script
+  Approval"). The embedded version had the same requirement.
+
+### Concurrency unchanged from D13
+
+`gain-release` deliberately does *not* declare
+`disableConcurrentBuilds()`. Pre-publish work (wheels,
+conda, docker) runs in separate Jenkins workspaces with
+distinct `${BUILD_NUMBER}` so two overlapping releases (e.g.,
+a hotfix tag pushed shortly after a planned release) progress
+in parallel up to the `lock(resource: 'gain-release-publish')`
+on the Publish stage. The lock is the only required
+serialization point — same design as D13, just enforced from
+a separate job.

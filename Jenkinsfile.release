@@ -1,0 +1,517 @@
+// Jenkins pipeline for the GAIn monorepo's tag-driven release.
+//
+// Phase 10 originally embedded this as a `stage('Release')` inside
+// the root Jenkinsfile. It was extracted into this separate
+// pipelineJob (`gain-release`) — see
+// docs/2026-04-27-phase-10-release-pipeline.md "Addendum:
+// extraction" for the rationale and decision D16.
+//
+// Triggered by:
+//   - The root Jenkinsfile's `Dispatch release` stage when a CalVer
+//     tag (^\d{4}\.\d+\.\d+$) lands on the multibranch (fire and
+//     forget; the dispatcher does not block).
+//   - Manual UI trigger (re-runs after transient publish failures).
+//
+// Inputs (mirrored in jenkins-jobs/release.groovy for the UI form):
+//   - TAG_NAME        — the CalVer tag (e.g. 2026.4.27).
+//   - UPSTREAM_PROJECT — multibranch path used to find the master
+//                        CI build whose commit matches the tag
+//                        (default 'iossifovlab/gain/master').
+//
+// Output: wheels published to nemo:/data/wheels/gain, conda
+// packages to anaconda.org/iossifovlab, and Docker images to
+// registry.seqpipe.org tagged :${TAG_NAME} + :stable.
+
+pipeline {
+    // !dory mirrors the root Jenkinsfile and gain-web-e2e — dory's
+    // docker daemon / resource profile doesn't fit the root build's
+    // compose stacks (and our docker-build-heavy phases here).
+    agent { label '!dory' }
+
+    parameters {
+        string(
+            name: 'TAG_NAME',
+            defaultValue: '',
+            description: 'CalVer tag to release (e.g. 2026.4.27). ' +
+                'Must match ^\\d{4}\\.\\d+\\.\\d+$. Pre-release ' +
+                'suffixes are deferred to V2.',
+        )
+        string(
+            name: 'UPSTREAM_PROJECT',
+            defaultValue: 'iossifovlab/gain/master',
+            description: 'Multibranch path used to locate the ' +
+                'master CI build whose GIT_COMMIT matches the ' +
+                'tagged commit. Override only if the multibranch ' +
+                'folder layout has changed.',
+        )
+    }
+
+    options {
+        timeout(time: 1, unit: 'HOURS')
+        // 40 keeps several months of release history while still
+        // letting Jenkins reclaim disk on a job that runs once
+        // per CalVer tag.
+        buildDiscarder(logRotator(numToKeepStr: '40'))
+        // Concurrency: D13 (publish lock) is the only required
+        // serialization point. Pre-publish work uses separate
+        // workspaces (Jenkins @2/@3 suffixes) and BUILD_NUMBER, so
+        // overlapping releases are safe up to the lock. We
+        // deliberately do NOT disableConcurrentBuilds().
+        skipDefaultCheckout(true)
+    }
+
+    environment {
+        REGISTRY        = 'registry.seqpipe.org'
+        BACKEND_REPO    = "${env.REGISTRY}/gain-web-api"
+        FRONTEND_REPO   = "${env.REGISTRY}/gain-web-ui"
+        REGISTRY_USER   = credentials('user.registry.seqpipe.org')
+        REGISTRY_PASS   = credentials('passwd.registry.seqpipe.org')
+        ANACONDA_TOKEN  = credentials('anaconda-token-iossifovlab')
+        WHEELS_HOST     = 'nemo'
+        WHEELS_PATH     = '/data/wheels/gain'
+        ANACONDA_USER   = 'iossifovlab'
+        CONDA_BUILDER   = "gain-conda-builder-ci:${env.BUILD_NUMBER}"
+        // Lift params.TAG_NAME into env.TAG_NAME so the existing
+        // shell heredocs (lifted from the embedded Release stage)
+        // can keep using ${TAG_NAME} unchanged.
+        TAG_NAME        = "${params.TAG_NAME}"
+    }
+
+    stages {
+        stage('Validate + checkout tag') {
+            steps {
+                script {
+                    if (!params.TAG_NAME) {
+                        error('TAG_NAME parameter is required.')
+                    }
+                    // Defense-in-depth: the dispatcher in the root
+                    // Jenkinsfile already filters CalVer tags, but
+                    // gain-release is also manually triggerable
+                    // and a typo in the UI should fail cleanly
+                    // here, not deep in the pipeline.
+                    if (!(params.TAG_NAME ==~ /^\d{4}\.\d+\.\d+$/)) {
+                        error(
+                            "TAG_NAME '${params.TAG_NAME}' does " +
+                            'not match the CalVer pattern ' +
+                            '^\\d{4}\\.\\d+\\.\\d+$. Pre-release ' +
+                            'suffixes are deferred to V2.'
+                        )
+                    }
+                }
+                // skipDefaultCheckout(true) means we own the
+                // checkout. shallow:false / noTags:false are
+                // load-bearing for hatch-vcs's `git describe
+                // --tags` to resolve the clean tag version
+                // without a .dev suffix.
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "refs/tags/${params.TAG_NAME}"]],
+                    extensions: [
+                        [$class: 'CloneOption',
+                         shallow: false,
+                         noTags: false,
+                         depth: 0],
+                    ],
+                    userRemoteConfigs: [[
+                        url: 'https://github.com/iossifovlab/gain.git',
+                    ]],
+                ])
+                sh '''
+                    set -e
+                    described=$(git describe --tags --always --dirty)
+                    echo "git describe: $described"
+                    test "$described" = "${TAG_NAME}"
+                '''
+            }
+        }
+
+        stage('Pre-flight: master CI gate') {
+            // Find the master multibranch build whose GIT_COMMIT
+            // matches the tagged commit and assert it succeeded.
+            // Stash its build number for the copyArtifacts call
+            // below. D8 — see Phase 10 design doc.
+            //
+            // Uses Jenkins core APIs that require in-process
+            // script approval the first time gain-release runs
+            // (admin → "Manage Jenkins" → "In-process Script
+            // Approval").
+            steps {
+                script {
+                    def upstreamProject = params.UPSTREAM_PROJECT
+                    def masterJob = jenkins.model.Jenkins.instance
+                        .getItemByFullName(upstreamProject)
+                    if (masterJob == null) {
+                        error(
+                            "Upstream project '${upstreamProject}' " +
+                            'not found. Override UPSTREAM_PROJECT ' +
+                            'if the multibranch path has changed.'
+                        )
+                    }
+                    def tagSha = sh(
+                        script: 'git rev-parse HEAD',
+                        returnStdout: true,
+                    ).trim()
+                    def matching = null
+                    for (b in masterJob.getBuilds()) {
+                        def gitData = b.getAction(
+                            hudson.plugins.git.util.BuildData)
+                        def sha = gitData?.lastBuiltRevision?.sha1String
+                        if (sha == tagSha) {
+                            matching = b
+                            break
+                        }
+                    }
+                    if (matching == null) {
+                        error(
+                            "No ${upstreamProject} build found for " +
+                            "commit ${tagSha}. Tag a commit that " +
+                            'has been merged to master and built ' +
+                            'green.'
+                        )
+                    }
+                    if (matching.result != hudson.model.Result.SUCCESS) {
+                        error(
+                            "Upstream master build " +
+                            "#${matching.number} for commit " +
+                            "${tagSha} did not succeed " +
+                            "(${matching.result}). Refusing to " +
+                            'release.'
+                        )
+                    }
+                    env.UPSTREAM_BUILD_NUMBER =
+                        matching.number.toString()
+                    env.GIT_COMMIT = tagSha
+                    echo(
+                        "Upstream master build: #${matching.number} " +
+                        "(SUCCESS) for commit ${tagSha}"
+                    )
+                }
+            }
+        }
+
+        stage('Setup') {
+            // Workspace prep + conda-builder image. Deferred until
+            // the master CI gate passes so doomed releases don't
+            // pay the docker-build cost. (In the embedded Release
+            // stage these prerequisites came from earlier
+            // multibranch CI stages for free.)
+            steps {
+                sh '''
+                    rm -rf reports dist conda
+                    mkdir -p reports dist conda
+                    docker build -f conda-builder/Dockerfile \
+                        -t "${CONDA_BUILDER}" conda-builder
+                '''
+            }
+        }
+
+        stage('Pre-flight: tag freshness') {
+            // Reject tag mutation: if any destination already has
+            // an artefact for ${TAG_NAME}, abort. D14.
+            steps {
+                sh '''
+                    # HEAD on the wheels index — 200 means already
+                    # published. Anything else (404, 5xx, network)
+                    # is treated as "not there yet, proceed" so a
+                    # flaky index doesn't block releases.
+                    code=$(curl -sS -o /dev/null \
+                        -w '%{http_code}' \
+                        "https://${WHEELS_HOST}/gain/gain_core-${TAG_NAME}-py3-none-any.whl")
+                    echo "Wheel index probe: HTTP $code"
+                    if [ "$code" = "200" ]; then
+                        echo "ERROR: gain-core ${TAG_NAME} already" \
+                             "at https://${WHEELS_HOST}/gain/"
+                        echo "Tag mutation is rejected." \
+                             "Cut a new tag instead."
+                        exit 1
+                    fi
+
+                    # Anaconda check: exit 0 means the package
+                    # exists; non-zero (1, 2, network) is treated
+                    # as "not there yet". Use --no-progress + 2>&1
+                    # to keep the build log readable.
+                    if docker run --rm "${CONDA_BUILDER}" \
+                        anaconda show \
+                            "${ANACONDA_USER}/gain-core/${TAG_NAME}" \
+                            >/dev/null 2>&1; then
+                        echo "ERROR: gain-core ${TAG_NAME} already" \
+                             "on Anaconda.org/${ANACONDA_USER}"
+                        echo "Tag mutation is rejected." \
+                             "Cut a new tag instead."
+                        exit 1
+                    fi
+                '''
+            }
+        }
+
+        stage('Pre-flight: credentials') {
+            // Touch each destination before any state mutates.
+            // Catches expired tokens, network failures, missing
+            // ssh keys before the publish phase begins. D10.
+            steps {
+                sshagent(credentials: ['wheels-seqpipe-ssh-key']) {
+                    sh '''
+                        ssh -o BatchMode=yes \
+                            -o StrictHostKeyChecking=accept-new \
+                            "${WHEELS_HOST}" true
+                    '''
+                }
+                sh '''
+                    docker run --rm \
+                        -e ANACONDA_TOKEN \
+                        "${CONDA_BUILDER}" \
+                        anaconda --token "$ANACONDA_TOKEN" whoami
+                '''
+                sh '''
+                    printf '%s' "$REGISTRY_PASS" | docker login \
+                        -u "$REGISTRY_USER" \
+                        --password-stdin "$REGISTRY"
+                    docker logout "$REGISTRY"
+                '''
+            }
+        }
+
+        stage('Fetch base-images.lock') {
+            // Pull the digest lockfile from the master build
+            // identified above. fingerprintArtifacts:true pairs
+            // with the master archiveArtifacts' fingerprint:true
+            // so the file is locatable even if the build record
+            // itself rotated.
+            steps {
+                copyArtifacts(
+                    projectName: params.UPSTREAM_PROJECT,
+                    selector: specific(env.UPSTREAM_BUILD_NUMBER),
+                    filter: 'dist/base-images.lock',
+                    fingerprintArtifacts: true,
+                )
+                sh 'cat dist/base-images.lock'
+            }
+        }
+
+        stage('Build wheels + sdists') {
+            // hatch-vcs derives the embedded version from `git
+            // describe --tags`; at a tagged commit this resolves
+            // to the clean ${TAG_NAME} with no .dev suffix.
+            // Verified immediately after build — a shallow clone
+            // would yield a dev version and we abort before
+            // publishing.
+            steps {
+                sh '''
+                    mkdir -p dist/core dist/web_api \
+                        dist/demo_annotator \
+                        dist/vep_annotator \
+                        dist/spliceai_annotator
+                    for pkg in core web_api \
+                               demo_annotator \
+                               vep_annotator \
+                               spliceai_annotator; do
+                        distpkg="gain-${pkg//_/-}"
+                        uv build --package "$distpkg" \
+                            --out-dir "dist/$pkg"
+                    done
+
+                    bad=0
+                    for whl in dist/*/*.whl; do
+                        case "$whl" in
+                            *"-${TAG_NAME}-py3-none-any.whl") ;;
+                            *)
+                                echo "$whl does not embed" \
+                                     "clean ${TAG_NAME}" >&2
+                                bad=1
+                                ;;
+                        esac
+                    done
+                    if [ "$bad" != 0 ]; then
+                        echo "hatch-vcs did not resolve to" \
+                             "${TAG_NAME} — likely a shallow" \
+                             "clone. Aborting." >&2
+                        exit 1
+                    fi
+                '''
+            }
+        }
+
+        stage('Build conda packages') {
+            // Reuses the rattler-build flow from the (now-deleted)
+            // root multibranch Conda packages stage, with
+            // VCS_VERSION pulled from the freshly built wheel
+            // filenames so the conda versions match.
+            steps {
+                sh '''
+                    VCS_VERSION=$(ls dist/core/*.whl \
+                        | head -1 \
+                        | sed 's#.*gain_core-##' \
+                        | sed 's#-py3-none-any.whl$##')
+                    echo "VCS_VERSION=$VCS_VERSION"
+
+                    mkdir -p dist/conda
+                    DOCKER_USER="$(id -u):$(id -g)"
+                    for proj in core demo_annotator \
+                                vep_annotator \
+                                spliceai_annotator; do
+                        mkdir -p conda/$proj
+                        docker run --rm \
+                            --user "$DOCKER_USER" \
+                            -e HOME=/tmp \
+                            -v $PWD:/workspace \
+                            -w /workspace \
+                            -e VCS_VERSION="$VCS_VERSION" \
+                            "${CONDA_BUILDER}" \
+                            rattler-build build \
+                                --recipe $proj/conda-recipe/recipe.yaml \
+                                --output-dir conda/$proj
+                        cp conda/$proj/noarch/*.conda dist/conda/
+                    done
+                '''
+            }
+        }
+
+        stage('Build prod Docker (digest-pinned)') {
+            // Same Dockerfiles the master build uses, but with
+            // PYTHON_IMAGE / NODE_IMAGE / HTTPD_IMAGE pinned to
+            // the digests captured by the upstream master build.
+            // Tagged directly as :${TAG_NAME}; :stable is applied
+            // at push time.
+            steps {
+                sh '''
+                    set -a
+                    . dist/base-images.lock
+                    set +a
+                    echo "PYTHON_IMAGE=${PYTHON_IMAGE}"
+                    echo "NODE_IMAGE=${NODE_IMAGE}"
+                    echo "HTTPD_IMAGE=${HTTPD_IMAGE}"
+
+                    docker build \
+                        -f web_api/Dockerfile.production \
+                        --build-arg PYTHON_IMAGE="${PYTHON_IMAGE}" \
+                        -t "${BACKEND_REPO}:${TAG_NAME}" .
+
+                    docker build \
+                        -f web_ui/Dockerfile.production \
+                        --build-arg NODE_IMAGE="${NODE_IMAGE}" \
+                        --build-arg HTTPD_IMAGE="${HTTPD_IMAGE}" \
+                        --build-arg BACKEND_IMAGE="${BACKEND_REPO}:${TAG_NAME}" \
+                        -t "${FRONTEND_REPO}:${TAG_NAME}" .
+                '''
+            }
+        }
+
+        stage('Publish') {
+            // Serialize across overlapping releases (D13). The
+            // lock collides only with another gain-release
+            // currently in Publish; pre-publish stages of other
+            // gain-release builds are unaffected.
+            options {
+                lock(resource: 'gain-release-publish')
+            }
+            steps {
+                // 1) Wheels + sdists → wheels.seqpipe.org
+                sshagent(credentials: ['wheels-seqpipe-ssh-key']) {
+                    sh '''
+                        files=$(ls \
+                            dist/core/gain_core-*.whl \
+                            dist/core/gain_core-*.tar.gz \
+                            dist/web_api/gain_web_api-*.whl \
+                            dist/web_api/gain_web_api-*.tar.gz \
+                            dist/demo_annotator/gain_demo_annotator-*.whl \
+                            dist/demo_annotator/gain_demo_annotator-*.tar.gz \
+                            dist/vep_annotator/gain_vep_annotator-*.whl \
+                            dist/vep_annotator/gain_vep_annotator-*.tar.gz \
+                            dist/spliceai_annotator/gain_spliceai_annotator-*.whl \
+                            dist/spliceai_annotator/gain_spliceai_annotator-*.tar.gz)
+                        # Deliberate word-split on $files.
+                        rsync -av \
+                            -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
+                            $files \
+                            "${WHEELS_HOST}:${WHEELS_PATH}/"
+                        ssh -o BatchMode=yes \
+                            -o StrictHostKeyChecking=accept-new \
+                            "${WHEELS_HOST}" \
+                            "cd ${WHEELS_PATH} && pip-index ."
+                    '''
+                }
+
+                // 2) Conda → Anaconda.org/iossifovlab.
+                // --skip-existing makes re-runs after a partial
+                // publish failure idempotent (D10).
+                sh '''
+                    docker run --rm \
+                        -e ANACONDA_TOKEN \
+                        -v "$PWD/dist/conda:/dist/conda:ro" \
+                        "${CONDA_BUILDER}" \
+                        anaconda --token "$ANACONDA_TOKEN" \
+                            upload \
+                                --user "${ANACONDA_USER}" \
+                                --skip-existing \
+                                /dist/conda/*.conda
+                '''
+
+                // 3) Docker → registry.seqpipe.org with
+                // :${TAG_NAME} immutable + :stable moving.
+                // Re-pushing same digest is a registry no-op
+                // (D10).
+                sh '''
+                    printf '%s' "$REGISTRY_PASS" | docker login \
+                        -u "$REGISTRY_USER" \
+                        --password-stdin "$REGISTRY"
+                    trap 'docker logout "$REGISTRY" || true' EXIT
+
+                    for repo in "$BACKEND_REPO" "$FRONTEND_REPO"; do
+                        docker tag "$repo:$TAG_NAME" \
+                                   "$repo:stable"
+                        docker push "$repo:$TAG_NAME"
+                        docker push "$repo:stable"
+                    done
+                '''
+            }
+        }
+
+        stage('Notify') {
+            steps {
+                zulipSend(
+                    topic: 'releases',
+                    message:
+                        "Released ${env.TAG_NAME} — wheels: " +
+                        "https://${env.WHEELS_HOST}/gain/, " +
+                        "conda: https://anaconda.org/" +
+                            "${env.ANACONDA_USER}, " +
+                        "docker: ${env.BACKEND_REPO}:" +
+                            "${env.TAG_NAME} + " +
+                        "${env.FRONTEND_REPO}:" +
+                            "${env.TAG_NAME} " +
+                        "(also tagged :stable)",
+                )
+            }
+        }
+    }
+
+    post {
+        failure {
+            // The dispatcher fires us with wait:false,propagate:false,
+            // so failures here never bubble up to the multibranch
+            // tag-build. Announce on Zulip so the developer who
+            // pushed the tag finds out without hunting for a build
+            // URL.
+            zulipSend(
+                topic: 'releases',
+                message:
+                    "Release ${params.TAG_NAME} FAILED — " +
+                    "${env.BUILD_URL}",
+            )
+        }
+        cleanup {
+            // Strip ephemeral images this build produced. All
+            // `|| true` so a missing image (e.g. early failure
+            // before the docker build ran) doesn't fail the
+            // cleanup step.
+            sh '''
+                docker rmi "${CONDA_BUILDER}" 2>/dev/null || true
+                for repo in "${BACKEND_REPO}" "${FRONTEND_REPO}"; do
+                    for tag in "${TAG_NAME}" stable; do
+                        docker rmi "$repo:$tag" 2>/dev/null || true
+                    done
+                done
+            '''
+        }
+    }
+}
