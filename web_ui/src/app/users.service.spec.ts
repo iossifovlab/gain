@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
-import { UserData, UsersService } from './users.service';
+import { UsersService } from './users.service';
+import { RateLimits, UserData } from './users';
 import { HttpClient, provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { lastValueFrom, of, take } from 'rxjs';
@@ -55,7 +56,7 @@ describe('UsersService', () => {
   });
 
   it('should check post request params when login user', () => {
-    const mockUserData = { email: 'mockEmail@email.com', loggedIn: false } as UserData;
+    const mockUserData = { email: 'mockEmail@email.com', loggedIn: false };
     const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
     httpPostSpy.mockReturnValue(of(mockUserData));
 
@@ -74,7 +75,7 @@ describe('UsersService', () => {
   });
 
   it('should store current user in subject after login', async() => {
-    const mockUserData = {
+    const mockUserData: UserData = {
       email: 'mockEmail@email.com',
       isAdmin: false,
       loggedIn: true,
@@ -83,8 +84,9 @@ describe('UsersService', () => {
         filesize: '30M',
         todayJobsCount: 4,
         variantCount: 100,
+        diskSpace: ''
       }
-    } as UserData;
+    };
     const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
     httpPostSpy.mockReturnValue(of(mockUserData));
     const httpGetSpy = jest.spyOn(HttpClient.prototype, 'get');

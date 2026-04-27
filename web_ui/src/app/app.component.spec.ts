@@ -1,6 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { AppComponent } from './app.component';
-import { UserData, UsersService } from './users.service';
+import { UsersService } from './users.service';
+import { UserData } from './users';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { BehaviorSubject, Observable, of } from 'rxjs';
@@ -51,7 +52,19 @@ describe('AppComponent', () => {
   });
 
   it('should set current user to null when logout', () => {
-    component.currentUserData = { email: 'mockEmail@email.com', isAdmin: false } as UserData;
+    component.currentUserData = {
+      email: 'mockEmail@email.com',
+      isAdmin: false,
+      loggedIn: true,
+      limitations:
+      {
+        dailyJobs: 100,
+        filesize: '1GB',
+        todayJobsCount: 5,
+        variantCount: 1000,
+        diskSpace: '10GB'
+      }
+    };
     const logoutSpy = jest.spyOn(usersServiceMock, 'logout');
     component.logout();
     expect(logoutSpy).toHaveBeenCalledWith();
@@ -59,7 +72,19 @@ describe('AppComponent', () => {
   });
 
   it('should get last logged in user from service', () => {
-    const mockUserData = { email: 'mockEmail@email.com', isAdmin: false } as UserData;
+    const mockUserData = {
+      email: 'mockEmail@email.com',
+      isAdmin: false,
+      loggedIn: true,
+      limitations:
+      {
+        dailyJobs: 100,
+        filesize: '1GB',
+        todayJobsCount: 5,
+        variantCount: 1000,
+        diskSpace: '10GB'
+      }
+    };
     component.currentUserData = null;
     usersServiceMock.userData.next(mockUserData);
     component.ngDoCheck();

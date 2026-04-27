@@ -7,7 +7,8 @@ import { BehaviorSubject, Observable, of } from 'rxjs';
 import { Pipeline } from './pipelines';
 import { FileContent } from './jobs';
 import { SingleAnnotationService } from '../single-annotation.service';
-import { UserData, UsersService } from '../users.service';
+import { UserData } from '../users';
+import { UsersService } from '../users.service';
 
 class SingleAnnotationServiceMock {
   public getGenomes(): Observable<string[]> {
@@ -16,9 +17,9 @@ class SingleAnnotationServiceMock {
 }
 
 const mockPipelines = [
-  new Pipeline('id1', 'name1', 'content1', 'default'),
-  new Pipeline('id2', 'name2', 'content2', 'default'),
-  new Pipeline('id3', 'name3', 'content3', 'default'),
+  new Pipeline('id1', 'name1', 'content1', 'default', 'loaded'),
+  new Pipeline('id2', 'name2', 'content2', 'default', 'loaded'),
+  new Pipeline('id3', 'name3', 'content3', 'default', 'loaded'),
 ];
 class JobsServiceMock {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

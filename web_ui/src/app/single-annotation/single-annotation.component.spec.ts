@@ -7,7 +7,8 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { SingleAnnotationService } from '../single-annotation.service';
 import { BehaviorSubject, Observable, of, throwError } from 'rxjs';
 import { Annotator, AnnotatorDetails, Resource, SingleAnnotationReport, Annotatable } from '../single-annotation';
-import { UserData, UsersService } from '../users.service';
+import { UserData } from '../users';
+import { UsersService } from '../users.service';
 import { MatTooltip } from '@angular/material/tooltip';
 import { AnnotationPipelineStateService } from '../annotation-pipeline/annotation-pipeline-state.service';
 

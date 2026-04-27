@@ -1,7 +1,8 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectorRef, Component, DoCheck, OnInit } from '@angular/core';
 import { Router, RouterModule, RouterOutlet } from '@angular/router';
-import { UserData, UsersService } from './users.service';
+import { UsersService } from './users.service';
+import { UserData } from './users';
 import { takeWhile } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { MarkdownModule } from 'ngx-markdown';

@@ -4,19 +4,7 @@ import { Router } from '@angular/router';
 import { CookieService } from 'ngx-cookie-service';
 import { BehaviorSubject, Observable, map, switchMap, take, tap } from 'rxjs';
 import { environment } from '../../environments/environment';
-
-export interface UserData {
-  email: string;
-  loggedIn: boolean;
-  isAdmin: boolean;
-  limitations: {
-    dailyJobs: number;
-    filesize: string;
-    todayJobsCount: number;
-    variantCount: number;
-    diskSpace: string;
-  }
-}
+import { RateLimits, UserData } from './users';
 
 @Injectable()
 export class UsersService {

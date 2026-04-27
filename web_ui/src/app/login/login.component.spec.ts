@@ -3,7 +3,8 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { LoginComponent } from './login.component';
 import { HttpErrorResponse, provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
-import { UserData, UsersService } from '../users.service';
+import { UsersService } from '../users.service';
+import { UserData } from '../users';
 import { BehaviorSubject, Observable, of, throwError } from 'rxjs';
 import { provideRouter, Router } from '@angular/router';
 
