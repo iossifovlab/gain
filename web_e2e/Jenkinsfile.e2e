@@ -140,6 +140,21 @@ pipeline {
             // as $BACKEND_IMAGE / $FRONTEND_IMAGE so the
             // compose-jenkins stack and `post.cleanup` don't have
             // to care which path produced them.
+            //
+            // The pull path explicitly `docker login`s with the
+            // shared registry credentials. We can't rely on the
+            // agent's ~/.docker/config.json being authenticated:
+            // the parent Jenkinsfile's master-push stage runs
+            // `docker logout` on EXIT, which invalidates any
+            // pre-saved auth for that agent. Build #20 failed
+            // when it landed on a freshly-logged-out agent (pooh)
+            // while #19 succeeded on a still-authenticated one
+            // (piglet). Logging in here makes the pull
+            // agent-independent.
+            environment {
+                REGISTRY_USER = credentials('user.registry.seqpipe.org')
+                REGISTRY_PASS = credentials('passwd.registry.seqpipe.org')
+            }
             steps {
                 script {
                     boolean canPull = \
@@ -148,6 +163,20 @@ pipeline {
                     if (canPull) {
                         String tag = params.UPSTREAM_BUILD
                         sh """
+                            # Same login pattern as the parent
+                            # Jenkinsfile's push stage:
+                            # `printf` (not `echo`) to avoid the
+                            # POSIX-sh trailing newline /
+                            # backslash-escape pitfalls; trap
+                            # logout so the agent is left clean
+                            # even on failure.
+                            printf '%s' "\$REGISTRY_PASS" | \
+                                docker login \
+                                    -u "\$REGISTRY_USER" \
+                                    --password-stdin \
+                                    registry.seqpipe.org
+                            trap 'docker logout registry.seqpipe.org || true' EXIT
+
                             docker pull \
                                 'registry.seqpipe.org/gain-web-api:${tag}'
                             docker pull \
