@@ -96,24 +96,6 @@ button:hover {
   background-color: #5b778c;
 }
 
-#google-login-button {
-  color: #5b778c;
-  border: 1px solid #cfd8df;
-  background-color: white;
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-
-#google-login-button:hover {
-  background-color: #f4f7fb;
-}
-
-#google-icon {
-  width: 15px;
-  height: 15px;
-}
-
 #login-options {
   display: flex;
   flex-direction: column;
