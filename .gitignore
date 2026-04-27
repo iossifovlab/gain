@@ -84,3 +84,4 @@ core/gain/_version.py
 /dist/
 /conda/
 /reports/
+web_api/data/db.sqlite3
