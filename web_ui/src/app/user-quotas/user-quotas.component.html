@@ -1,0 +1,30 @@
+<div id="tables-wrapper">
+  @for(q of quotas | keyvalue; track q) {
+  <div>
+    <h2>{{ q.key.replaceAll('_', ' ') }}</h2>
+    <div
+      class="category-table"
+      [ngStyle]="
+        isUserLoggedIn ? { 'grid-template-rows': 'repeat(3, auto)' } : { 'grid-template-rows': 'repeat(2, auto)' }
+      ">
+      <div class="cell corner"></div>
+      <div class="cell header">Current</div>
+      <div class="cell header">Max</div>
+
+      <div class="cell header">Daily</div>
+      <div class="cell">{{ q.value.daily.current }}</div>
+      <div class="cell">{{ q.value.daily.max }}</div>
+
+      <div class="cell header">Monthly</div>
+      <div class="cell">{{ q.value.monthly.current }}</div>
+      <div class="cell">{{ q.value.monthly.max }}</div>
+
+      @if(isUserLoggedIn) {
+      <div class="cell header">Extra</div>
+      <div class="cell extra">{{ q.value.extra }}</div>
+      <div></div>
+      }
+    </div>
+  </div>
+  }
+</div>

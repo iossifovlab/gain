@@ -152,4 +152,29 @@ describe('UsersService', () => {
 
     expect(service.userData.value).toBeNull();
   });
+
+  it('should check get quotas query params', () => {
+    const httpGetSpy = jest.spyOn(HttpClient.prototype, 'get');
+
+    service.getQuotas();
+    expect(httpGetSpy).toHaveBeenCalledWith(
+      '//localhost:8000/api/quotas',
+      { withCredentials: true }
+    );
+  });
+
+  it('should return rate limits data', async() => {
+    const mockRateLimits: RateLimits = {
+      annotations: {
+        daily: { current: 3, max: 10 },
+        monthly: { current: 15, max: 100 },
+        extra: 0,
+      }
+    };
+    const httpGetSpy = jest.spyOn(HttpClient.prototype, 'get');
+    httpGetSpy.mockReturnValue(of(mockRateLimits));
+
+    const result = await lastValueFrom(service.getQuotas().pipe(take(1)));
+    expect(result).toStrictEqual(mockRateLimits);
+  });
 });

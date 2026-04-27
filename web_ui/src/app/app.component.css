@@ -97,7 +97,8 @@
   flex-shrink: 0;
 }
 
-#page-links a {
+#page-links a,
+#quotas-link {
   text-decoration: none;
   color: #85a2b9;
   background-color: #ecf1f6;
@@ -114,7 +115,8 @@
   text-align: center;
 }
 
-#page-links a.active-link {
+#page-links a.active-link,
+#quotas-link.active-link {
   color: #435869;
   background-color: #fff;
   border: 2px solid #435869;

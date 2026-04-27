@@ -6,6 +6,7 @@ import { AboutPageComponent } from './about-page/about-page.component';
 import {
   SingleAlleleAnnotationWrapperComponent
 } from './single-allele-annotation-wrapper/single-allele-annotation-wrapper.component';
+import { UserQuotasComponent } from './user-quotas/user-quotas.component';
 
 export const routes: Routes = [
   { path: 'annotation-jobs', component: AnnotationJobsWrapperComponent },
@@ -13,5 +14,6 @@ export const routes: Routes = [
   { path: 'login', component: LoginComponent },
   { path: 'register', component: RegistrationComponent },
   { path: 'about', component: AboutPageComponent },
+  { path: 'quotas', component: UserQuotasComponent },
   { path: '**', redirectTo: 'single-allele-annotation' },
 ];

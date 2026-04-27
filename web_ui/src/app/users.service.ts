@@ -12,6 +12,7 @@ export class UsersService {
   private readonly loginUrl = `${environment.apiPath}/login`;
   private readonly logoutUrl = `${environment.apiPath}/logout`;
   private readonly userDataUrl = `${environment.apiPath}/user_info`;
+  private readonly userQuotasUrl = `${environment.apiPath}/quotas`;
   public userData = new BehaviorSubject<UserData>(null);
 
   public constructor(
@@ -74,4 +75,12 @@ export class UsersService {
       })
     );
   }
+
+  public getQuotas(): Observable<RateLimits> {
+    const options = { withCredentials: true };
+    return this.http.get(this.userQuotasUrl, options).pipe(
+      map(obj => obj as RateLimits)
+    );
+  }
 }
+

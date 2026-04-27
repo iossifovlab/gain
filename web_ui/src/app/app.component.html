@@ -26,6 +26,14 @@
       </div>
     </div>
     <div id="header-right">
+      <a
+        id="quotas-link"
+        routerLink="/quotas"
+        routerLinkActive="active-link"
+        [routerLinkActiveOptions]="{ exact: true }"
+        title="Quotas"
+        >Quotas</a
+      >
       @if(currentUserData.loggedIn) {
       <div id="user-data">
         <span id="user-email">{{ currentUserData.email }}</span>
