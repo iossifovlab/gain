@@ -12,6 +12,8 @@
   text-align: center;
   font-weight: bold;
   font-size: 14px;
+  position: sticky;
+  top: 0;
 }
 
 .grid-cell {

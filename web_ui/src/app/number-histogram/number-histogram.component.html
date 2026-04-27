@@ -18,9 +18,11 @@
               [attr.y1]="scaleYAxis(1)"
               [attr.x2]="scaleXAxis(score)"
               [attr.y2]="-20" />
+            @if(scoreValues.length === 1) {
             <text [attr.x]="scaleXAxis(score) - 5" y="-15" dy=".35em" class="percentage-text" text-anchor="end">
               {{ scorePercentages[score] | formatResultValue : 4 }}%
             </text>
+            }
           </ng-container>
           }
         </g>

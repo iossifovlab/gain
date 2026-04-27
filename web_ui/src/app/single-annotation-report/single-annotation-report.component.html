@@ -68,7 +68,9 @@
               @if(!tableViewSources.includes(attribute.source)) { @if(isValueArray(attribute.result.value)) {
               <div class="value-grid-container" style="grid-template-columns: auto">
                 @for(item of asArray(attribute.result.value); track $index) {
-                <div class="value-grid-cell" [title]="item">{{ item }}</div>
+                <div class="value-grid-cell" [title]="item | formatResultValue : 3">{{
+                  item | formatResultValue : 3
+                }}</div>
                 }
               </div>
               } @else if(isValueMap(attribute.result.value)) {
