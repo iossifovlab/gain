@@ -74,6 +74,97 @@ describe('SingleAnnotationReportComponent', () => {
     expect(allValueElements[2].innerHTML).toBe('0');
   });
 
+  it('should set sortColumn and sortDirection when sorting a new column', () => {
+    const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
+      new Map([['GeneA', 3], ['GeneB', 1], ['GeneC', 2]]), null
+    ));
+
+    component.sort('Value', attribute);
+
+    expect(component.sortColumn).toBe('Value');
+    expect(component.sortDirection).toBe('asc');
+  });
+
+  it('should toggle sortDirection when sorting the same column twice', () => {
+    const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
+      new Map([['GeneA', 3], ['GeneB', 1], ['GeneC', 2]]), null
+    ));
+
+    component.sort('Value', attribute);
+    expect(component.sortDirection).toBe('asc');
+
+    component.sort('Value', attribute);
+    expect(component.sortDirection).toBe('desc');
+  });
+
+  it('should reset sortDirection to asc when switching to a different column', () => {
+    const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
+      new Map([['GeneA', 3], ['GeneB', 1], ['GeneC', 2]]), null
+    ));
+
+    component.sort('Value', attribute);
+    component.sort('Value', attribute);
+    expect(component.sortDirection).toBe('desc');
+
+    component.sort('Gene', attribute);
+    expect(component.sortColumn).toBe('Gene');
+    expect(component.sortDirection).toBe('asc');
+  });
+
+  it('should sort by gene name ascending', () => {
+    const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
+      new Map([['GeneC', 2], ['GeneA', 3], ['GeneB', 1]]), null
+    ));
+
+    component.sort('Gene', attribute);
+
+    const keys = [...(attribute.result.value as Map<string, number>).keys()];
+    expect(keys).toStrictEqual(['GeneA', 'GeneB', 'GeneC']);
+  });
+
+  it('should sort by gene name descending', () => {
+    const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
+      new Map([['GeneC', 2], ['GeneA', 3], ['GeneB', 1]]), null
+    ));
+
+    component.sort('Gene', attribute);
+    component.sort('Gene', attribute);
+
+    const keys = [...(attribute.result.value as Map<string, number>).keys()];
+    expect(keys).toStrictEqual(['GeneC', 'GeneB', 'GeneA']);
+  });
+
+  it('should sort by value ascending', () => {
+    const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
+      new Map([['GeneA', 3], ['GeneB', 1], ['GeneC', 2]]), null
+    ));
+
+    component.sort('Value', attribute);
+
+    const entries = [...(attribute.result.value as Map<string, number>).entries()];
+    expect(entries).toStrictEqual([['GeneB', 1], ['GeneC', 2], ['GeneA', 3]]);
+  });
+
+  it('should sort by value descending', () => {
+    const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
+      new Map([['GeneA', 3], ['GeneB', 1], ['GeneC', 2]]), null
+    ));
+
+    component.sort('Value', attribute);
+    component.sort('Value', attribute);
+
+    const entries = [...(attribute.result.value as Map<string, number>).entries()];
+    expect(entries).toStrictEqual([['GeneA', 3], ['GeneC', 2], ['GeneB', 1]]);
+  });
+
+  it('should not sort when attribute value is not a Map', () => {
+    const attribute = new Attribute('attr1', 'desc1', 'AF', new Result('plain string', null));
+
+    component.sort('Value', attribute);
+
+    expect(attribute.result.value).toBe('plain string');
+  });
+
   it('should save report as file', async() => {
     const saveAsSpy = jest.spyOn(FileSaver, 'saveAs').mockImplementation(() => null);
 

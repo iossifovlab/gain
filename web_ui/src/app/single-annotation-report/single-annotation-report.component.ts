@@ -1,5 +1,5 @@
 import { Component, effect, ElementRef, Input, TemplateRef, ViewChild } from '@angular/core';
-import { Annotator, SingleAnnotationReport } from '../single-annotation';
+import { Annotator, Attribute, SingleAnnotationReport } from '../single-annotation';
 import { CommonModule } from '@angular/common';
 import { MarkdownModule } from 'ngx-markdown';
 import { HistogramWrapperComponent } from '../histogram-wrapper/histogram-wrapper.component';
@@ -26,7 +26,8 @@ export class SingleAnnotationReportComponent {
   public tableViewSources = ['effect_details', 'gene_effects'];
   public showFullReport: boolean;
   @ViewChild('infoModal') public infoModalRef: TemplateRef<ElementRef>;
-
+  public sortColumn: string = '';
+  public sortDirection: 'asc' | 'desc' = 'asc';
 
   public constructor(
     private dialog: MatDialog,
@@ -95,6 +96,35 @@ export class SingleAnnotationReportComponent {
     const content = new Blob([reportLines], {type: 'text/plain;charset=utf-8'});
     saveAs(content, fileName);
   }
+
+  public sort(column: string, attribute: Attribute): void {
+    if (this.sortColumn === column) {
+      this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+      this.sortColumn = column;
+      this.sortDirection = 'asc';
+    }
+    this.sortData(attribute);
+  }
+
+  public sortData(attribute: Attribute): void {
+    if (!this.isValueMap(attribute.result.value)) {
+      return;
+    }
+    if (this.sortColumn === 'Gene') {
+      if (this.sortDirection === 'asc') {
+        attribute.result.value = new Map([...attribute.result.value.entries()].sort());
+      } else {
+        attribute.result.value = new Map([...attribute.result.value.entries()].reverse());
+      }
+    } else {
+      attribute.result.value = new Map([...attribute.result.value.entries()].sort((a, b) => {
+        const cmp = a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0;
+        return this.sortDirection === 'asc' ? cmp : -cmp;
+      }));
+    }
+  }
+
 
   public isValueMap(value: unknown): value is Map<string, string | number> {
     return value instanceof Map;

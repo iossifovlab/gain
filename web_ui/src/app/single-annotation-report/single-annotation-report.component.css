@@ -166,6 +166,17 @@ hr {
   top: 0;
 }
 
+.sortable-header {
+  user-select: none;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.sortable-header:hover {
+  cursor: pointer;
+}
+
 .value-grid-cell {
   border: 1px solid #cfd8df;
   text-align: center;
