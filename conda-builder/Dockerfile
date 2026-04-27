@@ -22,7 +22,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 USER mambauser
-RUN micromamba install -n base -y -c conda-forge rattler-build \
+# anaconda-client provides `anaconda upload`, used by the
+# tag-driven release pipeline to publish .conda packages to the
+# iossifovlab org on Anaconda.org. Same image, no PATH change
+# (/opt/conda/bin is already on PATH below).
+RUN micromamba install -n base -y -c conda-forge \
+        rattler-build anaconda-client \
     && micromamba clean --all --yes
 
 # Make the rattler-build binary callable directly without `micromamba run`.

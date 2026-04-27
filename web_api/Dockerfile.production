@@ -14,11 +14,11 @@
 
 # syntax=docker/dockerfile:1.7
 
-ARG PYTHON_VERSION=3.12-slim
+ARG PYTHON_IMAGE=python:3.12-slim
 
 
 # 1) Builder: install the wheels into an isolated venv at /opt/gpf.
-FROM python:${PYTHON_VERSION} AS builder
+FROM ${PYTHON_IMAGE} AS builder
 
 RUN python -m venv /opt/gpf \
  && /opt/gpf/bin/pip install --no-cache-dir --upgrade pip
@@ -31,7 +31,7 @@ RUN /opt/gpf/bin/pip install --no-cache-dir /wheels/*.whl
 
 
 # 2) Runtime: minimal slim image, just libmagic1 + the venv.
-FROM python:${PYTHON_VERSION} AS runtime
+FROM ${PYTHON_IMAGE} AS runtime
 
 # python-magic needs libmagic at runtime; psycopg (3) needs
 # libpq when installed without the [binary] extra (which is

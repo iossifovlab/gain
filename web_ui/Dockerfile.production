@@ -18,12 +18,13 @@
 
 # syntax=docker/dockerfile:1.7
 
-ARG NODE_VERSION=22.14.0-alpine
+ARG NODE_IMAGE=node:22.14.0-alpine
+ARG HTTPD_IMAGE=httpd:2.4-alpine
 ARG BACKEND_IMAGE=gain-web-api-prod:latest
 
 
 # 1) Angular SPA build.
-FROM node:${NODE_VERSION} AS angular
+FROM ${NODE_IMAGE} AS angular
 
 WORKDIR /app
 
@@ -51,7 +52,7 @@ RUN mkdir -p /static/gpf/static \
 
 
 # 3) Apache runtime.
-FROM httpd:2.4-alpine AS runtime
+FROM ${HTTPD_IMAGE} AS runtime
 
 # Angular SPA at the document root.
 COPY --from=angular /app/dist/frontend/browser /usr/local/apache2/htdocs/
