@@ -17,7 +17,7 @@ dependencies:
   - pytest-mock
   - pytest-django
   - pytest-doctestplus=1.2
-  - ruff==0.14.6
+  - ruff=0.14.6
   - pylint
   - nodejs>=24
   - mypy=1.15.0
@@ -31,6 +31,16 @@ dependencies:
   - types-python-dateutil=2.8
   - types-docker
   - types-psutil
+  - django-stubs=5.2.2
+  - mypy=1.15.0
+  - pylint
+  - pylint-django
+  - pytest
+  - pytest-asyncio
+  - pytest-cov
+  - pytest-django
+  - pytest-mock
+  - pytest-xdist
   - invoke=2.2
   - gitpython=3.1
   - sphinx
@@ -50,5 +60,8 @@ dependencies:
     - rstcheck
     - types-requests-oauthlib
     - types-requests
+    - types-channels
+    - types-requests
     - types-psutil
     - pytestarch
+  

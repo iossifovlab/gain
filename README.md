@@ -35,6 +35,8 @@ mamba env update --name gain --file ./dev-environment.yml
 conda activate gain
 
 pip install -e core
+pip install -e web_api
+
 # Optional annotator plugins:
 pip install -e demo_annotator
 pip install -e vep_annotator
