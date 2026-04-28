@@ -486,6 +486,7 @@ variant frequencies, etc.
 """)  # noqa
 
         self.allele_attribute = None
+        self.attrs_to_include = []
 
         for att_info in info.attributes:
             if att_info.source == "allele":
