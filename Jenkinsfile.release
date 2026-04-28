@@ -475,6 +475,12 @@ pipeline {
                         # Wheels host needs only docker; no Python
                         # tooling installed there.
                         #
+                        # setuptools is pinned <80 because libpip2pi
+                        # imports pkg_resources, which setuptools 80
+                        # removed; an unpinned install on Python 3.12
+                        # picks up setuptools 82+ and breaks dir2pi
+                        # with ModuleNotFoundError: pkg_resources.
+                        #
                         # The heredoc lets ${WHEELS_PATH} expand
                         # on the agent while \\$(id -u)/\\$(id -g)
                         # remain literal so the remote shell
@@ -494,7 +500,7 @@ docker run --rm \\
     -v "${WHEELS_PATH}":/work \\
     -w /work \\
     python:3.12-slim \\
-    sh -c 'pip install --quiet --user pip2pi && /tmp/.local/bin/dir2pi .'
+    sh -c 'pip install --quiet --user "setuptools<80" pip2pi && /tmp/.local/bin/dir2pi .'
 EOF
                     '''
                 }
