@@ -508,16 +508,23 @@ EOF
                 // 2) Conda → Anaconda.org/iossifovlab.
                 // --skip-existing makes re-runs after a partial
                 // publish failure idempotent (D10).
+                //
+                // Wrapped in `sh -c '…'` so /dist/conda/*.conda
+                // glob-expands inside the container, where the
+                // path actually exists. Without the wrapper the
+                // agent's shell expanded the glob against its own
+                // root (no /dist/conda there), found no match, and
+                // passed the literal pattern to anaconda upload.
+                // ANACONDA_TOKEN + ANACONDA_USER come in via -e so
+                // the inner single-quoted script can reference
+                // them without agent-side interpolation.
                 sh '''
                     docker run --rm \
                         -e ANACONDA_TOKEN \
+                        -e ANACONDA_USER \
                         -v "$PWD/dist/conda:/dist/conda:ro" \
                         "${CONDA_BUILDER}" \
-                        anaconda --token "$ANACONDA_TOKEN" \
-                            upload \
-                                --user "${ANACONDA_USER}" \
-                                --skip-existing \
-                                /dist/conda/*.conda
+                        sh -c 'anaconda --token "$ANACONDA_TOKEN" upload --user "$ANACONDA_USER" --skip-existing /dist/conda/*.conda'
                 '''
 
                 // 3) Docker → registry.seqpipe.org with
