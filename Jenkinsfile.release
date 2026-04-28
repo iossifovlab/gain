@@ -100,6 +100,13 @@ pipeline {
         REGISTRY_PASS   = credentials('passwd.registry.seqpipe.org')
         ANACONDA_TOKEN  = credentials('anaconda-token-iossifovlab')
         WHEELS_HOST     = 'wheels.seqpipe.org'
+        // Stated explicitly so we don't rely on each Jenkins
+        // agent's ~/.ssh/config to map wheels.seqpipe.org to the
+        // right account. Without this, a build that landed on an
+        // agent whose ssh config didn't set `User seqpipe` would
+        // ssh in as the local jenkins user, hit a directory it
+        // can't write, and fail mkstemp during rsync.
+        WHEELS_USER     = 'seqpipe'
         WHEELS_PATH     = '/data/wheels/gain'
         ANACONDA_USER   = 'iossifovlab'
         CONDA_BUILDER   = "gain-conda-builder-ci:${env.BUILD_NUMBER}"
@@ -273,7 +280,7 @@ pipeline {
                     sh '''
                         ssh -o BatchMode=yes \
                             -o StrictHostKeyChecking=accept-new \
-                            "${WHEELS_HOST}" true
+                            "${WHEELS_USER}@${WHEELS_HOST}" true
                     '''
                 }
                 sh '''
@@ -458,7 +465,7 @@ pipeline {
                         rsync -av \
                             -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
                             $files \
-                            "${WHEELS_HOST}:${WHEELS_PATH}/"
+                            "${WHEELS_USER}@${WHEELS_HOST}:${WHEELS_PATH}/"
                         # Regenerate the simple/ index in a
                         # throwaway python:3.12-slim container on
                         # the wheels host: pip install pip2pi at
@@ -478,7 +485,7 @@ pipeline {
                         # UID we're running as.
                         ssh -o BatchMode=yes \
                             -o StrictHostKeyChecking=accept-new \
-                            "${WHEELS_HOST}" \
+                            "${WHEELS_USER}@${WHEELS_HOST}" \
                             bash <<EOF
 set -e
 docker run --rm \\
