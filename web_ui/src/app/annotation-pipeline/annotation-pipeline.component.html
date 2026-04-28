@@ -87,27 +87,26 @@
       (ngModelChange)="isConfigValid()"></ngx-monaco-editor>
     <div id="status-bar">
       <span class="status-item">
-        <span class="material-symbols-outlined">menu</span>{{ pipelineInfo?.annotatorsCount || '?' }} annotators</span
+        <span class="material-symbols-outlined">menu</span>{{ pipelineInfo?.annotatorsCount || '0' }} annotators</span
       >
       <span class="status-item"
         ><span class="material-symbols-outlined">menu_open</span
-        >{{ pipelineInfo?.attributesCount || '?' }} attributes</span
+        >{{ pipelineInfo?.attributesCount || '0' }} attributes</span
       >
       <span
         class="status-item"
         #tooltip="matTooltip"
-        [matTooltip]="pipelineInfo?.annotatables.join('\n') || '?'"
+        [matTooltip]="pipelineInfo?.annotatables.join('\n') || '0'"
         matTooltipShowDelay="200"
         ><span class="material-symbols-outlined">edit_note</span
-        >{{ pipelineInfo?.annotatables?.length || '?' }} annotatables</span
+        >{{ pipelineInfo?.annotatables?.length || '0' }} annotatables</span
       >
       <span
         class="status-item"
         #tooltip="matTooltip"
-        [matTooltip]="pipelineInfo?.geneLists.join('\n') || '?'"
+        [matTooltip]="pipelineInfo?.geneLists.join('\n') || '0'"
         matTooltipShowDelay="200"
-        ><span class="material-symbols-outlined">grain</span>{{ pipelineInfo?.geneLists?.length || '?' }} gene
-        list</span
+        ><span class="material-symbols-outlined">grain</span>{{ pipelineInfo?.geneLists?.length || 0 }} gene list</span
       >
     </div>
   </div>
