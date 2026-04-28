@@ -462,10 +462,11 @@ pipeline {
                         # Regenerate the simple/ index in a
                         # throwaway python:3.12-slim container on
                         # the wheels host: pip install pip2pi at
-                        # run time, then pip-index against the
-                        # mounted wheels dir. Wheels host needs
-                        # only docker; no Python tooling installed
-                        # there.
+                        # run time, then dir2pi against the mounted
+                        # wheels dir. (pip2pi ships dir2pi/pip2pi/
+                        # pip2tgz — there's no `pip-index` binary.)
+                        # Wheels host needs only docker; no Python
+                        # tooling installed there.
                         #
                         # The heredoc lets ${WHEELS_PATH} expand
                         # on the agent while \\$(id -u)/\\$(id -g)
@@ -486,7 +487,7 @@ docker run --rm \\
     -v "${WHEELS_PATH}":/work \\
     -w /work \\
     python:3.12-slim \\
-    sh -c 'pip install --quiet --user pip2pi && /tmp/.local/bin/pip-index .'
+    sh -c 'pip install --quiet --user pip2pi && /tmp/.local/bin/dir2pi .'
 EOF
                     '''
                 }
