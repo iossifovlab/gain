@@ -707,7 +707,9 @@ variant frequencies, etc.
             if pos_end is None:
                 pos_end = line.pos_end
 
-            if self.allele_filter is not None and self.allele_filter(line):
+            if (
+                self.allele_filter is not None and self.allele_filter(line)
+            ) or self.allele_filter is None:
                 allele_str = f"{line.chrom}:{line.pos_begin}"
                 if line.ref is not None and line.alt is not None:
                     allele_str += f":{line.ref}:{line.alt}"
