@@ -10,10 +10,12 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from jinja2 import Template
+from lark import Lark, Token, Tree
 
 from gain.annotation.annotatable import Annotatable, VCFAllele
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
+    AnnotationConfigurationError,
     AnnotatorInfo,
     AttributeInfo,
 )
@@ -30,6 +32,7 @@ from gain.genomic_resources.genomic_scores import (
     PositionScore,
     PositionScoreQuery,
     ScoreDef,
+    ScoreLine,
     ScoreQuery,
 )
 from gain.genomic_resources.repository import GenomicResource
@@ -130,23 +133,39 @@ class GenomicScoreAnnotatorBase(Annotator):
             "region_length_cutoff", 500_000)
 
         info.resources.append(score.resource)
-        if not info.attributes:
-            info.attributes = AnnotationConfigParser.parse_raw_attributes(
-                score.get_default_annotation_attributes())
 
-        for attribute_info in info.attributes:
-            score_def = score.get_score_definition(attribute_info.source)
-            if score_def is None:
-                message = (
-                    f"The score '{attribute_info.source}' is "
-                    f"unknown in '{score.resource.get_id()}' "
-                    "resource!")
-                raise ValueError(message)
-            attribute_info.value_type = score_def.value_type
-            attribute_info.description = score_def.desc
+        if info.attributes:
+            for attribute_info in info.attributes:
+                if attribute_info.source not in self.score.score_definitions:
+                    continue
+                score_def = score.get_score_definition(attribute_info.source)
+                if score_def is None:
+                    message = (
+                        f"The score '{attribute_info.source}' is "
+                        f"unknown in '{score.resource.get_id()}' "
+                        "resource!")
+                    raise ValueError(message)
+                attribute_info.value_type = score_def.value_type
+                attribute_info.description = score_def.desc
+        else:
+            info.attributes = []
+            for attr_desc in self.get_all_attribute_descriptions().values():
+                if attr_desc.default:
+                    attr = AttributeInfo(
+                        name=cast(str, attr_desc.name),
+                        source=attr_desc.source,
+                        internal=attr_desc.internal,
+                        parameters={},
+                        _type=attr_desc.type,
+                        description=attr_desc.description,
+                        attribute_type=attr_desc.attribute_type,
+                        default=attr_desc.default,
+                    )
+                    info.attributes.append(attr)
 
         self.simple_score_queries: list[str] = [
-            attr.source for attr in info.attributes]
+            attr.source for attr in info.attributes
+            if attr.source in self.score.score_definitions]
 
     def open(self) -> Annotator:
         self.score.open()
@@ -404,10 +423,56 @@ def build_allele_score_annotator(pipeline: AnnotationPipeline,
 class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
     """This class implements allele_score annotator."""
 
+    ALLELE_FILTER_GRAMMAR = textwrap.dedent("""
+        ?start: filter | and_ | or
+
+        and_: filter "and" filter
+
+        or: filter "or" filter
+
+        ?filter: subject operator subject | or | and_
+
+        ?subject: variable | value
+
+        value: "\\"" word "\\"" | number
+
+        variable: word
+
+        operator: equals | greater_than | less_than | in
+
+        equals: "=="
+
+        greater_than: ">"
+
+        less_than: "<"
+
+        in: "in"
+
+        word: /[a-zA-Z!@#$%^&*()_+]+/
+
+        number: /[0-9\\.]+/
+
+        %ignore " "
+    """)
+
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
         resource = get_genomic_resource(
             pipeline, info, {"np_score", "allele_score"})
         self.allele_score = AlleleScore(resource)
+        self.filter_parser = Lark(self.ALLELE_FILTER_GRAMMAR)
+        self.allele_filter = None
+        allele_filter_str = info.parameters.get("allele_filter")
+        if allele_filter_str is not None:
+            assert isinstance(allele_filter_str, str)
+
+            cnv_filter_str = allele_filter_str.replace(
+                "\n", " ").replace("\t", " ").strip()
+            try:
+                self.allele_filter = self._build_allele_filter_func(
+                    self.filter_parser.parse(cnv_filter_str))
+            except Exception as e:
+                raise AnnotationConfigurationError(
+                    f"Error parsing cnv_filter: {e}") from e
 
         super().__init__(pipeline, info, self.allele_score)
         self.allele_score_queries = []
@@ -420,7 +485,16 @@ variant frequencies, etc.
 
 """)  # noqa
 
+        self.allele_attribute = None
+
         for att_info in info.attributes:
+            if att_info.source == "allele":
+                self.attrs_to_include = att_info.parameters.get(
+                    "include_attributes", [])
+                if isinstance(self.attrs_to_include, str):
+                    self.attrs_to_include = [self.attrs_to_include]
+                self.allele_attribute = att_info
+                continue
             pos_agg = att_info.parameters.get("position_aggregator")
             nuc_agg = att_info.parameters.get("nucleotide_aggregator")
             allele_agg = att_info.parameters.get("allele_aggregator")
@@ -440,6 +514,101 @@ variant frequencies, etc.
                 att_info, "position_aggregator", pos_agg)
             self.add_score_aggregator_documentation(
                 att_info, "allele_aggregator", allele_agg)
+
+    @classmethod
+    def _build_allele_filter_func(
+        cls, tree: Tree,
+    ) -> Callable[[ScoreLine], bool]:
+        if tree.data == "and_":
+            assert isinstance(tree.children[0], Tree)
+            assert isinstance(tree.children[1], Tree)
+            left_func = cls._build_allele_filter_func(tree.children[0])
+            right_func = cls._build_allele_filter_func(tree.children[1])
+            return lambda cnv: left_func(cnv) and right_func(cnv)
+        if tree.data == "or":
+            left_func = cls._build_allele_filter_func(tree.children[0])
+            right_func = cls._build_allele_filter_func(tree.children[1])
+            return lambda cnv: left_func(cnv) or right_func(cnv)
+
+        left = tree.children[0]
+        assert isinstance(left, Tree)
+        assert isinstance(left.data, Token)
+        left_type = left.data.value
+        if left_type == "variable":
+            assert isinstance(left.children[0], Tree)
+            assert isinstance(left.children[0].data, Token)
+            assert left.children[0].data.value == "word"
+            assert isinstance(left.children[0].children[0], Token)
+            left_value = left.children[0].children[0].value
+
+            def left_accessor(_score: ScoreLine) -> Any:
+                return _score.get_score(left_value)
+        else:
+            assert isinstance(left.children[0], Tree)
+            assert isinstance(left.children[0].data, Token)
+            is_number = left.children[0].data.value == "number"
+            assert isinstance(left.children[0].children[0], Token)
+            left_value = left.children[0].children[0].value
+            if is_number:
+                left_value = float(left_value)
+
+            def left_accessor(
+                _score: ScoreLine,
+            ) -> Any:  # pylint: disable=unused-argument
+                return left_value
+        assert isinstance(tree.children[1], Tree)
+        assert isinstance(tree.children[1].children[0], Tree)
+        assert isinstance(tree.children[1].children[0].data, Token)
+        operator = tree.children[1].children[0].data.value
+        right = tree.children[2]
+        assert isinstance(right, Tree)
+        assert isinstance(right.data, Token)
+        right_type = right.data.value
+        if right_type == "variable":
+            assert isinstance(right.children[0], Tree)
+            assert isinstance(right.children[0].data, Token)
+            assert right.children[0].data.value == "word"
+            assert isinstance(right.children[0].children[0], Token)
+            right_value = right.children[0].children[0].value
+
+            def right_accessor(_score: ScoreLine) -> Any:
+                return _score.get_score(right_value)
+        else:
+            assert isinstance(right.children[0], Tree)
+            assert isinstance(right.children[0].data, Token)
+            is_number = right.children[0].data.value == "number"
+            assert isinstance(right.children[0].children[0], Token)
+            right_value = right.children[0].children[0].value
+            if is_number:
+                right_value = float(right_value)
+
+            def right_accessor(
+                _score: ScoreLine,
+            ) -> Any:  # pylint: disable=unused-argument
+                return right_value
+
+        if operator == "equals":
+            return lambda cnv: left_accessor(cnv) == right_accessor(cnv)
+        if operator == "greater_than":
+            return lambda cnv: left_accessor(cnv) > right_accessor(cnv)
+        if operator == "less_than":
+            return lambda cnv: left_accessor(cnv) < right_accessor(cnv)
+        if operator == "in":
+            return lambda cnv: left_accessor(cnv) in right_accessor(cnv)
+
+        raise ValueError(f"Unsupported operator {operator.data}")
+
+    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
+        result = super().get_all_attribute_descriptions()
+        result["allele"] = AttributeDesc(
+            source="allele",
+            name="allele",
+            type="str",
+            description="The allele in the format 'chr:pos:ref:alt'",
+            default=False,
+            internal=False,
+        )
+        return result
 
     def build_score_aggregator_documentation(
         self, attr_info: AttributeInfo,
@@ -464,24 +633,135 @@ variant frequencies, etc.
         )
         return [pos_doc, allele_doc]
 
-    def _fetch_substitution_scores(
-            self, allele: VCFAllele) -> list[Any] | None:
-        return self.allele_score.fetch_scores(
-            allele.chromosome, allele.position,
-            allele.reference, allele.alternative,
-            self.simple_score_queries)
-
-    def _fetch_vcf_allele_score(self, allele: VCFAllele) \
-            -> list[Any] | None:
-        return self.allele_score.fetch_scores(
-            allele.chromosome, allele.position, allele.reference,
-            allele.alternative, self.simple_score_queries)
-
     def _fetch_aggregated_scores(self, annotatable: Annotatable) -> list[Any]:
         scores_agg = self.allele_score.fetch_scores_agg(
             annotatable.chrom, annotatable.pos, annotatable.pos_end,
             self.allele_score_queries)
         return [sagg.get_final() for sagg in scores_agg]
+
+    def _annotate_exact_match(
+        self, annotatable: Annotatable,
+    ) -> dict[str, Any]:
+        assert isinstance(annotatable, VCFAllele)
+        scores = self.allele_score.fetch_scores(
+            annotatable.chromosome, annotatable.position,
+            annotatable.reference, annotatable.alternative,
+            self.simple_score_queries,
+        )
+        if scores is None:
+            return self._empty_result()
+
+        if "allele" in [att.source for att in self.attributes]:
+            attr = next(
+                att for att in self.attributes if att.source == "allele"
+            )
+            allele_str = (
+                f"{annotatable.chromosome}:{annotatable.position}"
+                f":{annotatable.reference}:{annotatable.alternative}"
+            )
+            if len(self.attrs_to_include) > 0:
+                attrs_str = ", ".join(
+                    [str(scores.get(attr)) for attr in self.attrs_to_include],
+                )
+                allele_str += f":{attrs_str}"
+            scores[attr.name] = allele_str
+
+        result = {}
+
+        for attr in self.attributes:
+            result[attr.name] = scores.get(attr.source)
+
+        return result
+
+    def aggregate_scores(
+        self, score_lines: list[ScoreLine],
+        scores: list[AlleleScoreQuery] | None = None,
+    ) -> dict[str, Any]:
+        """Perform aggregation of score values for the provided lines."""
+        if scores is None:
+            scores = [
+                AlleleScoreQuery(score_id)
+                for score_id in self.allele_score.get_all_scores()]
+
+        score_aggs = self.allele_score.build_scores_agg(scores)
+
+        def aggregate_alleles() -> None:
+            for sagg in score_aggs.values():
+                sagg.position_aggregator.add(
+                    sagg.allele_aggregator.get_final())
+                sagg.allele_aggregator.clear()
+
+        last_pos: int = score_lines[0].pos_begin
+        if not score_lines:
+            return {
+                score: sagg.position_aggregator
+                for score, sagg in score_aggs.items()
+            }
+
+        pos_begin = None
+        pos_end = None
+        alleles = set()
+        for line in score_lines:
+            if pos_begin is None:
+                pos_begin = line.pos_begin
+            if pos_end is None:
+                pos_end = line.pos_end
+
+            if self.allele_filter is not None and self.allele_filter(line):
+                allele_str = f"{line.chrom}:{line.pos_begin}"
+                if line.ref is not None and line.alt is not None:
+                    allele_str += f":{line.ref}:{line.alt}"
+                if len(self.attrs_to_include) > 0:
+                    attrs_str = ", ".join([
+                        str(line.get_score(attr))
+                        for attr in self.attrs_to_include
+                    ])
+                    allele_str += f":{attrs_str}"
+                alleles.add(allele_str)
+
+            if line.pos_begin != last_pos:
+                aggregate_alleles()
+
+            for sagg in score_aggs.values():
+                val = line.get_score(sagg.score)
+                left = line.pos_begin
+                right = line.pos_end
+                for _ in range(left, right + 1):
+                    sagg.allele_aggregator.add(val)
+            last_pos = line.pos_begin
+        aggregate_alleles()
+
+        results = {
+            score: sagg.position_aggregator.get_final()
+            for score, sagg in score_aggs.items()
+        }
+        if self.allele_attribute is not None:
+            results[self.allele_attribute.source] = ",".join(alleles)
+        return results
+
+    def _annotate_aggregated(
+        self, annotatable: Annotatable,
+    ) -> dict[str, Any]:
+        score_lines = list(self.allele_score.fetch_lines(
+            annotatable.chrom,
+            annotatable.position,
+            annotatable.pos_end,
+            ))
+
+        if len(annotatable) > self._region_length_cutoff:
+            return self._empty_result()
+
+        scores = self.aggregate_scores(
+            score_lines, self.allele_score_queries,
+        )
+
+        if scores is None:
+            return self._empty_result()
+
+        return {
+            attr.name: scores.get(attr.source)
+            for attr in self.attributes
+        }
 
     def annotate(
         self, annotatable: Annotatable | None,
@@ -494,22 +774,20 @@ variant frequencies, etc.
         if annotatable.chromosome not in self.score.get_all_chromosomes():
             return self._empty_result()
 
-        if self.allele_score.substitutions_mode() and \
-                annotatable.type == Annotatable.Type.SUBSTITUTION:
-            assert isinstance(annotatable, VCFAllele)
-            scores = self._fetch_substitution_scores(annotatable)
-        elif self.allele_score.alleles_mode() and \
-                isinstance(annotatable, VCFAllele):
-            scores = self._fetch_vcf_allele_score(annotatable)
+        if (
+            self.allele_score.substitutions_mode() and
+            annotatable.type == Annotatable.Type.SUBSTITUTION
+        ) or (
+            self.allele_score.alleles_mode() and
+            isinstance(annotatable, VCFAllele)
+        ):
+            scores = self._annotate_exact_match(annotatable)
         else:
             if len(annotatable) > self._region_length_cutoff:
-                scores = None
-            else:
-                scores = self._fetch_aggregated_scores(annotatable)
+                return self._empty_result()
+            scores = self._annotate_aggregated(annotatable)
 
         if scores is None:
             return self._empty_result()
 
-        return dict(zip(
-            [att.name for att in self.attributes],
-            scores, strict=True))
+        return scores

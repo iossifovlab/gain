@@ -761,7 +761,7 @@ class GenomicScore(ResourceConfigValidationMixin):
         assert self.table is not None
         return self.table.header
 
-    def _fetch_lines(
+    def fetch_lines(
         self,
         chrom: str | None,
         pos_begin: int | None,
@@ -807,7 +807,7 @@ class GenomicScore(ResourceConfigValidationMixin):
         if scores is None:
             scores = self.get_all_scores()
 
-        for line in self._fetch_lines(chrom, pos_begin, pos_end):
+        for line in self.fetch_lines(chrom, pos_begin, pos_end):
             line_chrom, line_begin, line_end = self._line_to_begin_end(line)
             if pos_begin is not None and line_end < pos_begin:
                 continue
@@ -1012,7 +1012,7 @@ class PositionScore(GenomicScore):
                 for s in scores]
         assert all(isinstance(s, str) for s in scores)
 
-        lines = list(self._fetch_lines(chrom, position, position))
+        lines = list(self.fetch_lines(chrom, position, position))
         if not lines:
             return None
 
@@ -1083,7 +1083,7 @@ class PositionScore(GenomicScore):
 
         score_aggs = self._build_scores_agg(scores)
 
-        for line in self._fetch_lines(chrom, pos_begin, pos_end):
+        for line in self.fetch_lines(chrom, pos_begin, pos_end):
             _line_chrom, line_begin, line_end = self._line_to_begin_end(line)
             for sagg in score_aggs:
                 val = line.get_score(sagg.score)
@@ -1367,14 +1367,14 @@ class AlleleScore(GenomicScore):
         self, chrom: str, position: int,
         reference: str, alternative: str,
         scores: list[str] | None = None,
-    ) -> list[ScoreValue] | None:
+    ) -> dict[str, ScoreValue] | None:
         """Fetch score values at specified genomic position and nucleotide."""
         if chrom not in self.get_all_chromosomes():
             raise ValueError(
                 f"{chrom} is not among the available chromosomes for "
                 f"NP Score resource {self.resource_id}")
 
-        lines = list(self._fetch_lines(chrom, position, position))
+        lines = list(self.fetch_lines(chrom, position, position))
         if not lines:
             return None
 
@@ -1387,12 +1387,12 @@ class AlleleScore(GenomicScore):
         if not selected_line:
             return None
         requested_scores = scores or self.get_all_scores()
-        return [selected_line.get_score(sc) for sc in requested_scores]
+        return {sc: selected_line.get_score(sc) for sc in requested_scores}
 
-    def _build_scores_agg(
+    def build_scores_agg(
         self, score_queries: list[AlleleScoreQuery],
-    ) -> list[AlleleScoreAggr]:
-        score_aggs = []
+    ) -> dict[str, AlleleScoreAggr]:
+        score_aggs = {}
         for squery in score_queries:
             scr_def = self.score_definitions[squery.score]
 
@@ -1409,9 +1409,8 @@ class AlleleScore(GenomicScore):
                 assert scr_def.allele_aggregator is not None
                 aggregator_type = scr_def.allele_aggregator
             allele_aggregator = build_aggregator(aggregator_type)
-            score_aggs.append(
-                AlleleScoreAggr(
-                    squery.score, position_aggregator, allele_aggregator))
+            score_aggs[squery.score] = AlleleScoreAggr(
+                squery.score, position_aggregator, allele_aggregator)
         return score_aggs
 
     def fetch_scores_agg(
@@ -1430,9 +1429,9 @@ class AlleleScore(GenomicScore):
                 AlleleScoreQuery(score_id)
                 for score_id in self.get_all_scores()]
 
-        score_aggs = self._build_scores_agg(scores)
+        score_aggs = self.build_scores_agg(scores)
 
-        score_lines = list(self._fetch_lines(chrom, pos_begin, pos_end))
+        score_lines = list(self.fetch_lines(chrom, pos_begin, pos_end))
         if not score_lines:
             return [sagg.position_aggregator for sagg in score_aggs]
 
@@ -1555,7 +1554,7 @@ class CnvCollection(GenomicScore):
         if chrom not in self.table.get_chromosomes():
             return cnvs
 
-        lines = list(self._fetch_lines(chrom, start, stop))
+        lines = list(self.fetch_lines(chrom, start, stop))
         if not lines:
             return cnvs
 
