@@ -19,7 +19,6 @@ from pytest_mock import MockerFixture
 
 from web_annotation.consumers import AnnotationStateConsumer
 from web_annotation.executor import SequentialTaskExecutor
-from web_annotation.mail import send_email
 from web_annotation.models import (
     AnonymousJob,
     Job,
@@ -31,9 +30,6 @@ from web_annotation.models import (
 from web_annotation.pipeline_cache import LRUPipelineCache
 from web_annotation.tasks import clean_old_jobs
 from web_annotation.testing import CustomWebsocketCommunicator
-from web_annotation.tests.mailhog_client import (
-    MailhogClient,
-)
 
 
 @pytest.fixture(autouse=True)

@@ -2,13 +2,12 @@
 import pathlib
 import shutil
 from collections.abc import Generator
-from typing import Any, cast
+from typing import cast
 from urllib.parse import urlparse
 
 import pytest
 import pytest_mock
-from django.conf import LazySettings, settings
-from django.core import mail
+from django.conf import settings
 from django.test import Client
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (

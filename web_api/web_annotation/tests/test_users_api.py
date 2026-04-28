@@ -1,16 +1,12 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import re
-from typing import Any
 
 import pytest
 from django.conf import LazySettings
-from django.test import Client
 from django.core import mail
+from django.test import Client
 
 from web_annotation.models import User
-from web_annotation.tests.mailhog_client import (
-    MailhogClient,
-)
 
 
 def test_get_users(admin_client: Client) -> None:
