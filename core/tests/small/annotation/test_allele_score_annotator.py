@@ -99,6 +99,7 @@ def test_allele_score_annotator_attributes(
     assert attributes[1].value_type == "float"
     assert attributes[1].description == ""
 
+
 @pytest.mark.parametrize("variant, expected", [
     (("1", 10, "A", "G"), 0.02),
     (("1", 10, "A", "C"), 0.03),

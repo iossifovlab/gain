@@ -39,10 +39,14 @@ def test_the_simplest_np_score() -> None:
     score.open()
 
     assert score.get_all_scores() == ["cadd_raw"]
-    assert score.fetch_scores("1", 10, "A", "C") == [0.03]
+    assert score.fetch_scores("1", 10, "A", "C") == {"cadd_raw": 0.03}
 
-    assert score.fetch_scores_agg("1", 10, 11) == [0.04]
-    assert score.fetch_scores_agg("1", 15, 16) == [0.05]
+    assert [
+        agg.get_final() for agg in score.fetch_scores_agg("1", 10, 11)
+    ] == [0.04]
+    assert [
+        agg.get_final() for agg in score.fetch_scores_agg("1", 15, 16)
+    ] == [0.05]
 
 
 def test_np_score_aggregation() -> None:

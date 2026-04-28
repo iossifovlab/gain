@@ -578,11 +578,12 @@ class GenomicScore(ResourceConfigValidationMixin):
         for score, config_scoredef in config_scoredefs.items():
             vcf_scoredef = vcf_scoredefs[score]
 
+            value_type = config_scoredef.value_type or vcf_scoredef.value_type
+
             scoredef = _ScoreDef(
                 score_id=vcf_scoredef.score_id,
                 desc=config_scoredef.desc or vcf_scoredef.desc,
-                value_type=config_scoredef.value_type
-                    or vcf_scoredef.value_type,
+                value_type=value_type,
 
                 pos_aggregator=config_scoredef.pos_aggregator,
                 allele_aggregator=config_scoredef.allele_aggregator,
@@ -1360,7 +1361,8 @@ class AlleleScore(GenomicScore):
             if prev_right is not None and left < prev_right:
                 raise ValueError(
                     f"multiple values for positions [{left}, {prev_right}]")
-            returned_region = (lchrom, left, right, val, {(line.ref, line.alt)})
+            returned_region = (
+                lchrom, left, right, val, {(line.ref, line.alt)})
             yield (left, line.ref, line.alt, val)
 
     def fetch_scores(
@@ -1433,10 +1435,10 @@ class AlleleScore(GenomicScore):
 
         score_lines = list(self.fetch_lines(chrom, pos_begin, pos_end))
         if not score_lines:
-            return [sagg.position_aggregator for sagg in score_aggs]
+            return [sagg.position_aggregator for sagg in score_aggs.values()]
 
         def aggregate_alleles() -> None:
-            for sagg in score_aggs:
+            for sagg in score_aggs.values():
                 sagg.position_aggregator.add(
                     sagg.allele_aggregator.get_final())
                 sagg.allele_aggregator.clear()
@@ -1446,7 +1448,7 @@ class AlleleScore(GenomicScore):
             if line.pos_begin != last_pos:
                 aggregate_alleles()
 
-            for sagg in score_aggs:
+            for sagg in score_aggs.values():
                 val = line.get_score(sagg.score)
                 left = (
                     max(pos_begin, line.pos_begin)
@@ -1459,7 +1461,7 @@ class AlleleScore(GenomicScore):
             last_pos = line.pos_begin
         aggregate_alleles()
 
-        return [sagg.position_aggregator for sagg in score_aggs]
+        return [sagg.position_aggregator for sagg in score_aggs.values()]
 
 
 @dataclass

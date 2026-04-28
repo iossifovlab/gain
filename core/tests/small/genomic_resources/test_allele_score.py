@@ -52,7 +52,7 @@ def test_the_simplest_allele_score() -> None:
     score.open()
 
     assert score.get_all_scores() == ["freq"]
-    assert score.fetch_scores("1", 10, "A", "C") == [0.03]
+    assert score.fetch_scores("1", 10, "A", "C") == {"freq": 0.03}
 
 
 def test_allele_score_fetch_region() -> None:
@@ -361,7 +361,7 @@ def test_allele_score_build_scores_agg_defaults() -> None:
 
     score = AlleleScore(res)
 
-    aggs = score._build_scores_agg([AlleleScoreQuery("freq")])
+    aggs = list(score.build_scores_agg([AlleleScoreQuery("freq")]).values())
     assert len(aggs) == 1
     assert isinstance(aggs[0].position_aggregator, MeanAggregator)
     assert isinstance(aggs[0].allele_aggregator, MaxAggregator)
@@ -391,10 +391,10 @@ def test_allele_score_build_scores_agg_overrides() -> None:
 
     score = AlleleScore(res)
 
-    aggs = score._build_scores_agg([
+    aggs = list(score.build_scores_agg([
         AlleleScoreQuery("freq", position_aggregator="min",
                          allele_aggregator="mean"),
-    ])
+    ]).values())
     assert len(aggs) == 1
     assert isinstance(aggs[0].position_aggregator, MinAggregator)
     assert isinstance(aggs[0].allele_aggregator, MeanAggregator)
