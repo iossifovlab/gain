@@ -122,11 +122,10 @@ test.describe('Single annotation report tests', () => {
     const downloadPromise = page.waitForEvent('download');
     await page.locator('#download-report-button').click();
     const download = await downloadPromise;
-
-    const fixtureData = scanCSV(await download.path(), {truncateRaggedLines: true});
-    const downloadData = scanCSV('./fixtures/chr1_11796321_G_A_report.tsv', {truncateRaggedLines: true});
-    const fixtureFrame = await fixtureData.collect();
-    const downloadFrame = await downloadData.collect();
+    const fixtureData = scanCSV(await download.path(), {truncateRaggedLines: true, sep: '\t' });
+    const downloadData = scanCSV('./fixtures/chr1_11796321_G_A_report.tsv', {truncateRaggedLines: true, sep: '\t' });
+    const fixtureFrame = (await fixtureData.collect()).sort('Attribute name');
+    const downloadFrame = (await downloadData.collect()).sort('Attribute name');
     expect(fixtureFrame.toString()).toEqual(downloadFrame.toString());
   });
 
