@@ -1394,6 +1394,7 @@ class AlleleScore(GenomicScore):
     def build_scores_agg(
         self, score_queries: list[AlleleScoreQuery],
     ) -> dict[str, AlleleScoreAggr]:
+        """Build allele score aggregators for the specified queries."""
         score_aggs = {}
         for squery in score_queries:
             scr_def = self.score_definitions[squery.score]
