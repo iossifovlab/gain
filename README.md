@@ -11,13 +11,53 @@ https://iossifovlab.com/gpfuserdocs/.
 
 ## Repository overview
 
-- **`core/`** — GAIn core: annotation engine,
-  genomic resources, effect annotation, task graph,
-  gene scores/sets. Python package: `gain`.
-- **`spliceai_annotator/`**,
-  **`vep_annotator/`**,
-  **`demo_annotator/`** — external annotation
-  plugins (Docker-based).
+Python packages (uv workspace members):
+
+- **`core/`** — GAIn core: annotation engine, genomic
+  resources, effect annotation, task graph, gene
+  scores/sets. Python package: `gain`.
+- **`web_api/`** — Django backend serving the GAIn
+  web API. Python package: `gain-web-api`.
+- **`spliceai_annotator/`**, **`vep_annotator/`**,
+  **`demo_annotator/`** — external annotation plugins
+  (Docker-based, optional workspace members).
+
+Web stack and deployment:
+
+- **`web_ui/`** — Angular frontend, served behind Apache
+  in production.
+- **`web_e2e/`** — Playwright end-to-end tests
+  exercising the full web_api + web_ui stack.
+- **`web_infra/`** — Docker compose files for deploying
+  the production web stack.
+
+CI / release plumbing:
+
+- **`Jenkinsfile`** — root multibranch CI: lint, tests,
+  per-package wheels and conda builds, prod Docker
+  images, dispatches the release pipeline on CalVer
+  tags.
+- **`Jenkinsfile.release`** — tag-driven release
+  pipeline (`gain-release`): rebuilds wheels, conda
+  packages, and digest-pinned prod Docker images for a
+  tagged commit, then publishes wheels to
+  `wheels.seqpipe.org`, conda to Anaconda.org, and
+  Docker images to `registry.seqpipe.org`.
+- **`conda-builder/`** — Docker image carrying the conda
+  build/upload toolchain (rattler-build, anaconda-client,
+  uv) used by both pipelines.
+- **`jenkins-jobs/`** — Jenkins job DSLs
+  (`release.groovy`, `Jenkinsfile.seed`).
+- **`docker-compose.yaml`** — local fixture services
+  (MinIO + Apache httpd) for tests that need S3 or
+  HTTP-fetched genomic resources.
+
+Other:
+
+- **`docs/`** — design notes (one file per phase, dated).
+- **`scripts/`** — helper scripts (lint output
+  conversion, `wait-for-it.sh`).
+- **`typings/`** — type stubs.
 
 Primary stack: Python 3.12, dask, pandas, pyarrow,
 duckdb, pysam, pytest, mypy, ruff.
@@ -78,7 +118,7 @@ source .venv/bin/activate
 The lockfile (`uv.lock`) is committed. Use `uv lock
 --upgrade` to refresh.
 
-### 3) Run tests
+### Run tests
 
 Quick cycles (examples):
 
@@ -92,14 +132,18 @@ Full suite (parallel):
 
 ```bash
 cd core
-conda run -n gain pytest -v -n 10 tests/
+pytest -v -n 10 tests/
 ```
 
 Test markers and configuration are defined in
 `core/pytest.ini` (e.g., `grr_rw`, `grr_ro`,
-`grr_full`, `grr_http`, `grr_tabix`).
+`grr_full`, `grr_http`, `grr_tabix`). Tests tagged
+`grr_http` / `grr_full` need fixture services from
+`docker-compose.yaml` running locally
+(`docker compose up -d`) and are gated behind
+`--enable-s3-testing` / `--enable-http-testing`.
 
-### 4) Linting and type checking
+### Linting and type checking
 
 ```bash
 ruff check --fix .
