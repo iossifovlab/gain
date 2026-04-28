@@ -1,9 +1,11 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import re
+from typing import Any
 
 import pytest
 from django.conf import LazySettings
 from django.test import Client
+from django.core import mail
 
 from web_annotation.models import User
 from web_annotation.tests.mailhog_client import (
@@ -51,9 +53,8 @@ def test_register(client: Client) -> None:
 
 def test_register_and_activate_account(
     client: Client,
-    mail_client: MailhogClient,
 ) -> None:
-    mail_client.delete_all_messages()
+    mail.outbox.clear()
 
     response = client.post(
         "/api/register",
@@ -66,13 +67,13 @@ def test_register_and_activate_account(
     assert response.status_code == 200
     assert User.objects.filter(email="temp@example.com").exists()
 
-    message = mail_client.find_message_to_user("temp@example.com")
+    message_body = mail.outbox[-1].message().get_payload()
     assert "/confirm_account?code=" \
-        in message["Content"]["Body"]
+        in message_body
 
     confirmation_link_search = re.search(
-        r"new account:\r\n (.*)",
-        message["Content"]["Body"],
+        r"new account:\n (.*)",
+        message_body,
     )
     assert confirmation_link_search is not None
 
@@ -231,9 +232,8 @@ def test_load_of_reset_password_form(
 @pytest.mark.django_db
 def test_reset_password_email(
     client: Client,
-    mail_client: MailhogClient,
 ) -> None:
-    mail_client.delete_all_messages()
+    mail.outbox.clear()
 
     response = client.post(
         "/api/forgotten_password",
@@ -241,19 +241,17 @@ def test_reset_password_email(
     )
     assert response.status_code == 200
 
-    emails = mail_client.get_all_messages()
-    assert emails["total"] != 0
+    assert len(mail.outbox) == 1
 
-    message = mail_client.find_message_to_user("user@example.com")
-    assert "/reset_password?code=" in message["Content"]["Body"]
+    message = mail.outbox[0].message().get_payload()
+    assert "/reset_password?code=" in message
 
 
 @pytest.mark.django_db
 def test_load_reset_password_form(
     client: Client,
-    mail_client: MailhogClient,
 ) -> None:
-    mail_client.delete_all_messages()
+    mail.outbox.clear()
 
     response = client.post(
         "/api/forgotten_password",
@@ -261,10 +259,10 @@ def test_load_reset_password_form(
     )
     assert response.status_code == 200
 
-    message = mail_client.find_message_to_user("user@example.com")
+    message = mail.outbox[0].message().get_payload()
     link_search = re.search(
-        r":8000(.*)\r\n",
-        message["Content"]["Body"],
+        r":8000(.*)\n",
+        message,
     )
     assert link_search is not None
 
@@ -287,8 +285,8 @@ def test_load_reset_password_form(
 @pytest.mark.django_db
 def test_reset_password_form(
     client: Client,
-    mail_client: MailhogClient,
 ) -> None:
+    mail.outbox.clear()
     user = User.objects.create_user(
         "temp-user",
         "temp@example.com",
@@ -296,18 +294,16 @@ def test_reset_password_form(
     )
     user.save()
 
-    mail_client.delete_all_messages()
-
     response = client.post(
         "/api/forgotten_password",
         {"email": "temp@example.com"},
     )
     assert response.status_code == 200
 
-    message = mail_client.find_message_to_user("temp@example.com")
+    message = mail.outbox[0].message().get_payload()
     code_search = re.search(
-        r"code=(.*)\r\n",
-        message["Content"]["Body"],
+        r"code=(.*)\n",
+        message,
     )
     assert code_search is not None
 
@@ -333,8 +329,9 @@ def test_reset_password_form(
 def test_reset_password_form_with_invalid_code(
     user_client: Client,
     client: Client,
-    mail_client: MailhogClient,
 ) -> None:
+    mail.outbox.clear()
+
     user = User.objects.create_user(
         "temp-user",
         "temp@example.com",
@@ -342,18 +339,16 @@ def test_reset_password_form_with_invalid_code(
     )
     user.save()
 
-    mail_client.delete_all_messages()
-
     response = user_client.post(
         "/api/forgotten_password",
         {"email": "temp@example.com"},
     )
     assert response.status_code == 200
 
-    message = mail_client.find_message_to_user("temp@example.com")
+    message = mail.outbox[0].message().get_payload()
     code_search = re.search(
-        r"code=(.*)\r\n",
-        message["Content"]["Body"],
+        r"code=(.*)\n",
+        message,
     )
     assert code_search is not None
 
@@ -384,9 +379,8 @@ def test_reset_password_form_with_invalid_code(
 
 def test_activation_of_account_through_reset_password(
     client: Client,
-    mail_client: MailhogClient,
 ) -> None:
-    mail_client.delete_all_messages()
+    mail.outbox.clear()
 
     response = client.post(
         "/api/register",
@@ -400,7 +394,7 @@ def test_activation_of_account_through_reset_password(
     assert response.status_code == 200
     assert User.objects.filter(email="temp@example.com").exists()
 
-    mail_client.delete_all_messages()  # Ignore the confirmation email
+    mail.outbox.clear()
 
     response = client.post(
         "/api/forgotten_password",
@@ -408,10 +402,10 @@ def test_activation_of_account_through_reset_password(
     )
     assert response.status_code == 200
 
-    message = mail_client.find_message_to_user("temp@example.com")
+    message = mail.outbox[0].message().get_payload()
     code_search = re.search(
-        r"code=(.*)\r\n",
-        message["Content"]["Body"],
+        r"code=(.*)\n",
+        message,
     )
     assert code_search is not None
 

@@ -136,18 +136,6 @@ def test_job_update_success() -> None:
 
 
 @pytest.mark.django_db
-def test_send_email(mail_client: MailhogClient) -> None:
-    email_result = send_email(
-        "TEST SUBJECT",
-        "TEST MESSAGE",
-        ["recipient1@mail.com", "recipient2@mail.com"],
-        "sender@mail.com",
-    )
-
-    assert email_result == 1
-
-
-@pytest.mark.django_db
 def test_job_failure_starts_email_task(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

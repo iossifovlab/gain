@@ -2,12 +2,13 @@
 import pathlib
 import shutil
 from collections.abc import Generator
-from typing import cast
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import pytest
 import pytest_mock
 from django.conf import LazySettings, settings
+from django.core import mail
 from django.test import Client
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
@@ -15,7 +16,6 @@ from gain.genomic_resources.repository_factory import (
 )
 
 from web_annotation.models import Job, User
-from web_annotation.tests.mailhog_client import MailhogClient
 
 
 @pytest.fixture(autouse=True)
@@ -36,14 +36,6 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="REST API URL",
     )
 
-    parser.addoption(
-        "--mailhog",
-        dest="mailhog",
-        action="store",
-        default="http://localhost:8025",
-        help="Mailhog REST API URL",
-    )
-
 
 @pytest.fixture
 def test_grr(mocker: pytest_mock.MockFixture) -> GenomicResourceRepo:
@@ -58,13 +50,12 @@ def test_grr(mocker: pytest_mock.MockFixture) -> GenomicResourceRepo:
     )
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="function", autouse=True)
 def setup_data_dirs() -> Generator[None, None, None]:
-    assert not pathlib.Path(settings.DATA_STORAGE_DIR).exists()
-    pathlib.Path(settings.DATA_STORAGE_DIR).mkdir()
-    pathlib.Path(settings.ANNOTATION_CONFIG_STORAGE_DIR).mkdir()
-    pathlib.Path(settings.JOB_INPUT_STORAGE_DIR).mkdir()
-    pathlib.Path(settings.JOB_RESULT_STORAGE_DIR).mkdir()
+    pathlib.Path(settings.DATA_STORAGE_DIR).mkdir(exist_ok=True)
+    pathlib.Path(settings.ANNOTATION_CONFIG_STORAGE_DIR).mkdir(exist_ok=True)
+    pathlib.Path(settings.JOB_INPUT_STORAGE_DIR).mkdir(exist_ok=True)
+    pathlib.Path(settings.JOB_RESULT_STORAGE_DIR).mkdir(exist_ok=True)
     yield
     shutil.rmtree(settings.DATA_STORAGE_DIR)
 
@@ -155,15 +146,6 @@ def clients(
         "user": user_client,
         "anonymous": anonymous_client,
     }
-
-
-@pytest.fixture
-def mail_client(mailhog_url: str, settings: LazySettings) -> MailhogClient:
-    """REST client fixture."""
-    # Workaround for django test environment setup being hardcoded to
-    # always set up a locmem backend
-    settings.EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-    return MailhogClient(mailhog_url)
 
 
 @pytest.fixture
