@@ -49,7 +49,7 @@ def test_grr(mocker: pytest_mock.MockFixture) -> GenomicResourceRepo:
     )
 
 
-@pytest.fixture(scope="function", autouse=True)
+@pytest.fixture(autouse=True)
 def setup_data_dirs() -> Generator[None, None, None]:
     pathlib.Path(settings.DATA_STORAGE_DIR).mkdir(exist_ok=True)
     pathlib.Path(settings.ANNOTATION_CONFIG_STORAGE_DIR).mkdir(exist_ok=True)
