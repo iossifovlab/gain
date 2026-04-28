@@ -477,6 +477,21 @@ pipeline {
                     }
                     steps {
                         sh '''
+                            # Pull base images up front so `docker image
+                            # inspect` further down can read a populated
+                            # RepoDigests. BuildKit-driven `docker build`
+                            # pulls images into BuildKit's content store
+                            # but doesn't always register them at the
+                            # daemon level with a <repo>:<tag> +
+                            # RepoDigests entry, which previously left
+                            # NODE_IMAGE/HTTPD_IMAGE empty in
+                            # dist/base-images.lock and broke the Phase
+                            # 10 release pipeline's digest-pinned
+                            # rebuild.
+                            docker pull python:3.12-slim
+                            docker pull node:22.14.0-alpine
+                            docker pull httpd:2.4-alpine
+
                             # Build backend; tag with build number first
                             # so the frontend's --build-arg can reference
                             # it. PYTHON_IMAGE is passed explicitly so the
@@ -519,6 +534,19 @@ pipeline {
                                     --format '{{index .RepoDigests 0}}')"
                             } > dist/base-images.lock
                             cat dist/base-images.lock
+
+                            # Fail loud if RepoDigests came back empty.
+                            # The release pipeline silently consumes
+                            # whatever this file contains and an empty
+                            # value only surfaces several stages later
+                            # as an opaque `docker build` failure.
+                            if grep -E '^[A-Z_]+=$' dist/base-images.lock; then
+                                echo "ERROR: empty digest(s) in" \
+                                     "dist/base-images.lock — see" \
+                                     "lines above. Refusing to" \
+                                     "publish a poisoned lockfile." >&2
+                                exit 1
+                            fi
                         '''
                         script {
                             if (env.BRANCH_NAME == 'master') {
