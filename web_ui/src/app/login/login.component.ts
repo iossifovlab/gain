@@ -49,7 +49,7 @@ export class LoginComponent implements OnInit {
     this.usersService.loginUser(email, password).subscribe({
       next: () => {
         this.cleanInputs();
-        this.router.navigate(['/single-allele-annotation']);
+        this.router.navigate(['/single-annotation']);
       },
       error: (error: HttpErrorResponse) => {
         this.responseMessage = (error.error as {error: string})['error'] || 'Login failed!';

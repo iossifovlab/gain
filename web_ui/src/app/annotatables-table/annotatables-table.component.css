@@ -34,7 +34,7 @@
   padding: 8px 0 5px 10px;
 }
 
-#delete-allele {
+#delete-annotatable {
   background: none;
   border: none;
 }
@@ -45,12 +45,12 @@
   margin-top: 5px;
 }
 
-.allele-button {
+.annotatable-button {
   color: #5b778c;
   text-decoration: underline;
 }
 
-.allele-button:hover {
+.annotatable-button:hover {
   cursor: pointer;
   color: #85a2b9;
 }

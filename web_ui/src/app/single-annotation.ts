@@ -264,26 +264,26 @@ export class SingleAnnotationReport {
   }
 }
 
-export class Allele {
+export class AnnotatableHistory {
   public constructor(
     public id: number,
     public name: string,
   ) {}
 
-  public static fromJsonArray(jsonArray: object[]): Allele[] {
+  public static fromJsonArray(jsonArray: object[]): AnnotatableHistory[] {
     if (!jsonArray) {
       return undefined;
     }
-    return jsonArray.map((json) => Allele.fromJson(json));
+    return jsonArray.map((json) => AnnotatableHistory.fromJson(json));
   }
 
 
-  public static fromJson(json: object): Allele {
+  public static fromJson(json: object): AnnotatableHistory {
     if (!json) {
       return undefined;
     }
 
-    return new Allele(
+    return new AnnotatableHistory(
       json['id'] as number,
       json['allele'] as string,
     );

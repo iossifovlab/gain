@@ -129,7 +129,7 @@ describe('UsersService', () => {
     const navigateSpy = jest.spyOn(router, 'navigate');
     const queryResponse = service.logout();
     await lastValueFrom(queryResponse.pipe(take(1)));
-    expect(navigateSpy).toHaveBeenCalledWith(['/single-allele-annotation']);
+    expect(navigateSpy).toHaveBeenCalledWith(['/single-annotation']);
   });
 
   it('should delete csrf token from cookies after logout', async() => {

@@ -3,7 +3,7 @@ import { map, Observable } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { HttpClient } from '@angular/common/http';
 import {
-  Allele,
+  AnnotatableHistory,
   CategoricalHistogram,
   NumberHistogram,
   SingleAnnotationReport,
@@ -15,7 +15,7 @@ import {
 export class SingleAnnotationService {
   private readonly getReportUrl = `${environment.apiPath}/single_allele/annotate`;
   private readonly getGenomesUrl = `${environment.apiPath}/jobs/genomes`;
-  private readonly allelesHistoryUrl = `${environment.apiPath}/single_allele/history`;
+  private readonly annotatablesHistoryUrl = `${environment.apiPath}/single_allele/history`;
   private readonly getHistogramUrl = `${environment.apiPath}/single_allele`;
   public constructor(private http: HttpClient) { }
 
@@ -72,16 +72,16 @@ export class SingleAnnotationService {
     return this.http.get<string[]>(this.getGenomesUrl);
   }
 
-  public getAllelesHistory(): Observable<Allele[]> {
+  public getAnnotatablesHistory(): Observable<AnnotatableHistory[]> {
     const options = { headers: {'X-CSRFToken': this.getCSRFToken()}, withCredentials: true };
-    return this.http.get<Allele[]>(
-      this.allelesHistoryUrl,
+    return this.http.get<AnnotatableHistory[]>(
+      this.annotatablesHistoryUrl,
       options
-    ).pipe(map((rawAlleles: object[]) => Allele.fromJsonArray(rawAlleles)));
+    ).pipe(map((rawAnnotatables: object[]) => AnnotatableHistory.fromJsonArray(rawAnnotatables)));
   }
 
-  public deleteAllele(alleleId: number): Observable<object> {
+  public deleteAnnotatable(annotatableId: number): Observable<object> {
     const options = { headers: {'X-CSRFToken': this.getCSRFToken()}, withCredentials: true };
-    return this.http.delete(`${this.allelesHistoryUrl}?id=${alleleId}`, options);
+    return this.http.delete(`${this.annotatablesHistoryUrl}?id=${annotatableId}`, options);
   }
 }

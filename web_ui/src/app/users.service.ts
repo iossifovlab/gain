@@ -31,7 +31,7 @@ export class UsersService {
       tap(() => {
         this.cookieService.delete('csrftoken');
         this.userData.next(null);
-        this.router.navigate(['/single-allele-annotation']);
+        this.router.navigate(['/single-annotation']);
       })
     );
   }

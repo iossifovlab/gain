@@ -8,34 +8,34 @@ test.describe('Single annotation input tests', () => {
     await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
   });
 
-  test('should disable Go button when no allele is typed', async({ page }) => {
+  test('should disable Go button when no annotatable is typed', async({ page }) => {
     await utils.selectPipeline(page, 'pipeline/Clinical_annotation');
     await expect(page.getByRole('button', { name: 'Go' })).toBeDisabled();
   });
 
-  test('should disable Go button when allele format is invalid', async({ page }) => {
+  test('should disable Go button when annotatable format is invalid', async({ page }) => {
     await utils.selectPipeline(page, 'pipeline/Clinical_annotation');
     await page.getByPlaceholder('Type annotatable...').fill('invalid input');
     await expect(page.getByRole('button', { name: 'Go' })).toBeDisabled();
   });
 
-  test('should enable Go button when valid allele and pipeline are selected', async({ page }) => {
+  test('should enable Go button when valid annotatable and pipeline are selected', async({ page }) => {
     await utils.selectPipeline(page, 'pipeline/Clinical_annotation');
     await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
     await expect(page.getByRole('button', { name: 'Go' })).toBeEnabled();
   });
 
-  test('should show validation message for invalid allele format', async({ page }) => {
+  test('should show validation message for invalid annotatable format', async({ page }) => {
     await page.getByPlaceholder('Type annotatable...').fill('invalid input');
-    await expect(page.locator('#validation-message')).toHaveText('Invalid allele format!');
+    await expect(page.locator('#validation-message')).toHaveText('Invalid annotatable format!');
   });
 
-  test('should not show validation message for colon-separated allele', async({ page }) => {
+  test('should not show validation message for colon-separated annotatable', async({ page }) => {
     await page.getByPlaceholder('Type annotatable...').fill('chr1:11796321:G:A');
     await expect(page.locator('#validation-message')).not.toBeVisible();
   });
 
-  test('should not show validation message for arrow-separated allele', async({ page }) => {
+  test('should not show validation message for arrow-separated annotatable', async({ page }) => {
     await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G>A');
     await expect(page.locator('#validation-message')).not.toBeVisible();
   });
@@ -68,7 +68,7 @@ test.describe('Single annotation input tests', () => {
     await expect(page.getByPlaceholder('Type annotatable...')).toHaveValue('chr1 11796321 G A');
   });
 
-  test('should clear report when allele input changes', async({ page }) => {
+  test('should clear report when annotatable input changes', async({ page }) => {
     await customDefaultPipeline(page);
     await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
     await page.getByRole('button', { name: 'Go' }).click();
@@ -239,15 +239,15 @@ test.describe('Single annotation history tests', () => {
     await customDefaultPipeline(page);
   });
 
-  test('should show allele in history after annotation', async({ page }) => {
+  test('should show annotatable in history after annotation', async({ page }) => {
     await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
     await page.getByRole('button', { name: 'Go', exact: true }).click();
     await page.waitForSelector('#report', { timeout: 120000 });
 
-    await expect(page.locator('.allele-name').getByText('chr1:1265232 G>A')).toBeVisible();
+    await expect(page.locator('.annotatable-name').getByText('chr1:1265232 G>A')).toBeVisible();
   });
 
-  test('should annotate when clicking allele from history', async({ page }) => {
+  test('should annotate when clicking annotatable from history', async({ page }) => {
     await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
     await page.getByRole('button', { name: 'Go', exact: true }).click();
     await page.waitForSelector('#report', { timeout: 120000 });
@@ -255,22 +255,22 @@ test.describe('Single annotation history tests', () => {
     await page.getByPlaceholder('Type annotatable...').fill('');
     await expect(page.locator('#report')).not.toBeVisible();
 
-    await page.locator('.allele-button').first().click();
+    await page.locator('.annotatable-button').first().click();
     await page.waitForSelector('#report', { timeout: 120000 });
     await expect(page.locator('#report')).toBeVisible();
   });
 
-  test('should delete allele from history', async({ page }) => {
+  test('should delete annotatable from history', async({ page }) => {
     await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
     await page.getByRole('button', { name: 'Go', exact: true }).click();
     await page.waitForSelector('#report', { timeout: 120000 });
 
-    await expect(page.locator('.allele-name')).toHaveCount(1);
-    await page.locator('#delete-allele').click();
-    await expect(page.locator('.allele-name')).toHaveCount(0);
+    await expect(page.locator('.annotatable-name')).toHaveCount(1);
+    await page.locator('#delete-annotatable').click();
+    await expect(page.locator('.annotatable-name')).toHaveCount(0);
   });
 
-  test('should accumulate multiple alleles in history', async({ page }) => {
+  test('should accumulate multiple annotatable in history', async({ page }) => {
     await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
     await page.getByRole('button', { name: 'Go', exact: true }).click();
     await page.waitForSelector('#report', { timeout: 120000 });
@@ -279,10 +279,11 @@ test.describe('Single annotation history tests', () => {
     await page.getByRole('button', { name: 'Go', exact: true }).click();
     await page.waitForSelector('#report', { timeout: 120000 });
 
-    await expect(page.locator('.allele-name')).toHaveCount(2);
+    await expect(page.locator('.annotatable-name')).toHaveCount(2);
   });
 
-  test('should not duplicate allele in history when annotating the same allele multiple times', async({ page }) => {
+  test('should not duplicate annotatable in history when annotating '+
+    'the same annotatable multiple times', async({ page }) => {
     await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
     await page.getByRole('button', { name: 'Go', exact: true }).click();
     await page.waitForSelector('#report', { timeout: 120000 });
@@ -290,7 +291,7 @@ test.describe('Single annotation history tests', () => {
     await page.getByRole('button', { name: 'Go', exact: true }).click();
     await page.waitForSelector('#report', { timeout: 120000 });
 
-    await expect(page.locator('.allele-name')).toHaveCount(1);
+    await expect(page.locator('.annotatable-name')).toHaveCount(1);
   });
 });
 

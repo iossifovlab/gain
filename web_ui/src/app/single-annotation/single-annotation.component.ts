@@ -27,13 +27,13 @@ import { AnnotationPipelineStateService } from '../annotation-pipeline/annotatio
 })
 export class SingleAnnotationComponent implements OnInit {
   public readonly environment = environment;
-  public alleleInput: FormControl<string>;
+  public annotatableInput: FormControl<string>;
   public report: SingleAnnotationReport = null;
-  @Output() public alleleUpdateEmit = new EventEmitter<void>();
+  @Output() public annotatableUpdateEmit = new EventEmitter<void>();
   @Output() public autoSaveTrigger = new EventEmitter<void>();
   private getReportSubscription = new Subscription();
   public loading = false;
-  private alleleJson: Annotatable;
+  private annotatableJson: Annotatable;
   public examples: string[];
 
   public constructor(
@@ -56,17 +56,17 @@ export class SingleAnnotationComponent implements OnInit {
       'chr1 11,796,321 11,800,000',
     ];
 
-    this.alleleInput = new FormControl('');
+    this.annotatableInput = new FormControl('');
 
-    this.alleleInput.valueChanges.pipe(
+    this.annotatableInput.valueChanges.pipe(
       distinctUntilChanged(),
     ).subscribe(value => {
       this.report = null;
-      this.alleleJson = undefined;
-      if (value && !this.isAlleleValid(value)) {
-        this.alleleInput.setErrors({ invalidAllele: true });
+      this.annotatableJson = undefined;
+      if (value && !this.isAnnotatableValid(value)) {
+        this.annotatableInput.setErrors({ invalidAnnotatable: true });
       } else {
-        this.alleleInput.setErrors(null);
+        this.annotatableInput.setErrors(null);
       }
     });
   }
@@ -75,14 +75,14 @@ export class SingleAnnotationComponent implements OnInit {
     this.autoSaveTrigger.emit();
   }
 
-  public annotateAllele(): void {
+  public annotate(): void {
     const pipelineId = this.pipelineStateService.currentTemporaryPipelineId() ||
       this.pipelineStateService.selectedPipelineId() ||
       '';
-    if (this.alleleInput.valid && pipelineId) {
+    if (this.annotatableInput.valid && pipelineId) {
       this.getReport(pipelineId);
     } else {
-      this.alleleJson = undefined;
+      this.annotatableJson = undefined;
       this.report = null;
     }
   }
@@ -91,19 +91,19 @@ export class SingleAnnotationComponent implements OnInit {
     const pipelineId = this.pipelineStateService.currentTemporaryPipelineId() ||
       this.pipelineStateService.selectedPipelineId() ||
       '';
-    return !(this.alleleInput.value &&
-      this.alleleInput.valid &&
+    return !(this.annotatableInput.value &&
+      this.annotatableInput.valid &&
       Boolean(pipelineId) &&
       this.pipelineStateService.isConfigValid());
   }
 
-  private isAlleleValid(allele: string): boolean {
-    const trimmedValue: string = allele.trim();
+  private isAnnotatableValid(annotatable: string): boolean {
+    const trimmedValue: string = annotatable.trim();
 
-    const parts = this.splitAllele(trimmedValue);
+    const parts = this.splitAnnotatable(trimmedValue);
 
     if (parts.length === 4) {
-      this.alleleJson = new Annotatable(
+      this.annotatableJson = new Annotatable(
         parts[0],
         Number(parts[1].replaceAll(',', '')),
         parts[2],
@@ -116,7 +116,7 @@ export class SingleAnnotationComponent implements OnInit {
     }
 
     if (parts.length === 3) {
-      this.alleleJson = new Annotatable(
+      this.annotatableJson = new Annotatable(
         parts[0],
         null,
         null,
@@ -132,7 +132,7 @@ export class SingleAnnotationComponent implements OnInit {
     }
 
     if (parts.length === 2) {
-      this.alleleJson = new Annotatable(
+      this.annotatableJson = new Annotatable(
         parts[0],
         Number(parts[1].replaceAll(',', '')),
         null,
@@ -143,12 +143,12 @@ export class SingleAnnotationComponent implements OnInit {
       );
       return this.isPosValid(parts[1]);
     }
-    this.alleleJson = undefined;
+    this.annotatableJson = undefined;
     return false;
   }
 
-  private splitAllele(allele: string): string[] {
-    const parts = allele.split(/[: \t]+/);
+  private splitAnnotatable(annotatble: string): string[] {
+    const parts = annotatble.split(/[: \t]+/);
     const [chrom, pos, ref, alt] = parts;
 
     if (!pos) {
@@ -199,8 +199,8 @@ export class SingleAnnotationComponent implements OnInit {
     return alternative !== '' && this.areBasesValid(alternative);
   }
 
-  public setAllele(historyAllele: string): void {
-    this.alleleInput.setValue(historyAllele);
+  public setAnnotatable(historyAnnotatble: string): void {
+    this.annotatableInput.setValue(historyAnnotatble);
     this.resetReport();
   }
 
@@ -215,13 +215,13 @@ export class SingleAnnotationComponent implements OnInit {
     this.getReportSubscription.unsubscribe();
     this.loading = true;
     this.getReportSubscription = this.singleAnnotationService.getReport(
-      this.alleleJson,
+      this.annotatableJson,
       pipelineId
     ).subscribe({
       next: report => {
         this.loading = false;
         this.report = report;
-        this.triggerAllelesTableUpdate();
+        this.triggerAnnotatblesTableUpdate();
       },
       error: () => {
         this.loading = false;
@@ -229,11 +229,11 @@ export class SingleAnnotationComponent implements OnInit {
     });
   }
 
-  private triggerAllelesTableUpdate(): void {
+  private triggerAnnotatblesTableUpdate(): void {
     this.userService.userData.pipe(
     ).subscribe((userData) => {
       if (userData.loggedIn) {
-        this.alleleUpdateEmit.emit();
+        this.annotatableUpdateEmit.emit();
       }
     });
   }

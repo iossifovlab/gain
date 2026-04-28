@@ -89,7 +89,7 @@ test.describe('Registration tests', () => {
     await page.locator('#email').pressSequentially(randomEmail);
     await page.locator('#password').pressSequentially('password123');
     await page.locator('#login-container').getByRole('button', { name: 'Login' }).click();
-    await page.waitForSelector('app-single-allele-annotation-wrapper', {timeout: 120000});
+    await page.waitForSelector('app-single-annotation-wrapper', {timeout: 120000});
   });
 });
 
@@ -105,7 +105,7 @@ test.describe('Login tests', () => {
     await page.locator('#email').pressSequentially(randomEmail);
     await page.locator('#password').pressSequentially('password123');
     await page.locator('#login-container').getByRole('button', { name: 'Login' }).click();
-    await page.waitForSelector('app-single-allele-annotation-wrapper', {timeout: 120000});
+    await page.waitForSelector('app-single-annotation-wrapper', {timeout: 120000});
     await expect(page.locator('#user-data')).toBeVisible();
   });
 
@@ -116,10 +116,10 @@ test.describe('Login tests', () => {
     await page.locator('#email').pressSequentially(randomEmail);
     await page.locator('#password').pressSequentially('password123');
     await page.locator('#login-container').getByRole('button', { name: 'Login' }).click();
-    await page.waitForSelector('app-single-allele-annotation-wrapper', {timeout: 120000});
+    await page.waitForSelector('app-single-annotation-wrapper', {timeout: 120000});
 
     await page.getByRole('button', { name: 'Logout' }).click();
-    await page.waitForSelector('app-single-allele-annotation-wrapper', {timeout: 120000});
+    await page.waitForSelector('app-single-annotation-wrapper', {timeout: 120000});
   });
 
   test('should show error message when trying to login with invalid credentials', async({ page }) => {
@@ -127,21 +127,21 @@ test.describe('Login tests', () => {
     await page.locator('#password').pressSequentially('nonexistentpassword');
     await page.locator('#login-container').getByRole('button', { name: 'Login' }).click();
     await expect(page.getByText('Invalid login credentials')).toBeVisible();
-    await expect(page.locator('app-single-allele-annotation-wrapper')).not.toBeVisible();
+    await expect(page.locator('app-single-annotation-wrapper')).not.toBeVisible();
   });
 
   test('should show error message when trying to login without email', async({ page }) => {
     await page.locator('#password').pressSequentially('nonexistentpassword');
     await page.locator('#login-container').getByRole('button', { name: 'Login' }).click();
     await expect(page.getByText('Invalid login credentials')).toBeVisible();
-    await expect(page.locator('app-single-allele-annotation-wrapper')).not.toBeVisible();
+    await expect(page.locator('app-single-annotation-wrapper')).not.toBeVisible();
   });
 
   test('should show error message when trying to login without password', async({ page }) => {
     await page.locator('#email').pressSequentially('nonexistent@email.com');
     await page.locator('#login-container').getByRole('button', { name: 'Login' }).click();
     await expect(page.getByText('Invalid login credentials')).toBeVisible();
-    await expect(page.locator('app-single-allele-annotation-wrapper')).not.toBeVisible();
+    await expect(page.locator('app-single-annotation-wrapper')).not.toBeVisible();
   });
 
   test('should reset password for user and then login', async({ page }) => {
@@ -151,7 +151,7 @@ test.describe('Login tests', () => {
     await page.locator('#email').pressSequentially(randomEmail);
     await page.locator('#password').pressSequentially('password123');
     await page.locator('#login-container').getByRole('button', { name: 'Login' }).click();
-    await page.waitForSelector('app-single-allele-annotation-wrapper', {timeout: 120000});
+    await page.waitForSelector('app-single-annotation-wrapper', {timeout: 120000});
 
     await page.locator('#logout-button').click();
     await page.waitForSelector('#login-button');
@@ -172,7 +172,7 @@ test.describe('Login tests', () => {
     await page.locator('#email').pressSequentially(randomEmail);
     await page.locator('#password').pressSequentially(newPassword);
     await page.locator('#login-container').getByRole('button', { name: 'Login' }).click();
-    await page.waitForSelector('app-single-allele-annotation-wrapper', {timeout: 120000});
+    await page.waitForSelector('app-single-annotation-wrapper', {timeout: 120000});
     await expect(page.locator('#user-data')).toBeVisible();
   });
 });
@@ -190,7 +190,7 @@ test.describe('Logout tests', () => {
 
   test('should stay logged out after refreshing the page', async({ page }) => {
     await page.locator('#logout-button').click();
-    await page.waitForSelector('app-single-allele-annotation-wrapper', {timeout: 120000});
+    await page.waitForSelector('app-single-annotation-wrapper', {timeout: 120000});
     await expect(page.locator('#login-button')).toBeVisible();
     await expect(page.locator('#register-button')).toBeVisible();
     await page.reload();

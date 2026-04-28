@@ -1,0 +1,20 @@
+<div *ngIf="annotatables.length">
+  <div id="history-header">History</div>
+  <div id="grid-container">
+    <div class="grid-header">Annotatables</div>
+    <div class="grid-header">Actions</div>
+
+    <ng-container *ngFor="let annotatable of annotatables">
+      <div class="grid-cell annotatable-name"
+        ><a class="annotatable-button" (click)="makeRequest(annotatable.name)">{{ annotatable.name }}</a></div
+      >
+      <div class="grid-cell actions">
+        <button id="delete-annotatable" (click)="onDelete(annotatable.id)"
+          ><span class="material-symbols-outlined delete-icon">delete</span></button
+        >
+      </div>
+    </ng-container>
+  </div>
+
+  <span id="note">Note: Annotatables are stored for 30 days</span>
+</div>

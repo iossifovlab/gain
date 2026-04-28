@@ -1,5 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { SingleAlleleAnnotationWrapperComponent } from './single-allele-annotation-wrapper.component';
+import { SingleAnnotationWrapperComponent } from './single-annotation-wrapper.component';
 import { JobsService } from '../job-creation/jobs.service';
 import { provideHttpClient } from '@angular/common/http';
 import { UserData } from '../users';
@@ -50,16 +50,16 @@ class AnnotationPipelineServiceMock {
 };
 
 
-describe('SingleAlleleAnnotationWrapperComponent', () => {
-  let component: SingleAlleleAnnotationWrapperComponent;
-  let fixture: ComponentFixture<SingleAlleleAnnotationWrapperComponent>;
+describe('SingleAnnotationWrapperComponent', () => {
+  let component: SingleAnnotationWrapperComponent;
+  let fixture: ComponentFixture<SingleAnnotationWrapperComponent>;
   let pipelineStateService: AnnotationPipelineStateService;
   const userServiceMock = new UserServiceMock();
   const annotationPipelineServiceMock = new AnnotationPipelineServiceMock();
 
   beforeEach(() => {
     TestBed.configureTestingModule({
-      imports: [SingleAlleleAnnotationWrapperComponent],
+      imports: [SingleAnnotationWrapperComponent],
       providers: [
         JobsService,
         MatTooltip,
@@ -77,7 +77,7 @@ describe('SingleAlleleAnnotationWrapperComponent', () => {
       ]
     }).compileComponents();
 
-    fixture = TestBed.createComponent(SingleAlleleAnnotationWrapperComponent);
+    fixture = TestBed.createComponent(SingleAnnotationWrapperComponent);
     component = fixture.componentInstance;
 
     pipelineStateService = TestBed.inject(AnnotationPipelineStateService);
@@ -115,37 +115,37 @@ describe('SingleAlleleAnnotationWrapperComponent', () => {
     expect(pipelinesComponentSpy).toHaveBeenCalledWith();
   });
 
-  it('should trigger allele annotation and auto save pipeline', () => {
+  it('should trigger single annotation and auto save pipeline', () => {
     fixture.detectChanges();
     pipelineStateService.isConfigValid.set(true);
 
     const pipelinesComponentSpy = jest.spyOn(component.pipelinesComponent, 'autoSave').mockReturnValue(of(''));
-    const annotateAlleleSpy = jest.spyOn(component.singleAnnotationComponent, 'annotateAllele');
+    const annotateSpy = jest.spyOn(component.singleAnnotationComponent, 'annotate');
     jest.spyOn(component.pipelinesComponent, 'isPipelineChanged').mockReturnValue(true);
 
     component.autoSavePipeline();
     expect(pipelinesComponentSpy).toHaveBeenCalledWith();
-    expect(annotateAlleleSpy).toHaveBeenCalledWith();
+    expect(annotateSpy).toHaveBeenCalledWith();
   });
 
-  it('should trigger allele annotation when catching emits from alleles table', () => {
+  it('should trigger annotation when catching emits from annotatables table', () => {
     fixture.detectChanges();
 
     const autoSavePipelineSpy = jest.spyOn(component, 'autoSavePipeline');
-    const setAlleleSpy = jest.spyOn(component.singleAnnotationComponent, 'setAllele').mockImplementation();
+    const setAnnotatableSpy = jest.spyOn(component.singleAnnotationComponent, 'setAnnotatable').mockImplementation();
 
-    component.triggerSingleAlleleAnnotation('chr1 123123 TT GG');
+    component.triggerSingleAnnotation('chr1 123123 TT GG');
     expect(autoSavePipelineSpy).toHaveBeenCalledWith();
-    expect(setAlleleSpy).toHaveBeenCalledWith('chr1 123123 TT GG');
+    expect(setAnnotatableSpy).toHaveBeenCalledWith('chr1 123123 TT GG');
   });
 
   it('should set and load pipeline when catching emits from pipeline component', () => {
     const loadPipelineSpy = jest.spyOn(annotationPipelineServiceMock, 'loadPipeline');
-    const resetSingleAlleleReportSpy = jest.spyOn(component, 'resetSingleAlleleReport');
+    const resetSingleAnnotationReportSpy = jest.spyOn(component, 'resetSingleAnnotationReport');
     pipelineStateService.selectedPipelineId.set('new_pipeline');
 
     fixture.detectChanges();
-    expect(resetSingleAlleleReportSpy).toHaveBeenCalledWith();
+    expect(resetSingleAnnotationReportSpy).toHaveBeenCalledWith();
     expect(loadPipelineSpy).toHaveBeenCalledWith('new_pipeline');
   });
 
@@ -154,15 +154,15 @@ describe('SingleAlleleAnnotationWrapperComponent', () => {
 
     const resetReportSpy = jest.spyOn(component.singleAnnotationComponent, 'resetReport');
 
-    component.resetSingleAlleleReport();
+    component.resetSingleAnnotationReport();
     expect(resetReportSpy).toHaveBeenCalledWith();
   });
 
-  it('should trigger alleles table refresh', () => {
+  it('should trigger annotatables table refresh', () => {
     fixture.detectChanges();
-    const refreshTableSpy = jest.spyOn(component.allelesTableComponent, 'refreshTable');
+    const refreshTableSpy = jest.spyOn(component.annotatablesTableComponent, 'refreshTable');
 
-    component.refreshAllelesTable();
+    component.refreshAnnotatablesTable();
     expect(refreshTableSpy).toHaveBeenCalledWith();
   });
 
@@ -195,11 +195,11 @@ describe('SingleAlleleAnnotationWrapperComponent', () => {
     expect(mockBoeforeUnloadEvent.preventDefault).not.toHaveBeenCalledWith();
   });
 
-  it('should reset single allele report when pipeline text changes', () => {
-    const resetSingleAlleleReportSpy = jest.spyOn(component, 'resetSingleAlleleReport');
+  it('should reset single annotation report when pipeline text changes', () => {
+    const resetSingleAnnotationReportSpy = jest.spyOn(component, 'resetSingleAnnotationReport');
     pipelineStateService.currentPipelineText.set('new pipeline config');
     fixture.detectChanges();
-    expect(resetSingleAlleleReportSpy).toHaveBeenCalledWith();
+    expect(resetSingleAnnotationReportSpy).toHaveBeenCalledWith();
   });
 
   it('should not auto save pipeline when config is invalid', () => {

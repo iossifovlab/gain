@@ -3,27 +3,27 @@ import { take } from 'rxjs';
 import { AnnotationPipelineComponent } from '../annotation-pipeline/annotation-pipeline.component';
 import { CommonModule } from '@angular/common';
 import { SingleAnnotationComponent } from '../single-annotation/single-annotation.component';
-import { AllelesTableComponent } from '../alleles-table/alleles-table.component';
+import { AnnotatablesTableComponent } from '../annotatables-table/annotatables-table.component';
 import { UsersService } from '../users.service';
 import { AnnotationPipelineService } from '../annotation-pipeline.service';
 import { AnnotationPipelineStateService } from '../annotation-pipeline/annotation-pipeline-state.service';
 
 @Component({
-  selector: 'app-single-allele-annotation-wrapper',
+  selector: 'app-single-annotation-wrapper',
   imports: [
     CommonModule,
     AnnotationPipelineComponent,
     SingleAnnotationComponent,
-    AllelesTableComponent,
+    AnnotatablesTableComponent,
   ],
-  templateUrl: './single-allele-annotation-wrapper.component.html',
-  styleUrl: './single-allele-annotation-wrapper.component.css'
+  templateUrl: './single-annotation-wrapper.component.html',
+  styleUrl: './single-annotation-wrapper.component.css'
 })
 
-export class SingleAlleleAnnotationWrapperComponent implements OnInit {
+export class SingleAnnotationWrapperComponent implements OnInit {
   public creationError = '';
   @ViewChild(AnnotationPipelineComponent) public pipelinesComponent: AnnotationPipelineComponent;
-  @ViewChild(AllelesTableComponent) public allelesTableComponent: AllelesTableComponent;
+  @ViewChild(AnnotatablesTableComponent) public annotatablesTableComponent: AnnotatablesTableComponent;
   @ViewChild(SingleAnnotationComponent) public singleAnnotationComponent: SingleAnnotationComponent;
   public hideComponents = false;
   public hideHistory = false;
@@ -40,14 +40,14 @@ export class SingleAlleleAnnotationWrapperComponent implements OnInit {
       const id = this.pipelineStateService.currentTemporaryPipelineId() ||
         this.pipelineStateService.selectedPipelineId();
       if (id) {
-        this.resetSingleAlleleReport();
+        this.resetSingleAnnotationReport();
         this.annotationPipelineService.loadPipeline(id).pipe(take(1)).subscribe();
       }
     });
 
     effect(() => {
       this.pipelineStateService.currentPipelineText();
-      this.resetSingleAlleleReport();
+      this.resetSingleAnnotationReport();
     });
   }
 
@@ -79,20 +79,20 @@ export class SingleAlleleAnnotationWrapperComponent implements OnInit {
   }
 
   private annotate(): void {
-    this.singleAnnotationComponent.annotateAllele();
+    this.singleAnnotationComponent.annotate();
   }
 
-  public triggerSingleAlleleAnnotation(allele: string): void {
-    this.singleAnnotationComponent.setAllele(allele);
+  public triggerSingleAnnotation(annotatable: string): void {
+    this.singleAnnotationComponent.setAnnotatable(annotatable);
     this.autoSavePipeline();
   }
 
-  public resetSingleAlleleReport(): void {
+  public resetSingleAnnotationReport(): void {
     this.singleAnnotationComponent?.resetReport();
   }
 
-  public refreshAllelesTable(): void {
-    this.allelesTableComponent.refreshTable();
+  public refreshAnnotatablesTable(): void {
+    this.annotatablesTableComponent.refreshTable();
   }
 
   public updateComponentsVisibility(toHide: boolean): void {

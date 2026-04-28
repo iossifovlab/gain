@@ -4,7 +4,7 @@
       ><span class="material-symbols-outlined">info</span></span
     >
     <input
-      [formControl]="alleleInput"
+      [formControl]="annotatableInput"
       type="text"
       placeholder="Type annotatable..."
       (keydown.enter)="triggerPipelineAutoSave()" />
@@ -12,12 +12,12 @@
 
     <mat-menu #tooltip="matMenu">
       @for(e of examples; track e) {
-      <a mat-menu-item disableRipple class="example" (click)="setAllele(e); triggerPipelineAutoSave()">{{ e }}</a>
+      <a mat-menu-item disableRipple class="example" (click)="setAnnotatable(e); triggerPipelineAutoSave()">{{ e }}</a>
       }
     </mat-menu>
   </div>
-  @if(!alleleInput.valid) {
-  <span id="validation-message">Invalid allele format!</span>
+  @if(!annotatableInput.valid) {
+  <span id="validation-message">Invalid annotatable format!</span>
   } @if (loading) {
   <mat-progress-spinner mode="indeterminate" diameter="40"></mat-progress-spinner>
   <span id="loading-text">Loading...</span>

@@ -51,7 +51,7 @@ export async function loginUser(page: Page, email: string, password: string): Pr
   await page.locator('#email').pressSequentially(email);
   await page.locator('#password').pressSequentially(password);
   await page.locator('#login-container').getByRole('button', { name: 'Login' }).click();
-  await page.waitForSelector('app-single-allele-annotation-wrapper', {timeout: 120000});
+  await page.waitForSelector('app-single-annotation-wrapper', {timeout: 120000});
 }
 
 export async function typeInPipelineEditor(page: Page, input: string): Promise<void> {

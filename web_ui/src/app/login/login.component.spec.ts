@@ -64,7 +64,7 @@ describe('LoginComponent', () => {
 
     component.login();
     expect(loginSpy).toHaveBeenCalledWith('mockEmail@email.com', 'mockPassword');
-    expect(navigateSpy).toHaveBeenCalledWith(['/single-allele-annotation']);
+    expect(navigateSpy).toHaveBeenCalledWith(['/single-annotation']);
   });
 
   it('should clear inputs when login is successful', () => {
