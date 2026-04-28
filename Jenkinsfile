@@ -6,8 +6,11 @@
 //      output, plus Cobertura coverage for pytest.
 //   3. Publishes JUnit + coverage reports to Jenkins.
 //
-// The container scripts never exit non-zero on tool failures; instead the
-// JUnit plugin reads the XML and marks the build UNSTABLE on failures.
+// Lint / type-check tools (ruff, mypy, pylint) only report via their JUnit
+// XML and don't gate the build. Pytest, however, propagates its exit code
+// so test failures fail the build (the post.always hook still publishes
+// the JUnit + coverage reports either way). The web_ui stage follows the
+// same pattern with jest as the gating tool.
 
 def runProject(Map args) {
     String name           = args.name                          // dir name, e.g. "demo_annotator"
@@ -57,6 +60,7 @@ def runProject(Map args) {
                     --cov=${pkg} --cov-branch \\
                     --cov-report=xml:/reports/coverage.xml \\
                     ${tests}
+                pytest_exit=\$?
                 # Rewrite container-absolute <source>/workspace/...</source> to a
                 # path relative to the Jenkins workspace so recordCoverage can
                 # resolve source files.
@@ -66,7 +70,13 @@ def runProject(Map args) {
                 # mounted .git to produce a proper PEP 440 version.
                 uv build --package ${distPkg} --out-dir /dist
                 chmod -R a+rw /reports /dist
-                exit 0
+                # Propagate pytest's exit code so test failures fail the
+                # build (FAILURE) instead of just being logged via JUnit
+                # (UNSTABLE). The post.always publishReports hook still
+                # uploads the XML reports either way. Lint / type-check
+                # failures from the steps above don't gate here — they
+                # surface via their JUnit XMLs only.
+                exit \$pytest_exit
             '
     """
 }
@@ -363,6 +373,7 @@ pipeline {
                                                     npx jest --ci \\
                                                         --collectCoverageFrom=./src/** \\
                                                         --coverageDirectory=/reports/coverage
+                                                jest_exit=\$?
                                                 # Rewrite container-absolute /app
                                                 # paths to web_ui/ so Jenkins coverage
                                                 # source mapping resolves files. This
@@ -376,7 +387,13 @@ pipeline {
                                                     /reports/coverage.xml \\
                                                     2>/dev/null || true
                                                 chmod -R a+rw /reports
-                                                exit 0
+                                                # Propagate jest's exit code so test
+                                                # failures fail the build (mirrors the
+                                                # python projects' pytest gating).
+                                                # eslint / stylelint failures don't
+                                                # gate; they surface through their
+                                                # report XMLs only.
+                                                exit \$jest_exit
                                             '
                                     """
                                 }
