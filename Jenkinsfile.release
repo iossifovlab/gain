@@ -315,20 +315,35 @@ pipeline {
             // Verified immediately after build — a shallow clone
             // would yield a dev version and we abort before
             // publishing.
+            //
+            // Built inside ${CONDA_BUILDER} because uv is not
+            // installed on the Jenkins agents; the conda-builder
+            // image carries uv alongside rattler-build and
+            // anaconda-client.
             steps {
                 sh '''
                     mkdir -p dist/core dist/web_api \
                         dist/demo_annotator \
                         dist/vep_annotator \
                         dist/spliceai_annotator
-                    for pkg in core web_api \
-                               demo_annotator \
-                               vep_annotator \
-                               spliceai_annotator; do
-                        distpkg="gain-${pkg//_/-}"
-                        uv build --package "$distpkg" \
-                            --out-dir "dist/$pkg"
-                    done
+                    DOCKER_USER="$(id -u):$(id -g)"
+                    docker run --rm \
+                        --user "$DOCKER_USER" \
+                        -e HOME=/tmp \
+                        -v $PWD:/workspace \
+                        -w /workspace \
+                        "${CONDA_BUILDER}" \
+                        sh -c '
+                            set -e
+                            for pkg in core web_api \
+                                       demo_annotator \
+                                       vep_annotator \
+                                       spliceai_annotator; do
+                                distpkg="gain-${pkg//_/-}"
+                                uv build --package "$distpkg" \
+                                    --out-dir "dist/$pkg"
+                            done
+                        '
 
                     bad=0
                     for whl in dist/*/*.whl; do

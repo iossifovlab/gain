@@ -1,7 +1,8 @@
-# CI image used to build conda packages for every sub-project with
-# rattler-build. Intentionally minimal: just rattler-build itself plus `git`
-# (some recipes embed vcs-sourced metadata via hatch-vcs when building from
-# source trees).
+# CI image used by the tag-driven release pipeline to build conda
+# packages (rattler-build) and Python wheels/sdists (`uv build`)
+# for every sub-project, plus push them to Anaconda.org
+# (anaconda-client). `git` is also installed because hatch-vcs
+# derives the embedded PEP 440 version from the git tree.
 #
 # Usage:
 #   docker build -f conda-builder/Dockerfile -t gain-conda-builder-ci .
@@ -24,10 +25,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 USER mambauser
 # anaconda-client provides `anaconda upload`, used by the
 # tag-driven release pipeline to publish .conda packages to the
-# iossifovlab org on Anaconda.org. Same image, no PATH change
+# iossifovlab org on Anaconda.org. uv builds the wheels/sdists
+# in the same pipeline. Same image, no PATH change
 # (/opt/conda/bin is already on PATH below).
 RUN micromamba install -n base -y -c conda-forge \
-        rattler-build anaconda-client \
+        rattler-build anaconda-client uv \
     && micromamba clean --all --yes
 
 # Make the rattler-build binary callable directly without `micromamba run`.
