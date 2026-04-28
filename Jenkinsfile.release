@@ -459,10 +459,35 @@ pipeline {
                             -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new" \
                             $files \
                             "${WHEELS_HOST}:${WHEELS_PATH}/"
+                        # Regenerate the simple/ index in a
+                        # throwaway python:3.12-slim container on
+                        # the wheels host: pip install pip2pi at
+                        # run time, then pip-index against the
+                        # mounted wheels dir. Wheels host needs
+                        # only docker; no Python tooling installed
+                        # there.
+                        #
+                        # The heredoc lets ${WHEELS_PATH} expand
+                        # on the agent while \\$(id -u)/\\$(id -g)
+                        # remain literal so the remote shell
+                        # evaluates them — index files end up
+                        # owned by the SSH user, not
+                        # root-in-container. HOME=/tmp gives pip
+                        # --user a writable home for the random
+                        # UID we're running as.
                         ssh -o BatchMode=yes \
                             -o StrictHostKeyChecking=accept-new \
                             "${WHEELS_HOST}" \
-                            "cd ${WHEELS_PATH} && pip-index ."
+                            bash <<EOF
+set -e
+docker run --rm \\
+    --user "\\$(id -u):\\$(id -g)" \\
+    -e HOME=/tmp \\
+    -v "${WHEELS_PATH}":/work \\
+    -w /work \\
+    python:3.12-slim \\
+    sh -c 'pip install --quiet --user pip2pi && /tmp/.local/bin/pip-index .'
+EOF
                     '''
                 }
 
