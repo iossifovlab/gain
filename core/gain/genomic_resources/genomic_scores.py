@@ -768,6 +768,7 @@ class GenomicScore(ResourceConfigValidationMixin):
         pos_begin: int | None,
         pos_end: int | None,
     ) -> Iterator[ScoreLine]:
+        """Fetch lines in a region and wrap them in ScoreLines."""
         try:
             for line in self.table.get_records_in_region(
                 chrom, pos_begin, pos_end,
