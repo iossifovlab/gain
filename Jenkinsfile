@@ -151,18 +151,23 @@ pipeline {
             stages {
                 stage('Start') {
                     steps {
-                        // Grant the gain-web-e2e and gain-release
-                        // downstream jobs permission to copy artefacts
-                        // from this per-branch job. Without this, their
-                        // `copyArtifacts(projectName: 'iossifovlab/gain/<branch>')`
-                        // calls fail with "Unable to find project for
-                        // artifact copy" (Jenkins's permission-denied
-                        // disguise). Idempotent — applied on every build.
-                        // BranchJobProperty (set by the multibranch scan)
-                        // is preserved.
+                        // Grant any job permission to copy artefacts
+                        // from this per-branch job. Without this,
+                        // downstream `copyArtifacts(projectName:
+                        // 'iossifovlab/gain/<branch>')` calls fail with
+                        // "Unable to find project for artifact copy"
+                        // (Jenkins's permission-denied disguise) — even
+                        // when the consumer is named explicitly, if the
+                        // consumer build's effective user lacks
+                        // Item.Read on the iossifovlab folder the
+                        // permission check fails before the name list
+                        // is consulted. '*' sidesteps that by skipping
+                        // the consumer-name match entirely. Idempotent
+                        // — applied on every build. BranchJobProperty
+                        // (set by the multibranch scan) is preserved.
                         script {
                             properties([
-                                copyArtifactPermission('gain-web-e2e,gain-release'),
+                                copyArtifactPermission('*'),
                             ])
                         }
                         zulipSend(
