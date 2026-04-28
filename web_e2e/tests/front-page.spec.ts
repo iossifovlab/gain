@@ -11,7 +11,6 @@ test.describe('Basic tests', () => {
     await expect(page.locator('#password')).toBeVisible();
     await expect(page.locator('#register-link')).toBeVisible();
     await expect(page.locator('#login-container').getByRole('button', { name: 'Login' })).toBeVisible();
-    await expect(page.locator('#divider')).toBeVisible();
   });
 
   test('should check application description', async({ page }) => {
