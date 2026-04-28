@@ -22,6 +22,38 @@
 // packages to anaconda.org/iossifovlab, and Docker images to
 // registry.seqpipe.org tagged :${TAG_NAME} + :stable.
 
+import com.cloudbees.groovy.cps.NonCPS
+
+// Look up the upstream multibranch build whose GIT_COMMIT matches
+// the tagged commit. Wrapped in @NonCPS because WorkflowJob and
+// WorkflowRun are not Serializable: if either reference is held in
+// a CPS-scoped local across a CPS step (sh / echo / error / …),
+// the program-state save throws NotSerializableException and the
+// CPS thread dies (surfacing as a misleading
+// "agent seems to be removed or offline" before the underlying
+// NotSerializableException at end of pipeline).
+//
+// Therefore: do all Jenkins-API work here and return only
+// primitives / Serializable values to the CPS world.
+@NonCPS
+def findUpstreamBuildForCommit(String project, String sha) {
+    def job = jenkins.model.Jenkins.instance.getItemByFullName(project)
+    if (job == null) {
+        return [found: false, reason: 'missing']
+    }
+    for (b in job.getBuilds()) {
+        def gitData = b.getAction(hudson.plugins.git.util.BuildData)
+        if (gitData?.lastBuiltRevision?.sha1String == sha) {
+            return [
+                found:  true,
+                number: b.number,
+                result: b.result?.toString(),
+            ]
+        }
+    }
+    return [found: false, reason: 'no-match']
+}
+
 pipeline {
     // !dory mirrors the root Jenkinsfile and gain-web-e2e — dory's
     // docker daemon / resource profile doesn't fit the root build's
@@ -138,30 +170,20 @@ pipeline {
             steps {
                 script {
                     def upstreamProject = params.UPSTREAM_PROJECT
-                    def masterJob = jenkins.model.Jenkins.instance
-                        .getItemByFullName(upstreamProject)
-                    if (masterJob == null) {
+                    def tagSha = sh(
+                        script: 'git rev-parse HEAD',
+                        returnStdout: true,
+                    ).trim()
+                    def info = findUpstreamBuildForCommit(
+                        upstreamProject, tagSha)
+                    if (!info.found && info.reason == 'missing') {
                         error(
                             "Upstream project '${upstreamProject}' " +
                             'not found. Override UPSTREAM_PROJECT ' +
                             'if the multibranch path has changed.'
                         )
                     }
-                    def tagSha = sh(
-                        script: 'git rev-parse HEAD',
-                        returnStdout: true,
-                    ).trim()
-                    def matching = null
-                    for (b in masterJob.getBuilds()) {
-                        def gitData = b.getAction(
-                            hudson.plugins.git.util.BuildData)
-                        def sha = gitData?.lastBuiltRevision?.sha1String
-                        if (sha == tagSha) {
-                            matching = b
-                            break
-                        }
-                    }
-                    if (matching == null) {
+                    if (!info.found) {
                         error(
                             "No ${upstreamProject} build found for " +
                             "commit ${tagSha}. Tag a commit that " +
@@ -169,20 +191,18 @@ pipeline {
                             'green.'
                         )
                     }
-                    if (matching.result != hudson.model.Result.SUCCESS) {
+                    if (info.result != 'SUCCESS') {
                         error(
                             "Upstream master build " +
-                            "#${matching.number} for commit " +
+                            "#${info.number} for commit " +
                             "${tagSha} did not succeed " +
-                            "(${matching.result}). Refusing to " +
-                            'release.'
+                            "(${info.result}). Refusing to release."
                         )
                     }
-                    env.UPSTREAM_BUILD_NUMBER =
-                        matching.number.toString()
+                    env.UPSTREAM_BUILD_NUMBER = info.number.toString()
                     env.GIT_COMMIT = tagSha
                     echo(
-                        "Upstream master build: #${matching.number} " +
+                        "Upstream master build: #${info.number} " +
                         "(SUCCESS) for commit ${tagSha}"
                     )
                 }
