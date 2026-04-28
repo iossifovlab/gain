@@ -99,7 +99,7 @@ pipeline {
         REGISTRY_USER   = credentials('user.registry.seqpipe.org')
         REGISTRY_PASS   = credentials('passwd.registry.seqpipe.org')
         ANACONDA_TOKEN  = credentials('anaconda-token-iossifovlab')
-        WHEELS_HOST     = 'nemo'
+        WHEELS_HOST     = 'wheels.seqpipe.org'
         WHEELS_PATH     = '/data/wheels/gain'
         ANACONDA_USER   = 'iossifovlab'
         CONDA_BUILDER   = "gain-conda-builder-ci:${env.BUILD_NUMBER}"
