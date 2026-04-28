@@ -492,26 +492,47 @@ pipeline {
             // tag-build. Announce on Zulip so the developer who
             // pushed the tag finds out without hunting for a build
             // URL.
-            zulipSend(
-                topic: 'releases',
-                message:
-                    "Release ${params.TAG_NAME} FAILED — " +
-                    "${env.BUILD_URL}",
-            )
+            //
+            // Wrapped in an explicit node block: a failure during
+            // pipeline init (e.g., a missing credential in the
+            // `environment {}` block) tears down the agent before
+            // post runs, leaving zulipSend without a FilePath
+            // context. Allocating our own node guarantees Zulip
+            // fires whether the failure was mid-stage (where the
+            // outer agent is still alive) or pre-stage (where it
+            // isn't).
+            node('!dory') {
+                zulipSend(
+                    topic: 'releases',
+                    message:
+                        "Release ${params.TAG_NAME} FAILED — " +
+                        "${env.BUILD_URL}",
+                )
+            }
         }
         cleanup {
             // Strip ephemeral images this build produced. All
             // `|| true` so a missing image (e.g. early failure
             // before the docker build ran) doesn't fail the
             // cleanup step.
-            sh '''
-                docker rmi "${CONDA_BUILDER}" 2>/dev/null || true
-                for repo in "${BACKEND_REPO}" "${FRONTEND_REPO}"; do
-                    for tag in "${TAG_NAME}" stable; do
-                        docker rmi "$repo:$tag" 2>/dev/null || true
+            //
+            // Same node-wrap rationale as `failure` above. ${...:-}
+            // shell defaults guard against pipeline-init failures
+            // that abort before the `environment {}` block sets
+            // BACKEND_REPO/FRONTEND_REPO/CONDA_BUILDER/TAG_NAME —
+            // empty values turn the rmi into a harmless no-op.
+            node('!dory') {
+                sh '''
+                    docker rmi "${CONDA_BUILDER:-}" 2>/dev/null || true
+                    for repo in "${BACKEND_REPO:-}" "${FRONTEND_REPO:-}"; do
+                        [ -z "$repo" ] && continue
+                        for tag in "${TAG_NAME:-}" stable; do
+                            [ -z "$tag" ] && continue
+                            docker rmi "$repo:$tag" 2>/dev/null || true
+                        done
                     done
-                done
-            '''
+                '''
+            }
         }
     }
 }
