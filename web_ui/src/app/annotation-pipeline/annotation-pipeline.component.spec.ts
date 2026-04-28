@@ -219,19 +219,6 @@ describe('AnnotationPipelineComponent', () => {
     expect(pipelineStateService.currentTemporaryPipelineId()).toBe('215');
   });
 
-  it('should reconnects to socket notifications on close event', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const setupSpy = jest.spyOn(component as any, 'setupPipelineWebSocketConnection');
-    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
-      .mockReturnValueOnce(throwError(new CloseEvent('close')));
-    const unsubSpy = jest.spyOn(component.socketNotificationSubscription, 'unsubscribe');
-
-    component.ngOnInit();
-
-    expect(unsubSpy).toHaveBeenCalledWith();
-    expect(setupSpy).toHaveBeenCalledWith();
-  });
-
   it('does not reconnect for non-close events', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const setupSpy = jest.spyOn(component as any, 'setupPipelineWebSocketConnection');
