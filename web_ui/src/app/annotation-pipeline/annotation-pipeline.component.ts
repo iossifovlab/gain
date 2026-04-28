@@ -143,17 +143,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
           pipeline.status = notification.status;
         }
       },
-      error: err => {
-        console.error(err);
-        if (err instanceof CloseEvent && err.type === 'close') {
-          this.socketNotificationSubscription.unsubscribe();
-          this.setupPipelineWebSocketConnection();
-        }
-      },
-      complete: () => {
-        this.socketNotificationSubscription.unsubscribe();
-        this.setupPipelineWebSocketConnection();
-      }
+      error: err => console.error(err)
     });
   }
 
@@ -578,6 +568,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     if (this.resizeObserver) {
       this.resizeObserver.disconnect();
     }
+    this.socketNotificationSubscription.unsubscribe();
   }
 
   public editorWidth(): string {
