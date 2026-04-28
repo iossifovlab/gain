@@ -117,7 +117,7 @@ def test_clinvar_fetch_region(
 @pytest.mark.parametrize("chrom,pos,ref,alt,scores,expected", [
     (
         "chrA", 1, "A", "T", ["CLNDN", "ALLELEID"],
-        ["not_provided", 1003021],
+        {"CLNDN": "not_provided", "ALLELEID": 1003021},
     ),
     (
         "chrA", 1, "A", "G", ["CLNDN", "ALLELEID"],
@@ -125,12 +125,12 @@ def test_clinvar_fetch_region(
     ),
     (
         "chrA", 2, "A", "T", ["CLNDN", "CLNSIG"],
-        ["Combined_immunodeficiency_due_to_OX40_deficiency",
-         "Likely_benign"],
+        {"CLNDN": "Combined_immunodeficiency_due_to_OX40_deficiency",
+         "CLNSIG": "Likely_benign"},
     ),
     (
         "chrA", 3, "A", "T", ["DBVARID"],
-        [None],
+        {"DBVARID": None},
     ),
 ])
 def test_clinvar_fetch_scores(
@@ -410,7 +410,7 @@ def test_gnomad_vcf_fetch_region(
 @pytest.mark.parametrize("chrom,pos,ref,alt,scores,expected", [
     (
         "chrA", 1, "A", "C", ["AN", "AC"],
-        [53780, 0],
+        {"AN": 53780, "AC": 0},
     ),
     (
         "chrA", 1, "A", "G", ["AN", "AC"],
@@ -418,7 +418,7 @@ def test_gnomad_vcf_fetch_region(
     ),
     (
         "chrA", 4, "A", "C", ["AN", "AC"],
-        [89638, 1],
+        {"AN": 89638, "AC": 1},
     ),
 ])
 def test_gnomad_vcf_fetch_rscores(

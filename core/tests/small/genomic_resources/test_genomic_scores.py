@@ -326,7 +326,7 @@ def test_score_definition_via_index_headerless_tabix(
     res = build_filesystem_test_resource(tmp_path)
     score = build_score_from_resource(res)
     score.open()
-    score_line = next(score._fetch_lines("1", 10, 12))
+    score_line = next(score.fetch_lines("1", 10, 12))
     assert len(score.score_definitions) == 1
     assert "piscore" in score.score_definitions
     assert score_line.get_available_scores() == ("piscore",)
@@ -370,7 +370,7 @@ def test_score_definition_list_header_tabix(tmp_path: pathlib.Path) -> None:
     res = build_filesystem_test_resource(tmp_path)
     score = build_score_from_resource(res)
     score.open()
-    score_line = next(score._fetch_lines("1", 10, 12))
+    score_line = next(score.fetch_lines("1", 10, 12))
     assert len(score.score_definitions) == 1
     assert "piscore" in score.score_definitions
     assert score_line.get_available_scores() == ("piscore",)
@@ -502,7 +502,7 @@ def test_line_score_value_parsing(tmp_path: pathlib.Path) -> None:
     res = build_filesystem_test_resource(tmp_path)
     score = build_score_from_resource(res)
     score.open()
-    result = [line.get_score("c2") for line in score._fetch_lines("1", 10, 30)]
+    result = [line.get_score("c2") for line in score.fetch_lines("1", 10, 30)]
     assert result == [3.14, 4.14, 5.14]
 
 
@@ -617,13 +617,13 @@ def test_line_score_na_values(tmp_path: pathlib.Path) -> None:
 
     score = build_score_from_resource(res)
     score.open()
-    result = [line.get_score("c2") for line in score._fetch_lines("1", 10, 30)]
+    result = [line.get_score("c2") for line in score.fetch_lines("1", 10, 30)]
     assert result == [3.14, None, None]
 
 
 def test_line_get_available_score_columns(vcf_score: AlleleScore) -> None:
     vcf_score.open()
-    score_line = next(vcf_score._fetch_lines("chr1", 2, 30))
+    score_line = next(vcf_score.fetch_lines("chr1", 2, 30))
     assert set(score_line.get_available_scores()) == {"A", "B", "C", "D"}
 
 
@@ -631,7 +631,7 @@ def test_vcf_tuple_scores_autoconcat_to_string(vcf_score: AlleleScore) -> None:
     vcf_score.open()
     results = tuple(
         (r.chrom, r.pos_begin, r.pos_end, r.get_score("B"))
-        for r in vcf_score._fetch_lines("chr1", 2, 30)
+        for r in vcf_score.fetch_lines("chr1", 2, 30)
     )
     assert results == (
         ("chr1", 2, 2, "1|2|3"),
@@ -722,7 +722,7 @@ def test_score_definition_new_configuration_fields(
     assert "piscore" in score.score_definitions
     assert "2piscore" in score.score_definitions
 
-    score_line = next(score._fetch_lines("1", 10, 12))
+    score_line = next(score.fetch_lines("1", 10, 12))
     assert score_line.get_available_scores() == ("piscore", "2piscore")
     assert score_line.get_score("piscore") == 3.14
     assert score_line.get_score("2piscore") == 6.28
@@ -768,7 +768,7 @@ def test_score_definition_histograms(
     assert "score1" in score.score_definitions
     assert "score2" in score.score_definitions
 
-    score_line = next(score._fetch_lines("1", 10, 10))
+    score_line = next(score.fetch_lines("1", 10, 10))
     assert score_line.get_available_scores() == ("score1", "score2")
     assert score_line.get_score("score1") == "aaa"
     assert score_line.get_score("score2") == "bbb"

@@ -578,11 +578,12 @@ class GenomicScore(ResourceConfigValidationMixin):
         for score, config_scoredef in config_scoredefs.items():
             vcf_scoredef = vcf_scoredefs[score]
 
+            value_type = config_scoredef.value_type or vcf_scoredef.value_type
+
             scoredef = _ScoreDef(
                 score_id=vcf_scoredef.score_id,
                 desc=config_scoredef.desc or vcf_scoredef.desc,
-                value_type=config_scoredef.value_type
-                    or vcf_scoredef.value_type,
+                value_type=value_type,
 
                 pos_aggregator=config_scoredef.pos_aggregator,
                 allele_aggregator=config_scoredef.allele_aggregator,
@@ -761,12 +762,13 @@ class GenomicScore(ResourceConfigValidationMixin):
         assert self.table is not None
         return self.table.header
 
-    def _fetch_lines(
+    def fetch_lines(
         self,
         chrom: str | None,
         pos_begin: int | None,
         pos_end: int | None,
     ) -> Iterator[ScoreLine]:
+        """Fetch lines in a region and wrap them in ScoreLines."""
         try:
             for line in self.table.get_records_in_region(
                 chrom, pos_begin, pos_end,
@@ -807,7 +809,7 @@ class GenomicScore(ResourceConfigValidationMixin):
         if scores is None:
             scores = self.get_all_scores()
 
-        for line in self._fetch_lines(chrom, pos_begin, pos_end):
+        for line in self.fetch_lines(chrom, pos_begin, pos_end):
             line_chrom, line_begin, line_end = self._line_to_begin_end(line)
             if pos_begin is not None and line_end < pos_begin:
                 continue
@@ -1012,7 +1014,7 @@ class PositionScore(GenomicScore):
                 for s in scores]
         assert all(isinstance(s, str) for s in scores)
 
-        lines = list(self._fetch_lines(chrom, position, position))
+        lines = list(self.fetch_lines(chrom, position, position))
         if not lines:
             return None
 
@@ -1083,7 +1085,7 @@ class PositionScore(GenomicScore):
 
         score_aggs = self._build_scores_agg(scores)
 
-        for line in self._fetch_lines(chrom, pos_begin, pos_end):
+        for line in self.fetch_lines(chrom, pos_begin, pos_end):
             _line_chrom, line_begin, line_end = self._line_to_begin_end(line)
             for sagg in score_aggs:
                 val = line.get_score(sagg.score)
@@ -1360,21 +1362,22 @@ class AlleleScore(GenomicScore):
             if prev_right is not None and left < prev_right:
                 raise ValueError(
                     f"multiple values for positions [{left}, {prev_right}]")
-            returned_region = (lchrom, left, right, val, {(line.ref, line.alt)})
+            returned_region = (
+                lchrom, left, right, val, {(line.ref, line.alt)})
             yield (left, line.ref, line.alt, val)
 
     def fetch_scores(
         self, chrom: str, position: int,
         reference: str, alternative: str,
         scores: list[str] | None = None,
-    ) -> list[ScoreValue] | None:
+    ) -> dict[str, ScoreValue] | None:
         """Fetch score values at specified genomic position and nucleotide."""
         if chrom not in self.get_all_chromosomes():
             raise ValueError(
                 f"{chrom} is not among the available chromosomes for "
                 f"NP Score resource {self.resource_id}")
 
-        lines = list(self._fetch_lines(chrom, position, position))
+        lines = list(self.fetch_lines(chrom, position, position))
         if not lines:
             return None
 
@@ -1387,12 +1390,13 @@ class AlleleScore(GenomicScore):
         if not selected_line:
             return None
         requested_scores = scores or self.get_all_scores()
-        return [selected_line.get_score(sc) for sc in requested_scores]
+        return {sc: selected_line.get_score(sc) for sc in requested_scores}
 
-    def _build_scores_agg(
+    def build_scores_agg(
         self, score_queries: list[AlleleScoreQuery],
-    ) -> list[AlleleScoreAggr]:
-        score_aggs = []
+    ) -> dict[str, AlleleScoreAggr]:
+        """Build allele score aggregators for the specified queries."""
+        score_aggs = {}
         for squery in score_queries:
             scr_def = self.score_definitions[squery.score]
 
@@ -1409,9 +1413,8 @@ class AlleleScore(GenomicScore):
                 assert scr_def.allele_aggregator is not None
                 aggregator_type = scr_def.allele_aggregator
             allele_aggregator = build_aggregator(aggregator_type)
-            score_aggs.append(
-                AlleleScoreAggr(
-                    squery.score, position_aggregator, allele_aggregator))
+            score_aggs[squery.score] = AlleleScoreAggr(
+                squery.score, position_aggregator, allele_aggregator)
         return score_aggs
 
     def fetch_scores_agg(
@@ -1430,14 +1433,14 @@ class AlleleScore(GenomicScore):
                 AlleleScoreQuery(score_id)
                 for score_id in self.get_all_scores()]
 
-        score_aggs = self._build_scores_agg(scores)
+        score_aggs = self.build_scores_agg(scores)
 
-        score_lines = list(self._fetch_lines(chrom, pos_begin, pos_end))
+        score_lines = list(self.fetch_lines(chrom, pos_begin, pos_end))
         if not score_lines:
-            return [sagg.position_aggregator for sagg in score_aggs]
+            return [sagg.position_aggregator for sagg in score_aggs.values()]
 
         def aggregate_alleles() -> None:
-            for sagg in score_aggs:
+            for sagg in score_aggs.values():
                 sagg.position_aggregator.add(
                     sagg.allele_aggregator.get_final())
                 sagg.allele_aggregator.clear()
@@ -1447,7 +1450,7 @@ class AlleleScore(GenomicScore):
             if line.pos_begin != last_pos:
                 aggregate_alleles()
 
-            for sagg in score_aggs:
+            for sagg in score_aggs.values():
                 val = line.get_score(sagg.score)
                 left = (
                     max(pos_begin, line.pos_begin)
@@ -1460,7 +1463,7 @@ class AlleleScore(GenomicScore):
             last_pos = line.pos_begin
         aggregate_alleles()
 
-        return [sagg.position_aggregator for sagg in score_aggs]
+        return [sagg.position_aggregator for sagg in score_aggs.values()]
 
 
 @dataclass
@@ -1555,7 +1558,7 @@ class CnvCollection(GenomicScore):
         if chrom not in self.table.get_chromosomes():
             return cnvs
 
-        lines = list(self._fetch_lines(chrom, start, stop))
+        lines = list(self.fetch_lines(chrom, start, stop))
         if not lines:
             return cnvs
 

@@ -9,6 +9,7 @@ from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.annotation.score_annotator import AlleleScoreAnnotator
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
+    GenomicResourceRepo,
 )
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
@@ -89,14 +90,14 @@ def test_allele_score_annotator_attributes(
 
     attributes = annotator.get_info().attributes
     assert len(attributes) == 2
-    assert attributes[0].name == "allele_freq"
-    assert attributes[0].source == "freq"
-    assert attributes[0].value_type == "float"
-    assert attributes[0].description == ""
-    assert attributes[1].name == "variant_id"
-    assert attributes[1].source == "ID"
-    assert attributes[1].value_type == "str"
-    assert attributes[1].description == "variant ID"
+    assert attributes[0].name == "variant_id"
+    assert attributes[0].source == "ID"
+    assert attributes[0].value_type == "str"
+    assert attributes[0].description == "variant ID"
+    assert attributes[1].name == "allele_freq"
+    assert attributes[1].source == "freq"
+    assert attributes[1].value_type == "float"
+    assert attributes[1].description == ""
 
 
 @pytest.mark.parametrize("variant, expected", [
@@ -257,3 +258,170 @@ def test_allele_score_annotator_with_default_annotation(
         assert len(result) == 2
         assert result["allele_freq"] == expected[0]
         assert result["variant_id"] == expected[1]
+
+
+_ALLELE_SCORE_GRR_CONF = """
+    type: allele_score
+    allele_score_mode: alleles
+    table:
+        filename: data.txt
+        reference:
+          name: reference
+        alternative:
+          name: alternative
+    scores:
+        - id: ID
+          type: str
+          desc: "variant ID"
+          name: ID
+        - id: freq
+          type: float
+          desc: ""
+          name: freq
+"""
+
+_ALLELE_SCORE_DATA = convert_to_tab_separated("""
+    chrom  pos_begin  reference  alternative ID   freq
+    1      10         A          G           ag   0.02
+    1      10         A          C           ac   0.03
+    1      10         A          T           at   0.04
+    1      16         CA         G           cag  0.03
+    1      16         C          T           ct   0.04
+    1      16         C          A           ca   0.05
+    1      16         C          CA          cca  1.0
+    1      16         C          CG          ccg  2.0
+""")
+
+
+@pytest.fixture
+def allele_score_repository(
+    tmp_path: pathlib.Path,
+) -> GenomicResourceRepo:
+    setup_directories(
+        tmp_path / "grr", {
+            "allele_score": {
+                GR_CONF_FILE_NAME: _ALLELE_SCORE_GRR_CONF,
+                "data.txt": _ALLELE_SCORE_DATA,
+            },
+        })
+    return build_genomic_resource_repository({
+        "id": "allele_score_local",
+        "type": "directory",
+        "directory": str(tmp_path / "grr"),
+    })
+
+
+def test_allele_attribute_listed_with_default_false(
+    annotation_pipeline: AnnotationPipeline,
+) -> None:
+    annotator = annotation_pipeline.annotators[0]
+    assert isinstance(annotator, AlleleScoreAnnotator)
+    attr_descs = annotator.get_all_attribute_descriptions()
+    assert "allele" in attr_descs
+    assert attr_descs["allele"].default is False
+    assert attr_descs["allele"].source == "allele"
+
+
+def test_allele_score_exact_match_allele_attribute(
+    allele_score_repository: GenomicResourceRepo,
+) -> None:
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent("""
+            - allele_score:
+                resource_id: allele_score
+                attributes:
+                - source: freq
+                  name: allele_freq
+                - source: allele
+        """),
+        allele_score_repository,
+    )
+    with pipeline.open() as work_pipeline:
+        result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
+    assert result["allele_freq"] == pytest.approx(0.02)
+    assert result["allele"] == "1:10:A:G"
+
+
+def test_allele_score_exact_match_allele_with_include_attributes(
+    allele_score_repository: GenomicResourceRepo,
+) -> None:
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent("""
+            - allele_score:
+                resource_id: allele_score
+                attributes:
+                - source: freq
+                  name: allele_freq
+                - source: allele
+                  include_attributes: freq
+        """),
+        allele_score_repository,
+    )
+    with pipeline.open() as work_pipeline:
+        result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
+    assert result["allele_freq"] == pytest.approx(0.02)
+    assert result["allele"] == "1:10:A:G:0.02"
+
+
+@pytest.mark.parametrize("allele_filter, expected_alleles", [
+    (
+        "freq > 0.03",
+        {"1:10:A:T", "1:16:C:T", "1:16:C:A", "1:16:C:CA", "1:16:C:CG"},
+    ),
+    (
+        "freq < 0.04",
+        {"1:10:A:G", "1:10:A:C", "1:16:CA:G"},
+    ),
+    (
+        "freq == 0.04",
+        {"1:10:A:T", "1:16:C:T"},
+    ),
+    (
+        "freq > 0.03 and freq < 0.1",
+        {"1:10:A:T", "1:16:C:T", "1:16:C:A"},
+    ),
+    (
+        "freq < 0.03 or freq > 1.0",
+        {"1:10:A:G", "1:16:C:CG"},
+    ),
+])
+def test_allele_score_region_allele_filter(
+    allele_score_repository: GenomicResourceRepo,
+    allele_filter: str,
+    expected_alleles: set,
+) -> None:
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent(f"""
+            - allele_score:
+                resource_id: allele_score
+                allele_filter: "{allele_filter}"
+                attributes:
+                - source: allele
+        """),
+        allele_score_repository,
+    )
+    with pipeline.open() as work_pipeline:
+        result = work_pipeline.annotate(Region("1", 10, 16))
+    assert set(result["allele"].split(",")) == expected_alleles
+
+
+def test_allele_score_region_allele_with_include_attributes(
+    allele_score_repository: GenomicResourceRepo,
+) -> None:
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent("""
+            - allele_score:
+                resource_id: allele_score
+                allele_filter: "freq > 0.03"
+                attributes:
+                - source: allele
+                  include_attributes: freq
+        """),
+        allele_score_repository,
+    )
+    with pipeline.open() as work_pipeline:
+        result = work_pipeline.annotate(Region("1", 10, 16))
+    alleles = set(result["allele"].split(","))
+    assert "1:10:A:T:0.04" in alleles
+    assert "1:16:C:A:0.05" in alleles
+    assert not any(a.startswith("1:10:A:G") for a in alleles)
