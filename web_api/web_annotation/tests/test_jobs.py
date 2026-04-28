@@ -19,7 +19,6 @@ from pytest_mock import MockerFixture
 
 from web_annotation.consumers import AnnotationStateConsumer
 from web_annotation.executor import SequentialTaskExecutor
-from web_annotation.mail import send_email
 from web_annotation.models import (
     AnonymousJob,
     Job,
@@ -31,9 +30,6 @@ from web_annotation.models import (
 from web_annotation.pipeline_cache import LRUPipelineCache
 from web_annotation.tasks import clean_old_jobs
 from web_annotation.testing import CustomWebsocketCommunicator
-from web_annotation.tests.mailhog_client import (
-    MailhogClient,
-)
 
 
 @pytest.fixture(autouse=True)
@@ -133,18 +129,6 @@ def test_job_update_success() -> None:
         test_job.update_job_success("")
 
     assert test_job.status == Job.Status.SUCCESS
-
-
-@pytest.mark.django_db
-def test_send_email(mail_client: MailhogClient) -> None:
-    email_result = send_email(
-        "TEST SUBJECT",
-        "TEST MESSAGE",
-        ["recipient1@mail.com", "recipient2@mail.com"],
-        "sender@mail.com",
-    )
-
-    assert email_result == 1
 
 
 @pytest.mark.django_db

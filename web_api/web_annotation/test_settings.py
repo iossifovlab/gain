@@ -2,15 +2,13 @@
 import os
 import pathlib
 import tempfile
-import time
 
 import yaml
 
 from .settings import *  # noqa
 
 # Dir for all data storage
-DATA_STORAGE_DIR = \
-    f"{tempfile.gettempdir()}/gpf-web-annotation-tests-data-{int(time.time())}"
+DATA_STORAGE_DIR = tempfile.mkdtemp()
 # Subdir to store uploaded annotation configurations in
 ANNOTATION_CONFIG_STORAGE_DIR = f"{DATA_STORAGE_DIR}/annotation-configs"
 # Subdir to store uploaded files in before they are annotated
