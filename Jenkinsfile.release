@@ -506,25 +506,39 @@ EOF
                 }
 
                 // 2) Conda → Anaconda.org/iossifovlab.
-                // --skip-existing makes re-runs after a partial
-                // publish failure idempotent (D10).
+                //
+                // Uploaded with rattler-build's own `upload
+                // anaconda` subcommand instead of `anaconda-client`
+                // because the latter (via conda-package-handling
+                // 2.4.0) failed to extract metadata from the
+                // .conda files produced by rattler-build 0.63.1
+                // ("Trouble reading metadata"). Using the same
+                // binary that built the package avoids that
+                // parser-version mismatch.
+                //
+                // --force replaces on conflict, giving us the same
+                // idempotent re-run semantics that anaconda-client
+                // had with --skip-existing (rattler-build doesn't
+                // ship a skip-existing flag, but our builds are
+                // deterministic so overwriting with the same
+                // content is harmless). D10.
                 //
                 // Wrapped in `sh -c '…'` so /dist/conda/*.conda
                 // glob-expands inside the container, where the
                 // path actually exists. Without the wrapper the
                 // agent's shell expanded the glob against its own
                 // root (no /dist/conda there), found no match, and
-                // passed the literal pattern to anaconda upload.
-                // ANACONDA_TOKEN + ANACONDA_USER come in via -e so
-                // the inner single-quoted script can reference
-                // them without agent-side interpolation.
+                // passed the literal pattern through. ANACONDA_TOKEN
+                // + ANACONDA_USER come in via -e so the inner
+                // single-quoted script can reference them without
+                // agent-side interpolation.
                 sh '''
                     docker run --rm \
                         -e ANACONDA_TOKEN \
                         -e ANACONDA_USER \
                         -v "$PWD/dist/conda:/dist/conda:ro" \
                         "${CONDA_BUILDER}" \
-                        sh -c 'anaconda --token "$ANACONDA_TOKEN" upload --user "$ANACONDA_USER" --skip-existing /dist/conda/*.conda'
+                        sh -c 'rattler-build upload anaconda --owner "$ANACONDA_USER" --api-key "$ANACONDA_TOKEN" --force /dist/conda/*.conda'
                 '''
 
                 // 3) Docker → registry.seqpipe.org with
