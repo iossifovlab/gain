@@ -532,8 +532,20 @@ EOF
                 // + ANACONDA_USER come in via -e so the inner
                 // single-quoted script can reference them without
                 // agent-side interpolation.
+                //
+                // --user runs the container as the Jenkins user
+                // (matches the build stage). Without it the
+                // container default is mambauser, which has no
+                // permission to read the .conda files owned by
+                // the Jenkins user — produces an opaque
+                // "io error occurred: Permission denied". HOME=/tmp
+                // gives the random UID a writable home for any
+                // rattler-build cache lookups.
                 sh '''
+                    DOCKER_USER="$(id -u):$(id -g)"
                     docker run --rm \
+                        --user "$DOCKER_USER" \
+                        -e HOME=/tmp \
                         -e ANACONDA_TOKEN \
                         -e ANACONDA_USER \
                         -v "$PWD/dist/conda:/dist/conda:ro" \
