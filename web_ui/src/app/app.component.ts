@@ -45,7 +45,6 @@ export class AppComponent implements DoCheck, OnInit {
       this.currentUserData = null;
       window.location.reload();
       this.usersService.refreshUserData();
-      this.socketNotificationsService.reopenConnection();
     });
   }
 
