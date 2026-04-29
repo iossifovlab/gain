@@ -1,6 +1,6 @@
 import { Component, ViewChild, OnInit, NgZone, HostListener, effect } from '@angular/core';
 import { JobsTableComponent } from '../jobs-table/jobs-table.component';
-import { Observable, Subscription, take } from 'rxjs';
+import { filter, Observable, Subscription, take } from 'rxjs';
 import { JobsService } from '../job-creation/jobs.service';
 import { AnnotationPipelineComponent } from '../annotation-pipeline/annotation-pipeline.component';
 import { getStatusClassName, Job, JobStatus } from '../job-creation/jobs';
@@ -64,6 +64,7 @@ export class AnnotationJobsWrapperComponent implements OnInit {
   public ngOnInit(): void {
     this.setupJobWebSocketConnection();
     this.userService.userData.pipe(
+      filter((userData) => userData !== null),
     ).subscribe((userData) => {
       this.isUserLoggedIn = userData.loggedIn;
     });

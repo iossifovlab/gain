@@ -1,5 +1,5 @@
 import { Component, ViewChild, OnInit, NgZone, HostListener, effect } from '@angular/core';
-import { take } from 'rxjs';
+import { filter, take } from 'rxjs';
 import { AnnotationPipelineComponent } from '../annotation-pipeline/annotation-pipeline.component';
 import { CommonModule } from '@angular/common';
 import { SingleAnnotationComponent } from '../single-annotation/single-annotation.component';
@@ -53,6 +53,7 @@ export class SingleAnnotationWrapperComponent implements OnInit {
 
   public ngOnInit(): void {
     this.userService.userData.pipe(
+      filter((userData) => userData !== null),
     ).subscribe((userData) => {
       this.isUserLoggedIn = userData.loggedIn;
     });

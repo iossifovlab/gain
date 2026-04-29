@@ -12,7 +12,7 @@ import {
   TemplateRef,
   ViewChild,
 } from '@angular/core';
-import { map, Observable, of, startWith, Subscription, switchMap, take, tap } from 'rxjs';
+import { filter, map, Observable, of, startWith, Subscription, switchMap, take, tap } from 'rxjs';
 import { JobsService } from '../job-creation/jobs.service';
 import { Pipeline } from '../job-creation/pipelines';
 import { FormControl, FormsModule, ReactiveFormsModule } from '@angular/forms';
@@ -96,6 +96,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     this.editorWidth = this.pipelineStateService.editorWidth();
 
     this.userService.userData.pipe(
+      filter((userData) => userData !== null),
     ).subscribe((userData) => {
       this.isUserLoggedIn = userData.loggedIn;
     });

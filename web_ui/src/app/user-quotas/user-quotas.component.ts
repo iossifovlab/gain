@@ -1,6 +1,6 @@
 import { Component, OnInit } from '@angular/core';
 import { UsersService } from '../users.service';
-import { take } from 'rxjs';
+import { filter, take } from 'rxjs';
 import { RateLimits } from '../users';
 import { CommonModule, KeyValuePipe } from '@angular/common';
 
@@ -23,6 +23,7 @@ export class UserQuotasComponent implements OnInit {
     });
 
     this.userService.userData.pipe(
+      filter((userData) => userData !== null),
     ).subscribe((userData) => {
       this.isUserLoggedIn = userData.loggedIn;
     });

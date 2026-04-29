@@ -6,7 +6,7 @@ import { SingleAnnotationReportComponent } from '../single-annotation-report/sin
 import { SingleAnnotationService } from '../single-annotation.service';
 import { SingleAnnotationReport, Annotatable } from '../single-annotation';
 import { UsersService } from '../users.service';
-import { distinctUntilChanged, Subscription } from 'rxjs';
+import { distinctUntilChanged, filter, Subscription } from 'rxjs';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatMenuModule } from '@angular/material/menu';
 import { AnnotationPipelineStateService } from '../annotation-pipeline/annotation-pipeline-state.service';
@@ -231,6 +231,7 @@ export class SingleAnnotationComponent implements OnInit {
 
   private triggerAnnotatblesTableUpdate(): void {
     this.userService.userData.pipe(
+      filter((userData) => userData !== null),
     ).subscribe((userData) => {
       if (userData.loggedIn) {
         this.annotatableUpdateEmit.emit();

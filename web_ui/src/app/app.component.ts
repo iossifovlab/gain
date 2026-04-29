@@ -3,7 +3,7 @@ import { ChangeDetectorRef, Component, DoCheck, OnInit } from '@angular/core';
 import { Router, RouterModule, RouterOutlet } from '@angular/router';
 import { UsersService } from './users.service';
 import { UserData } from './users';
-import { takeWhile } from 'rxjs';
+import { filter, takeWhile } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { MarkdownModule } from 'ngx-markdown';
 import { SocketNotificationsService } from './socket-notifications/socket-notifications.service';
@@ -31,6 +31,7 @@ export class AppComponent implements DoCheck, OnInit {
 
   public ngDoCheck(): void {
     this.usersService.userData.pipe(
+      filter(userData => userData !== null),
       takeWhile(user => user?.email !== this.currentUserData?.email),
     ).subscribe((userData) => {
       this.currentUserData = userData;
