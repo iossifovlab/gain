@@ -79,10 +79,10 @@
           ? currentTemporaryPipelineStatus + '-editor'
           : ''
       ]"
-      [style.width]="editorWidth()"
-      [style.height]="editorHeight()"
+      [style.width.px]="editorWidth"
+      [style.height]="'calc(100vh - 330px)'"
       [options]="yamlEditorOptions"
-      (onInit)="onEditorInit()"
+      (onInit)="onEditorInit($event)"
       [(ngModel)]="currentPipelineText"
       (ngModelChange)="isConfigValid()"></ngx-monaco-editor>
     <div id="status-bar">
@@ -131,6 +131,8 @@
       #pipelineCreate="cdkOverlayOrigin"
       ><span class="material-symbols-outlined new-pipeline-icon">draft</span>New pipeline</button
     >
+  </div>
+  <div>
     <button *ngIf="isUserLoggedIn" (click)="saveAs()" id="save-as-button" [disabled]="configError || disableActions"
       ><span class="material-symbols-outlined save-as-icon">save_as</span>Save as</button
     >
@@ -141,7 +143,6 @@
       [disabled]="!isPipelineChanged() || configError || disableActions"
       ><span class="material-symbols-outlined save-icon">save</span>Save</button
     >
-
     <span cdkOverlayOrigin #pipelineDelete="cdkOverlayOrigin">
       <button
         *ngIf="isUserLoggedIn && selectedPipeline && selectedPipeline.type === 'user'"
@@ -151,14 +152,6 @@
         ><span class="material-symbols-outlined delete-icon">delete</span>Delete</button
       >
     </span>
-  </div>
-  <div>
-    <button *ngIf="displayResetScreenButton" (click)="shrinkTextarea()" id="shrink-button"
-      ><span class="material-symbols-outlined shrink-icon">close_fullscreen</span>Reset</button
-    >
-    <button *ngIf="displayFullScreenButton" (click)="expandTextarea()" id="expand-button"
-      ><span class="material-symbols-outlined expand-icon">open_in_full</span>Full screen</button
-    >
   </div>
 </div>
 

@@ -2,17 +2,19 @@
   display: flex;
   gap: 15px;
   align-items: center;
+  max-width: 95vw;
+  min-width: 300px;
+  width: calc(100% - 14px);
 }
 
 #pipeline-editor {
   border: 2px solid #cfd8df;
   border-radius: 15px;
   padding-top: 10px;
-  resize: both;
+  resize: horizontal;
   overflow: auto;
   min-height: 300px;
   min-width: 450px;
-  max-height: 70vh;
   max-width: 95vw;
 }
 
@@ -83,8 +85,7 @@
   color: #252e34;
   font-weight: 600;
   font-size: 16px;
-  max-width: 30vw;
-  width: 80%;
+  width: 100%;
 }
 
 #pipelines-input:focus {
@@ -109,8 +110,9 @@
 
 #pipeline-actions {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
   margin-top: 10px;
+  width: 97%;
 }
 
 #add-annotator-button,

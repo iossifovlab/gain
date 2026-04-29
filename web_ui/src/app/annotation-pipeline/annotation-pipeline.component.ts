@@ -63,9 +63,6 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   @ViewChild('pipelineInput') public pipelineInputRef: MatAutocompleteTrigger;
   public resizeObserver: ResizeObserver = null;
   public yamlEditorOptions = {};
-  public displayFullScreenButton = true;
-  public displayResetScreenButton = false;
-  public editorSize: 'small' | 'full' | 'custom' = 'small';
   @Output() public tiggerHidingComponents = new EventEmitter<boolean>();
   public isUserLoggedIn = false;
   public showConfimDeletePopup = false;
@@ -77,6 +74,8 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   public disableActions: boolean;
   public invalidPipelineName = false;
   public pipelinesLoaded = false;
+  public editorInstance: Monaco.editor.IStandaloneCodeEditor;
+  public editorWidth: number;
 
   public constructor(
     private jobsService: JobsService,
@@ -88,11 +87,14 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     private pipelineStateService: AnnotationPipelineStateService,
   ) { }
 
-  public onEditorInit(): void {
+  public onEditorInit(editor: Monaco.editor.IStandaloneCodeEditor): void {
+    this.editorInstance = editor;
     initEditor();
   }
 
   public ngOnInit(): void {
+    this.editorWidth = this.pipelineStateService.editorWidth();
+
     this.userService.userData.pipe(
     ).subscribe((userData) => {
       this.isUserLoggedIn = userData.loggedIn;
@@ -165,19 +167,6 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     return false;
   }
 
-  private resolveResizeButtonsVisibility(editorElement: HTMLElement): void {
-    const maxWidth = Math.round(window.innerWidth * 0.95);
-    const minWidth = Math.round(window.innerWidth * 0.40);
-    if (
-      editorElement.clientWidth < maxWidth && editorElement.clientWidth > minWidth ||
-      editorElement.clientWidth < minWidth
-    ) {
-      this.displayFullScreenButton = true;
-      this.displayResetScreenButton = true;
-      this.editorSize = 'custom';
-    }
-  }
-
   private resolveComponentsVisibility(editorElement: HTMLElement): void {
     const parentWidth = document.getElementById('annotation-container').clientWidth;
     if (editorElement.clientWidth > parentWidth/1.5) {
@@ -185,7 +174,6 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     } else if (editorElement.clientWidth < parentWidth/1.5) {
       this.showParentComponents();
     }
-    this.resolveResizeButtonsVisibility(editorElement);
   }
 
   private getPipelines(defaultPipelineId: string = ''): void {
@@ -541,18 +529,10 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   }
 
   public expandTextarea(): void {
-    this.displayFullScreenButton = false;
-    this.displayResetScreenButton = true;
-    this.editorSize = 'full';
-
     this.hideParentComponents();
   }
 
   public shrinkTextarea(): void {
-    this.displayFullScreenButton = true;
-    this.displayResetScreenButton = false;
-    this.editorSize = 'small';
-
     this.showParentComponents();
   }
 
@@ -565,29 +545,12 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   }
 
   public ngOnDestroy(): void {
+    const width = this.editorInstance?.getLayoutInfo().width;
+    this.pipelineStateService.editorWidth.set(width);
+
     if (this.resizeObserver) {
       this.resizeObserver.disconnect();
     }
     this.socketNotificationSubscription.unsubscribe();
-  }
-
-  public editorWidth(): string {
-    if (this.editorSize === 'full') {
-      return '95vw';
-    } else if (this.editorSize === 'small') {
-      return '40vw';
-    } else {
-      return 'auto';
-    }
-  }
-
-  public editorHeight(): string {
-    if (this.editorSize === 'full') {
-      return '70vh';
-    } else if (this.editorSize === 'small') {
-      return '40vh';
-    } else {
-      return 'auto';
-    }
   }
 }

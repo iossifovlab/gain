@@ -268,43 +268,15 @@ describe('AnnotationPipelineComponent', () => {
     expect(component.filteredPipelines).toStrictEqual(mockPipelines);
   });
 
-  it('should determine editor\'s width', () => {
-    component.editorSize = 'custom';
-    expect(component.editorWidth()).toBe('auto');
-
-    component.editorSize = 'full';
-    expect(component.editorWidth()).toBe('95vw');
-
-    component.editorSize = 'small';
-    expect(component.editorWidth()).toBe('40vw');
-  });
-
-  it('should determine editor\'s height', () => {
-    component.editorSize = 'custom';
-    expect(component.editorHeight()).toBe('auto');
-
-    component.editorSize = 'full';
-    expect(component.editorHeight()).toBe('70vh');
-
-    component.editorSize = 'small';
-    expect(component.editorHeight()).toBe('40vh');
-  });
-
   it('should expand editor and hide elements', () => {
     const triggerHideElementsSpy = jest.spyOn(component.tiggerHidingComponents, 'emit');
     component.expandTextarea();
-    expect(component.displayFullScreenButton).toBe(false);
-    expect(component.displayResetScreenButton).toBe(true);
-    expect(component.editorSize).toBe('full');
     expect(triggerHideElementsSpy).toHaveBeenCalledWith(true);
   });
 
   it('should auto shrink editor and display elements', () => {
     const triggerHideElementsSpy = jest.spyOn(component.tiggerHidingComponents, 'emit');
     component.shrinkTextarea();
-    expect(component.displayFullScreenButton).toBe(true);
-    expect(component.displayResetScreenButton).toBe(false);
-    expect(component.editorSize).toBe('small');
     expect(triggerHideElementsSpy).toHaveBeenCalledWith(false);
   });
 
@@ -591,10 +563,11 @@ describe('AnnotationPipelineComponent', () => {
 
     const monacoEditor = fixture.debugElement.query(By.css('ngx-monaco-editor'));
 
+    const mockEditor = { getLayoutInfo: jest.fn().mockReturnValue({ width: 400 }) };
     // Manually trigger (onInit) of editor
-    monacoEditor.triggerEventHandler('onInit', { fake: 'editorInstance' });
+    monacoEditor.triggerEventHandler('onInit', mockEditor);
 
-    expect(editorInitSpy).toHaveBeenCalledWith();
+    expect(editorInitSpy).toHaveBeenCalledWith(mockEditor);
     expect(component.yamlEditorOptions).toStrictEqual(
       {
         language: 'yaml',
@@ -621,7 +594,7 @@ describe('AnnotationPipelineComponent', () => {
     const monacoEditor = fixture.debugElement.query(By.css('ngx-monaco-editor'));
 
     // Manually trigger (onInit) of editor
-    monacoEditor.triggerEventHandler('onInit', { fake: 'editorInstance' });
+    monacoEditor.triggerEventHandler('onInit', { getLayoutInfo: jest.fn().mockReturnValue({ width: 400 }) });
 
     fixture.detectChanges();
     expect(defineThemeSpy).toHaveBeenCalledWith('annotationPipelineTheme', {
