@@ -19,9 +19,10 @@
 //      Manage Jenkins → In-process Script Approval, then rerun.
 //
 // After bootstrap the seed is idempotent: jobs whose .groovy
-// definition hasn't changed get no-op updates. Currently manages:
-//   - iossifovlab/gain-vep-integration
-//     (defined in vep_annotator/jenkins-jobs/integration.groovy)
+// definition hasn't changed get no-op updates. Manages every job
+// whose Job-DSL definition lives under `<project>/jenkins-jobs/
+// *.groovy` in this repo (currently: gain-release, gain-web-e2e,
+// gain-vep-integration, gain-nightly).
 
 pipeline {
     agent any

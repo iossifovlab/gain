@@ -43,6 +43,12 @@ CI / release plumbing:
   tagged commit, then publishes wheels to
   `wheels.seqpipe.org`, conda to Anaconda.org, and
   Docker images to `registry.seqpipe.org`.
+- **`Jenkinsfile.nightly`** — cron-scheduled
+  orchestrator (`gain-nightly`, ~02:00 UTC): rebuilds
+  master and re-runs the integration jobs
+  (`gain-web-e2e`, `gain-vep-integration`)
+  unconditionally so dependency drift / silently-stale
+  caches surface daily.
 - **`conda-builder/`** — Docker image carrying the conda
   build/upload toolchain (rattler-build, anaconda-client,
   uv) used by both pipelines.

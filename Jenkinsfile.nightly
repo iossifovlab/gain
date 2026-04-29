@@ -1,0 +1,98 @@
+// Cron-scheduled orchestrator that rebuilds master from scratch
+// and re-runs the integration jobs unconditionally. Catches
+// dependency drift / silently-stale caches on quiet days.
+//
+// Three downstreams are exercised:
+//   - iossifovlab/gain/master        — full rebuild, lint+tests+
+//                                      wheels+conda+prod images
+//   - /gain-web-e2e                  — Playwright e2e against the
+//                                      freshly built backend +
+//                                      frontend
+//   - /gain-vep-integration          — VEP integration tests
+//                                      (otherwise gated on
+//                                      vep_annotator/** changes)
+//
+// Each is wrapped in `catchError` so a failure in one doesn't mask
+// the others. By morning we want a single Zulip alert whose linked
+// build surfaces every failing downstream, not just whichever
+// broke first.
+
+pipeline {
+    // Same label exclusion the other gain pipelines use — dory's
+    // docker daemon / resource profile doesn't fit our jobs.
+    agent { label '!dory' }
+
+    options {
+        // Generous: a cold master rebuild + e2e + VEP integration
+        // can comfortably reach 90 minutes; 4 hours leaves headroom
+        // for a slow/contended night without false-alarming.
+        timeout(time: 4, unit: 'HOURS')
+        // 40 keeps ~6 weeks of nightlies for trend analysis without
+        // bloating the controller's disk.
+        buildDiscarder(logRotator(numToKeepStr: '40'))
+    }
+
+    triggers {
+        // H = random minute around 02:00 UTC, smoothing controller
+        // load across nightly jobs.
+        cron('H 2 * * *')
+    }
+
+    stages {
+        stage('Rebuild master') {
+            steps {
+                catchError(buildResult: 'FAILURE',
+                           stageResult: 'FAILURE') {
+                    build(
+                        job: 'iossifovlab/gain/master',
+                        wait: true,
+                        propagate: true,
+                    )
+                }
+            }
+        }
+
+        stage('Run gain-web-e2e') {
+            steps {
+                catchError(buildResult: 'FAILURE',
+                           stageResult: 'FAILURE') {
+                    build(
+                        job: '/gain-web-e2e',
+                        wait: true,
+                        propagate: true,
+                    )
+                }
+            }
+        }
+
+        stage('Run gain-vep-integration') {
+            steps {
+                catchError(buildResult: 'FAILURE',
+                           stageResult: 'FAILURE') {
+                    build(
+                        job: '/gain-vep-integration',
+                        wait: true,
+                        propagate: true,
+                    )
+                }
+            }
+        }
+    }
+
+    post {
+        failure {
+            // Wrapped in an explicit node block: a pipeline-init
+            // failure can tear down the outer agent before post
+            // runs, leaving zulipSend without a FilePath context.
+            // Same defensive pattern as Jenkinsfile.release's post
+            // hooks.
+            node('!dory') {
+                zulipSend(
+                    topic: 'nightly',
+                    message:
+                        "Nightly FAILED — ${env.BUILD_URL}",
+                )
+            }
+        }
+    }
+}
