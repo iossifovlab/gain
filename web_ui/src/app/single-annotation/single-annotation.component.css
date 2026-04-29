@@ -118,4 +118,12 @@ mat-menu {
   align-items: center;
   gap: 10px;
   margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+#annotation-wrapper > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
 }

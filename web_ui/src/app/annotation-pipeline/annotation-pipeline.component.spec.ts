@@ -269,15 +269,13 @@ describe('AnnotationPipelineComponent', () => {
   });
 
   it('should expand editor and hide elements', () => {
-    const triggerHideElementsSpy = jest.spyOn(component.tiggerHidingComponents, 'emit');
     component.expandTextarea();
-    expect(triggerHideElementsSpy).toHaveBeenCalledWith(true);
+    expect(pipelineStateService.hideComponents()).toBe(true);
   });
 
   it('should auto shrink editor and display elements', () => {
-    const triggerHideElementsSpy = jest.spyOn(component.tiggerHidingComponents, 'emit');
     component.shrinkTextarea();
-    expect(triggerHideElementsSpy).toHaveBeenCalledWith(false);
+    expect(pipelineStateService.hideComponents()).toBe(false);
   });
 
 

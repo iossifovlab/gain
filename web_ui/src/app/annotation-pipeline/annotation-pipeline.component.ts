@@ -2,13 +2,12 @@ import { CommonModule } from '@angular/common';
 import {
   AfterViewInit,
   Component,
+  effect,
   ElementRef,
-  EventEmitter,
   HostListener,
   NgZone,
   OnDestroy,
   OnInit,
-  Output,
   TemplateRef,
   ViewChild,
 } from '@angular/core';
@@ -63,7 +62,6 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   @ViewChild('pipelineInput') public pipelineInputRef: MatAutocompleteTrigger;
   public resizeObserver: ResizeObserver = null;
   public yamlEditorOptions = {};
-  @Output() public tiggerHidingComponents = new EventEmitter<boolean>();
   public isUserLoggedIn = false;
   public showConfimDeletePopup = false;
   public showConfimPipelineChangePopup = false;
@@ -85,7 +83,11 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     private socketNotificationsService: SocketNotificationsService,
     private ngZone: NgZone,
     private pipelineStateService: AnnotationPipelineStateService,
-  ) { }
+  ) {
+    effect(() => {
+      this.editorWidth = this.pipelineStateService.editorWidth();
+    });
+  }
 
   public onEditorInit(editor: Monaco.editor.IStandaloneCodeEditor): void {
     this.editorInstance = editor;
@@ -93,8 +95,6 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   }
 
   public ngOnInit(): void {
-    this.editorWidth = this.pipelineStateService.editorWidth();
-
     this.userService.userData.pipe(
       filter((userData) => userData !== null),
     ).subscribe((userData) => {
@@ -117,6 +117,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     const editorElement = this.pipelineEditorRef._editorContainer.nativeElement as HTMLElement;
 
     this.resizeObserver = new ResizeObserver(() => {
+      this.editorWidth = editorElement.clientWidth;
       if (!this.isEditorMaximized(editorElement) && !this.isEditorMinimized(editorElement)) {
         this.resolveComponentsVisibility(editorElement);
       }
@@ -530,19 +531,21 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   }
 
   public expandTextarea(): void {
+    this.editorWidth = window.innerWidth * 0.95;
     this.hideParentComponents();
   }
 
   public shrinkTextarea(): void {
+    this.editorWidth = window.innerWidth * 0.4;
     this.showParentComponents();
   }
 
   private showParentComponents(): void {
-    this.tiggerHidingComponents.emit(false);
+    this.pipelineStateService.hideComponents.set(false);
   }
 
   private hideParentComponents(): void {
-    this.tiggerHidingComponents.emit(true);
+    this.pipelineStateService.hideComponents.set(true);
   }
 
   public ngOnDestroy(): void {

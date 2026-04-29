@@ -447,11 +447,9 @@ describe('AnnotationJobsWrapperComponent', () => {
   });
 
   it('should display hidden components and trigger shrinking the editor\'s size', () => {
-    const updateComponentsVisibilitySpy = jest.spyOn(component, 'updateComponentsVisibility');
     const shrinkTextareaSpy = jest.spyOn(component.pipelinesComponent, 'shrinkTextarea');
 
     component.showComponents();
-    expect(updateComponentsVisibilitySpy).toHaveBeenCalledWith(false);
     expect(shrinkTextareaSpy).toHaveBeenCalledWith();
   });
 

@@ -13,4 +13,5 @@ export class AnnotationPipelineStateService {
   public readonly pipelineInfo = signal<PipelineInfo>(null);
   public readonly isConfigValid = signal<boolean>(false);
   public readonly editorWidth = signal<number>(window.innerWidth * 0.4); // default width is 40vw
+  public readonly hideComponents = signal<boolean>(false);
 }

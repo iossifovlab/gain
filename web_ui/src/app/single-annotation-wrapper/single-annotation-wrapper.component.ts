@@ -1,4 +1,4 @@
-import { Component, ViewChild, OnInit, NgZone, HostListener, effect } from '@angular/core';
+import { Component, ViewChild, OnInit, HostListener, effect } from '@angular/core';
 import { filter, take } from 'rxjs';
 import { AnnotationPipelineComponent } from '../annotation-pipeline/annotation-pipeline.component';
 import { CommonModule } from '@angular/common';
@@ -25,16 +25,14 @@ export class SingleAnnotationWrapperComponent implements OnInit {
   @ViewChild(AnnotationPipelineComponent) public pipelinesComponent: AnnotationPipelineComponent;
   @ViewChild(AnnotatablesTableComponent) public annotatablesTableComponent: AnnotatablesTableComponent;
   @ViewChild(SingleAnnotationComponent) public singleAnnotationComponent: SingleAnnotationComponent;
-  public hideComponents = false;
   public hideHistory = false;
   public isUserLoggedIn = false;
 
 
   public constructor(
       private userService: UsersService,
-      private ngZone: NgZone,
       private annotationPipelineService: AnnotationPipelineService,
-      private pipelineStateService: AnnotationPipelineStateService,
+      public pipelineStateService: AnnotationPipelineStateService,
   ) {
     effect(() => {
       const id = this.pipelineStateService.currentTemporaryPipelineId() ||
@@ -96,15 +94,8 @@ export class SingleAnnotationWrapperComponent implements OnInit {
     this.annotatablesTableComponent.refreshTable();
   }
 
-  public updateComponentsVisibility(toHide: boolean): void {
-    this.ngZone.run(() => {
-      this.hideComponents = toHide;
-      this.hideHistory = toHide;
-    });
-  }
-
   public showComponents(): void {
-    this.updateComponentsVisibility(false);
+    this.hideHistory = false;
     this.pipelinesComponent.shrinkTextarea();
   }
 

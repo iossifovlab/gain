@@ -1,4 +1,4 @@
-import { Component, ViewChild, OnInit, NgZone, HostListener, effect } from '@angular/core';
+import { Component, ViewChild, OnInit, HostListener, effect } from '@angular/core';
 import { JobsTableComponent } from '../jobs-table/jobs-table.component';
 import { filter, Observable, Subscription, take } from 'rxjs';
 import { JobsService } from '../job-creation/jobs.service';
@@ -37,7 +37,6 @@ export class AnnotationJobsWrapperComponent implements OnInit {
   public downloadLink = '';
   public currentJob: Job = null;
   public currentJobId: number = null;
-  public hideComponents = false;
   public hideHistory = false;
   public isUserLoggedIn = false;
   public blockCreate: boolean = false;
@@ -47,10 +46,9 @@ export class AnnotationJobsWrapperComponent implements OnInit {
   public constructor(
       private jobsService: JobsService,
       private userService: UsersService,
-      private ngZone: NgZone,
       private socketNotificationsService: SocketNotificationsService,
       private annotationPipelineService: AnnotationPipelineService,
-      private pipelineStateService: AnnotationPipelineStateService,
+      public pipelineStateService: AnnotationPipelineStateService,
   ) {
     effect(() => {
       const id = this.pipelineStateService.currentTemporaryPipelineId() ||
@@ -239,15 +237,8 @@ export class AnnotationJobsWrapperComponent implements OnInit {
     return status === 'success' || status === 'failed';
   }
 
-  public updateComponentsVisibility(toHide: boolean): void {
-    this.ngZone.run(() => {
-      this.hideComponents = toHide;
-      this.hideHistory = toHide;
-    });
-  }
-
   public showComponents(): void {
-    this.updateComponentsVisibility(false);
+    this.hideHistory = false;
     this.pipelinesComponent.shrinkTextarea();
   }
 

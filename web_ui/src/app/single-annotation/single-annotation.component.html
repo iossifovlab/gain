@@ -1,13 +1,15 @@
 <div id="single-annotation-container">
   <div id="annotation-wrapper">
-    <span id="examples-button" [matMenuTriggerFor]="tooltip" title="Examples"
-      ><span class="material-symbols-outlined">info</span></span
-    >
-    <input
-      [formControl]="annotatableInput"
-      type="text"
-      placeholder="Type annotatable..."
-      (keydown.enter)="triggerPipelineAutoSave()" />
+    <div>
+      <span id="examples-button" [matMenuTriggerFor]="tooltip" title="Examples"
+        ><span class="material-symbols-outlined">info</span></span
+      >
+      <input
+        [formControl]="annotatableInput"
+        type="text"
+        placeholder="Type annotatable..."
+        (keydown.enter)="triggerPipelineAutoSave()" />
+    </div>
     <button (click)="triggerPipelineAutoSave()" [disabled]="disableGo()">Go</button>
 
     <mat-menu #tooltip="matMenu">
