@@ -450,6 +450,8 @@ test.describe('Pipeline validation tests', () => {
     await utils.registerUser(page, email, password);
 
     await utils.loginUser(page, email, password);
+    // wait for default pipeline to load
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
   });
 
   test('should type config without annotators and show error message', async({ page }) => {
@@ -466,7 +468,7 @@ test.describe('Pipeline validation tests', () => {
     await expect(page.getByText('Invalid configuration, reason: \'preamble\'')).toBeVisible();
   });
 
-  test('should type semantically invalid config and see error', async({ page }) => {
+  test('should type semantically invalid config and display error', async({ page }) => {
     await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
     await utils.typeInPipelineEditor(page, '- allele_score');
 
@@ -854,7 +856,8 @@ test.describe('Add annotator to pipeline tests', () => {
   test('should filter annotators in dropdown by search text', async({ page }) => {
     await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
 
-    await page.getByRole('combobox', { name: 'Select annotator' }).fill('allele');
+    await page.getByRole('combobox', { name: 'Select annotator' }).focus();
+    await page.keyboard.type('allele');
     await expect(page.locator('.annotator-option')).toHaveCount(2);
     await expect(page.locator('.annotator-option').filter({ hasText: 'allele_score_annotator' })).toBeVisible();
     await expect(page.locator('.annotator-option').filter({ hasText: 'normalize_allele_annotator' })).toBeVisible();
@@ -1201,12 +1204,14 @@ test.describe('Add resource to pipeline tests', () => {
     await page.locator('#pipeline-actions').locator('#add-resource-button').click();
 
     await page.locator('#resource-search-input').fill('"gene_properties/gene_scores/GTEx_V11_RNAexpression"');
-    await page.locator('#resource-search-input').dispatchEvent('keyup');
-    await page.waitForResponse(
-      resp => resp.url().includes(
-        'api/resources/search?search=%22gene_properties/gene_scores/GTEx_V11_RNAexpression%22'
-      ), {timeout: 30000}
-    );
+    await Promise.all([
+      page.locator('#resource-search-input').dispatchEvent('keyup'), // trigger search query
+      page.waitForResponse(
+        resp => resp.url().includes(
+          'api/resources/search?search=%22gene_properties/gene_scores/GTEx_V11_RNAexpression%22'
+        ), {timeout: 30000}
+      )
+    ]);
     await page.waitForSelector(
       '[id="gene_properties/gene_scores/GTEx_V11_RNAexpression-continue-button"]',
       { state: 'visible', timeout: 15000 }
