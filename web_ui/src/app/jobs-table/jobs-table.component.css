@@ -4,8 +4,7 @@
   grid-template-columns: repeat(2, minmax(80px, max-content));
   border: 1px solid #cfd8df;
   border-radius: 15px;
-  margin-bottom: 5px;
-  margin-top: 5px;
+  margin: 5px auto;
 }
 
 .grid-header {

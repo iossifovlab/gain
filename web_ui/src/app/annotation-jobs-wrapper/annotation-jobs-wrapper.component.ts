@@ -38,6 +38,13 @@ export class AnnotationJobsWrapperComponent implements OnInit {
   public currentJob: Job = null;
   public currentJobId: number = null;
   public hideHistory = false;
+
+  @HostListener('window:resize')
+  public onWindowResize(): void {
+    if (window.innerWidth <= 1023) {
+      this.hideHistory = false;
+    }
+  }
   public isUserLoggedIn = false;
   public blockCreate: boolean = false;
   public socketNotificationSubscription: Subscription = new Subscription();

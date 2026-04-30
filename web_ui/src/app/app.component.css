@@ -128,3 +128,72 @@
 #separator {
   border-top: 2px solid #435869;
 }
+
+#hamburger-button {
+  display: none;
+  background: transparent;
+  border: none;
+  color: #435869;
+  cursor: pointer;
+  padding: 4px;
+  flex-shrink: 0;
+}
+
+#mobile-menu {
+  display: none;
+}
+
+@media (max-width: 700px) {
+  #page-links,
+  #header-right {
+    display: none;
+  }
+
+  #hamburger-button {
+    display: flex;
+    align-items: center;
+  }
+
+  #mobile-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 15px;
+    border-bottom: 2px solid #435869;
+    background: white;
+  }
+
+  #mobile-menu a {
+    text-decoration: none;
+    color: #85a2b9;
+    font-size: 16px;
+    font-weight: 500;
+    padding: 10px 12px;
+    border-radius: 8px;
+  }
+
+  #mobile-menu a:hover,
+  #mobile-menu a.active-link {
+    background-color: #ecf1f6;
+    color: #435869;
+  }
+
+  #mobile-user-data {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 12px;
+  }
+
+  #mobile-user-email {
+    font-size: 14px;
+    color: #85a2b9;
+  }
+
+  #mobile-menu #login-button,
+  #mobile-menu #logout-button,
+  #mobile-menu #register-button {
+    align-self: flex-start;
+    margin: 4px 0;
+  }
+}

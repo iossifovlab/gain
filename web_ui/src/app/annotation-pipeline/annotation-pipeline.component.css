@@ -15,6 +15,7 @@
   overflow: auto;
   min-height: 300px;
   min-width: 450px;
+  width: 40vw;
   max-width: 95vw;
 }
 
@@ -406,4 +407,39 @@
 
 .status-item .material-symbols-outlined {
   font-size: 20px;
+}
+
+@media (max-width: 1023px) {
+  #selecting-container {
+    width: 90vw;
+    max-width: 90vw;
+  }
+
+  #pipeline-editor {
+    min-width: 0;
+    width: 90vw !important;
+    resize: none;
+    height: 45vh !important;
+  }
+
+  #pipeline-actions {
+    width: 90vw;
+  }
+
+  #expand-button,
+  #shrink-button {
+    display: none;
+  }
+}
+
+@media (max-width: 599px) {
+  #selecting-container {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  #pipelines-input {
+    width: 80vw;
+  }
 }

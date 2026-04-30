@@ -26,6 +26,13 @@ export class SingleAnnotationWrapperComponent implements OnInit {
   @ViewChild(AnnotatablesTableComponent) public annotatablesTableComponent: AnnotatablesTableComponent;
   @ViewChild(SingleAnnotationComponent) public singleAnnotationComponent: SingleAnnotationComponent;
   public hideHistory = false;
+
+  @HostListener('window:resize')
+  public onWindowResize(): void {
+    if (window.innerWidth <= 1023) {
+      this.hideHistory = false;
+    }
+  }
   public isUserLoggedIn = false;
 
 

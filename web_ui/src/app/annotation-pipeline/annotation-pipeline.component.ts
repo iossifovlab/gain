@@ -117,9 +117,21 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     const editorElement = this.pipelineEditorRef._editorContainer.nativeElement as HTMLElement;
 
     this.resizeObserver = new ResizeObserver(() => {
-      this.editorWidth = editorElement.clientWidth;
+      if (this.editorWidth !== null) {
+        this.editorWidth = editorElement.clientWidth;
+      } else {
+        // null = CSS mode (40vw/min-width); switch to px only when user drags
+        const cssWidth = Math.max(450, Math.round(window.innerWidth * 0.4));
+        if (Math.abs(editorElement.clientWidth - cssWidth) > 2) {
+          this.editorWidth = editorElement.clientWidth;
+        }
+      }
       if (!this.isEditorMaximized(editorElement) && !this.isEditorMinimized(editorElement)) {
-        this.resolveComponentsVisibility(editorElement);
+        if (window.innerWidth <= 1023) {
+          this.shrinkTextarea();
+        } else {
+          this.resolveComponentsVisibility(editorElement);
+        }
       }
     });
 
@@ -531,13 +543,20 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   }
 
   public expandTextarea(): void {
-    this.editorWidth = window.innerWidth * 0.95;
+    this.editorWidth = window.innerWidth * 0.95; // explicit px overrides CSS
     this.hideParentComponents();
   }
 
   public shrinkTextarea(): void {
-    this.editorWidth = window.innerWidth * 0.4;
+    this.editorWidth = null; // null lets CSS width: 40vw take over
     this.showParentComponents();
+  }
+
+  @HostListener('window:resize')
+  public onWindowResize(): void {
+    if (window.innerWidth <= 1023) {
+      this.shrinkTextarea();
+    }
   }
 
   private showParentComponents(): void {
@@ -545,12 +564,13 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   }
 
   private hideParentComponents(): void {
-    this.pipelineStateService.hideComponents.set(true);
+    if (window.innerWidth > 1023) {
+      this.pipelineStateService.hideComponents.set(true);
+    }
   }
 
   public ngOnDestroy(): void {
-    const width = this.editorInstance?.getLayoutInfo().width;
-    this.pipelineStateService.editorWidth.set(width);
+    this.pipelineStateService.editorWidth.set(this.editorWidth);
 
     if (this.resizeObserver) {
       this.resizeObserver.disconnect();

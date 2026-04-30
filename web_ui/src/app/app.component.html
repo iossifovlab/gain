@@ -46,7 +46,33 @@
       </div>
       }
     </div>
+    <button id="hamburger-button" (click)="menuOpen = !menuOpen" [attr.aria-expanded]="menuOpen">
+      <span class="material-symbols-outlined">{{ menuOpen ? 'close' : 'menu' }}</span>
+    </button>
   </div>
+
+  @if(menuOpen) {
+  <div id="mobile-menu" (click)="menuOpen = false">
+    <a routerLink="/single-annotation" routerLinkActive="active-link" [routerLinkActiveOptions]="{ exact: true }"
+      >Single Annotation</a
+    >
+    <a routerLink="/annotation-jobs" routerLinkActive="active-link" [routerLinkActiveOptions]="{ exact: true }"
+      >Annotation Jobs</a
+    >
+    <a routerLink="/about" routerLinkActive="active-link" [routerLinkActiveOptions]="{ exact: true }">About</a>
+    <a routerLink="/quotas" routerLinkActive="active-link" [routerLinkActiveOptions]="{ exact: true }">Quotas</a>
+    @if(currentUserData.loggedIn) {
+    <div id="mobile-user-data">
+      <span id="mobile-user-email">{{ currentUserData.email }}</span>
+      <button id="logout-button" (click)="logout()">Logout</button>
+    </div>
+    } @if(!currentUserData.loggedIn) {
+    <button id="login-button" (click)="login()">Login</button>
+    <button id="register-button" (click)="register()">Register</button>
+    }
+  </div>
+  }
+
   <div id="separator"></div>
   }
   <router-outlet></router-outlet>

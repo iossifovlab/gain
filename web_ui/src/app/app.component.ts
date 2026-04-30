@@ -17,6 +17,7 @@ import { SocketNotificationsService } from './socket-notifications/socket-notifi
 export class AppComponent implements DoCheck, OnInit {
   public currentUserData: UserData = null;
   public readonly environment = environment;
+  public menuOpen = false;
 
   public constructor(
     private usersService: UsersService,
