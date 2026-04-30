@@ -26,8 +26,7 @@ export class SingleAnnotationReportComponent {
   public tableViewSources = ['effect_details', 'gene_effects'];
   public showFullReport: boolean;
   @ViewChild('infoModal') public infoModalRef: TemplateRef<ElementRef>;
-  public sortColumn: string = '';
-  public sortDirection: 'asc' | 'desc' = 'asc';
+  public sortState = new Map<Attribute, { column: string; direction: 'asc' | 'desc' }>();
 
   public constructor(
     private dialog: MatDialog,
@@ -98,29 +97,54 @@ export class SingleAnnotationReportComponent {
   }
 
   public sort(column: string, attribute: Attribute): void {
-    if (this.sortColumn === column) {
-      this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
+    const current = this.sortState.get(attribute);
+    if (current && current.column === column) {
+      this.sortState.set(attribute, { column: column, direction: current.direction === 'asc' ? 'desc' : 'asc' });
     } else {
-      this.sortColumn = column;
-      this.sortDirection = 'asc';
+      this.sortState.set(attribute, { column: column, direction: 'asc' });
     }
     this.sortData(attribute);
   }
 
+  public getSortIcon(column: string, attribute: Attribute): string {
+    const state = this.sortState.get(attribute);
+    if (!state || state.column !== column) {
+      return 'unfold_more';
+    }
+    return state.direction === 'asc' ? 'keyboard_arrow_up' : 'keyboard_arrow_down';
+  }
+
   public sortData(attribute: Attribute): void {
+    const state = this.sortState.get(attribute);
+    if (!state) {
+      return;
+    }
+    const { column, direction } = state;
+    const cmpValues = (a: string | number, b: string | number): number => {
+      if (typeof a === 'number' && typeof b === 'number') {
+        return a - b;
+      }
+      return String(a).localeCompare(String(b), undefined, { sensitivity: 'base' });
+    };
+    if (this.isValueArray(attribute.result.value)) {
+      attribute.result.value = [...attribute.result.value].sort((a, b) => {
+        const cmp = cmpValues(a, b);
+        return direction === 'asc' ? cmp : -cmp;
+      });
+      return;
+    }
     if (!this.isValueMap(attribute.result.value)) {
       return;
     }
-    if (this.sortColumn === 'Gene') {
-      if (this.sortDirection === 'asc') {
-        attribute.result.value = new Map([...attribute.result.value.entries()].sort());
-      } else {
-        attribute.result.value = new Map([...attribute.result.value.entries()].reverse());
-      }
+    if (column === 'Gene') {
+      attribute.result.value = new Map([...attribute.result.value.entries()].sort((a, b) => {
+        const cmp = cmpValues(a[0], b[0]);
+        return direction === 'asc' ? cmp : -cmp;
+      }));
     } else {
       attribute.result.value = new Map([...attribute.result.value.entries()].sort((a, b) => {
-        const cmp = a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0;
-        return this.sortDirection === 'asc' ? cmp : -cmp;
+        const cmp = cmpValues(a[1], b[1]);
+        return direction === 'asc' ? cmp : -cmp;
       }));
     }
   }

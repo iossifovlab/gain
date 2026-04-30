@@ -74,41 +74,41 @@ describe('SingleAnnotationReportComponent', () => {
     expect(allValueElements[2].innerHTML).toBe('0');
   });
 
-  it('should set sortColumn and sortDirection when sorting a new column', () => {
+  it('should set sort state when sorting a new column', () => {
     const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
       new Map([['GeneA', 3], ['GeneB', 1], ['GeneC', 2]]), null
     ));
 
     component.sort('Value', attribute);
 
-    expect(component.sortColumn).toBe('Value');
-    expect(component.sortDirection).toBe('asc');
+    expect(component.sortState.get(attribute)?.column).toBe('Value');
+    expect(component.sortState.get(attribute)?.direction).toBe('asc');
   });
 
-  it('should toggle sortDirection when sorting the same column twice', () => {
+  it('should toggle sort direction when sorting the same column twice', () => {
     const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
       new Map([['GeneA', 3], ['GeneB', 1], ['GeneC', 2]]), null
     ));
 
     component.sort('Value', attribute);
-    expect(component.sortDirection).toBe('asc');
+    expect(component.sortState.get(attribute)?.direction).toBe('asc');
 
     component.sort('Value', attribute);
-    expect(component.sortDirection).toBe('desc');
+    expect(component.sortState.get(attribute)?.direction).toBe('desc');
   });
 
-  it('should reset sortDirection to asc when switching to a different column', () => {
+  it('should reset sort direction to asc when switching to a different column', () => {
     const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
       new Map([['GeneA', 3], ['GeneB', 1], ['GeneC', 2]]), null
     ));
 
     component.sort('Value', attribute);
     component.sort('Value', attribute);
-    expect(component.sortDirection).toBe('desc');
+    expect(component.sortState.get(attribute)?.direction).toBe('desc');
 
     component.sort('Gene', attribute);
-    expect(component.sortColumn).toBe('Gene');
-    expect(component.sortDirection).toBe('asc');
+    expect(component.sortState.get(attribute)?.column).toBe('Gene');
+    expect(component.sortState.get(attribute)?.direction).toBe('asc');
   });
 
   it('should sort by gene name ascending', () => {

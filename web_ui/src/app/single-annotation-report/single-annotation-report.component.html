@@ -67,6 +67,10 @@
             <div class="attribute-result">
               @if(!tableViewSources.includes(attribute.source)) { @if(isValueArray(attribute.result.value)) {
               <div class="value-grid-container" style="grid-template-columns: auto">
+                <div class="value-grid-header sortable-header" (click)="sort('Value', attribute)">
+                  Value
+                  <span class="material-symbols-outlined">{{ getSortIcon('Value', attribute) }}</span></div
+                >
                 @for(item of asArray(attribute.result.value); track $index) {
                 <div class="value-grid-cell" [title]="item | formatResultValue : 3">{{
                   item | formatResultValue : 3
@@ -77,23 +81,11 @@
               <div class="value-grid-container" style="grid-template-columns: repeat(2, auto)">
                 <div class="value-grid-header sortable-header" (click)="sort('Gene', attribute)">
                   Gene
-                  <span class="material-symbols-outlined">{{
-                    sortColumn === 'Gene'
-                      ? sortDirection === 'asc'
-                        ? 'keyboard_arrow_up'
-                        : 'keyboard_arrow_down'
-                      : 'unfold_more'
-                  }}</span></div
+                  <span class="material-symbols-outlined">{{ getSortIcon('Gene', attribute) }}</span></div
                 >
                 <div class="value-grid-header sortable-header" (click)="sort('Value', attribute)">
                   Value
-                  <span class="material-symbols-outlined">{{
-                    sortColumn === 'Value'
-                      ? sortDirection === 'asc'
-                        ? 'keyboard_arrow_up'
-                        : 'keyboard_arrow_down'
-                      : 'unfold_more'
-                  }}</span></div
+                  <span class="material-symbols-outlined">{{ getSortIcon('Value', attribute) }}</span></div
                 >
                 @for(entry of asMapEntries(attribute.result.value); track entry[0]) {
                 <div class="value-grid-cell" [title]="entry[0]">{{ entry[0] }}</div>
