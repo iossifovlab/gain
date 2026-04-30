@@ -182,10 +182,9 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   }
 
   private resolveComponentsVisibility(editorElement: HTMLElement): void {
-    const parentWidth = document.getElementById('annotation-container').clientWidth;
-    if (editorElement.clientWidth > parentWidth/1.5) {
+    if (editorElement.clientWidth > window.innerWidth / 1.5) {
       this.hideParentComponents();
-    } else if (editorElement.clientWidth < parentWidth/1.5) {
+    } else if (editorElement.clientWidth < window.innerWidth / 1.5) {
       this.showParentComponents();
     }
   }
