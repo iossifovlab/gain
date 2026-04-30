@@ -45,7 +45,7 @@ def build_genomic_position_table(
     if table_fmt.lower() in ("bw", "bigwig"):
         if table_definition.get("header_mode") is not None:
             logger.warning(
-                "header_mode is not supported for bigwig tables,"
+                "header_mode is not supported for bigwig tables, "
                 "ignoring it in %s",
                 resource.get_full_id(),
             )
