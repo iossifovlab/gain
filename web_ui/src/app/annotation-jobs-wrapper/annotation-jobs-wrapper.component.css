@@ -33,6 +33,7 @@
 #annotation-container {
   display: flex;
   flex: 1;
+  min-width: 0;
   justify-content: flex-start;
   gap: 50px;
   padding-right: 25px;
