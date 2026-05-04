@@ -136,7 +136,7 @@ export class SingleAnnotationReportComponent {
     if (!this.isValueMap(attribute.result.value)) {
       return;
     }
-    if (column === 'Gene') {
+    if (column === 'Key') {
       attribute.result.value = new Map([...attribute.result.value.entries()].sort((a, b) => {
         const cmp = cmpValues(a[0], b[0]);
         return direction === 'asc' ? cmp : -cmp;

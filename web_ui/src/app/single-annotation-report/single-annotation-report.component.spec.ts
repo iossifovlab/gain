@@ -76,7 +76,7 @@ describe('SingleAnnotationReportComponent', () => {
 
   it('should set sort state when sorting a new column', () => {
     const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
-      new Map([['GeneA', 3], ['GeneB', 1], ['GeneC', 2]]), null
+      new Map([['KeyA', 3], ['KeyB', 1], ['KeyC', 2]]), null
     ));
 
     component.sort('Value', attribute);
@@ -87,7 +87,7 @@ describe('SingleAnnotationReportComponent', () => {
 
   it('should toggle sort direction when sorting the same column twice', () => {
     const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
-      new Map([['GeneA', 3], ['GeneB', 1], ['GeneC', 2]]), null
+      new Map([['KeyA', 3], ['KeyB', 1], ['KeyC', 2]]), null
     ));
 
     component.sort('Value', attribute);
@@ -99,62 +99,62 @@ describe('SingleAnnotationReportComponent', () => {
 
   it('should reset sort direction to asc when switching to a different column', () => {
     const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
-      new Map([['GeneA', 3], ['GeneB', 1], ['GeneC', 2]]), null
+      new Map([['KeyA', 3], ['KeyB', 1], ['KeyC', 2]]), null
     ));
 
     component.sort('Value', attribute);
     component.sort('Value', attribute);
     expect(component.sortState.get(attribute)?.direction).toBe('desc');
 
-    component.sort('Gene', attribute);
-    expect(component.sortState.get(attribute)?.column).toBe('Gene');
+    component.sort('Key', attribute);
+    expect(component.sortState.get(attribute)?.column).toBe('Key');
     expect(component.sortState.get(attribute)?.direction).toBe('asc');
   });
 
-  it('should sort by gene name ascending', () => {
+  it('should sort by key name ascending', () => {
     const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
-      new Map([['GeneC', 2], ['GeneA', 3], ['GeneB', 1]]), null
+      new Map([['KeyC', 2], ['KeyA', 3], ['KeyB', 1]]), null
     ));
 
-    component.sort('Gene', attribute);
+    component.sort('Key', attribute);
 
     const keys = [...(attribute.result.value as Map<string, number>).keys()];
-    expect(keys).toStrictEqual(['GeneA', 'GeneB', 'GeneC']);
+    expect(keys).toStrictEqual(['KeyA', 'KeyB', 'KeyC']);
   });
 
-  it('should sort by gene name descending', () => {
+  it('should sort by key name descending', () => {
     const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
-      new Map([['GeneC', 2], ['GeneA', 3], ['GeneB', 1]]), null
+      new Map([['KeyC', 2], ['KeyA', 3], ['KeyB', 1]]), null
     ));
 
-    component.sort('Gene', attribute);
-    component.sort('Gene', attribute);
+    component.sort('Key', attribute);
+    component.sort('Key', attribute);
 
     const keys = [...(attribute.result.value as Map<string, number>).keys()];
-    expect(keys).toStrictEqual(['GeneC', 'GeneB', 'GeneA']);
+    expect(keys).toStrictEqual(['KeyC', 'KeyB', 'KeyA']);
   });
 
   it('should sort by value ascending', () => {
     const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
-      new Map([['GeneA', 3], ['GeneB', 1], ['GeneC', 2]]), null
+      new Map([['KeyA', 3], ['KeyB', 1], ['KeyC', 2]]), null
     ));
 
     component.sort('Value', attribute);
 
     const entries = [...(attribute.result.value as Map<string, number>).entries()];
-    expect(entries).toStrictEqual([['GeneB', 1], ['GeneC', 2], ['GeneA', 3]]);
+    expect(entries).toStrictEqual([['KeyB', 1], ['KeyC', 2], ['KeyA', 3]]);
   });
 
   it('should sort by value descending', () => {
     const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
-      new Map([['GeneA', 3], ['GeneB', 1], ['GeneC', 2]]), null
+      new Map([['KeyA', 3], ['KeyB', 1], ['KeyC', 2]]), null
     ));
 
     component.sort('Value', attribute);
     component.sort('Value', attribute);
 
     const entries = [...(attribute.result.value as Map<string, number>).entries()];
-    expect(entries).toStrictEqual([['GeneA', 3], ['GeneC', 2], ['GeneB', 1]]);
+    expect(entries).toStrictEqual([['KeyA', 3], ['KeyC', 2], ['KeyB', 1]]);
   });
 
   it('should not sort when attribute value is not a Map', () => {
