@@ -296,23 +296,26 @@ def test_get_chromosome_length_tabix_avoid_infinite_loop(
     tmp_path: pathlib.Path,
 ) -> None:
     """
-    If the tabix file is malformed and cannot provide any records,
-    the function should not enter an infinite loop.
+    If the tabix file cannot provide any records for the requested
+    chromosome, the function must return None instead of entering
+    an infinite loop (see commit 6ac64e67d9 for the original bug).
     """
-
+    # The original test triggered "all fetches empty" by feeding a
+    # malformed file to setup_tabix; pysam>=0.24 (htslib) now rejects
+    # that at index-build time. Same effect via a valid file + a chrom
+    # that's not in the index — every fetch raises ValueError, which
+    # any_records() swallows, so the binary search halves pos down to
+    # 0 and the guard at regions.py must fire.
     in_content = textwrap.dedent("""
-        dummyCol1 chrom   dummyCol2 pos  dummyCol3
-        ?         chr1    ?         23   ?
+        #chrom pos
+        chr1   23
     """)
     in_file = tmp_path / "in.txt.gz"
-    # in this case, the tabix file will be malformed
-    # since the header does not start with a '#' symbol,
-    # and the line has not been skipped in setup_tabix.
     setup_tabix(in_file, in_content,
-                seq_col=1, start_col=3, end_col=3, line_skip=0)
+                seq_col=0, start_col=1, end_col=1, line_skip=0)
 
     assert get_chromosome_length_tabix(
-        pysam.TabixFile(str(in_file)), "chr1") is None
+        pysam.TabixFile(str(in_file)), "chr2") is None
 
 
 @pytest.fixture
