@@ -118,11 +118,21 @@ pipeline {
                                 switch (env.PROJECT) {
                                     case 'core':
                                         try {
+                                            // -f docker-compose.yaml skips
+                                            // docker-compose.override.yaml
+                                            // (the local-dev port-publish
+                                            // file). Without this, the
+                                            // three core cells (3.12 / 3.13
+                                            // / 3.14) running in parallel
+                                            // would race on host port 28080
+                                            // / 9000 / 9001.
                                             sh """
                                                 mkdir -p core/tests/.test_grr
-                                                docker compose -p "${composeProject}" \\
+                                                docker compose -f docker-compose.yaml \\
+                                                    -p "${composeProject}" \\
                                                     up -d --wait apache minio
-                                                docker compose -p "${composeProject}" \\
+                                                docker compose -f docker-compose.yaml \\
+                                                    -p "${composeProject}" \\
                                                     run --rm minio-client
                                             """
                                             runCellPytest(
@@ -139,7 +149,8 @@ pipeline {
                                             )
                                         } finally {
                                             sh """
-                                                docker compose -p "${composeProject}" \\
+                                                docker compose -f docker-compose.yaml \\
+                                                    -p "${composeProject}" \\
                                                     down -v --remove-orphans || true
                                             """
                                         }

@@ -1,0 +1,27 @@
+# Local-dev overrides for `docker compose up`.
+#
+# Auto-loaded by `docker compose` when run from the repo root with
+# no `-f` flag — adds host-side port publishing so local pytest
+# runs can reach the fixture stack via the defaults in
+# core/gain/genomic_resources/testing.py:
+#   * apache  → http://localhost:28080  (HTTP_HOST default)
+#   * minio   → http://localhost:9000   (MINIO_HOST default)
+#   * minio console → http://localhost:9001
+#
+# Bound to 127.0.0.1 so the test stack isn't reachable from the LAN.
+#
+# CI passes `-f docker-compose.yaml` explicitly to skip this file —
+# without that, parallel matrix cells (three `core` stages on
+# Python 3.12/3.13/3.14) would race on the same host ports and all
+# but one would fail to start.
+
+services:
+
+  minio:
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+
+  apache:
+    ports:
+      - "127.0.0.1:28080:80"

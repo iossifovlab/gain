@@ -218,11 +218,19 @@ pipeline {
                                         // minio-client is a one-shot bucket setup job — run it
                                         // inline instead of via `up --wait`, which races with
                                         // short-lived services.
+                                        // -f docker-compose.yaml skips
+                                        // docker-compose.override.yaml
+                                        // (the local-dev port-publish file);
+                                        // without this, parallel CI builds
+                                        // on the same agent collide on host
+                                        // ports 28080 / 9000 / 9001.
                                         sh '''
                                             mkdir -p core/tests/.test_grr
-                                            docker compose -p "$COMPOSE_PROJECT" \
+                                            docker compose -f docker-compose.yaml \
+                                                -p "$COMPOSE_PROJECT" \
                                                 up -d --wait apache minio
-                                            docker compose -p "$COMPOSE_PROJECT" \
+                                            docker compose -f docker-compose.yaml \
+                                                -p "$COMPOSE_PROJECT" \
                                                 run --rm minio-client
                                         '''
         
@@ -241,7 +249,9 @@ pipeline {
                                         )
                                     } finally {
                                         sh '''
-                                            docker compose -p "$COMPOSE_PROJECT" down -v --remove-orphans || true
+                                            docker compose -f docker-compose.yaml \
+                                                -p "$COMPOSE_PROJECT" \
+                                                down -v --remove-orphans || true
                                         '''
                                     }
                                 }
@@ -311,7 +321,8 @@ pipeline {
                                         // activation emails so the user-flow tests can
                                         // assert against them via --mailhog.
                                         sh '''
-                                            docker compose -p "$COMPOSE_PROJECT" \
+                                            docker compose -f docker-compose.yaml \
+                                                -p "$COMPOSE_PROJECT" \
                                                 up -d --wait mail
                                         '''
         
@@ -331,7 +342,9 @@ pipeline {
                                         )
                                     } finally {
                                         sh '''
-                                            docker compose -p "$COMPOSE_PROJECT" down -v --remove-orphans || true
+                                            docker compose -f docker-compose.yaml \
+                                                -p "$COMPOSE_PROJECT" \
+                                                down -v --remove-orphans || true
                                         '''
                                     }
                                 }
