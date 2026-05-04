@@ -2,9 +2,14 @@ services:
 
   minio:
     image: minio/minio:latest
-    expose:
-      - "9000"
-      - "9001"
+    # Publish to 127.0.0.1 so local pytest runs on the host can reach
+    # `localhost:9000` (the default MINIO_HOST endpoint in
+    # core/gain/genomic_resources/testing.py:404). CI is unaffected
+    # because the pytest container joins this compose network and
+    # still reaches the service by its `minio` hostname.
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
@@ -30,8 +35,13 @@ services:
 
   apache:
     image: httpd:latest
-    expose:
-      - "80"
+    # Map container :80 to host :28080 so local pytest runs can reach
+    # the fixture server at `localhost:28080` (the default HTTP_HOST
+    # in core/gain/genomic_resources/testing.py:393). CI uses the
+    # `apache:80` service hostname over the compose network and is
+    # unaffected.
+    ports:
+      - "127.0.0.1:28080:80"
     volumes:
       - ./core/tests/.test_grr:/usr/local/apache2/htdocs/
 
