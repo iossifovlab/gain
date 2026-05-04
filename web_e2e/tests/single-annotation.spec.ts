@@ -311,10 +311,13 @@ test.describe('Single annotation rate limit tests - anonymous user', () => {
     /* eslint-enable */
 
     // 11th click should fail
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    const annotateResponse = page.waitForResponse(
-      resp => resp.url().includes('api/single_allele/annotate')
-    );
+    let annotateResponse;
+    await Promise.all([
+      page.getByRole('button', { name: 'Go', exact: true }).click(),
+      annotateResponse = page.waitForResponse(
+        resp => resp.url().includes('api/single_allele/annotate')
+      )
+    ]);
     expect((await annotateResponse).status()).toBe(429);
   });
 });
@@ -343,10 +346,13 @@ test.describe('Single annotation rate limit tests - logged in user', () => {
     /* eslint-enable */
 
     // 11th click should fail
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    const annotateResponse = page.waitForResponse(
-      resp => resp.url().includes('api/single_allele/annotate')
-    );
+    let annotateResponse;
+    await Promise.all([
+      page.getByRole('button', { name: 'Go', exact: true }).click(),
+      annotateResponse = page.waitForResponse(
+        resp => resp.url().includes('api/single_allele/annotate')
+      )
+    ]);
     expect((await annotateResponse).status()).toBe(429);
   });
 });

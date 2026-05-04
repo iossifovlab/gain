@@ -12,6 +12,10 @@ test.describe('Create job tests', () => {
 
     await utils.loginUser(page, email, password);
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
+    await page.waitForSelector(
+      '.loaded-editor',
+      { state: 'visible', timeout: 120000 }
+    ); // wait for default pipeline to load
   });
 
   test('should create job with vcf file', async({ page }) => {
@@ -25,8 +29,6 @@ test.describe('Create job tests', () => {
   });
 
   test('should check if create button is disabled when no file is uploaded', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Autism_annotation');
-
     await expect(page.locator('#create-button')).toBeDisabled();
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
     await expect(page.locator('#create-button')).toBeEnabled();
@@ -51,7 +53,6 @@ test.describe('Create job tests', () => {
   });
 
   test('should check if create button is disabled when uploaded file is removed', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Autism_annotation');
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
     await expect(page.locator('#create-button')).toBeEnabled();
     await page.locator('#delete-uploaded-file').click();
@@ -59,7 +60,8 @@ test.describe('Create job tests', () => {
   });
 
   test('should create job and then delete it', async({ page }) => {
-    await createJobWithPipeline(page, 'pipeline/Clinical_annotation', 'input-vcf-file.vcf');
+    await customDefaultPipeline(page);
+    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
 
     const lastJobId = await page.locator('app-jobs-table').locator('.job-name').evaluate(el => el.textContent);
     await expect(page.getByText(lastJobId)).toBeVisible();
@@ -100,6 +102,10 @@ test.describe('Job details tests', () => {
 
     await utils.loginUser(page, email, password);
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
+    await page.waitForSelector(
+      '.loaded-editor',
+      { state: 'visible', timeout: 120000 }
+    ); // wait for default pipeline to load
   });
 
   test('should check job details of the first job', async({ page }) => {
@@ -207,6 +213,10 @@ test.describe('Jobs table tests', () => {
 
     await utils.loginUser(page, email, password);
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
+    await page.waitForSelector(
+      '.loaded-editor',
+      { state: 'visible', timeout: 120000 }
+    ); // wait for default pipeline to load
   });
 
   test('should create job and check first row', async({ page }) => {
@@ -288,11 +298,13 @@ test.describe('Jobs validation tests', () => {
 
     await utils.loginUser(page, email, password);
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
+    await page.waitForSelector(
+      '.loaded-editor',
+      { state: 'visible', timeout: 120000 }
+    ); // wait for default pipeline to load
   });
 
   test('should check if create button is disabled when invalid file is uploaded', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Autism_annotation');
-
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/invalid-input-file-format.yaml');
     await expect(page.getByText('Unsupported format!')).toBeVisible();
     await expect(page.locator('#create-button')).toBeDisabled();
@@ -309,7 +321,6 @@ test.describe('Jobs validation tests', () => {
   });
 
   test('should expect error message file with invalid separator is uploaded', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Autism_annotation');
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/invalid-separator.csv');
     await page.locator('[id="CHROM+POS+REF+ALT-header"]').locator('mat-select').click();
     await page.getByRole('option', { name: 'chrom', exact: true }).click();
@@ -318,7 +329,6 @@ test.describe('Jobs validation tests', () => {
   });
 
   test('should expect error message if file content is not separeted correctly', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Autism_annotation');
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/wrongly-separated-row.csv');
     await page.locator('[id="CHROM,POS,REF,ALT-header"]').locator('mat-select').click();
     await page.getByRole('option', { name: 'chrom', exact: true }).click();
@@ -327,14 +337,12 @@ test.describe('Jobs validation tests', () => {
   });
 
   test('should expect error message when no columns are specified', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Autism_annotation');
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/wrongly-separated-row.csv');
     await expect(page.getByText('No columns selected!')).toBeVisible();
     await expect(page.locator('#create-button')).toBeDisabled();
   });
 
   test.skip('should upload file with more than 1000 variants', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Autism_annotation');
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/more-than-1000.vcf');
     await page.locator('#create-button').click();
     await expect(page.getByText('Upload limit reached!')).toBeVisible();
