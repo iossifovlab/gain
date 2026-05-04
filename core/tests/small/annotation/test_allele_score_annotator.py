@@ -363,6 +363,28 @@ def test_allele_score_exact_match_allele_with_include_attributes(
     assert result["allele"] == "1:10:A:G:0.02"
 
 
+def test_allele_score_exact_match_allele_filtered(
+    allele_score_repository: GenomicResourceRepo,
+) -> None:
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent("""
+            - allele_score:
+                resource_id: allele_score
+                allele_filter: "freq > 0.03"
+                attributes:
+                - source: freq
+                  name: allele_freq
+                - source: allele
+                  include_attributes: freq
+        """),
+        allele_score_repository,
+    )
+    with pipeline.open() as work_pipeline:
+        result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
+    assert result["allele_freq"] is None
+    assert result["allele"] is None
+
+
 @pytest.mark.parametrize("allele_filter, expected_alleles", [
     (
         "freq > 0.03",
@@ -422,7 +444,10 @@ def test_allele_score_region_allele_with_include_attributes(
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 10, 16))
     alleles = set(result["allele"].split(","))
+    assert "1:10:A:T:0.02" not in alleles
+    assert "1:10:A:T:0.03" not in alleles
     assert "1:10:A:T:0.04" in alleles
+    assert "1:16:C:T:0.04" in alleles
     assert "1:16:C:A:0.05" in alleles
     assert not any(a.startswith("1:10:A:G") for a in alleles)
 
@@ -445,3 +470,24 @@ def test_allele_score_region_with_no_lines(
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 200, 300))
     assert result == {"freq": None, "allele": None}
+
+
+def test_allele_score_region_filter_all_alleles(
+    allele_score_repository: GenomicResourceRepo,
+) -> None:
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent("""
+            - allele_score:
+                resource_id: allele_score
+                allele_filter: "freq > 2.0"
+                attributes:
+                - source: allele
+                  include_attributes: freq
+                - source: freq
+        """),
+        allele_score_repository,
+    )
+    with pipeline.open() as work_pipeline:
+        result = work_pipeline.annotate(Region("1", 10, 16))
+    assert result["allele"] == ""
+    assert result["freq"] == None
