@@ -692,12 +692,12 @@ variant frequencies, etc.
                     sagg.allele_aggregator.get_final())
                 sagg.allele_aggregator.clear()
 
-        last_pos: int = score_lines[0].pos_begin
         if not score_lines:
             return {
                 score: sagg.position_aggregator
                 for score, sagg in score_aggs.items()
             }
+        last_pos: int = score_lines[0].pos_begin
 
         pos_begin = None
         pos_end = None
