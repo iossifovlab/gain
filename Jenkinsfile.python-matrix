@@ -1,0 +1,232 @@
+// Python-version matrix for the GAIn sub-projects.
+//
+// Re-runs each project's pytest suite under Python 3.12, 3.13,
+// and 3.14 so that forward-compatibility breakage on newer
+// interpreters is caught incrementally instead of at migration
+// time. Triggered nightly from Jenkinsfile.nightly; can also be
+// run on demand.
+//
+// Matrix axes:
+//   PY      — 3.12, 3.13, 3.14 (override default by building each
+//             project's Dockerfile with --build-arg PYTHON_IMAGE)
+//   PROJECT — core, demo_annotator, vep_annotator, web_api
+//             (spliceai_annotator is intentionally excluded —
+//             tensorflow>=2.18 has no 3.14 wheels yet; revisit
+//             after the next TF bump)
+//
+// Per cell we only run pytest. Linters (ruff/mypy/pylint) are
+// not interpreter-sensitive in any useful way — the per-branch
+// Jenkinsfile CI already covers them, no value in 3x duplicate
+// reports here. External services (Apache/MinIO for core,
+// MailHog for web_api) are brought up the same as in the
+// per-branch CI; the HTTP/S3/Django/aiohttp paths are exactly
+// where Python-version drift tends to surface.
+//
+// Failure semantics: any cell failure → pipeline FAILURE →
+// existing nightly Zulip alert via the orchestrator's failure{}
+// block.
+
+def runCellPytest(Map args) {
+    String project        = args.project                       // dir name, e.g. "core"
+    String pkg            = args.pkg                           // importable package, e.g. "gain"
+    String tests          = args.tests                         // pytest target relative to project dir
+    String py             = args.py                            // "3.12" / "3.13" / "3.14"
+    String pytestArgs     = args.pytestArgs ?: ''
+    String dockerRunExtra = args.dockerRunExtra ?: ''
+    String pyTag          = py.replace('.', '')                // e.g. "312" — usable in image tags
+    String reportDir      = "${project}-py${py}"               // e.g. "core-py3.12"
+    String imageTag       = "gain-${project.replace('_', '-')}-pymtx-py${pyTag}:${env.BUILD_NUMBER}"
+
+    sh label: "Build ${project} image (py${py})", script: """
+        docker build -f ${project}/Dockerfile \\
+            --build-arg PYTHON_IMAGE=python:${py}-slim \\
+            -t ${imageTag} .
+    """
+
+    // Mirrors runProject() in the per-branch Jenkinsfile, minus
+    // the linter / wheel-build steps. Reports land in a cell-
+    // scoped dir so parallel matrix cells can't collide.
+    sh label: "Run ${project} pytest (py${py})", script: """
+        mkdir -p reports/${reportDir}
+        docker run --rm \\
+            -v \$PWD/reports/${reportDir}:/reports \\
+            ${dockerRunExtra} \\
+            ${imageTag} \\
+            sh -c '
+                pytest ${pytestArgs} \\
+                    --junitxml=/reports/pytest.xml \\
+                    ${tests}
+                pytest_exit=\$?
+                chmod -R a+rw /reports
+                exit \$pytest_exit
+            '
+    """
+}
+
+def publishCellReports(String project, String py) {
+    junit allowEmptyResults: true,
+          testResults: "reports/${project}-py${py}/*.xml"
+}
+
+pipeline {
+    agent { label '!dory' }
+
+    options {
+        // 12 cells x ~10-15 min each, mostly parallelizable but
+        // bounded by agent count. 3h is comfortable headroom.
+        timeout(time: 3, unit: 'HOURS')
+        // 40 to match Jenkinsfile.nightly's retention — same
+        // ~6-week window for trend analysis.
+        buildDiscarder(logRotator(numToKeepStr: '40'))
+    }
+
+    stages {
+        stage('Prepare workspace') {
+            steps {
+                sh 'rm -rf reports && mkdir -p reports'
+            }
+        }
+
+        stage('Matrix') {
+            matrix {
+                axes {
+                    axis {
+                        name 'PY'
+                        values '3.12', '3.13', '3.14'
+                    }
+                    axis {
+                        name 'PROJECT'
+                        values 'core', 'demo_annotator',
+                               'vep_annotator', 'web_api'
+                    }
+                }
+
+                stages {
+                    stage('pytest') {
+                        steps {
+                            script {
+                                // Per-cell compose project name keeps
+                                // service container names unique when
+                                // multiple cells land on the same
+                                // agent in parallel.
+                                String composeProject =
+                                    "gain-pymtx-${env.BUILD_NUMBER}-" +
+                                    "${env.PROJECT}-py${env.PY.replace('.', '')}"
+                                String composeNetwork =
+                                    "${composeProject}_default"
+
+                                switch (env.PROJECT) {
+                                    case 'core':
+                                        try {
+                                            sh """
+                                                mkdir -p core/tests/.test_grr
+                                                docker compose -p "${composeProject}" \\
+                                                    up -d --wait apache minio
+                                                docker compose -p "${composeProject}" \\
+                                                    run --rm minio-client
+                                            """
+                                            runCellPytest(
+                                                project: 'core',
+                                                pkg: 'gain',
+                                                tests: 'tests',
+                                                py: env.PY,
+                                                pytestArgs: '-n 5 --enable-http-testing --enable-s3-testing',
+                                                dockerRunExtra:
+                                                    "--network ${composeNetwork} " +
+                                                    '-e HTTP_HOST=apache:80 ' +
+                                                    '-e MINIO_HOST=minio ' +
+                                                    '-v $PWD/core/tests/.test_grr:/workspace/core/tests/.test_grr',
+                                            )
+                                        } finally {
+                                            sh """
+                                                docker compose -p "${composeProject}" \\
+                                                    down -v --remove-orphans || true
+                                            """
+                                        }
+                                        break
+
+                                    case 'demo_annotator':
+                                        runCellPytest(
+                                            project: 'demo_annotator',
+                                            pkg: 'demo_annotator',
+                                            tests: 'demo_annotator/tests',
+                                            py: env.PY,
+                                            pytestArgs: '-n 5',
+                                            dockerRunExtra:
+                                                '-v /var/run/docker.sock:/var/run/docker.sock',
+                                        )
+                                        break
+
+                                    case 'vep_annotator':
+                                        runCellPytest(
+                                            project: 'vep_annotator',
+                                            pkg: 'vep_annotator',
+                                            tests: 'vep_annotator/tests',
+                                            py: env.PY,
+                                            pytestArgs: '-n 5',
+                                            dockerRunExtra:
+                                                '-v /var/run/docker.sock:/var/run/docker.sock',
+                                        )
+                                        break
+
+                                    case 'web_api':
+                                        try {
+                                            sh """
+                                                docker compose -p "${composeProject}" \\
+                                                    up -d --wait mail
+                                            """
+                                            runCellPytest(
+                                                project: 'web_api',
+                                                pkg: 'web_annotation',
+                                                tests: 'web_annotation/tests',
+                                                py: env.PY,
+                                                pytestArgs: '--mailhog http://mail:8025',
+                                                dockerRunExtra:
+                                                    "--network ${composeNetwork} " +
+                                                    '-e GPFWA_EMAIL_HOST=mail ' +
+                                                    '-e DJANGO_SETTINGS_MODULE=' +
+                                                    'web_annotation.test_settings',
+                                            )
+                                        } finally {
+                                            sh """
+                                                docker compose -p "${composeProject}" \\
+                                                    down -v --remove-orphans || true
+                                            """
+                                        }
+                                        break
+
+                                    default:
+                                        error("Unknown project: ${env.PROJECT}")
+                                }
+                            }
+                        }
+                        post {
+                            always {
+                                script {
+                                    publishCellReports(env.PROJECT, env.PY)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        failure {
+            // Wrapped in an explicit node block to mirror
+            // Jenkinsfile.nightly's defensive pattern: a
+            // pipeline-init failure can tear down the outer
+            // agent before post runs, leaving zulipSend without
+            // a FilePath context.
+            node('!dory') {
+                zulipSend(
+                    topic: 'nightly',
+                    message:
+                        "Python matrix FAILED — ${env.BUILD_URL}",
+                )
+            }
+        }
+    }
+}

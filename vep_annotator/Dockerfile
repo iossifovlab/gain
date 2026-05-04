@@ -4,7 +4,8 @@
 #     docker build -f vep_annotator/Dockerfile -t gain-vep-annotator-ci .
 
 # syntax=docker/dockerfile:1.7
-FROM python:3.12-slim
+ARG PYTHON_IMAGE=python:3.12-slim
+FROM ${PYTHON_IMAGE}
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.3 /uv /uvx /usr/local/bin/
 

@@ -2,7 +2,7 @@
 // and re-runs the integration jobs unconditionally. Catches
 // dependency drift / silently-stale caches on quiet days.
 //
-// Three downstreams are exercised:
+// Four downstreams are exercised:
 //   - iossifovlab/gain/master        — full rebuild, lint+tests+
 //                                      wheels+conda+prod images
 //   - /gain-web-e2e                  — Playwright e2e against the
@@ -11,6 +11,10 @@
 //   - /gain-vep-integration          — VEP integration tests
 //                                      (otherwise gated on
 //                                      vep_annotator/** changes)
+//   - /gain-python-matrix            — pytest matrix across
+//                                      Python 3.12/3.13/3.14 for
+//                                      core, demo_annotator,
+//                                      vep_annotator, web_api
 //
 // Each is wrapped in `catchError` so a failure in one doesn't mask
 // the others. By morning we want a single Zulip alert whose linked
@@ -71,6 +75,19 @@ pipeline {
                            stageResult: 'FAILURE') {
                     build(
                         job: '/gain-vep-integration',
+                        wait: true,
+                        propagate: true,
+                    )
+                }
+            }
+        }
+
+        stage('Run gain-python-matrix') {
+            steps {
+                catchError(buildResult: 'FAILURE',
+                           stageResult: 'FAILURE') {
+                    build(
+                        job: '/gain-python-matrix',
                         wait: true,
                         propagate: true,
                     )
