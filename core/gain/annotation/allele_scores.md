@@ -40,7 +40,7 @@ Optionally, one or more score values can be appended by setting
 `include_attributes` on the attribute:
 
 ```yaml
-- allele_score:
+- allele_score_annotator:
     resource_id: my_score
     attributes:
     - source: allele
@@ -53,11 +53,11 @@ Produces e.g. `"1:10:A:G:0.02"`.
 
 Collects allele strings from lines in the region and joins them with `,`.
 
-- **No `allele_filter`**: every line in the region is collected.
-- **With `allele_filter`**: only lines whose scores satisfy the expression are collected.
+- **No `allele_filter`**: every allele in the region is collected.
+- **With `allele_filter`**: only alleles whose scores satisfy the expression are collected.
 
 ```yaml
-- allele_score:
+- allele_score_annotator:
     resource_id: my_score
     allele_filter: "freq > 0.05"   # optional; omit to collect all alleles
     attributes:
