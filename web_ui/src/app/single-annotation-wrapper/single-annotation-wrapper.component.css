@@ -51,9 +51,11 @@
   position: sticky;
   top: 10px;
   height: fit-content;
+  flex-shrink: 0;
+  width: fit-content;
 }
 
-@media (max-width: 1023px) {
+@media (max-width: 1200px) {
   #wrapper-container {
     flex-direction: column;
     margin: 30px 3%;

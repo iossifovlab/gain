@@ -117,17 +117,17 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     const editorElement = this.pipelineEditorRef._editorContainer.nativeElement as HTMLElement;
 
     this.resizeObserver = new ResizeObserver(() => {
+      const currentVw = (editorElement.clientWidth / window.innerWidth) * 100;
       if (this.editorWidth !== null) {
-        this.editorWidth = editorElement.clientWidth;
-      } else {
-        // null = CSS mode (40vw/min-width); switch to px only when user drags
-        const cssWidth = Math.max(450, Math.round(window.innerWidth * 0.4));
-        if (Math.abs(editorElement.clientWidth - cssWidth) > 2) {
-          this.editorWidth = editorElement.clientWidth;
+        // null = CSS mode (40vw)
+        if (Math.abs(currentVw - this.editorWidth) > 2) {
+          this.editorWidth = currentVw;
         }
+      } else if (Math.abs(currentVw - 40) > 2) {
+        this.editorWidth = currentVw;
       }
       if (!this.isEditorMaximized(editorElement) && !this.isEditorMinimized(editorElement)) {
-        if (window.innerWidth <= 1023) {
+        if (window.innerWidth <= 1200) {
           this.shrinkTextarea();
         } else {
           this.resolveComponentsVisibility(editorElement);
@@ -545,7 +545,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   }
 
   public expandTextarea(): void {
-    this.editorWidth = window.innerWidth * 0.95; // explicit px overrides CSS
+    this.editorWidth = 95; // 95vw
     this.hideParentComponents();
   }
 
@@ -556,7 +556,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
 
   @HostListener('window:resize')
   public onWindowResize(): void {
-    if (window.innerWidth <= 1023) {
+    if (window.innerWidth <= 1200) {
       this.shrinkTextarea();
     }
   }
@@ -566,7 +566,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   }
 
   private hideParentComponents(): void {
-    if (window.innerWidth > 1023) {
+    if (window.innerWidth > 1200) {
       this.pipelineStateService.hideComponents.set(true);
     }
   }

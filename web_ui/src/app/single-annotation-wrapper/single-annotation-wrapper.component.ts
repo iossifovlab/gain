@@ -29,7 +29,7 @@ export class SingleAnnotationWrapperComponent implements OnInit {
 
   @HostListener('window:resize')
   public onWindowResize(): void {
-    if (window.innerWidth <= 1023) {
+    if (window.innerWidth <= 1200) {
       this.hideHistory = false;
     }
   }
