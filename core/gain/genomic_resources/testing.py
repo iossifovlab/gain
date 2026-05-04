@@ -402,8 +402,8 @@ def build_http_test_protocol(
 
 
 def s3_test_server_endpoint() -> str:
-    host = os.environ.get("MINIO_HOST", "localhost")
-    return f"http://{host}:9000"
+    host = os.environ.get("MINIO_HOST", "localhost:29000")
+    return f"http://{host}"
 
 
 def s3_test_protocol() -> FsspecReadWriteProtocol:

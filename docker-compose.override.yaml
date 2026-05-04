@@ -4,9 +4,15 @@
 # no `-f` flag — adds host-side port publishing so local pytest
 # runs can reach the fixture stack via the defaults in
 # core/gain/genomic_resources/testing.py:
-#   * apache  → http://localhost:28080  (HTTP_HOST default)
-#   * minio   → http://localhost:9000   (MINIO_HOST default)
-#   * minio console → http://localhost:9001
+#   * apache        → http://localhost:28080  (HTTP_HOST default)
+#   * minio         → http://localhost:29000  (MINIO_HOST default)
+#   * minio console → http://localhost:29001
+#
+# Host ports are deliberately offset (28080, 29000, 29001) so they
+# don't collide with the very common defaults on dev machines
+# (Apache, MinIO, Portainer, etc.). Container-side ports stay at
+# their service defaults (80, 9000, 9001) so CI's in-network
+# reachability is unchanged.
 #
 # Bound to 127.0.0.1 so the test stack isn't reachable from the LAN.
 #
@@ -19,8 +25,8 @@ services:
 
   minio:
     ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
+      - "127.0.0.1:29000:9000"
+      - "127.0.0.1:29001:9001"
 
   apache:
     ports:

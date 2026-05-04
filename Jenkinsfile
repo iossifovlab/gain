@@ -244,7 +244,7 @@ pipeline {
                                             dockerRunExtra:
                                                 '--network "$COMPOSE_NETWORK" ' +
                                                 '-e HTTP_HOST=apache:80 ' +
-                                                '-e MINIO_HOST=minio ' +
+                                                '-e MINIO_HOST=minio:9000 ' +
                                                 '-v $PWD/core/tests/.test_grr:/workspace/core/tests/.test_grr',
                                         )
                                     } finally {
