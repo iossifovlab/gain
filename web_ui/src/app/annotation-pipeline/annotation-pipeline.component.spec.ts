@@ -269,6 +269,11 @@ describe('AnnotationPipelineComponent', () => {
   });
 
   it('should expand editor and hide elements', () => {
+    Object.defineProperty(window, 'innerWidth', {
+      writable: true,
+      configurable: true,
+      value: 1500,
+    });
     component.expandTextarea();
     expect(pipelineStateService.hideComponents()).toBe(true);
   });
