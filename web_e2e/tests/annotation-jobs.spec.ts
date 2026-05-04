@@ -62,6 +62,7 @@ test.describe('Create job tests', () => {
   test('should create job and then delete it', async({ page }) => {
     await customDefaultPipeline(page);
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
+    await page.locator('#create-button').click();
 
     const lastJobId = await page.locator('app-jobs-table').locator('.job-name').evaluate(el => el.textContent);
     await expect(page.getByText(lastJobId)).toBeVisible();
