@@ -42,6 +42,8 @@ def get_histogram_genomic_score(
     ]:
         raise ValueError(f"{resource.resource_id} is not a genomic score!")
     score = build_score_from_resource(resource)
+    if score_id not in score.score_definitions:
+        return NullHistogram(NullHistogramConfig("score id not found")), {}
     score_def = score.score_definitions[score_id]
     return (
         score.get_score_histogram(score_id),
@@ -59,6 +61,8 @@ def get_histogram_gene_score(
     if resource.get_type() != "gene_score":
         raise ValueError(f"{resource.resource_id} is not a genomic score!")
     score = build_gene_score_from_resource(resource)
+    if score_id not in score.score_definitions:
+        return NullHistogram(NullHistogramConfig("score id not found")), {}
     score_def = score.score_definitions[score_id]
     return (
         score.get_score_histogram(score_id),
@@ -121,6 +125,8 @@ class SingleAnnotation(AnnotationBaseView):
 
         if isinstance(annotator, GenomicScoreAnnotatorBase):
             assert isinstance(annotator, GenomicScoreAnnotatorBase)
+            if attribute_info.source == "allele":
+                return None
             return annotator.build_attribute_help(attribute_info)
 
         assert isinstance(annotator, GeneScoreAnnotator)
