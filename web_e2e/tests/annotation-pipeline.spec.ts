@@ -1140,12 +1140,13 @@ test.describe('Add resource to pipeline tests', () => {
   test('should display matching resources after typing in search input', async({ page }) => {
     await page.locator('#pipeline-actions').locator('#add-resource-button').click();
 
-    await page.locator('#resource-search-input').fill('CADD');
-    await page.locator('#resource-search-input').dispatchEvent('keyup'); // trigger search
-
-    await page.waitForResponse(
-      resp => resp.url().includes('api/resources/search?search=CADD'), {timeout: 30000}
-    );
+    await Promise.all([
+      page.locator('#resource-search-input').fill('CADD'),
+      page.locator('#resource-search-input').dispatchEvent('keyup'), // trigger search
+      page.waitForResponse(
+        resp => resp.url().includes('api/resources/search?search=CADD'), {timeout: 30000}
+      )
+    ]);
 
     await expect(page.locator('#resource-count')).toHaveText('5 resources');
     await expect(page.getByTitle('hg38/scores/CADD_v1.4')).toBeVisible();
@@ -1166,12 +1167,14 @@ test.describe('Add resource to pipeline tests', () => {
   test('should navigate past select annotator step after clicking continue', async({ page }) => {
     await page.locator('#pipeline-actions').locator('#add-resource-button').click();
 
-    await page.locator('#resource-search-input').fill('"CADD_v1.4"');
-    await page.locator('#resource-search-input').dispatchEvent('keyup'); // trigger search
+    await Promise.all([
+      page.locator('#resource-search-input').fill('"CADD_v1.4"'),
+      page.locator('#resource-search-input').dispatchEvent('keyup'), // trigger search
+      page.waitForResponse(
+        resp => resp.url().includes('api/resources/search?search=%22CADD_v1.4%22'), {timeout: 30000}
+      )
+    ]);
 
-    await page.waitForResponse(
-      resp => resp.url().includes('api/resources/search?search=%22CADD_v1.4%22'), {timeout: 30000}
-    );
     await page.waitForSelector('[id="hg38/scores/CADD_v1.4-continue-button"]', { state: 'visible', timeout: 15000 });
     await page.locator('[id$="-continue-button"]').first().click();
 
@@ -1184,12 +1187,14 @@ test.describe('Add resource to pipeline tests', () => {
   test('should navigate back to previous step', async({ page }) => {
     await page.locator('#pipeline-actions').locator('#add-resource-button').click();
 
-    await page.locator('#resource-search-input').fill('"CADD_v1.4"');
-    await page.locator('#resource-search-input').dispatchEvent('keyup'); // trigger search
+    await Promise.all([
+      page.locator('#resource-search-input').fill('"CADD_v1.4"'),
+      page.locator('#resource-search-input').dispatchEvent('keyup'), // trigger search
+      page.waitForResponse(
+        resp => resp.url().includes('api/resources/search?search=%22CADD_v1.4%22'), {timeout: 30000}
+      )
+    ]);
 
-    await page.waitForResponse(
-      resp => resp.url().includes('api/resources/search?search=%22CADD_v1.4%22'), {timeout: 30000}
-    );
     await page.waitForSelector('[id="hg38/scores/CADD_v1.4-continue-button"]', { state: 'visible', timeout: 15000 });
     await page.locator('[id$="-continue-button"]').first().click();
 
@@ -1245,12 +1250,14 @@ test.describe('Add resource to pipeline tests', () => {
 
     await page.locator('#pipeline-actions').locator('#add-resource-button').click();
 
-    await page.locator('#resource-search-input').fill('"hg19/scores/AlphaMissense"');
-    await page.locator('#resource-search-input').dispatchEvent('keyup'); // trigger search
+    await Promise.all([
+      page.locator('#resource-search-input').fill('"hg19/scores/AlphaMissense"'),
+      page.locator('#resource-search-input').dispatchEvent('keyup'), // trigger search
+      page.waitForResponse(
+        resp => resp.url().includes('api/resources/search?search=%22hg19/scores/AlphaMissense%22'), {timeout: 30000}
+      )
+    ]);
 
-    await page.waitForResponse(
-      resp => resp.url().includes('api/resources/search?search=%22hg19/scores/AlphaMissense%22'), {timeout: 30000}
-    );
     await page.waitForSelector('[id="hg19/scores/AlphaMissense-finish-button"]', { state: 'visible', timeout: 15000 });
 
     await Promise.all([
@@ -1272,11 +1279,14 @@ test.describe('Add resource to pipeline tests', () => {
 
     await page.locator('#pipeline-actions').locator('#add-resource-button').click();
 
-    await page.locator('#resource-search-input').fill('"hg19/scores/AlphaMissense"');
-    await page.locator('#resource-search-input').dispatchEvent('keyup'); // trigger search
-    await page.waitForResponse(
-      resp => resp.url().includes('api/resources/search?search=%22hg19/scores/AlphaMissense%22'), {timeout: 30000}
-    );
+    await Promise.all([
+      page.locator('#resource-search-input').fill('"hg19/scores/AlphaMissense"'),
+      page.locator('#resource-search-input').dispatchEvent('keyup'), // trigger search
+      page.waitForResponse(
+        resp => resp.url().includes('api/resources/search?search=%22hg19/scores/AlphaMissense%22'), {timeout: 30000}
+      )
+    ]);
+
     await page.waitForSelector(
       '[id="hg19/scores/AlphaMissense-continue-button"]',
       { state: 'visible', timeout: 15000 }
@@ -1316,12 +1326,14 @@ test.describe('Add resource to pipeline tests', () => {
   test('should open resource details in new tab', async({ page }) => {
     await page.locator('#pipeline-actions').locator('#add-resource-button').click();
 
-    await page.locator('#resource-search-input').fill('"CADD_v1.4"');
-    await page.locator('#resource-search-input').dispatchEvent('keyup');
+    await Promise.all([
+      page.locator('#resource-search-input').fill('"CADD_v1.4"'),
+      page.locator('#resource-search-input').dispatchEvent('keyup'), // trigger search
+      page.waitForResponse(
+        resp => resp.url().includes('api/resources/search?search=%22CADD_v1.4%22'), {timeout: 30000}
+      )
+    ]);
 
-    await page.waitForResponse(
-      resp => resp.url().includes('api/resources/search?search=%22CADD_v1.4%22'), {timeout: 30000}
-    );
     await page.waitForSelector(
       '[id="hg38/scores/CADD_v1.4-resource-details-button"]',
       { state: 'visible', timeout: 15000 }
