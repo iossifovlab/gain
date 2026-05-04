@@ -694,7 +694,7 @@ variant frequencies, etc.
 
         if not score_lines:
             return {
-                score: sagg.position_aggregator
+                score: sagg.position_aggregator.get_final()
                 for score, sagg in score_aggs.items()
             }
         last_pos: int = score_lines[0].pos_begin
