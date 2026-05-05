@@ -11,7 +11,7 @@ from gain.annotation.annotation_config import AttributeInfo
 from gain.genomic_resources.repository import GenomicResourceRepo
 from pytest_mock import MockerFixture
 
-from web_annotation.models import AlleleQuery, User
+from web_annotation.models import AlleleQuery, User, UserQuota
 from web_annotation.pipeline_cache import LRUPipelineCache
 from web_annotation.single_allele_annotation.views import SingleAnnotation
 
@@ -542,7 +542,6 @@ def test_single_annotation_allele_attribute(admin_client: Client) -> None:
 def test_unlimited_user_bypasses_single_allele_quota(
     user_client: Client,
 ) -> None:
-    from web_annotation.models import UserQuota  # noqa: PLC0415
     user = User.objects.get(email="user@example.com")
     user.is_unlimited = True
     user.save()
@@ -572,7 +571,6 @@ def test_unlimited_user_bypasses_single_allele_quota(
 def test_unlimited_user_quota_not_deducted_after_single_allele_query(
     user_client: Client,
 ) -> None:
-    from web_annotation.models import UserQuota  # noqa: PLC0415
     user = User.objects.get(email="user@example.com")
     user.is_unlimited = True
     user.save()
@@ -602,7 +600,6 @@ def test_unlimited_user_quota_not_deducted_after_single_allele_query(
 def test_non_unlimited_user_is_blocked_by_quota(
     user_client: Client,
 ) -> None:
-    from web_annotation.models import UserQuota  # noqa: PLC0415
     user = User.objects.get(email="user@example.com")
     user.is_unlimited = False
     user.save()

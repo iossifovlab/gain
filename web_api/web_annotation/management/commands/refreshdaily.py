@@ -28,7 +28,9 @@ class Command(BaseCommand):
 
         if already_ran and not options["force"]:
             self.stdout.write(
-                "Daily quota refresh already ran today. Use --force to override.")
+                "Daily quota refresh already "
+                "ran today. Use --force to override.",
+            )
             return
 
         for user_quota in UserQuota.objects.all():
