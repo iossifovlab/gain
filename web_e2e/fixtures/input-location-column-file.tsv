@@ -1,0 +1,16 @@
+location	position	end_position	chrom	frequency	effect	variant	family_variants_count	is_denovo	seen_in_affected	seen_in_unaffected
+chr10:28590745	28590744	28590746	chr10		frame-shift	del(2)	1	True	True	False
+chr10:28610740	28610739	28610743	chr10		frame-shift	del(4)	1	True	True	False
+chr10:28547951	28547951	28547951	chr10	25.08690059185028	synonymous	sub(G->A)	1422	False	True	True
+chr10:28535579	28535579	28535579	chr10	0.005927990059717558	missense	sub(G->A)	2	False	True	True
+chr10:28535631	28535631	28535631	chr10	0.017761999333743006	missense	sub(G->A)	4	False	True	True
+chr10:28535704	28535704	28535704	chr10	0.004598119994625449	missense	sub(G->T)	3	False	True	True
+chr10:28547938	28547937	28547941	chr10	0.26728399097919464	splice-site	del(4)	6	False	True	True
+chr10:28547950	28547950	28547950	chr10	0.4887830000370741	missense	sub(C->T)	7	False	True	True
+chr10:28547953	28547953	28547953	chr10	0.022875299328006804	missense	sub(T->C)	4	False	True	True
+chr10:28547962	28547962	28547962	chr10	2.103560045361519	missense	sub(T->C)	27	False	True	True
+chr10:28547981	28547981	28547981	chr10	0.00759227987146005	synonymous	sub(C->T)	2	False	True	True
+chr10:28583408	28583408	28583408	chr10	0.038169900653883815	missense	sub(A->G)	2	False	False	True
+chr10:28583461	28583461	28583461	chr10	0.00535059989488218	missense	sub(C->T)	2	False	False	True
+chr10:28589786	28589786	28589786	chr10	0.07090240251272917	missense	sub(A->G)	3	False	True	True
+chr10:28590805	28590805	28590805	chr10	0.14180700527504086	missense	sub(A->G)	4	False	True	True

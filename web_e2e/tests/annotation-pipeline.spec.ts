@@ -309,30 +309,7 @@ test.describe('Pipeline tests', () => {
     await expect(page.locator('mat-option')).toHaveCount(0);
   });
 
-  test('should update annotator and attribute counts in status bar after adding annotator', async({ page }) => {
-    await customDefaultPipeline(page);
 
-    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu1 annotators');
-    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open2 attributes');
-
-    // add simple_effect_annotator which contributes 3 attributes
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('simple_effect_annotator').click();
-    await page.getByRole('button', { name: 'Next' }).click();
-
-    await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg19/gene_models/ccds_v201309').click();
-    await page.getByRole('button', { name: 'Next' }).click();
-
-    await Promise.all([
-      page.getByRole('button', { name: 'Finish' }).click(),
-      page.waitForResponse(resp => resp.url().includes('api/editor/pipeline_status')),
-    ]);
-
-    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu2 annotators');
-    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open5 attributes');
-  });
 
   test('should save user pipeline with Ctrl+S', async({ page }) => {
     await customDefaultPipeline(page);
@@ -395,6 +372,76 @@ test.describe('Pipeline tests', () => {
 
     await expect(page.locator('#name-modal .error-message')).toHaveText('Pipeline with this name already exists.');
     await expect(page.locator('#name-modal')).toBeVisible();
+  });
+
+  test('should keep pipeline when Cancel is clicked on delete confirmation', async({ page }) => {
+    await customDefaultPipeline(page);
+    await page.getByRole('button', { name: 'Save as' }).click();
+    await page.locator('#name-modal input').fill('My Pipeline');
+    await Promise.all([
+      page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
+      page.waitForResponse(resp => resp.url().includes('api/pipelines/load')),
+    ]);
+    await expect(page.locator('#pipelines-input')).toHaveValue('My Pipeline');
+
+    await page.getByRole('button', { name: 'Delete' }).click();
+    await expect(page.locator('#change-confirmation-popover')).toBeVisible();
+    await page.locator('#cancel-delete').click();
+
+    await expect(page.locator('#change-confirmation-popover')).not.toBeVisible();
+    await expect(page.locator('#pipelines-input')).toHaveValue('My Pipeline');
+  });
+
+  test('should save pipeline name via Enter key in name modal', async({ page }) => {
+    await customDefaultPipeline(page);
+    await page.getByRole('button', { name: 'Save as' }).click();
+    await expect(page.locator('#name-modal')).toBeVisible();
+    await page.locator('#name-modal input').fill('My Pipeline');
+
+    await Promise.all([
+      page.locator('#name-modal input').press('Enter'),
+      page.waitForResponse(resp => resp.url().includes('api/pipelines/load')),
+    ]);
+
+    await expect(page.locator('#name-modal')).not.toBeVisible();
+    await expect(page.locator('#pipelines-input')).toHaveValue('My Pipeline');
+  });
+
+  test('should disable Save button when pipeline is unchanged and enable it after an edit', async({ page }) => {
+    await customDefaultPipeline(page);
+    await page.getByRole('button', { name: 'Save as' }).click();
+    await page.locator('#name-modal input').fill('My Pipeline');
+    await Promise.all([
+      page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
+      page.waitForResponse(resp => resp.url().includes('api/pipelines/load')),
+    ]);
+
+    await expect(page.locator('#save-button')).toBeDisabled();
+
+    /* eslint-disable */
+    await page.evaluate(() => {
+      const monaco = (window as any).monaco;
+      const model = monaco.editor.getModels()[0];
+      model.applyEdits([{ range: new monaco.Range(5, 1, 5, 1), text: '    # edited\n' }]);
+    });
+    /* eslint-enable */
+
+    await expect(page.locator('#save-button')).toBeEnabled();
+  });
+
+  test('should show Public pipelines and User pipelines group labels in dropdown', async({ page }) => {
+    await customDefaultPipeline(page);
+    await page.getByRole('button', { name: 'Save as' }).click();
+    await page.locator('#name-modal input').fill('My Pipeline');
+    await Promise.all([
+      page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
+      page.waitForResponse(resp => resp.url().includes('api/pipelines/load')),
+    ]);
+
+    await page.locator('#pipelines-input').click();
+
+    await expect(page.getByRole('group', { name: 'Public pipelines' })).toBeVisible();
+    await expect(page.getByRole('group', { name: 'User pipelines' })).toBeVisible();
   });
 });
 
@@ -1302,6 +1349,93 @@ test.describe('Add resource to pipeline tests', () => {
 
     await popup.waitForLoadState('domcontentloaded');
     expect(popup.url()).toContain('/hg38/scores/CADD_v1.7/index.html');
+  });
+});
+
+
+test.describe('Pipeline status bar tests', () => {
+  test.beforeEach(async({ page }) => {
+    await page.goto('/', { waitUntil: 'load' });
+    const email = utils.getRandomString() + '@email.com';
+    const password = 'aaabbb';
+    await utils.registerUser(page, email, password);
+    await utils.loginUser(page, email, password);
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  });
+
+  test('should show annotatable count in status bar', async({ page }) => {
+    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+    await expect(page.locator('#pipelines-input')).toBeEmpty();
+    await expect(page.locator('.monaco-editor').nth(0)).toBeEmpty();
+
+    const saveResponse = page.waitForResponse(
+      resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
+    );
+
+    await utils.typeInPipelineEditor(
+      page,
+      '- normalize_allele_annotator:\n' +
+      '    genome: hg38/genomes/GRCh38.p14\n' +
+      '\n' +
+      '- allele_score:\n' +
+      '    resource_id: hg38/scores/dbSNP\n' +
+      '    input_annotatable: normalized_allele'
+    );
+
+    await saveResponse;
+
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await expect(page.locator('#status-bar .status-item').nth(2)).toContainText('1 annotatables');
+  });
+
+  test('should show gene list count in status bar for pipeline with gene list attribute', async({ page }) => {
+    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+
+    const saveResponse = page.waitForResponse(
+      resp => resp.url().includes('api/pipelines/user'), { timeout: 30000 }
+    );
+    await utils.typeInPipelineEditor(
+      page,
+      'preamble:\n' +
+      '   input_reference_genome: hg38/genomes/GRCh38-hg38\n' +
+      'annotators:\n' +
+      '- effect_annotator:\n' +
+      '    gene_models: hg38/gene_models/GENCODE/48/basic/ALL\n' +
+      '    attributes:\n' +
+      '    - worst_effect\n' +
+      '    - name: gene_list\n' +
+      '      source: gene_list\n' +
+      '      internal: true\n'
+    );
+    await saveResponse;
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+
+    await expect(page.locator('#status-bar .status-item').nth(3)).toContainText('1 gene list');
+  });
+
+  test('should update annotator and attribute counts in status bar after adding annotator', async({ page }) => {
+    await customDefaultPipeline(page);
+
+    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu1 annotators');
+    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open2 attributes');
+
+    // add simple_effect_annotator which contributes 3 attributes
+    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    await page.getByRole('combobox', { name: 'Select annotator' }).click();
+    await page.locator('mat-option').getByText('simple_effect_annotator').click();
+    await page.getByRole('button', { name: 'Next' }).click();
+
+    await page.locator('[id="gene_models-dropdown"]').click();
+    await page.locator('mat-option').getByText('hg19/gene_models/ccds_v201309').click();
+    await page.getByRole('button', { name: 'Next' }).click();
+
+    await Promise.all([
+      page.getByRole('button', { name: 'Finish' }).click(),
+      page.waitForResponse(resp => resp.url().includes('api/editor/pipeline_status')),
+    ]);
+
+    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu2 annotators');
+    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open5 attributes');
   });
 });
 

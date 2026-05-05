@@ -1,6 +1,7 @@
 import { test, expect, Page } from '@playwright/test';
 import * as utils from '../utils';
 import { scanCSV } from 'nodejs-polars';
+import * as fs from 'fs';
 
 test.describe('Create job tests', () => {
   test.beforeEach(async({ page }) => {
@@ -346,6 +347,96 @@ test.describe('Jobs validation tests', () => {
     await expect(page.getByText('Upload limit reached!')).toBeVisible();
   });
 });
+
+test.describe('Job file upload tests', () => {
+  test.beforeEach(async({ page }) => {
+    await page.goto('/', { waitUntil: 'load' });
+    const email = utils.getRandomString() + '@email.com';
+    const password = 'aaabbb';
+    await utils.registerUser(page, email, password);
+    await utils.loginUser(page, email, password);
+    await page.getByRole('link', { name: 'Annotation Jobs' }).click();
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  });
+
+  test('should upload VCF file via drag-and-drop', async({ page }) => {
+    const fileBuffer = fs.readFileSync('./fixtures/input-vcf-file.vcf');
+    const dataTransfer = await page.evaluateHandle((data) => {
+      const dt = new DataTransfer();
+      const file = new File([new Uint8Array(data)], 'input-vcf-file.vcf', { type: 'text/vcard' });
+      dt.items.add(file);
+      return dt;
+    }, [...fileBuffer]);
+
+    await page.locator('#file-upload-field').dispatchEvent('drop', { dataTransfer });
+
+    await expect(page.locator('#uploaded-file-container')).toBeVisible();
+    await expect(page.locator('#file-info')).toContainText('input-vcf-file.vcf');
+    await expect(page.locator('#create-button')).toBeEnabled();
+  });
+
+  test('should reject unsupported format via drag-and-drop', async({ page }) => {
+    const fileBuffer = fs.readFileSync('./fixtures/invalid-input-file-format.yaml');
+    const dataTransfer = await page.evaluateHandle((data) => {
+      const dt = new DataTransfer();
+      const file = new File([new Uint8Array(data)], 'invalid-file.yaml');
+      dt.items.add(file);
+      return dt;
+    }, [...fileBuffer]);
+
+    await page.locator('#file-upload-field').dispatchEvent('drop', { dataTransfer });
+
+    await expect(page.locator('#uploaded-file-container')).toBeVisible();
+    await expect(page.getByText('Unsupported format!')).toBeVisible();
+    await expect(page.locator('#create-button')).toBeDisabled();
+  });
+
+  test('should switch separator from tab to comma for TSV file', async({ page }) => {
+    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-tsv-file.tsv');
+    await page.waitForSelector('#table');
+
+    await expect(page.locator('#tab-separtor-radio')).toBeChecked();
+    await expect(page.locator('#comma-separtor-radio')).not.toBeChecked();
+
+    const separatorResponse = page.waitForResponse(
+      resp => resp.url().includes('api/jobs/preview')
+    );
+    await page.locator('#comma-separtor-radio').click();
+    await separatorResponse;
+
+    await expect(page.locator('#comma-separtor-radio')).toBeChecked();
+    await expect(page.locator('#tab-separtor-radio')).not.toBeChecked();
+  });
+
+  test('should switch separator from comma to tab for CSV file', async({ page }) => {
+    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-csv-file.csv');
+    await page.waitForSelector('#table');
+
+    await expect(page.locator('#comma-separtor-radio')).toBeChecked();
+    await expect(page.locator('#tab-separtor-radio')).not.toBeChecked();
+
+    const separatorResponse = page.waitForResponse(
+      resp => resp.url().includes('api/jobs/preview')
+    );
+    await page.locator('#tab-separtor-radio').click();
+    await separatorResponse;
+
+    await expect(page.locator('#tab-separtor-radio')).toBeChecked();
+    await expect(page.locator('#comma-separtor-radio')).not.toBeChecked();
+  });
+
+  test('should show genome selector when location column is auto-mapped', async({ page }) => {
+    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-location-column-file.tsv');
+    await page.waitForSelector('#table');
+
+    await expect(page.locator('#select-genome')).toBeVisible();
+    await expect(page.locator('label[for="select-genome"]')).toHaveText('Select genome:');
+
+    const options = await page.locator('#select-genome option').allTextContents();
+    expect(options.length).toBe(5);
+  });
+});
+
 
 async function waitForJobStatus(page: Page, color: string): Promise<void> {
   await expect(async() => {
