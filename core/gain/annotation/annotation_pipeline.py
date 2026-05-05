@@ -123,6 +123,8 @@ class AttributeDesc:
 class Annotator(abc.ABC):
     """Annotator provides a set of attrubutes for a given Annotatable."""
 
+    BASE_DOC_URL = "https://iossifovlab.com/gaindocs/annotation_infrastructure2.html"
+
     def __init__(self, pipeline: AnnotationPipeline | None,
                  info: AnnotatorInfo):
         self.pipeline = pipeline

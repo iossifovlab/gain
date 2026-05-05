@@ -214,7 +214,7 @@ test.describe('Single annotation annotator modal', () => {
   test('should check annotator link', async({ page }) => {
     await page.locator('.info-icon').nth(1).click();
     await expect(page.getByRole('link', { name: 'More info' })).toHaveAttribute(
-      'href', 'https://www.iossifovlab.com/gpfuserdocs/administration/annotation.html#allele-score'
+      'href', 'https://iossifovlab.com/gaindocs/annotation_infrastructure2.html#allele-score-annotator'
     );
   });
 

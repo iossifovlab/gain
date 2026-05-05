@@ -39,6 +39,8 @@ class EditorView(AnnotationBaseView):
             "normalize_allele_annotator",
         ]
 
+    BASE_DOC_URL = "https://iossifovlab.com/gaindocs/annotation_infrastructure2.html#"
+
     def _get_annotator_config_template(
         self, annotator_type: str,
     ) -> dict[str, Any]:
@@ -54,8 +56,7 @@ class EditorView(AnnotationBaseView):
             return {
                 "annotator_type": "position_score_annotator",
                 "documentation_url": (
-                    "https://iossifovlab.com/gpfuserdocs/administration"
-                    "/annotation.html#position-score"
+                    f"{self.BASE_DOC_URL}#position-score-annotator"
                 ),
                 "resource_id": {
                     "field_type": "resource",
@@ -72,8 +73,7 @@ class EditorView(AnnotationBaseView):
             return {
                 "annotator_type": "allele_score",
                 "documentation_url": (
-                    "https://iossifovlab.com/gpfuserdocs/administration"
-                    "/annotation.html#allele-score"
+                    f"{self.BASE_DOC_URL}#allele-score-annotator"
                 ),
                 "resource_id": {
                     "field_type": "resource",
@@ -90,8 +90,7 @@ class EditorView(AnnotationBaseView):
             return {
                 "annotator_type": "gene_score_annotator",
                 "documentation_url": (
-                    "https://iossifovlab.com/gpfuserdocs/administration"
-                    "/annotation.html#gene-score-annotator"
+                    f"{self.BASE_DOC_URL}#gene-score-annotator"
                 ),
                 "resource_id": {
                     "field_type": "resource",
@@ -113,8 +112,7 @@ class EditorView(AnnotationBaseView):
             return {
                 "annotator_type": "gene_set_annotator",
                 "documentation_url": (
-                    "https://iossifovlab.com/gpfuserdocs/administration"
-                    "/annotation.html#gene-set-annotator"
+                    f"{self.BASE_DOC_URL}#gene-set-annotator"
                 ),
                 "resource_id": {
                     "field_type": "resource",
@@ -131,8 +129,7 @@ class EditorView(AnnotationBaseView):
             return {
                 "annotator_type": "cnv_collection",
                 "documentation_url": (
-                    "https://iossifovlab.com/gpfuserdocs/administration"
-                    "/annotation.html#cnv-collection-annotator"
+                    f"{self.BASE_DOC_URL}#cnv-collection-annotator"
                 ),
                 "resource_id": {
                     "field_type": "resource",
@@ -153,8 +150,7 @@ class EditorView(AnnotationBaseView):
             return {
                 "annotator_type": "effect_annotator",
                 "documentation_url": (
-                    "https://iossifovlab.com/gpfuserdocs/administration"
-                    "/annotation.html#effect-annotator"
+                    f"{self.BASE_DOC_URL}#effect-annotator"
                 ),
                 "gene_models": {
                     "field_type": "resource",
@@ -176,8 +172,7 @@ class EditorView(AnnotationBaseView):
             return {
                 "annotator_type": "effect_annotator",
                 "documentation_url": (
-                    "https://iossifovlab.com/gpfuserdocs/administration"
-                    "/annotation.html#effect-annotator"
+                    f"{self.BASE_DOC_URL}#effect-annotator"
                 ),
                 "gene_models": {
                     "field_type": "resource",
@@ -194,8 +189,7 @@ class EditorView(AnnotationBaseView):
             return {
                 "annotator_type": "liftover_annotator",
                 "documentation_url": (
-                    "https://iossifovlab.com/gpfuserdocs/administration"
-                    "/annotation.html#liftover-annotator"
+                    f"{self.BASE_DOC_URL}#liftover-annotator"
                 ),
                 "chain": {
                     "field_type": "resource",
@@ -222,8 +216,7 @@ class EditorView(AnnotationBaseView):
             return {
                 "annotator_type": "normalize_allele_annotator",
                 "documentation_url": (
-                    "https://iossifovlab.com/gpfuserdocs/administration"
-                    "/annotation.html#gene-set-annotator"
+                    f"{self.BASE_DOC_URL}#normalize-allele-annotator"
                 ),
                 "genome": {
                     "field_type": "resource",

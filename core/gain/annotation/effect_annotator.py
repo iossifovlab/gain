@@ -47,13 +47,13 @@ class EffectAnnotatorAdapter(AnnotatorBase):
         genome = find_annotator_reference_genome(
             info, gene_models, pipeline, pipeline.repository)
 
-        info.documentation += textwrap.dedent("""
+        info.documentation += textwrap.dedent(f"""
 
 Annotator to identify the effect of the variant on protein coding.
 
-<a href="https://iossifovlab.com/gpfuserdocs/administration/annotation.html#effect-annotator" target="_blank">More info</a>
+<a href="{self.BASE_DOC_URL}#effect-annotator" target="_blank">More info</a>
 
-""")  # noqa
+""")
         info.resources += [genome.resource, gene_models.resource]
         super().__init__(pipeline, info)
 

@@ -145,12 +145,11 @@ class SimpleEffectAnnotator(AnnotatorBase):
             gene_models = build_gene_models_from_resource(resource)
         assert isinstance(gene_models, GeneModels)
 
-        info.documentation += textwrap.dedent(
-            """
+        info.documentation += textwrap.dedent(f"""
 
 Simple effect annotator.
 
-<a href="https://iossifovlab.com/gpfuserdocs/administration/annotation.html#simple-effect-annotator" target="_blank">More info</a>
+<a href="{self.BASE_DOC_URL}#simple-effect-annotator" target="_blank">More info</a>
 
 """)  # noqa
 

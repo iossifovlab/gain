@@ -294,7 +294,7 @@ class VEPCacheAnnotator(VEPAnnotatorBase):
 
             This annotator is configured to run with VEP version {self._vep_version}
 
-        <a href="https://iossifovlab.com/gpfuserdocs/administration/annotation.html#vep-annotators" target="_blank">More info</a>
+        <a href="{self.BASE_DOC_URL}#vep-annotators" target="_blank">More info</a>
 
         """)  # noqa
 
@@ -400,7 +400,7 @@ class VEPEffectAnnotator(VEPAnnotatorBase):
 
             This annotator is configured to run with VEP version {self._vep_version}
 
-        <a href="https://iossifovlab.com/gpfuserdocs/administration/annotation.html#vep-annotators" target="_blank">More info</a>
+        <a href="{self.BASE_DOC_URL}#vep-annotators" target="_blank">More info</a>
 
         """)  # noqa
 

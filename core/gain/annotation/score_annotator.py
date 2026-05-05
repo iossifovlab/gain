@@ -338,12 +338,12 @@ class PositionScoreAnnotator(GenomicScoreAnnotatorBase):
         super().__init__(pipeline, info, self.position_score)
 
         self.position_score_queries = []
-        info.documentation += textwrap.dedent("""
+        info.documentation += textwrap.dedent(f"""
 
 Annotator to use with genomic scores depending on genomic position like
 phastCons, phyloP, FitCons2, etc.
 
-<a href="https://www.iossifovlab.com/gpfuserdocs/administration/annotation.html#position-score" target="_blank">More info</a>
+<a href="{self.BASE_DOC_URL}#position-score-annotator" target="_blank">More info</a>
 
 """)  # noqa
 
@@ -477,12 +477,12 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
 
         super().__init__(pipeline, info, self.allele_score)
         self.allele_score_queries = []
-        info.documentation += textwrap.dedent("""
+        info.documentation += textwrap.dedent(f"""
 
 Annotator to use with scores that depend on allele like
 variant frequencies, etc.
 
-<a href="https://www.iossifovlab.com/gpfuserdocs/administration/annotation.html#allele-score" target="_blank">More info</a>
+<a href="{self.BASE_DOC_URL}#allele-score-annotator" target="_blank">More info</a>
 
 """)  # noqa
 

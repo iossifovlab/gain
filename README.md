@@ -7,7 +7,7 @@ the Genomic Resource Repository (GRR), effect annotation,
 task graph orchestration, and gene scores/sets.
 
 User documentation: see the GPF documentation at
-https://iossifovlab.com/gpfuserdocs/.
+https://iossifovlab.com/gaindocs/.
 
 ## Repository overview
 

@@ -88,13 +88,13 @@ class AbstractLiftoverAnnotator(AnnotatorBase):
         target_genome: ReferenceGenome,
     ):
 
-        info.documentation += textwrap.dedent("""
+        info.documentation += textwrap.dedent(f"""
 
 Annotator to lift over a variant from one reference genome to another.
 
-<a href="https://iossifovlab.com/gpfuserdocs/administration/annotation.html#liftover-annotator" target="_blank">More info</a>
+<a href="{self.BASE_DOC_URL}#liftover-annotator" target="_blank">More info</a>
 
-""")  # noqa
+""")
         info.resources += [
             chain.resource, source_genome.resource, target_genome.resource]
         super().__init__(pipeline, info)
