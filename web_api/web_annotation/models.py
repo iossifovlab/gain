@@ -90,6 +90,10 @@ class BaseUser:
             raise ValueError("Session ID does not match user session!")
         return cast(BasePipeline, pipeline)
 
+    @abstractmethod
+    def can_create(self) -> bool:
+        """Check if a user is not limited by the daily quota."""
+
 
 class UserWrapper(BaseUser):
     """Wrapper for user objects to implement BaseUser functions."""
