@@ -206,6 +206,10 @@ class LRUPipelineCache:
                     return
                 self.delete_pipeline(pipeline_id)
 
+            if len(self._cache) >= self.capacity:
+                last_pipeline_id = self._order[0]
+                self.delete_pipeline(last_pipeline_id, do_cancel=False)
+
             pipeline_future = self._load_executor.execute(
                 self._load_pipeline_raw,
                 raw=pipeline_config,
@@ -221,9 +225,6 @@ class LRUPipelineCache:
                 future=pipeline_future,
             )
 
-            if len(self._cache) >= self.capacity:
-                last_pipeline_id = self._order[0]
-                self.delete_pipeline(last_pipeline_id, do_cancel=False)
             self._pipeline_callbacks[pipeline_id] = delete_callback
             self._cache[pipeline_id] = loading_details
             self._order.append(pipeline_id)
