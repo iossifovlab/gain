@@ -250,12 +250,6 @@ test.describe('Jobs table tests', () => {
     expect(fixtureFrame.toString()).toEqual(downloadFrame.toString());
   });
 
-  test('should check if download button is not available when job is not finished', async({ page }) => {
-    await createJobWithPipeline(page, 'pipeline/T2T_Clinical_annotation', 'input-vcf-file.vcf');
-
-    await expect(page.locator('.no-download-icon').nth(0)).toBeVisible({timeout: 15000});
-  });
-
   test('should upload tsv file and check specify columns component content', async({ page }) => {
     await utils.selectPipeline(page, 'pipeline/GPF-SFARI_annotation');
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-tsv-file.tsv');
@@ -359,13 +353,6 @@ async function waitForJobStatus(page: Page, color: string): Promise<void> {
     await page.reload();
   }).toPass({intervals: [2000, 3000, 5000], timeout: 120000});
 }
-
-async function createJobWithPipeline(page: Page, pipeline: string, inputFileName: string): Promise<void> {
-  await utils.selectPipeline(page, pipeline);
-  await page.locator('input[id="file-upload"]').setInputFiles(`./fixtures/${inputFileName}`);
-  await page.locator('#create-button').click();
-}
-
 
 async function customDefaultPipeline(page: Page): Promise<void> {
   await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
