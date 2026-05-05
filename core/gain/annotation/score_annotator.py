@@ -13,6 +13,7 @@ from jinja2 import Template
 from lark import Lark, Token, Tree
 
 from gain.annotation.annotatable import Annotatable, VCFAllele
+from gain.annotation.annotate_utils import stringify
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotationConfigurationError,
@@ -448,7 +449,7 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
 
         in: "in"
 
-        word: /[a-zA-Z!@#$%^&*()_+]+/
+        word: /[a-zA-Z0-9!@#$%^&*()_+]+/
 
         number: /[0-9\\.]+/
 
@@ -644,12 +645,45 @@ variant frequencies, etc.
         self, annotatable: Annotatable,
     ) -> dict[str, Any]:
         assert isinstance(annotatable, VCFAllele)
-        scores = self.allele_score.fetch_scores(
-            annotatable.chromosome, annotatable.position,
-            annotatable.reference, annotatable.alternative,
-            self.simple_score_queries,
-        )
-        if scores is None:
+
+        if annotatable.chrom not in self.allele_score.get_all_chromosomes():
+            raise ValueError(
+                f"{annotatable.chrom} is not among "
+                "the available chromosomes for "
+                f"NP Score resource {self.allele_score.resource_id}")
+
+        lines = list(self.allele_score.fetch_lines(
+            annotatable.chrom,
+            annotatable.position,
+            annotatable.position,
+        ))
+        if not lines:
+            return self._empty_result()
+
+        selected_line = None
+        for line in lines:
+            if (
+                line.ref == annotatable.reference
+                and line.alt == annotatable.alternative
+            ):
+                selected_line = line
+                break
+
+        if not selected_line:
+            return self._empty_result()
+
+        scores = {
+            sc: selected_line.get_score(sc)
+            for sc in (
+                self.simple_score_queries or
+                self.allele_score.get_all_scores()
+            )
+        }
+
+        if (
+            self.allele_filter is not None
+            and not self.allele_filter(selected_line)
+        ):
             return self._empty_result()
 
         if "allele" in [att.source for att in self.attributes]:
@@ -661,9 +695,10 @@ variant frequencies, etc.
                 f":{annotatable.reference}:{annotatable.alternative}"
             )
             if len(self.attrs_to_include) > 0:
-                attrs_str = ", ".join(
-                    [str(scores.get(attr)) for attr in self.attrs_to_include],
-                )
+                attrs_str = ",".join([
+                    stringify(scores.get(attr))
+                    for attr in self.attrs_to_include
+                ])
                 allele_str += f":{attrs_str}"
             scores[attr.name] = allele_str
 
@@ -707,20 +742,19 @@ variant frequencies, etc.
                 pos_begin = line.pos_begin
             if pos_end is None:
                 pos_end = line.pos_end
+            if self.allele_filter is not None and not self.allele_filter(line):
+                continue
 
-            if (
-                self.allele_filter is not None and self.allele_filter(line)
-            ) or self.allele_filter is None:
-                allele_str = f"{line.chrom}:{line.pos_begin}"
-                if line.ref is not None and line.alt is not None:
-                    allele_str += f":{line.ref}:{line.alt}"
-                if len(self.attrs_to_include) > 0:
-                    attrs_str = ", ".join([
-                        str(line.get_score(attr))
-                        for attr in self.attrs_to_include
-                    ])
-                    allele_str += f":{attrs_str}"
-                alleles.add(allele_str)
+            allele_str = f"{line.chrom}:{line.pos_begin}"
+            if line.ref is not None and line.alt is not None:
+                allele_str += f":{line.ref}:{line.alt}"
+            if len(self.attrs_to_include) > 0:
+                attrs_str = ",".join([
+                    stringify(line.get_score(attr))
+                    for attr in self.attrs_to_include
+                ])
+                allele_str += f":{attrs_str}"
+            alleles.add(allele_str)
 
             if line.pos_begin != last_pos:
                 aggregate_alleles()

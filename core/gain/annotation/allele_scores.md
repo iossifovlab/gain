@@ -37,35 +37,46 @@ data file; its value is synthesised from the matched line(s).
 Returns a string `"chrom:pos:ref:alt"` for the matched allele.
 
 Optionally, one or more score values can be appended by setting
-`include_attributes` on the attribute:
+`include_attributes` on the attribute. Score values also have to be present
+in the annotator's attributes and references by source.
 
 ```yaml
-- allele_score:
+- allele_score_annotator:
     resource_id: my_score
     attributes:
     - source: allele
       include_attributes: freq       # single score id
+    - source: freq
 ```
 
-Produces e.g. `"1:10:A:G:0.02"`.
+```yaml
+- allele_score_annotator:
+    resource_id: my_score
+    attributes:
+    - source: allele
+      include_attributes:
+        - freq 
+        - id
+    - source: freq
+    - source: id
+```
 
 #### Aggregated path (`Region`)
 
 Collects allele strings from lines in the region and joins them with `,`.
 
-- **No `allele_filter`**: every line in the region is collected.
-- **With `allele_filter`**: only lines whose scores satisfy the expression are collected.
+- **No `allele_filter`**: every allele in the region is collected.
+- **With `allele_filter`**: only alleles whose scores satisfy the expression are collected.
 
 ```yaml
-- allele_score:
+- allele_score_annotator:
     resource_id: my_score
     allele_filter: "freq > 0.05"   # optional; omit to collect all alleles
     attributes:
     - source: allele
 ```
 
-`include_attributes` works the same way as for exact match — a single score id
-whose value is appended to each allele string.
+`include_attributes` works the same way as for exact match.
 
 ### `allele_filter` — Lark grammar
 
@@ -82,7 +93,8 @@ Supported syntax:
 | `expr and expr` | `freq > 0.01 and freq < 0.1` |
 | `expr or expr` | `freq < 0.01 or freq > 0.9` |
 
-Variables resolve to score values via `ScoreLine.get_score(name)`.
+Variables resolve to score values via `ScoreLine.get_score(name)`. These map
+to the sources of the annotator's attributes.
 
 ### New / renamed methods
 

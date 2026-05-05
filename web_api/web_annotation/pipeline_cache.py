@@ -201,6 +201,8 @@ class LRUPipelineCache:
             if pipeline_id in self._cache:
                 details = self._cache[pipeline_id]
                 if details.config_hash == pipeline_config_hash and not force:
+                    if finish_load_callback is not None:
+                        finish_load_callback()
                     return
                 self.delete_pipeline(pipeline_id)
 

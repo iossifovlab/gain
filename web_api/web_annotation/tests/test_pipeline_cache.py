@@ -192,3 +192,31 @@ def test_lru_pipeline_cache_callbacks(
 
     assert len(deleted_pipelines) == 1
     assert deleted_pipelines[0].pipeline_id == "pipeline1"
+
+
+def test_lru_pipeline_cache_finish_callback_on_already_loaded(
+    test_grr: GenomicResourceRepo,
+) -> None:
+    lru_cache = LRUPipelineCache(test_grr, 2)
+    lru_cache._load_executor = cast(  # pylint: disable=protected-access
+        ThreadedTaskExecutor,
+        SequentialTaskExecutor(),
+    )
+    finish_calls: list[None] = []
+
+    def finish_callback() -> None:
+        finish_calls.append(None)
+
+    lru_cache.put_pipeline(
+        "pipeline1",
+        "- position_score: scores/pos1",
+        finish_load_callback=finish_callback,
+    )
+    assert len(finish_calls) == 1
+
+    lru_cache.put_pipeline(
+        "pipeline1",
+        "- position_score: scores/pos1",
+        finish_load_callback=finish_callback,
+    )
+    assert len(finish_calls) == 2

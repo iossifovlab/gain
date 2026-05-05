@@ -506,3 +506,29 @@ def test_annotation_does_not_create_duplicate_allele_query(
 
     assert AlleleQuery.objects.filter(
         allele="1:3 A>T", owner=user).count() == 1
+
+
+def test_single_annotation_allele_attribute(admin_client: Client) -> None:
+    response = admin_client.post(
+        "/api/single_allele/annotate",
+        {
+            "pipeline_id": "pipeline/allele_pipeline",
+            "annotatable": {
+                "chrom": "chr1", "pos": 1, "ref": "C", "alt": "A",
+            },
+        },
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["annotators"]) == 1
+    attributes = data["annotators"][0]["attributes"]
+
+    freq_attr = next(a for a in attributes if a["name"] == "freq")
+    assert freq_attr["result"]["value"] == pytest.approx(0.05)
+    assert freq_attr["result"]["histogram"] is None
+
+    allele_attr = next(a for a in attributes if a["name"] == "allele")
+    assert allele_attr["result"]["value"] == "chr1:1:C:A"
+    assert allele_attr["result"]["histogram"] is None
