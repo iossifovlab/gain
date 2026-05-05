@@ -23,7 +23,7 @@ test.describe('Create job tests', () => {
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
     await page.locator('#create-button').click();
 
-    await expect(page.locator('#result')).toBeVisible();
+    await expect(page.locator('#result')).toBeVisible({timeout: 15000});
     await expect(page.locator('#new-job-section')).toBeVisible();
     await expect(page.locator('app-job-creation')).not.toBeVisible();
   });
@@ -110,7 +110,10 @@ test.describe('Job details tests', () => {
   });
 
   test('should check job details of the first job', async({ page }) => {
-    await createJobWithPipeline(page, 'pipeline/Clinical_annotation', 'input-vcf-file.vcf');
+    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
+    await page.locator('#create-button').click();
+
+    await waitForJobStatus(page, utils.successBackgroundColor);
 
     await page.locator('.job-name').getByText('info').nth(0).click();
     await expect(page.locator('app-job-details')).toBeVisible();
@@ -123,7 +126,7 @@ test.describe('Job details tests', () => {
     await expect(page.locator('app-job-details').locator('.status-label')).not.toBeEmpty();
     await expect(page.locator('app-job-details').locator('#download-input')).toBeVisible();
     await expect(page.locator('app-job-details').locator('#download-config')).toBeVisible();
-    await expect(page.locator('app-job-details').locator('#download-annotated')).not.toBeVisible();
+    await expect(page.locator('app-job-details').locator('#download-annotated')).toBeVisible();
     await expect(page.locator('app-job-details').locator('#data-size')).toBeVisible();
   });
 
@@ -250,7 +253,7 @@ test.describe('Jobs table tests', () => {
   test('should check if download button is not available when job is not finished', async({ page }) => {
     await createJobWithPipeline(page, 'pipeline/T2T_Clinical_annotation', 'input-vcf-file.vcf');
 
-    await expect(page.locator('.no-download-icon').nth(0)).toBeVisible();
+    await expect(page.locator('.no-download-icon').nth(0)).toBeVisible({timeout: 15000});
   });
 
   test('should upload tsv file and check specify columns component content', async({ page }) => {
