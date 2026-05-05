@@ -490,4 +490,4 @@ def test_allele_score_region_filter_all_alleles(
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 10, 16))
     assert result["allele"] == ""
-    assert result["freq"] == None
+    assert result["freq"] is None
