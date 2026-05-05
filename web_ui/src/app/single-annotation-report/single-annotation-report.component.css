@@ -141,6 +141,7 @@ hr {
 
 .attributes {
   width: 86%;
+  container-type: inline-size;
 }
 
 .attribute-result {
@@ -348,6 +349,20 @@ a:hover {
 }
 
 @media (max-width: 1023px) {
+  .attribute-header {
+    width: 100%;
+  }
+
+  .attribute-result {
+    width: 100%;
+  }
+
+  .attribute {
+    flex-wrap: wrap;
+  }
+}
+
+@container (max-width: 500px) {
   .attribute-header {
     width: 100%;
   }
