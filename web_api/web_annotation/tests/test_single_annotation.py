@@ -184,13 +184,15 @@ def test_single_annotation_returns_403_when_quota_exceeded(
     custom_cache.put_pipeline("dummy", "")
 
     quota_mock = MagicMock()
-    quota_mock.single_allele_allowed.return_value = False
+    allowed_mock = MagicMock(return_value=False)
+    quota_mock.single_allele_allowed = allowed_mock
 
     request_data = MagicMock()
     request_data.data = {
         "pipeline_id": "dummy",
         "annotatable": {"chrom": "1", "pos": 12345, "ref": "A", "alt": "T"},
     }
+    request_data.user.is_unlimited = False
     request_data.user.get_quota.return_value = quota_mock
 
     mocker.patch(
@@ -214,13 +216,15 @@ def test_single_annotation_records_quota_usage_on_success(
     custom_cache.put_pipeline("dummy", "")
 
     quota_mock = MagicMock()
-    quota_mock.single_allele_allowed.return_value = True
+    allowed_mock = MagicMock(return_value=True)
+    quota_mock.single_allele_allowed = allowed_mock
 
     request_data = MagicMock()
     request_data.data = {
         "pipeline_id": "dummy",
         "annotatable": {"chrom": "1", "pos": 12345, "ref": "A", "alt": "T"},
     }
+    request_data.user.is_unlimited = False
     request_data.user.get_quota.return_value = quota_mock
 
     mocker.patch(
@@ -274,6 +278,7 @@ def test_single_annotation_quota_counts_only_non_internal_attributes(
         "pipeline_id": "some_pipeline",
         "annotatable": {"chrom": "1", "pos": 12345, "ref": "A", "alt": "T"},
     }
+    request_data.user.is_unlimited = False
     request_data.user.get_quota.return_value = quota_mock
 
     view.post(request_data)
@@ -532,3 +537,93 @@ def test_single_annotation_allele_attribute(admin_client: Client) -> None:
     allele_attr = next(a for a in attributes if a["name"] == "allele")
     assert allele_attr["result"]["value"] == "chr1:1:C:A"
     assert allele_attr["result"]["histogram"] is None
+
+
+def test_unlimited_user_bypasses_single_allele_quota(
+    user_client: Client,
+) -> None:
+    from web_annotation.models import UserQuota  # noqa: PLC0415
+    user = User.objects.get(email="user@example.com")
+    user.is_unlimited = True
+    user.save()
+    quota = UserQuota(
+        user=user,
+        daily_allele_queries=0,
+        monthly_allele_queries=0,
+        daily_attributes=0,
+        monthly_attributes=0,
+    )
+    quota.save()
+
+    response = user_client.post(
+        "/api/single_allele/annotate",
+        {
+            "pipeline_id": "pipeline/allele_pipeline",
+            "annotatable": {
+                "chrom": "chr1", "pos": 1, "ref": "C", "alt": "A",
+            },
+        },
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+
+
+def test_unlimited_user_quota_not_deducted_after_single_allele_query(
+    user_client: Client,
+) -> None:
+    from web_annotation.models import UserQuota  # noqa: PLC0415
+    user = User.objects.get(email="user@example.com")
+    user.is_unlimited = True
+    user.save()
+    quota = UserQuota(user=user)
+    quota.reset_daily()
+    quota.reset_monthly()
+
+    before_daily = quota.daily_allele_queries
+    before_monthly = quota.monthly_allele_queries
+
+    user_client.post(
+        "/api/single_allele/annotate",
+        {
+            "pipeline_id": "pipeline/allele_pipeline",
+            "annotatable": {
+                "chrom": "chr1", "pos": 1, "ref": "C", "alt": "A",
+            },
+        },
+        content_type="application/json",
+    )
+
+    quota.refresh_from_db()
+    assert quota.daily_allele_queries == before_daily
+    assert quota.monthly_allele_queries == before_monthly
+
+
+def test_non_unlimited_user_is_blocked_by_quota(
+    user_client: Client,
+) -> None:
+    from web_annotation.models import UserQuota  # noqa: PLC0415
+    user = User.objects.get(email="user@example.com")
+    user.is_unlimited = False
+    user.save()
+    quota = UserQuota(
+        user=user,
+        daily_allele_queries=0,
+        monthly_allele_queries=0,
+        daily_attributes=0,
+        monthly_attributes=0,
+    )
+    quota.save()
+
+    response = user_client.post(
+        "/api/single_allele/annotate",
+        {
+            "pipeline_id": "pipeline/allele_pipeline",
+            "annotatable": {
+                "chrom": "chr1", "pos": 1, "ref": "C", "alt": "A",
+            },
+        },
+        content_type="application/json",
+    )
+
+    assert response.status_code == 429

@@ -1,13 +1,38 @@
 from typing import Any
 
 from django.core.management.base import BaseCommand
+from django.utils import timezone
 
-from web_annotation.models import AnonymousUserQuota, UserQuota
+from web_annotation.models import (
+    AnonymousUserQuota,
+    MonthlyQuotaRefreshLog,
+    UserQuota,
+)
 
 
 class Command(BaseCommand):
     """Management command to reset all monthly quotas."""
-    def handle(self, *_args: Any, **_options: Any) -> None:
+
+    def add_arguments(self, parser: Any) -> None:
+        parser.add_argument(
+            "--force",
+            action="store_true",
+            help="Run even if already executed this month.",
+        )
+
+    def handle(self, *_args: Any, **options: Any) -> None:
+        now = timezone.now()
+        month_start = now.replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0)
+        already_ran = MonthlyQuotaRefreshLog.objects.filter(
+            executed_at__gte=month_start).exists()
+
+        if already_ran and not options["force"]:
+            self.stdout.write(
+                "Monthly quota refresh already ran this month. "
+                "Use --force to override.")
+            return
+
         for user_quota in UserQuota.objects.all():
             user_quota.reset_monthly()
             user_quota.save()
@@ -15,3 +40,6 @@ class Command(BaseCommand):
         for anonymous_quota in AnonymousUserQuota.objects.all():
             anonymous_quota.reset_monthly()
             anonymous_quota.save()
+
+        MonthlyQuotaRefreshLog.objects.create()
+        self.stdout.write("Monthly quota refresh complete.")

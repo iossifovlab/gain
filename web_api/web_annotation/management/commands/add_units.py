@@ -10,17 +10,17 @@ class Command(BaseCommand):
     """Management command to add units to a user's quota."""
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
-            "user_id",
-            type=int,
-            help="User to add units to",
+            "email",
+            type=str,
+            help="Email of the user to add units to",
         )
 
     def handle(self, *_args: Any, **options: Any) -> None:
-        user_id = options["user_id"]
+        email = options["email"]
         try:
-            user = User.objects.get(id=user_id)
+            user = User.objects.get(email=email)
         except User.DoesNotExist as ex:
             raise CommandError(
-                f"User with id {user_id} does not exist") from ex
+                f"User with email {email} does not exist") from ex
 
         user.get_quota().add_units()

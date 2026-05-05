@@ -8,7 +8,13 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 
 from web_annotation.management.commands.export_quotas import HEADER
-from web_annotation.models import AnonymousUserQuota, User, UserQuota
+from web_annotation.models import (
+    AnonymousUserQuota,
+    DailyQuotaRefreshLog,
+    MonthlyQuotaRefreshLog,
+    User,
+    UserQuota,
+)
 
 
 @pytest.fixture
@@ -33,10 +39,9 @@ def anonymous_quota() -> AnonymousUserQuota:
 def test_add_units_command_adds_units_to_user_quota(
     user_quota: UserQuota,
 ) -> None:
-    user = User.objects.get(email="user@example.com")
     before = user_quota.extra_jobs
 
-    call_command("add_units", user.pk)
+    call_command("add_units", "user@example.com")
 
     user_quota.refresh_from_db()
     assert user_quota.extra_jobs == before + user_quota.get_monthly_job_max()
@@ -44,7 +49,36 @@ def test_add_units_command_adds_units_to_user_quota(
 
 def test_add_units_command_raises_for_nonexistent_user() -> None:
     with pytest.raises(CommandError, match="does not exist"):
-        call_command("add_units", 99999)
+        call_command("add_units", "nobody@example.com")
+
+
+# --- set_unlimited command ---
+
+def test_set_unlimited_sets_flag() -> None:
+    user = User.objects.get(email="user@example.com")
+    user.is_unlimited = False
+    user.save()
+
+    call_command("set_unlimited", "user@example.com")
+
+    user.refresh_from_db()
+    assert user.is_unlimited is True
+
+
+def test_set_unlimited_remove_clears_flag() -> None:
+    user = User.objects.get(email="user@example.com")
+    user.is_unlimited = True
+    user.save()
+
+    call_command("set_unlimited", "user@example.com", "--remove")
+
+    user.refresh_from_db()
+    assert user.is_unlimited is False
+
+
+def test_set_unlimited_raises_for_nonexistent_user() -> None:
+    with pytest.raises(CommandError, match="does not exist"):
+        call_command("set_unlimited", "nobody@example.com")
 
 
 # --- refreshdaily command ---
@@ -92,6 +126,38 @@ def test_refreshdaily_does_not_reset_monthly_fields(
     assert user_quota.monthly_jobs == 0
 
 
+def test_refreshdaily_creates_log_entry(user_quota: UserQuota) -> None:
+    assert DailyQuotaRefreshLog.objects.count() == 0
+    call_command("refreshdaily")
+    assert DailyQuotaRefreshLog.objects.count() == 1
+
+
+def test_refreshdaily_skips_if_already_ran_today(
+    user_quota: UserQuota,
+) -> None:
+    call_command("refreshdaily")
+    user_quota.daily_jobs = 0
+    user_quota.save()
+
+    call_command("refreshdaily")
+
+    user_quota.refresh_from_db()
+    assert user_quota.daily_jobs == 0
+
+
+def test_refreshdaily_force_runs_even_if_already_ran(
+    user_quota: UserQuota,
+) -> None:
+    call_command("refreshdaily")
+    user_quota.daily_jobs = 0
+    user_quota.save()
+
+    call_command("refreshdaily", "--force")
+
+    user_quota.refresh_from_db()
+    assert user_quota.daily_jobs == user_quota.get_daily_job_max()
+
+
 # --- refreshmonthly command ---
 
 def test_refreshmonthly_resets_user_quota_monthly_fields(
@@ -133,6 +199,38 @@ def test_refreshmonthly_does_not_reset_daily_fields(
 
     user_quota.refresh_from_db()
     assert user_quota.daily_jobs == 0
+
+
+def test_refreshmonthly_creates_log_entry(user_quota: UserQuota) -> None:
+    assert MonthlyQuotaRefreshLog.objects.count() == 0
+    call_command("refreshmonthly")
+    assert MonthlyQuotaRefreshLog.objects.count() == 1
+
+
+def test_refreshmonthly_skips_if_already_ran_this_month(
+    user_quota: UserQuota,
+) -> None:
+    call_command("refreshmonthly")
+    user_quota.monthly_jobs = 0
+    user_quota.save()
+
+    call_command("refreshmonthly")
+
+    user_quota.refresh_from_db()
+    assert user_quota.monthly_jobs == 0
+
+
+def test_refreshmonthly_force_runs_even_if_already_ran(
+    user_quota: UserQuota,
+) -> None:
+    call_command("refreshmonthly")
+    user_quota.monthly_jobs = 0
+    user_quota.save()
+
+    call_command("refreshmonthly", "--force")
+
+    user_quota.refresh_from_db()
+    assert user_quota.monthly_jobs == user_quota.get_monthly_job_max()
 
 
 # --- export_quotas command ---

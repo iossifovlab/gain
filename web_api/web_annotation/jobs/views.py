@@ -190,8 +190,11 @@ class AnnotateVCF(AnnotationBaseView):
         user: User,
     ) -> bool:
         """Check if a variants file does not exceed the variants limit."""
-        limit = self.max_variants if not user.is_superuser else None
-
+        limit = (
+            None
+            if user.is_superuser or getattr(user, "is_unlimited", False)
+            else self.max_variants
+        )
         return validate_vcf(file_path, limit)
 
     def post(self, request: Request) -> Response:
@@ -232,17 +235,18 @@ class AnnotateVCF(AnnotationBaseView):
             self._notify_user_job(request.user, str(job.pk), job.status)
 
             assert isinstance(request.user, BaseUser)
-            attributes_count = sum(
-                1 for annotator in pipeline.annotators
-                for attr in annotator.attributes
-                if not attr.internal
-            )
-            variants_count = count_input_variants(
-                job.input_path, job.annotation_type,
-            )
-            request.user.get_quota().job_complete(
-                variants_count, attributes_count,
-            )
+            if not request.user.is_unlimited:
+                attributes_count = sum(
+                    1 for annotator in pipeline.annotators
+                    for attr in annotator.attributes
+                    if not attr.internal
+                )
+                variants_count = count_input_variants(
+                    job.input_path, job.annotation_type,
+                )
+                request.user.get_quota().job_complete(
+                    variants_count, attributes_count,
+                )
 
         def on_failure(exception: BaseException) -> None:
             """Callback when annotation fails."""
@@ -316,7 +320,7 @@ class AnnotateColumns(AnnotationBaseView):
 
     def check_variants_limit(self, filepath: Path, user: User) -> bool:
         """Check if a variants file does not exceed the variants limit."""
-        if user.is_superuser:
+        if user.is_superuser or getattr(user, "is_unlimited", False):
             return True
 
         opener = (
@@ -389,17 +393,18 @@ class AnnotateColumns(AnnotationBaseView):
             self._notify_user_job(request.user, str(job.pk), job.status)
 
             assert isinstance(request.user, BaseUser)
-            attributes_count = sum(
-                1 for annotator in pipeline.annotators
-                for attr in annotator.attributes
-                if not attr.internal
-            )
-            variants_count = count_input_variants(
-                job.input_path, job.annotation_type,
-            )
-            request.user.get_quota().job_complete(
-                variants_count, attributes_count,
-            )
+            if not request.user.is_unlimited:
+                attributes_count = sum(
+                    1 for annotator in pipeline.annotators
+                    for attr in annotator.attributes
+                    if not attr.internal
+                )
+                variants_count = count_input_variants(
+                    job.input_path, job.annotation_type,
+                )
+                request.user.get_quota().job_complete(
+                    variants_count, attributes_count,
+                )
 
         def on_failure(exception: BaseException) -> None:
             job.duration = time.time() - start_time
