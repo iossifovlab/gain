@@ -34,14 +34,6 @@ const mockResources = [
     summary: 'CADD summary'
   },
   {
-    full_id: 'hg38/scores/CADD_v1.4',
-    resource_id: 'hg38/scores/CADD_v1.4',
-    type: 'allele_score',
-    version: 0,
-    url: 'url',
-    summary: 'CADD_v1.4 summary'
-  },
-  {
     full_id: 'hg38/scores/CADD_v1.7',
     resource_id: 'hg38/scores/CADD_v1.7',
     type: 'allele_score',
@@ -469,8 +461,6 @@ describe('PipelineEditorService', () => {
         [
           new Resource('hg19/scores/CADD', 'hg19/scores/CADD', 'allele_score', 0, 'url/index.html', 'CADD summary'),
           // eslint-disable-next-line @stylistic/max-len
-          new Resource('hg38/scores/CADD_v1.4', 'hg38/scores/CADD_v1.4', 'allele_score', 0, 'url/index.html', 'CADD_v1.4 summary'),
-          // eslint-disable-next-line @stylistic/max-len
           new Resource('hg38/scores/CADD_v1.7', 'hg38/scores/CADD_v1.7', 'allele_score', 0, 'url/index.html', 'CADD_v1.7 summary'),
         ],
         200
@@ -503,8 +493,6 @@ describe('PipelineEditorService', () => {
         [
           new Resource('hg19/scores/MPC', 'hg19/scores/MPC', 'allele_score', 0, 'url/index.html', 'mpc summary'),
           new Resource('hg19/scores/CADD', 'hg19/scores/CADD', 'allele_score', 0, 'url/index.html', 'CADD summary'),
-          // eslint-disable-next-line @stylistic/max-len
-          new Resource('hg38/scores/CADD_v1.4', 'hg38/scores/CADD_v1.4', 'allele_score', 0, 'url/index.html', 'CADD_v1.4 summary'),
           // eslint-disable-next-line @stylistic/max-len
           new Resource('hg38/scores/CADD_v1.7', 'hg38/scores/CADD_v1.7', 'allele_score', 0, 'url/index.html', 'CADD_v1.7 summary'),
         ],
@@ -541,7 +529,6 @@ describe('PipelineEditorService', () => {
           /* eslint-disable @stylistic/max-len */
           new Resource('hg19/scores/MPC', 'hg19/scores/MPC', 'allele_score', 0, 'url/index.html', 'mpc summary'),
           new Resource('hg19/scores/CADD', 'hg19/scores/CADD', 'allele_score', 0, 'url/index.html', 'CADD summary'),
-          new Resource('hg38/scores/CADD_v1.4', 'hg38/scores/CADD_v1.4', 'allele_score', 0, 'url/index.html', 'CADD_v1.4 summary'),
           new Resource('hg38/scores/CADD_v1.7', 'hg38/scores/CADD_v1.7', 'allele_score', 0, 'url/index.html', 'CADD_v1.7 summary'),
           new Resource('hg38/genomes/GRCh38.p13', 'hg38/genomes/GRCh38.p13', 'genome', 0, 'url/index.html', 'GRCh38.p13 summary'),
           new Resource('hg38/genomes/GRCh38.p14', 'hg38/genomes/GRCh38.p14', 'genome', 0, 'url/index.html', 'GRCh38.p14 summary'),

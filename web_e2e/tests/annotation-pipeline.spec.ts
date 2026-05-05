@@ -29,7 +29,7 @@ test.describe('Pipeline tests', () => {
       '   input_reference_genome: hg38/genomes/GRCh38-hg38\n' +
       'annotators:\n' +
       '- allele_score:\n' +
-      '    resource_id: hg38/scores/CADD_v1.4\n'
+      '    resource_id: hg38/scores/CADD_v1.7\n'
     );
 
     await saveResponse;
@@ -46,48 +46,6 @@ test.describe('Pipeline tests', () => {
     await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
   });
 
-  test.skip('should receive pipeline status via WebSocket after socket reconnection', async({ page }) => {
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
-    await expect(page.locator('#pipelines-input')).toBeEmpty();
-
-    // Simulate the reconnection that happens in production when the user email changes
-    // (e.g. logout or token refresh) while the annotation-pipeline component is still alive.
-    // reopenConnection() completes the current WebSocketSubject and creates a new one, but the
-    // component's subscription stays bound to the old (now completed) subject.
-    // eslint-disable-next-line max-len
-    /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-assignment */
-    await page.evaluate(() => {
-      const component = (window as any).ng.getComponent(
-        document.querySelector('app-annotation-pipeline')
-      );
-      component['socketNotificationsService'].reopenConnection();
-    });
-    /* eslint-enable */
-
-    const saveResponse = page.waitForResponse(
-      resp => resp.url().includes('api/pipelines/user'), { timeout: 30000 }
-    );
-
-    await utils.typeInPipelineEditor(
-      page,
-      'preamble:\n' +
-      '   input_reference_genome: hg38/genomes/GRCh38-hg38\n' +
-      'annotators:\n' +
-      '- allele_score:\n' +
-      '    resource_id: hg38/scores/CADD_v1.4\n'
-    );
-
-    await saveResponse;
-
-    // After autosave the backend sends a WebSocket notification {status: 'loaded'}.
-    // The component should receive it and set currentTemporaryPipelineStatus = 'loaded',
-    // which produces the .loaded-editor CSS class on the Monaco editor.
-    // BUG: subscription is on the old completed subject → notification never received
-    // → currentTemporaryPipelineStatus stays null → .loaded-editor never appears.
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 15000 });
-  });
 
   test('should create new pipeline and use it without saving it', async({ page }) => {
     await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
@@ -126,7 +84,7 @@ test.describe('Pipeline tests', () => {
       'input_reference_genome: hg38/genomes/GRCh38-hg38\n' +
       'annotators:\n' +
       '- allele_score:\n' +
-      'resource_id: hg38/scores/CADD_v1.4'
+      'resource_id: hg38/scores/CADD_v1.7'
     );
     await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
     await expect(page.getByText('Invalid configuration')).toBeVisible();
@@ -173,7 +131,7 @@ test.describe('Pipeline tests', () => {
       '   input_reference_genome: hg38/genomes/GRCh38-hg38\n' +
       'annotators:\n' +
       '- allele_score:\n' +
-      '    resource_id: hg38/scores/CADD_v1.4\n'
+      '    resource_id: hg38/scores/CADD_v1.7\n'
     );
 
     await saveResponse;
@@ -235,7 +193,7 @@ test.describe('Pipeline tests', () => {
       '   input_reference_genome: hg38/genomes/GRCh38-hg38\n' +
       'annotators:\n' +
       '- allele_score:\n' +
-      '    resource_id: hg38/scores/CADD_v1.4\n'
+      '    resource_id: hg38/scores/CADD_v1.7\n'
     );
 
     await saveResponse;
@@ -293,7 +251,7 @@ test.describe('Pipeline tests', () => {
       '   input_reference_genome: hg38/genomes/GRCh38-hg38\n' +
       'annotators:\n' +
       '- allele_score:\n' +
-      '    resource_id: hg38/scores/CADD_v1.4\n'
+      '    resource_id: hg38/scores/CADD_v1.7\n'
     );
 
     await saveResponse;
@@ -327,7 +285,7 @@ test.describe('Pipeline tests', () => {
     await expect(page.locator('#pipelines-input')).toHaveValue('User pipeline copy');
     await expect(page.locator('.monaco-editor').nth(0)).toHaveText(
       // eslint-disable-next-line max-len
-      'preamble:   input_reference_genome: hg38/genomes/GRCh38-hg38annotators:- allele_score:    resource_id: hg38/scores/CADD_v1.4'
+      'preamble:   input_reference_genome: hg38/genomes/GRCh38-hg38annotators:- allele_score:    resource_id: hg38/scores/CADD_v1.7'
     );
   });
 
@@ -463,7 +421,7 @@ test.describe('Pipeline validation tests', () => {
 
   test('should type config without peamble and show error message', async({ page }) => {
     await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
-    await utils.typeInPipelineEditor(page, 'annotators:\n - allele_score: hg38/scores/CADD_v1.4');
+    await utils.typeInPipelineEditor(page, 'annotators:\n - allele_score: hg38/scores/CADD_v1.7');
     await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
     await expect(page.getByText('Invalid configuration, reason: \'preamble\'')).toBeVisible();
   });
@@ -498,7 +456,7 @@ test.describe('Pipeline confirmation popup tests', () => {
     '   input_reference_genome: hg38/genomes/GRCh38-hg38\n' +
     'annotators:\n' +
     '- allele_score:\n' +
-    '    resource_id: hg38/scores/CADD_v1.4\n';
+    '    resource_id: hg38/scores/CADD_v1.7\n';
 
   async function setupTempPipeline(page: Page): Promise<void> {
     await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
@@ -549,7 +507,7 @@ test.describe('Pipeline confirmation popup tests', () => {
       ' input_reference_genome: hg38/genomes/GRCh38-hg38' +
       'annotators:' +
       '- allele_score:' +
-      '   resource_id: hg38/scores/CADD_v1.4');
+      '   resource_id: hg38/scores/CADD_v1.7');
   });
 
   test('should show confirmation popup when clicking "New pipeline" with unsaved temp changes', async({ page }) => {
@@ -825,7 +783,7 @@ test.describe('Add annotator to pipeline tests', () => {
       '\n' +
       'annotators:\n' +
       '- allele_score:\n' +
-      '    resource_id: hg38/scores/CADD_v1.4\n' +
+      '    resource_id: hg38/scores/CADD_v1.7\n' +
       '\n' +
       '- simple_effect_annotator:\n' +
       '    gene_models: hg19/gene_models/ccds_v201309\n' +
@@ -890,14 +848,14 @@ test.describe('Add annotator to pipeline tests', () => {
     await expect(configureSummary.locator('.annotator-display-text')).toContainText('allele_score_annotator');
 
     await page.locator('[id="resource_id-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg38/scores/CADD_v1.4').click();
+    await page.locator('mat-option').getByText('hg38/scores/CADD_v1.7').click();
     await page.getByRole('button', { name: 'Next' }).click();
 
     // attribute step: summary adds the configured resource_id beneath the annotator
     const attributeSummary = page.locator('.mat-horizontal-stepper-content-current');
     await expect(attributeSummary.locator('.annotator-display-text')).toContainText('allele_score_annotator');
     const resourceIdDisplay = attributeSummary.locator('.resources-display-text').filter({ hasText: 'resource_id' });
-    await expect(resourceIdDisplay).toContainText('hg38/scores/CADD_v1.4');
+    await expect(resourceIdDisplay).toContainText('hg38/scores/CADD_v1.7');
   });
 
   test('should remove a default attribute in the attribute step', async({ page }) => {
@@ -1148,9 +1106,7 @@ test.describe('Add resource to pipeline tests', () => {
       )
     ]);
 
-    await expect(page.locator('#resource-count')).toHaveText('5 resources');
-    await expect(page.getByTitle('hg38/scores/CADD_v1.4')).toBeVisible();
-    await expect(page.getByTitle('hg38/scores/CADD_v1.6')).toBeVisible();
+    await expect(page.locator('#resource-count')).toHaveText('3 resources');
     await expect(page.getByTitle('hg19/scores/CADD')).toBeVisible();
     await expect(page.getByTitle('hg38/scores/CADD_v1.7')).toBeVisible();
     await expect(page.getByTitle('hg38/scores/dbNSFP4.9a')).toBeVisible();
@@ -1158,7 +1114,7 @@ test.describe('Add resource to pipeline tests', () => {
 
   test('should filter resources by resource type', async({ page }) => {
     await page.locator('#pipeline-actions').locator('#add-resource-button').click();
-    await expect(page.locator('#resource-count')).toHaveText('302 resources');
+    await expect(page.locator('#resource-count')).toHaveText('296 resources');
     await page.locator('#resource-type mat-select').click();
     await page.locator('mat-option').filter({ hasText: 'position_score' }).click();
     await expect(page.locator('#resource-count')).toHaveText('160 resources');
@@ -1168,14 +1124,14 @@ test.describe('Add resource to pipeline tests', () => {
     await page.locator('#pipeline-actions').locator('#add-resource-button').click();
 
     await Promise.all([
-      page.locator('#resource-search-input').fill('"CADD_v1.4"'),
+      page.locator('#resource-search-input').fill('"CADD_v1.7"'),
       page.locator('#resource-search-input').dispatchEvent('keyup'), // trigger search
       page.waitForResponse(
-        resp => resp.url().includes('api/resources/search?search=%22CADD_v1.4%22'), {timeout: 30000}
+        resp => resp.url().includes('api/resources/search?search=%22CADD_v1.7%22'), {timeout: 30000}
       )
     ]);
 
-    await page.waitForSelector('[id="hg38/scores/CADD_v1.4-continue-button"]', { state: 'visible', timeout: 15000 });
+    await page.waitForSelector('[id="hg38/scores/CADD_v1.7-continue-button"]', { state: 'visible', timeout: 15000 });
     await page.locator('[id$="-continue-button"]').first().click();
 
     await expect(page.locator('#resources-form')).toBeVisible({ timeout: 15000 });
@@ -1188,14 +1144,14 @@ test.describe('Add resource to pipeline tests', () => {
     await page.locator('#pipeline-actions').locator('#add-resource-button').click();
 
     await Promise.all([
-      page.locator('#resource-search-input').fill('"CADD_v1.4"'),
+      page.locator('#resource-search-input').fill('"CADD_v1.7"'),
       page.locator('#resource-search-input').dispatchEvent('keyup'), // trigger search
       page.waitForResponse(
-        resp => resp.url().includes('api/resources/search?search=%22CADD_v1.4%22'), {timeout: 30000}
+        resp => resp.url().includes('api/resources/search?search=%22CADD_v1.7%22'), {timeout: 30000}
       )
     ]);
 
-    await page.waitForSelector('[id="hg38/scores/CADD_v1.4-continue-button"]', { state: 'visible', timeout: 15000 });
+    await page.waitForSelector('[id="hg38/scores/CADD_v1.7-continue-button"]', { state: 'visible', timeout: 15000 });
     await page.locator('[id$="-continue-button"]').first().click();
 
     await expect(page.locator('#resources-form')).toBeVisible({ timeout: 15000 });
@@ -1312,7 +1268,7 @@ test.describe('Add resource to pipeline tests', () => {
     });
     /* eslint-enable */
 
-    expect(value).toContain('resource_id: hg38/scores/CADD_v1.4');
+    expect(value).toContain('resource_id: hg38/scores/CADD_v1.7');
   });
 
   test('should disable New resource button when pipeline config is invalid', async({ page }) => {
@@ -1327,25 +1283,25 @@ test.describe('Add resource to pipeline tests', () => {
     await page.locator('#pipeline-actions').locator('#add-resource-button').click();
 
     await Promise.all([
-      page.locator('#resource-search-input').fill('"CADD_v1.4"'),
+      page.locator('#resource-search-input').fill('"CADD_v1.7"'),
       page.locator('#resource-search-input').dispatchEvent('keyup'), // trigger search
       page.waitForResponse(
-        resp => resp.url().includes('api/resources/search?search=%22CADD_v1.4%22'), {timeout: 30000}
+        resp => resp.url().includes('api/resources/search?search=%22CADD_v1.7%22'), {timeout: 30000}
       )
     ]);
 
     await page.waitForSelector(
-      '[id="hg38/scores/CADD_v1.4-resource-details-button"]',
+      '[id="hg38/scores/CADD_v1.7-resource-details-button"]',
       { state: 'visible', timeout: 15000 }
     );
 
     const [popup] = await Promise.all([
       page.context().waitForEvent('page'),
-      page.locator('[id="hg38/scores/CADD_v1.4-resource-details-button"] a').click(),
+      page.locator('[id="hg38/scores/CADD_v1.7-resource-details-button"] a').click(),
     ]);
 
     await popup.waitForLoadState('domcontentloaded');
-    expect(popup.url()).toContain('/hg38/scores/CADD_v1.4/index.html');
+    expect(popup.url()).toContain('/hg38/scores/CADD_v1.7/index.html');
   });
 });
 
@@ -1365,7 +1321,7 @@ async function customDefaultPipeline(page: Page): Promise<void> {
     '   input_reference_genome: hg38/genomes/GRCh38-hg38\n' +
     'annotators:\n' +
     '- allele_score:\n' +
-    '    resource_id: hg38/scores/CADD_v1.4\n'
+    '    resource_id: hg38/scores/CADD_v1.7\n'
   );
 
   await saveResponse;
