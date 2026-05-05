@@ -491,3 +491,25 @@ def test_allele_score_region_filter_all_alleles(
         result = work_pipeline.annotate(Region("1", 10, 16))
     assert result["allele"] == ""
     assert result["freq"] is None
+
+
+def test_allele_score_include_multiple_attributes(
+    allele_score_repository: GenomicResourceRepo,
+) -> None:
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent("""
+            - allele_score:
+                resource_id: allele_score
+                attributes:
+                - source: allele
+                  include_attributes:
+                    - freq
+                    - ID
+                - source: ID
+                - source: freq
+        """),
+        allele_score_repository,
+    )
+    with pipeline.open() as work_pipeline:
+        result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
+    assert result["allele"] == "1:10:A:G:0.02,ag"

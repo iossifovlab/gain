@@ -13,6 +13,7 @@ from jinja2 import Template
 from lark import Lark, Token, Tree
 
 from gain.annotation.annotatable import Annotatable, VCFAllele
+from gain.annotation.annotate_utils import stringify
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotationConfigurationError,
@@ -448,7 +449,7 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
 
         in: "in"
 
-        word: /[a-zA-Z!@#$%^&*()_+]+/
+        word: /[a-zA-Z0-9!@#$%^&*()_+]+/
 
         number: /[0-9\\.]+/
 
@@ -694,9 +695,10 @@ variant frequencies, etc.
                 f":{annotatable.reference}:{annotatable.alternative}"
             )
             if len(self.attrs_to_include) > 0:
-                attrs_str = ", ".join(
-                    [str(scores.get(attr)) for attr in self.attrs_to_include],
-                )
+                attrs_str = ",".join([
+                    stringify(scores.get(attr))
+                    for attr in self.attrs_to_include
+                ])
                 allele_str += f":{attrs_str}"
             scores[attr.name] = allele_str
 
@@ -747,8 +749,8 @@ variant frequencies, etc.
             if line.ref is not None and line.alt is not None:
                 allele_str += f":{line.ref}:{line.alt}"
             if len(self.attrs_to_include) > 0:
-                attrs_str = ", ".join([
-                    str(line.get_score(attr))
+                attrs_str = ",".join([
+                    stringify(line.get_score(attr))
                     for attr in self.attrs_to_include
                 ])
                 allele_str += f":{attrs_str}"
