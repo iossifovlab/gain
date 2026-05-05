@@ -118,6 +118,11 @@ class AnnotationBaseView(views.APIView):
         assert channel_layer is not None
         self.channel_layer = channel_layer
 
+    def check_throttles(self, request: Request) -> None:
+        """Override to disable throttling."""
+        if not request.user.is_unlimited:
+            super().check_throttles(request)
+
     @property
     def grr(self) -> GenomicResourceRepo:
         """Return annotation GRR."""

@@ -12,9 +12,10 @@ from django.test import Client
             {
                 "page": 0,
                 "pages": 1,
-                "total_resources": 9,
+                "total_resources": 10,
                 "resources": {
                     "hg38/GRCh38-hg38/genome",
+                    "scores/allele1",
                     "scores/pos1",
                     "scores/pos2",
                     "t4c8/gene_scores/t4c8_score",
