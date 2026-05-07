@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 import pytest
 import pytest_mock
 from django.conf import settings
+from django.core.cache import cache
 from django.test import Client
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
@@ -24,6 +25,11 @@ def clean_genomic_context(
     mocker.patch(
         "gain.genomic_resources.genomic_context._REGISTERED_CONTEXTS",
         [])
+
+
+@pytest.fixture(autouse=True)
+def clear_throttle_cache() -> None:
+    cache.clear()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
