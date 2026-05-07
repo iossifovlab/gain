@@ -332,6 +332,7 @@ pipeline {
                                             tests: 'web_annotation/tests',
                                             mypyTarget: 'web_annotation',
                                             mypyExtra: '--config-file /workspace/web_api/mypy.ini',
+                                            pytestArgs: '-n 5',
                                             distPkg: 'gain-web-api',
                                             dockerRunExtra:
                                                 '--network "$COMPOSE_NETWORK" ' +
