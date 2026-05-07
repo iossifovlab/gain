@@ -1288,3 +1288,61 @@ def test_int_scores(scores_repo: GenomicResourceRepo) -> None:
     assert gene_score.get_gene_value("int score", "G3") == 3
 
     assert gene_score.score_definitions["int score"].value_type == "int"
+
+
+# ---------------------------------------------------------------------------
+# gene_column config
+# ---------------------------------------------------------------------------
+
+def test_gene_column_default() -> None:
+    repo = build_inmemory_test_repository({
+        "GeneColumnDefault": {
+            GR_CONF_FILE_NAME: textwrap.dedent("""
+                type: gene_score
+                filename: data.csv
+                scores:
+                  - id: pli
+                    type: float
+                    histogram:
+                      type: number
+                      number_of_bins: 10
+                      view_range:
+                        min: 0.0
+                        max: 1.0
+            """),
+            "data.csv": "gene,pli\nGENE1,0.5\nGENE2,0.9\n",
+        },
+    })
+    gene_score = build_gene_score_from_resource(
+        repo.get_resource("GeneColumnDefault"))
+    assert gene_score.get_gene_value("pli", "GENE1") == pytest.approx(0.5)
+    assert gene_score.get_gene_value("pli", "GENE2") == pytest.approx(0.9)
+    assert gene_score.get_gene_value("pli", "MISSING") is None
+
+
+def test_gene_column_custom() -> None:
+    repo = build_inmemory_test_repository({
+        "GeneColumnCustom": {
+            GR_CONF_FILE_NAME: textwrap.dedent("""
+                type: gene_score
+                filename: data.csv
+                gene_column: symbol
+                scores:
+                  - id: pli
+                    type: float
+                    histogram:
+                      type: number
+                      number_of_bins: 10
+                      view_range:
+                        min: 0.0
+                        max: 1.0
+            """),
+            "data.csv": "symbol,pli\nGENE1,0.5\nGENE2,0.9\n",
+        },
+    })
+    gene_score = build_gene_score_from_resource(
+        repo.get_resource("GeneColumnCustom"))
+    assert gene_score.get_gene_value("pli", "GENE1") == pytest.approx(0.5)
+    assert gene_score.get_gene_value("pli", "GENE2") == pytest.approx(0.9)
+    assert gene_score.get_gene_value("pli", "MISSING") is None
+    assert gene_score.get_genes("pli", score_min=0.6) == {"GENE2"}

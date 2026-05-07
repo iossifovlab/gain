@@ -95,6 +95,10 @@ class GeneScore(
                 sep = "\t" if self.filename.endswith(".tsv") else ","
             self.df = pd.read_csv(file, sep=sep)
 
+        gene_column = self.config.get("gene_column", "gene")
+        if gene_column != "gene":
+            self.df = self.df.rename(columns={gene_column: "gene"})
+
         if self.config.get("scores") is None:
             raise ValueError(f"missing scores config in {resource.get_id()}")
 
@@ -291,6 +295,7 @@ class GeneScore(
             "default_annotation": {
                 "type": ["dict", "list"], "allow_unknown": True,
             },
+            "gene_column": {"type": "string"},
             "scores": {"type": "list", "schema": {
                 "type": "dict",
                 "schema": {
