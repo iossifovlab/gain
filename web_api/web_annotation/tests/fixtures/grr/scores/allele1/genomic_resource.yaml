@@ -1,0 +1,13 @@
+type: allele_score
+allele_score_mode: alleles
+table:
+    filename: data.tsv
+    reference:
+      column_name: reference
+    alternative:
+      column_name: alternative
+scores:
+    - id: freq
+      type: float
+      desc: "allele frequency"
+      column_name: freq

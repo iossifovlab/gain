@@ -71,6 +71,11 @@ class BaseUser:
         """Get pipelines for user."""
         raise NotImplementedError
 
+    @property
+    def is_unlimited(self) -> bool:
+        """Return whether this user bypasses quota limits."""
+        return False
+
     def get_temporary_pipeline(
         self, session_id: str | None = None,
     ) -> BasePipeline | None:
@@ -84,6 +89,10 @@ class BaseUser:
         if session_id != self.session_id:
             raise ValueError("Session ID does not match user session!")
         return cast(BasePipeline, pipeline)
+
+    @abstractmethod
+    def can_create(self) -> bool:
+        """Check if a user is not limited by the daily quota."""
 
 
 class UserWrapper(BaseUser):
@@ -189,6 +198,10 @@ class UserWrapper(BaseUser):
         return self.user.get_quota()
 
     @property
+    def is_unlimited(self) -> bool:
+        return self.user.is_unlimited
+
+    @property
     def as_owner(self) -> User | str:
         return self.user.as_owner
 
@@ -199,6 +212,7 @@ class User(AbstractUser):
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS: ClassVar = []
     job_counter = models.IntegerField(default=0)
+    is_unlimited = models.BooleanField(default=False)
 
     @property
     def job_class(self) -> type[Job]:
@@ -981,3 +995,23 @@ class UserQuota(Quota):
 
     def _quota_config(self) -> dict:
         return cast(dict, settings.QUERY_QUOTAS["user"])
+
+
+class DailyQuotaRefreshLog(models.Model):
+    """Tracks each execution of the daily quota refresh command."""
+
+    executed_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:  # pylint: disable=too-few-public-methods
+        """Meta class for daily quota refresh log."""
+        db_table = "daily_quota_refresh_log"
+
+
+class MonthlyQuotaRefreshLog(models.Model):
+    """Tracks each execution of the monthly quota refresh command."""
+
+    executed_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:  # pylint: disable=too-few-public-methods
+        """Meta class for monthly quota refresh log."""
+        db_table = "monthly_quota_refresh_log"

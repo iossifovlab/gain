@@ -171,8 +171,12 @@ class SingleAnnotation(AnnotationBaseView):
             if not attr.internal
         )
 
+        is_unlimited = getattr(request.user, "is_unlimited", False)
         quota = request.user.get_quota()
-        if not quota.single_allele_allowed(attributes_count):
+        if (
+            not is_unlimited and
+            not quota.single_allele_allowed(attributes_count)
+        ):
             return Response(
                 {"reason": "Single allele query quota exceeded!"},
                 status=views.status.HTTP_403_FORBIDDEN,
@@ -239,7 +243,8 @@ class SingleAnnotation(AnnotationBaseView):
                 allele_query.last_used = timezone.now()
             allele_query.save()
 
-        quota.single_allele_query_complete(attributes_count)
+        if not is_unlimited:
+            quota.single_allele_query_complete(attributes_count)
 
         response_data = {
             "annotatable": annotatable.to_dict(),

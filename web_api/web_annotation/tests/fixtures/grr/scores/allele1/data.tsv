@@ -1,0 +1,4 @@
+chrom	pos_begin	reference	alternative	freq
+chr1	1	C	A	0.05
+chr1	1	C	G	0.10
+chr1	1	C	T	0.15

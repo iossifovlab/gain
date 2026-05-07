@@ -7,12 +7,18 @@ from web_annotation.models import User
 
 
 class Command(BaseCommand):
-    """Management command to add units to a user's quota."""
+    """Management command to set or remove the unlimited flag on a user."""
+
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
             "email",
             type=str,
-            help="Email of the user to add units to",
+            help="Email of the user to update",
+        )
+        parser.add_argument(
+            "--remove",
+            action="store_true",
+            help="Remove the unlimited flag instead of setting it.",
         )
 
     def handle(self, *_args: Any, **options: Any) -> None:
@@ -23,4 +29,7 @@ class Command(BaseCommand):
             raise CommandError(
                 f"User with email {email} does not exist") from ex
 
-        user.get_quota().add_units()
+        user.is_unlimited = not options["remove"]
+        user.save()
+        state = "removed from" if options["remove"] else "set on"
+        self.stdout.write(f"Unlimited flag {state} {email}.")

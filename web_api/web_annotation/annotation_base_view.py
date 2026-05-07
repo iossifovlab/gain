@@ -118,6 +118,14 @@ class AnnotationBaseView(views.APIView):
         assert channel_layer is not None
         self.channel_layer = channel_layer
 
+    def check_throttles(self, request: Request) -> None:
+        """Override to disable throttling."""
+        if (
+            (request.user.is_authenticated and not request.user.is_unlimited)
+            or not request.user.is_authenticated
+        ):
+            super().check_throttles(request)
+
     @property
     def grr(self) -> GenomicResourceRepo:
         """Return annotation GRR."""
@@ -160,7 +168,7 @@ class AnnotationBaseView(views.APIView):
         user: User,
     ) -> bool:
         """Check if a file upload does not exceed the upload size limit."""
-        if user.is_superuser:
+        if user.is_superuser or getattr(user, "is_unlimited", False):
             return True
         assert file.size is not None
         return file.size < self._convert_size(
@@ -335,18 +343,19 @@ class AnnotationBaseView(views.APIView):
 
     def _validate_request(self, request: Request) -> Response | None:
         """Validate the request for creating a job."""
-        if not request.user.can_create():
-            return Response(
-                {"reason": "Daily job limit reached!"},
-                status=views.status.HTTP_403_FORBIDDEN,
-            )
         assert isinstance(request.user, BaseUser)
-        quota = request.user.get_quota()
-        if not quota.check_job_quota():
-            return Response(
-                {"reason": "Job quota exceeded!"},
-                status=views.status.HTTP_403_FORBIDDEN,
-            )
+        if not request.user.is_unlimited:
+            if not request.user.can_create():
+                return Response(
+                    {"reason": "Daily job limit reached!"},
+                    status=views.status.HTTP_403_FORBIDDEN,
+                )
+            quota = request.user.get_quota()
+            if not quota.check_job_quota():
+                return Response(
+                    {"reason": "Job quota exceeded!"},
+                    status=views.status.HTTP_403_FORBIDDEN,
+                )
         if not request.content_type.startswith("multipart/form-data"):
             return Response(
                 {"reason": "Invalid content type!"},

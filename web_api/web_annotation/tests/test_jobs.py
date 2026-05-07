@@ -1601,14 +1601,16 @@ def test_get_pipelines(
 
     response = user_client.get("/api/pipelines")
     pipelines = response.json()
-    assert len(pipelines) == 3
-    assert pipelines[0]["name"] == "pipeline/test_pipeline"
+    assert len(pipelines) == 4
+    assert pipelines[0]["name"] == "pipeline/allele_pipeline"
     assert pipelines[0]["status"] == "unloaded"
-    assert pipelines[1]["name"] == "t4c8/t4c8_pipeline"
+    assert pipelines[1]["name"] == "pipeline/test_pipeline"
     assert pipelines[1]["status"] == "unloaded"
-    assert pipelines[2]["name"] == "test-user-pipeline"
-    assert pipelines[2]["status"] == "loaded"
-    assert pipelines[2]["content"] == "- position_score: scores/pos1"
+    assert pipelines[2]["name"] == "t4c8/t4c8_pipeline"
+    assert pipelines[2]["status"] == "unloaded"
+    assert pipelines[3]["name"] == "test-user-pipeline"
+    assert pipelines[3]["status"] == "loaded"
+    assert pipelines[3]["content"] == "- position_score: scores/pos1"
 
 
 @pytest.mark.django_db
@@ -1631,9 +1633,10 @@ def test_get_pipelines_annonymous_user(
 
     response = anonymous_client.get("/api/pipelines")
     pipelines = response.json()
-    assert len(pipelines) == 2
-    assert pipelines[0]["id"] == "pipeline/test_pipeline"
-    assert pipelines[1]["id"] == "t4c8/t4c8_pipeline"
+    assert len(pipelines) == 3
+    assert pipelines[0]["id"] == "pipeline/allele_pipeline"
+    assert pipelines[1]["id"] == "pipeline/test_pipeline"
+    assert pipelines[2]["id"] == "t4c8/t4c8_pipeline"
 
 
 @pytest.mark.django_db
@@ -2158,14 +2161,14 @@ async def test_annotate_notifications_unloading_pipeline(
     output = await communicator.receive_json_from()
     assert output == {
         "type": "pipeline_status",
-        "pipeline_id": "t4c8/t4c8_pipeline",
-        "status": "loading",
+        "pipeline_id": "pipeline/test_pipeline",
+        "status": "unloaded",
     }
     output = await communicator.receive_json_from()
     assert output == {
         "type": "pipeline_status",
-        "pipeline_id": "pipeline/test_pipeline",
-        "status": "unloaded",
+        "pipeline_id": "t4c8/t4c8_pipeline",
+        "status": "loading",
     }
     output = await communicator.receive_json_from()
     assert output == {
@@ -2351,6 +2354,7 @@ async def test_annotate_anonymous_notifications(
 async def test_clean_up_anonymous_jobs(
     anonymous_client: Client, mocker: MockerFixture,
     test_grr: GenomicResourceRepo,
+    settings: LazySettings,
 ) -> None:
     cache = LRUPipelineCache(test_grr, 16)
     mocker.patch(
@@ -2358,6 +2362,7 @@ async def test_clean_up_anonymous_jobs(
         ".views.AnnotateVCF.lru_cache",
         new=cache,
     )
+    settings.QUOTAS["variant_count"] = 50
     session = await anonymous_client.asession()
     assert session.session_key is not None
     user = WebAnnotationAnonymousUser(session.session_key, ip="test")
@@ -2487,3 +2492,202 @@ def test_save_unloads_pipeline(
     assert mock_lru_cache.has_pipeline(
         "1",
     ) is True
+
+
+# --- unlimited user ---
+
+@pytest.mark.django_db
+def test_annotate_vcf_unlimited_user_bypasses_job_quota(
+    user_client: Client,
+    mocker: MockerFixture,
+    test_grr: GenomicResourceRepo,
+) -> None:
+    user = User.objects.get(email="user@example.com")
+    user.is_unlimited = True
+    user.save()
+
+    quota_mock = MagicMock()
+    quota_mock.check_job_quota.return_value = False
+    mocker.patch.object(User, "get_quota", return_value=quota_mock)
+
+    vcf = textwrap.dedent("""
+        ##fileformat=VCFv4.1
+        ##contig=<ID=chr1>
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+        chr1\t1\t.\tC\tA\t.\t.\t.
+    """).strip()
+
+    response = user_client.post(
+        "/api/jobs/annotate_vcf",
+        {
+            "pipeline_id": "pipeline/test_pipeline",
+            "data": ContentFile(vcf, "test_input.vcf"),
+        },
+    )
+
+    assert response.status_code == 200
+    quota_mock.check_job_quota.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_annotate_vcf_unlimited_user_quota_not_deducted(
+    user_client: Client,
+    mocker: MockerFixture,
+    test_grr: GenomicResourceRepo,
+) -> None:
+    user = User.objects.get(email="user@example.com")
+    user.is_unlimited = True
+    user.save()
+
+    quota_mock = MagicMock()
+    quota_mock.check_job_quota.return_value = True
+    mocker.patch.object(User, "get_quota", return_value=quota_mock)
+
+    vcf = textwrap.dedent("""
+        ##fileformat=VCFv4.1
+        ##contig=<ID=chr1>
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+        chr1\t1\t.\tC\tA\t.\t.\t.
+    """).strip()
+
+    response = user_client.post(
+        "/api/jobs/annotate_vcf",
+        {
+            "pipeline_id": "pipeline/test_pipeline",
+            "data": ContentFile(vcf, "test_input.vcf"),
+        },
+    )
+
+    assert response.status_code == 200
+    quota_mock.job_complete.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_annotate_columns_unlimited_user_bypasses_job_quota(
+    user_client: Client,
+    mocker: MockerFixture,
+    test_grr: GenomicResourceRepo,
+) -> None:
+    user = User.objects.get(email="user@example.com")
+    user.is_unlimited = True
+    user.save()
+
+    quota_mock = MagicMock()
+    quota_mock.check_job_quota.return_value = False
+    mocker.patch.object(User, "get_quota", return_value=quota_mock)
+
+    file = textwrap.dedent("""
+        chrom,pos,ref,alt
+        chr1,1,C,A
+    """).strip()
+
+    response = user_client.post(
+        "/api/jobs/annotate_columns",
+        {
+            "pipeline_id": "pipeline/test_pipeline",
+            "data": ContentFile(file, "test_input.csv"),
+            "col_chrom": "chrom",
+            "col_pos": "pos",
+            "col_ref": "ref",
+            "col_alt": "alt",
+            "separator": ",",
+        },
+    )
+
+    assert response.status_code == 200
+    quota_mock.check_job_quota.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_annotate_columns_unlimited_user_quota_not_deducted(
+    user_client: Client,
+    mocker: MockerFixture,
+    test_grr: GenomicResourceRepo,
+) -> None:
+    user = User.objects.get(email="user@example.com")
+    user.is_unlimited = True
+    user.save()
+
+    quota_mock = MagicMock()
+    quota_mock.check_job_quota.return_value = True
+    mocker.patch.object(User, "get_quota", return_value=quota_mock)
+
+    file = textwrap.dedent("""
+        chrom,pos,ref,alt
+        chr1,1,C,A
+    """).strip()
+
+    response = user_client.post(
+        "/api/jobs/annotate_columns",
+        {
+            "pipeline_id": "pipeline/test_pipeline",
+            "data": ContentFile(file, "test_input.csv"),
+            "col_chrom": "chrom",
+            "col_pos": "pos",
+            "col_ref": "ref",
+            "col_alt": "alt",
+            "separator": ",",
+        },
+    )
+
+    assert response.status_code == 200
+    quota_mock.job_complete.assert_not_called()
+
+
+def test_annotate_vcf_unlimited_user_bypasses_variant_limit(
+    user_client: Client,
+    settings: LazySettings,
+) -> None:
+    user = User.objects.get(email="user@example.com")
+    user.is_unlimited = True
+    user.save()
+
+    settings.QUOTAS["variant_count"] = 5
+
+    vcf = textwrap.dedent("""
+        ##fileformat=VCFv4.1
+        ##contig=<ID=chr1>
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+    """).strip() + "\n" + "\n".join(
+        f"chr1\t{i}\t.\tA\tT\t.\t.\t." for i in range(1, 10)
+    )
+
+    response = user_client.post(
+        "/api/jobs/annotate_vcf",
+        {
+            "pipeline_id": "pipeline/test_pipeline",
+            "data": ContentFile(vcf, "test_input.vcf"),
+        },
+    )
+
+    assert response.status_code == 200
+
+
+def test_annotate_columns_unlimited_user_bypasses_variant_limit(
+    user_client: Client,
+    settings: LazySettings,
+) -> None:
+    user = User.objects.get(email="user@example.com")
+    user.is_unlimited = True
+    user.save()
+
+    settings.QUOTAS["variant_count"] = 5
+
+    file = "chrom,pos,ref,alt\n" + "\n".join(
+        f"chr1,{i},A,T" for i in range(1, 10)
+    )
+
+    response = user_client.post(
+        "/api/jobs/annotate_columns",
+        {
+            "pipeline_id": "pipeline/test_pipeline",
+            "data": ContentFile(file, "test_input.csv"),
+            "col_chrom": "chrom",
+            "col_pos": "pos",
+            "col_ref": "ref",
+            "col_alt": "alt",
+            "separator": ",",
+        },
+    )
+
+    assert response.status_code == 200
