@@ -2,8 +2,6 @@
 import pathlib
 import shutil
 from collections.abc import Generator
-from typing import cast
-from urllib.parse import urlparse
 
 import pytest
 import pytest_mock
@@ -151,17 +149,3 @@ def clients(
         "user": user_client,
         "anonymous": anonymous_client,
     }
-
-
-@pytest.fixture
-def mailhog_url(request: pytest.FixtureRequest) -> str:
-    """Mailhog URL fixture."""
-    res = cast(str, request.config.getoption("--mailhog"))
-    parsed = urlparse(res)
-    if not parsed.scheme:
-        res = f"http://{res}"
-    if parsed.scheme not in {"http", "https"}:
-        raise ValueError(f"Invalid URL: {res}")
-    parsed = urlparse(res)
-    path = parsed.path.rstrip("/")
-    return f"{parsed.scheme}://{parsed.netloc}{path}"
