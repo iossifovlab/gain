@@ -161,3 +161,136 @@ def test_gene_score_annotator_used_context_attributes(
         "gene_list",
     )
     assert annotator.used_context_attributes == ("gene_list",)
+
+
+@pytest.fixture
+def default_annotation_repo() -> GenomicResourceRepo:
+    return build_inmemory_test_repository({
+        "MultiScore": {
+            GR_CONF_FILE_NAME: """
+                type: gene_score
+                filename: scores.csv
+                default_annotation:
+                  - source: score1
+                  - source: score2
+                    gene_aggregator: min
+                scores:
+                  - id: score1
+                    desc: first score
+                    histogram:
+                      type: number
+                      number_of_bins: 3
+                      x_log_scale: false
+                      y_log_scale: false
+                  - id: score2
+                    desc: second score
+                    histogram:
+                      type: number
+                      number_of_bins: 3
+                      x_log_scale: false
+                      y_log_scale: false
+                  - id: score3
+                    desc: third score (not in default_annotation)
+                    histogram:
+                      type: number
+                      number_of_bins: 3
+                      x_log_scale: false
+                      y_log_scale: false
+                """,
+            "scores.csv": textwrap.dedent("""
+                gene,score1,score2,score3
+                G1,1,10,100
+                G2,2,20,200
+                G3,3,30,300
+            """),
+        },
+    })
+
+
+def test_default_annotation_limits_scores(
+    default_annotation_repo: GenomicResourceRepo,
+) -> None:
+    resource = default_annotation_repo.get_resource("MultiScore")
+    annotator = GeneScoreAnnotator(
+        None, AnnotatorInfo("gosho", [], {}), resource, "gene_list",
+    )
+    assert [a.name for a in annotator.attributes] == ["score1", "score2"]
+    assert "score3" not in [a.name for a in annotator.attributes]
+
+
+def test_default_annotation_custom_aggregator(
+    default_annotation_repo: GenomicResourceRepo,
+) -> None:
+    resource = default_annotation_repo.get_resource("MultiScore")
+    annotator = GeneScoreAnnotator(
+        None, AnnotatorInfo("gosho", [], {}), resource, "gene_list",
+    )
+    result = annotator.annotate(None, {"gene_list": ["G1", "G2"]})
+    assert result["score1"] == {"G1": 1, "G2": 2}
+    assert result["score2"] == 10
+
+
+def test_default_annotation_non_default_accessible_explicitly(
+    default_annotation_repo: GenomicResourceRepo,
+) -> None:
+    resource = default_annotation_repo.get_resource("MultiScore")
+    annotator = GeneScoreAnnotator(
+        None,
+        AnnotatorInfo(
+            "gosho",
+            [AttributeInfo("score3", "score3", internal=False,
+                           parameters={"gene_aggregator": "max"})],
+            {},
+        ),
+        resource,
+        "gene_list",
+    )
+    result = annotator.annotate(None, {"gene_list": ["G1", "G2"]})
+    assert result == {"score3": 200}
+
+
+def test_default_annotation_invalid_score_raises(
+    default_annotation_repo: GenomicResourceRepo,
+) -> None:
+    bad_repo = build_inmemory_test_repository({
+        "BadScore": {
+            GR_CONF_FILE_NAME: """
+                type: gene_score
+                filename: scores.csv
+                default_annotation:
+                  - source: nonexistent
+                scores:
+                  - id: score1
+                    desc: only score
+                    histogram:
+                      type: number
+                      number_of_bins: 3
+                      x_log_scale: false
+                      y_log_scale: false
+                """,
+            "scores.csv": textwrap.dedent("""
+                gene,score1
+                G1,1
+            """),
+        },
+    })
+    resource = bad_repo.get_resource("BadScore")
+    with pytest.raises(ValueError, match="nonexistent"):
+        GeneScoreAnnotator(
+            None, AnnotatorInfo("gosho", [], {}), resource, "gene_list",
+        )
+
+
+def test_default_annotation_attribute_descriptions(
+    default_annotation_repo: GenomicResourceRepo,
+) -> None:
+    resource = default_annotation_repo.get_resource("MultiScore")
+    annotator = GeneScoreAnnotator(
+        None, AnnotatorInfo("gosho", [], {}), resource, "gene_list",
+    )
+    descs = annotator.get_all_attribute_descriptions()
+    assert descs["score1"].default is True
+    assert descs["score2"].default is True
+    assert descs["score3"].default is False
+    assert descs["score2"].params["gene_aggregator"] == "min"
+    assert descs["score1"].params["gene_aggregator"] == "dict"
