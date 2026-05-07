@@ -39,6 +39,7 @@ body {
   font-size: 14px;
   color: #d74b59;
   font-weight: normal;
+  word-break: break-word;
 }
 
 .annotatable-message {

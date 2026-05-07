@@ -1,17 +1,19 @@
 <div id="pipelines-container">
-  <div cdkOverlayOrigin id="selecting-container">
+  <div cdkOverlayOrigin id="selecting-container" [style.width.vw]="editorWidth">
     <div id="pipelines-header">Select pipeline</div>
-    <input
-      [title]="selectedPipeline ? selectedPipeline.name : ''"
-      id="pipelines-input"
-      matInput
-      #pipelineInput="matAutocompleteTrigger"
-      [matAutocomplete]="pipelinesDropdown"
-      cdkOverlayOrigin
-      #pipelineChange="cdkOverlayOrigin"
-      [formControl]="dropdownControl"
-      (focus)="clearPipelineInput()" />
-    <span (click)="clearPipelineInput()" class="material-symbols-outlined dropdown-icon">keyboard_arrow_down</span>
+    <div class="pipeline-input-wrapper">
+      <input
+        [title]="selectedPipeline ? selectedPipeline.name : ''"
+        id="pipelines-input"
+        matInput
+        #pipelineInput="matAutocompleteTrigger"
+        [matAutocomplete]="pipelinesDropdown"
+        cdkOverlayOrigin
+        #pipelineChange="cdkOverlayOrigin"
+        [formControl]="dropdownControl"
+        (focus)="clearPipelineInput()" />
+      <span (click)="clearPipelineInput()" class="material-symbols-outlined dropdown-icon">keyboard_arrow_down</span>
+    </div>
   </div>
 
   <ng-template
@@ -28,6 +30,7 @@
     }]"
     [cdkConnectedOverlayHeight]="115"
     [cdkConnectedOverlayPush]="true"
+    [cdkConnectedOverlayViewportMargin]="8"
     [cdkConnectedOverlayHasBackdrop]="true"
     (detach)="confirmChange(false)"
     (backdropClick)="confirmChange(false)"
@@ -155,6 +158,44 @@
   </div>
 </div>
 
+<div id="mobile-actions-toggle">
+  <button id="actions-menu-button" (click)="$event.stopPropagation(); showMobileActions = !showMobileActions"
+    ><span class="material-symbols-outlined">more_horiz</span>Actions</button
+  >
+  @if(showMobileActions) {
+  <div id="mobile-actions-menu" (click)="$event.stopPropagation()">
+    <button (click)="openAnnotatorFormModal(true); showMobileActions = false" [disabled]="configError || disableActions"
+      ><span class="material-symbols-outlined">add</span>New resource</button
+    >
+    <button (click)="openAnnotatorFormModal(); showMobileActions = false" [disabled]="configError || disableActions"
+      ><span class="material-symbols-outlined">add</span>New annotator</button
+    >
+    <button (click)="clearPipeline(); showMobileActions = false" [disabled]="disableActions"
+      ><span class="material-symbols-outlined">draft</span>New pipeline</button
+    >
+    <button
+      *ngIf="isUserLoggedIn"
+      (click)="saveAs(); showMobileActions = false"
+      [disabled]="configError || disableActions"
+      ><span class="material-symbols-outlined">save_as</span>Save as</button
+    >
+    <button
+      *ngIf="isUserLoggedIn && selectedPipeline && selectedPipeline.type === 'user'"
+      (click)="save(); showMobileActions = false"
+      [disabled]="!isPipelineChanged() || configError || disableActions"
+      ><span class="material-symbols-outlined">save</span>Save</button
+    >
+    <button
+      *ngIf="isUserLoggedIn && selectedPipeline && selectedPipeline.type === 'user'"
+      (click)="showConfimDeletePopup = true; showMobileActions = false"
+      [disabled]="disableActions"
+      class="mobile-delete-button"
+      ><span class="material-symbols-outlined">delete</span>Delete</button
+    >
+  </div>
+  }
+</div>
+
 <ng-template
   cdkConnectedOverlay
   [cdkConnectedOverlayOrigin]="pipelineDelete"
@@ -170,11 +211,12 @@
   [cdkConnectedOverlayMinHeight]="115"
   [cdkConnectedOverlayMinWidth]="130"
   [cdkConnectedOverlayPush]="true"
+  [cdkConnectedOverlayViewportMargin]="8"
   [cdkConnectedOverlayHasBackdrop]="true"
   (detach)="showConfimDeletePopup = false"
   (backdropClick)="showConfimDeletePopup = false"
   [cdkConnectedOverlayBackdropClass]="'transparent-backdrop'">
-  <div id="change-confirmation-popover">
+  <div id="delete-confirmation-popover">
     <p>Are you sure you want to delete the pipeline?</p>
     <div>
       <button id="confirm-delete" (click)="delete()">Delete</button>
@@ -198,6 +240,7 @@
   }]"
   [cdkConnectedOverlayHeight]="115"
   [cdkConnectedOverlayPush]="true"
+  [cdkConnectedOverlayViewportMargin]="8"
   [cdkConnectedOverlayHasBackdrop]="true"
   (detach)="confirmCreate(false)"
   (backdropClick)="confirmCreate(false)"

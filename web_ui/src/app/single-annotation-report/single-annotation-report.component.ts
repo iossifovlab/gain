@@ -8,6 +8,7 @@ import { saveAs } from 'file-saver';
 import { MatDialog } from '@angular/material/dialog';
 import { FormatResultValuePipe } from '../format-result-value.pipe';
 import { SingleAnnotationReportStateService } from './single-annotation-report-state.service';
+import { ViewportService } from '../viewport.service';
 
 @Component({
   selector: 'app-single-annotation-report',
@@ -30,7 +31,8 @@ export class SingleAnnotationReportComponent {
 
   public constructor(
     private dialog: MatDialog,
-    private singleAnnotationReportStateService: SingleAnnotationReportStateService
+    private singleAnnotationReportStateService: SingleAnnotationReportStateService,
+    private viewportService: ViewportService
   ) {
     effect(() => {
       this.showFullReport = this.singleAnnotationReportStateService.isFullReport();
@@ -38,12 +40,13 @@ export class SingleAnnotationReportComponent {
   }
 
   public showInfo(annotator: Annotator): void {
+    const isMobile = this.viewportService.isMobile();
     this.dialog.open(this.infoModalRef, {
       data: annotator,
-      width: '50vw',
-      maxWidth: '1000px',
-      minWidth: '500px',
-      maxHeight: '700px',
+      width: isMobile ? '95vw' : '50vw',
+      maxWidth: isMobile ? '95vw' : '1000px',
+      minWidth: isMobile ? 'unset' : '500px',
+      maxHeight: isMobile ? '70vh' : '700px',
     });
   }
 

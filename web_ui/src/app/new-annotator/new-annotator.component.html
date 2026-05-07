@@ -137,7 +137,7 @@
                 >Next</button
               >
               @if(data.isResourceWorkflow) {
-              <button mat-button matStepperPrevious class="back-button">Back</button>
+              <button matButton matStepperPrevious class="back-button">Back</button>
               }
             </div>
           </form>
@@ -207,10 +207,10 @@
                   [ngClass]="{ 'invalid-field': resource.key === 'cnv_filter' && errorMessage }" />
                 } @else if(resource.fieldType === 'bool') {
                 <div>
-                  <input type="radio" [formControlName]="resource.key" for="true" />
-                  <label name="true">True</label>
-                  <input type="radio" [formControlName]="resource.key" for="false" />
-                  <label name="false">False</label>
+                  <input type="radio" [formControlName]="resource.key" [value]="true" [id]="resource.key + '-true'" />
+                  <label [for]="resource.key + '-true'">True</label>
+                  <input type="radio" [formControlName]="resource.key" [value]="false" [id]="resource.key + '-false'" />
+                  <label [for]="resource.key + '-false'">False</label>
                 </div>
                 }
               </div>
@@ -220,7 +220,7 @@
               @if(errorMessage) {
               <div class="error-message">{{ errorMessage }}</div>
               }
-              <button mat-button matStepperPrevious class="back-button" (click)="clearErrorMessage()">Back</button>
+              <button matButton matStepperPrevious class="back-button" (click)="clearErrorMessage()">Back</button>
               <button matButton [disabled]="configurationStep.invalid" (click)="requestAttributes()" class="next-button"
                 >Next</button
               >

@@ -432,3 +432,120 @@ input[type="checkbox"]:hover {
 input[type="checkbox"]:checked {
   accent-color: #435869;
 }
+
+@media (max-width: 599px) {
+  ::ng-deep .mat-horizontal-stepper-content.mat-horizontal-stepper-content-current {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .summary-content {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  ::ng-deep .mat-mdc-form-field {
+    width: 100%;
+  }
+
+  .resource-fields-wrapper {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  #resource-type {
+    width: 100%;
+  }
+
+  #resource-search-input {
+    flex: 1;
+    min-width: 0;
+    width: auto;
+    box-sizing: border-box;
+  }
+
+  .info-icon {
+    min-width: 44px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .resource-field {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  #resource-list {
+    min-width: 380px;
+  }
+
+  #modal-header {
+    margin: 12px 16px;
+  }
+
+  .field {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .labels-wrapper {
+    width: 100%;
+    text-align: start;
+  }
+
+  .grid-cell {
+    font-size: 12px;
+    padding: 4px;
+  }
+
+  /* Larger tap area for action icons in the resource grid */
+  .action-button {
+    padding: 6px;
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  /* 44×44px touch target for the delete icon */
+  .remove-attribute {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .editable-name {
+    font-size: 12px;
+    width: 80%;
+    min-height: 32px;
+    height: auto;
+    padding: 4px 8px;
+  }
+
+  #attributes-dropdown {
+    margin-top: 16px;
+    margin-bottom: 16px;
+  }
+
+  /* Stepper: hide labels and tighten spacing so all 4 circles fit without overflow */
+  ::ng-deep .mat-step-label {
+    display: none !important;
+  }
+
+  ::ng-deep .mat-horizontal-stepper-header {
+    padding: 0 8px !important;
+  }
+
+  ::ng-deep .mat-stepper-horizontal-line {
+    min-width: 8px !important;
+  }
+
+  /* Attributes table: fixed pixel columns force the grid wider than the container,
+     triggering the element's own overflow: auto for horizontal scroll */
+  #attributes-list {
+    grid-template-columns: 80px 80px 44px minmax(80px, 1fr) 44px;
+  }
+}

@@ -346,6 +346,27 @@ a:hover {
     height: 1px;
     margin: 7px 0;
   }
+
+  .attributes {
+    width: 100%;
+  }
+
+  #modal-content {
+    flex-direction: column-reverse;
+    gap: 20px;
+    padding: 15px;
+  }
+
+  .annotator-details {
+    min-width: unset;
+    max-width: none;
+    width: 85%;
+    position: static;
+  }
+
+  .value-grid-container {
+    width: 100%;
+  }
 }
 
 @media (max-width: 1023px) {

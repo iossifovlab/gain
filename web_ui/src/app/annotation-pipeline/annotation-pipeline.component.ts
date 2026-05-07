@@ -30,6 +30,7 @@ import type * as Monaco from 'monaco-editor';
 import { MatTooltip } from '@angular/material/tooltip';
 import { OverlayModule } from '@angular/cdk/overlay';
 import { AnnotationPipelineStateService } from './annotation-pipeline-state.service';
+import { ViewportService } from '../viewport.service';
 
 @Component({
   selector: 'app-annotation-pipeline',
@@ -66,6 +67,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   public showConfimDeletePopup = false;
   public showConfimPipelineChangePopup = false;
   public showConfimPipelineCreatePopup = false;
+  public showMobileActions = false;
   public socketNotificationSubscription: Subscription = new Subscription();
   public pipelineValidationSubscription: Subscription = new Subscription();
   public pipelineInfo: PipelineInfo;
@@ -83,6 +85,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     private socketNotificationsService: SocketNotificationsService,
     private ngZone: NgZone,
     private pipelineStateService: AnnotationPipelineStateService,
+    private viewportService: ViewportService,
   ) {
     effect(() => {
       this.editorWidth = this.pipelineStateService.editorWidth();
@@ -389,16 +392,17 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   }
 
   public openAnnotatorFormModal(isResourceWorkflow = false): void {
+    const isMobile = this.viewportService.isMobile();
     const newAnnotatorModal = this.dialog.open(NewAnnotatorComponent, {
       id: 'newAnnotator',
       data: {
         pipelineId: this.currentTemporaryPipelineId || this.selectedPipeline?.id,
         isResourceWorkflow: isResourceWorkflow
       },
-      height: '70vh',
-      width: '80vw',
-      maxWidth: '1500px',
-      minWidth: '500px'
+      height: isMobile ? '85vh' : '70vh',
+      width: isMobile ? '95vw' : '80vw',
+      maxWidth: isMobile ? '95vw' : '1500px',
+      minWidth: isMobile ? 'unset' : '500px',
     });
 
     newAnnotatorModal.afterClosed().subscribe((result: string) => {
@@ -454,8 +458,8 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     this.disableActions = true;
     const newNameModalRef = this.dialog.open(this.nameInputTemplateRef, {
       id: 'setPipelineName',
-      width: '30vw',
-      maxWidth: '700px'
+      width: this.viewportService.isMobile() ? '90vw' : '30vw',
+      maxWidth: this.viewportService.isMobile() ? '90vw' : '700px'
     });
 
     newNameModalRef.afterClosed().pipe(
@@ -553,6 +557,11 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   public shrinkTextarea(): void {
     this.editorWidth = null; // null lets CSS width: 40vw take over
     this.showParentComponents();
+  }
+
+  @HostListener('document:click')
+  public onDocumentClick(): void {
+    this.showMobileActions = false;
   }
 
   @HostListener('window:resize')
