@@ -179,7 +179,7 @@ class SingleAnnotation(AnnotationBaseView):
         ):
             return Response(
                 {"reason": "Single allele query quota exceeded!"},
-                status=views.status.HTTP_403_FORBIDDEN,
+                status=views.status.HTTP_429_TOO_MANY_REQUESTS,
             )
 
         annotatable = build_annotatable_from_dict(annotatable)

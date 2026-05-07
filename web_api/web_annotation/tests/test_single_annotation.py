@@ -175,7 +175,7 @@ def test_use_of_thread_safe_pipelines(
     assert thread_safe_dummy.lock.__enter__.call_count == 3
 
 
-def test_single_annotation_returns_403_when_quota_exceeded(
+def test_single_annotation_returns_429_when_quota_exceeded(
     mocker: MockerFixture,
     test_grr: GenomicResourceRepo,
 ) -> None:
@@ -203,7 +203,7 @@ def test_single_annotation_returns_403_when_quota_exceeded(
 
     response = view.post(request_data)
 
-    assert response.status_code == 403
+    assert response.status_code == 429
     quota_mock.single_allele_query_complete.assert_not_called()
 
 
