@@ -1,12 +1,13 @@
 """Module containing the gene score annotator."""
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotatorInfo,
+    AttributeInfo,
 )
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
@@ -64,9 +65,18 @@ class GeneScoreAnnotator(Annotator):
 
         info.resources += [gene_score_resource]
         if not info.attributes:
-            info.attributes = AnnotationConfigParser.parse_raw_attributes(
-                self.score.get_all_scores(),
-            )
+            info.attributes = []
+            for attr_desc in self.get_all_attribute_descriptions().values():
+                if attr_desc.default:
+                    info.attributes.append(AttributeInfo(
+                        cast(str, attr_desc.name),
+                        attr_desc.source,
+                        internal=attr_desc.internal,
+                        parameters={},
+                        _type=attr_desc.type,
+                        description=attr_desc.description,
+                        default=attr_desc.default,
+                    ))
 
         self.aggregators: list[str] = []
 
@@ -117,6 +127,38 @@ class GeneScoreAnnotator(Annotator):
                 description=score_def.description,
                 params={"gene_aggregator": self.DEFAULT_AGGREGATOR_TYPE},
             )
+
+        default_annotation = self.score.config.get("default_annotation")
+        if default_annotation is not None:
+            for desc in attributes.values():
+                desc.default = False
+            for attr in default_annotation:
+                default_attr = \
+                    AnnotationConfigParser.parse_raw_attribute_config(attr)
+                if default_attr.source not in attributes:
+                    raise ValueError(
+                        f"Default annotation attribute "
+                        f"'{default_attr.source}' is not defined in the "
+                        f"{self.gene_score_resource.get_id()} gene score "
+                        "resource!")
+                if default_attr.name:
+                    attributes[default_attr.source].name = default_attr.name
+                if default_attr.description:
+                    attributes[default_attr.source].description = \
+                        default_attr.description
+                params: dict[str, Any] = {
+                    "gene_aggregator": self.DEFAULT_AGGREGATOR_TYPE,
+                }
+                gene_agg = default_attr.parameters.get("gene_aggregator")
+                if gene_agg is not None:
+                    validate_aggregator(gene_agg)
+                    params["gene_aggregator"] = gene_agg
+                attributes[default_attr.source].params = params
+                attributes[default_attr.source].default = True
+                if default_attr.internal is not None:
+                    attributes[default_attr.source].internal = \
+                        default_attr.internal
+
         return attributes
 
     @property

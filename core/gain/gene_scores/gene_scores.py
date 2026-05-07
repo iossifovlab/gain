@@ -288,6 +288,9 @@ class GeneScore(
             **get_base_resource_schema(),
             "filename": {"type": "string"},
             "separator": {"type": "string"},
+            "default_annotation": {
+                "type": ["dict", "list"], "allow_unknown": True,
+            },
             "scores": {"type": "list", "schema": {
                 "type": "dict",
                 "schema": {
