@@ -859,8 +859,9 @@ test.describe('Add annotator to pipeline tests', () => {
   test('should filter annotators in dropdown by search text', async({ page }) => {
     await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
 
-    await page.getByRole('combobox', { name: 'Select annotator' }).focus();
-    await page.keyboard.type('allele');
+    await page.getByRole('combobox', { name: 'Select annotator' }).fill('allele');
+    await page.getByRole('combobox', { name: 'allele' }).dispatchEvent('input');
+
     await expect(page.locator('.annotator-option')).toHaveCount(2);
     await expect(page.locator('.annotator-option').filter({ hasText: 'allele_score_annotator' })).toBeVisible();
     await expect(page.locator('.annotator-option').filter({ hasText: 'normalize_allele_annotator' })).toBeVisible();
