@@ -120,7 +120,10 @@ class AnnotationBaseView(views.APIView):
 
     def check_throttles(self, request: Request) -> None:
         """Override to disable throttling."""
-        if request.user.is_authenticated and not request.user.is_unlimited:
+        if (
+            (request.user.is_authenticated and not request.user.is_unlimited)
+            or not request.user.is_authenticated
+        ):
             super().check_throttles(request)
 
     @property
