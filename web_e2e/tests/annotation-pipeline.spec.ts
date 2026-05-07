@@ -309,8 +309,6 @@ test.describe('Pipeline tests', () => {
     await expect(page.locator('mat-option')).toHaveCount(0);
   });
 
-
-
   test('should save user pipeline with Ctrl+S', async({ page }) => {
     await customDefaultPipeline(page);
 
@@ -437,7 +435,7 @@ test.describe('Pipeline tests', () => {
       page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
       page.waitForResponse(resp => resp.url().includes('api/pipelines/load')),
     ]);
-
+    await expect(page.locator('#pipelines-input')).toHaveValue('My Pipeline');
     await page.locator('#pipelines-input').click();
 
     await expect(page.getByRole('group', { name: 'Public pipelines' })).toBeVisible();
