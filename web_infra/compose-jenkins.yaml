@@ -121,11 +121,22 @@ services:
       GPFWA_SECRET_KEY: "django-insecure-3rz4n(_u+x8r+n%&xr-(vg83v8&llq7pin*x%@%y@d8af%iphk"
       GPFWA_EMAIL_VERIFICATION_ENDPOINT: "http://frontend"
       GPFWA_EMAIL_REDIRECT_ENDPOINT: "http://frontend"
+    # Probes pipeline_status, not /api/user_info, so e2e-tests
+    # waits until pipeline/Clinical_annotation has finished its
+    # first GRR build (~75s cold) before tests start. Without
+    # this, the first test to selectPipeline() pays the load
+    # cost and can blow .loaded-editor's 120s wait under worker
+    # pressure (annotation-jobs.spec.ts:105 was the canonical
+    # flake). The endpoint is anonymous-readable and blocks in
+    # pipeline_cache.py:get_pipeline until the future resolves;
+    # --fail rejects non-2xx, --max-time bounds the call.
     healthcheck:
-      test: ["CMD", "curl", "http://localhost:9001/api/user_info"]
+      test: ["CMD", "curl", "--fail", "--max-time", "120",
+             "http://localhost:9001/api/editor/pipeline_status?pipeline_id=pipeline/Clinical_annotation"]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout: 125s
+      retries: 3
+      start_period: 120s
 
 
   frontend:
