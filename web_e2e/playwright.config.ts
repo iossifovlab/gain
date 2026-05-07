@@ -4,20 +4,21 @@ import { defineConfig, devices } from '@playwright/test';
  * See https://playwright.dev/docs/test-configuration.
  */
 export default defineConfig({
-  // 2 workers on CI parallelizes across the 5 spec files
+  // 4 workers on CI parallelizes across the 5 spec files
   // (annotation-jobs / annotation-pipeline / anonymous-user /
   // front-page / single-annotation); `fullyParallel: false`
-  // below keeps tests within a file serial. We cap at 2
-  // (rather than 4 = file-count / 2) because workers=4
-  // surfaces a timing race in
-  // `annotation-jobs.spec.ts:105:7` — that test asserts
-  // `#download-annotated` is NOT visible (job not yet
-  // complete), and with 4 concurrent job-creating workers
-  // backend job-queue depth shifts so sometimes the job
-  // already finished. workers=2 keeps the backend pressure
-  // low enough that the existing timing assumptions hold.
+  // below keeps tests within a file serial. The previous
+  // workers=2 cap was justified by a flake in
+  // `annotation-jobs.spec.ts:105:7` (asserts
+  // `#download-annotated` is NOT visible — under 4
+  // concurrent job-creating workers the backend job-queue
+  // depth could let the job finish before the assertion);
+  // probing 4 runs at workers=4 against `:131`/`:132` (tb-3zf
+  // diagnosis, 2026-05-07) didn't reproduce that race. Bumped
+  // back to 4 to recover the file-count/2 throughput; revert
+  // to 2 if the historical race resurfaces.
   // Locally Playwright defaults to ~half-CPU.
-  workers: process.env.CI ? 2 : undefined,
+  workers: process.env.CI ? 4 : undefined,
   timeout: 300000,
   expect: {
     timeout: 5000,
