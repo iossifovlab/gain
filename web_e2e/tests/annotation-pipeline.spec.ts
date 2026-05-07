@@ -383,10 +383,10 @@ test.describe('Pipeline tests', () => {
     await expect(page.locator('#pipelines-input')).toHaveValue('My Pipeline');
 
     await page.getByRole('button', { name: 'Delete' }).click();
-    await expect(page.locator('#change-confirmation-popover')).toBeVisible();
+    await expect(page.locator('#delete-confirmation-popover')).toBeVisible();
     await page.locator('#cancel-delete').click();
 
-    await expect(page.locator('#change-confirmation-popover')).not.toBeVisible();
+    await expect(page.locator('#delete-confirmation-popover')).not.toBeVisible();
     await expect(page.locator('#pipelines-input')).toHaveValue('My Pipeline');
   });
 
