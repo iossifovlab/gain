@@ -339,7 +339,7 @@ def test_allele_score_exact_match_allele_attribute(
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
     assert result["allele_freq"] == pytest.approx(0.02)
-    assert result["allele"] == "1:10:A:G"
+    assert result["allele"] == ["1:10:A:G"]
 
 
 def test_allele_score_exact_match_allele_with_include_attributes(
@@ -360,7 +360,7 @@ def test_allele_score_exact_match_allele_with_include_attributes(
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
     assert result["allele_freq"] == pytest.approx(0.02)
-    assert result["allele"] == "1:10:A:G:0.02"
+    assert result["allele"] == ["1:10:A:G:0.02"]
 
 
 def test_allele_score_exact_match_allele_filtered(
@@ -424,7 +424,7 @@ def test_allele_score_region_allele_filter(
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 10, 16))
-    assert set(result["allele"].split(",")) == expected_alleles
+    assert set(result["allele"]) == expected_alleles
 
 
 def test_allele_score_region_allele_with_include_attributes(
@@ -443,7 +443,7 @@ def test_allele_score_region_allele_with_include_attributes(
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 10, 16))
-    alleles = set(result["allele"].split(","))
+    alleles = set(result["allele"])
     assert "1:10:A:T:0.02" not in alleles
     assert "1:10:A:T:0.03" not in alleles
     assert "1:10:A:T:0.04" in alleles
@@ -489,7 +489,7 @@ def test_allele_score_region_filter_all_alleles(
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 10, 16))
-    assert result["allele"] == ""
+    assert result["allele"] == []
     assert result["freq"] is None
 
 
@@ -512,4 +512,4 @@ def test_allele_score_include_multiple_attributes(
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
-    assert result["allele"] == "1:10:A:G:0.02,ag"
+    assert result["allele"] == ["1:10:A:G:0.02,ag"]

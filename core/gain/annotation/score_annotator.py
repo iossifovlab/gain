@@ -672,7 +672,7 @@ variant frequencies, etc.
         if not selected_line:
             return self._empty_result()
 
-        scores = {
+        scores: dict[str, Any] = {
             sc: selected_line.get_score(sc)
             for sc in (
                 self.simple_score_queries or
@@ -700,7 +700,7 @@ variant frequencies, etc.
                     for attr in self.attrs_to_include
                 ])
                 allele_str += f":{attrs_str}"
-            scores[attr.name] = allele_str
+            scores[attr.name] = [allele_str]
 
         result = {}
 
@@ -773,7 +773,7 @@ variant frequencies, etc.
             for score, sagg in score_aggs.items()
         }
         if self.allele_attribute is not None:
-            results[self.allele_attribute.source] = ",".join(alleles)
+            results[self.allele_attribute.source] = list(alleles)
         return results
 
     def _annotate_aggregated(
