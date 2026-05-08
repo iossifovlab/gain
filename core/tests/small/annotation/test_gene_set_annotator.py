@@ -8,7 +8,7 @@ from gain.annotation.annotation_config import (
     AnnotationConfigurationError,
 )
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
-from gain.annotation.annotation_pipeline import AnnotatorInfo
+from gain.annotation.annotation_pipeline import AnnotatorInfo, AttributeInfo
 from gain.annotation.gene_set_annotator import GeneSetAnnotator
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
@@ -96,19 +96,50 @@ def test_gene_set_annotator(test_grr: GenomicResourceRepo) -> None:
     annotator.open()
 
     result = annotator.annotate(annotatable, {"gene_list": ["g1"]})
-    assert result == {
-        "in_sets": ["set_0", "set_1"],
-    }
+    assert result["in_sets"] == ["set_0", "set_1"]
 
     result = annotator.annotate(annotatable, {"gene_list": ["g3"]})
-    assert result == {
-        "in_sets": [],
-    }
+    assert result["in_sets"] == []
 
     result = annotator.annotate(annotatable, {"gene_list": ["g3", "g2"]})
-    assert result == {
-        "in_sets": ["set_0", "set_2"],
-    }
+    assert result["in_sets"] == ["set_0", "set_2"]
+
+
+def test_gene_set_annotator_intersecting_genes(
+    test_grr: GenomicResourceRepo,
+) -> None:
+    resource = test_grr.get_resource("foobar_gene_set_collection")
+    annotator = GeneSetAnnotator(
+        None,
+        AnnotatorInfo(
+            "gosho",
+            [
+                AttributeInfo("set_0", "set_0", internal=False, parameters={}),
+                AttributeInfo("set_1", "set_1", internal=False, parameters={}),
+                AttributeInfo("set_2", "set_2", internal=False, parameters={}),
+            ],
+            {"work_dir": "some/dir"},
+        ),
+        resource, "gene_list",
+    )
+
+    annotatable = VCFAllele("1", 1, "A", "G")
+    annotator.open()
+
+    result = annotator.annotate(annotatable, {"gene_list": ["g1"]})
+    assert result["set_0"] == ["g1"]
+    assert result["set_1"] == ["g1"]
+    assert result["set_2"] == []
+
+    result = annotator.annotate(annotatable, {"gene_list": ["g1", "g2"]})
+    assert sorted(result["set_0"]) == ["g1", "g2"]
+    assert result["set_1"] == ["g1"]
+    assert result["set_2"] == ["g2"]
+
+    result = annotator.annotate(annotatable, {"gene_list": ["g3"]})
+    assert result["set_0"] == []
+    assert result["set_1"] == []
+    assert result["set_2"] == []
 
 
 def test_gene_score_annotator_used_context_attributes(
@@ -161,7 +192,7 @@ def test_gene_set_annotator_in_pipeline(
     with pipeline as pipeline:
         allele = VCFAllele(chrom, pos, ref, alt)
         result = pipeline.annotate(allele)
-        assert result[set_id] is expected
+        assert bool(result[set_id]) is expected
 
 
 def test_gene_set_annotator_broken_configuration(
@@ -220,4 +251,8 @@ def test_gene_set_annotator_in_pipeline_with_configuration(
     with pipeline as pipeline:
         allele = VCFAllele(chrom, pos, ref, alt)
         result = pipeline.annotate(allele)
-        assert result.get(set_id) is expected
+        value = result.get(set_id)
+        if expected is None:
+            assert value is None
+        else:
+            assert bool(value) is expected

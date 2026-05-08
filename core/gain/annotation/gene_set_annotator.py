@@ -110,7 +110,7 @@ class GeneSetAnnotator(AnnotatorBase):
         source_type_desc.update({
             gs["name"]: AttributeDesc(
                 source=gs["name"],
-                type="bool",
+                type="object",
                 description=f"({gs['count']}) {gs['desc']}",
                 default=False,
             )
@@ -145,9 +145,9 @@ class GeneSetAnnotator(AnnotatorBase):
                 f"The GeneSetAnnotator {self.gene_set_resource} "
                 f"is not open.")
         for gs in self.gene_sets:
-            output[gs.name] = False
-            if genes_set.intersection(set(gs.syms)):
-                output[gs.name] = True
+            intersecting = list(genes_set.intersection(set(gs.syms)))
+            output[gs.name] = intersecting
+            if intersecting:
                 in_sets.append(gs.name)
 
         return output
