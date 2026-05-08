@@ -26,13 +26,12 @@ pipeline {
         disableConcurrentBuilds()
     }
 
-    triggers {
-        // Nightly run so regressions against a live VEP + GRR surface
-        // even when vep_annotator/ itself hasn't changed on master.
-        // `H` hashes on the job name so the minute/hour is stable per
-        // job but spread across any other nightlies on the controller.
-        cron('H H(0-5) * * *')
-    }
+    // tb-7e7: cron lives in vep_annotator/jenkins-jobs/integration.groovy
+    // (the Job DSL), not here. A `triggers { cron(...) }` block in this
+    // Jenkinsfile only registers AFTER the pipeline runs once, and
+    // gain-seed re-applies the DSL on every master push — wiping the
+    // registration. Putting the cron in the DSL means each seed run
+    // re-asserts it explicitly.
 
     environment {
         // Persistent across builds — the VEP cache is multi-GB and
