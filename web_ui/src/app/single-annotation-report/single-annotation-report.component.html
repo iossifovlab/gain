@@ -2,14 +2,19 @@
   <div id="annotatable">
     <div id="report-header">
       <div id="toggle-view-container">
-        <input class="switch" type="checkbox" [checked]="!showFullReport" (change)="toggleView()" />
-        <label [ngStyle]="{ color: showFullReport ? '#5b778c' : '#85a2b9' }">full report</label>
-      </div>
-      <span id="download-report" download>
-        <button (click)="saveReport()" id="download-report-button"
-          ><span class="material-symbols-outlined download-icon">download</span>Download report</button
+        <input
+          class="switch"
+          id="full-report-toggle"
+          type="checkbox"
+          [checked]="!showFullReport"
+          (change)="toggleView()" />
+        <label for="full-report-toggle" [ngStyle]="{ color: showFullReport ? '#5b778c' : '#85a2b9' }"
+          >full report</label
         >
-      </span>
+      </div>
+      <button (click)="saveReport()" id="download-report-button"
+        ><span class="material-symbols-outlined download-icon">download</span>Download report</button
+      >
     </div>
     <div id="annotatable-data-container">
       @if(report.annotatable.chromosome) {
@@ -126,7 +131,12 @@
       </div>
 
       <div id="compact-report">
-        <span class="material-symbols-outlined info-icon" (click)="showInfo(annotator)">info</span>
+        <button
+          class="material-symbols-outlined info-icon"
+          aria-label="Show annotator details"
+          (click)="showInfo(annotator)"
+          >info</button
+        >
 
         <ng-template #infoModal let-annotator>
           <div id="modal-content">

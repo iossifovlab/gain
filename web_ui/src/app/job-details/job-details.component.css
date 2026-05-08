@@ -1,9 +1,9 @@
 .mat-mdc-dialog-actions {
-  justify-content: end;
+  justify-content: flex-end;
 }
 
 .label {
-  color: #b9d3e7;
+  color: #85a2b9;
   font-weight: bold;
 }
 
@@ -11,19 +11,16 @@
   color: #5b778c;
 }
 
-.error {
-  color: #8d6b6b;
-}
-
 .error-block {
-  background-color: #f8d7da;
-  border-color: #f5c6cb;
-  color: #721c24;
+  background-color: #ffedef;
+  border: 1px solid #d74b59;
+  border-radius: 5px;
+  color: #252e34;
   padding: 10px;
 }
 
 .time {
-  color: #c8dae7;
+  color: #85a2b9;
 }
 
 mat-dialog-content {

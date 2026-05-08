@@ -9,12 +9,8 @@
       <app-annotation-pipeline></app-annotation-pipeline>
     </div>
 
-    <div
-      id="annotation-component"
-      [style.display]="pipelineStateService.hideComponents() ? 'none' : 'flex'"
-      style="display: flex; flex-direction: column; width: auto; min-width: 0; flex-grow: 1">
+    <div id="annotation-component" [style.display]="pipelineStateService.hideComponents() ? 'none' : 'flex'">
       <app-single-annotation
-        style="width: 100%"
         (annotatableUpdateEmit)="refreshAnnotatablesTable()"
         (autoSaveTrigger)="autoSavePipeline()"></app-single-annotation>
     </div>

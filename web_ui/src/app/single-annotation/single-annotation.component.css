@@ -129,3 +129,15 @@ mat-menu {
   flex: 1;
   min-width: 0;
 }
+
+@media (max-width: 599px) {
+  #single-annotation-container {
+    align-items: stretch;
+    padding: 16px;
+    padding-top: 13px;
+  }
+
+  input[type="text"] {
+    max-width: none;
+  }
+}

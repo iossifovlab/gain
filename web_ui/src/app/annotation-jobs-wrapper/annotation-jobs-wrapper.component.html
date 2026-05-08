@@ -10,10 +10,7 @@
       <app-annotation-pipeline></app-annotation-pipeline>
     </div>
 
-    <div
-      id="annotation-component"
-      [style.display]="pipelineStateService.hideComponents() ? 'none' : 'flex'"
-      style="display: flex; flex-direction: column; width: auto; min-width: 0; flex-grow: 1">
+    <div id="annotation-component" [style.display]="pipelineStateService.hideComponents() ? 'none' : 'flex'">
       <div>
         @if(isCreationFormVisible) {
         <app-job-creation
@@ -22,10 +19,8 @@
           (emitGenome)="setGenome($event)"
           (emitUpdatedFileHeader)="setUpdatedFileHeader($event)"></app-job-creation>
         <div style="margin-top: 10px">
+          <button id="create-button" (click)="autoSavePipeline()" [disabled]="disableCreate()">Create</button>
           <span class="error-message">{{ creationError }}</span>
-          <button id="create-button" (click)="autoSavePipeline()" tabindex="1" [disabled]="disableCreate()"
-            >Create</button
-          >
         </div>
         } @if(!isCreationFormVisible && currentJob) {
         <div id="result">

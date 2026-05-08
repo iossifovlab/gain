@@ -13,12 +13,18 @@
   background: #435869;
   border-radius: 10px;
   color: white;
-  float: right;
+  align-self: flex-end;
 }
 
 #create-button:hover {
   background: #5b778c;
   cursor: pointer;
+}
+
+#create-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 0.2rem #b9d3e7;
+  border-radius: 4px;
 }
 
 #create-button:disabled {
@@ -39,35 +45,6 @@
   padding-right: 25px;
 }
 
-#annotation-mode button {
-  border: none;
-  background-color: transparent;
-  font-size: 16px;
-}
-
-#annotation-mode button:hover {
-  cursor: pointer;
-}
-
-#annotation-mode {
-  display: flex;
-  justify-content: center;
-  margin-top: 20px;
-}
-
-.active-view {
-  font-weight: bold;
-  text-decoration: underline;
-  text-decoration-thickness: 3px;
-  text-underline-offset: 5px;
-  color: #435869;
-}
-
-.inactive-view {
-  text-decoration: none;
-  color: #85a2b9;
-}
-
 #new-job-button {
   color: #435869;
   border: none;
@@ -83,7 +60,7 @@
 }
 
 #result {
-  margin-top: 40px;
+  margin-top: 0;
 }
 
 #current-job-info {
@@ -94,7 +71,7 @@
 }
 
 #new-job-section {
-  border-top: 1px solid #dde4e8;
+  border-top: 1px solid #cfd8df;
   margin-top: 10px;
 }
 
@@ -119,15 +96,23 @@
   position: absolute;
 }
 
-.show-icon {
-  vertical-align: middle;
-  font-size: 22px;
-}
-
 #show-components:hover,
 #toggle-history:hover {
   cursor: pointer;
   color: #5b778c;
+}
+
+#show-components:focus-visible,
+#toggle-history:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 0.2rem #b9d3e7;
+  border-radius: 4px;
+}
+
+#new-job-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 0.2rem #b9d3e7;
+  border-radius: 4px;
 }
 
 #history-table {
@@ -136,13 +121,27 @@
   padding-left: 25px;
 }
 
+#annotation-component {
+  display: flex;
+  flex-direction: column;
+  width: auto;
+  min-width: 0;
+  flex-grow: 1;
+}
+
+#annotation-component app-job-creation {
+  width: 100%;
+}
+
 .sticky-elements {
   position: sticky;
   top: 10px;
   height: fit-content;
+  flex-shrink: 0;
+  width: fit-content;
 }
 
-@media (max-width: 1023px) {
+@media (max-width: 1200px) {
   #wrapper-container {
     flex-direction: column;
     margin: 30px 3%;
@@ -151,8 +150,9 @@
   #annotation-container {
     width: 100%;
     flex-direction: column;
+    align-items: center;
     padding-right: 0;
-    gap: 0;
+    gap: 40px;
   }
 
   #history-table {
@@ -175,5 +175,22 @@
 
   .sticky-elements {
     position: static;
+  }
+
+  #annotation-component {
+    width: 100%;
+  }
+}
+
+@media (max-width: 599px) {
+  #annotation-container {
+    gap: 24px;
+  }
+
+  #create-button {
+    float: none;
+    display: block;
+    width: 100%;
+    margin-top: 8px;
   }
 }

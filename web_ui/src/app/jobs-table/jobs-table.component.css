@@ -1,6 +1,22 @@
+#history-header {
+  color: #85a2b9;
+  font-size: 16px;
+  font-weight: bold;
+  margin-bottom: 5px;
+  text-align: center;
+}
+
+#empty-state {
+  color: #85a2b9;
+  font-size: 14px;
+  padding: 12px 0;
+}
+
 #grid-container {
   display: grid;
   width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
   grid-template-columns: repeat(2, minmax(80px, max-content));
   border: 1px solid #cfd8df;
   border-radius: 15px;
@@ -35,23 +51,51 @@
 
 .info-icon {
   font-size: 20px;
-  color: #5b778c;
+  color: #85a2b9;
   margin-left: 5px;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  line-height: 1;
+  vertical-align: middle;
 }
 
 .info-icon:hover {
-  color: #85a2b9;
-  cursor: pointer;
+  color: #5b778c;
 }
 
-#delete-job {
+.info-icon:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 0.2rem #b9d3e7;
+  border-radius: 4px;
+}
+
+.delete-job-btn {
   background: none;
   border: none;
+  padding: 0;
+  cursor: pointer;
+  line-height: 1;
 }
 
-#download-result {
-  background-color: transparent;
-  border: none;
+.download-result {
+  line-height: 1;
+  color: #435869;
+}
+
+.download-result:hover {
+  color: #5b778c;
+}
+
+.download-result:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 0.2rem #b9d3e7;
+  border-radius: 4px;
+}
+
+.no-download-icon {
+  color: #85a2b9;
 }
 
 #note {

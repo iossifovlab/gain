@@ -53,3 +53,9 @@
   cursor: pointer;
   color: #85a2b9;
 }
+
+#history-header {
+  font-weight: bold;
+  color: #85a2b9;
+  text-align: center;
+}

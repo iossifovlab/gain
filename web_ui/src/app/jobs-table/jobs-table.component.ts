@@ -5,6 +5,7 @@ import { JobsService } from '../job-creation/jobs.service';
 import { Subscription, take } from 'rxjs';
 import { getStatusClassName, Job } from '../job-creation/jobs';
 import { JobDetailsComponent } from '../job-details/job-details.component';
+import { ViewportService } from '../viewport.service';
 
 @Component({
   selector: 'app-jobs-table',
@@ -20,6 +21,7 @@ export class JobsTableComponent implements OnInit, OnDestroy {
   public constructor(
     private dialog: MatDialog,
     private jobsService: JobsService,
+    private viewportService: ViewportService,
   ) {}
 
   public ngOnInit(): void {
@@ -37,11 +39,12 @@ export class JobsTableComponent implements OnInit, OnDestroy {
 
 
   public openDetailsModal(jobId: number): void {
+    const isMobile = this.viewportService.isMobile();
     const detailsModalRef = this.dialog.open(JobDetailsComponent, {
       data: jobId,
       height: '40vh',
-      width: '30vw',
-      maxWidth: '1000px',
+      width: isMobile ? '60vw' : '30vw',
+      maxWidth: isMobile ? '60vw' : '1000px',
       minHeight: '400px'
     });
 

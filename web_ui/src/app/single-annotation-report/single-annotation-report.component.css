@@ -245,14 +245,25 @@ a:hover {
 }
 
 .info-icon {
-  color: #b4b4b4;
+  color: #85a2b9;
   font-size: 26px;
   height: fit-content;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  line-height: 1;
 }
 
 .info-icon:hover {
-  cursor: pointer;
-  color: steelblue;
+  color: #5b778c;
+}
+
+.info-icon:focus-visible,
+#download-report-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 0.2rem #b9d3e7;
+  border-radius: 4px;
 }
 
 #modal-content {
@@ -278,7 +289,6 @@ a:hover {
 #compact-report {
   display: flex;
   justify-content: flex-end;
-  gap: 30px;
   position: sticky;
   top: 10px;
   height: fit-content;
@@ -292,7 +302,7 @@ a:hover {
   appearance: none;
   border-radius: 9999px;
   background-color: #5b778c;
-  transition: all 0.3s ease;
+  transition: background-color 0.3s ease;
 }
 
 .switch:checked {
@@ -312,7 +322,7 @@ a:hover {
   border-radius: 9999px;
   background-color: white;
   box-shadow: 0 3px 10px #64748b53;
-  transition: all 0.3s ease;
+  transition: transform 0.3s ease;
   transform: translateX(100%);
 }
 
@@ -347,6 +357,17 @@ a:hover {
     margin: 7px 0;
   }
 
+  .annotator {
+    flex-direction: row-reverse;
+  }
+
+  #compact-report {
+    order: -1;
+    position: static;
+    justify-content: flex-end;
+    padding-bottom: 8px;
+  }
+
   .attributes {
     width: 100%;
   }
@@ -370,6 +391,13 @@ a:hover {
 }
 
 @media (max-width: 1023px) {
+  .compact-value-result,
+  .value-grid-cell {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
   .attribute-header {
     width: 100%;
   }
@@ -380,6 +408,7 @@ a:hover {
 
   .attribute {
     flex-wrap: wrap;
+    gap: 15px;
   }
 }
 
@@ -394,5 +423,27 @@ a:hover {
 
   .attribute {
     flex-wrap: wrap;
+    gap: 15px;
+  }
+}
+
+@media (max-width: 599px) {
+  .info-icon {
+    min-width: 44px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #toggle-view-container {
+    min-height: 44px;
+  }
+
+  #download-report-button {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
   }
 }

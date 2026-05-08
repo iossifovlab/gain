@@ -1,3 +1,4 @@
+<div *ngIf="!jobs.length" id="empty-state">No annotation jobs yet.</div>
 <div *ngIf="jobs.length">
   <div id="history-header">History</div>
   <div id="grid-container">
@@ -6,14 +7,20 @@
 
     <ng-container *ngFor="let j of jobs">
       <div class="grid-cell job-name" [ngClass]="getStatusClass(j.status)"
-        >{{ j.name }}<span class="material-symbols-outlined info-icon" (click)="openDetailsModal(j.id)">info</span></div
+        >{{ j.name
+        }}<button
+          class="material-symbols-outlined info-icon"
+          (click)="openDetailsModal(j.id)"
+          aria-label="Show job details"
+          >info</button
+        ></div
       >
       <div class="grid-cell actions" [ngClass]="getStatusClass(j.status)">
-        <a *ngIf="j.status === 'success'" id="download-result" [href]="getDownloadLink(j.id)" download
+        <a *ngIf="j.status === 'success'" class="download-result" [href]="getDownloadLink(j.id)" download
           ><span class="material-symbols-outlined download-icon">download</span></a
         >
         <span *ngIf="j.status !== 'success'" class="material-symbols-outlined no-download-icon">file_download_off</span>
-        <button id="delete-job" (click)="onDelete(j.id)"
+        <button class="delete-job-btn" (click)="onDelete(j.id)" aria-label="Delete job"
           ><span class="material-symbols-outlined delete-icon">delete</span></button
         >
       </div>

@@ -14,6 +14,18 @@
   padding-right: 25px;
 }
 
+#annotation-component {
+  display: flex;
+  flex-direction: column;
+  width: auto;
+  min-width: 0;
+  flex-grow: 1;
+}
+
+#annotation-component app-single-annotation {
+  width: 100%;
+}
+
 #show-components,
 #toggle-history {
   background-color: transparent;
@@ -69,6 +81,10 @@
     gap: 80px;
   }
 
+  #annotation-component {
+    width: 100%;
+  }
+
   #history-table {
     display: block !important;
     width: 100%;
@@ -89,5 +105,11 @@
 
   .sticky-elements {
     position: static;
+  }
+}
+
+@media (max-width: 599px) {
+  #annotation-container {
+    gap: 24px;
   }
 }
