@@ -46,29 +46,56 @@
       </div>
       }
     </div>
-    <button id="hamburger-button" (click)="menuOpen = !menuOpen" [attr.aria-expanded]="menuOpen">
+    <button
+      id="hamburger-button"
+      (click)="menuOpen = !menuOpen"
+      [attr.aria-expanded]="menuOpen"
+      [attr.aria-label]="menuOpen ? 'Close navigation menu' : 'Open navigation menu'"
+      aria-controls="mobile-menu">
       <span class="material-symbols-outlined">{{ menuOpen ? 'close' : 'menu' }}</span>
     </button>
   </div>
 
   @if(menuOpen) {
-  <div id="mobile-menu" (click)="menuOpen = false">
-    <a routerLink="/single-annotation" routerLinkActive="active-link" [routerLinkActiveOptions]="{ exact: true }"
+  <div id="mobile-menu">
+    <a
+      routerLink="/single-annotation"
+      routerLinkActive="active-link"
+      [routerLinkActiveOptions]="{ exact: true }"
+      (click)="menuOpen = false"
       >Single Annotation</a
     >
-    <a routerLink="/annotation-jobs" routerLinkActive="active-link" [routerLinkActiveOptions]="{ exact: true }"
+    <a
+      routerLink="/annotation-jobs"
+      routerLinkActive="active-link"
+      [routerLinkActiveOptions]="{ exact: true }"
+      (click)="menuOpen = false"
       >Annotation Jobs</a
     >
-    <a routerLink="/about" routerLinkActive="active-link" [routerLinkActiveOptions]="{ exact: true }">About</a>
-    <a routerLink="/quotas" routerLinkActive="active-link" [routerLinkActiveOptions]="{ exact: true }">Quotas</a>
+    <a
+      routerLink="/about"
+      routerLinkActive="active-link"
+      [routerLinkActiveOptions]="{ exact: true }"
+      (click)="menuOpen = false"
+      >About</a
+    >
+    <a
+      routerLink="/quotas"
+      routerLinkActive="active-link"
+      [routerLinkActiveOptions]="{ exact: true }"
+      (click)="menuOpen = false"
+      >Quotas</a
+    >
     @if(currentUserData.loggedIn) {
     <div id="mobile-user-data">
       <span id="mobile-user-email">{{ currentUserData.email }}</span>
       <button id="logout-button" (click)="logout()">Logout</button>
     </div>
     } @if(!currentUserData.loggedIn) {
-    <button id="login-button" (click)="login()">Login</button>
-    <button id="register-button" (click)="register()">Register</button>
+    <div class="mobile-auth-section">
+      <button id="login-button" (click)="login()">Login</button>
+      <button id="register-button" (click)="register()">Register</button>
+    </div>
     }
   </div>
   }
