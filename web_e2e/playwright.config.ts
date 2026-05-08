@@ -38,8 +38,17 @@ export default defineConfig({
     /* Base URL to use in actions like `await page.goto('/')`. */
     baseURL: process.env.CI === '1' ? 'http://frontend' : 'http://localhost:4200',
     trace: process.env.CI ? 'on' : 'on-first-retry',
+    /* tb-84q: CI mode 'on-first-retry' instead of 'retain-on-failure'.
+     * 'retain-on-failure' starts ffmpeg at the beginning of every test
+     * and deletes the file on pass — that means 16 concurrent 1080p
+     * ffmpeg processes recording continuously across all green tests,
+     * which overloads the Jenkins agent. 'on-first-retry' only records
+     * the retry attempt; with retries=1 every failure still has video
+     * evidence, but green tests never start ffmpeg. Local stays at
+     * retain-on-failure (no contention; retries=0 locally so
+     * on-first-retry would record nothing). */
     video: process.env.CI ? {
-      mode: 'retain-on-failure',
+      mode: 'on-first-retry',
       size: { width: 1920, height: 1080 }
     }: {
       mode: 'retain-on-failure',
