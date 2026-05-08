@@ -535,7 +535,7 @@ def test_single_annotation_allele_attribute(admin_client: Client) -> None:
     assert freq_attr["result"]["histogram"] is None
 
     allele_attr = next(a for a in attributes if a["name"] == "allele")
-    assert allele_attr["result"]["value"] == "chr1:1:C:A"
+    assert allele_attr["result"]["value"] == ["chr1:1:C:A"]
     assert allele_attr["result"]["histogram"] is None
 
 
