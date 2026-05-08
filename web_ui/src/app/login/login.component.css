@@ -12,25 +12,46 @@
 }
 
 #front-page-header {
-  background-color: rgb(244, 247, 251);
+  background-color: #f4f7fb;
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
   width: 50%;
   height: 100vh;
+  text-align: center;
+}
+
+#front-page-header h2 {
+  color: #435869;
+  font-size: 22px;
+  margin: 16px 0 8px;
+}
+
+#front-page-header p {
+  color: #85a2b9;
+  font-size: 16px;
+  max-width: 280px;
+  line-height: 1.5;
+}
+
+#login-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 24px;
 }
 
 input {
   border: 1px solid #cfd8df;
   border-radius: 10px;
   height: 35px;
-  width: 22vw;
-  max-width: 22vw;
-  padding: 5px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 10px;
   font-size: 18px;
-  margin: 10px;
-  margin-left: 0;
+  margin-top: 6px;
   color: #252e34;
 }
 
@@ -43,8 +64,9 @@ input:focus {
 form {
   display: flex;
   flex-direction: column;
-  align-items: center;
   margin-bottom: 20px;
+  width: 100%;
+  max-width: 340px;
 }
 
 label {
@@ -52,15 +74,11 @@ label {
   font-size: 18px;
 }
 
-#or-text {
-  color: #cfd8df;
-  font-size: 18px;
-}
-
 .form-group {
   display: flex;
   flex-direction: column;
   margin-bottom: 10px;
+  width: 100%;
 }
 
 button {
@@ -78,10 +96,16 @@ button:hover {
   font-size: 18px;
   align-self: center;
   border: none;
+  margin-top: 10px;
 }
 
 #login-button:hover {
   background-color: #5b778c;
+}
+
+#login-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 0.2rem #b9d3e7;
 }
 
 #login-options {
@@ -100,7 +124,7 @@ button:hover {
 }
 
 #response-message {
-  color: red;
+  color: #d74b59;
 }
 
 .activation-message {
@@ -109,17 +133,48 @@ button:hover {
   margin-top: 15px;
   border: 1px solid transparent;
   border-radius: 0.25rem;
-  width: calc(346px - 2.5rem);
+  width: 100%;
+  max-width: 340px;
+  box-sizing: border-box;
 }
 
 #activation-success {
-  color: #155724;
-  background-color: #d4edda;
-  border-color: #c3e6cb;
+  color: #2d5a1b;
+  background-color: #e8f5df;
+  border-color: #b8dca3;
 }
 
 #activation-failure {
-  color: #721c24;
-  background-color: #f8d7da;
-  border-color: #f5c6cb;
+  color: #5e1018;
+  background-color: #fbe8ea;
+  border-color: #f0b8bd;
+}
+
+@media (max-width: 700px) {
+  #front-page-container {
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+    padding: 20px;
+    gap: 0;
+    justify-content: center;
+  }
+
+  #front-page-header {
+    display: none;
+  }
+
+  #login-container {
+    width: 100%;
+    padding: 0;
+    justify-content: center;
+  }
+
+  form {
+    max-width: 100%;
+  }
+
+  .activation-message {
+    max-width: 100%;
+  }
 }
