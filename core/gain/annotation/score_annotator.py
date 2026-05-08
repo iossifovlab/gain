@@ -605,7 +605,7 @@ variant frequencies, etc.
         result["allele"] = AttributeDesc(
             source="allele",
             name="allele",
-            type="str",
+            type="list",
             description="The allele in the format 'chr:pos:ref:alt'",
             default=False,
             internal=False,
