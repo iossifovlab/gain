@@ -27,8 +27,6 @@ QUERY_QUOTAS = {
     "anonymous": {
         "daily_jobs": 10,
         "monthly_jobs": 100,
-        "daily_allele_queries": 100,
-        "monthly_allele_queries": 1_000,
         "daily_variants": 100_000,
         "monthly_variants": 1_000_000,
         "daily_attributes": 1_000_000,
@@ -37,8 +35,6 @@ QUERY_QUOTAS = {
     "user": {
         "daily_jobs": 100,
         "monthly_jobs": 1_000,
-        "daily_allele_queries": 1_000,
-        "monthly_allele_queries": 10_000,
         "daily_variants": 1_000_000,
         "monthly_variants": 10_000_000,
         "daily_attributes": 10_000_000,

@@ -290,10 +290,7 @@ def test_export_quotas_anonymous_row_quota_values(
     row = next(r for r in rows if r["id"] == "127.0.0.1")
     assert int(row["daily_jobs"]) == anonymous_quota.daily_jobs
     assert int(row["monthly_jobs"]) == anonymous_quota.monthly_jobs
-    assert (
-        int(row["extra_allele_queries"])
-        == anonymous_quota.extra_allele_queries
-    )
+    assert int(row["extra_variants"]) == anonymous_quota.extra_variants
 
 
 def test_export_quotas_writes_to_file(

@@ -50,16 +50,5 @@ class QuotasView(AnnotationBaseView):
                 },
                 "extra": quota.extra_jobs,
             },
-            "single_variant_queries": {
-                "daily": {
-                    "current": quota.daily_allele_queries,
-                    "max": quota.get_daily_allele_query_max(),
-                },
-                "monthly": {
-                    "current": quota.monthly_allele_queries,
-                    "max": quota.get_monthly_allele_query_max(),
-                },
-                "extra": quota.extra_allele_queries,
-            },
         }
         return Response(quotas, status=status.HTTP_200_OK)
