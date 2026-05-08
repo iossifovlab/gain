@@ -142,6 +142,44 @@ def test_gene_set_annotator_intersecting_genes(
     assert result["set_2"] == []
 
 
+def test_gene_set_annotator_bool_aggregator(
+    test_grr: GenomicResourceRepo,
+) -> None:
+    resource = test_grr.get_resource("foobar_gene_set_collection")
+    annotator = GeneSetAnnotator(
+        None,
+        AnnotatorInfo(
+            "gosho",
+            [
+                AttributeInfo(
+                    "set_0", "set_0", internal=False,
+                    parameters={"aggregator": "bool"}),
+                AttributeInfo(
+                    "set_1", "set_1", internal=False,
+                    parameters={"aggregator": "bool"}),
+                AttributeInfo(
+                    "set_2", "set_2", internal=False,
+                    parameters={"aggregator": "bool"}),
+            ],
+            {"work_dir": "some/dir"},
+        ),
+        resource, "gene_list",
+    )
+
+    annotatable = VCFAllele("1", 1, "A", "G")
+    annotator.open()
+
+    result = annotator.annotate(annotatable, {"gene_list": ["g1"]})
+    assert result["set_0"] is True
+    assert result["set_1"] is True
+    assert result["set_2"] is False
+
+    result = annotator.annotate(annotatable, {"gene_list": ["g3"]})
+    assert result["set_0"] is False
+    assert result["set_1"] is False
+    assert result["set_2"] is False
+
+
 def test_gene_score_annotator_used_context_attributes(
     test_grr: GenomicResourceRepo,
 ) -> None:

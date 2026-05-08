@@ -309,6 +309,28 @@ class ListAggregator(Aggregator):
         return list(self._flatten(self.values))
 
 
+class BoolAggregator(Aggregator):
+    """Aggregator that returns True if any non-None value was added."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.values: list[Any] = []
+
+    def _add_internal(
+        self, value: Any,
+        **kwargs: Any,  # noqa: ARG002
+    ) -> None:
+        if value is not None:
+            self.values.append(value)
+            self.used_count += 1
+
+    def _clear_internal(self) -> None:
+        self.values.clear()
+
+    def get_final(self) -> bool:
+        return bool(self.values)
+
+
 class DictAggregator(Aggregator):
     """Aggregator that builds a dictionary of all passed values."""
 
@@ -364,6 +386,7 @@ AGGREGATOR_CLASS_DICT: dict[str, type[Aggregator]] = {
     "mode": ModeAggregator,
     "join": JoinAggregator,
     "list": ListAggregator,
+    "bool": BoolAggregator,
     "dict": DictAggregator,
     "value_count": CounterAggregator,
 }
@@ -379,6 +402,7 @@ AGGREGATOR_SCHEMA = {
         {"regex": "^mode$"},
         {"regex": "^join\\(.+\\)$"},
         {"regex": "^list$"},
+        {"regex": "^bool$"},
         {"regex": "^dict$"},
         {"regex": "^value_count$"},
     ],
