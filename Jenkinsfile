@@ -610,13 +610,21 @@ pipeline {
                                         -u "$REGISTRY_USER" \
                                         --password-stdin "$REGISTRY"
                                     trap 'docker logout "$REGISTRY" || true' EXIT
-                                    docker tag "$BACKEND_REPO:$BUILD_NUMBER" \
-                                               "$BACKEND_REPO:latest"
-                                    docker tag "$FRONTEND_REPO:$BUILD_NUMBER" \
-                                               "$FRONTEND_REPO:latest"
+                                    # tb-w8d: tag :latest INSIDE the loop,
+                                    # immediately before pushing it. Build
+                                    # #137 failed with "tag does not exist:
+                                    # …gain-web-api:latest" ~30s after a
+                                    # bulk docker tag at the top of this
+                                    # block, while concurrent activity on
+                                    # the shared daemon (visible as 'Port
+                                    # 8787 is already in use' in the log)
+                                    # had untagged :latest in between.
+                                    # Re-tagging right before push closes
+                                    # the race window.
                                     for repo in "$BACKEND_REPO" "$FRONTEND_REPO"; do
                                         docker push "$repo:$BUILD_NUMBER"
                                         docker push "$repo:$GIT_SHORT"
+                                        docker tag "$repo:$BUILD_NUMBER" "$repo:latest"
                                         docker push "$repo:latest"
                                     done
                                 '''
