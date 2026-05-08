@@ -547,8 +547,8 @@ def test_unlimited_user_bypasses_single_allele_quota(
     user.save()
     quota = UserQuota(
         user=user,
-        daily_allele_queries=0,
-        monthly_allele_queries=0,
+        daily_variants=0,
+        monthly_variants=0,
         daily_attributes=0,
         monthly_attributes=0,
     )
@@ -578,8 +578,8 @@ def test_unlimited_user_quota_not_deducted_after_single_allele_query(
     quota.reset_daily()
     quota.reset_monthly()
 
-    before_daily = quota.daily_allele_queries
-    before_monthly = quota.monthly_allele_queries
+    before_daily = quota.daily_variants
+    before_monthly = quota.monthly_variants
 
     user_client.post(
         "/api/single_allele/annotate",
@@ -593,8 +593,8 @@ def test_unlimited_user_quota_not_deducted_after_single_allele_query(
     )
 
     quota.refresh_from_db()
-    assert quota.daily_allele_queries == before_daily
-    assert quota.monthly_allele_queries == before_monthly
+    assert quota.daily_variants == before_daily
+    assert quota.monthly_variants == before_monthly
 
 
 def test_non_unlimited_user_is_blocked_by_quota(
@@ -605,8 +605,8 @@ def test_non_unlimited_user_is_blocked_by_quota(
     user.save()
     quota = UserQuota(
         user=user,
-        daily_allele_queries=0,
-        monthly_allele_queries=0,
+        daily_variants=0,
+        monthly_variants=0,
         daily_attributes=0,
         monthly_attributes=0,
     )

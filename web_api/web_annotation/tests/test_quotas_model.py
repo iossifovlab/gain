@@ -31,8 +31,6 @@ def test_anonymous_quota_max_values(
 ) -> None:
     assert anonymous_quota.get_daily_job_max() == 10
     assert anonymous_quota.get_monthly_job_max() == 100
-    assert anonymous_quota.get_daily_allele_query_max() == 100
-    assert anonymous_quota.get_monthly_allele_query_max() == 1_000
     assert anonymous_quota.get_daily_variant_max() == 100_000
     assert anonymous_quota.get_monthly_variant_max() == 1_000_000
     assert anonymous_quota.get_daily_attribute_max() == 1_000_000
@@ -42,8 +40,6 @@ def test_anonymous_quota_max_values(
 def test_user_quota_max_values(user_quota: UserQuota) -> None:
     assert user_quota.get_daily_job_max() == 100
     assert user_quota.get_monthly_job_max() == 1_000
-    assert user_quota.get_daily_allele_query_max() == 1_000
-    assert user_quota.get_monthly_allele_query_max() == 10_000
     assert user_quota.get_daily_variant_max() == 1_000_000
     assert user_quota.get_monthly_variant_max() == 10_000_000
     assert user_quota.get_daily_attribute_max() == 10_000_000
@@ -54,7 +50,6 @@ def test_reset_daily_sets_all_fields(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
     anonymous_quota.daily_jobs = 0
-    anonymous_quota.daily_allele_queries = 0
     anonymous_quota.daily_variants = 0
     anonymous_quota.daily_attributes = 0
     anonymous_quota.save()
@@ -63,8 +58,6 @@ def test_reset_daily_sets_all_fields(
 
     assert anonymous_quota.daily_jobs == \
         anonymous_quota.get_daily_job_max()
-    assert anonymous_quota.daily_allele_queries == \
-        anonymous_quota.get_daily_allele_query_max()
     assert anonymous_quota.daily_variants == \
         anonymous_quota.get_daily_variant_max()
     assert anonymous_quota.daily_attributes == \
@@ -75,7 +68,6 @@ def test_reset_monthly_sets_all_fields(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
     anonymous_quota.monthly_jobs = 0
-    anonymous_quota.monthly_allele_queries = 0
     anonymous_quota.monthly_variants = 0
     anonymous_quota.monthly_attributes = 0
     anonymous_quota.save()
@@ -84,8 +76,6 @@ def test_reset_monthly_sets_all_fields(
 
     assert anonymous_quota.monthly_jobs == \
         anonymous_quota.get_monthly_job_max()
-    assert anonymous_quota.monthly_allele_queries == \
-        anonymous_quota.get_monthly_allele_query_max()
     assert anonymous_quota.monthly_variants == \
         anonymous_quota.get_monthly_variant_max()
     assert anonymous_quota.monthly_attributes == \
@@ -154,61 +144,33 @@ def test_check_job_quota_true_with_extra_even_when_daily_exhausted(
     assert anonymous_quota.check_job_quota() is True
 
 
-def test_check_single_allele_quota_true_when_available(
-    anonymous_quota: AnonymousUserQuota,
-) -> None:
-    assert anonymous_quota.check_single_allele_quota() is True
-
-
-def test_check_single_allele_quota_false_when_daily_exhausted(
-    anonymous_quota: AnonymousUserQuota,
-) -> None:
-    anonymous_quota.daily_allele_queries = 0
-    assert anonymous_quota.check_single_allele_quota() is False
-
-
-def test_check_single_allele_quota_false_when_monthly_exhausted(
-    anonymous_quota: AnonymousUserQuota,
-) -> None:
-    anonymous_quota.monthly_allele_queries = 0
-    assert anonymous_quota.check_single_allele_quota() is False
-
-
-def test_check_single_allele_quota_true_with_extra_even_when_exhausted(
-    anonymous_quota: AnonymousUserQuota,
-) -> None:
-    anonymous_quota.daily_allele_queries = 0
-    anonymous_quota.extra_allele_queries = 1
-    assert anonymous_quota.check_single_allele_quota() is True
-
-
 def test_single_allele_allowed_true_when_quota_available(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
     assert anonymous_quota.single_allele_allowed(attributes_count=10) is True
 
 
-def test_single_allele_allowed_false_when_allele_quota_exhausted(
-    anonymous_quota: AnonymousUserQuota,
-) -> None:
-    anonymous_quota.daily_allele_queries = 0
-    assert anonymous_quota.single_allele_allowed(attributes_count=10) is False
-
-
-def test_single_allele_allowed_true_with_extra_allele_quota(
-    anonymous_quota: AnonymousUserQuota,
-) -> None:
-    anonymous_quota.daily_allele_queries = 0
-    anonymous_quota.extra_allele_queries = 1
-    assert anonymous_quota.single_allele_allowed(attributes_count=10) is True
-
-
-def test_single_allele_allowed_does_not_check_variant_quota(
+def test_single_allele_allowed_false_when_variant_quota_exhausted(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
     anonymous_quota.daily_variants = 0
-    anonymous_quota.monthly_variants = 0
+    assert anonymous_quota.single_allele_allowed(attributes_count=10) is False
+
+
+def test_single_allele_allowed_true_with_extra_variant_quota(
+    anonymous_quota: AnonymousUserQuota,
+) -> None:
+    anonymous_quota.daily_variants = 0
+    anonymous_quota.extra_variants = 1
     assert anonymous_quota.single_allele_allowed(attributes_count=10) is True
+
+
+def test_single_allele_allowed_false_when_attribute_quota_exhausted(
+    anonymous_quota: AnonymousUserQuota,
+) -> None:
+    anonymous_quota.daily_attributes = 0
+    anonymous_quota.monthly_attributes = 0
+    assert anonymous_quota.single_allele_allowed(attributes_count=10) is False
 
 
 def test_job_complete_decrements_job_counts(
@@ -357,16 +319,16 @@ def test_job_complete_persisted(anonymous_quota: AnonymousUserQuota) -> None:
         anonymous_quota.get_daily_attribute_max() - 2_000
 
 
-def test_single_allele_query_complete_decrements_allele_counts(
+def test_single_allele_query_complete_decrements_variant_counts(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
-    before_daily = anonymous_quota.daily_allele_queries
-    before_monthly = anonymous_quota.monthly_allele_queries
+    before_daily = anonymous_quota.daily_variants
+    before_monthly = anonymous_quota.monthly_variants
 
     anonymous_quota.single_allele_query_complete(attributes_count=10)
 
-    assert anonymous_quota.daily_allele_queries == before_daily - 1
-    assert anonymous_quota.monthly_allele_queries == before_monthly - 1
+    assert anonymous_quota.daily_variants == before_daily - 1
+    assert anonymous_quota.monthly_variants == before_monthly - 1
 
 
 def test_single_allele_query_complete_decrements_attribute_counts(
@@ -385,12 +347,12 @@ def test_single_allele_query_complete_decrements_attribute_counts(
 def test_single_allele_query_complete_does_not_consume_extras_when_sufficient(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
-    before_extra_allele = anonymous_quota.extra_allele_queries
+    before_extra_variants = anonymous_quota.extra_variants
     before_extra_attributes = anonymous_quota.extra_attributes
 
     anonymous_quota.single_allele_query_complete(attributes_count=10)
 
-    assert anonymous_quota.extra_allele_queries == before_extra_allele
+    assert anonymous_quota.extra_variants == before_extra_variants
     assert anonymous_quota.extra_attributes == before_extra_attributes
 
 
@@ -438,12 +400,12 @@ def test_single_allele_query_complete_zeros_all_extras_when_extra_exhausted(
     anonymous_quota.daily_attributes = 0
     anonymous_quota.monthly_attributes = 0
     anonymous_quota.extra_attributes = 10
-    anonymous_quota.extra_allele_queries = 5
+    anonymous_quota.extra_variants = 5
 
     anonymous_quota.single_allele_query_complete(attributes_count=10)
 
     assert anonymous_quota.extra_attributes == 0
-    assert anonymous_quota.extra_allele_queries == 0
+    assert anonymous_quota.extra_variants == 0
 
 
 def test_single_allele_query_complete_does_not_zero_extras_when_partial_consumption(  # noqa: E501
@@ -452,24 +414,12 @@ def test_single_allele_query_complete_does_not_zero_extras_when_partial_consumpt
     anonymous_quota.daily_attributes = 0
     anonymous_quota.monthly_attributes = 0
     anonymous_quota.extra_attributes = 50
-    anonymous_quota.extra_allele_queries = 5
+    anonymous_quota.extra_variants = 5
 
     anonymous_quota.single_allele_query_complete(attributes_count=10)
 
     assert anonymous_quota.extra_attributes == 40
-    assert anonymous_quota.extra_allele_queries == 5
-
-
-def test_single_allele_query_complete_does_not_touch_variant_counts(
-    anonymous_quota: AnonymousUserQuota,
-) -> None:
-    before_daily = anonymous_quota.daily_variants
-    before_monthly = anonymous_quota.monthly_variants
-
-    anonymous_quota.single_allele_query_complete(attributes_count=10)
-
-    assert anonymous_quota.daily_variants == before_daily
-    assert anonymous_quota.monthly_variants == before_monthly
+    assert anonymous_quota.extra_variants == 5
 
 
 def test_single_allele_query_complete_persisted(
@@ -478,8 +428,8 @@ def test_single_allele_query_complete_persisted(
     anonymous_quota.single_allele_query_complete(attributes_count=10)
 
     refreshed = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
-    assert refreshed.daily_allele_queries == \
-        anonymous_quota.get_daily_allele_query_max() - 1
+    assert refreshed.daily_variants == \
+        anonymous_quota.get_daily_variant_max() - 1
     assert refreshed.daily_attributes == \
         anonymous_quota.get_daily_attribute_max() - 10
 
@@ -514,15 +464,6 @@ def test_add_units_increments_extra_jobs(
     )
 
 
-def test_add_units_increments_extra_allele_queries(
-    anonymous_quota: AnonymousUserQuota,
-) -> None:
-    before = anonymous_quota.extra_allele_queries
-    anonymous_quota.add_units()
-    assert anonymous_quota.extra_allele_queries == \
-        before + anonymous_quota.get_monthly_allele_query_max()
-
-
 def test_add_units_increments_extra_variants(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
@@ -545,13 +486,10 @@ def test_add_units_clamps_negative_extras_before_adding(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
     anonymous_quota.extra_jobs = -5
-    anonymous_quota.extra_allele_queries = -10
     anonymous_quota.extra_variants = -100
     anonymous_quota.extra_attributes = -1_000
     anonymous_quota.add_units()
     assert anonymous_quota.extra_jobs == anonymous_quota.get_monthly_job_max()
-    assert anonymous_quota.extra_allele_queries == \
-        anonymous_quota.get_monthly_allele_query_max()
     assert anonymous_quota.extra_variants == (
         anonymous_quota.get_monthly_variant_max()
     )
@@ -575,8 +513,6 @@ def test_add_units_persisted(anonymous_quota: AnonymousUserQuota) -> None:
     anonymous_quota.add_units()
     refreshed = AnonymousUserQuota.objects.get(pk=anonymous_quota.pk)
     assert refreshed.extra_jobs == anonymous_quota.get_monthly_job_max()
-    assert refreshed.extra_allele_queries == \
-        anonymous_quota.get_monthly_allele_query_max()
     assert refreshed.extra_variants == anonymous_quota.get_monthly_variant_max()
     assert refreshed.extra_attributes == (
         anonymous_quota.get_monthly_attribute_max()
@@ -606,8 +542,6 @@ def test_user_get_quota_initializes_values() -> None:
     assert quota.monthly_variants == quota.get_monthly_variant_max()
     assert quota.daily_attributes == quota.get_daily_attribute_max()
     assert quota.monthly_attributes == quota.get_monthly_attribute_max()
-    assert quota.daily_allele_queries == quota.get_daily_allele_query_max()
-    assert quota.monthly_allele_queries == quota.get_monthly_allele_query_max()
 
 
 def test_user_get_quota_returns_existing(user_quota: UserQuota) -> None:
@@ -650,8 +584,6 @@ def test_anonymous_user_get_quota_initializes_values() -> None:
     assert quota.monthly_variants == quota.get_monthly_variant_max()
     assert quota.daily_attributes == quota.get_daily_attribute_max()
     assert quota.monthly_attributes == quota.get_monthly_attribute_max()
-    assert quota.daily_allele_queries == quota.get_daily_allele_query_max()
-    assert quota.monthly_allele_queries == quota.get_monthly_allele_query_max()
 
 
 def test_anonymous_user_get_quota_returns_existing(

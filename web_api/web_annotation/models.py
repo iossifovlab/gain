@@ -768,9 +768,6 @@ class Quota(models.Model):
     daily_jobs = models.IntegerField(default=0)
     monthly_jobs = models.IntegerField(default=0)
 
-    daily_allele_queries = models.IntegerField(default=0)
-    monthly_allele_queries = models.IntegerField(default=0)
-
     daily_variants = models.IntegerField(default=0)
     monthly_variants = models.IntegerField(default=0)
 
@@ -781,7 +778,6 @@ class Quota(models.Model):
     last_monthly_reset = models.DateTimeField(default=timezone.now)
 
     extra_jobs = models.IntegerField(default=0)
-    extra_allele_queries = models.IntegerField(default=0)
     extra_variants = models.IntegerField(default=0)
     extra_attributes = models.IntegerField(default=0)
 
@@ -801,14 +797,6 @@ class Quota(models.Model):
     def get_monthly_job_max(self) -> int:
         """Get the maximum number of monthly jobs allowed."""
         return cast(int, self._quota_config()["monthly_jobs"])
-
-    def get_daily_allele_query_max(self) -> int:
-        """Get the maximum number of daily allele queries allowed."""
-        return cast(int, self._quota_config()["daily_allele_queries"])
-
-    def get_monthly_allele_query_max(self) -> int:
-        """Get the maximum number of monthly allele queries allowed."""
-        return cast(int, self._quota_config()["monthly_allele_queries"])
 
     def get_daily_variant_max(self) -> int:
         """Get the maximum number of daily variants allowed."""
@@ -830,7 +818,6 @@ class Quota(models.Model):
         """Reset all daily quota counts."""
         now = timezone.now()
         self.daily_jobs = self.get_daily_job_max()
-        self.daily_allele_queries = self.get_daily_allele_query_max()
         self.daily_variants = self.get_daily_variant_max()
         self.daily_attributes = self.get_daily_attribute_max()
         self.last_daily_reset = now
@@ -840,7 +827,6 @@ class Quota(models.Model):
         """Reset all monthly quota counts."""
         now = timezone.now()
         self.monthly_jobs = self.get_monthly_job_max()
-        self.monthly_allele_queries = self.get_monthly_allele_query_max()
         self.monthly_variants = self.get_monthly_variant_max()
         self.monthly_attributes = self.get_monthly_attribute_max()
         self.last_monthly_reset = now
@@ -851,9 +837,6 @@ class Quota(models.Model):
         self.extra_jobs = max(self.extra_jobs, 0)
         self.extra_jobs += self.get_monthly_job_max()
 
-        self.extra_allele_queries = max(self.extra_allele_queries, 0)
-        self.extra_allele_queries += self.get_monthly_allele_query_max()
-
         self.extra_variants = max(self.extra_variants, 0)
         self.extra_variants += self.get_monthly_variant_max()
 
@@ -861,15 +844,6 @@ class Quota(models.Model):
         self.extra_attributes += self.get_monthly_attribute_max()
 
         self.save()
-
-    def check_single_allele_quota(self) -> bool:
-        """Check if the user has quota for a single allele query."""
-        if self.extra_allele_queries > 0:
-            return True
-        return not (
-            self.daily_allele_queries <= 0
-            or self.monthly_allele_queries <= 0
-        )
 
     def check_job_quota(self) -> bool:
         """Check if the user has quota for a job."""
@@ -906,7 +880,7 @@ class Quota(models.Model):
 
     def single_allele_allowed(self, attributes_count: int) -> bool:
         """Check if a single query is allowed."""
-        return self.check_single_allele_quota() \
+        return self.check_variant_quota(1) \
             and self.check_attribute_quota(attributes_count)
 
     def job_allowed(self, variants_count: int, attributes_count: int) -> bool:
@@ -935,7 +909,6 @@ class Quota(models.Model):
         setattr(self, extra_field, new_extra)
         if new_extra <= 0 < extra_deduction:
             self.extra_jobs = 0
-            self.extra_allele_queries = 0
             self.extra_variants = 0
             self.extra_attributes = 0
 
@@ -957,8 +930,8 @@ class Quota(models.Model):
     def single_allele_query_complete(self, attributes_count: int) -> None:
         """Update quotas after a single allele query is completed."""
         self._deduct(
-            "daily_allele_queries", "monthly_allele_queries",
-            "extra_allele_queries", 1,
+            "daily_variants", "monthly_variants",
+            "extra_variants", 1,
         )
         self._deduct(
             "daily_attributes", "monthly_attributes",

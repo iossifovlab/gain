@@ -41,17 +41,6 @@ from django.test import Client
                 },
                 "extra": 0,
             },
-            "single_variant_queries": {
-                "daily": {
-                    "current": 100,
-                    "max": 100,
-                },
-                "monthly": {
-                    "current": 1000,
-                    "max": 1000,
-                },
-                "extra": 0,
-            },
         },
     ),
     (
@@ -86,17 +75,6 @@ from django.test import Client
                 "monthly": {
                     "current": 1000,
                     "max": 1000,
-                },
-                "extra": 0,
-            },
-            "single_variant_queries": {
-                "daily": {
-                    "current": 1000,
-                    "max": 1000,
-                },
-                "monthly": {
-                    "current": 10000,
-                    "max": 10000,
                 },
                 "extra": 0,
             },
