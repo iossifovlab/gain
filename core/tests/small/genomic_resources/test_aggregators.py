@@ -2,6 +2,7 @@
 
 import numpy
 from gain.genomic_resources.aggregators import (
+    BoolAggregator,
     ConcatAggregator,
     CountAggregator,
     CounterAggregator,
@@ -189,6 +190,32 @@ def test_dict_aggregator() -> None:
         "third": 3,
         "fourth": 4,
     }
+
+
+def test_bool_aggregator_with_values() -> None:
+    agg = BoolAggregator()
+    agg.add("g1")
+    agg.add("g2")
+    assert agg.get_final() is True
+
+
+def test_bool_aggregator_empty() -> None:
+    agg = BoolAggregator()
+    assert agg.get_final() is False
+
+
+def test_bool_aggregator_none_values() -> None:
+    agg = BoolAggregator()
+    agg.add(None)
+    agg.add(None)
+    assert agg.get_final() is False
+
+
+def test_bool_aggregator_mixed() -> None:
+    agg = BoolAggregator()
+    agg.add(None)
+    agg.add("g1")
+    assert agg.get_final() is True
 
 
 def test_counter_aggregator() -> None:
