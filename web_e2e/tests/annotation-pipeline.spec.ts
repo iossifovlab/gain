@@ -560,8 +560,8 @@ test.describe('Pipeline confirmation popup tests', () => {
 
     await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
 
-    await expect(page.locator('#change-confirmation-popover')).toBeVisible();
-    await expect(page.locator('#change-confirmation-popover p')).toHaveText(
+    await expect(page.locator('#create-confirmation-popover')).toBeVisible();
+    await expect(page.locator('#create-confirmation-popover p')).toHaveText(
       'Are you sure? You are going to lose your changes.'
     );
     await expect(page.locator('#confirm-change')).toBeVisible();
@@ -572,11 +572,11 @@ test.describe('Pipeline confirmation popup tests', () => {
     await setupTempPipeline(page);
 
     await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
-    await expect(page.locator('#change-confirmation-popover')).toBeVisible();
+    await expect(page.locator('#create-confirmation-popover')).toBeVisible();
 
     await page.locator('#confirm-change').click();
 
-    await expect(page.locator('#change-confirmation-popover')).not.toBeVisible();
+    await expect(page.locator('#create-confirmation-popover')).not.toBeVisible();
     await expect(page.locator('#pipelines-input')).toBeEmpty();
     await expect(page.locator('.monaco-editor').nth(0)).toBeEmpty();
   });
@@ -585,11 +585,11 @@ test.describe('Pipeline confirmation popup tests', () => {
     await setupTempPipeline(page);
 
     await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
-    await expect(page.locator('#change-confirmation-popover')).toBeVisible();
+    await expect(page.locator('#create-confirmation-popover')).toBeVisible();
 
     await page.locator('#cancel-change').click();
 
-    await expect(page.locator('#change-confirmation-popover')).not.toBeVisible();
+    await expect(page.locator('#create-confirmation-popover')).not.toBeVisible();
     await expect(page.locator('.monaco-editor').nth(0)).not.toBeEmpty();
   });
 

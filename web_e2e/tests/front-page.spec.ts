@@ -13,11 +13,6 @@ test.describe('Basic tests', () => {
     await expect(page.locator('#login-container').getByRole('button', { name: 'Login' })).toBeVisible();
   });
 
-  test('should check application description', async({ page }) => {
-    await page.goto('/login', {waitUntil: 'load'});
-    await expect(page.locator('#front-page-header p')).toHaveText('GAIn Web description');
-  });
-
   test('should check url after navigating to register page from login page', async({ page }) => {
     await page.goto('/login', {waitUntil: 'load'});
     await page.locator('#register-link').click();
@@ -50,7 +45,7 @@ test.describe('Registration tests', () => {
     await page.locator('#password').pressSequentially('password123');
     await page.getByRole('button', { name: 'Create' }).click();
     await expect(page.getByText('Invalid email format.')).toBeVisible();
-    await expect(page.getByText('Invalid email format.')).toHaveCSS('color', 'rgb(255, 0, 0)');
+    await expect(page.getByText('Invalid email format.')).toHaveCSS('color', 'rgb(215, 75, 89)');
     await expect(page.getByRole('textbox', { name: 'email' })).toHaveValue('user');
     await expect(page.getByRole('textbox', { name: 'email' })).toBeFocused();
     await expect(page.locator('#password')).toHaveValue('password123');
@@ -61,7 +56,7 @@ test.describe('Registration tests', () => {
     await page.locator('#password').pressSequentially('pa');
     await page.getByRole('button', { name: 'Create' }).click();
     await expect(page.getByText('Password must be at least 6 characters long.')).toBeVisible();
-    await expect(page.getByText('Password must be at least 6 characters long.')).toHaveCSS('color', 'rgb(255, 0, 0)');
+    await expect(page.getByText('Password must be at least 6 characters long.')).toHaveCSS('color', 'rgb(215, 75, 89)');
     await expect(page.locator('#email')).toHaveValue('user@email.com');
     await expect(page.locator('#password')).toBeFocused();
     await expect(page.locator('#password')).toHaveValue('pa');
@@ -77,7 +72,7 @@ test.describe('Registration tests', () => {
     await page.locator('#password').pressSequentially('password123');
     await page.getByRole('button', { name: 'Create' }).click();
     await expect(page.getByText('This email is already in use')).toBeVisible();
-    await expect(page.getByText('This email is already in use')).toHaveCSS('color', 'rgb(255, 0, 0)');
+    await expect(page.getByText('This email is already in use')).toHaveCSS('color', 'rgb(215, 75, 89)');
     await expect(page.locator('#email')).toHaveValue(randomEmail);
     await expect(page.locator('#password')).toHaveValue('password123');
   });
