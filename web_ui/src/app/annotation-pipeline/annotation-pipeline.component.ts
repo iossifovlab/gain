@@ -213,7 +213,17 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
         this.pipelineStateService.pipelines.set(pipelines);
         this.pipelinesLoaded = true;
         if (defaultPipelineId) {
-          this.onPipelineClick(this.pipelines.find(p => p.id === defaultPipelineId));
+          // Post-saveAs path. onPipelineClick would reset
+          // currentPipelineText to the GET-response's stale (pre-edit)
+          // content, silently dropping any user edits that landed in
+          // the gap between the save POST returning and this GET
+          // response (tb-348). Select without resetting the buffer so
+          // displayUnsavedPipelineIndication picks up edits as a real
+          // diff and adds the * indicator.
+          const pipeline = this.pipelines.find(p => p.id === defaultPipelineId);
+          if (pipeline) {
+            this.selectPipelineAfterSave(pipeline);
+          }
         } else {
           this.onPipelineClick(this.pipelines[0]);
         }
@@ -221,6 +231,18 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
       error: () => {
         this.disableActions = false;
       }});
+  }
+
+  private selectPipelineAfterSave(pipeline: Pipeline): void {
+    this.configError = '';
+    this.pipelineStateService.isConfigValid.set(true);
+    this.selectedPipeline = pipeline;
+    this.pipelineStateService.selectedPipelineId.set(pipeline.id);
+    this.dropdownControl.setValue(pipeline.name);
+    this.displayUnsavedPipelineIndication();
+    this.clearTemporaryPipeline();
+    this.disableActions = false;
+    this.getPipelineInfo();
   }
 
   private restoreState(): void {

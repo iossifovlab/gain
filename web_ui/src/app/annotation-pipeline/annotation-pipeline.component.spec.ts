@@ -432,11 +432,13 @@ describe('AnnotationPipelineComponent', () => {
   });
 
   it('should save pipeline and trigger pipelines query if new name is set', () => {
+    // The post-save GET response carries the just-saved content (server's
+    // view of pipeline 4 matches what the user typed).
     const updatedMockPipelines = [
       new Pipeline('1', 'id1', 'content1', 'default', 'loaded'),
       new Pipeline('2', 'id2', 'content2', 'default', 'loaded'),
       new Pipeline('3', 'id3', 'content3', 'default', 'loaded'),
-      new Pipeline('4', 'pipeline-name', 'content', 'default', 'loaded'),
+      new Pipeline('4', 'pipeline-name', 'mock config', 'user', 'loaded'),
     ];
 
     jest.spyOn(mockMatRef, 'open').mockReturnValueOnce(mockMatDialogRef);
@@ -444,15 +446,17 @@ describe('AnnotationPipelineComponent', () => {
     const savePipelineSpy = jest.spyOn(annotationPipelineServiceMock, 'savePipeline').mockReturnValueOnce(of('4'));
     const getAnnotationPipelinesSpy = jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
       .mockReturnValueOnce(of(updatedMockPipelines));
-    const onPipelineClickSpy = jest.spyOn(component, 'onPipelineClick');
 
     component.currentPipelineText = 'mock config';
 
     component.saveAs();
     expect(savePipelineSpy).toHaveBeenCalledWith('', 'pipeline-name', 'mock config');
     expect(getAnnotationPipelinesSpy).toHaveBeenCalledWith();
-    expect(onPipelineClickSpy).toHaveBeenCalledWith(new Pipeline('4', 'pipeline-name', 'content', 'default', 'loaded'));
     expect(component.selectedPipeline.id).toBe('4');
+    expect(component.selectedPipeline.name).toBe('pipeline-name');
+    // No asterisk: currentPipelineText matches the just-saved pipeline.
+    expect(component.dropdownControl.value).toBe('pipeline-name');
+    expect(component.isPipelineChanged()).toBe(false);
   });
 
   it('should not save pipeline and trigger pipelines query if new pipeline has no name', () => {
@@ -460,14 +464,12 @@ describe('AnnotationPipelineComponent', () => {
     jest.spyOn(mockMatDialogRef, 'afterClosed').mockReturnValueOnce(of(null));
     const savePipelineSpy = jest.spyOn(annotationPipelineServiceMock, 'savePipeline');
     const getAnnotationPipelinesSpy = jest.spyOn(jobsServiceMock, 'getAnnotationPipelines');
-    const onPipelineClickSpy = jest.spyOn(component, 'onPipelineClick');
 
     component.currentPipelineText = 'mock config';
 
     component.saveAs();
     expect(savePipelineSpy).not.toHaveBeenCalledWith();
     expect(getAnnotationPipelinesSpy).not.toHaveBeenCalledTimes(2);
-    expect(onPipelineClickSpy).not.toHaveBeenCalledWith();
     expect(component.selectedPipeline.id).toBe('id1');
   });
 
@@ -492,14 +494,61 @@ describe('AnnotationPipelineComponent', () => {
     const savePipelineSpy = jest.spyOn(annotationPipelineServiceMock, 'savePipeline').mockReturnValueOnce(of('id3'));
     jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
       .mockReturnValueOnce(of(updatedMockPipelines));
-    const selectNewPipelineSpy = jest.spyOn(component, 'onPipelineClick');
 
     component.selectedPipeline = mockPipelines[2];
     component.currentPipelineText = 'new content';
 
     component.save();
     expect(savePipelineSpy).toHaveBeenCalledWith('id3', 'name3', 'new content');
-    expect(selectNewPipelineSpy).toHaveBeenCalledWith(new Pipeline('id3', 'name3', 'new content', 'user', 'loaded'));
+    expect(component.selectedPipeline.id).toBe('id3');
+    expect(component.selectedPipeline.name).toBe('name3');
+  });
+
+  it('saveAs preserves a user edit that lands during the post-save pipelines refresh (tb-348)', () => {
+    // Regression test for tb-348 / H8 race: after savePipeline returns, the
+    // post-save GET /api/pipelines is in flight. If the user edits the
+    // editor before that GET responds, the OLD onPipelineClick path would
+    // reset currentPipelineText to the GET-response's pre-edit content,
+    // dropping the user's edit (the * indicator never appears).
+    // selectPipelineAfterSave deliberately preserves currentPipelineText.
+    jest.spyOn(mockMatRef, 'open').mockReturnValueOnce(mockMatDialogRef);
+    jest.spyOn(mockMatDialogRef, 'afterClosed').mockReturnValueOnce(of('My Pipeline'));
+    jest.spyOn(annotationPipelineServiceMock, 'savePipeline').mockReturnValueOnce(of('4'));
+
+    // Hold the post-save GET response so we can simulate the user editing
+    // BEFORE the GET completes.
+    const pipelinesAfterSave = new Subject<Pipeline[]>();
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+      .mockReturnValueOnce(pipelinesAfterSave.asObservable());
+
+    component.currentPipelineText = 'user typed yaml';
+    component.saveAs();
+
+    // savePipeline has resolved with id '4'; getAnnotationPipelines is in
+    // flight. Now the user edits the editor.
+    component.currentPipelineText = 'user typed yaml + edited';
+
+    // The GET finally resolves. Server's view of pipeline 4 is the
+    // pre-edit content (because the edit happened AFTER the save POST).
+    pipelinesAfterSave.next([
+      new Pipeline('id1', 'name1', 'content1', 'default', 'loaded'),
+      new Pipeline('id2', 'name2', 'content2', 'default', 'loaded'),
+      new Pipeline('id3', 'name3', 'content3', 'user', 'loaded'),
+      new Pipeline('4', 'My Pipeline', 'user typed yaml', 'user', 'loaded'),
+    ]);
+    pipelinesAfterSave.complete();
+
+    // The user's edit must survive — currentPipelineText is NOT reset to
+    // the server's pre-edit content.
+    expect(component.currentPipelineText).toBe('user typed yaml + edited');
+    // The new pipeline is selected and named correctly.
+    expect(component.selectedPipeline.id).toBe('4');
+    expect(component.selectedPipeline.name).toBe('My Pipeline');
+    // isPipelineChanged() now correctly reflects that the editor's text
+    // differs from the saved pipeline's content.
+    expect(component.isPipelineChanged()).toBe(true);
+    // displayUnsavedPipelineIndication adds the * suffix to the dropdown.
+    expect(component.dropdownControl.value).toBe('My Pipeline *');
   });
 
   it('should save pipeline and not update pipeline list when response is invalid', () => {
