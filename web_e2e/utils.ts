@@ -27,7 +27,11 @@ export async function registerUser(page: Page, email: string, password: string):
   const href = await getLinkInEmail(page, email, 'GPFWA: Registration validation');
   await page.goto(href, {waitUntil: 'load'});
 
-  await expect(page.locator('app-login')).toBeVisible();
+  // 30s timeout (vs default 5s): page just navigated to the email-confirmation
+  // href, which redirects to /login; the SPA needs to bootstrap from cold and
+  // render <app-login>. Under 4-worker CI contention this can exceed 5s. Match
+  // Playwright's default 30s actionability budget. Bead tb-1am.
+  await expect(page.locator('app-login')).toBeVisible({timeout: 30000});
 }
 
 export async function getLinkInEmail(page: Page, email: string, subject: string): Promise<string> {
