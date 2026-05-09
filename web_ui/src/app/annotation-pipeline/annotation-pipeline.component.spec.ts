@@ -504,6 +504,60 @@ describe('AnnotationPipelineComponent', () => {
     expect(component.selectedPipeline.name).toBe('name3');
   });
 
+  it('initial-load preserves user-typed text that arrives during a slow GET /api/pipelines (tb-l7c)', () => {
+    // Regression test for tb-l7c (CI gain-web-e2e #158). When the user
+    // navigates mid-flight before the first getPipelines GET returns,
+    // the new component's ngOnInit fires a SECOND GET. If the user
+    // types into the editor before the late GET response lands, the
+    // OLD onPipelineClick(pipelines[0]) call would reset
+    // currentPipelineText to the default pipeline's content — silently
+    // dropping the user's input so isPipelineChanged() returns false
+    // and the autoSave that customDefaultPipeline waits for never
+    // fires.
+    pipelineStateService.pipelines.set([]);
+    component.pipelines = [];
+    component.selectedPipeline = null;
+    component.currentPipelineText = '';
+
+    const initialPipelines = new Subject<Pipeline[]>();
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+      .mockReturnValueOnce(initialPipelines.asObservable());
+
+    component['getPipelines']();
+
+    // The GET is in flight. The user clicks "draft New pipeline" then
+    // types yaml — currentPipelineText now reflects the typed text.
+    component.currentPipelineText = 'user-typed effect_annotator yaml';
+
+    // Late GET response lands.
+    initialPipelines.next(mockPipelines);
+    initialPipelines.complete();
+
+    // The typed text must survive — not clobbered by mockPipelines[0].content.
+    expect(component.currentPipelineText).toBe('user-typed effect_annotator yaml');
+    // The first pipeline is selected for dropdown / state purposes.
+    expect(component.selectedPipeline.id).toBe('id1');
+    // isPipelineChanged() reflects the divergence.
+    expect(component.isPipelineChanged()).toBe(true);
+  });
+
+  it('initial-load with empty buffer falls back to onPipelineClick semantics (tb-l7c)', () => {
+    // Counterpart to the above: a genuine fresh-load (currentPipelineText
+    // empty) should still adopt the first pipeline's content via
+    // onPipelineClick — only the user-has-typed path goes through
+    // selectPipelineAfterSave.
+    pipelineStateService.pipelines.set([]);
+    component.pipelines = [];
+    component.selectedPipeline = null;
+    component.currentPipelineText = '';
+
+    component['getPipelines']();
+
+    expect(component.currentPipelineText).toBe('content1');
+    expect(component.selectedPipeline.id).toBe('id1');
+    expect(component.isPipelineChanged()).toBe(false);
+  });
+
   it('saveAs preserves a user edit that lands during the post-save pipelines refresh (tb-348)', () => {
     // Regression test for tb-348 / H8 race: after savePipeline returns, the
     // post-save GET /api/pipelines is in flight. If the user edits the

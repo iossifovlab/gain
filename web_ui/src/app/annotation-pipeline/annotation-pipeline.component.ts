@@ -225,7 +225,23 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
             this.selectPipelineAfterSave(pipeline);
           }
         } else {
-          this.onPipelineClick(this.pipelines[0]);
+          // Initial-load path. If the user navigated mid-flight (e.g.
+          // clicked Annotation Jobs while the first GET /api/pipelines
+          // was still pending), a SECOND GET fires from the new
+          // component's ngOnInit and its late response can clobber any
+          // text the user typed in the meantime — same race family as
+          // tb-348 but triggered by navigation, not save (tb-l7c, CI
+          // gain-web-e2e #158). Preserve the buffer when it carries
+          // user content that differs from the default pipeline's
+          // saved content.
+          const firstPipeline = this.pipelines[0];
+          const userHasTyped = this.currentPipelineText.trim() !== ''
+            && this.currentPipelineText.trim() !== firstPipeline?.content.trim();
+          if (userHasTyped && firstPipeline) {
+            this.selectPipelineAfterSave(firstPipeline);
+          } else {
+            this.onPipelineClick(firstPipeline);
+          }
         }
       },
       error: () => {
