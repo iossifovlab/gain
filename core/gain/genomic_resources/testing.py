@@ -11,6 +11,7 @@ import tempfile
 import textwrap
 from collections.abc import Generator
 from typing import Any, cast
+from urllib.parse import urlparse
 
 import pyBigWig
 import pysam
@@ -403,6 +404,10 @@ def build_http_test_protocol(
 
 def s3_test_server_endpoint() -> str:
     host = os.environ.get("MINIO_HOST", "localhost:29000")
+    # Accept hostname-only MINIO_HOST (default to MinIO's standard 9000)
+    # as well as host:port.
+    if urlparse(f"//{host}").port is None:
+        host = f"{host}:9000"
     return f"http://{host}"
 
 
