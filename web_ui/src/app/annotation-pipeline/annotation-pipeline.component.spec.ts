@@ -605,6 +605,37 @@ describe('AnnotationPipelineComponent', () => {
     expect(component.dropdownControl.value).toBe('My Pipeline *');
   });
 
+  it('delete clears the editor buffer so the default pipeline takes over without a stray * indicator', () => {
+    // Regression test for the post-delete asterisk drift seen in
+    // gain-web-e2e #163 / #164 (annotation-pipeline.spec.ts:180 'should
+    // delete user pipeline'). delete() must reset currentPipelineText
+    // before getPipelines() runs — otherwise the no-arg branch's
+    // userHasTyped heuristic (tb-l7c) sees the deleted pipeline's content
+    // as user-typed, routes through selectPipelineAfterSave +
+    // displayUnsavedPipelineIndication, and appends ' *' to the default
+    // pipeline that takes the deleted one's place. Verified that
+    // reverting the delete()-side fix makes this test fail at the
+    // dropdownControl.value assertion (received: "name1 *").
+    component.pipelines = mockPipelines;
+    component.selectedPipeline = mockPipelines[2]; // user pipeline, content3
+    component.currentPipelineText = 'content3';
+    pipelineStateService.pipelines.set(mockPipelines);
+    pipelineStateService.selectedPipelineId.set('id3');
+
+    jest.spyOn(annotationPipelineServiceMock, 'deletePipeline').mockReturnValue(of({}));
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines').mockReturnValueOnce(of([
+      new Pipeline('id1', 'name1', 'content1', 'default', 'loaded'),
+      new Pipeline('id2', 'name2', 'content2', 'default', 'loaded'),
+    ]));
+
+    component.delete();
+
+    expect(component.selectedPipeline.id).toBe('id1');
+    expect(component.dropdownControl.value).toBe('name1');
+    expect(component.isPipelineChanged()).toBe(false);
+    expect(component.currentPipelineText).toBe('content1');
+  });
+
   it('should save pipeline and not update pipeline list when response is invalid', () => {
     const savePipelineSpy = jest.spyOn(annotationPipelineServiceMock, 'savePipeline').mockReturnValueOnce(of(null));
     const getAnnotationPipelinesSpy = jest.spyOn(jobsServiceMock, 'getAnnotationPipelines');

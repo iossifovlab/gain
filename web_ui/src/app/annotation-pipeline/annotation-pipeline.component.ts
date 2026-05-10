@@ -554,6 +554,13 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
 
   public delete(): void {
     this.annotationPipelineService.deletePipeline(this.selectedPipeline.id).subscribe(() => {
+      // Reset the editor buffer before the post-delete getPipelines().
+      // Otherwise the no-arg branch's userHasTyped heuristic (tb-l7c) sees
+      // the deleted pipeline's content as "user-typed" and routes through
+      // selectPipelineAfterSave + displayUnsavedPipelineIndication, which
+      // appends a stray * to the default pipeline that takes its place.
+      this.currentPipelineText = '';
+      this.pipelineStateService.currentPipelineText.set('');
       this.pipelineStateService.pipelines.set([]);
       this.getPipelines();
     });
