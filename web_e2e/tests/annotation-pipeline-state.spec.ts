@@ -38,11 +38,25 @@ async function createAndSaveUserPipeline(page: Page, name: string): Promise<void
   await expect(page.locator('#name-modal')).toBeVisible();
   await page.locator('#name-modal input').fill(name);
 
+  // Click and wait for the saveAs's POST specifically (not /pipelines/load).
+  // /pipelines/load is fired by an effect on selectedPipelineId change AND
+  // also by the temp pipeline's autoSave inside createTempPipeline. The
+  // temp-pipeline load can still be in flight when this Promise.all arms
+  // its waitForResponse, so a `/load` match could catch the stale response
+  // and let the test continue before selectPipelineAfterSave runs — leaving
+  // selectedPipeline=null and currentPipelineText pre-edit at the moment a
+  // subsequent Monaco edit fires (no `*` is added because
+  // displayUnsavedPipelineIndication early-returns on null selectedPipeline).
   await Promise.all([
     page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
-    page.waitForResponse(resp => resp.url().includes('api/pipelines/load')),
+    page.waitForResponse(
+      resp => resp.url().includes('api/pipelines/user') && resp.request().method() === 'POST'
+    ),
   ]);
 
+  // Wait for the post-save selectPipelineAfterSave to finish: dropdown
+  // carries the saved pipeline name, and the editor is in 'loaded'.
+  await expect(page.locator('#pipelines-input')).toHaveValue(name, { timeout: 30000 });
   await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
 }
 
