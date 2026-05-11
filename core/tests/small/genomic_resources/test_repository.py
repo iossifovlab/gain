@@ -5,8 +5,8 @@ import textwrap
 import pytest
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.repository import (
-    GenomicResourceRepo,
     GenomicResourceProtocolRepo,
+    GenomicResourceRepo,
     parse_gr_id_version_token,
     parse_resource_id_version,
 )
@@ -206,7 +206,8 @@ def search_grr_fixture(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
                             domain: domain_c
                     filename: genes.gtf
                 """),
-                "genes.gtf": 'chr1\t.\tgene\t1\t1000\t.\t+\t.\tgene_id "gene1";\n',
+                "genes.gtf":
+                    'chr1\t.\tgene\t1\t1000\t.\t+\t.\tgene_id "gene1";\n',
             },
             "gene_scores/res_d": {
                 "genomic_resource.yaml": textwrap.dedent("""

@@ -510,8 +510,9 @@ def _create_contents_db(
         )
 
         if columns:
+            cols_str = ", ".join(columns)
             conn.execute(
-                f"CREATE VIRTUAL TABLE contents USING fts5({', '.join(columns)})",
+                f"CREATE VIRTUAL TABLE contents USING fts5({cols_str})",
             )
             for header, row in index_infos:
                 header_idx = {col: i for i, col in enumerate(header)}
