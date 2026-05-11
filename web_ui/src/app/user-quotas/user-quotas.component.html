@@ -1,30 +1,42 @@
-<div id="tables-wrapper">
-  @for(q of quotas | keyvalue; track q) {
-  <div>
-    <h2>{{ q.key.replaceAll('_', ' ') }}</h2>
-    <div
-      class="category-table"
-      [ngStyle]="
-        isUserLoggedIn ? { 'grid-template-rows': 'repeat(3, auto)' } : { 'grid-template-rows': 'repeat(2, auto)' }
-      ">
-      <div class="cell corner"></div>
-      <div class="cell header">Current</div>
-      <div class="cell header">Max</div>
+<div id="page-container">
+  <div id="tables-wrapper">
+    @for(q of quotas | keyvalue; track q) {
+    <div>
+      <h2>{{ q.key.replaceAll('_', ' ') }}</h2>
+      <div
+        class="category-table"
+        [ngStyle]="
+          isUserLoggedIn ? { 'grid-template-rows': 'repeat(3, auto)' } : { 'grid-template-rows': 'repeat(2, auto)' }
+        ">
+        <div class="cell corner"></div>
+        <div class="cell header">Current</div>
+        <div class="cell header">Max</div>
 
-      <div class="cell header">Daily</div>
-      <div class="cell">{{ q.value.daily.current }}</div>
-      <div class="cell">{{ q.value.daily.max }}</div>
+        <div class="cell header"><span class="free-label">(free)</span>Daily</div>
+        @if(q.value.extra > 0) {
+        <div class="cell">-</div>
+        <div class="cell">-</div>
+        } @else {
+        <div class="cell">{{ q.value.daily.current | number : '' : 'en-US' }}</div>
+        <div class="cell">{{ q.value.daily.max | number : '' : 'en-US' }}</div>
+        }
 
-      <div class="cell header">Monthly</div>
-      <div class="cell">{{ q.value.monthly.current }}</div>
-      <div class="cell">{{ q.value.monthly.max }}</div>
-
-      @if(isUserLoggedIn) {
-      <div class="cell header">Extra</div>
-      <div class="cell extra">{{ q.value.extra }}</div>
-      <div></div>
-      }
+        <div class="cell header"><span class="free-label">(free)</span>Monthly</div>
+        @if(q.value.extra > 0) {
+        <div class="cell">-</div>
+        <div class="cell">-</div>
+        } @else {
+        <div class="cell">{{ q.value.monthly.current | number : '' : 'en-US' }}</div>
+        <div class="cell">{{ q.value.monthly.max | number : '' : 'en-US' }}</div>
+        } @if(isUserLoggedIn) {
+        <div class="cell header">* Extra</div>
+        <div class="cell">{{ q.value.extra | number : '' : 'en-US' }}</div>
+        <div class="cell">{{ q.value.extra | number : '' : 'en-US' }}</div>
+        <div></div>
+        }
+      </div>
     </div>
+    }
   </div>
-  }
+  <div id="note">* For extra please contact us at <a href="mailto:gain@iossifovlab.com">gain@iossifovlab.com</a></div>
 </div>

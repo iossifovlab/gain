@@ -8,11 +8,14 @@
   width: 100%;
 }
 
+#page-container {
+  margin: 60px 15%;
+}
+
 #tables-wrapper {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 40px;
-  margin: 60px 15%;
 }
 
 @media (max-width: 600px) {
@@ -24,7 +27,7 @@
 
 .cell {
   background: white;
-  padding: 0.75rem 1rem;
+  padding: 0.75rem 10px;
   text-align: right;
 }
 
@@ -36,6 +39,11 @@
   background: #ecf1f6;
   font-weight: 600;
   color: #374151;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
 }
 
 .corner {
@@ -44,4 +52,21 @@
 
 h2 {
   margin-bottom: 5px;
+}
+
+#note {
+  font-style: italic;
+  color: #252e34;
+  margin-top: 15px;
+}
+
+a {
+  color: #24699e;
+  text-decoration: none;
+}
+
+.free-label {
+  color: #aabcce;
+  font-size: 12px;
+  margin-left: 4px;
 }
