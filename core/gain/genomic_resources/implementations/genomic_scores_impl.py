@@ -621,7 +621,7 @@ GENOMIC_SCORES_TEMPLATE = """
 {% set impl = data.genomic_scores %}
 {% set scores = impl.score %}
 
-<h2>Scores</h2>
+<h2>Scores ({{ scores.score_definitions|length }})</h2>
 <table border="1">
     <tr>
         <th>ID</th>

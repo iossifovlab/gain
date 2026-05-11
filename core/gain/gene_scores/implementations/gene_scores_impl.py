@@ -192,7 +192,7 @@ GENE_SCORES_TEMPLATE = """
 
 {% set score = data.gene_score %}
 
-<h1>Scores</h1>
+<h1>Scores ({{ score.score_definitions|length }})</h1>
     <table border="1">
         <tr>
             <th>ID</th>
