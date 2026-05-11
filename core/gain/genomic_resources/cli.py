@@ -28,6 +28,7 @@ from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
+    GR_SQLITE_META_FILE_NAME,
     GenomicResource,
     GenomicResourceRepo,
     ManifestEntry,
@@ -476,8 +477,9 @@ def _create_contents_db(
     contents: list[dict[str, Any]],
 ) -> None:
 
-    sqlite_filepath = proto.filesystem.expand_path(".CONTENTS.sqlite3")[0]
-    gzip_sqlite_filepath = f"{sqlite_filepath}.gz"
+    sqlite_filepath = os.path.join(proto.root_path, ".CONTENTS.sqlite3")
+    gzip_sqlite_filepath = os.path.join(
+        proto.root_path, GR_SQLITE_META_FILE_NAME)
     if os.path.exists(sqlite_filepath):
         os.remove(sqlite_filepath)
     if os.path.exists(gzip_sqlite_filepath):
