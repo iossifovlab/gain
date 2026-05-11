@@ -107,6 +107,32 @@ class GenomicResourceImplementation(ABC):
         """
         raise NotImplementedError
 
+    def collect_index_info(
+        self,
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """Collect resource info for FTS index building.
+
+        Returns a (header, row) pair where header contains field names and
+        row contains the corresponding values for this resource.
+        Label keys/values are appended after the fixed fields.
+        """
+        res = self.resource
+        meta = res.get_config().get("meta", {}) or {}
+        labels: dict = res.get_labels() or {}
+        header: tuple[str, ...] = (
+            "full_id", "id", "type", "description", "summary",
+            *labels.keys(),
+        )
+        row: tuple[str, ...] = (
+            res.get_full_id(),
+            res.resource_id,
+            res.get_type(),
+            meta.get("description", "") or "",
+            meta.get("summary", "") or "",
+            *[str(v) for v in labels.values()],
+        )
+        return header, row
+
     def get_statistics(self) -> ResourceStatistics | None:
         """Try and load resource statistics."""
         return None

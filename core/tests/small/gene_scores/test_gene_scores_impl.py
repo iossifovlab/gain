@@ -431,3 +431,81 @@ def test_calc_statistics_hash_deterministic(
 
 def test_calc_info_hash(linear_impl: GeneScoreImplementation) -> None:
     assert linear_impl.calc_info_hash() == b"placeholder"
+
+
+def test_collect_index_info_header_includes_score_fields(
+    linear_impl: GeneScoreImplementation,
+) -> None:
+    header, _ = linear_impl.collect_index_info()
+    assert "score_ids" in header
+    assert "score_descriptions" in header
+
+
+def test_collect_index_info_header_includes_base_fields(
+    linear_impl: GeneScoreImplementation,
+) -> None:
+    header, _ = linear_impl.collect_index_info()
+    for field in ("full_id", "id", "type"):
+        assert field in header
+
+
+def test_collect_index_info_score_ids_contains_score_id(
+    linear_impl: GeneScoreImplementation,
+) -> None:
+    header, row = linear_impl.collect_index_info()
+    score_ids_value = row[header.index("score_ids")]
+    assert "score1" in score_ids_value
+
+
+def test_collect_index_info_score_descriptions_contains_desc(
+    linear_impl: GeneScoreImplementation,
+) -> None:
+    header, row = linear_impl.collect_index_info()
+    score_descriptions_value = row[header.index("score_descriptions")]
+    assert "a numeric score" in score_descriptions_value
+
+
+def test_collect_index_info_multiple_scores_space_joined() -> None:
+    repo = build_inmemory_test_repository({
+        "MultiScore": {
+            GR_CONF_FILE_NAME: textwrap.dedent("""
+                type: gene_score
+                filename: scores.csv
+                scores:
+                - id: alpha
+                  desc: first score
+                  histogram:
+                    type: number
+                    number_of_bins: 3
+                    x_log_scale: false
+                    y_log_scale: false
+                - id: beta
+                  desc: second score
+                  histogram:
+                    type: number
+                    number_of_bins: 3
+                    x_log_scale: false
+                    y_log_scale: false
+            """),
+            "scores.csv": textwrap.dedent("""
+                gene,alpha,beta
+                G1,1,10
+                G2,2,20
+            """),
+        },
+    })
+    impl = GeneScoreImplementation(repo.get_resource("MultiScore"))
+    header, row = impl.collect_index_info()
+    score_ids_value = row[header.index("score_ids")]
+    assert "alpha" in score_ids_value
+    assert "beta" in score_ids_value
+    score_descriptions_value = row[header.index("score_descriptions")]
+    assert "first score" in score_descriptions_value
+    assert "second score" in score_descriptions_value
+
+
+def test_collect_index_info_row_length_matches_header(
+    linear_impl: GeneScoreImplementation,
+) -> None:
+    header, row = linear_impl.collect_index_info()
+    assert len(header) == len(row)

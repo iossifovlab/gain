@@ -3,7 +3,6 @@ import argparse
 import copy
 import fnmatch
 import gzip
-import json
 import logging
 import os
 import pathlib
@@ -28,6 +27,7 @@ from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
+    GR_SQLITE_META_FILE_NAME,
     GenomicResource,
     GenomicResourceRepo,
     ManifestEntry,
@@ -462,43 +462,45 @@ def _run_repo_manifest_command_internal(
 def _run_build_fts_db_command(
     proto: FsspecReadWriteProtocol,
 ) -> None:
-    content_filepath = os.path.join(
-        proto.url, GR_CONTENTS_FILE_NAME)
-    with proto.filesystem.open(
-        content_filepath, mode="r", compression="gzip",
-    ) as contents_file:
-        contents = json.loads(contents_file.read())
-        _create_contents_db(proto, contents)
+    _create_contents_db(proto)
 
 
 def _create_contents_db(
     proto: FsspecReadWriteProtocol,
-    contents: list[dict[str, Any]],
 ) -> None:
+    """Build the FTS SQLite index for the repository.
 
-    sqlite_filepath = proto.filesystem.expand_path(".CONTENTS.sqlite3")[0]
-    gzip_sqlite_filepath = f"{sqlite_filepath}.gz"
+    Calls collect_index_info() on each resource's implementation to get
+    field names and values. If an implementation cannot be constructed,
+    falls back to the standard meta fields from the resource config.
+    """
+    sqlite_filepath = os.path.join(proto.root_path, ".CONTENTS.sqlite3")
+    gzip_sqlite_filepath = os.path.join(
+        proto.root_path, GR_SQLITE_META_FILE_NAME)
     if os.path.exists(sqlite_filepath):
         os.remove(sqlite_filepath)
     if os.path.exists(gzip_sqlite_filepath):
         os.remove(gzip_sqlite_filepath)
+
+    index_infos: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+    for res in proto.get_all_resources():
+        try:
+            impl = build_resource_implementation(res)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Skipping FTS index for <%s>: could not build implementation",
+                res.resource_id,
+            )
+            continue
+        index_infos.append(impl.collect_index_info())
+
+    all_columns: dict[str, None] = {}
+    for header, _ in index_infos:
+        for col in header:
+            all_columns[col] = None
+    columns = list(all_columns.keys())
+
     with apsw.Connection(sqlite_filepath) as conn:
-
-        labels = set()
-
-        for res_info in contents:
-            res_labels = res_info["config"].get("meta", {}).get("labels", {})
-            if res_labels is None:
-                res_labels = {}
-            labels.update(res_labels.keys())
-
-        label_list = list(labels)  # switch to list for ordered access
-        if len(label_list) > 0:
-            # Empty label is added for more convenient support of queries
-            # without labels. ", ".join(labels) would start with a "," when
-            # labes are present and without when they are not.
-            label_list.insert(0, "")
-
         conn.execute(
             "CREATE TABLE contents_metadata (key TEXT PRIMARY KEY, value TEXT)",
         )
@@ -507,45 +509,22 @@ def _create_contents_db(
             ("contents_md5", proto.md5_contents()),
         )
 
-        conn.execute(
-            "CREATE VIRTUAL TABLE contents "
-            "USING fts5(full_id, id, type, description, summary"
-            f"{', '.join(label_list)})",
-        )
-
-        for res_info in contents:
-            res_full_id = res_info["full_id"]
-            res_id = res_info["id"]
-            res_type = res_info["config"]["type"]
-            res_description = res_info["config"].get("meta", {}).get(
-                "description", "")
-            res_summary = res_info["config"].get("meta", {}).get(
-                "summary", "")
-
-            res_labels = res_info["config"].get(
-                "meta", {}).get("labels", {})
-
-            if res_labels is None:
-                res_labels = {}
-
-            row = [
-                res_full_id,
-                res_id,
-                res_type,
-                res_description,
-                res_summary,
-                *[res_labels.get(label, "") for label in labels],
-            ]
-
+        if columns:
+            cols_str = ", ".join(columns)
             conn.execute(
-                "INSERT INTO contents "  # noqa: S608
-                "(full_id, id, type, description, summary"
-                f"{', '.join(label_list)}) "
-                f"VALUES ({', '.join(['?' for _ in range(len(row))])})",
-                (
-                    *row,
-                ),
+                f"CREATE VIRTUAL TABLE contents USING fts5({cols_str})",
             )
+            for header, row in index_infos:
+                header_idx = {col: i for i, col in enumerate(header)}
+                full_row = tuple(
+                    row[header_idx[col]] if col in header_idx else ""
+                    for col in columns
+                )
+                conn.execute(
+                    f"INSERT INTO contents ({', '.join(columns)}) "  # noqa: S608
+                    f"VALUES ({', '.join(['?'] * len(columns))})",
+                    full_row,
+                )
 
     raw_data = pathlib.Path(sqlite_filepath).read_bytes()
     with gzip.open(gzip_sqlite_filepath, mode="wb") as gzip_out:

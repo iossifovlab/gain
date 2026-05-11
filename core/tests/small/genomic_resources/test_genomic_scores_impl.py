@@ -623,3 +623,155 @@ def test_statistics_with_vcf_allele_score_30_000_000(
 
     graph.add_tasks(tasks)
     task_graph_run(graph, executor)
+
+
+def test_collect_index_info_header_includes_score_fields() -> None:
+    res = build_inmemory_test_resource({
+        GR_CONF_FILE_NAME: """
+            type: position_score
+            table:
+                filename: data.mem
+            scores:
+                - id: value
+                  name: value
+                  type: float
+                  desc: a position score
+        """,
+        "data.mem": convert_to_tab_separated(
+            """
+            chrom pos_begin value
+            1     10        0.1
+            """,
+        ),
+    })
+    impl = build_score_implementation_from_resource(res)
+    header, _ = impl.collect_index_info()
+    assert "score_ids" in header
+    assert "score_descriptions" in header
+
+
+def test_collect_index_info_header_includes_base_fields() -> None:
+    res = build_inmemory_test_resource({
+        GR_CONF_FILE_NAME: """
+            type: position_score
+            table:
+                filename: data.mem
+            scores:
+                - id: value
+                  name: value
+                  type: float
+        """,
+        "data.mem": convert_to_tab_separated(
+            """
+            chrom pos_begin value
+            1     10        0.1
+            """,
+        ),
+    })
+    impl = build_score_implementation_from_resource(res)
+    header, _ = impl.collect_index_info()
+    for field in ("full_id", "id", "type"):
+        assert field in header
+
+
+def test_collect_index_info_score_ids_contains_score_id() -> None:
+    res = build_inmemory_test_resource({
+        GR_CONF_FILE_NAME: """
+            type: position_score
+            table:
+                filename: data.mem
+            scores:
+                - id: value
+                  name: value
+                  type: float
+        """,
+        "data.mem": convert_to_tab_separated(
+            """
+            chrom pos_begin value
+            1     10        0.1
+            """,
+        ),
+    })
+    impl = build_score_implementation_from_resource(res)
+    header, row = impl.collect_index_info()
+    assert "value" in row[header.index("score_ids")]
+
+
+def test_collect_index_info_score_descriptions_contains_desc() -> None:
+    res = build_inmemory_test_resource({
+        GR_CONF_FILE_NAME: """
+            type: position_score
+            table:
+                filename: data.mem
+            scores:
+                - id: value
+                  name: value
+                  type: float
+                  desc: a position score
+        """,
+        "data.mem": convert_to_tab_separated(
+            """
+            chrom pos_begin value
+            1     10        0.1
+            """,
+        ),
+    })
+    impl = build_score_implementation_from_resource(res)
+    header, row = impl.collect_index_info()
+    assert "a position score" in row[header.index("score_descriptions")]
+
+
+def test_collect_index_info_multiple_scores_space_joined() -> None:
+    res = build_inmemory_test_resource({
+        GR_CONF_FILE_NAME: """
+            type: position_score
+            table:
+                filename: data.mem
+            scores:
+                - id: alpha
+                  name: alpha
+                  type: float
+                  desc: first score
+                - id: beta
+                  name: beta
+                  type: float
+                  desc: second score
+        """,
+        "data.mem": convert_to_tab_separated(
+            """
+            chrom pos_begin alpha beta
+            1     10        0.1   0.2
+            """,
+        ),
+    })
+    impl = build_score_implementation_from_resource(res)
+    header, row = impl.collect_index_info()
+    score_ids_value = row[header.index("score_ids")]
+    assert "alpha" in score_ids_value
+    assert "beta" in score_ids_value
+    score_descriptions_value = row[header.index("score_descriptions")]
+    assert "first score" in score_descriptions_value
+    assert "second score" in score_descriptions_value
+
+
+def test_collect_index_info_row_length_matches_header() -> None:
+    res = build_inmemory_test_resource({
+        GR_CONF_FILE_NAME: """
+            type: position_score
+            table:
+                filename: data.mem
+            scores:
+                - id: value
+                  name: value
+                  type: float
+        """,
+        "data.mem": convert_to_tab_separated(
+            """
+            chrom pos_begin value
+            1     10        0.1
+            """,
+        ),
+    })
+    impl = build_score_implementation_from_resource(res)
+    header, row = impl.collect_index_info()
+    assert len(header) == len(row)
