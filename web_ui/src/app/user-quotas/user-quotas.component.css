@@ -31,10 +31,6 @@
   text-align: right;
 }
 
-.extra {
-  grid-column: span 2;
-}
-
 .header {
   background: #ecf1f6;
   font-weight: 600;

@@ -8,7 +8,7 @@ const mockRateLimits: RateLimits = {
   jobs: {
     daily: { current: 3, max: 10 },
     monthly: { current: 15, max: 100 },
-    extra: 5,
+    extra: 0,
   }
 };
 
@@ -87,16 +87,41 @@ describe('UserQuotasComponent', () => {
   });
 
   it('should show the extra row when user is logged in', () => {
-    const extraCell = (fixture.nativeElement as HTMLElement).querySelector('.cell.extra');
+    const extraCell = (fixture.nativeElement as HTMLElement).querySelectorAll('.cell.extra');
     expect(extraCell).not.toBeNull();
-    expect(extraCell.textContent.trim()).toBe('5');
+    expect(extraCell[0].textContent.trim()).toBe('0');
+    expect(extraCell[1].textContent.trim()).toBe('0');
+  });
+
+  it('should display \'-\' for daily and monthly quotas', () => {
+    jest.spyOn(mockUsersService, 'getQuotas').mockReturnValue(of({
+      jobs: {
+        daily: { current: 3, max: 10 },
+        monthly: { current: 15, max: 100 },
+        extra: 10,
+      }
+    }));
+    component.ngOnInit();
+    fixture.detectChanges();
+    const dailyCells = (fixture.nativeElement as HTMLElement).querySelectorAll('.cell:not(.header):not(.corner)');
+    expect(dailyCells[0].textContent.trim()).toBe('-');
+    expect(dailyCells[1].textContent.trim()).toBe('-');
+
+    const monthlyCells = (fixture.nativeElement as HTMLElement).querySelectorAll('.cell:not(.header):not(.corner)');
+    expect(monthlyCells[2].textContent.trim()).toBe('-');
+    expect(monthlyCells[3].textContent.trim()).toBe('-');
+
+    const extraCell = (fixture.nativeElement as HTMLElement).querySelectorAll('.cell.extra');
+    expect(extraCell[0].textContent.trim()).toBe('10');
+    expect(extraCell[1].textContent.trim()).toBe('10');
   });
 
   it('should hide the extra row when user is not logged in', () => {
     mockUsersService.userData.next({ ...mockLoggedInUser, loggedIn: false });
     fixture.detectChanges();
-    const extraCell = (fixture.nativeElement as HTMLElement).querySelector('.cell.extra');
-    expect(extraCell).toBeNull();
+    const extraCell = (fixture.nativeElement as HTMLElement).querySelectorAll('.cell.extra');
+    expect(extraCell[0]).toBeUndefined();
+    expect(extraCell[1]).toBeUndefined();
   });
 
   it('should apply 3-row grid style when user is logged in', () => {
