@@ -142,42 +142,45 @@ def test_gene_set_annotator_intersecting_genes(
     assert result["set_2"] == []
 
 
+@pytest.mark.parametrize("set_id, chrom, pos, ref, alt, expected", [
+    ("set_0", "foo", 10, "A", "C", True),
+    ("set_1", "foo", 10, "A", "C", True),
+    ("set_2", "foo", 10, "A", "C", False),
+    ("set_0", "foo", 20, "C", "G", False),
+    ("set_1", "foo", 20, "C", "G", False),
+    ("set_2", "foo", 20, "C", "G", False),
+])
 def test_gene_set_annotator_bool_aggregator(
     test_grr: GenomicResourceRepo,
+    set_id: str,
+    chrom: str,
+    pos: int,
+    ref: str,
+    alt: str,
+    expected: bool,
 ) -> None:
-    resource = test_grr.get_resource("foobar_gene_set_collection")
-    annotator = GeneSetAnnotator(
-        None,
-        AnnotatorInfo(
-            "gosho",
-            [
-                AttributeInfo(
-                    "set_0", "set_0", internal=False,
-                    parameters={"aggregator": "bool"}),
-                AttributeInfo(
-                    "set_1", "set_1", internal=False,
-                    parameters={"aggregator": "bool"}),
-                AttributeInfo(
-                    "set_2", "set_2", internal=False,
-                    parameters={"aggregator": "bool"}),
-            ],
-            {"work_dir": "some/dir"},
-        ),
-        resource, "gene_list",
-    )
+    pipeline = load_pipeline_from_yaml(textwrap.dedent(
+        """
+        - effect_annotator:
+            genome: foobar_genome
+            gene_models: foobar_genes
+        - gene_set_annotator:
+            resource_id: foobar_gene_set_collection
+            input_gene_list: gene_list
+            attributes:
+                - name: set_0
+                  aggregator: bool
+                - name: set_1
+                  aggregator: bool
+                - name: set_2
+                  aggregator: bool
+        """),
+        test_grr)
 
-    annotatable = VCFAllele("1", 1, "A", "G")
-    annotator.open()
-
-    result = annotator.annotate(annotatable, {"gene_list": ["g1"]})
-    assert result["set_0"] is True
-    assert result["set_1"] is True
-    assert result["set_2"] is False
-
-    result = annotator.annotate(annotatable, {"gene_list": ["g3"]})
-    assert result["set_0"] is False
-    assert result["set_1"] is False
-    assert result["set_2"] is False
+    with pipeline as pipeline:
+        allele = VCFAllele(chrom, pos, ref, alt)
+        result = pipeline.annotate(allele)
+        assert result[set_id] is expected
 
 
 def test_gene_score_annotator_used_context_attributes(
