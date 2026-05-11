@@ -144,6 +144,21 @@ class GeneScoreImplementation(
             raise TypeError(f"Unknown histogram config: {hist_conf}")
         return histogram
 
+    def collect_index_info(
+        self,
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        header, row = super().collect_index_info()
+        score_ids = " ".join(self.gene_score.score_definitions.keys())
+        score_descriptions = " ".join(
+            sd.description
+            for sd in self.gene_score.score_definitions.values()
+            if sd.description
+        )
+        return (
+            (*header, "score_ids", "score_descriptions"),
+            (*row, score_ids, score_descriptions),
+        )
+
     def calc_info_hash(self) -> bytes:
         return b"placeholder"
 

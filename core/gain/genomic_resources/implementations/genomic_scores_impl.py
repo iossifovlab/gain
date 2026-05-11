@@ -514,6 +514,21 @@ class GenomicScoreImplementation(
         return GenomicScoreImplementation._save_histograms(
             resource, merged_histograms)
 
+    def collect_index_info(
+        self,
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        header, row = super().collect_index_info()
+        score_ids = " ".join(self.score.score_definitions.keys())
+        score_descriptions = " ".join(
+            sd.desc
+            for sd in self.score.score_definitions.values()
+            if sd.desc
+        )
+        return (
+            (*header, "score_ids", "score_descriptions"),
+            (*row, score_ids, score_descriptions),
+        )
+
     def calc_info_hash(self) -> bytes:
         """Compute and return the info hash."""
         return b"infohash"

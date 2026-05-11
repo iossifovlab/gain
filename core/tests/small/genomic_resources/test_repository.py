@@ -139,11 +139,13 @@ def test_find_resource_with_version(
 
 @pytest.fixture
 def search_grr_fixture(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
-    """GRR with three resources covering two types and varied labels.
+    """GRR with four resources covering three types and varied labels.
 
-    scores/cadd      — position_score, reference=hg38, domain=pathogenicity
-    scores/phylop    — position_score, reference=hg38, domain=conservation
-    annotation/gencode — gene_models,  reference=hg38, domain=annotation
+    scores/res_a         — position_score, ref=ref_a, domain=domain_a
+    scores/res_b         — position_score, ref=ref_a, domain=domain_b
+    annotation/res_c     — gene_models,    ref=ref_a, domain=domain_c
+    gene_scores/res_d    — gene_score,     ref=ref_a, domain=domain_d
+                           score IDs: score1
 
     The fixture uses the CLI to build manifests and the FTS index so that
     search_resources() can be exercised end-to-end.
@@ -151,15 +153,15 @@ def search_grr_fixture(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
     setup_directories(
         tmp_path,
         {
-            "scores/cadd": {
+            "scores/res_a": {
                 "genomic_resource.yaml": textwrap.dedent("""
                     type: position_score
                     meta:
-                        description: CADD pathogenicity scores
-                        summary: Combined Annotation Dependent Depletion
+                        description: Example position score A
+                        summary: Example summary A
                         labels:
-                            reference: hg38
-                            domain: pathogenicity
+                            ref: ref_a
+                            domain: domain_a
                     table:
                         filename: data.txt
                     scores:
@@ -172,15 +174,15 @@ def search_grr_fixture(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
                     chr1   100        1.5
                 """),
             },
-            "scores/phylop": {
+            "scores/res_b": {
                 "genomic_resource.yaml": textwrap.dedent("""
                     type: position_score
                     meta:
-                        description: PhyloP conservation scores
-                        summary: Phylogenetic P-values for conservation
+                        description: Example position score B
+                        summary: Example summary B
                         labels:
-                            reference: hg38
-                            domain: conservation
+                            ref: ref_a
+                            domain: domain_b
                     table:
                         filename: data.txt
                     scores:
@@ -193,18 +195,40 @@ def search_grr_fixture(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
                     chr1   200        0.7
                 """),
             },
-            "annotation/gencode": {
+            "annotation/res_c": {
                 "genomic_resource.yaml": textwrap.dedent("""
                     type: gene_models
                     meta:
-                        description: GENCODE gene annotations
-                        summary: Comprehensive human gene models
+                        description: Example gene models C
+                        summary: Example summary C
                         labels:
-                            reference: hg38
-                            domain: annotation
-                    file: genes.gtf
+                            ref: ref_a
+                            domain: domain_c
+                    filename: genes.gtf
                 """),
-                "genes.gtf": 'chr1\t.\tgene\t1\t1000\t.\t+\t.\tgene_id "TP53";\n',
+                "genes.gtf": 'chr1\t.\tgene\t1\t1000\t.\t+\t.\tgene_id "gene1";\n',
+            },
+            "gene_scores/res_d": {
+                "genomic_resource.yaml": textwrap.dedent("""
+                    type: gene_score
+                    meta:
+                        description: Example gene score D
+                        labels:
+                            ref: ref_a
+                            domain: domain_d
+                    filename: scores.csv
+                    scores:
+                        - id: score1
+                          type: float
+                          column_name: score1
+                          desc: example score one description
+                          histogram:
+                              type: number
+                              number_of_bins: 3
+                              x_log_scale: false
+                              y_log_scale: false
+                """),
+                "scores.csv": "gene,score1\ngene_a,0.9\ngene_b,0.5\n",
             },
         },
     )
@@ -218,7 +242,7 @@ def test_search_resources_no_filter(
     search_grr_fixture: GenomicResourceProtocolRepo,
 ) -> None:
     resources = list(search_grr_fixture.search_resources())
-    assert len(resources) == 3
+    assert len(resources) == 4
 
 
 def test_search_resources_by_type_position_score(
@@ -238,25 +262,25 @@ def test_search_resources_by_type_gene_models(
         search_grr_fixture.search_resources(resource_type="gene_models"),
     )
     assert len(resources) == 1
-    assert resources[0].resource_id == "annotation/gencode"
+    assert resources[0].resource_id == "annotation/res_c"
 
 
 def test_search_resources_by_term_matches_id(
     search_grr_fixture: GenomicResourceProtocolRepo,
 ) -> None:
-    resources = list(search_grr_fixture.search_resources(search_term="cadd"))
+    resources = list(search_grr_fixture.search_resources(search_term="res_a"))
     assert len(resources) == 1
-    assert resources[0].resource_id == "scores/cadd"
+    assert resources[0].resource_id == "scores/res_a"
 
 
 def test_search_resources_by_term_matches_label_value(
     search_grr_fixture: GenomicResourceProtocolRepo,
 ) -> None:
     resources = list(
-        search_grr_fixture.search_resources(search_term="pathogenicity"),
+        search_grr_fixture.search_resources(search_term="domain_a"),
     )
     assert len(resources) == 1
-    assert resources[0].resource_id == "scores/cadd"
+    assert resources[0].resource_id == "scores/res_a"
 
 
 def test_search_resources_combined_type_and_term(
@@ -264,7 +288,7 @@ def test_search_resources_combined_type_and_term(
 ) -> None:
     resources = list(
         search_grr_fixture.search_resources(
-            search_term="hg38",
+            search_term="ref_a",
             resource_type="position_score",
         ),
     )
@@ -279,3 +303,13 @@ def test_search_resources_no_match(
         search_grr_fixture.search_resources(search_term="xyzzy_no_match"),
     )
     assert len(resources) == 0
+
+
+def test_search_resources_gene_score_by_score_id(
+    search_grr_fixture: GenomicResourceProtocolRepo,
+) -> None:
+    resources = list(
+        search_grr_fixture.search_resources(search_term="score1"),
+    )
+    assert len(resources) == 1
+    assert resources[0].resource_id == "gene_scores/res_d"
