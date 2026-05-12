@@ -6,8 +6,10 @@ Families) system. It provides the annotation pipeline,
 the Genomic Resource Repository (GRR), effect annotation,
 task graph orchestration, and gene scores/sets.
 
-User documentation: see the GPF documentation at
-https://iossifovlab.com/gaindocs/.
+User documentation: see the GAIn documentation at
+https://iossifovlab.com/gaindocs/. The Sphinx source
+tree lives in `docs/` (build via
+`uv sync --group docs && bash docs/build_docs.sh`).
 
 ## Repository overview
 
