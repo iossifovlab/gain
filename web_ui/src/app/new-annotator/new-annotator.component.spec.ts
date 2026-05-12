@@ -90,8 +90,8 @@ class PipelineEditorServiceMock {
     return of(annotatorConfigMock);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  public getAttributes(pipelineId: string, annotator: string, resources: object): Observable<AttributePage> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars, @stylistic/max-len
+  public getAttributes(pipelineId: string, annotator: string, resources: object, searchValue?: string, page?: number): Observable<AttributePage> {
     return of(attributePageMock);
   }
 
@@ -376,7 +376,8 @@ describe('NewAnnotatorComponent', () => {
       'gene_set_annotator',
       // eslint-disable-next-line camelcase
       { resource_id: 'gene_properties/gene_scores/RVIS' },
-      undefined
+      undefined,
+      0
     );
     expect(component.attributePage).toStrictEqual(attributePageMock);
     expect(component.selectedAttributes).toStrictEqual([attributesMock[0], attributesMock[2]]);
@@ -577,7 +578,8 @@ describe('NewAnnotatorComponent', () => {
       'effect_annotator',
       // eslint-disable-next-line camelcase
       { gene_models: 'hg38/gene_models/GENCODE/48' },
-      'UTR'
+      'UTR',
+      0
     );
 
     expect(component.filteredAttributes).toStrictEqual([
@@ -614,7 +616,8 @@ describe('NewAnnotatorComponent', () => {
       'effect_annotator',
       // eslint-disable-next-line camelcase
       { gene_models: 'hg38/gene_models/GENCODE/48' },
-      undefined
+      undefined,
+      0
     );
     expect(component.attributePage).toStrictEqual(attributePageMock);
     expect(component.filteredAttributes).toStrictEqual(attributesMock);
@@ -649,6 +652,117 @@ describe('NewAnnotatorComponent', () => {
     expect(attribute.name).toBe('hg19_annotatable');
     expect(component.isAttributeValid(attribute)).toBe(false);
     expect(component.areAttributesValid).toBe(false);
+  });
+
+  describe('selectAllAttributes', () => {
+    beforeEach(() => {
+      component.configurationStep.setControl('resource_id', new FormControl('gene_properties/gene_scores/RVIS'));
+      component.configurationStep.setControl('input_annotatable', new FormControl(null));
+      component.annotatorStep.setControl('annotator', new FormControl('gene_set_annotator'));
+      component.requestAttributes();
+    });
+
+    it('should show warning and not select when totalAttributes > 1001', () => {
+      component.attributePage = new AttributePage(attributesMock, 0, 10, 1002);
+      component.filteredAttributes = [...attributesMock];
+      component.selectedAttributes = [];
+
+      component.selectAllAttributes();
+
+      expect(component.displayWarningMessage).toBe(true);
+      expect(component.selectedAttributes).toStrictEqual([]);
+    });
+
+    it('should select all from filteredAttributes when all pages are already loaded', () => {
+      component.attributePage = new AttributePage(attributesMock, 0, 1, 3);
+      component.filteredAttributes = [...attributesMock];
+
+      component.selectAllAttributes();
+
+      expect(component.displayWarningMessage).toBe(false);
+      expect(component.selectedAttributes).toStrictEqual(attributesMock);
+    });
+
+    it('should fetch remaining pages and select all attributes', () => {
+      const page2Attributes = [
+        new AttributeData('attr3', 'string', 'source3', false, true, 'desc3'),
+      ];
+      const page2Mock = new AttributePage(page2Attributes, 1, 2, 4);
+      const page1Attributes = [...attributesMock];
+
+      component.attributePage = new AttributePage(page1Attributes, 0, 2, 4);
+      component.filteredAttributes = [...page1Attributes];
+
+      const getAttributesSpy = jest.spyOn(pipelineEditorServiceMock, 'getAttributes')
+        .mockReturnValueOnce(of(page2Mock));
+
+      component.selectAllAttributes();
+
+      expect(getAttributesSpy).toHaveBeenCalledWith(
+        'pipelineId',
+        'gene_set_annotator',
+        // eslint-disable-next-line camelcase
+        { resource_id: 'gene_properties/gene_scores/RVIS' },
+        undefined,
+        1
+      );
+      expect(component.filteredAttributes).toStrictEqual([...page1Attributes, ...page2Attributes]);
+      expect(component.selectedAttributes).toStrictEqual([...page1Attributes, ...page2Attributes]);
+      expect(component.attributePage).toStrictEqual(page2Mock);
+    });
+
+    it('should fetch multiple remaining pages via forkJoin', () => {
+      const page2Attrs = [new AttributeData('attr3', 'string', 'src3', false, true, 'desc3')];
+      const page3Attrs = [new AttributeData('attr4', 'string', 'src4', false, true, 'desc4')];
+      const page2Mock = new AttributePage(page2Attrs, 1, 3, 5);
+      const page3Mock = new AttributePage(page3Attrs, 2, 3, 5);
+      const page1Attributes = [...attributesMock];
+
+      component.attributePage = new AttributePage(page1Attributes, 0, 3, 5);
+      component.filteredAttributes = [...page1Attributes];
+
+      const getAttributesSpy = jest.spyOn(pipelineEditorServiceMock, 'getAttributes')
+        .mockReturnValueOnce(of(page2Mock))
+        .mockReturnValueOnce(of(page3Mock));
+      getAttributesSpy.mockClear();
+
+      component.selectAllAttributes();
+
+      expect(getAttributesSpy).toHaveBeenCalledTimes(2);
+      expect(getAttributesSpy).toHaveBeenCalledWith(
+        'pipelineId',
+        'gene_set_annotator',
+        // eslint-disable-next-line camelcase
+        { resource_id: 'gene_properties/gene_scores/RVIS' },
+        undefined,
+        1
+      );
+      expect(getAttributesSpy).toHaveBeenCalledWith(
+        'pipelineId',
+        'gene_set_annotator',
+        // eslint-disable-next-line camelcase
+        { resource_id: 'gene_properties/gene_scores/RVIS' },
+        undefined,
+        2
+      );
+      expect(component.filteredAttributes).toStrictEqual([
+        ...page1Attributes, ...page2Attrs, ...page3Attrs
+      ]);
+      expect(component.selectedAttributes).toStrictEqual([
+        ...page1Attributes, ...page2Attrs, ...page3Attrs
+      ]);
+      expect(component.attributePage).toStrictEqual(page3Mock);
+    });
+
+    it('should clear displayWarningMessage when pages were fetched after a previous warning', () => {
+      component.attributePage = new AttributePage(attributesMock, 0, 1, 3);
+      component.filteredAttributes = [...attributesMock];
+      component.displayWarningMessage = true;
+
+      component.selectAllAttributes();
+
+      expect(component.displayWarningMessage).toBe(false);
+    });
   });
 });
 

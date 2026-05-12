@@ -1,5 +1,5 @@
-<div id="modal-header">{{ data.isResourceWorkflow ? 'New resource' : 'New annotator' }}</div>
-<div style="height: 100%">
+<h2 id="modal-header">{{ data.isResourceWorkflow ? 'New resource' : 'New annotator' }}</h2>
+<div class="stepper-container">
   <mat-stepper #stepper [linear]="true" class="custom-stepper">
     @if(data.isResourceWorkflow) {
     <mat-step label="Select resource" [stepControl]="resourceStep">
@@ -35,7 +35,7 @@
 
         <span class="error-message">{{ searchError }}</span>
 
-        <div style="flex: 1 1 0; overflow: auto">
+        <div class="resource-list-wrapper">
           <div>
             <div class="grid-container" id="resource-list">
               <div class="grid-header" title="Actions">Actions</div>
@@ -49,6 +49,7 @@
                     [attr.id]="resource.id + '-resource-details-button'"
                     class="material-symbols-outlined action-button"
                     title="Visit resource details"
+                    aria-label="Visit resource details"
                     ><a [href]="resource.url" target="_blank">open_in_new</a></button
                   >
                   <button
@@ -56,6 +57,7 @@
                     class="material-symbols-outlined action-button"
                     (click)="selectResource(resource.fullId)"
                     title="Continue"
+                    aria-label="Continue with this resource"
                     >settings</button
                   >
                   <button
@@ -63,6 +65,7 @@
                     class="material-symbols-outlined action-button"
                     (click)="selectResource(resource.fullId, true)"
                     title="Finish with defaults"
+                    aria-label="Finish with defaults"
                     [ngClass]="
                       resource.fullId === resourceStep.get('resourceId').value && errorMessage
                         ? 'error-action-button'
@@ -80,7 +83,7 @@
             </div>
           </div>
         </div>
-        <div style="display: flex; gap: 15px">
+        <div class="resource-footer">
           <span id="resource-count">{{ resourcePage?.totalResources }} resources</span>
           @if (createWithDefaults) {
           <span class="error-message">{{ errorMessage }}</span>
@@ -94,9 +97,7 @@
       <ng-template matStepContent>
         @if(data.isResourceWorkflow) {
         <div class="summary-content">
-          <div class="resource-type-display-text" style="margin-bottom: 10px">{{
-            'resource type\n' + getResourceById().type
-          }}</div>
+          <div class="resource-type-display-text">{{ 'resource type\n' + getResourceById()?.type }}</div>
           <div class="resource-type-display-text" [title]="resourceStep.get('resourceId').value">
             {{ 'resource id\n' + resourceStep.get('resourceId').value }}
           </div>
@@ -120,6 +121,7 @@
               <span
                 (click)="annotatorInput.openPanel(); clearAnnotator()"
                 class="material-symbols-outlined dropdown-icon"
+                aria-hidden="true"
                 >keyboard_arrow_down</span
               >
 
@@ -166,7 +168,7 @@
               @for (resource of annotatorConfig.resources; track resource.key) {
               <div class="field">
                 <div class="labels-wrapper">
-                  <span class="resource field-label"> {{ resource.key }}</span>
+                  <span class="resource field-label">{{ resource.key }}</span>
                   @if(resource.optional) {
                   <span class="optional-label">(optional)</span>
                   }
@@ -188,6 +190,7 @@
                   <span
                     (click)="resourceInput.openPanel(); clearResource(resource.key)"
                     class="material-symbols-outlined dropdown-icon"
+                    aria-hidden="true"
                     >keyboard_arrow_down</span
                   >
 
@@ -234,9 +237,7 @@
       <ng-template matStepContent>
         <div class="summary-content">
           @if (data.isResourceWorkflow) {
-          <div class="resource-type-display-text" style="margin-bottom: 10px">{{
-            'resource type\n' + getResourceById().type
-          }}</div>
+          <div class="resource-type-display-text">{{ 'resource type\n' + getResourceById().type }}</div>
           <div class="resource-type-display-text" [title]="resourceStep.get('resourceId').value">
             {{ 'resource id\n' + resourceStep.get('resourceId').value }}</div
           >
@@ -252,7 +253,7 @@
         </div>
 
         <div class="left-content">
-          <div style="display: flex; flex-direction: column; flex: 1 1 0; min-height: 0">
+          <div class="attributes-content-wrapper">
             <form [formGroup]="attributeStep" id="attribute-form">
               <mat-form-field [appearance]="'outline'" class="attribute-input" id="attributes-dropdown">
                 <input
@@ -270,6 +271,7 @@
                 <span
                   (click)="attributeInput.openPanel(); clearAttributeInput()"
                   class="material-symbols-outlined dropdown-icon"
+                  aria-hidden="true"
                   >keyboard_arrow_down</span
                 >
 
@@ -291,8 +293,20 @@
                 </mat-autocomplete>
               </mat-form-field>
             </form>
+            <div id="attributes-selection-controls">
+              <button class="attributes-action-button remove-all-button" (click)="removeAllSelectedAttributes()"
+                >Remove all</button
+              >
+              <button class="attributes-action-button" (click)="selectAllAttributes()">Select all</button>
+              @if(displayWarningMessage) {
+              <span class="warning-message"
+                >Selecting more than 1000 attributes may cause performance issues. Please consider filtering attributes
+                or selecting them manually</span
+              >
+              }
+            </div>
             @if(selectedAttributes.length) {
-            <span>Selected attributes:</span>
+            <span class="attributes-section-label">Selected attributes ({{ selectedAttributes.length }}):</span>
             <div class="grid-container" id="attributes-list">
               <div class="grid-header" title="Name">Name</div>
               <div class="grid-header" title="Source">Source</div>
@@ -310,6 +324,7 @@
                     type="text"
                     #attributeNameInput
                     [title]="selectedAttribute.name"
+                    [attr.aria-label]="'Attribute name: ' + selectedAttribute.name"
                     [ngModel]="selectedAttribute.name"
                     (ngModelChange)="onAttributeNameChange(selectedAttribute, attributeNameInput.value)"
                     [ngClass]="!isAttributeValid(selectedAttribute) ? 'duplicate-name-input' : ''" />
@@ -321,17 +336,19 @@
                   ><input
                     type="checkbox"
                     [checked]="selectedAttribute.internal"
-                    (change)="toggleAttributeInternal(selectedAttribute)" />
+                    (change)="toggleAttributeInternal(selectedAttribute)"
+                    [attr.aria-label]="'Mark ' + selectedAttribute.name + ' as internal'" />
                 </span>
                 <span class="attribute-description grid-cell" [title]="selectedAttribute.description">{{
                   selectedAttribute.description
                 }}</span>
                 <div class="delete-buttons grid-cell center-cell">
-                  <span
+                  <button
                     [attr.id]="selectedAttribute.name + '-remove-button'"
                     class="material-symbols-outlined remove-attribute"
                     (click)="removeSelectedAttribute(selectedAttribute)"
-                    >delete</span
+                    [attr.aria-label]="'Remove ' + selectedAttribute.name"
+                    >delete</button
                   >
                 </div>
               </ng-container>

@@ -185,6 +185,7 @@ mat-form-field {
 #modal-header {
   margin: 20px 30px;
   font-size: 18px;
+  font-weight: 500;
   color: #85a2b9;
 }
 
@@ -230,11 +231,14 @@ mat-form-field {
 
 .remove-attribute {
   color: #85a2b9;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
 }
 
 .remove-attribute:hover {
   color: #9cb8d0;
-  cursor: pointer;
 }
 
 .optional-label {
@@ -548,4 +552,76 @@ input[type="checkbox"]:checked {
   #attributes-list {
     grid-template-columns: 80px 80px 44px minmax(80px, 1fr) 44px;
   }
+}
+
+.stepper-container {
+  height: 100%;
+}
+
+.resource-list-wrapper {
+  flex: 1 1 0;
+  overflow: auto;
+}
+
+.resource-footer {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+}
+
+.attributes-content-wrapper {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+#attributes-selection-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.attributes-action-button {
+  background: none;
+  border: 1px solid #cfd8df;
+  border-radius: 5px;
+  color: #435869;
+  font-size: 13px;
+  font-family: inherit;
+  padding: 4px 10px;
+  cursor: pointer;
+  line-height: 1.4;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out;
+}
+
+.attributes-action-button:hover {
+  background-color: #f4f7fb;
+  border-color: #85a2b9;
+}
+
+.attributes-action-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 0.125rem #b9d3e7;
+}
+
+.remove-all-button:hover {
+  background-color: #ffedef;
+  border-color: #d74b59;
+  color: #d74b59;
+}
+
+.warning-message {
+  font-size: 13px;
+  color: #7a6000;
+}
+
+.attributes-section-label {
+  display: block;
+  font-size: 13px;
+  color: #85a2b9;
+  font-weight: 500;
+  margin-bottom: 4px;
 }

@@ -1,7 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { AfterViewInit, Component, ElementRef, Inject, OnDestroy, OnInit, signal, ViewChild } from '@angular/core';
 import { FormBuilder, FormControl, FormGroup, FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
-import { MatAutocompleteModule } from '@angular/material/autocomplete';
+import { MatAutocompleteModule, MatAutocompleteTrigger } from '@angular/material/autocomplete';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
@@ -84,6 +84,10 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
   public errorMessage = '';
   public editAttributeNameView = false;
   public searchError = '';
+  public displayWarningMessage = false;
+  public isAttributeLoading = false;
+  private attributePanel: HTMLElement = null;
+  private attributePanelScrollHandler: (() => void) = null;
   public tooltipContent =
     '- use AND to perform \'and\',\n'+
     '- use OR to perform \'or\',\n' +
@@ -100,6 +104,24 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
   public observer!: IntersectionObserver;
   public isResourceTableInitialized = false;
   public createWithDefaults = true;
+
+  @ViewChild('attributeInput') private set attributeInput(trigger: MatAutocompleteTrigger) {
+    if (!trigger) {
+      return;
+    }
+    trigger.autocomplete.opened.subscribe(() => {
+      setTimeout(() => {
+        const panel = trigger.autocomplete.panel?.nativeElement as HTMLElement | undefined;
+        if (!panel) {
+          return;
+        }
+        this.removeAttributePanelScrollHandler();
+        this.attributePanelScrollHandler = (): void => this.onAttributePanelScroll(panel);
+        panel.addEventListener('scroll', this.attributePanelScrollHandler);
+        this.attributePanel = panel;
+      });
+    });
+  }
 
   public constructor(
     private editorService: PipelineEditorService,
@@ -170,6 +192,7 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
 
   public ngOnDestroy(): void {
     this.observer?.disconnect();
+    this.removeAttributePanelScrollHandler();
   }
 
   private setupResourceSearching(): void {
@@ -421,15 +444,17 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
     ).subscribe(res => {
       this.attributePage = res;
       this.filteredAttributes = res.attributes;
+      this.displayWarningMessage = false;
     });
   }
 
-  private getAttributesObservable(value?: string): Observable<AttributePage> {
+  private getAttributesObservable(value?: string, page?: number): Observable<AttributePage> {
     return this.editorService.getAttributes(
       this.data.pipelineId,
       this.annotatorStep.value.annotator,
       this.getPopulatedResourceValues(),
-      value || undefined
+      value || undefined,
+      page ?? 0
     ).pipe(take(1));
   }
 
@@ -534,12 +559,76 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
     });
   }
 
+  private onAttributePanelScroll(panel: HTMLElement): void {
+    const nearBottom = panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 50;
+    if (nearBottom && !this.isAttributeLoading && this.attributePage.page + 1 < this.attributePage.totalPages) {
+      this.loadMoreAttributes();
+    }
+  }
+
+  private loadMoreAttributes(): void {
+    this.isAttributeLoading = true;
+    const searchValue = this.attributeStep.get('attribute').value ?? null;
+    this.getAttributesObservable(searchValue ?? undefined, this.attributePage.page + 1).subscribe({
+      next: res => {
+        this.filteredAttributes = [...this.filteredAttributes, ...res.attributes];
+        this.attributePage = res;
+        this.isAttributeLoading = false;
+      },
+      error: () => {
+        this.isAttributeLoading = false;
+      }
+    });
+  }
+
+  private removeAttributePanelScrollHandler(): void {
+    if (!this.attributePanelScrollHandler) {
+      return;
+    }
+    this.attributePanel?.removeEventListener('scroll', this.attributePanelScrollHandler);
+    this.attributePanelScrollHandler = null;
+    this.attributePanel = null;
+  }
+
   public clearErrorMessage(): void {
     this.errorMessage = '';
+    this.displayWarningMessage = false;
   }
 
   public getResourceById(): Resource {
     const id = this.resourceStep.get('resourceId').value;
     return this.resourcePage.resources.find(r => r.fullId === id);
+  }
+
+  public removeAllSelectedAttributes(): void {
+    this.selectedAttributes = [];
+    this.displayWarningMessage = false;
+  }
+
+  public selectAllAttributes(): void {
+    if (this.attributePage.totalAttributes > 1000) {
+      this.displayWarningMessage = true;
+      return;
+    }
+    this.displayWarningMessage = false;
+
+    const nextPage = this.attributePage.page + 1;
+    const totalPages = this.attributePage.totalPages;
+
+    if (nextPage >= totalPages) {
+      this.selectedAttributes = cloneDeep(this.filteredAttributes);
+      return;
+    }
+
+    const searchValue = this.attributeStep.get('attribute').value ?? null;
+    const remainingPages = Array.from({ length: totalPages - nextPage }, (_, i) => nextPage + i);
+
+    forkJoin(remainingPages.map(page => this.getAttributesObservable(searchValue ?? undefined, page)))
+      .subscribe(pages => {
+        const allAttributes = [...this.filteredAttributes, ...pages.flatMap(p => p.attributes)];
+        this.filteredAttributes = allAttributes;
+        this.attributePage = pages[pages.length - 1];
+        this.selectedAttributes = cloneDeep(allAttributes);
+      });
   }
 }

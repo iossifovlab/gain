@@ -252,8 +252,15 @@ describe('PipelineEditorService', () => {
 
     expect(httpPostSpy).toHaveBeenCalledWith(
       '//localhost:8000/api/editor/annotator_attributes',
-      // eslint-disable-next-line camelcase
-      {pipeline_id: 'pipelineId', annotator_type: 'position_score', resource_id: 'hg19/scores/FitCons-i6-merged'},
+      /* eslint-disable camelcase */
+      {
+        pipeline_id: 'pipelineId',
+        annotator_type: 'position_score',
+        resource_id: 'hg19/scores/FitCons-i6-merged',
+        search: undefined,
+        page: 0
+      },
+      /* eslint-enable */
       options
     );
     const res = await lastValueFrom(getResponse.pipe(take(1)));
