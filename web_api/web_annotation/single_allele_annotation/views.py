@@ -244,7 +244,7 @@ class SingleAnnotation(AnnotationBaseView):
             allele_query.save()
 
         if not is_unlimited:
-            quota.single_allele_query_complete(attributes_count)
+            request.user.quota_single_allele_complete(attributes_count)
 
         response_data = {
             "annotatable": annotatable.to_dict(),

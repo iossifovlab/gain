@@ -23,4 +23,4 @@ class Command(BaseCommand):
             raise CommandError(
                 f"User with email {email} does not exist") from ex
 
-        user.get_quota().add_units()
+        user.quota_add_units()

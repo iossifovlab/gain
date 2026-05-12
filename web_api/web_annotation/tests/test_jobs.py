@@ -894,6 +894,7 @@ def test_annotate_vcf_returns_403_when_quota_exceeded(
     quota_mock = MagicMock()
     quota_mock.check_job_quota.return_value = False
     mocker.patch.object(User, "get_quota", return_value=quota_mock)
+    quota_job_complete_mock = mocker.patch.object(User, "quota_job_complete")
 
     vcf = textwrap.dedent("""
         ##fileformat=VCFv4.1
@@ -910,7 +911,7 @@ def test_annotate_vcf_returns_403_when_quota_exceeded(
     )
 
     assert response.status_code == 403
-    quota_mock.job_complete.assert_not_called()
+    quota_job_complete_mock.assert_not_called()
 
 
 @pytest.mark.django_db
@@ -922,6 +923,7 @@ def test_annotate_vcf_records_quota_usage_on_success(
     quota_mock = MagicMock()
     quota_mock.check_job_quota.return_value = True
     mocker.patch.object(User, "get_quota", return_value=quota_mock)
+    quota_job_complete_mock = mocker.patch.object(User, "quota_job_complete")
 
     vcf = textwrap.dedent("""
         ##fileformat=VCFv4.1
@@ -939,7 +941,7 @@ def test_annotate_vcf_records_quota_usage_on_success(
     )
 
     assert response.status_code == 200
-    quota_mock.job_complete.assert_called_once()
+    quota_job_complete_mock.assert_called_once()
 
 
 @pytest.mark.django_db
@@ -950,6 +952,7 @@ def test_annotate_columns_returns_403_when_quota_exceeded(
     quota_mock = MagicMock()
     quota_mock.check_job_quota.return_value = False
     mocker.patch.object(User, "get_quota", return_value=quota_mock)
+    quota_job_complete_mock = mocker.patch.object(User, "quota_job_complete")
 
     file = textwrap.dedent("""
         chrom,pos,ref,alt
@@ -970,7 +973,7 @@ def test_annotate_columns_returns_403_when_quota_exceeded(
     )
 
     assert response.status_code == 403
-    quota_mock.job_complete.assert_not_called()
+    quota_job_complete_mock.assert_not_called()
 
 
 @pytest.mark.django_db
@@ -982,6 +985,7 @@ def test_annotate_columns_records_quota_usage_on_success(
     quota_mock = MagicMock()
     quota_mock.check_job_quota.return_value = True
     mocker.patch.object(User, "get_quota", return_value=quota_mock)
+    quota_job_complete_mock = mocker.patch.object(User, "quota_job_complete")
 
     file = textwrap.dedent("""
         chrom,pos,ref,alt
@@ -1002,7 +1006,7 @@ def test_annotate_columns_records_quota_usage_on_success(
     )
 
     assert response.status_code == 200
-    quota_mock.job_complete.assert_called_once()
+    quota_job_complete_mock.assert_called_once()
 
 
 @pytest.mark.django_db
@@ -2542,6 +2546,7 @@ def test_annotate_vcf_unlimited_user_quota_not_deducted(
     quota_mock = MagicMock()
     quota_mock.check_job_quota.return_value = True
     mocker.patch.object(User, "get_quota", return_value=quota_mock)
+    quota_job_complete_mock = mocker.patch.object(User, "quota_job_complete")
 
     vcf = textwrap.dedent("""
         ##fileformat=VCFv4.1
@@ -2559,7 +2564,7 @@ def test_annotate_vcf_unlimited_user_quota_not_deducted(
     )
 
     assert response.status_code == 200
-    quota_mock.job_complete.assert_not_called()
+    quota_job_complete_mock.assert_not_called()
 
 
 @pytest.mark.django_db
@@ -2611,6 +2616,7 @@ def test_annotate_columns_unlimited_user_quota_not_deducted(
     quota_mock = MagicMock()
     quota_mock.check_job_quota.return_value = True
     mocker.patch.object(User, "get_quota", return_value=quota_mock)
+    quota_job_complete_mock = mocker.patch.object(User, "quota_job_complete")
 
     file = textwrap.dedent("""
         chrom,pos,ref,alt
@@ -2631,7 +2637,7 @@ def test_annotate_columns_unlimited_user_quota_not_deducted(
     )
 
     assert response.status_code == 200
-    quota_mock.job_complete.assert_not_called()
+    quota_job_complete_mock.assert_not_called()
 
 
 def test_annotate_vcf_unlimited_user_bypasses_variant_limit(

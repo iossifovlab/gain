@@ -204,7 +204,7 @@ def test_single_annotation_returns_429_when_quota_exceeded(
     response = view.post(request_data)
 
     assert response.status_code == 429
-    quota_mock.single_allele_query_complete.assert_not_called()
+    request_data.user.quota_single_allele_complete.assert_not_called()
 
 
 def test_single_annotation_records_quota_usage_on_success(
@@ -238,7 +238,7 @@ def test_single_annotation_records_quota_usage_on_success(
     assert response.status_code == 200
     # Empty pipeline has no annotators, so attributes_count == 0
     quota_mock.single_allele_allowed.assert_called_once_with(0)
-    quota_mock.single_allele_query_complete.assert_called_once_with(0)
+    request_data.user.quota_single_allele_complete.assert_called_once_with(0)
 
 
 def test_single_annotation_quota_counts_only_non_internal_attributes(
@@ -285,7 +285,7 @@ def test_single_annotation_quota_counts_only_non_internal_attributes(
 
     # 2 non-internal attributes, 1 internal — only non-internal counted
     quota_mock.single_allele_allowed.assert_called_once_with(2)
-    quota_mock.single_allele_query_complete.assert_called_once_with(2)
+    request_data.user.quota_single_allele_complete.assert_called_once_with(2)
 
 
 @pytest.mark.parametrize(

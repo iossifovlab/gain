@@ -244,7 +244,7 @@ class AnnotateVCF(AnnotationBaseView):
                 variants_count = count_input_variants(
                     job.input_path, job.annotation_type,
                 )
-                request.user.get_quota().job_complete(
+                request.user.quota_job_complete(
                     variants_count, attributes_count,
                 )
 
@@ -402,7 +402,7 @@ class AnnotateColumns(AnnotationBaseView):
                 variants_count = count_input_variants(
                     job.input_path, job.annotation_type,
                 )
-                request.user.get_quota().job_complete(
+                request.user.quota_job_complete(
                     variants_count, attributes_count,
                 )
 
