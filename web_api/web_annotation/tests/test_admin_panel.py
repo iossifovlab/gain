@@ -1,8 +1,8 @@
 # pylint: disable=W0621,C0114,C0116
 import pytest
+from admin_panel.views import reset_daily_quota, reset_monthly_quota
 from django.test import RequestFactory
 
-from admin_panel.views import reset_daily_quota, reset_monthly_quota
 from web_annotation.models import (
     DailyQuotaRefreshLog,
     MonthlyQuotaRefreshLog,
