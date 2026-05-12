@@ -454,14 +454,14 @@ class WebAnnotationAnonymousUser(BaseUser, AnonymousUser):
     def quota_job_complete(
         self, variants_count: int, attributes_count: int,
     ) -> None:
-        """Deduct quota after a job completes from both session and IP quotas."""
+        """Deduct units after a job completes from both quotas."""
         self._get_or_create_session_quota().job_complete(
             variants_count, attributes_count)
         self._get_or_create_ip_quota().job_complete(
             variants_count, attributes_count)
 
     def quota_single_allele_complete(self, attributes_count: int) -> None:
-        """Deduct quota from both session and IP quotas after a single query."""
+        """Deduct units from both quotas after a single query."""
         self._get_or_create_session_quota().single_allele_query_complete(
             attributes_count)
         self._get_or_create_ip_quota().single_allele_query_complete(
@@ -1099,7 +1099,7 @@ class QuotaSnapshot:
         return not (self.daily_jobs <= 0 or self.monthly_jobs <= 0)
 
     def check_variant_quota(self, variants_count: int) -> bool:
-        """Check if there is quota available for the given number of variants."""
+        """Check if there are units available for a number of variants."""
         if (
             self.extra_variants > 0
             and self.monthly_variants + self.extra_variants >= variants_count
