@@ -78,20 +78,3 @@ For annotation needs larger than the registered-user limits, please contact us
 at gain@iossifovlab.com. 
 
 We may be able to provide additional quota for larger annotation projects.
-
-### Guest user limits
-
-|                | annotatables | attributes | jobs | single annotatables | input file size |
-| -------------- | ------------ | ---------- | ---- | ------------------- | --------------- |
-| Per job limits | 10K          | 100K       | X    | X                   | 10M             |
-| Daily limits   | 100K         | 1M         | 10   | 100                 | X               |
-| Monthly limits | 1M           | 10M        | 100  | 1000                | X               |
-
-
-### Registered user limits
-
-|                | annotatables | attributes | jobs | single annotatables | input file size |
-| -------------- | ------------ | ---------- | ---- | ------------------- | --------------- |
-| Per job limits | 100K         | 1M         | X    | X                   | 100M            |
-| Daily limits   | 1M           | 10M        | 100  | 1000                | X               |
-| Monthly limits | 10M          | 100M       | 1000 | 10000               | X               |
