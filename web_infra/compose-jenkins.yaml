@@ -93,6 +93,27 @@ services:
       timeout: 5s
       retries: 5
 
+  backend-e2e-setup:
+    image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
+    depends_on:
+      backend-e2e-migrate:
+        condition: service_completed_successfully
+    environment:
+      DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
+      GPFWA_DB_NAME: gpfwa
+      GPFWA_DB_USER: postgres
+      GPFWA_DB_PASSWORD: secret
+      GPFWA_DB_HOST: db
+      GPFWA_DB_PORT: 5432
+      GPFWA_SECRET_KEY: "django-insecure-3rz4n(_u+x8r+n%&xr-(vg83v8&llq7pin*x%@%y@d8af%iphk"
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        python -m django create_user extra_units_user@email.com secret &&
+        python -m django add_units extra_units_user@email.com
+    restart: "no"
+
   backend-e2e:
     image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
     hostname: backend
