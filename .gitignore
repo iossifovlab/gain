@@ -89,3 +89,10 @@ web_api/data/db.sqlite3
 # Linked git worktrees used by Claude Code for isolated
 # feature development (see superpowers `using-git-worktrees`).
 /.worktrees/
+
+# Sphinx docs build artefacts. The tarball is consumed by
+# docs/deploy/docs_deploy.yaml; both are produced by
+# docs/build_docs.sh.
+/docs/build/
+/docs/gaindocs-html.tar.gz
+/docs/.tmp/

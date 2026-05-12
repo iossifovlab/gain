@@ -1,0 +1,31 @@
+- name: check GAIn docs host
+  hosts: all
+  tasks:
+
+  - name: debug
+    debug:
+      msg: "gain docs directory: {{ base_path }}/gaindocs"
+
+
+- name: deploy gaindocs
+  hosts: all
+  tasks:
+
+  - name: copy gaindocs-html.tar.gz
+    copy:
+      src: ../gaindocs-html.tar.gz
+      dest: "{{ base_path }}/gaindocs-html.tar.gz"
+
+  - name: clean user docs directory
+    file: path={{ base_path }}/gaindocs state=absent
+
+  - name: ensure user docs directory exists
+    file: path={{ base_path }}/gaindocs state=directory
+
+  - name: unarchive gaindocs-html.tar.gz
+    unarchive: |
+      src={{ base_path }}/gaindocs-html.tar.gz dest={{ base_path }}/gaindocs
+      remote_src=yes
+
+  - name: clean gaindocs-html.tar.gz
+    file: path={{ base_path }}/gaindocs-html.tar.gz state=absent
