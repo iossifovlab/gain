@@ -166,9 +166,16 @@ pipeline {
 
         stage('Pre-flight: master CI gate') {
             // Find the master multibranch build whose GIT_COMMIT
-            // matches the tagged commit and assert it succeeded.
-            // Stash its build number for the copyArtifacts call
-            // below. D8 — see Phase 10 design doc.
+            // matches the tagged commit and assert tests passed.
+            // SUCCESS and UNSTABLE are both accepted: lint and
+            // type-check findings (ruff / mypy / pylint) mark the
+            // upstream build UNSTABLE but do not gate the release,
+            // mirroring the policy in Jenkinsfile:9-13. FAILURE
+            // (pytest non-zero, or the build broke before pytest
+            // ran) blocks the release.
+            //
+            // Stash the matched build number for the copyArtifacts
+            // call below. D8 — see Phase 10 design doc.
             //
             // Uses Jenkins core APIs that require in-process
             // script approval the first time gain-release runs
@@ -198,11 +205,11 @@ pipeline {
                             'green.'
                         )
                     }
-                    if (info.result != 'SUCCESS') {
+                    if (!(info.result in ['SUCCESS', 'UNSTABLE'])) {
                         error(
                             "Upstream master build " +
                             "#${info.number} for commit " +
-                            "${tagSha} did not succeed " +
+                            "${tagSha} did not pass tests " +
                             "(${info.result}). Refusing to release."
                         )
                     }
@@ -210,7 +217,7 @@ pipeline {
                     env.GIT_COMMIT = tagSha
                     echo(
                         "Upstream master build: #${info.number} " +
-                        "(SUCCESS) for commit ${tagSha}"
+                        "(${info.result}) for commit ${tagSha}"
                     )
                 }
             }
