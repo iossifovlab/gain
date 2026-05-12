@@ -34,6 +34,16 @@ def anonymous_quota() -> AnonymousUserQuota:
     return quota
 
 
+def test_create_user_creates_user_with_given_email() -> None:
+    call_command("create_user", "new@example.com", "secret")
+    assert User.objects.filter(email="new@example.com").exists()
+
+
+def test_create_user_raises_for_duplicate_email() -> None:
+    with pytest.raises(CommandError, match="already exists"):
+        call_command("create_user", "user@example.com", "secret")
+
+
 # --- add_units command ---
 
 def test_add_units_command_adds_units_to_user_quota(
