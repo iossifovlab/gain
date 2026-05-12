@@ -90,6 +90,25 @@ cp pre-commit .git/hooks/
 The pre-commit hook runs `ruff check` (ignoring FIX
 warnings) on staged `.py` files.
 
+### Documentation (`docs/`)
+
+The Sphinx user docs (rendered at
+<https://iossifovlab.com/gaindocs/>) live in `docs/`. The
+build pulls an auto-generated module tree from `core/gain`.
+
+```bash
+# Install Sphinx toolchain
+uv sync --group docs
+
+# Build HTML + tarball
+bash docs/build_docs.sh
+open docs/build/html/index.html
+```
+
+The Jenkinsfile has `Build docs` (every branch) and
+`Deploy docs` (master only, ansible to iossifovlab.com).
+Pre-move history lives in `iossifovlab/gpf_documentation`.
+
 ### Test Infrastructure (Docker)
 
 Some tests require external services. Start them with:
