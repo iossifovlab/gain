@@ -12,7 +12,7 @@
         <div class="cell header">Current</div>
         <div class="cell header">Max</div>
 
-        <div class="cell header"><span class="free-label">(free)</span>Daily</div>
+        <div class="cell header">Free daily</div>
         @if(q.value.extra > 0) {
         <div [id]="'daily-current-' + q.key" class="cell">-</div>
         <div [id]="'daily-max-' + q.key" class="cell">-</div>
@@ -21,7 +21,7 @@
         <div [id]="'daily-max-' + q.key" class="cell">{{ q.value.daily.max | number : '' : 'en-US' }}</div>
         }
 
-        <div class="cell header"><span class="free-label">(free)</span>Monthly</div>
+        <div class="cell header">Free monthly</div>
         @if(q.value.extra > 0) {
         <div [id]="'monthly-current-' + q.key" class="cell">-</div>
         <div [id]="'monthly-max-' + q.key" class="cell">-</div>
