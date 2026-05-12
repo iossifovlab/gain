@@ -353,7 +353,25 @@ pipeline {
                                         // MailHog catches password-reset and account-
                                         // activation emails so the user-flow tests can
                                         // assert against them via --mailhog.
+                                        //
+                                        // Defensive teardown before up: COMPOSE_PROJECT
+                                        // includes only BUILD_NUMBER, so build #N of
+                                        // any branch shares the namespace with every
+                                        // other branch's build #N. If a prior #N run
+                                        // (other branch, manual test, abandoned build)
+                                        // left a mail container behind without its
+                                        // network, compose `up -d --wait` will reuse
+                                        // the container (reported as "Running" with
+                                        // no "Created"/"Starting") and skip network
+                                        // creation — and `runProject`'s
+                                        // `docker run --network <project>_default`
+                                        // then fails with "network not found".
+                                        // `|| true` because absent state is the
+                                        // happy path.
                                         sh '''
+                                            docker compose -f docker-compose.yaml \
+                                                -p "$COMPOSE_PROJECT" \
+                                                down -v --remove-orphans || true
                                             docker compose -f docker-compose.yaml \
                                                 -p "$COMPOSE_PROJECT" \
                                                 up -d --wait mail
