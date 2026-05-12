@@ -34,3 +34,19 @@ gain-demo-annotator = { workspace = true }
 gain-vep-annotator = { workspace = true }
 gain-spliceai-annotator = { workspace = true }
 gain-web-api = { workspace = true }
+
+[dependency-groups]
+# Sphinx toolchain for `docs/build_docs.sh`. Members mirror the
+# conda env that gpf_documentation used to ship from. Install
+# with `uv sync --group docs`.
+docs = [
+    "sphinx",
+    "sphinx-rtd-theme",
+    "sphinx-copybutton",
+    "sphinxcontrib-httpdomain",
+    "ipython",
+    "sphinx-autorun",
+    "sphinxcontrib-video",
+    "sphinx-last-updated-by-git",
+    "jinja2",
+]
