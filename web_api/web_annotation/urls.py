@@ -17,6 +17,7 @@ Including another URLconf
 from collections.abc import Sequence
 from typing import cast
 
+from django.conf import settings
 from django.urls import URLResolver, include, path, re_path
 
 from web_annotation import views
@@ -67,6 +68,10 @@ urlpatterns = [
         name="reset_password",
     ),
 ]
+
+if "admin_panel" in settings.INSTALLED_APPS:
+    from admin_panel.urls import urlpatterns as admin_panel_urls
+    urlpatterns += admin_panel_urls
 
 websocket_urlpatterns = [
     re_path(
