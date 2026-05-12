@@ -1,19 +1,19 @@
 Genomic resources and repositories
 ==============================
 
-A Genomic Resource Repository (GRR) is a collection of genomic resources (e.g., 
-genomes, gene models, scores, and gene sets) stored either locally (on disk) or 
-remotely (over the network). GAIn uses GRRs as the backing store for resources 
-during annotation and analysis. 
+A Genomic Resource Repository (GRR) is a collection of genomic resources (e.g.,
+genomes, gene models, scores, and gene sets) stored either locally (on disk) or
+remotely (over the network). GAIn uses GRRs as the backing store for resources
+during annotation and analysis.
 
 Repository discovery
 --------------------
-By default, GAIn looks for a configuration file named ``.grr_definition.yaml`` 
-in your home directory to determine which GRRs are available. If the file is 
+By default, GAIn looks for a configuration file named ``.grr_definition.yaml``
+in your home directory to determine which GRRs are available. If the file is
 not present, GAIn defaults to using the public IossifovLab GRR.
 
-To configure which GRRs GAIn uses by default, create a file named ``.grr_definition.yaml`` 
-in your home directory. The example below reproduces the default behavior by 
+To configure which GRRs GAIn uses by default, create a file named ``.grr_definition.yaml``
+in your home directory. The example below reproduces the default behavior by
 pointing GAIn to the public `IossifovLab GRR <https://grr.iossifovlab.com/>`_ (a remote repository accessed via URL):
 
 .. code:: yaml
@@ -25,7 +25,7 @@ pointing GAIn to the public `IossifovLab GRR <https://grr.iossifovlab.com/>`_ (a
       type: url
       url: https://grr.iossifovlab.com
 
-If you replace ``.grr_definition.yaml`` with the next example, GAIn will resolve resources from your local directory-based 
+If you replace ``.grr_definition.yaml`` with the next example, GAIn will resolve resources from your local directory-based
 GRR (created in “`Getting Started in GRR <https://iossifovlab.com/gaindocs/gain_getting_started_grr.html>`_”).
 This overrides the default behavior, so the public IossifovLab GRR will no longer be used unless you add it explicitly.
 
@@ -38,7 +38,7 @@ This overrides the default behavior, so the public IossifovLab GRR will no longe
       type: directory
       directory: [path to my_grr]/my_grr
 
-The configuration below defines two GRRs and searches them in order. When GAIn resolves a resource ID, it 
+The configuration below defines two GRRs and searches them in order. When GAIn resolves a resource ID, it
 first queries the GRR with id GRR (the public IossifovLab GRR). If the resource is not found there, GAIn then queries the GRR with id ``grr_local``.
 
 .. code:: yaml
@@ -60,12 +60,12 @@ first queries the GRR with id GRR (the public IossifovLab GRR). If the resource 
 Repository configuration
 ------------------------
 
-A repository configuration is a YAML mapping with a required id and type, 
+A repository configuration is a YAML mapping with a required id and type,
 plus additional fields depending on the repository type.
 
 Common fields
 
-    | **id** (string, required): Identifier for the repository. 
+    | **id** (string, required): Identifier for the repository.
     | **type** (string, required): directory, http, url, embedded, or group.
 
 Type-specific fields
@@ -91,18 +91,18 @@ Type-specific fields
 Repository caching
 -----------------------
 
-When a repository is configured with a ``cache_dir`` option, GAIn caches 
-resources locally before using them. This matters because many genomic 
-resources are large (often hundreds of MB to many GB), and repeatedly downloading 
+When a repository is configured with a ``cache_dir`` option, GAIn caches
+resources locally before using them. This matters because many genomic
+resources are large (often hundreds of MB to many GB), and repeatedly downloading
 or streaming them from a remote GRR can be slow and network-dependent.
 
-With caching enabled, the first use of a resource may take longer while GAIn 
-downloads it into ``cache_dir``. After that, GAIn reuses the cached copy, which is 
-typically much faster and avoids repeated network transfers. This is especially useful for 
+With caching enabled, the first use of a resource may take longer while GAIn
+downloads it into ``cache_dir``. After that, GAIn reuses the cached copy, which is
+typically much faster and avoids repeated network transfers. This is especially useful for
 resources you access frequently (for example, common reference genomes, gene models, or widely used scores).
 
-The tradeoff is disk usage: cached resources can occupy substantial space, 
-so choose a ``cache_dir`` location with enough capacity (and keep in mind that 
+The tradeoff is disk usage: cached resources can occupy substantial space,
+so choose a ``cache_dir`` location with enough capacity (and keep in mind that
 the cache may grow over time as you use more resources).
 
 
@@ -112,7 +112,7 @@ Repository management
 GAIn provides two command-line tools for working with genomic resources and repositories. Their usage is outlined below.
 
     | **grr_manage**: create, inspect, and maintain GRRs (manifests, stats, info pages, repair).
-    | **grr_browse**: browse the resources available through a GRR definition file. 
+    | **grr_browse**: browse the resources available through a GRR definition file.
 
 
 
@@ -174,12 +174,12 @@ GAIn provides two command-line tools for working with genomic resources and repo
 Genomic resource configuration
 ------------------------
 
-GAIn supports a large number of genomic resource types (for example, genomes, gene models, and position scores). 
-Each resource lives in its own folder within a GRR and includes the resource files plus a ``genomic_resource.yaml`` 
-configuration file. In the sections below, we describe the configuration options available for each resource type. 
+GAIn supports a large number of genomic resource types (for example, genomes, gene models, and position scores).
+Each resource lives in its own folder within a GRR and includes the resource files plus a ``genomic_resource.yaml``
+configuration file. In the sections below, we describe the configuration options available for each resource type.
 
-All ``genomic_resource.yaml`` files share the same top-level structure: the first line sets the resource type (a string that 
-determines how GAIn interprets the resource), and an optional meta section can provide human-readable metadata via summary, 
+All ``genomic_resource.yaml`` files share the same top-level structure: the first line sets the resource type (a string that
+determines how GAIn interprets the resource), and an optional meta section can provide human-readable metadata via summary,
 description, and labels.
 
 .. code-block:: yaml
@@ -193,21 +193,21 @@ description, and labels.
       description: <(string) Longer description of the resource>
       labels: <(dictionary) Arbitrary key/value pairs>
 
-While describing ``genomic_resource.yaml`` configuration options, 
-we will first cover the resource types whose ``genomic_resource.yaml`` 
-files are relatively simple (genome, gene models, liftover chains, 
-and annotation pipelines). Next, we will cover position score and allele score resources, 
-whose configuration files are typically more complex because the underlying data files are 
-large and often follow resource-specific conventions. To support these cases, we introduce 
-additional options for table and column matching, histogram configuration, and annotation defaults. 
-Finally, we cover gene scores (which are similar to position and allele scores) and gene sets, 
+While describing ``genomic_resource.yaml`` configuration options,
+we will first cover the resource types whose ``genomic_resource.yaml``
+files are relatively simple (genome, gene models, liftover chains,
+and annotation pipelines). Next, we will cover position score and allele score resources,
+whose configuration files are typically more complex because the underlying data files are
+large and often follow resource-specific conventions. To support these cases, we introduce
+additional options for table and column matching, histogram configuration, and annotation defaults.
+Finally, we cover gene scores (which are similar to position and allele scores) and gene sets,
 which have their own resource-specific configuration in ``genomic_resource.yaml``.
 
 
 Genomes
 ^^^^^^^
 
-Genome resources use a reference assembly FASTA and (optionally) provide assembly-specific 
+Genome resources use a reference assembly FASTA and (optionally) provide assembly-specific
 metadata such as chromosome naming conventions and pseudoautosomal regions.
 
 Resource-specific fields in ``genomic_resource.yaml`` for genome resources (**type**: genome) are:
@@ -217,7 +217,7 @@ Resource-specific fields in ``genomic_resource.yaml`` for genome resources (**ty
     | **PARS** (subsection, optional): Pseudoautosomal regions for the assembly.
 
 Let's revisit the example ``genomic_resource.yaml`` from the `Getting started with GRR genome section <https://iossifovlab.com/gaindocs/gain_getting_started_grr.html#genome-grch38-p14>`_.
-As before, filename points to the downloaded FASTA file and contig names use the ``chr`` prefix. We now also include 
+As before, filename points to the downloaded FASTA file and contig names use the ``chr`` prefix. We now also include
 ``PARS``, which defines the pseudoautosomal regions on chromosomes X and Y.
 
 .. code-block:: yaml
@@ -241,14 +241,14 @@ As before, filename points to the downloaded FASTA file and contig names use the
 Gene models
 ^^^^^^^^
 
-For gene model resources, the ``genomic_resource.yaml`` file has a minimal resource-specific 
+For gene model resources, the ``genomic_resource.yaml`` file has a minimal resource-specific
 section with only filename and format.
 
 Resource-specific fields (**type**: gene_models):
     | **filename** (string): Path to the gene model file, relative to the resource directory.
     | **format** (string): Gene model format. Supported values include default, refflat, refseq, ccds, knowngene, gtf, and ucscgenepred.
 
-In the `Getting started with GRR gene models <https://iossifovlab.com/gaindocs/gain_getting_started_grr.html#gene-models-mane-v1-4>`_ example, 
+In the `Getting started with GRR gene models <https://iossifovlab.com/gaindocs/gain_getting_started_grr.html#gene-models-mane-v1-4>`_ example,
 the gene model file is a GTF, so we set ``format: gtf``.
 
 
@@ -262,7 +262,7 @@ the gene model file is a GTF, so we set ``format: gtf``.
     meta:
       summary: MANE gene model version 1.4
 
-Liftover chains 
+Liftover chains
 ^^^^^^^^
 
 For liftover chain resources, the ``genomic_resource.yaml`` file has a minimal resource-specific section with only filename.
@@ -274,7 +274,7 @@ Resource-specific fields (**type**: liftover_chain):
 
     type: liftover_chain
     filename: hg38-chm13v2.over.chain.gz
-    meta: 
+    meta:
       summary: Liftover Chain hg38 to T2T
 
 
@@ -289,16 +289,16 @@ Resource-specific fields (**type**: annotation_pipeline):
 .. code-block:: yaml
 
     type: annotation_pipeline
-    filename: Clinical_annotation.yaml 
+    filename: Clinical_annotation.yaml
     meta:
-      summary: Clinical Annotation Pipeline 
+      summary: Clinical Annotation Pipeline
 
 
 
 Position scores
 ^^^^^^^^
 
-Position score resources (**type**: position_score) use a ``genomic_resource.yaml`` file with three resource-specific sections: 
+Position score resources (**type**: position_score) use a ``genomic_resource.yaml`` file with three resource-specific sections:
 ``table``, ``scores``, and (optionally) ``default_annotation``.
 
 **table**
@@ -321,7 +321,7 @@ The **header** field is used only when ``header_mode`` is set to list. Example:
     header: ["chrom", "start", "end", "score_value"]
 
 
-The user must tell GAIn which columns correspond to ``chrom`` (chromosome), ``pos_begin`` (start position), and ``pos_end`` (end position). 
+The user must tell GAIn which columns correspond to ``chrom`` (chromosome), ``pos_begin`` (start position), and ``pos_end`` (end position).
 This can be done by column index or by column name.
 
 If the resource file has no header, columns must be specified by index. For example:
@@ -339,7 +339,7 @@ If the resource file has no header, columns must be specified by index. For exam
       pos_end:
         index: 2
 
-If the resource file includes a header, columns can be specified by name. In the next example, ``positionscore2.bedGraph.gz`` has 
+If the resource file includes a header, columns can be specified by name. In the next example, ``positionscore2.bedGraph.gz`` has
 columns named ``chr`` and ``pos``:
 
 .. code-block:: yaml
@@ -355,8 +355,8 @@ columns named ``chr`` and ``pos``:
       pos_end:
         name: pos
 
-The table section also supports **chrom_mapping**, which can be used to reconcile chromosome 
-naming differences between the resource file and the reference genome. This is useful, for example, 
+The table section also supports **chrom_mapping**, which can be used to reconcile chromosome
+naming differences between the resource file and the reference genome. This is useful, for example,
 when the resource uses contig names like chr1 but the genome uses only numbers.
 
 Three options are available under chrom_mapping:
@@ -364,10 +364,10 @@ Three options are available under chrom_mapping:
     | **add_prefix**: Takes a string value and adds it as a prefix.
     | **del_prefix**: Takes a string value and removes it from the start of each chromosome name.
     | **zero_based**: Controls the coordinate convention used when reading the score. Set to true for BED-style coordinates (0-based, half-open). Leave it as the default (false) to use GAIn's internal format (1-based, closed intervals).
-    | **filename**: Takes a filepath (relative to the genomic resource directory). 
-    The file must contain two whitespace-delimited columns. 
-    The first line must be a header with the column names ``chrom`` and ``file_chrom``. 
-    Values in ``file_chrom`` are what appear in the resource file, and values in ``chrom`` are what 
+    | **filename**: Takes a filepath (relative to the genomic resource directory).
+    The file must contain two whitespace-delimited columns.
+    The first line must be a header with the column names ``chrom`` and ``file_chrom``.
+    Values in ``file_chrom`` are what appear in the resource file, and values in ``chrom`` are what
     they will be mapped to. For example:
 
 .. code-block:: yaml
@@ -376,7 +376,7 @@ Three options are available under chrom_mapping:
     Chromosome_1     1
     Chromosome_22    22
 
-An example of using ``chrom_mapping`` 
+An example of using ``chrom_mapping``
 (useful when the resource uses a ``chr`` prefix but the genome does not) is shown below:
 
 .. code-block:: yaml
@@ -390,9 +390,9 @@ An example of using ``chrom_mapping``
 **scores**
 """""""""""""""
 
-The ``table`` section configures how the data file is read. 
-The ``scores`` section specifies which score columns to extract, how to name them in the GRR, 
-and what data type they should have. For example, the minimal configuration below extracts a 
+The ``table`` section configures how the data file is read.
+The ``scores`` section specifies which score columns to extract, how to name them in the GRR,
+and what data type they should have. For example, the minimal configuration below extracts a
 float score from column index 2 and stores it under the id ``my_positionscore1``:
 
 .. code-block:: yaml
@@ -402,7 +402,7 @@ float score from column index 2 and stores it under the id ``my_positionscore1``
       type: float
       index: 2
 
-Alternatively, score columns can be specified by name. In the next example, the score column in the file is named ``positionscore2``, 
+Alternatively, score columns can be specified by name. In the next example, the score column in the file is named ``positionscore2``,
 and the extracted score is stored under the id ``my_positionscore2``:
 
 .. code-block:: yaml
@@ -412,7 +412,7 @@ and the extracted score is stored under the id ``my_positionscore2``:
       type: float
       name: positionscore2
 
-Optionally, the user may also add human-readable descriptions. 
+Optionally, the user may also add human-readable descriptions.
 These fields are used on the HTML summary page for the resource. For example:
 
 .. code-block:: yaml
@@ -421,15 +421,15 @@ These fields are used on the HTML summary page for the resource. For example:
     large_values_desc: "more conserved"
     small_values_desc: "less conserved"
 
-The HTML summary page displays a default histogram for each score. 
-Optionally, the user may provide a histogram configuration to override the default 
-and control how the score distribution is displayed. Histogram configuration options are covered `here <https://iossifovlab.com/gaindocs/grr.html#histogram-configuration>`_. The example below shows a custom histogram within a complete scores entry. 
+The HTML summary page displays a default histogram for each score.
+Optionally, the user may provide a histogram configuration to override the default
+and control how the score distribution is displayed. Histogram configuration options are covered `here <https://iossifovlab.com/gaindocs/grr.html#histogram-configuration>`_. The example below shows a custom histogram within a complete scores entry.
 If the resource includes multiple scores, add additional entries under scores with different id values.
 
 .. code-block:: yaml
 
     scores:
-    - id: my_positionscore2                       
+    - id: my_positionscore2
       type: float
       name: positionscore2
 
@@ -446,11 +446,11 @@ If the resource includes multiple scores, add additional entries under scores wi
         y_log_scale: True
 
 
-**default_annotation** 
+**default_annotation**
 """""""""""""""
 
-Annotation pipelines can choose which scores from a resource to use. If a pipeline does not explicitly specify scores for this resource, 
-GAIn falls back to the resource's ``default_annotation`` list. If ``default_annotation`` is not provided, all scores in the resource are 
+Annotation pipelines can choose which scores from a resource to use. If a pipeline does not explicitly specify scores for this resource,
+GAIn falls back to the resource's ``default_annotation`` list. If ``default_annotation`` is not provided, all scores in the resource are
 used by default. An example is shown below ***:
 
 .. code-block:: yaml
@@ -459,7 +459,7 @@ used by default. An example is shown below ***:
     - source: my_positionscore2
       name: my_positionscore2
 
-Putting all the pieces together, the following is a complete ``genomic_resource.yaml`` example for a position score resource. 
+Putting all the pieces together, the following is a complete ``genomic_resource.yaml`` example for a position score resource.
 The optional ``meta`` field is omitted for conciseness.
 
 .. code-block:: yaml
@@ -506,7 +506,7 @@ The optional ``meta`` field is omitted for conciseness.
 Allele scores
 ^^^^^^^^
 
-`genomic_resource.yaml` files for allele score resources are almost exactly the same 
+`genomic_resource.yaml` files for allele score resources are almost exactly the same
 as for position score resources, with three differences:
 
 1. **type**: allele_score
@@ -518,7 +518,7 @@ as for position score resources, with three differences:
 
 3. In the ``table`` section, the user must also specify which columns contain the **reference** and **alternative** alleles using reference and alternative.
 
-The scores, ``default_annotation``, and ``meta`` sections are the same as for position scores. The example below shows the beginning of 
+The scores, ``default_annotation``, and ``meta`` sections are the same as for position scores. The example below shows the beginning of
 a valid ``genomic_resource.yaml`` for an allele score resource:
 
 
@@ -548,22 +548,22 @@ a valid ``genomic_resource.yaml`` for an allele score resource:
 CNV collections
 ^^^^^^^^^^^^^^^
 
-``genomic_resource.yaml`` files for CNV collection resources are the same as for 
+``genomic_resource.yaml`` files for CNV collection resources are the same as for
 position score resources, except that the resource type is set to ``cnv_collection``.
 
-CNV collections are coordinate-based, like position scores: they are queried by chromosome and interval and do not model allele changes. 
+CNV collections are coordinate-based, like position scores: they are queried by chromosome and interval and do not model allele changes.
 Annotation consists of reporting overlapping CNVs and the selected associated fields (for example, CNV class and frequency).
 
 The example below shows a valid ``genomic_resource.yaml`` for a CNV collection resource (``my_CNVcollection.txt``),
-which uses ``chrom``, ``pos_begin`` and ``pos_end`` as column names for chromosome, beginning 
-position and end position, respectively. It and also has a column called ``deletion_duplication`` 
+which uses ``chrom``, ``pos_begin`` and ``pos_end`` as column names for chromosome, beginning
+position and end position, respectively. It and also has a column called ``deletion_duplication``
 which describes the event type recorded.
 
 .. code-block:: yaml
 
     type: cnv_collection
     table:
-      filename: my_CNVcollection.txt 
+      filename: my_CNVcollection.txt
 
     scores:
     - id: CNV type
@@ -578,18 +578,18 @@ which describes the event type recorded.
 Gene scores
 ^^^^^^^^^^^
 
-Gene scores are gene-level annotations, such as constraint metrics, expression summaries, or intolerance scores. 
-``genomic_resource.yaml`` files for gene score resources are similar to position score resources, 
-except that the resource type is set to ``gene_score`` and there is no ``table`` section. The underlying data file 
+Gene scores are gene-level annotations, such as constraint metrics, expression summaries, or intolerance scores.
+``genomic_resource.yaml`` files for gene score resources are similar to position score resources,
+except that the resource type is set to ``gene_score`` and there is no ``table`` section. The underlying data file
 is a table whose gene identifier column must be named ``gene``.
 
 
-In the example ``genomic_resource.yaml`` file below, data file ``gene_scores.tsv`` contains a required column named ``gene``, 
-plus two score columns named ``constraint`` and ``intolerance``. The ``scores`` section defines which columns are exposed as scores, 
+In the example ``genomic_resource.yaml`` file below, data file ``gene_scores.tsv`` contains a required column named ``gene``,
+plus two score columns named ``constraint`` and ``intolerance``. The ``scores`` section defines which columns are exposed as scores,
 and ``default_annotation`` works the same way as for position scores.
 
-The HTML summary page displays a default histogram for each score. Optionally, the user may provide a 
-histogram configuration to override the default and control how the score distribution is displayed, as shown for the ``constraint_score`` in this example. 
+The HTML summary page displays a default histogram for each score. Optionally, the user may provide a
+histogram configuration to override the default and control how the score distribution is displayed, as shown for the ``constraint_score`` in this example.
 Histogram configuration options are covered `here <https://iossifovlab.com/gaindocs/grr.html#histogram-configuration>`_.
 
 .. code-block:: yaml
@@ -624,18 +624,18 @@ Histogram configuration options are covered `here <https://iossifovlab.com/gaind
 Gene set collections
 ^^^^^^^^^^^^
 
-A ``gene_set_collection`` defines relationships between genes and gene sets. 
-These relationships can be provided either directly as gene sets (``gmt`` format) or 
-as gene-set mappings (``map`` format). In both cases, the underlying structure is the same: 
+A ``gene_set_collection`` defines relationships between genes and gene sets.
+These relationships can be provided either directly as gene sets (``gmt`` format) or
+as gene-set mappings (``map`` format). In both cases, the underlying structure is the same:
 a many-to-many association between genes and sets.
 
-In ``gmt`` format, each line of the file directly defines a gene set and its member genes. 
-In this format, each row corresponds to a single gene set. The first column defines 
-the set identifier, the second column typically provides a description, and the remaining 
-columns list the genes belonging to that set. No additional processing is required to 
+In ``gmt`` format, each line of the file directly defines a gene set and its member genes.
+In this format, each row corresponds to a single gene set. The first column defines
+the set identifier, the second column typically provides a description, and the remaining
+columns list the genes belonging to that set. No additional processing is required to
 construct the gene sets.
 
-``example.gmt``, an example ``gmt`` data file: 
+``example.gmt``, an example ``gmt`` data file:
 
 .. code-block:: text
 
@@ -654,13 +654,13 @@ Example ``genomic_resource.yaml`` file for a ``gmt`` gene set collection resourc
     meta:
       summary: Minimal GMT example
 
-In ``map`` format, each row defines a relationship between a gene and a gene set. 
-The first column contains the gene identifier, and the second column contains the set 
-identifier. Gene sets are formed by grouping all rows with the same set identifier. 
-A companion file may optionally be provided to associate each set identifier with a 
+In ``map`` format, each row defines a relationship between a gene and a gene set.
+The first column contains the gene identifier, and the second column contains the set
+identifier. Gene sets are formed by grouping all rows with the same set identifier.
+A companion file may optionally be provided to associate each set identifier with a
 human-readable description.
 
-``example-map.txt``, an example ``map`` file: 
+``example-map.txt``, an example ``map`` file:
 
 .. code-block:: text
 
@@ -698,37 +698,37 @@ Example ``genomic_resource.yaml`` file for a ``map`` gene set collection resourc
     meta:
       summary: Example MAP-based gene set collection
 
-For both ``gmt`` and ``map`` resources, the optional ``histograms`` section can be used to summarize the structure of the 
-collection. For example, ``genes_per_gene_set`` describes the distribution of gene set sizes, 
+For both ``gmt`` and ``map`` resources, the optional ``histograms`` section can be used to summarize the structure of the
+collection. For example, ``genes_per_gene_set`` describes the distribution of gene set sizes,
 while ``gene_sets_per_gene`` describes how many sets each gene belongs to.
 
 
 Histogram configuration
 -------------------------
 
-Histograms provide a quick visual summary of how a score is distributed across 
-the genome or across observed variants. Seeing the distribution is often as important 
-as seeing individual values, because it helps interpret what “large” or “small” values 
-typically look like for a given score and whether the score has outliers, heavy tails, 
+Histograms provide a quick visual summary of how a score is distributed across
+the genome or across observed variants. Seeing the distribution is often as important
+as seeing individual values, because it helps interpret what “large” or “small” values
+typically look like for a given score and whether the score has outliers, heavy tails,
 or distinct modes.
 
-For each score, the HTML summary page shows a default histogram whenever it is possible 
-to compute one from the underlying data. Histogram configuration is optional. If a score 
-includes a histogram block under scores, GAIn uses it to override the default display and 
+For each score, the HTML summary page shows a default histogram whenever it is possible
+to compute one from the underlying data. Histogram configuration is optional. If a score
+includes a histogram block under scores, GAIn uses it to override the default display and
 control how the distribution is visualized.
 
-Histogram behavior is controlled by the ``type`` field, which selects the histogram implementation. 
-GAIn supports three histogram types: ``number`` for numeric scores, ``categorical`` for string or 
-discrete category scores, and ``null`` to explicitly disable histogram computation/display when a 
+Histogram behavior is controlled by the ``type`` field, which selects the histogram implementation.
+GAIn supports three histogram types: ``number`` for numeric scores, ``categorical`` for string or
+discrete category scores, and ``null`` to explicitly disable histogram computation/display when a
 histogram is not meaningful. The value of type must be exactly one of number, categorical, or null.
 
-Some options are shared across number and categorical histogram types. For example, ``y_log_scale`` 
-controls whether the ``y-axis`` is displayed on a log scale (default: ``False``), which can be 
-helpful when counts vary widely across bins or categories. ``x_log_scale`` controls whether 
-the ``x-axis`` is displayed on a log scale (default: ``False``). When ``x_log_scale`` is set to 
-``True``, ``x_min_log`` defines the minimum ``x-axis`` value used for the logarithmic scale. 
-The example below shows a minimal histogram configuration that overrides the default 
-by enabling log-scale display on the ``y-axis`` for a numeric score. Other options depend 
+Some options are shared across number and categorical histogram types. For example, ``y_log_scale``
+controls whether the ``y-axis`` is displayed on a log scale (default: ``False``), which can be
+helpful when counts vary widely across bins or categories. ``x_log_scale`` controls whether
+the ``x-axis`` is displayed on a log scale (default: ``False``). When ``x_log_scale`` is set to
+``True``, ``x_min_log`` defines the minimum ``x-axis`` value used for the logarithmic scale.
+The example below shows a minimal histogram configuration that overrides the default
+by enabling log-scale display on the ``y-axis`` for a numeric score. Other options depend
 on the selected type and are described in the sections below.
 
 
@@ -747,10 +747,10 @@ on the selected type and are described in the sections below.
 
 **Number histograms**
 
-Number histograms are used for numeric scores, including continuous-valued scores and 
-integer-valued scores. They are supported for scores of type int and float. By default, 
-the histogram is calculated with 100 bins and uses linear scaling on both axes. They summarize 
-the distribution by grouping values into bins along the x-axis and showing the number of observations 
+Number histograms are used for numeric scores, including continuous-valued scores and
+integer-valued scores. They are supported for scores of type int and float. By default,
+the histogram is calculated with 100 bins and uses linear scaling on both axes. They summarize
+the distribution by grouping values into bins along the x-axis and showing the number of observations
 per bin.
 
 A number histogram configuration supports two options.
@@ -772,10 +772,10 @@ The example below shows a number histogram configuration with an explicit bin co
 
 **Categorical histograms**
 
-Here, each value represents a discrete label (e.g., ClinVar clinical significance categories 
-or review-status labels). Categorical histograms are supported for scores of type ``str`` and ``int``. 
-This histogram type shows the distribution of unique values in the score and is supported only 
-for scores with fewer than 100 unique values. They summarize the distribution by counting how many 
+Here, each value represents a discrete label (e.g., ClinVar clinical significance categories
+or review-status labels). Categorical histograms are supported for scores of type ``str`` and ``int``.
+This histogram type shows the distribution of unique values in the score and is supported only
+for scores with fewer than 100 unique values. They summarize the distribution by counting how many
 observations fall into each unique value and displaying those counts.
 
 A categorical histogram configuration supports five options.
@@ -786,8 +786,8 @@ A categorical histogram configuration supports five options.
   | **value_order**: the order in which the unique values are displayed in the histogram.
   | **plot_function**: optional custom plotting function used instead of the default categorical histogram rendering. This is useful when the default plot and the available options are not sufficient, for example to reorder, filter, or relabel categories. The value should be provided as <python module>:<python function>, where the Python module path is relative to the resource directory. When plot_function is set, GAIn uses the custom function to render the histogram and ignores built-in categorical histogram options such as displayed_values_count, displayed_values_percent, and label_rotation.
 
-The examples below show two common categorical histogram setups. The first uses the built-in 
-categorical histogram rendering with ``displayed_values_count`` and ``label_rotation``. The second uses 
+The examples below show two common categorical histogram setups. The first uses the built-in
+categorical histogram rendering with ``displayed_values_count`` and ``label_rotation``. The second uses
 ``plot_function``, which overrides the default categorical histogram rendering.
 
 Example 1: built-in categorical histogram options (top 5 values + label rotation)
@@ -807,9 +807,9 @@ Example 2: custom categorical histogram rendering using ``plot_function``
     type: categorical
     plot_function: "customplot1.py:my_own_plot"
 
-For GAIn to render the second histogram using a custom plotting function, place a Python module such as ``customplot1.py`` that contains 
-the function ``my_own_plot`` in the resource directory. The custom function must render and write a plot to the provided output stream 
-(outfile) so it can be embedded in the HTML summary output. A simple example that sorts categories by their counts, keeps the top 20, 
+For GAIn to render the second histogram using a custom plotting function, place a Python module such as ``customplot1.py`` that contains
+the function ``my_own_plot`` in the resource directory. The custom function must render and write a plot to the provided output stream
+(outfile) so it can be embedded in the HTML summary output. A simple example that sorts categories by their counts, keeps the top 20,
 and renders a basic bar chart (with optional log-scaled ``y-axis``) to the provided output stream is:
 
 .. code-block:: yaml
@@ -828,7 +828,7 @@ and renders a basic bar chart (with optional log-scaled ``y-axis``) to the provi
 
 **Null histograms**
 
-Null histograms are used when calculating a histogram is not possible or does not make sense for a score. 
+Null histograms are used when calculating a histogram is not possible or does not make sense for a score.
 In this case, the HTML summary page will not display a histogram for the score, and instead records the reason why histogram display is disabled.
 
 A null histogram configuration supports one required field.
@@ -848,9 +848,9 @@ Example:
 VCF score auto-detection
 ------------------------
 
-VCF files already describe many score-like fields in their headers. In particular, 
-each ##INFO line provides an ID, a type, and a human-readable description. GAIn uses this 
-metadata to automatically create score definitions for ``INFO`` fields, which you can then reference 
+VCF files already describe many score-like fields in their headers. In particular,
+each ##INFO line provides an ID, a type, and a human-readable description. GAIn uses this
+metadata to automatically create score definitions for ``INFO`` fields, which you can then reference
 in configuration just like manually defined scores.
 
 Create the following file and save it as ``example.vcf``, which contains a single ``INFO`` field A:
@@ -863,7 +863,7 @@ Create the following file and save it as ``example.vcf``, which contains a singl
     chr1   5   .  A   T   .    .       A=1
 
 
-Create the following ``genomic_resource.yaml`` for this score which omits an explicit scores section. 
+Create the following ``genomic_resource.yaml`` for this score which omits an explicit scores section.
 
 .. code:: yaml
 
@@ -873,7 +873,7 @@ Create the following ``genomic_resource.yaml`` for this score which omits an exp
       filename: example.vcf
       format: vcf_info
 
-When you run ``grr_manage resource-repair``, the scores and their descriptions will be automatically generated from the ``INFO`` 
+When you run ``grr_manage resource-repair``, the scores and their descriptions will be automatically generated from the ``INFO``
 field in the vcf file.
 
 
@@ -894,7 +894,7 @@ The configuration above is equivalent to spelling out the generated score defini
       desc: Score A
 
 
-Some fields cannot be automatically generated. To customize a generated definition, add a ``scores:`` entry with the same 
+Some fields cannot be automatically generated. To customize a generated definition, add a ``scores:`` entry with the same
 id and include only the fields you want to change or extend (for example, overriding type or adding a histogram block):
 
 .. code:: yaml
@@ -908,7 +908,7 @@ id and include only the fields you want to change or extend (for example, overri
 
 
 
-GAIn derives each score's type directly from the VCF ``INFO`` field type: 
+GAIn derives each score's type directly from the VCF ``INFO`` field type:
 ``Integer`` maps to ``int``, ``Float`` to ``float``, String to ``str``, and ``Flag`` to ``bool``.
 
 
@@ -918,22 +918,22 @@ GAIn derives each score's type directly from the VCF ``INFO`` field type:
 Tabix indexing
 ---------------------------
 
-Many GAIn resource types are backed by on-disk tables, typically tab-delimited genomic files 
-(for example TSV/BED-like tables, bedGraph, or VCF-derived tables). These files can be large, but GAIn 
-still needs to look up the records that overlap a given genomic interval during annotation (for example, 
-chr1:100000-101000). Scanning the full file for every query would be too slow, so GAIn supports 
-Tabix-indexed tables for fast random access by genomic region. (Some resource formats such as ``bigWig`` 
+Many GAIn resource types are backed by on-disk tables, typically tab-delimited genomic files
+(for example TSV/BED-like tables, bedGraph, or VCF-derived tables). These files can be large, but GAIn
+still needs to look up the records that overlap a given genomic interval during annotation (for example,
+chr1:100000-101000). Scanning the full file for every query would be too slow, so GAIn supports
+Tabix-indexed tables for fast random access by genomic region. (Some resource formats such as ``bigWig``
 are already indexed and do not use Tabix.)
 
-When you set ``format: tabix`` under a resource's table section, you are telling GAIn that the data 
-file is bgzip-compressed, coordinate-sorted, and accompanied by a Tabix index (``.tbi`` or ``.csi``). With 
-that index in place, GAIn can jump directly to the relevant file blocks, and your table: mapping 
-tells it how to interpret each row (which columns provide ``chrom``, ``pos_begin``, and ``pos_end``, plus any 
+When you set ``format: tabix`` under a resource's table section, you are telling GAIn that the data
+file is bgzip-compressed, coordinate-sorted, and accompanied by a Tabix index (``.tbi`` or ``.csi``). With
+that index in place, GAIn can jump directly to the relevant file blocks, and your table: mapping
+tells it how to interpret each row (which columns provide ``chrom``, ``pos_begin``, and ``pos_end``, plus any
 header handling you specify).
 
-The main pitfall is coordinate conventions: BED-style files are typically 0-based, 
-half-open, while many TSV tables and VCF positions are 1-based. Keep the tabix indexing flags 
-(for example -0) consistent with the file, and set ``zero_based`` accordingly in the resource YAML 
+The main pitfall is coordinate conventions: BED-style files are typically 0-based,
+half-open, while many TSV tables and VCF positions are 1-based. Keep the tabix indexing flags
+(for example -0) consistent with the file, and set ``zero_based`` accordingly in the resource YAML
 to avoid subtle off-by-one overlaps.
 
 
@@ -948,7 +948,7 @@ to avoid subtle off-by-one overlaps.
     * **-f, --force**: overwrite an existing index file.
 
 
-For a full list of options run ``tabix --help``. The examples below show how to produce Tabix indexes for 
+For a full list of options run ``tabix --help``. The examples below show how to produce Tabix indexes for
 common file layouts.
 
 
