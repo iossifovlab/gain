@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import pathlib
@@ -55,8 +56,18 @@ class BaseUser:
         """Get pipeline from respective table, checking ownership."""
         raise NotImplementedError
 
-    def get_quota(self) -> Quota:
-        """Get the quota for this user."""
+    def get_quota(self) -> QuotaSnapshot:
+        """Get a snapshot of the current quota state for this user."""
+        raise NotImplementedError
+
+    def quota_job_complete(
+        self, variants_count: int, attributes_count: int,
+    ) -> None:
+        """Deduct quota after a job completes."""
+        raise NotImplementedError
+
+    def quota_single_allele_complete(self, attributes_count: int) -> None:
+        """Deduct quota after a single-allele query completes."""
         raise NotImplementedError
 
     def delete_pipelines(self) -> None:
@@ -193,9 +204,19 @@ class UserWrapper(BaseUser):
         """Get user's jobs."""
         return self.user.get_jobs()
 
-    def get_quota(self) -> Quota:
-        """Get the quota for this user."""
+    def get_quota(self) -> QuotaSnapshot:
+        """Get a snapshot of the current quota state for this user."""
         return self.user.get_quota()
+
+    def quota_job_complete(
+        self, variants_count: int, attributes_count: int,
+    ) -> None:
+        """Deduct quota after a job completes."""
+        self.user.quota_job_complete(variants_count, attributes_count)
+
+    def quota_single_allele_complete(self, attributes_count: int) -> None:
+        """Deduct quota after a single-allele query completes."""
+        self.user.quota_single_allele_complete(attributes_count)
 
     @property
     def is_unlimited(self) -> bool:
@@ -307,8 +328,7 @@ class User(AbstractUser):
             created__gte=today, owner__exact=self.pk)
         return not len(jobs_made) >= cast(int, settings.QUOTAS["daily_jobs"])
 
-    def get_quota(self) -> Quota:
-        """Get the quota for this user."""
+    def _get_or_create_user_quota(self) -> UserQuota:
         try:
             return UserQuota.objects.get(user=self)
         except UserQuota.DoesNotExist:
@@ -316,6 +336,26 @@ class User(AbstractUser):
             quota.reset_daily()
             quota.reset_monthly()
             return quota
+
+    def get_quota(self) -> QuotaSnapshot:
+        """Get a snapshot of the current quota state for this user."""
+        return QuotaSnapshot.from_quota(self._get_or_create_user_quota())
+
+    def quota_job_complete(
+        self, variants_count: int, attributes_count: int,
+    ) -> None:
+        """Deduct quota after a job completes."""
+        self._get_or_create_user_quota().job_complete(
+            variants_count, attributes_count)
+
+    def quota_single_allele_complete(self, attributes_count: int) -> None:
+        """Deduct quota after a single-allele query completes."""
+        self._get_or_create_user_quota().single_allele_query_complete(
+            attributes_count)
+
+    def quota_add_units(self) -> None:
+        """Add extra quota units to this user."""
+        self._get_or_create_user_quota().add_units()
 
 
 class WebAnnotationAnonymousUser(BaseUser, AnonymousUser):
@@ -386,15 +426,46 @@ class WebAnnotationAnonymousUser(BaseUser, AnonymousUser):
             created__gte=today, ip=self.ip)
         return not len(jobs_made) >= cast(int, settings.QUOTAS["daily_jobs"])
 
-    def get_quota(self) -> Quota:
-        """Get the quota for this IP."""
+    def _get_or_create_session_quota(self) -> SessionQuota:
+        try:
+            return SessionQuota.objects.get(session_id=self.session_id)
+        except SessionQuota.DoesNotExist:
+            quota = SessionQuota(session_id=self.session_id)
+            quota.reset_daily()
+            quota.reset_monthly()
+            return quota
+
+    def _get_or_create_ip_quota(self) -> AnonymousUserQuota:
         try:
             return AnonymousUserQuota.objects.get(ip=self.ip)
         except AnonymousUserQuota.DoesNotExist:
             quota = AnonymousUserQuota(ip=self.ip)
             quota.reset_daily()
             quota.reset_monthly()
-        return quota
+            return quota
+
+    def get_quota(self) -> QuotaSnapshot:
+        """Get the more restrictive of the session and IP quota snapshots."""
+        return QuotaSnapshot.minimum(
+            QuotaSnapshot.from_quota(self._get_or_create_session_quota()),
+            QuotaSnapshot.from_quota(self._get_or_create_ip_quota()),
+        )
+
+    def quota_job_complete(
+        self, variants_count: int, attributes_count: int,
+    ) -> None:
+        """Deduct units after a job completes from both quotas."""
+        self._get_or_create_session_quota().job_complete(
+            variants_count, attributes_count)
+        self._get_or_create_ip_quota().job_complete(
+            variants_count, attributes_count)
+
+    def quota_single_allele_complete(self, attributes_count: int) -> None:
+        """Deduct units from both quotas after a single query."""
+        self._get_or_create_session_quota().single_allele_query_complete(
+            attributes_count)
+        self._get_or_create_ip_quota().single_allele_query_complete(
+            attributes_count)
 
     def save(self) -> None:
         """Anonymous user cannot be saved."""
@@ -940,6 +1011,136 @@ class Quota(models.Model):
         self.save()
 
 
+@dataclasses.dataclass(frozen=True)
+class QuotaSnapshot:
+    """Immutable quota state snapshot for read-only checks and views."""
+    daily_jobs: int
+    monthly_jobs: int
+    daily_variants: int
+    monthly_variants: int
+    daily_attributes: int
+    monthly_attributes: int
+    extra_jobs: int
+    extra_variants: int
+    extra_attributes: int
+    max_daily_jobs: int
+    max_monthly_jobs: int
+    max_daily_variants: int
+    max_monthly_variants: int
+    max_daily_attributes: int
+    max_monthly_attributes: int
+
+    @classmethod
+    def from_quota(cls, quota: Quota) -> QuotaSnapshot:
+        return cls(
+            daily_jobs=quota.daily_jobs,
+            monthly_jobs=quota.monthly_jobs,
+            daily_variants=quota.daily_variants,
+            monthly_variants=quota.monthly_variants,
+            daily_attributes=quota.daily_attributes,
+            monthly_attributes=quota.monthly_attributes,
+            extra_jobs=quota.extra_jobs,
+            extra_variants=quota.extra_variants,
+            extra_attributes=quota.extra_attributes,
+            max_daily_jobs=quota.get_daily_job_max(),
+            max_monthly_jobs=quota.get_monthly_job_max(),
+            max_daily_variants=quota.get_daily_variant_max(),
+            max_monthly_variants=quota.get_monthly_variant_max(),
+            max_daily_attributes=quota.get_daily_attribute_max(),
+            max_monthly_attributes=quota.get_monthly_attribute_max(),
+        )
+
+    @classmethod
+    def minimum(cls, a: QuotaSnapshot, b: QuotaSnapshot) -> QuotaSnapshot:
+        """Return the more restrictive snapshot (field-wise minimum)."""
+        return cls(
+            daily_jobs=min(a.daily_jobs, b.daily_jobs),
+            monthly_jobs=min(a.monthly_jobs, b.monthly_jobs),
+            daily_variants=min(a.daily_variants, b.daily_variants),
+            monthly_variants=min(a.monthly_variants, b.monthly_variants),
+            daily_attributes=min(a.daily_attributes, b.daily_attributes),
+            monthly_attributes=min(a.monthly_attributes, b.monthly_attributes),
+            extra_jobs=min(a.extra_jobs, b.extra_jobs),
+            extra_variants=min(a.extra_variants, b.extra_variants),
+            extra_attributes=min(a.extra_attributes, b.extra_attributes),
+            max_daily_jobs=min(a.max_daily_jobs, b.max_daily_jobs),
+            max_monthly_jobs=min(a.max_monthly_jobs, b.max_monthly_jobs),
+            max_daily_variants=min(a.max_daily_variants, b.max_daily_variants),
+            max_monthly_variants=min(
+                a.max_monthly_variants, b.max_monthly_variants),
+            max_daily_attributes=min(
+                a.max_daily_attributes, b.max_daily_attributes),
+            max_monthly_attributes=min(
+                a.max_monthly_attributes, b.max_monthly_attributes),
+        )
+
+    def get_daily_job_max(self) -> int:
+        return self.max_daily_jobs
+
+    def get_monthly_job_max(self) -> int:
+        return self.max_monthly_jobs
+
+    def get_daily_variant_max(self) -> int:
+        return self.max_daily_variants
+
+    def get_monthly_variant_max(self) -> int:
+        return self.max_monthly_variants
+
+    def get_daily_attribute_max(self) -> int:
+        return self.max_daily_attributes
+
+    def get_monthly_attribute_max(self) -> int:
+        return self.max_monthly_attributes
+
+    def check_job_quota(self) -> bool:
+        """Check if there is quota available for a job."""
+        if self.extra_jobs > 0:
+            return True
+        return not (self.daily_jobs <= 0 or self.monthly_jobs <= 0)
+
+    def check_variant_quota(self, variants_count: int) -> bool:
+        """Check if there are units available for a number of variants."""
+        if (
+            self.extra_variants > 0
+            and self.monthly_variants + self.extra_variants >= variants_count
+        ):
+            return True
+        if self.daily_variants <= 0 or self.monthly_variants <= 0:
+            return False
+        return not (
+            self.daily_variants < variants_count
+            or self.monthly_variants < variants_count
+        )
+
+    def check_attribute_quota(self, attributes_count: int) -> bool:
+        """Check if there is quota for the given number of attributes."""
+        if self.extra_attributes > 0:
+            total = self.monthly_attributes + self.extra_attributes
+            if total >= attributes_count:
+                return True
+        if self.daily_attributes <= 0 or self.monthly_attributes <= 0:
+            return False
+        return not (
+            self.daily_attributes < attributes_count
+            or self.monthly_attributes < attributes_count
+        )
+
+    def single_allele_allowed(self, attributes_count: int) -> bool:
+        """Check if a single-allele query is within quota."""
+        return (
+            self.check_variant_quota(1)
+            and self.check_attribute_quota(attributes_count)
+        )
+
+    def job_allowed(self, variants_count: int, attributes_count: int) -> bool:
+        """Check if a full job is within quota."""
+        return (
+            self.check_job_quota()
+            and self.check_attribute_quota(attributes_count)
+            and self.check_variant_quota(variants_count)
+        )
+
+
 class AnonymousUserQuota(Quota):
     """Quota limits for anonymous (unauthenticated) users."""
 
@@ -948,6 +1149,19 @@ class AnonymousUserQuota(Quota):
     class Meta:  # pylint: disable=too-few-public-methods
         """Meta class for anonymous user quotas."""
         db_table = "anonymous_user_quotas"
+
+    def _quota_config(self) -> dict:
+        return cast(dict, settings.QUERY_QUOTAS["anonymous"])
+
+
+class SessionQuota(Quota):
+    """Quota limits keyed by session ID."""
+
+    session_id = models.CharField(max_length=1024, unique=True)
+
+    class Meta:  # pylint: disable=too-few-public-methods
+        """Meta class for session quotas."""
+        db_table = "session_quotas"
 
     def _quota_config(self) -> dict:
         return cast(dict, settings.QUERY_QUOTAS["anonymous"])

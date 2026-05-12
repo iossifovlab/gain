@@ -3,6 +3,8 @@ import pytest
 
 from web_annotation.models import (
     AnonymousUserQuota,
+    QuotaSnapshot,
+    SessionQuota,
     User,
     UserQuota,
     WebAnnotationAnonymousUser,
@@ -527,8 +529,8 @@ def test_user_get_quota_creates_when_missing() -> None:
 
     quota = user.get_quota()
 
-    assert isinstance(quota, UserQuota)
-    assert quota.user == user
+    assert isinstance(quota, QuotaSnapshot)
+    assert UserQuota.objects.filter(user=user).exists()
 
 
 def test_user_get_quota_initializes_values() -> None:
@@ -545,11 +547,14 @@ def test_user_get_quota_initializes_values() -> None:
 
 
 def test_user_get_quota_returns_existing(user_quota: UserQuota) -> None:
+    user_quota.daily_jobs = 5
+    user_quota.save()
     user = User.objects.get(email="user@example.com")
 
     quota = user.get_quota()
 
-    assert quota.pk == user_quota.pk
+    assert isinstance(quota, QuotaSnapshot)
+    assert quota.daily_jobs == 5
 
 
 def test_user_get_quota_does_not_duplicate(user_quota: UserQuota) -> None:
@@ -566,11 +571,13 @@ def test_user_get_quota_does_not_duplicate(user_quota: UserQuota) -> None:
 def test_anonymous_user_get_quota_creates_when_missing() -> None:
     anon = WebAnnotationAnonymousUser(session_id="test-session", ip="10.0.0.1")
     assert not AnonymousUserQuota.objects.filter(ip="10.0.0.1").exists()
+    assert not SessionQuota.objects.filter(session_id="test-session").exists()
 
     quota = anon.get_quota()
 
-    assert isinstance(quota, AnonymousUserQuota)
-    assert quota.ip == "10.0.0.1"
+    assert isinstance(quota, QuotaSnapshot)
+    assert AnonymousUserQuota.objects.filter(ip="10.0.0.1").exists()
+    assert SessionQuota.objects.filter(session_id="test-session").exists()
 
 
 def test_anonymous_user_get_quota_initializes_values() -> None:
@@ -589,11 +596,33 @@ def test_anonymous_user_get_quota_initializes_values() -> None:
 def test_anonymous_user_get_quota_returns_existing(
     anonymous_quota: AnonymousUserQuota,
 ) -> None:
+    anonymous_quota.daily_jobs = 3
+    anonymous_quota.save()
     anon = WebAnnotationAnonymousUser(session_id="test-session", ip="127.0.0.1")
 
     quota = anon.get_quota()
 
-    assert quota.pk == anonymous_quota.pk
+    assert isinstance(quota, QuotaSnapshot)
+    assert quota.daily_jobs == 3
+
+
+def test_anonymous_user_get_quota_minimum_of_session_and_ip() -> None:
+    ip_quota = AnonymousUserQuota(ip="10.0.0.3")
+    ip_quota.reset_daily()
+    ip_quota.reset_monthly()
+    ip_quota.daily_jobs = 7
+    ip_quota.save()
+
+    session_quota = SessionQuota(session_id="low-session")
+    session_quota.reset_daily()
+    session_quota.reset_monthly()
+    session_quota.daily_jobs = 2
+    session_quota.save()
+
+    anon = WebAnnotationAnonymousUser(session_id="low-session", ip="10.0.0.3")
+    quota = anon.get_quota()
+
+    assert quota.daily_jobs == 2
 
 
 def test_anonymous_user_get_quota_does_not_duplicate(
@@ -605,3 +634,4 @@ def test_anonymous_user_get_quota_does_not_duplicate(
     anon.get_quota()
 
     assert AnonymousUserQuota.objects.filter(ip="127.0.0.1").count() == 1
+    assert SessionQuota.objects.filter(session_id="test-session").count() == 1
