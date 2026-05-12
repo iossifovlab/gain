@@ -14,20 +14,20 @@
 
         <div class="cell header"><span class="free-label">(free)</span>Daily</div>
         @if(q.value.extra > 0) {
-        <div class="cell">-</div>
-        <div class="cell">-</div>
+        <div [id]="'daily-current-' + q.key" class="cell">-</div>
+        <div [id]="'daily-max-' + q.key" class="cell">-</div>
         } @else {
-        <div class="cell">{{ q.value.daily.current | number : '' : 'en-US' }}</div>
-        <div class="cell">{{ q.value.daily.max | number : '' : 'en-US' }}</div>
+        <div [id]="'daily-current-' + q.key" class="cell">{{ q.value.daily.current | number : '' : 'en-US' }}</div>
+        <div [id]="'daily-max-' + q.key" class="cell">{{ q.value.daily.max | number : '' : 'en-US' }}</div>
         }
 
         <div class="cell header"><span class="free-label">(free)</span>Monthly</div>
         @if(q.value.extra > 0) {
-        <div class="cell">-</div>
-        <div class="cell">-</div>
+        <div [id]="'monthly-current-' + q.key" class="cell">-</div>
+        <div [id]="'monthly-max-' + q.key" class="cell">-</div>
         } @else {
-        <div class="cell">{{ q.value.monthly.current | number : '' : 'en-US' }}</div>
-        <div class="cell">{{ q.value.monthly.max | number : '' : 'en-US' }}</div>
+        <div [id]="'monthly-current-' + q.key" class="cell">{{ q.value.monthly.current | number : '' : 'en-US' }}</div>
+        <div [id]="'monthly-max-' + q.key" class="cell">{{ q.value.monthly.max | number : '' : 'en-US' }}</div>
         } @if(isUserLoggedIn) {
         <div class="cell header">* Extra</div>
         <div class="cell extra">{{ q.value.extra | number : '' : 'en-US' }}</div>
@@ -38,5 +38,7 @@
     </div>
     }
   </div>
+  @if(isUserLoggedIn) {
   <div id="note">* For extra please contact us at <a href="mailto:gain@iossifovlab.com">gain@iossifovlab.com</a></div>
+  }
 </div>
