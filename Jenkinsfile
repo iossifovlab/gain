@@ -192,8 +192,40 @@ pipeline {
                         sh 'rm -rf reports dist conda && mkdir -p reports dist conda'
                     }
                 }
-        
+
+                stage('Detect change scope') {
+                    // Sets env.DOCS_ONLY='true' iff every file in this
+                    // build's changeset lives under docs/. Heavy stages
+                    // (Conda builder image, Sub-projects, Conda packages,
+                    // Build & push prod images, downstream triggers) gate
+                    // on it and skip when only docs changed. Build docs /
+                    // Deploy docs keep their existing `changeset 'docs/**'`
+                    // clauses.
+                    //
+                    // Empty changeset (first build, manual rebuild, no
+                    // commits since last build) → DOCS_ONLY='false' →
+                    // full CI. Conservative default — only short-circuit
+                    // when we positively know it's docs-only.
+                    steps {
+                        script {
+                            def changedFiles = []
+                            for (changeSet in currentBuild.changeSets) {
+                                for (item in changeSet.items) {
+                                    changedFiles.addAll(item.affectedPaths)
+                                }
+                            }
+                            boolean isDocsOnly =
+                                !changedFiles.isEmpty() &&
+                                changedFiles.every { it.startsWith('docs/') }
+                            env.DOCS_ONLY = isDocsOnly ? 'true' : 'false'
+                            echo "Changeset: ${changedFiles.size()} file(s); " +
+                                 "DOCS_ONLY=${env.DOCS_ONLY}"
+                        }
+                    }
+                }
+
                 stage('Conda builder image') {
+                    when { not { environment name: 'DOCS_ONLY', value: 'true' } }
                     steps {
                         sh '''
                             docker build -f conda-builder/Dockerfile \
@@ -203,6 +235,7 @@ pipeline {
                 }
         
                 stage('Sub-projects') {
+                    when { not { environment name: 'DOCS_ONLY', value: 'true' } }
                     parallel {
                         stage('core') {
                             environment {
@@ -439,7 +472,102 @@ pipeline {
                     }
                 }
         
+                stage('Build docs') {
+                    when { changeset 'docs/**' }
+                    // Migrated from iossifovlab/gpf_documentation
+                    // (iossifovlab/gain#6). The Sphinx source tree now
+                    // lives in docs/. Build runs inside the core CI image
+                    // (which already has gain-core under /workspace/.venv);
+                    // the docs dependency group from the root pyproject.toml
+                    // is layered on top at run-time.
+                    //
+                    // Only runs when docs/** changed in this build's
+                    // commit range; saves time on code-only changes. A
+                    // docstring tweak in core/gain won't refresh the
+                    // rendered autodoc page until a docs-side commit
+                    // lands — accepted trade-off (same as gpf docs).
+                    //
+                    // When DOCS_ONLY=true the Sub-projects > core stage
+                    // is skipped, so we build the core CI image inline
+                    // here. Idempotent — when Sub-projects did run, the
+                    // image already exists and the docker build is a
+                    // near-instant cache hit; we still re-issue it so the
+                    // stage is self-contained and runnable in either mode.
+                    steps {
+                        sh '''
+                            docker build -f core/Dockerfile \
+                                -t gain-core-ci:${BUILD_NUMBER} .
+                            mkdir -p dist/docs
+                            docker run --rm \
+                                -v $PWD:/workspace \
+                                -v $PWD/.git:/workspace/.git:ro \
+                                -w /workspace \
+                                gain-core-ci:${BUILD_NUMBER} \
+                                sh -c '
+                                    set -eu
+                                    # The `docs` group is defined on the
+                                    # root virtual workspace, so install
+                                    # without --package: this installs
+                                    # gain-core + gain-web-api (the root
+                                    # deps) plus the sphinx toolchain.
+                                    uv sync --group docs
+                                    bash docs/build_docs.sh
+                                '
+                            cp docs/gaindocs-html.tar.gz dist/docs/
+                        '''
+                    }
+                }
+
+                stage('Deploy docs') {
+                    when {
+                        allOf {
+                            branch 'master'
+                            changeset 'docs/**'
+                        }
+                    }
+                    // Master-only ansible push to iossifovlab.com, only
+                    // when docs/** changed. Skipped on every branch
+                    // build and on master builds that don't touch the
+                    // docs tree, so the live site keeps serving the
+                    // last good build's content untouched.
+                    //
+                    // Reuses the `gpf-docs-deploy` Jenkins SSH credential
+                    // (same SSH login + target host as gpf docs; one key
+                    // to rotate, not two).
+                    steps {
+                        withCredentials([sshUserPrivateKey(
+                            credentialsId: 'gpf-docs-deploy',
+                            keyFileVariable: 'SSH_KEY',
+                            usernameVariable: 'SSH_USER',
+                        )]) {
+                            sh '''
+                                docker run --rm \
+                                    -v $PWD:/workspace \
+                                    -v $SSH_KEY:/deploy.key:ro \
+                                    -e SSH_USER \
+                                    -w /workspace \
+                                    gain-core-ci:${BUILD_NUMBER} \
+                                    sh -c '
+                                        set -eu
+                                        apt-get update
+                                        apt-get install -y --no-install-recommends \
+                                            ansible openssh-client
+                                        mkdir -p /root/.ssh
+                                        chmod 700 /root/.ssh
+                                        ssh-keyscan -H iossifovlab.com \
+                                            > /root/.ssh/known_hosts 2>/dev/null
+                                        chmod 600 /root/.ssh/known_hosts
+                                        ANSIBLE_PRIVATE_KEY_FILE=/deploy.key \
+                                            ANSIBLE_REMOTE_USER="$SSH_USER" \
+                                            bash docs/deploy/docs_deploy.sh
+                                    '
+                            '''
+                        }
+                    }
+                }
+
                 stage('Conda packages') {
+                    when { not { environment name: 'DOCS_ONLY', value: 'true' } }
                     steps {
                         sh '''
                             # Derive the hatch-vcs PEP 440 version from any wheel name;
@@ -485,6 +613,7 @@ pipeline {
                 }
         
                 stage('Build & push prod images') {
+                    when { not { environment name: 'DOCS_ONLY', value: 'true' } }
                     // Phase 9 slice 1: build the wheel-based backend +
                     // Apache-based frontend prod images here in the
                     // root build, tag them for registry.seqpipe.org, and
@@ -637,6 +766,7 @@ pipeline {
                 }
         
                 stage('Trigger web_e2e') {
+                    when { not { environment name: 'DOCS_ONLY', value: 'true' } }
                     // Downstream gate for the gain-web-e2e job (DSL at
                     // web_e2e/jenkins-jobs/e2e.groovy). Runs on every
                     // branch — the e2e job clones the same branch /
@@ -684,6 +814,7 @@ pipeline {
                         allOf {
                             branch 'master'
                             changeset 'vep_annotator/**'
+                            not { environment name: 'DOCS_ONLY', value: 'true' }
                         }
                     }
                     steps {
