@@ -50,7 +50,7 @@ services:
       db:
         condition: service_healthy
     volumes:
-      - ../web_api:/web_api_src:ro
+      - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
       PYTHONPATH: /web_api_src
@@ -102,7 +102,7 @@ services:
       backend-e2e-migrate:
         condition: service_completed_successfully
     volumes:
-      - ../web_api:/web_api_src:ro
+      - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
       PYTHONPATH: /web_api_src
@@ -134,7 +134,7 @@ services:
       - ./gpfwa-data:/data
       - ./gpfwa-logs:/logs
       - /mnt/cephfs/seqpipe/grr:/grr
-      - ../web_api:/web_api_src:ro
+      - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
       PYTHONPATH: /web_api_src
