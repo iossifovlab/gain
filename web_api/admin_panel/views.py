@@ -2,7 +2,6 @@ import dataclasses
 
 from django.core.management import call_command
 from django.http import HttpRequest, HttpResponse, JsonResponse
-
 from web_annotation.models import QuotaSnapshot, User, UserQuota
 
 _EXTRA_QUOTA_FIELDS = {
