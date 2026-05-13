@@ -49,8 +49,11 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - ../web_api:/web_api_src:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
+      PYTHONPATH: /web_api_src
       GPFWA_DB_NAME: gpfwa
       GPFWA_DB_USER: postgres
       GPFWA_DB_PASSWORD: secret
@@ -98,8 +101,11 @@ services:
     depends_on:
       backend-e2e-migrate:
         condition: service_completed_successfully
+    volumes:
+      - ../web_api:/web_api_src:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
+      PYTHONPATH: /web_api_src
       GPFWA_DB_NAME: gpfwa
       GPFWA_DB_USER: postgres
       GPFWA_DB_PASSWORD: secret
@@ -128,8 +134,10 @@ services:
       - ./gpfwa-data:/data
       - ./gpfwa-logs:/logs
       - /mnt/cephfs/seqpipe/grr:/grr
+      - ../web_api:/web_api_src:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
+      PYTHONPATH: /web_api_src
       GPFWA_EMAIL_HOST: mail
       GRR_DEFINITION_FILE: /grr-definition.yaml
       GPFWA_DB_NAME: gpfwa
