@@ -6,6 +6,8 @@ from .settings_default import *
 USERS_ACTIVATED_BY_DEFAULT = True
 STATIC_ROOT = '/static/gpf/static'
 
+INSTALLED_APPS += ["admin_panel"]
+
 
 QUOTAS = {
     "daily_jobs": 2,
