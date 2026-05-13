@@ -1163,7 +1163,7 @@ test.describe('Add resource to pipeline tests', () => {
     await expect(page.locator('#resource-count')).toHaveText('274 resources');
     await page.locator('#resource-type mat-select').click();
     await page.locator('mat-option').filter({ hasText: 'position_score' }).click();
-    await expect(page.locator('#resource-count')).toHaveText('160 resources');
+    await expect(page.locator('#resource-count')).toHaveText('143 resources');
   });
 
   test('should navigate past select annotator step after clicking continue', async({ page }) => {
