@@ -22,13 +22,9 @@
         }
 
         <div class="cell header">Free monthly</div>
-        @if(q.value.extra > 0) {
-        <div [id]="'monthly-current-' + q.key" class="cell">-</div>
-        <div [id]="'monthly-max-' + q.key" class="cell">-</div>
-        } @else {
         <div [id]="'monthly-current-' + q.key" class="cell">{{ q.value.monthly.current | number : '' : 'en-US' }}</div>
         <div [id]="'monthly-max-' + q.key" class="cell">{{ q.value.monthly.max | number : '' : 'en-US' }}</div>
-        } @if(isUserLoggedIn) {
+        @if(isUserLoggedIn) {
         <div class="cell header">* Extra</div>
         <div class="cell extra">{{ q.value.extra | number : '' : 'en-US' }}</div>
         <div class="cell extra">{{ q.value.extra | number : '' : 'en-US' }}</div>

@@ -93,7 +93,7 @@ describe('UserQuotasComponent', () => {
     expect(extraCell[1].textContent.trim()).toBe('0');
   });
 
-  it('should display \'-\' for daily and monthly quotas', () => {
+  it('should display \'-\' for daily quotas', () => {
     jest.spyOn(mockUsersService, 'getQuotas').mockReturnValue(of({
       jobs: {
         daily: { current: 3, max: 10 },
@@ -108,8 +108,8 @@ describe('UserQuotasComponent', () => {
     expect(dailyCells[1].textContent.trim()).toBe('-');
 
     const monthlyCells = (fixture.nativeElement as HTMLElement).querySelectorAll('.cell:not(.header):not(.corner)');
-    expect(monthlyCells[2].textContent.trim()).toBe('-');
-    expect(monthlyCells[3].textContent.trim()).toBe('-');
+    expect(monthlyCells[2].textContent.trim()).toBe('15');
+    expect(monthlyCells[3].textContent.trim()).toBe('100');
 
     const extraCell = (fixture.nativeElement as HTMLElement).querySelectorAll('.cell.extra');
     expect(extraCell[0].textContent.trim()).toBe('10');

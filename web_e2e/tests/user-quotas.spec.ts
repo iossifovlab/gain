@@ -30,14 +30,14 @@ test.describe('User quotas - user with extra units', () => {
     await navigateToQuotas(page);
   });
 
-  test('should show dashes for daily and monthly cells', async({ page }) => {
+  test('should show dashes for daily cells', async({ page }) => {
     const assertions = [];
     for (const category of CATEGORIES) {
       assertions.push(
         expect(page.locator(`#daily-current-${category}`)).toHaveText('-'),
         expect(page.locator(`#daily-max-${category}`)).toHaveText('-'),
-        expect(page.locator(`#monthly-current-${category}`)).toHaveText('-'),
-        expect(page.locator(`#monthly-max-${category}`)).toHaveText('-')
+        expect(page.locator(`#monthly-current-${category}`)).not.toHaveText('-'),
+        expect(page.locator(`#monthly-max-${category}`)).not.toHaveText('-')
       );
     }
     await Promise.all(assertions);
