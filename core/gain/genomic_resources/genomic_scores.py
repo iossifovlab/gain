@@ -1369,6 +1369,15 @@ class AlleleScore(GenomicScore):
                 lchrom, left, right, val, {(line.ref, line.alt)})
             yield (left, line.ref, line.alt, val)
 
+    def fetch_allele_line(
+        self, chrom: str, pos: int, ref: str, alt: str,
+    ) -> ScoreLine | None:
+        """Fetch the exact ScoreLine matching the given allele."""
+        for line in self.fetch_lines(chrom, pos, pos):
+            if line.ref == ref and line.alt == alt:
+                return line
+        return None
+
     def fetch_scores(
         self, chrom: str, position: int,
         reference: str, alternative: str,
