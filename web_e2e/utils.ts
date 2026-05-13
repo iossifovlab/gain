@@ -80,6 +80,45 @@ export async function typeInPipelineEditor(page: Page, input: string): Promise<v
   /* eslint-enable */
 }
 
+export const EXTRA_QUOTA_TYPES = ['jobs', 'variants', 'attributes'] as const;
+export type ExtraQuotaType = typeof EXTRA_QUOTA_TYPES[number];
+
+export type CurrentQuotaType =
+  | 'daily_jobs'
+  | 'monthly_jobs'
+  | 'daily_variants'
+  | 'monthly_variants'
+  | 'daily_attributes'
+  | 'monthly_attributes';
+
+const backendUrl = 'http://localhost:8000';
+
+export async function resetDailyQuota(page: Page): Promise<void> {
+  const response = await page.request.get(`${backendUrl}/admin-panel/reset-daily-quota`);
+  expect(response.status()).toBe(204);
+}
+
+export async function resetMonthlyQuota(page: Page): Promise<void> {
+  const response = await page.request.get(`${backendUrl}/admin-panel/reset-monthly-quota`);
+  expect(response.status()).toBe(204);
+}
+
+export async function setExtraQuota(
+  page: Page, email: string, quotaType: ExtraQuotaType, amount: number
+): Promise<void> {
+  const params = new URLSearchParams({ user_email: email, quota_type: quotaType, amount: String(amount) });
+  const response = await page.request.get(`${backendUrl}/admin-panel/set-extra-quota?${params.toString()}`);
+  expect(response.status()).toBe(200);
+}
+
+export async function setCurrentQuota(
+  page: Page, email: string, quotaType: CurrentQuotaType, amount: number
+): Promise<void> {
+  const params = new URLSearchParams({ user_email: email, quota_type: quotaType, amount: String(amount) });
+  const response = await page.request.get(`${backendUrl}/admin-panel/set-current-quota?${params.toString()}`);
+  expect(response.status()).toBe(200);
+}
+
 export async function selectPipeline(page: Page, pipeline: string): Promise<void> {
   await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
   await page.locator('.dropdown-icon').click();

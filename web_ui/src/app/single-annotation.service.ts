@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
-import { map, Observable } from 'rxjs';
+import { catchError, map, Observable, throwError } from 'rxjs';
 import { environment } from '../../environments/environment';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import {
   AnnotatableHistory,
   CategoricalHistogram,
@@ -55,7 +55,13 @@ export class SingleAnnotationService {
         pipeline_id: pipeline,
       },
       options
-    ).pipe(map((response: object) => SingleAnnotationReport.fromJson(response)));
+    ).pipe(map((response: object) => SingleAnnotationReport.fromJson(response)),
+      catchError((err: HttpErrorResponse) => {
+        switch (err.status) {
+          case 429: return throwError(() => new Error((err.error as {reason: string})['reason']));
+          default: return throwError(() => new Error('Error occurred!'));
+        }
+      }));
   }
 
   public getHistogram(histogramUrl: string): Observable<NumberHistogram | CategoricalHistogram> {

@@ -35,6 +35,7 @@ export class SingleAnnotationComponent implements OnInit {
   public loading = false;
   private annotatableJson: Annotatable;
   public examples: string[];
+  public annotateErrorMessage: string = '';
 
   public constructor(
     private singleAnnotationService: SingleAnnotationService,
@@ -223,8 +224,9 @@ export class SingleAnnotationComponent implements OnInit {
         this.report = report;
         this.triggerAnnotatblesTableUpdate();
       },
-      error: () => {
+      error: (err: Error) => {
         this.loading = false;
+        this.annotateErrorMessage = err.message;
       }
     });
   }

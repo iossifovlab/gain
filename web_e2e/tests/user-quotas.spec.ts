@@ -1,10 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 import * as utils from '../utils';
 
-const EXTRA_UNITS_EMAIL = 'extra_units_user@email.com';
-const EXTRA_UNITS_PASSWORD = 'secret';
-const CATEGORIES: Array<string> = ['variants', 'attributes', 'jobs'];
-
 async function navigateToQuotas(page: Page): Promise<void> {
   const quotasResponse = page.waitForResponse(
     resp => resp.url().includes('/api/quotas') && resp.status() === 200
@@ -24,83 +20,108 @@ async function getMonthlyCurrentValue(page: Page, category: string): Promise<num
   return parseInt(text.replace(/,/g, ''), 10);
 }
 
-test.describe('User quotas - user with extra units', () => {
-  test.beforeEach(async({ page }) => {
-    await utils.loginUser(page, EXTRA_UNITS_EMAIL, EXTRA_UNITS_PASSWORD);
-    await navigateToQuotas(page);
-  });
+async function createUserWithExtraUnits(
+  page: Page, units: number
+): Promise<{ email: string; password: string }> {
+  const email = utils.getRandomString() + '@email.com';
+  const password = 'aaabbb';
+  await utils.registerUser(page, email, password);
+  await utils.loginUser(page, email, password);
+  for (const category of utils.EXTRA_QUOTA_TYPES) {
+    // eslint-disable-next-line no-await-in-loop
+    await utils.setExtraQuota(page, email, category, units);
+  }
+  return { email, password };
+}
 
-  test('should show dashes for daily cells', async({ page }) => {
-    const assertions = [];
-    for (const category of CATEGORIES) {
-      assertions.push(
-        expect(page.locator(`#daily-current-${category}`)).toHaveText('-'),
-        expect(page.locator(`#daily-max-${category}`)).toHaveText('-'),
-        expect(page.locator(`#monthly-current-${category}`)).not.toHaveText('-'),
-        expect(page.locator(`#monthly-max-${category}`)).not.toHaveText('-')
+async function getExtraValue(page: Page, category: string): Promise<number> {
+  const text = await page.locator('.category-table')
+    .filter({ has: page.locator(`#monthly-current-${category}`) })
+    .locator('.cell.extra')
+    .first()
+    .innerText();
+  return parseInt(text.replace(/,/g, ''), 10);
+}
+
+test.describe('Quotas page', () => {
+  test.describe('user with extra units', () => {
+    test.beforeEach(async({ page }) => {
+      await createUserWithExtraUnits(page, 100);
+      await navigateToQuotas(page);
+    });
+
+    test('should show dashes for daily cells', async({ page }) => {
+      const assertions = [];
+      for (const category of utils.EXTRA_QUOTA_TYPES) {
+        assertions.push(
+          expect(page.locator(`#daily-current-${category}`)).toHaveText('-'),
+          expect(page.locator(`#daily-max-${category}`)).toHaveText('-'),
+          expect(page.locator(`#monthly-current-${category}`)).not.toHaveText('-'),
+          expect(page.locator(`#monthly-max-${category}`)).not.toHaveText('-')
+        );
+      }
+      await Promise.all(assertions);
+    });
+
+    test('should show non-zero extra values for all categories', async({ page }) => {
+      const extraCells = page.locator('.cell.extra');
+      await expect(extraCells).toHaveCount(utils.EXTRA_QUOTA_TYPES.length * 2);
+
+      const count = await extraCells.count();
+      const texts = await Promise.all(
+        Array.from({ length: count }, (_, i) => extraCells.nth(i).innerText())
       );
-    }
-    await Promise.all(assertions);
+      for (const text of texts) {
+        expect(parseInt(text.replace(/,/g, ''), 10)).toBe(100);
+      }
+    });
   });
 
-  test('should show non-zero extra values for all categories', async({ page }) => {
-    const extraCells = page.locator('.cell.extra');
-    await expect(extraCells).toHaveCount(CATEGORIES.length * 2);
+  test.describe('regular user', () => {
+    test.beforeEach(async({ page }) => {
+      const email = utils.getRandomString() + '@email.com';
+      const password = 'aaabbb';
+      await utils.registerUser(page, email, password);
+      await utils.loginUser(page, email, password);
+      await navigateToQuotas(page);
+    });
 
-    const count = await extraCells.count();
-    const texts = await Promise.all(
-      Array.from({ length: count }, (_, i) => extraCells.nth(i).innerText())
-    );
-    for (const text of texts) {
-      expect(parseInt(text.replace(/,/g, ''), 10)).toBeGreaterThan(0);
-    }
-  });
-});
+    test('should show numbers instead of dashes for daily and monthly cells', async({ page }) => {
+      const assertions = [];
+      for (const category of utils.EXTRA_QUOTA_TYPES) {
+        assertions.push(
+          expect(page.locator(`#daily-current-${category}`)).not.toHaveText('-'),
+          expect(page.locator(`#daily-max-${category}`)).not.toHaveText('-'),
+          expect(page.locator(`#monthly-current-${category}`)).not.toHaveText('-'),
+          expect(page.locator(`#monthly-max-${category}`)).not.toHaveText('-')
+        );
+      }
+      await Promise.all(assertions);
+    });
 
-test.describe('User quotas - regular user', () => {
-  test.beforeEach(async({ page }) => {
-    const email = utils.getRandomString() + '@email.com';
-    const password = 'aaabbb';
-    await utils.registerUser(page, email, password);
-    await utils.loginUser(page, email, password);
-    await navigateToQuotas(page);
-  });
+    test('should show 0 for extra cells', async({ page }) => {
+      const extraCells = page.locator('.cell.extra');
+      await expect(extraCells).toHaveCount(utils.EXTRA_QUOTA_TYPES.length * 2);
 
-  test('should show numbers instead of dashes for daily and monthly cells', async({ page }) => {
-    const assertions = [];
-    for (const category of CATEGORIES) {
-      assertions.push(
-        expect(page.locator(`#daily-current-${category}`)).not.toHaveText('-'),
-        expect(page.locator(`#daily-max-${category}`)).not.toHaveText('-'),
-        expect(page.locator(`#monthly-current-${category}`)).not.toHaveText('-'),
-        expect(page.locator(`#monthly-max-${category}`)).not.toHaveText('-')
+      const count = await extraCells.count();
+      await Promise.all(
+        Array.from({ length: count }, (_, i) => expect(extraCells.nth(i)).toHaveText('0'))
       );
-    }
-    await Promise.all(assertions);
+    });
   });
 
-  test('should show 0 for extra cells', async({ page }) => {
-    const extraCells = page.locator('.cell.extra');
-    await expect(extraCells).toHaveCount(CATEGORIES.length * 2);
+  test.describe('anonymous user', () => {
+    test.beforeEach(async({ page }) => {
+      await page.goto('/', { waitUntil: 'load' });
+      await navigateToQuotas(page);
+    });
 
-    const count = await extraCells.count();
-    await Promise.all(
-      Array.from({ length: count }, (_, i) => expect(extraCells.nth(i)).toHaveText('0'))
-    );
-  });
-});
-
-test.describe('User quotas - anonymous user', () => {
-  test.beforeEach(async({ page }) => {
-    await page.goto('/', { waitUntil: 'load' });
-    await navigateToQuotas(page);
-  });
-
-  test('should not show extra cells and note', async({ page }) => {
-    await expect(page.locator('.cell.extra')).toHaveCount(0);
-    const extraHeaders = page.locator('.cell.header').filter({ hasText: '* Extra' });
-    await expect(extraHeaders).toHaveCount(0);
-    await expect(page.locator('#note')).not.toBeVisible();
+    test('should not show extra cells and note', async({ page }) => {
+      await expect(page.locator('.cell.extra')).toHaveCount(0);
+      const extraHeaders = page.locator('.cell.header').filter({ hasText: '* Extra' });
+      await expect(extraHeaders).toHaveCount(0);
+      await expect(page.locator('#note')).not.toBeVisible();
+    });
   });
 });
 
@@ -217,6 +238,164 @@ test.describe('Quota changes', () => {
       expect(await getMonthlyCurrentValue(page, 'variants')).toBe(initialMonthlyVariants - 2);
       expect(await getMonthlyCurrentValue(page, 'attributes')).toBe(initialMonthlyAttributes - 3);
     });
+  });
+});
+
+test.describe('Quota limit', () => {
+  test.describe('daily', () => {
+    test('single annotation is blocked when daily variant quota is exhausted', async({ page }) => {
+      const email = utils.getRandomString() + '@email.com';
+      const password = 'aaabbb';
+      await utils.registerUser(page, email, password);
+      await utils.loginUser(page, email, password);
+      await utils.setCurrentQuota(page, email, 'daily_variants', 0);
+
+      await page.getByRole('link', { name: 'Single Annotation' }).click();
+      await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+      await customDefaultPipeline(page);
+      await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
+
+      const quotaResponse = page.waitForResponse(
+        resp => resp.url().includes('/api/single_allele/annotate') && resp.status() === 429
+      );
+      await page.getByRole('button', { name: 'Go', exact: true }).click();
+      await quotaResponse;
+
+      await expect(page.locator('.error-message')).toHaveText('Single allele query quota exceeded!');
+      await expect(page.locator('#report')).not.toBeVisible();
+    });
+
+    test('job annotation shows error message when daily job quota is exhausted', async({ page }) => {
+      const email = utils.getRandomString() + '@email.com';
+      const password = 'aaabbb';
+      await utils.registerUser(page, email, password);
+      await utils.loginUser(page, email, password);
+      await utils.setCurrentQuota(page, email, 'daily_jobs', 0);
+
+      await page.getByRole('link', { name: 'Annotation Jobs' }).click();
+      await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+      await customDefaultPipeline(page);
+      await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
+      await page.locator('#create-button').click();
+
+      await expect(page.locator('#creation-error')).toHaveText('Job quota exceeded!');
+    });
+  });
+
+  test.describe('monthly', () => {
+    test('single annotation is blocked when monthly variant quota is exhausted', async({ page }) => {
+      const email = utils.getRandomString() + '@email.com';
+      const password = 'aaabbb';
+      await utils.registerUser(page, email, password);
+      await utils.loginUser(page, email, password);
+      await utils.setCurrentQuota(page, email, 'monthly_variants', 0);
+
+      await page.getByRole('link', { name: 'Single Annotation' }).click();
+      await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+      await customDefaultPipeline(page);
+      await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
+
+      const quotaResponse = page.waitForResponse(
+        resp => resp.url().includes('/api/single_allele/annotate') && resp.status() === 429
+      );
+      await page.getByRole('button', { name: 'Go', exact: true }).click();
+      await quotaResponse;
+
+      await expect(page.locator('.error-message')).toHaveText('Single allele query quota exceeded!');
+      await expect(page.locator('#report')).not.toBeVisible();
+    });
+
+    test('job annotation shows error message when monthly job quota is exhausted', async({ page }) => {
+      const email = utils.getRandomString() + '@email.com';
+      const password = 'aaabbb';
+      await utils.registerUser(page, email, password);
+      await utils.loginUser(page, email, password);
+      await utils.setCurrentQuota(page, email, 'monthly_jobs', 0);
+
+      await page.getByRole('link', { name: 'Annotation Jobs' }).click();
+      await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+      await customDefaultPipeline(page);
+      await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
+      await page.locator('#create-button').click();
+
+      await expect(page.locator('#creation-error')).toHaveText('Job quota exceeded!');
+    });
+  });
+});
+
+test.describe('User quotas - extra units consumption', () => {
+  test('should decrease extra units for variants and attributes after single annotation', async({ page }) => {
+    const { email } = await createUserWithExtraUnits(page, 100);
+    await utils.setCurrentQuota(page, email, 'monthly_variants', 0);
+    await utils.setCurrentQuota(page, email, 'monthly_attributes', 0);
+
+    // delete when daily quota is ignored when extra units are available
+    await utils.setCurrentQuota(page, email, 'daily_variants', 0);
+    await utils.setCurrentQuota(page, email, 'daily_attributes', 0);
+
+    await navigateToQuotas(page);
+
+    await page.getByRole('link', { name: 'Single Annotation' }).click();
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await customDefaultPipeline(page);
+    await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
+    await page.getByRole('button', { name: 'Go', exact: true }).click();
+    await page.waitForSelector('#report', { timeout: 120000 });
+
+    await navigateToQuotas(page);
+    expect(await getExtraValue(page, 'variants')).toBe(99);
+    expect(await getExtraValue(page, 'attributes')).toBe(97); // pipeline has 3 attributes
+  });
+
+  test('should decrease extra units for jobs, variants and attributes after job annotation', async({ page }) => {
+    const { email } = await createUserWithExtraUnits(page, 100);
+    await utils.setCurrentQuota(page, email, 'monthly_jobs', 0);
+    await utils.setCurrentQuota(page, email, 'monthly_variants', 0);
+    await utils.setCurrentQuota(page, email, 'monthly_attributes', 0);
+
+
+    // delete when daily quota is ignored when extra units are available
+    await utils.setCurrentQuota(page, email, 'daily_variants', 0);
+    await utils.setCurrentQuota(page, email, 'daily_attributes', 0);
+    await utils.setCurrentQuota(page, email, 'daily_jobs', 0);
+
+
+    await navigateToQuotas(page);
+
+    await page.getByRole('link', { name: 'Annotation Jobs' }).click();
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await customDefaultPipeline(page);
+    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
+    await page.locator('#create-button').click();
+    await page.waitForSelector('.success-status', { timeout: 120000 });
+
+    await navigateToQuotas(page);
+    expect(await getExtraValue(page, 'jobs')).toBe(99);
+    expect(await getExtraValue(page, 'variants')).toBe(98); // vcf file has 2 variants
+    expect(await getExtraValue(page, 'attributes')).toBe(97); // pipeline has 3 attributes
+  });
+
+  test('should not consume extra units when regular quota is still available', async({ page }) => {
+    await createUserWithExtraUnits(page, 100);
+
+    await navigateToQuotas(page);
+    const initialExtraVariants = await getExtraValue(page, 'variants');
+    const initialExtraAttributes = await getExtraValue(page, 'attributes');
+    const initialMonthlyVariants = await getMonthlyCurrentValue(page, 'variants');
+    const initialMonthlyAttributes = await getMonthlyCurrentValue(page, 'attributes');
+
+    await page.getByRole('link', { name: 'Single Annotation' }).click();
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await customDefaultPipeline(page);
+    await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
+    await page.getByRole('button', { name: 'Go', exact: true }).click();
+    await page.waitForSelector('#report', { timeout: 120000 });
+
+    await navigateToQuotas(page);
+    expect(await getExtraValue(page, 'variants')).toBe(initialExtraVariants);
+    expect(await getExtraValue(page, 'attributes')).toBe(initialExtraAttributes);
+    expect(await getMonthlyCurrentValue(page, 'variants')).toBe(initialMonthlyVariants - 1);
+    expect(await getMonthlyCurrentValue(page, 'attributes')).toBe(initialMonthlyAttributes - 3);
   });
 });
 

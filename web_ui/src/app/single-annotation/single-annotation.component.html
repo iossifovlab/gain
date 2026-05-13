@@ -11,6 +11,9 @@
         (keydown.enter)="triggerPipelineAutoSave()" />
     </div>
     <button (click)="triggerPipelineAutoSave()" [disabled]="disableGo()">Go</button>
+    @if(annotateErrorMessage) {
+    <span class="error-message">{{ annotateErrorMessage }}</span>
+    }
 
     <mat-menu #tooltip="matMenu">
       @for(e of examples; track e) {

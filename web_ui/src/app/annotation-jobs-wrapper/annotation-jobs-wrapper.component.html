@@ -20,7 +20,7 @@
           (emitUpdatedFileHeader)="setUpdatedFileHeader($event)"></app-job-creation>
         <div style="margin-top: 10px">
           <button id="create-button" (click)="autoSavePipeline()" [disabled]="disableCreate()">Create</button>
-          <span class="error-message">{{ creationError }}</span>
+          <span id="creation-error" class="error-message">{{ creationError }}</span>
         </div>
         } @if(!isCreationFormVisible && currentJob) {
         <div id="result">
