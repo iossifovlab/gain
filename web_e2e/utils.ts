@@ -91,7 +91,7 @@ export type CurrentQuotaType =
   | 'daily_attributes'
   | 'monthly_attributes';
 
-const backendUrl = 'http://localhost:8000';
+const backendUrl = process.env['CI'] === '1' ? 'http://backend:9001' : 'http://localhost:8000';
 
 export async function resetDailyQuota(page: Page): Promise<void> {
   const response = await page.request.get(`${backendUrl}/admin-panel/reset-daily-quota`);
