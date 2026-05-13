@@ -162,11 +162,11 @@ test.describe('Pipeline tests', () => {
         {
           range: new monaco.Range(6, 1, 13, 1),
           text: '- position_score_annotator:\n' +
+                '    resource_id: hg19/scores/fitCons2/E035\n' +
                 '    attributes:\n' +
                 '    - internal: false\n' +
-                '      name: fitcons2_e035\n' +
-                '      source: FitCons2_E035\n' +
-                '    resource_id: hg19/scores/FitCons2_E035'
+                '      name: FitCons2_E035\n' +
+                '      source: FitCons2_E035\n'
         }
       ]);
     });
@@ -1046,7 +1046,7 @@ test.describe('Add annotator to pipeline tests', () => {
     await page.locator('[id="chain-dropdown"] input').pressSequentially('hg19');
     const filteredOptions = page.locator('mat-option.resource-option');
 
-    expect(await filteredOptions.count()).toBe(6);
+    expect(await filteredOptions.count()).toBe(4);
   });
 
   test('should filter source_genome options by search text in configure step', async({ page }) => {
@@ -1160,7 +1160,7 @@ test.describe('Add resource to pipeline tests', () => {
 
   test('should filter resources by resource type', async({ page }) => {
     await page.locator('#pipeline-actions').locator('#add-resource-button').click();
-    await expect(page.locator('#resource-count')).toHaveText('296 resources');
+    await expect(page.locator('#resource-count')).toHaveText('274 resources');
     await page.locator('#resource-type mat-select').click();
     await page.locator('mat-option').filter({ hasText: 'position_score' }).click();
     await expect(page.locator('#resource-count')).toHaveText('160 resources');
