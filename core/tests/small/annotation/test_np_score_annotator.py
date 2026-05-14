@@ -76,12 +76,12 @@ def test_np_score_annotator() -> None:
         assert result.get("test") == pytest.approx(0.001, rel=1e-2)
 
 
-@pytest.mark.parametrize("variant,allele_aggregator,expected", [
+@pytest.mark.parametrize("variant,aggregator,expected", [
     (("1", 14970, "CA", "C"), "max", 0.4),
     (("1", 14970, "C", "CA"), "max", 0.04),
 ])
 def test_np_score_region_annotator(
-        variant: tuple, allele_aggregator: str, expected: float) -> None:
+        variant: tuple, aggregator: str, expected: float) -> None:
     repo = build_inmemory_test_repository(_NP_SCORE1_REPO)
     pipeline_config = textwrap.dedent(f"""
         - np_score:
@@ -90,7 +90,7 @@ def test_np_score_region_annotator(
             attributes:
             - source: test_raw
               name: test
-              allele_aggregator: {allele_aggregator}
+              aggregator: {aggregator}
         """)
     pipeline = load_pipeline_from_yaml(pipeline_config, repo)
     with pipeline.open() as work_pipeline:

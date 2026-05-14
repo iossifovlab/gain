@@ -513,22 +513,32 @@ variant frequencies, etc.
                     "in allele_score annotator and will be ignored")
             nuc_agg = att_info.parameters.get("nucleotide_aggregator")
             allele_agg = att_info.parameters.get("allele_aggregator")
+            agg = att_info.parameters.get("aggregator")
             if nuc_agg is not None:
-                if allele_agg is not None:
+                if allele_agg is not None or agg is not None:
                     raise AnnotationConfigurationError(
                         "Cannot specify both `nucleotide_aggregator` and "
-                        "`allele_aggregator` for the same attribute")
+                        "`aggregator` for the same attribute")
                 logger.warning(
                     "attribute `nucleotide_aggregator` is deprecated, "
-                    "use `allele_aggregator` instead")
-                allele_agg = nuc_agg
+                    "use `aggregator` instead")
+                agg = nuc_agg
+            elif allele_agg is not None:
+                if agg is not None:
+                    raise AnnotationConfigurationError(
+                        "Cannot specify both `allele_aggregator` and "
+                        "`aggregator` for the same attribute")
+                logger.warning(
+                    "attribute `allele_aggregator` is deprecated, "
+                    "use `aggregator` instead")
+                agg = allele_agg
 
-            if allele_agg:
-                validate_aggregator(allele_agg)
+            if agg:
+                validate_aggregator(agg)
             self.allele_score_queries.append(
-                AlleleScoreQuery(att_info.source, allele_aggregator=allele_agg))
+                AlleleScoreQuery(att_info.source, allele_aggregator=agg))
             self.add_score_aggregator_documentation(
-                att_info, "allele_aggregator", allele_agg)
+                att_info, "allele_aggregator", agg)
 
     @classmethod
     def _build_allele_filter_func(
@@ -631,10 +641,13 @@ variant frequencies, etc.
         """Collect score aggregator documentation."""
         nuc_agg = attr_info.parameters.get("nucleotide_aggregator")
         allele_agg = attr_info.parameters.get("allele_aggregator")
+        agg = attr_info.parameters.get("aggregator")
         if nuc_agg is not None:
-            allele_agg = nuc_agg
+            agg = nuc_agg
+        elif allele_agg is not None:
+            agg = allele_agg
         allele_doc = self._build_score_aggregator_documentation(
-            attr_info, "allele_aggregator", allele_agg,
+            attr_info, "allele_aggregator", agg,
         )
         return [allele_doc]
 

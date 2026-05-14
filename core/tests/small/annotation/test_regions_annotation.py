@@ -131,14 +131,14 @@ def test_position_score_annotator(
         assert result.get("test100") == expected
 
 
-@pytest.mark.parametrize("region,allele_aggregator,expected", [
+@pytest.mark.parametrize("region,aggregator,expected", [
     (("chr1", 10, 13), "max", 0.04),
     (("chr1", 10, 13), "min", 0.00001),
     (("chr1", 10, 14), "max", 0.4),
 ])
 def test_np_score_annotator(
         region: tuple,
-        allele_aggregator: str, expected: float,
+        aggregator: str, expected: float,
         fixture_repo: GenomicResourceRepo) -> None:
 
     annotatable = Region(*region)
@@ -150,7 +150,7 @@ def test_np_score_annotator(
             attributes:
             - source: test_raw
               name: test
-              allele_aggregator: {allele_aggregator}
+              aggregator: {aggregator}
         """)
 
     pipeline = load_pipeline_from_yaml(pipeline_config, fixture_repo)
@@ -163,14 +163,14 @@ def test_np_score_annotator(
     assert result["test"] == expected, annotatable
 
 
-@pytest.mark.parametrize("region,allele_aggregator,expected", [
+@pytest.mark.parametrize("region,aggregator,expected", [
     (("chr1", 10, 12), "max", 0.004),
     (("chr1", 10, 13), "max", None),
     (("chr1", 10, 14), "max", None),
 ])
 def test_np_score_annotator_region_length_cutoff(
         region: tuple,
-        allele_aggregator: str, expected: float,
+        aggregator: str, expected: float,
         fixture_repo: GenomicResourceRepo) -> None:
 
     annotatable = Region(*region)
@@ -183,7 +183,7 @@ def test_np_score_annotator_region_length_cutoff(
             attributes:
             - source: test_raw
               name: test
-              allele_aggregator: {allele_aggregator}
+              aggregator: {aggregator}
         """)
 
     pipeline = load_pipeline_from_yaml(pipeline_config, fixture_repo)
@@ -197,14 +197,14 @@ def test_np_score_annotator_region_length_cutoff(
     assert result["test"] == expected, annotatable
 
 
-@pytest.mark.parametrize("region,allele_aggregator,expected", [
+@pytest.mark.parametrize("region,aggregator,expected", [
     (("chr1", 10, 13), "max", 0.02),
     (("chr1", 10, 13), "min", 0.00001),
     (("chr1", 10, 14), "max", 0.2),
 ])
 def test_allele_score_annotator(
         region: tuple,
-        allele_aggregator: str, expected: float,
+        aggregator: str, expected: float,
         fixture_repo: GenomicResourceRepo) -> None:
 
     annotatable = Region(*region)
@@ -216,7 +216,7 @@ def test_allele_score_annotator(
             attributes:
             - source: score
               name: test
-              allele_aggregator: {allele_aggregator}
+              aggregator: {aggregator}
         """)
 
     pipeline = load_pipeline_from_yaml(pipeline_config, fixture_repo)
