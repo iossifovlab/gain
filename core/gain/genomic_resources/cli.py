@@ -1244,27 +1244,44 @@ PAGE_HEAD = """
       }
 
       #section-about {
-        margin: 56px auto;
-        padding: 0 clamp(20px, 10%, 64px);
-        max-width: 760px;
+        margin: 40px 10%;
         color: #2d3d4a;
-        line-height: 1.75;
+        line-height: 1.65;
       }
 
       #section-about h1 {
-        font-size: 1.85em;
+        font-size: 1.6em;
         font-weight: 700;
-        color: #1a2835;
-        letter-spacing: -0.022em;
-        line-height: 1.2;
-        margin: 0 0 28px;
-        padding-bottom: 24px;
-        border-bottom: 1px solid #d8e3ea;
+        color: #5b778c;
+        margin: 0 0 16px;
+      }
+
+      #section-about h2 {
+        font-size: 1.1em;
+        font-weight: 700;
+        color: #5b778c;
+        margin: 2em 0 0.5em;
       }
 
       #section-about p {
-        margin: 0 0 1.1em;
-        font-size: 0.975em;
+        font-size: 0.875em;
+        margin: 0 0 0.75em;
+      }
+
+      #section-about ul {
+        font-size: 0.875em;
+        list-style-type: '- ';
+        padding-left: 15px;
+        margin: 0 0 0.75em;
+      }
+
+      #section-about li {
+        margin-bottom: 0.4em;
+        padding-left: 4px;
+      }
+
+      #section-about a {
+        text-decoration: underline;
       }
 
       #page-header {
