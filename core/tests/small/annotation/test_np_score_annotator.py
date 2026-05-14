@@ -60,7 +60,7 @@ _NP_SCORE1_REPO = {
 }
 
 
-def test_np_score_substitution_annotator() -> None:
+def test_np_score_annotator() -> None:
     repo = build_inmemory_test_repository(_NP_SCORE1_REPO)
     pipeline_config = textwrap.dedent("""
         - np_score:
@@ -72,8 +72,8 @@ def test_np_score_substitution_annotator() -> None:
     pipeline = load_pipeline_from_yaml(pipeline_config, repo)
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(VCFAllele("1", 14970, "C", "A"))
-    assert result is not None
-    assert result.get("test") == pytest.approx(0.001, rel=1e-2)
+        assert result is not None
+        assert result.get("test") == pytest.approx(0.001, rel=1e-2)
 
 
 @pytest.mark.parametrize("variant,allele_aggregator,expected", [
@@ -95,8 +95,8 @@ def test_np_score_region_annotator(
     pipeline = load_pipeline_from_yaml(pipeline_config, repo)
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(VCFAllele(*variant))
-    assert result is not None
-    assert result.get("test") == pytest.approx(expected, rel=1e-2)
+        assert result is not None
+        assert result.get("test") == pytest.approx(expected, rel=1e-2)
 
 
 @pytest.fixture(scope="module")

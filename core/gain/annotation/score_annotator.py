@@ -506,6 +506,11 @@ variant frequencies, etc.
                     self.attrs_to_include = [self.attrs_to_include]
                 self.allele_attribute = att_info
                 continue
+            pos_agg = att_info.parameters.get("position_aggregator")
+            if pos_agg is not None:
+                logger.warning(
+                    "attribute `position_aggregator` is no longer used "
+                    "in allele_score annotator and will be ignored")
             nuc_agg = att_info.parameters.get("nucleotide_aggregator")
             allele_agg = att_info.parameters.get("allele_aggregator")
             if nuc_agg is not None:
