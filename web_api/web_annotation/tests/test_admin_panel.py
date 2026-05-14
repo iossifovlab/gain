@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116
 import json
+from unittest.mock import MagicMock
 
 import pytest
 from admin_panel.views import (
@@ -7,14 +8,19 @@ from admin_panel.views import (
     reset_monthly_quota,
     set_current_quota,
     set_extra_quota,
+    set_ip_quota,
+    set_session_quota,
 )
 from django.test import RequestFactory
 
 from web_annotation.models import (
+    AnonymousUserQuota,
     DailyQuotaRefreshLog,
     MonthlyQuotaRefreshLog,
+    SessionQuota,
     User,
     UserQuota,
+    WebAnnotationAnonymousUser,
 )
 
 
@@ -404,4 +410,297 @@ def test_set_current_quota_invalid_amount(
         "amount": "abc",
     })
     response = set_current_quota(request)
+    assert response.status_code == 400
+
+
+# --- set_session_quota ---
+
+@pytest.fixture
+def session_quota() -> SessionQuota:
+    quota = SessionQuota(session_id="test-session-id")
+    quota.reset_daily()
+    quota.reset_monthly()
+    quota.save()
+    return quota
+
+
+def test_set_session_quota_returns_200(
+    factory: RequestFactory,
+    session_quota: SessionQuota,
+) -> None:
+    request = factory.get("/admin-panel/set-session-quota", {
+        "session_id": "test-session-id",
+        "quota_type": "daily_jobs",
+        "amount": "5",
+    })
+    response = set_session_quota(request)
+    assert response.status_code == 200
+
+
+def test_set_session_quota_returns_snapshot_json(
+    factory: RequestFactory,
+    session_quota: SessionQuota,
+) -> None:
+    request = factory.get("/admin-panel/set-session-quota", {
+        "session_id": "test-session-id",
+        "quota_type": "daily_jobs",
+        "amount": "5",
+    })
+    response = set_session_quota(request)
+    data = json.loads(response.content)
+    assert "daily_jobs" in data
+    assert "extra_jobs" in data
+
+
+def test_set_session_quota_sets_field(
+    factory: RequestFactory,
+    session_quota: SessionQuota,
+) -> None:
+    request = factory.get("/admin-panel/set-session-quota", {
+        "session_id": "test-session-id",
+        "quota_type": "monthly_variants",
+        "amount": "888",
+    })
+    set_session_quota(request)
+    session_quota.refresh_from_db()
+    assert session_quota.monthly_variants == 888
+
+
+def test_set_session_quota_snapshot_reflects_change(
+    factory: RequestFactory,
+    session_quota: SessionQuota,
+) -> None:
+    request = factory.get("/admin-panel/set-session-quota", {
+        "session_id": "test-session-id",
+        "quota_type": "daily_attributes",
+        "amount": "42",
+    })
+    response = set_session_quota(request)
+    assert json.loads(response.content)["daily_attributes"] == 42
+
+
+def test_set_session_quota_fallback_to_cookie(
+    factory: RequestFactory,
+    session_quota: SessionQuota,
+) -> None:
+    request = factory.get("/admin-panel/set-session-quota", {
+        "quota_type": "daily_jobs",
+        "amount": "3",
+    })
+    request.session = MagicMock()
+    request.session.session_key = "test-session-id"
+    response = set_session_quota(request)
+    assert response.status_code == 200
+    session_quota.refresh_from_db()
+    assert session_quota.daily_jobs == 3
+
+
+def test_set_session_quota_creates_quota_if_missing(
+    factory: RequestFactory,
+) -> None:
+    request = factory.get("/admin-panel/set-session-quota", {
+        "session_id": "brand-new-session",
+        "quota_type": "daily_jobs",
+        "amount": "7",
+    })
+    response = set_session_quota(request)
+    assert response.status_code == 200
+    quota = SessionQuota.objects.get(session_id="brand-new-session")
+    assert quota.daily_jobs == 7
+
+
+def test_set_session_quota_missing_session_id(
+    factory: RequestFactory,
+) -> None:
+    request = factory.get("/admin-panel/set-session-quota", {
+        "quota_type": "daily_jobs",
+        "amount": "5",
+    })
+    request.session = MagicMock()
+    request.session.session_key = None
+    response = set_session_quota(request)
+    assert response.status_code == 400
+
+
+def test_set_session_quota_invalid_type(
+    factory: RequestFactory,
+    session_quota: SessionQuota,
+) -> None:
+    request = factory.get("/admin-panel/set-session-quota", {
+        "session_id": "test-session-id",
+        "quota_type": "jobs",
+        "amount": "5",
+    })
+    response = set_session_quota(request)
+    assert response.status_code == 400
+
+
+def test_set_session_quota_missing_param(
+    factory: RequestFactory,
+    session_quota: SessionQuota,
+) -> None:
+    request = factory.get("/admin-panel/set-session-quota", {
+        "session_id": "test-session-id",
+        "quota_type": "daily_jobs",
+    })
+    response = set_session_quota(request)
+    assert response.status_code == 400
+
+
+def test_set_session_quota_invalid_amount(
+    factory: RequestFactory,
+    session_quota: SessionQuota,
+) -> None:
+    request = factory.get("/admin-panel/set-session-quota", {
+        "session_id": "test-session-id",
+        "quota_type": "daily_jobs",
+        "amount": "not-a-number",
+    })
+    response = set_session_quota(request)
+    assert response.status_code == 400
+
+
+# --- set_ip_quota ---
+
+@pytest.fixture
+def ip_quota() -> AnonymousUserQuota:
+    quota = AnonymousUserQuota(ip="1.2.3.4")
+    quota.reset_daily()
+    quota.reset_monthly()
+    quota.save()
+    return quota
+
+
+def test_set_ip_quota_returns_200(
+    factory: RequestFactory,
+    ip_quota: AnonymousUserQuota,
+) -> None:
+    request = factory.get("/admin-panel/set-ip-quota", {
+        "ip": "1.2.3.4",
+        "quota_type": "daily_jobs",
+        "amount": "5",
+    })
+    response = set_ip_quota(request)
+    assert response.status_code == 200
+
+
+def test_set_ip_quota_returns_snapshot_json(
+    factory: RequestFactory,
+    ip_quota: AnonymousUserQuota,
+) -> None:
+    request = factory.get("/admin-panel/set-ip-quota", {
+        "ip": "1.2.3.4",
+        "quota_type": "daily_jobs",
+        "amount": "5",
+    })
+    response = set_ip_quota(request)
+    data = json.loads(response.content)
+    assert "daily_jobs" in data
+    assert "extra_jobs" in data
+
+
+def test_set_ip_quota_sets_field(
+    factory: RequestFactory,
+    ip_quota: AnonymousUserQuota,
+) -> None:
+    request = factory.get("/admin-panel/set-ip-quota", {
+        "ip": "1.2.3.4",
+        "quota_type": "monthly_variants",
+        "amount": "555",
+    })
+    set_ip_quota(request)
+    ip_quota.refresh_from_db()
+    assert ip_quota.monthly_variants == 555
+
+
+def test_set_ip_quota_snapshot_reflects_change(
+    factory: RequestFactory,
+    ip_quota: AnonymousUserQuota,
+) -> None:
+    request = factory.get("/admin-panel/set-ip-quota", {
+        "ip": "1.2.3.4",
+        "quota_type": "daily_attributes",
+        "amount": "99",
+    })
+    response = set_ip_quota(request)
+    assert json.loads(response.content)["daily_attributes"] == 99
+
+
+def test_set_ip_quota_fallback_to_anonymous_user(
+    factory: RequestFactory,
+    ip_quota: AnonymousUserQuota,
+) -> None:
+    request = factory.get("/admin-panel/set-ip-quota", {
+        "quota_type": "daily_jobs",
+        "amount": "3",
+    })
+    request.user = WebAnnotationAnonymousUser(
+        session_id="some-session", ip="1.2.3.4")
+    response = set_ip_quota(request)
+    assert response.status_code == 200
+    ip_quota.refresh_from_db()
+    assert ip_quota.daily_jobs == 3
+
+
+def test_set_ip_quota_returns_500_for_authenticated_user(
+    factory: RequestFactory,
+) -> None:
+    request = factory.get("/admin-panel/set-ip-quota", {
+        "quota_type": "daily_jobs",
+        "amount": "5",
+    })
+    request.user = User.objects.get(email="user@example.com")
+    response = set_ip_quota(request)
+    assert response.status_code == 500
+
+
+def test_set_ip_quota_creates_quota_if_missing(
+    factory: RequestFactory,
+) -> None:
+    request = factory.get("/admin-panel/set-ip-quota", {
+        "ip": "9.9.9.9",
+        "quota_type": "daily_jobs",
+        "amount": "7",
+    })
+    response = set_ip_quota(request)
+    assert response.status_code == 200
+    quota = AnonymousUserQuota.objects.get(ip="9.9.9.9")
+    assert quota.daily_jobs == 7
+
+
+def test_set_ip_quota_invalid_type(
+    factory: RequestFactory,
+    ip_quota: AnonymousUserQuota,
+) -> None:
+    request = factory.get("/admin-panel/set-ip-quota", {
+        "ip": "1.2.3.4",
+        "quota_type": "jobs",
+        "amount": "5",
+    })
+    response = set_ip_quota(request)
+    assert response.status_code == 400
+
+
+def test_set_ip_quota_missing_param(
+    factory: RequestFactory,
+    ip_quota: AnonymousUserQuota,
+) -> None:
+    request = factory.get("/admin-panel/set-ip-quota", {
+        "ip": "1.2.3.4",
+        "quota_type": "daily_jobs",
+    })
+    response = set_ip_quota(request)
+    assert response.status_code == 400
+
+
+def test_set_ip_quota_invalid_amount(
+    factory: RequestFactory,
+    ip_quota: AnonymousUserQuota,
+) -> None:
+    request = factory.get("/admin-panel/set-ip-quota", {
+        "ip": "1.2.3.4",
+        "quota_type": "daily_jobs",
+        "amount": "not-a-number",
+    })
+    response = set_ip_quota(request)
     assert response.status_code == 400

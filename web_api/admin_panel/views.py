@@ -2,7 +2,15 @@ import dataclasses
 
 from django.core.management import call_command
 from django.http import HttpRequest, HttpResponse, JsonResponse
-from web_annotation.models import QuotaSnapshot, User, UserQuota
+from web_annotation.models import (
+    AnonymousUserQuota,
+    Quota,
+    QuotaSnapshot,
+    SessionQuota,
+    User,
+    UserQuota,
+    WebAnnotationAnonymousUser,
+)
 
 _EXTRA_QUOTA_FIELDS = {
     "jobs": "extra_jobs",
@@ -39,7 +47,7 @@ def _get_or_create_user_quota(user: User) -> UserQuota:
         return quota
 
 
-def _quota_snapshot_response(quota: UserQuota) -> JsonResponse:
+def _quota_snapshot_response(quota: Quota) -> JsonResponse:
     snapshot = QuotaSnapshot.from_quota(quota)
     return JsonResponse(dataclasses.asdict(snapshot))
 
@@ -96,6 +104,85 @@ def set_current_quota(request: HttpRequest) -> HttpResponse:
         return HttpResponse(f"User '{user_email}' not found.", status=404)
 
     quota = _get_or_create_user_quota(user)
+    setattr(quota, quota_type, amount_int)
+    quota.save()
+
+    return _quota_snapshot_response(quota)
+
+
+def _get_or_create_session_quota(session_id: str) -> SessionQuota:
+    try:
+        return SessionQuota.objects.get(session_id=session_id)
+    except SessionQuota.DoesNotExist:
+        quota = SessionQuota(session_id=session_id)
+        quota.reset_daily()
+        quota.reset_monthly()
+        return quota
+
+
+def _get_or_create_ip_quota(ip: str) -> AnonymousUserQuota:
+    try:
+        return AnonymousUserQuota.objects.get(ip=ip)
+    except AnonymousUserQuota.DoesNotExist:
+        quota = AnonymousUserQuota(ip=ip)
+        quota.reset_daily()
+        quota.reset_monthly()
+        return quota
+
+
+def set_session_quota(request: HttpRequest) -> HttpResponse:
+    """Set a current quota field for an anonymous user by session ID."""
+    session_id = request.GET.get("session_id")
+    if not session_id:
+        session_id = request.session.session_key
+    quota_type = request.GET.get("quota_type")
+    amount = request.GET.get("amount")
+
+    if not session_id:
+        return HttpResponse("Missing session_id.", status=400)
+    if not quota_type or amount is None:
+        return HttpResponse("Missing required parameters.", status=400)
+    if quota_type not in _CURRENT_QUOTA_FIELDS:
+        valid = ", ".join(sorted(_CURRENT_QUOTA_FIELDS))
+        return HttpResponse(
+            f"Invalid quota_type. Valid types: {valid}.", status=400)
+    try:
+        amount_int = int(amount)
+    except ValueError:
+        return HttpResponse("amount must be an integer.", status=400)
+
+    quota = _get_or_create_session_quota(session_id)
+    setattr(quota, quota_type, amount_int)
+    quota.save()
+
+    return _quota_snapshot_response(quota)
+
+
+def set_ip_quota(request: HttpRequest) -> HttpResponse:
+    """Set a current quota field for an anonymous user by IP address."""
+    ip = request.GET.get("ip")
+    if not ip:
+        if not isinstance(request.user, WebAnnotationAnonymousUser):
+            return HttpResponse(
+                "ip parameter is required for authenticated users.", status=500)
+        ip = request.user.ip
+    quota_type = request.GET.get("quota_type")
+    amount = request.GET.get("amount")
+
+    if not ip:
+        return HttpResponse("Missing ip.", status=400)
+    if not quota_type or amount is None:
+        return HttpResponse("Missing required parameters.", status=400)
+    if quota_type not in _CURRENT_QUOTA_FIELDS:
+        valid = ", ".join(sorted(_CURRENT_QUOTA_FIELDS))
+        return HttpResponse(
+            f"Invalid quota_type. Valid types: {valid}.", status=400)
+    try:
+        amount_int = int(amount)
+    except ValueError:
+        return HttpResponse("amount must be an integer.", status=400)
+
+    quota = _get_or_create_ip_quota(ip)
     setattr(quota, quota_type, amount_int)
     quota.save()
 
