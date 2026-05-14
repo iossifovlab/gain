@@ -787,7 +787,6 @@ class FsspecReadWriteProtocol(
         has_about = self.filesystem.exists(about_md_path)
 
         about_html_content = ""
-        about_title = ""
         if has_about:
             with self.filesystem.open(
                     about_md_path, "rt", encoding="utf8") as infile:
