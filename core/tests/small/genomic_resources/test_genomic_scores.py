@@ -38,6 +38,7 @@ from gain.genomic_resources.testing import (
     build_inmemory_test_repository,
     build_inmemory_test_resource,
     convert_to_tab_separated,
+    setup_bigwig,
     setup_directories,
     setup_genome,
     setup_tabix,
@@ -982,3 +983,132 @@ def test_default_annotation_requires_list() -> None:
 
     with pytest.raises(TypeError, match="default_annotation"):
         score.get_default_annotation_attributes()
+
+
+# ── BigWig position score tests ───────────────────────────────────────────────
+
+_BIGWIG_DATA = textwrap.dedent("""
+    chr1  0   10   0.1
+    chr1  10  20   0.2
+    chr1  20  30   0.3
+    chr2  0   10   0.4
+    chr2  10  20   0.5
+""")
+_BIGWIG_CHROM_LENS = {"chr1": 1000, "chr2": 2000}
+
+
+def _build_bigwig_score_dir(root_path: pathlib.Path) -> None:
+    setup_directories(
+        root_path,
+        {
+            "grr.yaml": textwrap.dedent(f"""
+                id: test_grr
+                type: directory
+                directory: {root_path!s}
+            """),
+            "bw_score": {
+                "genomic_resource.yaml": textwrap.dedent("""
+                    type: position_score
+                    table:
+                        filename: data.bw
+                    scores:
+                    - id: score
+                      type: float
+                      index: 3
+                """),
+            },
+        },
+    )
+    setup_bigwig(root_path / "bw_score" / "data.bw", _BIGWIG_DATA, _BIGWIG_CHROM_LENS)
+
+
+@pytest.fixture(scope="module")
+def bigwig_position_score(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> GenomicScore:
+    root_path = tmp_path_factory.mktemp("bigwig_score")
+    _build_bigwig_score_dir(root_path)
+    grr = build_filesystem_test_repository(root_path)
+    score = build_score_from_resource(grr.get_resource("bw_score"))
+    score.open()
+    return score
+
+
+def test_bigwig_position_score_opens_without_header_mode(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Regression: BigWig score must open even when header_mode is not set.
+    _build_bigwig_score_dir(tmp_path)
+    grr = build_filesystem_test_repository(tmp_path)
+    score = build_score_from_resource(grr.get_resource("bw_score"))
+    score.open()
+    score.close()
+
+
+def test_bigwig_position_score_get_all_chromosomes(
+    bigwig_position_score: GenomicScore,
+) -> None:
+    assert bigwig_position_score.get_all_chromosomes() == ["chr1", "chr2"]
+
+
+def test_bigwig_position_score_get_all_scores(
+    bigwig_position_score: GenomicScore,
+) -> None:
+    assert bigwig_position_score.get_all_scores() == ["score"]
+
+
+def test_bigwig_position_score_fetch_lines(
+    bigwig_position_score: GenomicScore,
+) -> None:
+    # BigWig [0,10) → GAIn [1,10]; [10,20) → [11,20]
+    lines = list(bigwig_position_score.fetch_lines("chr1", 1, 15))
+    assert len(lines) == 2
+    assert lines[0].get_score("score") == pytest.approx(0.1)
+    assert lines[1].get_score("score") == pytest.approx(0.2)
+
+
+def test_bigwig_position_score_fetch_region_values(
+    bigwig_position_score: GenomicScore,
+) -> None:
+    result = list(
+        bigwig_position_score.fetch_region_values("chr1", 1, 20, ["score"])
+    )
+    assert len(result) == 2
+    assert result[0][2] is not None
+    assert result[0][2][0] == pytest.approx(0.1)
+    assert result[1][2] is not None
+    assert result[1][2][0] == pytest.approx(0.2)
+
+
+def test_bigwig_position_score_fetch_scores_at_position(
+    bigwig_position_score: GenomicScore,
+) -> None:
+    from gain.genomic_resources.genomic_scores import PositionScore
+    ps = cast(PositionScore, bigwig_position_score)
+    result = ps.fetch_scores("chr1", 5)
+    assert result is not None
+    assert result[0] == pytest.approx(0.1)
+
+    result = ps.fetch_scores("chr1", 15)
+    assert result is not None
+    assert result[0] == pytest.approx(0.2)
+
+
+def test_bigwig_position_score_fetch_scores_agg(
+    bigwig_position_score: GenomicScore,
+) -> None:
+    from gain.genomic_resources.genomic_scores import PositionScore
+    ps = cast(PositionScore, bigwig_position_score)
+    # Positions 1-20: [1,10] → 0.1, [11,20] → 0.2; mean = 0.15
+    aggs = ps.fetch_scores_agg("chr1", 1, 20)
+    assert len(aggs) == 1
+    assert aggs[0].get_final() == pytest.approx(0.15)
+
+
+def test_bigwig_position_score_multi_chrom(
+    bigwig_position_score: GenomicScore,
+) -> None:
+    lines_chr2 = list(bigwig_position_score.fetch_lines("chr2", 1, 20))
+    assert len(lines_chr2) == 2
+    assert lines_chr2[0].get_score("score") == pytest.approx(0.4)
+    assert lines_chr2[1].get_score("score") == pytest.approx(0.5)

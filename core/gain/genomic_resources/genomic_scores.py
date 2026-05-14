@@ -613,8 +613,11 @@ class GenomicScore(ResourceConfigValidationMixin):
                        for score in self.config["scores"]), \
                 ("Cannot configure score columns by"
                  " name when header_mode is 'none'!")
+        elif self.table.header is None:
+            # Table has no header (e.g. BigWig); column-name references are
+            # invalid, but index-based scores are fine — open() validates them.
+            return
         else:
-            assert self.table.header is not None
             for score in self.config["scores"]:
 
                 if "name" in score:
