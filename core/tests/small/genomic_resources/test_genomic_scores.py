@@ -31,7 +31,10 @@ from gain.genomic_resources.histogram import (
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     build_score_implementation_from_resource,
 )
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME, GenomicResource
+from gain.genomic_resources.repository import (
+    GR_CONF_FILE_NAME,
+    GenomicResource,
+)
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     build_filesystem_test_resource,
@@ -985,8 +988,6 @@ def test_default_annotation_requires_list() -> None:
         score.get_default_annotation_attributes()
 
 
-# ── BigWig position score tests ───────────────────────────────────────────────
-
 _BIGWIG_DATA = textwrap.dedent("""
     chr1  0   10   0.1
     chr1  10  20   0.2
@@ -1019,7 +1020,8 @@ def _build_bigwig_score_dir(root_path: pathlib.Path) -> None:
             },
         },
     )
-    setup_bigwig(root_path / "bw_score" / "data.bw", _BIGWIG_DATA, _BIGWIG_CHROM_LENS)
+    setup_bigwig(
+        root_path / "bw_score" / "data.bw", _BIGWIG_DATA, _BIGWIG_CHROM_LENS)
 
 
 @pytest.fixture(scope="module")
@@ -1071,7 +1073,7 @@ def test_bigwig_position_score_fetch_region_values(
     bigwig_position_score: GenomicScore,
 ) -> None:
     result = list(
-        bigwig_position_score.fetch_region_values("chr1", 1, 20, ["score"])
+        bigwig_position_score.fetch_region_values("chr1", 1, 20, ["score"]),
     )
     assert len(result) == 2
     assert result[0][2] is not None
