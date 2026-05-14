@@ -761,7 +761,11 @@ class FsspecReadWriteProtocol(
     def get_content_file_path(self) -> str:
         return os.path.join(self.url, GR_CONTENTS_FILE_NAME[:-3])
 
-    def build_index_info(self, repository_template: jinja2.Template) -> dict:
+    def build_index_info(
+        self,
+        repository_template: jinja2.Template,
+        about_template: jinja2.Template | None = None,
+    ) -> dict:
         """Build info dict for the repository."""
         result = {}
         for res in self.get_all_resources():
@@ -800,7 +804,11 @@ class FsspecReadWriteProtocol(
             with self.filesystem.open(
                 os.path.join(self.url, "about.html"), "wt", encoding="utf8",
             ) as outfile:
-                outfile.write(about_html_content)
+                if about_template is not None:
+                    outfile.write(about_template.render(
+                        about_contents=about_html_content))
+                else:
+                    outfile.write(about_html_content)
 
         content_filepath = os.path.join(self.url, GR_INDEX_FILE_NAME)
         with self.filesystem.open(
@@ -808,8 +816,7 @@ class FsspecReadWriteProtocol(
             outfile.write(repository_template.render(
                 data=result,
                 has_about=has_about,
-                about_title=about_title,
-                about_contents=about_html_content))
+            ))
 
         return result
 

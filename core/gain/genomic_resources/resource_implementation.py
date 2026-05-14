@@ -250,20 +250,29 @@ class ResourceConfigValidationMixin:
 RESOURCE_TEMPLATE = Template("""
 <html>
   <head>
+    <meta charset="utf-8">
     <style>
+      *, *::before, *::after {
+        box-sizing: border-box;
+      }
+
+      * {
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+
       body {
+        margin: 0;
+      }
+
+      .page-content {
         max-width: 1200px;
-        margin: 50px auto 100px auto;
-        padding: 0 40px;
+        margin: 0 auto;
+        padding: 40px 40px 100px;
       }
 
       h2 {
         margin-top: 50px;
         margin-bottom: 10px;
-      }
-
-      * {
-        font-family: sans-serif
       }
 
       h3,h4 {
@@ -352,6 +361,25 @@ RESOURCE_TEMPLATE = Template("""
         text-decoration: none;
         cursor: pointer;
       }
+      #page-header {
+        display: flex;
+        align-items: center;
+        padding: 14px clamp(20px, 10%, 64px);
+        border-bottom: 1px solid #e4edf2;
+      }
+
+      #page-header a {
+        color: #24699E;
+        font-weight: 500;
+        text-decoration: none;
+        transition: color 0.15s ease-out;
+        font-size: 18px;
+      }
+
+      #page-header a:hover {
+        color: #4C93C9;
+      }
+
       {% block extra_styles %}{% endblock %}
     </style>
 
@@ -391,10 +419,11 @@ RESOURCE_TEMPLATE = Template("""
         });
     </script>
   </head>
-    <body>
-    <a href="/index.html" style="position: absolute; top: 20px; left: 40px; font-size: 16px; color: #24699E;">
-      Back to main page
-    </a>
+  <body>
+    <nav id="page-header">
+      <a href="/index.html">← Back to main page</a>
+    </nav>
+    <div class="page-content">
     <h2>Resource</h2>
     <div>
         <table border="1" id="resource-table">
@@ -500,7 +529,8 @@ RESOURCE_TEMPLATE = Template("""
         {%- endfor %}
     </tbody>
     </table>
-    </body>
+    </div>
+  </body>
 </html>
 """)  # noqa: E501
 

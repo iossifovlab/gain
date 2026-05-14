@@ -764,7 +764,7 @@ def _run_repo_info_command(
     if dry_run:
         return status
 
-    proto.build_index_info(repository_template)  # type: ignore
+    proto.build_index_info(repository_template, about_template)  # type: ignore
     for res in resources:
         try:
             _do_resource_info_command(repo, proto, res)
@@ -1062,12 +1062,21 @@ def get_scripts_for_template() -> str:
 
 PAGE_HEAD = """
     <head>
+     <meta charset="utf-8">
      <link
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
     <style>
+      *, *::before, *::after {
+        box-sizing: border-box;
+      }
+
       * {
-        font-family: sans-serif
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+
+      body {
+        margin: 0;
       }
 
       th {
@@ -1105,6 +1114,7 @@ PAGE_HEAD = """
         gap: 15px;
         position: sticky;
         top: 0;
+        z-index: 1;
         background-color: white;
         height: 70px;
       }
@@ -1155,8 +1165,7 @@ PAGE_HEAD = """
       .search-info {
         text-align: center;
         font-size: 0.9em;
-        color: #ababab;
-        font-style: italic;
+        color: #5b778c;
         word-break: break-word;
         margin: 0 10%;
       }
@@ -1170,14 +1179,14 @@ PAGE_HEAD = """
       .pageButton {
         border: none;
         background: none;
-        color: blue;
+        color: #24699E;
         cursor: pointer;
         padding: 3px;
-        margin: 0px 3px;
+        margin: 0 3px;
       }
 
       .pageButton.active {
-        color: black;
+        color: #1a2835;
         cursor: default;
       }
 
@@ -1188,7 +1197,8 @@ PAGE_HEAD = """
       #status,
       #status-error {
         margin-left: 10%;
-        margin-top: 15px;
+        margin-top: 8px;
+        font-size: 0.875em;
         color: #5b778c;
       }
 
@@ -1200,7 +1210,7 @@ PAGE_HEAD = """
       #resource-table {
         margin: 10px 10%;
         width: 80%;
-        border: 1px solid black;
+        border: 1px solid #cfd8df;
       }
 
       .version-cell {
@@ -1234,47 +1244,50 @@ PAGE_HEAD = """
       }
 
       #section-about {
-        margin: 60px 10%;
-        color: #333;
-        line-height: 1.6;
+        margin: 56px auto;
+        padding: 0 clamp(20px, 10%, 64px);
+        max-width: 760px;
+        color: #2d3d4a;
+        line-height: 1.75;
       }
 
       #section-about h1 {
-        font-size: 1.5em;
+        font-size: 1.85em;
+        font-weight: 700;
+        color: #1a2835;
+        letter-spacing: -0.022em;
+        line-height: 1.2;
+        margin: 0 0 28px;
+        padding-bottom: 24px;
+        border-bottom: 1px solid #d8e3ea;
+      }
+
+      #section-about p {
+        margin: 0 0 1.1em;
+        font-size: 0.975em;
       }
 
       #page-header {
-        position: relative;
-        text-align: center;
-        margin: 20px 10% 0;
+        display: flex;
+        align-items: center;
+        padding: 14px clamp(20px, 10%, 64px);
+        border-bottom: 1px solid #e4edf2;
       }
 
-      #page-header h1 {
-        margin: 0;
-        display: inline-block;
-      }
-
-      #page-header h1 a {
-        color: inherit;
+      #page-header a {
+        color: #24699E;
+        font-weight: 500;
         text-decoration: none;
+        transition: color 0.15s ease-out;
+        font-size: 18px;
       }
 
-      #page-header h1 a:hover {
-        color: inherit;
-        cursor: pointer;
+      #page-header a:hover {
+        color: #4C93C9;
       }
 
       #nav-about {
-        display: block;
-        text-align: right;
-        font-weight: bold;
-        color: #7996ac;
-        text-decoration: none;
-        font-size: 20px;
-      }
-
-      #nav-about:hover {
-        color: #8dabc1;
+        margin-left: auto;
       }
     </style>
  </head>"""  # noqa: E501
@@ -1282,9 +1295,9 @@ PAGE_HEAD = """
 INDEX_BODY = """
  <body>
      {% if has_about %}
-     <div id="page-header">
+     <nav id="page-header">
        <a id="nav-about" href="about.html">About</a>
-     </div>
+     </nav>
      {% endif %}
      <div id="section-resources">
         <p class="loading">Loading search</p>
@@ -1352,17 +1365,15 @@ INDEX_BODY = """
      </div>
      <div class="pagination"></div>
      </div>
-     {% if has_about %}
-     <div id="section-about" style="display: none;" class="content">
-       {{about_contents}}
-     </div>
-     {% endif %}
  </body>
 """  # noqa: E501
 
 
 ABOUT_BODY = """
     <body>
+        <nav id="page-header">
+          <a href="./">← Back to main page</a>
+        </nav>
         <div id="section-about">
         {{about_contents}}
         </div>
