@@ -447,10 +447,13 @@ variant frequencies, etc.
             nuc_agg = att_info.parameters.get("nucleotide_aggregator")
             allele_agg = att_info.parameters.get("allele_aggregator")
             if nuc_agg is not None:
+                if allele_agg is not None:
+                    raise AnnotationConfigurationError(
+                        "Cannot specify both `nucleotide_aggregator` and "
+                        "`allele_aggregator` for the same attribute")
                 logger.warning(
-                    "attibute `nucleotide_aggregator` is deprecated, "
+                    "attribute `nucleotide_aggregator` is deprecated, "
                     "use `allele_aggregator` instead")
-                assert allele_agg is None
                 allele_agg = nuc_agg
 
             if allele_agg:
@@ -562,16 +565,13 @@ variant frequencies, etc.
         nuc_agg = attr_info.parameters.get("nucleotide_aggregator")
         allele_agg = attr_info.parameters.get("allele_aggregator")
         if nuc_agg is not None:
-            logger.warning(
-                "attibute `nucleotide_aggregator` is deprecated, "
-                "use `allele_aggregator` instead")
             allele_agg = nuc_agg
         allele_doc = self._build_score_aggregator_documentation(
             attr_info, "allele_aggregator", allele_agg,
         )
         return [allele_doc]
 
-    def _annotate_exact_match(
+    def _annotate_allele(
         self, annotatable: VCFAllele,
     ) -> dict[str, Any]:
         line = self.allele_score.fetch_allele_line(
@@ -602,11 +602,11 @@ variant frequencies, etc.
                 attrs_str = ",".join(
                     stringify(scores.get(a)) for a in self.attrs_to_include)
                 allele_str += f":{attrs_str}"
-            scores[self.allele_attribute.name] = [allele_str]
+            scores[self.allele_attribute.source] = [allele_str]
 
         return {attr.name: scores.get(attr.source) for attr in self.attributes}
 
-    def _annotate_aggregated(
+    def _annotate_region(
         self, annotatable: Annotatable,
     ) -> dict[str, Any]:
         score_aggs = {}
@@ -659,15 +659,15 @@ variant frequencies, etc.
         if annotatable is None:
             return self._empty_result()
 
-        if annotatable.chromosome not in self.score.get_all_chromosomes():
+        if annotatable.chromosome not in self.allele_score.get_all_chromosomes():
             return self._empty_result()
 
         if self.mode == "allele":
             if not isinstance(annotatable, VCFAllele):
                 return self._empty_result()
-            return self._annotate_exact_match(annotatable)
+            return self._annotate_allele(annotatable)
 
         # region mode
         if len(annotatable) > self._region_length_cutoff:
             return self._empty_result()
-        return self._annotate_aggregated(annotatable)
+        return self._annotate_region(annotatable)

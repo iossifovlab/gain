@@ -402,6 +402,27 @@ def test_allele_score_exact_match_allele_attribute(
     assert result["allele"] == ["1:10:A:G"]
 
 
+def test_allele_score_exact_match_allele_attribute_renamed(
+    allele_score_repository: GenomicResourceRepo,
+) -> None:
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent("""
+            - allele_score:
+                resource_id: allele_score
+                attributes:
+                - source: freq
+                  name: allele_freq
+                - source: allele
+                  name: variant_key
+        """),
+        allele_score_repository,
+    )
+    with pipeline.open() as work_pipeline:
+        result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
+    assert result["allele_freq"] == pytest.approx(0.02)
+    assert result["variant_key"] == ["1:10:A:G"]
+
+
 def test_allele_score_exact_match_allele_with_include_attributes(
     allele_score_repository: GenomicResourceRepo,
 ) -> None:
