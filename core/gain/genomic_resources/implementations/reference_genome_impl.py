@@ -6,10 +6,9 @@ import json
 import logging
 import os
 import textwrap
-from typing import Any
+from typing import Any, ClassVar
 
 import yaml
-from jinja2 import Template
 
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.reference_genome import (
@@ -321,10 +320,12 @@ class ReferenceGenomeImplementation(
         index_file_name = config.get("index_file", f"{file_name}.fai")
         return {file_name, index_file_name}
 
-    def get_template(self) -> Template:
-        return Template(textwrap.dedent("""
-            {% extends base %}
-            {% block extra_styles %}
+    template_name: ClassVar[str] = "reference_genome.jinja"
+    styles_template_name: ClassVar[str] = "reference_genome_styles.jinja"
+
+    @classmethod
+    def get_styles_template(cls) -> str:
+        return textwrap.dedent("""
             #chromosomes-table {
                 border-collapse: separate;
                 border-spacing: 0;
@@ -351,8 +352,12 @@ class ReferenceGenomeImplementation(
             #chromosomes-table thead {
                 position: sticky; top: 0; background-color: white;
             }
-            {% endblock %}
+        """)
 
+    @classmethod
+    def get_template(cls) -> str:
+        return textwrap.dedent("""
+            {% extends base %}
             {% block content %}
 
             {% if data["PARS"] %}
@@ -430,7 +435,7 @@ class ReferenceGenomeImplementation(
                 </table>
             {% endif %}
             {% endblock %}
-        """))  # noqa: E501
+        """)  # noqa: E501
 
     def _get_template_data(self) -> dict[str, Any]:
         info = copy.deepcopy(self.config)

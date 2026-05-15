@@ -60,6 +60,10 @@ annotate_doc = "gain.annotation.annotate_doc:cli"
 draw_score_histograms = "gain.genomic_resources.draw_score_histograms:main"
 
 [project.entry-points."gain.templates.providers"]
+annotation_score = "gain.annotation.score_annotator:_get_annotation_templates"
+gene_scores = "gain.gene_scores.gene_scores:_get_gene_score_templates"
+gene_score_impl = "gain.gene_scores.implementations.gene_scores_impl:_get_gene_score_impl_templates"
+gene_set_impl = "gain.gene_sets.implementations.gene_sets_impl:_get_gene_set_impl_templates"
 
 [project.entry-points."gain.genomic_resources.plugins"]
 default_grr = "gain.genomic_resources.genomic_context:DefaultRepositoryContextProvider"

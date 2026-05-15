@@ -16,7 +16,6 @@ from gain.genomic_resources.testing import (
 )
 from gain.task_graph.cli_tools import task_graph_run
 from gain.task_graph.graph import TaskGraph
-from jinja2 import Template
 
 # this content follows the 'refflat' gene model format
 REFFLAT_CONTENT = """
@@ -352,7 +351,8 @@ def test_gene_models_impl_get_template() -> None:
     gene_models_impl = GeneModelsImpl(res)
     template = gene_models_impl.get_template()
 
-    assert isinstance(template, Template)
+    assert isinstance(template, str)
+    assert len(template) > 0
 
 
 def test_gene_models_impl_only_noncoding_transcripts() -> None:

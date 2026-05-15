@@ -245,14 +245,13 @@ def test_get_template(grr_fixture: GenomicResourceRepo) -> None:
 
 
 def test_get_template_structure(grr_fixture: GenomicResourceRepo) -> None:
-    """Test template has expected structure."""
+    """Test template returns a non-empty string."""
     impl = AnnotationPipelineImplementation(
         grr_fixture.get_resource("pipeline"),
     )
     template = impl.get_template()
-    # Jinja2 Template objects can be rendered
-    # Let's just verify it's callable/renderable
-    assert hasattr(template, "render")
+    assert isinstance(template, str)
+    assert len(template) > 0
 
 
 # Tests for _relative_prefix_to_root_dir

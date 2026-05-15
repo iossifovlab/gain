@@ -13,12 +13,31 @@ _REGISTERED_RESOURCE_IMPLEMENTATIONS: dict[
 
 
 __all__ = [
+    "get_all_implementation_classes",
     "get_resource_implementation_builder",
 ]
 
 
 logger = logging.getLogger(__name__)
 _IMPLEMENTATIONS_LOADED = False
+
+
+def get_all_implementation_classes() -> (
+    list[type[GenomicResourceImplementation]]
+):
+    """Return every implementation class registered via entry points.
+
+    Builder functions (non-class callables) are skipped; only true subclasses
+    of GenomicResourceImplementation are returned.
+    """
+    classes = []
+    for ep in entry_points(group="gain.genomic_resources.implementations"):
+        loaded = ep.load()
+        if isinstance(loaded, type) and issubclass(
+            loaded, GenomicResourceImplementation,
+        ):
+            classes.append(loaded)
+    return classes
 
 
 def get_resource_implementation_builder(

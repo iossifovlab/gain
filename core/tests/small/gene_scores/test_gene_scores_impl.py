@@ -24,7 +24,6 @@ from gain.genomic_resources.testing import (
     setup_directories,
 )
 from gain.task_graph.graph import TaskDesc
-from jinja2 import Template
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -126,11 +125,12 @@ def test_init_builds_gene_score(
 # get_template / _get_template_data
 # ---------------------------------------------------------------------------
 
-def test_get_template_returns_template(
+def test_get_template_returns_str(
     linear_impl: GeneScoreImplementation,
 ) -> None:
     tmpl = linear_impl.get_template()
-    assert isinstance(tmpl, Template)
+    assert isinstance(tmpl, str)
+    assert len(tmpl) > 0
 
 
 def test_get_template_data_contains_gene_score(
