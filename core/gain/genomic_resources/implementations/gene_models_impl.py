@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import textwrap
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from functools import lru_cache
@@ -99,80 +98,6 @@ class GeneModelsImpl(
     template_name: ClassVar[str] = "gene_models.jinja"
     styles_template_name: ClassVar[str] = "gene_models_styles.jinja"
 
-    @classmethod
-    def get_styles_template(cls) -> str:
-        return textwrap.dedent("""
-            #chromosomes-table {
-                border-collapse: separate;
-                border-spacing: 0;
-            }
-            #chromosomes-table th {
-                border: 0;
-                border-top: 1px solid #cfd8df;
-                border-bottom: 1px solid #cfd8df;
-                border-right: 1px solid #cfd8df;
-            }
-            #chromosomes-table td {
-                border: 0;
-                border-bottom: 1px solid #cfd8df;
-                border-right: 1px solid #cfd8df;
-            }
-            #chromosomes-table th:first-child,
-            #chromosomes-table td:first-child {
-                border-left: 1px solid #cfd8df;
-            }
-            #chromosomes-table thead tr:nth-of-type(2) th {
-                border-top: none;
-            }
-            #chromosomes-table thead {
-                position: sticky; top: 0; background-color: white;
-            }
-        """)
-
-    @classmethod
-    def get_template(cls) -> str:
-        return textwrap.dedent("""
-{% extends base %}
-{% block content %}
-<h2>Configuration</h2>
-    <p><b>Gene models file:</b> <a href="{{ data.config.filename }}">
-    {{ data.config.filename }}
-    </a></p>
-
-    <p><b>Format:</b> {{ data.config.format }}</p>
-<h2>Statistics</h2>
-    <h3>Chromosome statistics</h3>
-    <div style="max-height: 50%; overflow-y: auto; width: fit-content">
-        <table id="chromosomes-table">
-            <thead>
-                <tr>
-                    <th></th>
-                    <th>Transcript number</th>
-                    <th>Protein coding transcript number</th>
-                    <th>Gene number</th>
-                    <th>Protein coding gene number</th>
-                </tr>
-                <tr>
-                    <th>Global</th>
-                    <td>{{ '{:,}'.format(data.stats.global_statistic.transcript_number)}}</td>
-                    <td>{{ '{:,}'.format(data.stats.global_statistic.protein_coding_transcript_number)}}</td>
-                    <td>{{ '{:,}'.format(data.stats.global_statistic.gene_number)}}</td>
-                    <td>{{ '{:,}'.format(data.stats.global_statistic.protein_coding_gene_number)}}</td>
-                </tr>
-            </thead>
-            {% for chrom, stat in data.stats.chrom_statistics.items() %}
-                <tr>
-                    <td>{{ chrom }}</td>
-                    <td>{{ '{:,}'.format(stat.transcript_number)}}</td>
-                    <td>{{ '{:,}'.format(stat.protein_coding_transcript_number)}}</td>
-                    <td>{{ '{:,}'.format(stat.gene_number)}}</td>
-                    <td>{{ '{:,}'.format(stat.protein_coding_gene_number)}}</td>
-                </tr>
-            {% endfor %}
-        </table>
-    </div>
-{% endblock %}
-        """)  # noqa: E501
 
     def _get_template_data(self) -> dict[str, Any]:
         return {"config": self.config,

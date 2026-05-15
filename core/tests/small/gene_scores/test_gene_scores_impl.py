@@ -124,12 +124,18 @@ def test_init_builds_gene_score(
 # get_template / _get_template_data
 # ---------------------------------------------------------------------------
 
-def test_get_template_returns_str(
+def test_get_template_returns_none(
     linear_impl: GeneScoreImplementation,
 ) -> None:
-    tmpl = linear_impl.get_template()
-    assert isinstance(tmpl, str)
-    assert len(tmpl) > 0
+    assert linear_impl.get_template() is None
+
+
+def test_template_loadable_from_environment(
+    linear_impl: GeneScoreImplementation,
+) -> None:
+    from gain.templates import get_jinja_env
+    tmpl = get_jinja_env().get_template(linear_impl.template_name)
+    assert tmpl is not None
 
 
 def test_get_template_data_contains_gene_score(

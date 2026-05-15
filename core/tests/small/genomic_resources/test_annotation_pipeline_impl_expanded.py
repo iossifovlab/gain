@@ -236,22 +236,19 @@ def test_get_statistics_info_loads_pipeline(
 
 
 def test_get_template(grr_fixture: GenomicResourceRepo) -> None:
-    """Test get_template returns a Template object."""
     impl = AnnotationPipelineImplementation(
         grr_fixture.get_resource("pipeline"),
     )
-    template = impl.get_template()
-    assert template is not None
+    assert impl.get_template() is None
 
 
 def test_get_template_structure(grr_fixture: GenomicResourceRepo) -> None:
-    """Test template returns a non-empty string."""
+    from gain.templates import get_jinja_env
     impl = AnnotationPipelineImplementation(
         grr_fixture.get_resource("pipeline"),
     )
-    template = impl.get_template()
-    assert isinstance(template, str)
-    assert len(template) > 0
+    tmpl = get_jinja_env().get_template(impl.template_name)
+    assert tmpl is not None
 
 
 # Tests for _relative_prefix_to_root_dir

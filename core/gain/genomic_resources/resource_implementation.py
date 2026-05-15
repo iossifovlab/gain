@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import textwrap
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
@@ -157,17 +156,12 @@ class InfoImplementationMixin:
     styles_template_name: ClassVar[str] = "base_implementation_styles.jinja"
 
     @classmethod
-    def get_template(cls) -> str:
-        return textwrap.dedent("""
-                {% extends base %}
-                {% block content %}
-
-                {% endblock %}
-            """)
+    def get_template(cls) -> str | None:
+        return None
 
     @classmethod
-    def get_styles_template(cls) -> str:
-        return ""
+    def get_styles_template(cls) -> str | None:
+        return None
 
     def _get_template_data(self) -> dict:
         return {}

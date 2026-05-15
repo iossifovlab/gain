@@ -1,5 +1,4 @@
 import logging
-import textwrap
 from typing import Any, ClassVar
 from urllib.parse import quote
 
@@ -52,14 +51,6 @@ class AnnotationPipelineImplementation(
 
     template_name: ClassVar[str] = "annotation_pipeline.jinja"
 
-    @classmethod
-    def get_template(cls) -> str:
-        return textwrap.dedent("""
-            {% extends base %}
-            {% block content %}
-            {{data["content"]}}
-            {% endblock %}
-        """)
 
     @property
     def _relative_prefix_to_root_dir(self) -> str:

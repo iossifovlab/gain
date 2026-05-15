@@ -1,0 +1,15 @@
+{% extends base %}
+{% block content %}
+<p>
+  <b>Liftover chain file: </b>
+  <a href="{{ data["filename"] }}">{{ data["filename"] }}</a>
+</p>
+
+<p><b>Format: </b>{{ data["format"] }}</p>
+{% if data["variant_chrom"] %}
+<p>{{ data["variant_chrom"] }}</p>
+{% endif %}
+{% if data["target_chrom"] %}
+<p>{{ data["target_chrom"] }}</p>
+{% endif %}
+{% endblock %}

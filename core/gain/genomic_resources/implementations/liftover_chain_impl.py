@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import logging
-import textwrap
 from typing import Any, ClassVar
 
 from markdown2 import markdown
@@ -35,25 +34,6 @@ class LiftoverChainImplementation(
 
     template_name: ClassVar[str] = "liftover_chain.jinja"
 
-    @classmethod
-    def get_template(cls) -> str:
-        return textwrap.dedent("""
-            {% extends base %}
-            {% block content %}
-            <p>
-              <b>Liftover chain file: </b>
-              <a href="{{ data["filename"] }}">{{ data["filename"] }}</a>
-            </p>
-
-            <p><b>Format: </b>{{ data["format"] }}</p>
-            {% if data["variant_chrom"] %}
-            <p>{{ data["variant_chrom"] }}</p>
-            {% endif %}
-            {% if data["target_chrom"] %}
-            <p>{{ data["target_chrom"] }}</p>
-            {% endif %}
-            {% endblock %}
-        """)
 
     def _get_template_data(self) -> dict[str, Any]:
         info = copy.deepcopy(self.config)

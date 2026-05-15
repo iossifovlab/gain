@@ -1,0 +1,72 @@
+{% extends base %}
+{% block content %}
+
+{% set score = data.gene_score %}
+
+<h1>Scores ({{ score.score_definitions|length }})</h1>
+    <table border="1">
+        <tr>
+            <th>ID</th>
+            <th>Type</th>
+            <th>Description</th>
+            <th>Histograms</th>
+            <th>Range</th>
+        </tr>
+
+        {% for score_id, score_def in score.score_definitions.items() %}
+            <tr>
+                <td>{{ score_id }}</td>
+
+                <td>{{ score.value_type }}</td>
+
+                <td>
+                    <div>{{ score_def.description }}</div>
+                    {% if score_def.small_values_desc %}
+                        <div style="color: rgb(145,145,145)">
+                            {{ "Small values desc: " + score_def.small_values_desc }}
+                        </div>
+                    {% endif %}
+                    {% if score_def.large_values_desc %}
+                        <div style="color: rgb(145,145,145)">
+                            {{ "Large values desc: " + score_def.large_values_desc }}
+                        </div>
+                    {% endif %}
+                </td>
+
+                {% set hist = score.get_score_histogram(score_id) %}
+                <td>
+                {% if hist %}
+                    <div class="histogram">
+                        <img src="{{score.get_histogram_image_filename(score_id)}}"
+                            style="width: 200px; cursor: pointer;"
+                            alt={{ score_id }}
+                            title=" {{ score_id | replace(" ", "_") }}"
+                            data-modal-trigger="modal-{{ score_id | replace(" ", "_") }}">
+                    </div>
+                {% endif %}
+                </td>
+
+                <td>
+                {%- if hist.type != 'null_histogram' %}
+                    {{ hist.values_domain() }}
+                {%- else -%}
+                    NO DOMAIN
+                {%- endif -%}
+                </td>
+            </tr>
+        {% endfor %}
+
+        {%- for score_id in score.score_definitions.keys() -%}
+            <div id="modal-{{ score_id | replace(" ", "_") }}" class="modal">
+                <div class="modal-content"
+                    style="padding: 10px 20px; background-color: #fff; height: fit-content; width: fit-content;">
+                    <span class="close">&times;</span>
+                    <img src="{{ score.get_histogram_image_filename(score_id) }}"
+                        alt="{{ "HISTOGRAM FOR " + score_id }}"
+                        title="{{ score_id | replace(" ", "_") }}"
+                        style="max-width: min(100%, 800px);">
+                </div>
+            </div>
+        {%- endfor %}
+    </table>
+{% endblock %}

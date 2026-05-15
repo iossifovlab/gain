@@ -76,10 +76,6 @@ class GenomicScoreImplementation(
 
     template_name: ClassVar[str] = "genomic_score.jinja"
 
-    @classmethod
-    def get_template(cls) -> str:
-        return GENOMIC_SCORES_TEMPLATE
-
     def _get_template_data(self) -> dict[str, Any]:
         return {"genomic_scores": self}
 
@@ -617,84 +613,3 @@ def build_score_implementation_from_resource(
     return GenomicScoreImplementation(resource)
 
 
-GENOMIC_SCORES_TEMPLATE = """
-{% extends base %}
-{% block content %}
-{% set impl = data.genomic_scores %}
-{% set scores = impl.score %}
-
-<h2>Scores ({{ scores.score_definitions|length }})</h2>
-<table border="1">
-    <tr>
-        <th>ID</th>
-        <th>Type</th>
-        <th>Default annotation</th>
-        <th>Description</th>
-        <th>Histogram</th>
-        <th>Range</th>
-    </tr>
-
-    {%- for score_id, score in scores.score_definitions.items() -%}
-        <tr class="score-definition">
-            <td>{{ score_id }}</td>
-            <td>{{ score.value_type }}</td>
-            {% set d_atts = scores.get_default_annotation_attribute(score_id) %}
-            {% if d_atts != None %}
-                <td>
-                    <p>{{ d_atts }}</p>
-                </td>
-            {% else %}
-                <td>
-                    <p>-</p>
-                </td>
-            {% endif %}
-
-            <td>
-                <div>{{ score.desc }}</div>
-                {% if score.small_values_desc %}
-                    <div style="color: rgb(145,145,145)">
-                        {{ "Small values desc: " + score.small_values_desc }}
-                    </div>
-                {% endif %}
-                {% if score.large_values_desc %}
-                    <div style="color: rgb(145,145,145)">
-                        {{ "Large values desc: " + score.large_values_desc }}
-                    </div>
-                {% endif %}
-            </td>
-            <td style="text-align: center">
-                {% set hist = impl.score.get_score_histogram(score_id) %}
-                {%- if hist.type != 'null_histogram' %}
-                {% set hist_image_file = impl.score.get_histogram_image_filename(score_id) %}
-                <img src="{{ hist_image_file }}"
-                    alt="{{ "HISTOGRAM FOR " + score_id }}"
-                    title={{ score_id | replace(" ", "_") }}
-                    style="max-width: 200px; cursor: pointer;"
-                    data-modal-trigger="modal-{{ score_id | replace(" ", "_") }}">
-                {%- else -%}
-                <p>No histogram: {{ hist.reason }}</p>
-                {%- endif -%}
-            </td>
-            <td>
-            {%- if hist.type != 'null_histogram' %}
-                {{ hist.values_domain() }}
-            {%- else -%}
-                NO DOMAIN
-            {%- endif -%}
-            </td>
-        </tr>
-    {%- endfor %}
-    {%- for score_id in scores.score_definitions.keys() -%}
-        <div id="modal-{{score_id | replace(" ", "_")}}" class="modal">
-            <div class="modal-content" style="padding: 10px 20px; background-color: #fff; height: fit-content; width: fit-content;">
-                <span title={{score_id | replace(" ", "_")}} class="close">&times;</span>
-                <img src="{{ impl.score.get_histogram_image_filename(score_id) }}"
-                    alt="{{ "HISTOGRAM FOR " + score_id }}"
-                    title={{ score_id | replace(" ", "_")}}
-                    style="max-width: min(100%, 800px);">
-            </div>
-        </div>
-    {%- endfor %}
-</table>
-{% endblock %}
-"""  # noqa: E501
