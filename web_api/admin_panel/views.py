@@ -1,7 +1,12 @@
 import dataclasses
+from typing import ClassVar
 
 from django.core.management import call_command
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from rest_framework import status
+from rest_framework.request import Request
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from web_annotation.authentication import WebAnnotationAuthentication
 from web_annotation.models import (
     AnonymousUserQuota,
     Quota,
@@ -9,7 +14,6 @@ from web_annotation.models import (
     SessionQuota,
     User,
     UserQuota,
-    WebAnnotationAnonymousUser,
 )
 
 _EXTRA_QUOTA_FIELDS = {
@@ -25,18 +29,6 @@ _CURRENT_QUOTA_FIELDS = {
 }
 
 
-def reset_daily_quota(_request: HttpRequest) -> HttpResponse:
-    """Trigger a daily quota reset for all users."""
-    call_command("refreshdaily")
-    return HttpResponse(status=204)
-
-
-def reset_monthly_quota(_request: HttpRequest) -> HttpResponse:
-    """Trigger a monthly quota reset for all users."""
-    call_command("refreshmonthly")
-    return HttpResponse(status=204)
-
-
 def _get_or_create_user_quota(user: User) -> UserQuota:
     try:
         return UserQuota.objects.get(user=user)
@@ -47,67 +39,9 @@ def _get_or_create_user_quota(user: User) -> UserQuota:
         return quota
 
 
-def _quota_snapshot_response(quota: Quota) -> JsonResponse:
+def _quota_snapshot_response(quota: Quota) -> Response:
     snapshot = QuotaSnapshot.from_quota(quota)
-    return JsonResponse(dataclasses.asdict(snapshot))
-
-
-def set_extra_quota(request: HttpRequest) -> HttpResponse:
-    """Set extra quota units of a given type for a user."""
-    user_email = request.GET.get("user_email")
-    quota_type = request.GET.get("quota_type")
-    amount = request.GET.get("amount")
-
-    if not user_email or not quota_type or amount is None:
-        return HttpResponse("Missing required parameters.", status=400)
-    if quota_type not in _EXTRA_QUOTA_FIELDS:
-        valid = ", ".join(_EXTRA_QUOTA_FIELDS)
-        return HttpResponse(
-            f"Invalid quota_type. Valid types: {valid}.", status=400)
-    try:
-        amount_int = int(amount)
-    except ValueError:
-        return HttpResponse("amount must be an integer.", status=400)
-
-    try:
-        user = User.objects.get(email=user_email)
-    except User.DoesNotExist:
-        return HttpResponse(f"User '{user_email}' not found.", status=404)
-
-    quota = _get_or_create_user_quota(user)
-    setattr(quota, _EXTRA_QUOTA_FIELDS[quota_type], amount_int)
-    quota.save()
-
-    return _quota_snapshot_response(quota)
-
-
-def set_current_quota(request: HttpRequest) -> HttpResponse:
-    """Set a specific current (non-extra) quota field for a user."""
-    user_email = request.GET.get("user_email")
-    quota_type = request.GET.get("quota_type")
-    amount = request.GET.get("amount")
-
-    if not user_email or not quota_type or amount is None:
-        return HttpResponse("Missing required parameters.", status=400)
-    if quota_type not in _CURRENT_QUOTA_FIELDS:
-        valid = ", ".join(sorted(_CURRENT_QUOTA_FIELDS))
-        return HttpResponse(
-            f"Invalid quota_type. Valid types: {valid}.", status=400)
-    try:
-        amount_int = int(amount)
-    except ValueError:
-        return HttpResponse("amount must be an integer.", status=400)
-
-    try:
-        user = User.objects.get(email=user_email)
-    except User.DoesNotExist:
-        return HttpResponse(f"User '{user_email}' not found.", status=404)
-
-    quota = _get_or_create_user_quota(user)
-    setattr(quota, quota_type, amount_int)
-    quota.save()
-
-    return _quota_snapshot_response(quota)
+    return Response(dataclasses.asdict(snapshot))
 
 
 def _get_or_create_session_quota(session_id: str) -> SessionQuota:
@@ -130,60 +64,176 @@ def _get_or_create_ip_quota(ip: str) -> AnonymousUserQuota:
         return quota
 
 
-def set_session_quota(request: HttpRequest) -> HttpResponse:
-    """Set a current quota field for an anonymous user by session ID."""
-    session_id = request.GET.get("session_id")
-    if not session_id:
-        session_id = request.session.session_key
-    quota_type = request.GET.get("quota_type")
-    amount = request.GET.get("amount")
-
-    if not session_id:
-        return HttpResponse("Missing session_id.", status=400)
-    if not quota_type or amount is None:
-        return HttpResponse("Missing required parameters.", status=400)
-    if quota_type not in _CURRENT_QUOTA_FIELDS:
-        valid = ", ".join(sorted(_CURRENT_QUOTA_FIELDS))
-        return HttpResponse(
-            f"Invalid quota_type. Valid types: {valid}.", status=400)
-    try:
-        amount_int = int(amount)
-    except ValueError:
-        return HttpResponse("amount must be an integer.", status=400)
-
-    quota = _get_or_create_session_quota(session_id)
-    setattr(quota, quota_type, amount_int)
-    quota.save()
-
-    return _quota_snapshot_response(quota)
+class AdminPanelView(APIView):
+    authentication_classes: ClassVar[list] = [WebAnnotationAuthentication]
 
 
-def set_ip_quota(request: HttpRequest) -> HttpResponse:
-    """Set a current quota field for an anonymous user by IP address."""
-    ip = request.GET.get("ip")
-    if not ip:
-        if not isinstance(request.user, WebAnnotationAnonymousUser):
-            return HttpResponse(
-                "ip parameter is required for authenticated users.", status=500)
-        ip = request.user.ip
-    quota_type = request.GET.get("quota_type")
-    amount = request.GET.get("amount")
+class ResetDailyQuotaView(AdminPanelView):
+    def get(self, _request: Request) -> Response:
+        call_command("refreshdaily")
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
-    if not ip:
-        return HttpResponse("Missing ip.", status=400)
-    if not quota_type or amount is None:
-        return HttpResponse("Missing required parameters.", status=400)
-    if quota_type not in _CURRENT_QUOTA_FIELDS:
-        valid = ", ".join(sorted(_CURRENT_QUOTA_FIELDS))
-        return HttpResponse(
-            f"Invalid quota_type. Valid types: {valid}.", status=400)
-    try:
-        amount_int = int(amount)
-    except ValueError:
-        return HttpResponse("amount must be an integer.", status=400)
 
-    quota = _get_or_create_ip_quota(ip)
-    setattr(quota, quota_type, amount_int)
-    quota.save()
+class ResetMonthlyQuotaView(AdminPanelView):
+    def get(self, _request: Request) -> Response:
+        call_command("refreshmonthly")
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
-    return _quota_snapshot_response(quota)
+
+class SetExtraQuotaView(AdminPanelView):
+    """View for setting extra quotas (jobs/variants/attributes)."""
+
+    def get(self, request: Request) -> Response:
+        """Get request for setting extra quota."""
+        user_email = request.query_params.get("user_email")
+        quota_type = request.query_params.get("quota_type")
+        amount = request.query_params.get("amount")
+
+        if not user_email or not quota_type or amount is None:
+            return Response(
+                "Missing required parameters.",
+                status=status.HTTP_400_BAD_REQUEST)
+        if quota_type not in _EXTRA_QUOTA_FIELDS:
+            valid = ", ".join(_EXTRA_QUOTA_FIELDS)
+            return Response(
+                f"Invalid quota_type. Valid types: {valid}.",
+                status=status.HTTP_400_BAD_REQUEST)
+        try:
+            amount_int = int(amount)
+        except ValueError:
+            return Response(
+                "amount must be an integer.",
+                status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(email=user_email)
+        except User.DoesNotExist:
+            return Response(
+                f"User '{user_email}' not found.",
+                status=status.HTTP_404_NOT_FOUND)
+
+        quota = _get_or_create_user_quota(user)
+        setattr(quota, _EXTRA_QUOTA_FIELDS[quota_type], amount_int)
+        quota.save()
+
+        return _quota_snapshot_response(quota)
+
+
+class SetCurrentQuotaView(AdminPanelView):
+    """View for setting current quotas (daily/monthly)."""
+
+    def get(self, request: Request) -> Response:
+        """Get request for setting current quota."""
+        user_email = request.query_params.get("user_email")
+        quota_type = request.query_params.get("quota_type")
+        amount = request.query_params.get("amount")
+
+        if not user_email or not quota_type or amount is None:
+            return Response(
+                "Missing required parameters.",
+                status=status.HTTP_400_BAD_REQUEST)
+        if quota_type not in _CURRENT_QUOTA_FIELDS:
+            valid = ", ".join(sorted(_CURRENT_QUOTA_FIELDS))
+            return Response(
+                f"Invalid quota_type. Valid types: {valid}.",
+                status=status.HTTP_400_BAD_REQUEST)
+        try:
+            amount_int = int(amount)
+        except ValueError:
+            return Response(
+                "amount must be an integer.",
+                status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(email=user_email)
+        except User.DoesNotExist:
+            return Response(
+                f"User '{user_email}' not found.",
+                status=status.HTTP_404_NOT_FOUND)
+
+        quota = _get_or_create_user_quota(user)
+        setattr(quota, quota_type, amount_int)
+        quota.save()
+
+        return _quota_snapshot_response(quota)
+
+
+class SetSessionQuotaView(AdminPanelView):
+    """View for session-based quotas."""
+
+    def get(self, request: Request) -> Response:
+        """Get request for setting session quota."""
+        session_id = request.query_params.get("session_id")
+        if not session_id:
+            session_id = request.session.session_key
+        quota_type = request.query_params.get("quota_type")
+        amount = request.query_params.get("amount")
+
+        if not session_id:
+            return Response(
+                "Missing session_id.", status=status.HTTP_400_BAD_REQUEST)
+        if not quota_type or amount is None:
+            return Response(
+                "Missing required parameters.",
+                status=status.HTTP_400_BAD_REQUEST)
+        if quota_type not in _CURRENT_QUOTA_FIELDS:
+            valid = ", ".join(sorted(_CURRENT_QUOTA_FIELDS))
+            return Response(
+                f"Invalid quota_type. Valid types: {valid}.",
+                status=status.HTTP_400_BAD_REQUEST)
+        try:
+            amount_int = int(amount)
+        except ValueError:
+            return Response(
+                "amount must be an integer.",
+                status=status.HTTP_400_BAD_REQUEST)
+
+        quota = _get_or_create_session_quota(session_id)
+        setattr(quota, quota_type, amount_int)
+        quota.save()
+
+        return _quota_snapshot_response(quota)
+
+
+class SetIpQuotaView(AdminPanelView):
+    """View for IP-based quotas."""
+
+    def get(self, request: Request) -> Response:
+        """
+        Get request for setting IP quota.
+
+        Without an IP provided, uses the IP of the request.
+        """
+        ip = request.query_params.get("ip")
+        if not ip:
+            if request.user.is_authenticated:
+                return Response(
+                    "ip parameter is required for authenticated users.",
+                    status=status.HTTP_400_BAD_REQUEST)
+            ip = request.user.ip
+        quota_type = request.query_params.get("quota_type")
+        amount = request.query_params.get("amount")
+
+        if not ip:
+            return Response("Missing ip.", status=status.HTTP_400_BAD_REQUEST)
+        if not quota_type or amount is None:
+            return Response(
+                "Missing required parameters.",
+                status=status.HTTP_400_BAD_REQUEST)
+        if quota_type not in _CURRENT_QUOTA_FIELDS:
+            valid = ", ".join(sorted(_CURRENT_QUOTA_FIELDS))
+            return Response(
+                f"Invalid quota_type. Valid types: {valid}.",
+                status=status.HTTP_400_BAD_REQUEST)
+        try:
+            amount_int = int(amount)
+        except ValueError:
+            return Response(
+                "amount must be an integer.",
+                status=status.HTTP_400_BAD_REQUEST)
+
+        quota = _get_or_create_ip_quota(ip)
+        setattr(quota, quota_type, amount_int)
+        quota.save()
+
+        return _quota_snapshot_response(quota)
