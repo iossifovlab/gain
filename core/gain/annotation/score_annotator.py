@@ -58,17 +58,6 @@ def get_genomic_resource(
 
 def _get_annotation_templates() -> dict[str, str]:
     return {
-        "score_histogram.jinja": textwrap.dedent("""
-        <div class="modal-histogram">
-
-        <div class="histogram-image">
-
-        ![HISTOGRAM]({{ hist_url }})
-
-        </div>
-
-        </div>
-        """),
         "genomic_score_help.jinja": textwrap.dedent("""
 
         <div class="score-description">
