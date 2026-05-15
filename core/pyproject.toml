@@ -59,6 +59,8 @@ annotate_vcf = "gain.annotation.annotate_vcf:cli"
 annotate_doc = "gain.annotation.annotate_doc:cli"
 draw_score_histograms = "gain.genomic_resources.draw_score_histograms:main"
 
+[project.entry-points."gain.templates.providers"]
+
 [project.entry-points."gain.genomic_resources.plugins"]
 default_grr = "gain.genomic_resources.genomic_context:DefaultRepositoryContextProvider"
 cli_genomic_context = "gain.genomic_resources.genomic_context_cli:CLIGenomicContextProvider"
