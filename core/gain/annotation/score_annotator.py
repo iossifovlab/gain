@@ -56,64 +56,6 @@ def get_genomic_resource(
     return resource
 
 
-def _get_annotation_templates() -> dict[str, str]:
-    return {
-        "genomic_score_help.jinja": textwrap.dedent("""
-
-        <div class="score-description">
-
-        ## {{ data.name }}
-
-        {{ data.description}}
-
-        {{ data.resource_summary }}
-
-        {{ data.histogram }}
-
-        Genomic resource:
-        <a href={{data.resource_url}} target="_blank">{{ data.resource_id }}</a>
-
-        <details>
-
-        <summary class="details">
-
-        #### Details
-
-        </summary>
-
-        <div class="details-body">
-
-        ##### Attribute properties:
-
-        * **source**: {{ data.source }}
-        {% for aggregator in data.aggregators %}
-
-        * {{ aggregator }}
-
-        {% endfor %}
-
-
-    ##### Resource properties:
-
-    * **resource_type**: `{{ data.resource_type }}`
-
-
-    ##### Annotator documentation:
-
-    * **annotator_type**: `{{ data.annotator_type }}`
-
-    {{ data.annotator_doc }}
-
-    </div>
-
-    </details>
-
-    </div>
-
-    """),
-    }
-
-
 class GenomicScoreAnnotatorBase(Annotator):
     """Genomic score base annotator."""
 

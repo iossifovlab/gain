@@ -349,10 +349,11 @@ def test_gene_models_impl_get_template() -> None:
         })
 
     gene_models_impl = GeneModelsImpl(res)
-    template = gene_models_impl.get_template()
+    assert gene_models_impl.get_template() is None
 
-    assert isinstance(template, str)
-    assert len(template) > 0
+    from gain.templates import get_jinja_env
+    tmpl = get_jinja_env().get_template(gene_models_impl.template_name)
+    assert tmpl is not None
 
 
 def test_gene_models_impl_only_noncoding_transcripts() -> None:

@@ -32,29 +32,6 @@ from gain.genomic_resources.resource_implementation import (
 logger = logging.getLogger(__name__)
 
 
-def _get_gene_score_templates() -> dict[str, str]:
-    return {
-        "gene_score_help.jinja": """
-
-<div class="score-description">
-
-## {{ data.name }}
-
-{{ data.description}}
-
-{{ data.resource_summary }}
-
-{{ data.histogram }}
-
-Genomic resource:
-<a href={{data.resource_url}} target="_blank">{{ data.resource_id }}</a>
-
-</div>
-
-""",
-    }
-
-
 @dataclass
 class ScoreDef:
     """Class used to represent a gene score definition."""

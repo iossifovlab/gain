@@ -79,6 +79,8 @@ class _ImplementationLoader(BaseLoader):
                     (impl_cls.styles_template_name,
                      impl_cls.get_styles_template()),
                 ):
+                    if source is None:
+                        continue
                     if name in templates:
                         if templates[name] != source:
                             raise ValueError(
