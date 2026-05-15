@@ -34,17 +34,6 @@ logger = logging.getLogger(__name__)
 
 def _get_gene_score_templates() -> dict[str, str]:
     return {
-        "score_histogram.jinja": """
-<div class="modal-histogram">
-
-<div class="histogram-image">
-
-![HISTOGRAM]({{ hist_url }})
-
-</div>
-
-</div>
-""",
         "gene_score_help.jinja": """
 
 <div class="score-description">
