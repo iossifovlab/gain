@@ -7,7 +7,6 @@ import pytest
 from gain.gene_scores.gene_scores import ScoreDef
 from gain.gene_scores.implementations.gene_scores_impl import (
     GeneScoreImplementation,
-    build_gene_score_implementation_from_resource,
 )
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
@@ -99,13 +98,13 @@ def linear_impl(inmemory_repo: GenomicResourceRepo) -> GeneScoreImplementation:
 
 def test_factory_creates_impl(inmemory_repo: GenomicResourceRepo) -> None:
     res = inmemory_repo.get_resource("LinearScore")
-    impl = build_gene_score_implementation_from_resource(res)
+    impl = GeneScoreImplementation(res)
     assert isinstance(impl, GeneScoreImplementation)
 
 
 def test_factory_raises_on_none() -> None:
     with pytest.raises((ValueError, AttributeError)):
-        build_gene_score_implementation_from_resource(None)  # type: ignore[arg-type]
+        GeneScoreImplementation(None)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

@@ -30,12 +30,16 @@ def get_all_implementation_classes() -> (
     Builder functions (non-class callables) are skipped; only true subclasses
     of GenomicResourceImplementation are returned.
     """
+    seen: set[type] = set()
     classes = []
     for ep in entry_points(group="gain.genomic_resources.implementations"):
         loaded = ep.load()
-        if isinstance(loaded, type) and issubclass(
-            loaded, GenomicResourceImplementation,
+        if (
+            isinstance(loaded, type)
+            and issubclass(loaded, GenomicResourceImplementation)
+            and loaded not in seen
         ):
+            seen.add(loaded)
             classes.append(loaded)
     return classes
 
