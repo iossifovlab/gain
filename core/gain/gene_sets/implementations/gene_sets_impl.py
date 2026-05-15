@@ -323,19 +323,6 @@ class GeneSetCollectionImpl(
         raise NotImplementedError
 
 
-def _get_gene_set_impl_templates() -> dict[str, str]:
-    return {
-        GeneSetCollectionImpl.template_name: GeneSetCollectionImpl.get_template(),
-        GeneSetCollectionImpl.styles_template_name: GeneSetCollectionImpl.get_styles_template(),
-    }
-
-
-def build_gene_set_collection_implementation_from_resource(
-    resource: GenomicResource,
-) -> GenomicResourceImplementation:
-    if resource is None:
-        raise ValueError(f"missing resource {resource}")
-    return GeneSetCollectionImpl(resource)
 
 
 GENE_SETS_TEMPLATE = """

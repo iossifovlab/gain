@@ -180,18 +180,6 @@ class GeneScoreImplementation(
         }, sort_keys=True, indent=2).encode()
 
 
-def _get_gene_score_impl_templates() -> dict[str, str]:
-    return {
-        GeneScoreImplementation.template_name: GeneScoreImplementation.get_template(),
-        GeneScoreImplementation.styles_template_name: GeneScoreImplementation.get_styles_template(),
-    }
-
-
-def build_gene_score_implementation_from_resource(
-        resource: GenomicResource) -> GenomicResourceImplementation:
-    if resource is None:
-        raise ValueError(f"missing resource {resource}")
-    return GeneScoreImplementation(resource)
 
 
 GENE_SCORES_TEMPLATE = """

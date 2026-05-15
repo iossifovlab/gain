@@ -62,8 +62,6 @@ draw_score_histograms = "gain.genomic_resources.draw_score_histograms:main"
 [project.entry-points."gain.templates.providers"]
 annotation_score = "gain.annotation.score_annotator:_get_annotation_templates"
 gene_scores = "gain.gene_scores.gene_scores:_get_gene_score_templates"
-gene_score_impl = "gain.gene_scores.implementations.gene_scores_impl:_get_gene_score_impl_templates"
-gene_set_impl = "gain.gene_sets.implementations.gene_sets_impl:_get_gene_set_impl_templates"
 
 [project.entry-points."gain.genomic_resources.plugins"]
 default_grr = "gain.genomic_resources.genomic_context:DefaultRepositoryContextProvider"
@@ -79,9 +77,9 @@ genome = "gain.genomic_resources.implementations.reference_genome_impl:Reference
 gene_models = "gain.genomic_resources.implementations.gene_models_impl:GeneModelsImpl"
 cnv_collection = "gain.genomic_resources.implementations.genomic_scores_impl:CnvCollectionImplementation"
 annotation_pipeline = "gain.genomic_resources.implementations.annotation_pipeline_impl:AnnotationPipelineImplementation"
-gene_score = "gain.gene_scores.implementations.gene_scores_impl:build_gene_score_implementation_from_resource"
-gene_set_collection = "gain.gene_sets.implementations.gene_sets_impl:build_gene_set_collection_implementation_from_resource"
-gene_set = "gain.gene_sets.implementations.gene_sets_impl:build_gene_set_collection_implementation_from_resource"
+gene_score = "gain.gene_scores.implementations.gene_scores_impl:GeneScoreImplementation"
+gene_set_collection = "gain.gene_sets.implementations.gene_sets_impl:GeneSetCollectionImpl"
+gene_set = "gain.gene_sets.implementations.gene_sets_impl:GeneSetCollectionImpl"
 
 [project.entry-points."gain.annotation.annotators"]
 allele_score = "gain.annotation.score_annotator:build_allele_score_annotator"
