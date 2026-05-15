@@ -6,7 +6,6 @@ import logging
 from typing import Any, ClassVar, cast
 
 import numpy as np
-from jinja2 import Template
 
 from gain.genomic_resources.genomic_position_table import (
     TabixGenomicPositionTable,
@@ -75,8 +74,11 @@ class GenomicScoreImplementation(
 
         return result
 
-    def get_template(self) -> Template:
-        return Template(GENOMIC_SCORES_TEMPLATE)
+    template_name: ClassVar[str] = "genomic_score.jinja"
+
+    @classmethod
+    def get_template(cls) -> str:
+        return GENOMIC_SCORES_TEMPLATE
 
     def _get_template_data(self) -> dict[str, Any]:
         return {"genomic_scores": self}

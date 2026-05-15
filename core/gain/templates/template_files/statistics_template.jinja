@@ -1,0 +1,42 @@
+
+<html>
+  <head>
+    <style>
+      body {
+        max-width: 1200px;
+        margin: 50px auto 100px auto;
+        padding: 0 40px;
+      }
+
+      * {
+        font-family: sans-serif
+      }
+
+      {% include "base_styles.jinja" %}
+
+      {% include styles_template %}
+    </style>
+  </head>
+  <body>
+      <table>
+        <thead>
+          <tr>
+            <th>Filename</th>
+            <th>Size</th>
+            <th>md5</th>
+          </tr>
+        </thead>
+        <tbody>
+          {%- for entry in data["statistic_files"] %}
+          <tr>
+            <td class="nowrap">
+                <a href='{{entry.name}}'>{{entry.name}}</a>
+            </td>
+            <td class="nowrap">{{entry.size}}</td>
+            <td class="nowrap">{{entry.md5}}</td>
+          </tr>
+          {%- endfor %}
+        </tbody>
+      </table>
+  </body>
+</html>

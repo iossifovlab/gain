@@ -9,7 +9,6 @@ import textwrap
 from collections.abc import Callable
 from typing import Any, cast
 
-from jinja2 import Template
 from lark import Lark, Token, Tree
 
 from gain.annotation.annotatable import Annotatable, VCFAllele
@@ -57,54 +56,52 @@ def get_genomic_resource(
     return resource
 
 
-class GenomicScoreAnnotatorBase(Annotator):
-    """Genomic score base annotator."""
+def _get_annotation_templates() -> dict[str, str]:
+    return {
+        "score_histogram.jinja": textwrap.dedent("""
+        <div class="modal-histogram">
 
-    SCORE_HISTOGRAM = textwrap.dedent("""
-    <div class="modal-histogram">
+        <div class="histogram-image">
 
-    <div class="histogram-image">
+        ![HISTOGRAM]({{ hist_url }})
 
-    ![HISTOGRAM]({{ hist_url }})
+        </div>
 
-    </div>
+        </div>
+        """),
+        "genomic_score_help.jinja": textwrap.dedent("""
 
-    </div>
-    """)
+        <div class="score-description">
 
-    GENOMIC_SCORE_HELP = textwrap.dedent("""
+        ## {{ data.name }}
 
-    <div class="score-description">
+        {{ data.description}}
 
-    ## {{ data.name }}
+        {{ data.resource_summary }}
 
-    {{ data.description}}
+        {{ data.histogram }}
 
-    {{ data.resource_summary }}
+        Genomic resource:
+        <a href={{data.resource_url}} target="_blank">{{ data.resource_id }}</a>
 
-    {{ data.histogram }}
+        <details>
 
-    Genomic resource:
-    <a href={{data.resource_url}} target="_blank">{{ data.resource_id }}</a>
+        <summary class="details">
 
-    <details>
+        #### Details
 
-    <summary class="details">
+        </summary>
 
-    #### Details
+        <div class="details-body">
 
-    </summary>
+        ##### Attribute properties:
 
-    <div class="details-body">
+        * **source**: {{ data.source }}
+        {% for aggregator in data.aggregators %}
 
-    ##### Attribute properties:
+        * {{ aggregator }}
 
-    * **source**: {{ data.source }}
-    {% for aggregator in data.aggregators %}
-
-    * {{ aggregator }}
-
-    {% endfor %}
+        {% endfor %}
 
 
     ##### Resource properties:
@@ -124,7 +121,12 @@ class GenomicScoreAnnotatorBase(Annotator):
 
     </div>
 
-    """)
+    """),
+    }
+
+
+class GenomicScoreAnnotatorBase(Annotator):
+    """Genomic score base annotator."""
 
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo,
                  score: GenomicScore):
@@ -282,11 +284,14 @@ class GenomicScoreAnnotatorBase(Annotator):
 
     def build_attribute_help(self, attr_info: AttributeInfo) -> str:
         """Build attribute help."""
+        from gain.templates import get_jinja_env
+        env = get_jinja_env()
+
         hist_url = self.score.get_histogram_image_url(attr_info.source)
         score_def = self.score.get_score_definition(attr_info.source)
         assert score_def is not None
 
-        histogram = Template(self.SCORE_HISTOGRAM).render(
+        histogram = env.get_template("score_histogram.jinja").render(
             hist_url=hist_url,
             score_def=score_def,
         )
@@ -307,8 +312,7 @@ class GenomicScoreAnnotatorBase(Annotator):
             "annotator_type": self.get_info().type,
             "annotator_doc": self.get_info().documentation,
         }
-        template = Template(self.GENOMIC_SCORE_HELP)
-        return template.render(data=data)
+        return env.get_template("genomic_score_help.jinja").render(data=data)
 
 
 def build_position_score_annotator(pipeline: AnnotationPipeline,

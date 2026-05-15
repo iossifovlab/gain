@@ -3,9 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import math
-from typing import Any
-
-from jinja2 import Template
+from typing import Any, ClassVar
 
 from gain.gene_scores.gene_scores import (
     GeneScore,
@@ -42,8 +40,11 @@ class GeneScoreImplementation(
             resource,
         )
 
-    def get_template(self) -> Template:
-        return Template(GENE_SCORES_TEMPLATE)
+    template_name: ClassVar[str] = "gene_score.jinja"
+
+    @classmethod
+    def get_template(cls) -> str:
+        return GENE_SCORES_TEMPLATE
 
     def _get_template_data(self) -> dict[str, Any]:
         data = {}
@@ -177,6 +178,13 @@ class GeneScoreImplementation(
             ],
             "score_file": manifest[score_filename].md5,
         }, sort_keys=True, indent=2).encode()
+
+
+def _get_gene_score_impl_templates() -> dict[str, str]:
+    return {
+        GeneScoreImplementation.template_name: GeneScoreImplementation.get_template(),
+        GeneScoreImplementation.styles_template_name: GeneScoreImplementation.get_styles_template(),
+    }
 
 
 def build_gene_score_implementation_from_resource(

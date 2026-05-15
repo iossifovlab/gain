@@ -1,9 +1,8 @@
 import logging
 import textwrap
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import quote
 
-from jinja2 import Environment, PackageLoader, Template
 from markdown2 import markdown
 
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
@@ -51,13 +50,16 @@ class AnnotationPipelineImplementation(
         self.pipeline = load_pipeline_from_yaml(self.raw, grr)
         return InfoImplementationMixin.get_statistics_info(self)
 
-    def get_template(self) -> Template:
-        return Template(textwrap.dedent("""
+    template_name: ClassVar[str] = "annotation_pipeline.jinja"
+
+    @classmethod
+    def get_template(cls) -> str:
+        return textwrap.dedent("""
             {% extends base %}
             {% block content %}
             {{data["content"]}}
             {% endblock %}
-        """))
+        """)
 
     @property
     def _relative_prefix_to_root_dir(self) -> str:
@@ -101,9 +103,11 @@ class AnnotationPipelineImplementation(
     def _get_template_data(self) -> dict[str, Any]:
         if self.pipeline is None:
             raise ValueError
-        env = Environment(  # noqa
-            loader=PackageLoader("gain.annotation", "templates"))
-        doc_template = env.get_template("annotate_doc_pipeline_template.jinja")
+        from gain.templates import (
+            get_jinja_env,  # lazy — avoids circular import
+        )
+        doc_template = get_jinja_env().get_template(
+            "annotate_doc_pipeline_template.jinja")
         return {
             "content": doc_template.render(
                 pipeline=self.pipeline,

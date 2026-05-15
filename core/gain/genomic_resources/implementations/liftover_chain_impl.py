@@ -5,9 +5,8 @@ from __future__ import annotations
 import copy
 import logging
 import textwrap
-from typing import Any
+from typing import Any, ClassVar
 
-from jinja2 import Template
 from markdown2 import markdown
 
 from gain.genomic_resources import GenomicResource
@@ -34,8 +33,11 @@ class LiftoverChainImplementation(
         super().__init__(resource)
         self.liftover_chain = build_liftover_chain_from_resource(self.resource)
 
-    def get_template(self) -> Template:
-        return Template(textwrap.dedent("""
+    template_name: ClassVar[str] = "liftover_chain.jinja"
+
+    @classmethod
+    def get_template(cls) -> str:
+        return textwrap.dedent("""
             {% extends base %}
             {% block content %}
             <p>
@@ -51,7 +53,7 @@ class LiftoverChainImplementation(
             <p>{{ data["target_chrom"] }}</p>
             {% endif %}
             {% endblock %}
-        """))
+        """)
 
     def _get_template_data(self) -> dict[str, Any]:
         info = copy.deepcopy(self.config)

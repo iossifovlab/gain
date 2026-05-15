@@ -1,9 +1,8 @@
 import copy
 import json
 from collections import Counter
-from typing import Any
+from typing import Any, ClassVar
 
-from jinja2 import Template
 from markdown2 import markdown
 
 from gain.gene_sets.gene_set import build_gene_set_collection_from_resource
@@ -43,8 +42,11 @@ class GeneSetCollectionImpl(
             resource,
         )
 
-    def get_template(self) -> Template:
-        return Template(GENE_SETS_TEMPLATE)
+    template_name: ClassVar[str] = "gene_set_collection.jinja"
+
+    @classmethod
+    def get_template(cls) -> str:
+        return GENE_SETS_TEMPLATE
 
     def _compute_and_save_gene_statistics(self) -> dict:
 
@@ -319,6 +321,13 @@ class GeneSetCollectionImpl(
     @staticmethod
     def get_schema() -> dict[str, Any]:
         raise NotImplementedError
+
+
+def _get_gene_set_impl_templates() -> dict[str, str]:
+    return {
+        GeneSetCollectionImpl.template_name: GeneSetCollectionImpl.get_template(),
+        GeneSetCollectionImpl.styles_template_name: GeneSetCollectionImpl.get_styles_template(),
+    }
 
 
 def build_gene_set_collection_implementation_from_resource(

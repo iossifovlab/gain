@@ -6,10 +6,9 @@ import textwrap
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from functools import lru_cache
-from typing import Any
+from typing import Any, ClassVar
 
 import yaml
-from jinja2 import Template
 
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.gene_models.gene_models import (
@@ -97,37 +96,43 @@ class GeneModelsImpl(
             res.add(gene_mapping_filename)
         return res
 
-    def get_template(self) -> Template:
-        return Template(textwrap.dedent("""
-{% extends base %}
-{% block extra_styles %}
-#chromosomes-table {
-    border-collapse: separate;
-    border-spacing: 0;
-}
-#chromosomes-table th {
-    border: 0;
-    border-top: 1px solid #cfd8df;
-    border-bottom: 1px solid #cfd8df;
-    border-right: 1px solid #cfd8df;
-}
-#chromosomes-table td {
-    border: 0;
-    border-bottom: 1px solid #cfd8df;
-    border-right: 1px solid #cfd8df;
-}
-#chromosomes-table th:first-child,
-#chromosomes-table td:first-child {
-    border-left: 1px solid #cfd8df;
-}
-#chromosomes-table thead tr:nth-of-type(2) th {
-    border-top: none;
-}
-#chromosomes-table thead {
-    position: sticky; top: 0; background-color: white;
-}
-{% endblock %}
+    template_name: ClassVar[str] = "gene_models.jinja"
+    styles_template_name: ClassVar[str] = "gene_models_styles.jinja"
 
+    @classmethod
+    def get_styles_template(cls) -> str:
+        return textwrap.dedent("""
+            #chromosomes-table {
+                border-collapse: separate;
+                border-spacing: 0;
+            }
+            #chromosomes-table th {
+                border: 0;
+                border-top: 1px solid #cfd8df;
+                border-bottom: 1px solid #cfd8df;
+                border-right: 1px solid #cfd8df;
+            }
+            #chromosomes-table td {
+                border: 0;
+                border-bottom: 1px solid #cfd8df;
+                border-right: 1px solid #cfd8df;
+            }
+            #chromosomes-table th:first-child,
+            #chromosomes-table td:first-child {
+                border-left: 1px solid #cfd8df;
+            }
+            #chromosomes-table thead tr:nth-of-type(2) th {
+                border-top: none;
+            }
+            #chromosomes-table thead {
+                position: sticky; top: 0; background-color: white;
+            }
+        """)
+
+    @classmethod
+    def get_template(cls) -> str:
+        return textwrap.dedent("""
+{% extends base %}
 {% block content %}
 <h2>Configuration</h2>
     <p><b>Gene models file:</b> <a href="{{ data.config.filename }}">
@@ -167,7 +172,7 @@ class GeneModelsImpl(
         </table>
     </div>
 {% endblock %}
-        """))  # noqa: E501
+        """)  # noqa: E501
 
     def _get_template_data(self) -> dict[str, Any]:
         return {"config": self.config,
