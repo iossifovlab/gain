@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -25,7 +26,9 @@ from web_annotation.models import (
 
 
 def _anon() -> WebAnnotationAnonymousUser:
-    return WebAnnotationAnonymousUser(session_id="test-session", ip="127.0.0.1")
+    return WebAnnotationAnonymousUser(
+        session_id="test-session", ip="127.0.0.1",
+    )
 
 
 @pytest.fixture
@@ -133,7 +136,7 @@ def test_set_extra_quota_returns_snapshot_json(
         "amount": "10",
     })
     force_authenticate(request, user=_anon())
-    response: Response = SetExtraQuotaView.as_view()(request)  # type: ignore[assignment]
+    response: Response = cast(Response, SetExtraQuotaView.as_view()(request))
     assert response.data is not None
     assert "extra_jobs" in response.data
     assert "daily_jobs" in response.data
@@ -198,7 +201,7 @@ def test_set_extra_quota_snapshot_reflects_change(
         "amount": "77",
     })
     force_authenticate(request, user=_anon())
-    response: Response = SetExtraQuotaView.as_view()(request)  # type: ignore[assignment]
+    response: Response = cast(Response, SetExtraQuotaView.as_view()(request))
     assert response.data is not None
     assert response.data["extra_variants"] == 77
 
@@ -281,7 +284,7 @@ def test_set_current_quota_returns_snapshot_json(
         "amount": "50",
     })
     force_authenticate(request, user=_anon())
-    response: Response = SetCurrentQuotaView.as_view()(request)  # type: ignore[assignment]
+    response: Response = cast(Response, SetCurrentQuotaView.as_view()(request))
     assert response.data is not None
     assert "daily_jobs" in response.data
     assert "extra_jobs" in response.data
@@ -393,7 +396,7 @@ def test_set_current_quota_snapshot_reflects_change(
         "amount": "123",
     })
     force_authenticate(request, user=_anon())
-    response: Response = SetCurrentQuotaView.as_view()(request)  # type: ignore[assignment]
+    response: Response = cast(Response, SetCurrentQuotaView.as_view()(request))
     assert response.data is not None
     assert response.data["monthly_jobs"] == 123
 
@@ -487,7 +490,7 @@ def test_set_session_quota_returns_snapshot_json(
         "amount": "5",
     })
     force_authenticate(request, user=_anon())
-    response: Response = SetSessionQuotaView.as_view()(request)  # type: ignore[assignment]
+    response: Response = cast(Response, SetSessionQuotaView.as_view()(request))
     assert response.data is not None
     assert "daily_jobs" in response.data
     assert "extra_jobs" in response.data
@@ -518,7 +521,7 @@ def test_set_session_quota_snapshot_reflects_change(
         "amount": "42",
     })
     force_authenticate(request, user=_anon())
-    response: Response = SetSessionQuotaView.as_view()(request)  # type: ignore[assignment]
+    response: Response = cast(Response, SetSessionQuotaView.as_view()(request))
     assert response.data is not None
     assert response.data["daily_attributes"] == 42
 
@@ -645,7 +648,7 @@ def test_set_ip_quota_returns_snapshot_json(
         "amount": "5",
     })
     force_authenticate(request, user=_anon())
-    response: Response = SetIpQuotaView.as_view()(request)  # type: ignore[assignment]
+    response: Response = cast(Response, SetIpQuotaView.as_view()(request))
     assert response.data is not None
     assert "daily_jobs" in response.data
     assert "extra_jobs" in response.data
@@ -676,7 +679,7 @@ def test_set_ip_quota_snapshot_reflects_change(
         "amount": "99",
     })
     force_authenticate(request, user=_anon())
-    response: Response = SetIpQuotaView.as_view()(request)  # type: ignore[assignment]
+    response: Response = cast(Response, SetIpQuotaView.as_view()(request))
     assert response.data is not None
     assert response.data["daily_attributes"] == 99
 
@@ -704,7 +707,8 @@ def test_set_ip_quota_returns_400_for_authenticated_user(
         "quota_type": "daily_jobs",
         "amount": "5",
     })
-    force_authenticate(request, user=User.objects.get(email="user@example.com"))
+    force_authenticate(
+        request, user=User.objects.get(email="user@example.com"))
     response = SetIpQuotaView.as_view()(request)
     assert response.status_code == 400
 
