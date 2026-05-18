@@ -45,7 +45,7 @@ from gain.genomic_resources.repository import (
     is_gr_id_token,
     parse_gr_id_version_token,
 )
-from gain.templates import get_jinja_env
+from gain.templates import get_template
 from gain.utils.helpers import convert_size
 
 logger = logging.getLogger(__name__)
@@ -767,8 +767,6 @@ class FsspecReadWriteProtocol(
         about_template: str | None = "grr_about.jinja",
     ) -> dict:
         """Build info dict for the repository."""
-        env = get_jinja_env()
-
         result = {}
         for res in self.get_all_resources():
             res_size = convert_size(
@@ -806,7 +804,7 @@ class FsspecReadWriteProtocol(
                 os.path.join(self.url, "about.html"), "wt", encoding="utf8",
             ) as outfile:
                 if about_template is not None:
-                    outfile.write(env.get_template(about_template).render(
+                    outfile.write(get_template(about_template).render(
                         about_contents=about_html_content))
                 else:
                     outfile.write(about_html_content)
@@ -814,7 +812,7 @@ class FsspecReadWriteProtocol(
         content_filepath = os.path.join(self.url, GR_INDEX_FILE_NAME)
         with self.filesystem.open(
                 content_filepath, "wt", encoding="utf8") as outfile:
-            outfile.write(env.get_template(repository_template).render(
+            outfile.write(get_template(repository_template).render(
                 data=result,
                 has_about=has_about,
             ))

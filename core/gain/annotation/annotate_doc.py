@@ -18,7 +18,7 @@ from gain.genomic_resources.genomic_context import (
 )
 from gain.genomic_resources.genomic_scores import GenomicScore
 from gain.genomic_resources.repository import GenomicResource
-from gain.templates import get_jinja_env
+from gain.templates import get_template
 from gain.utils.verbosity_configuration import VerbosityConfiguration
 
 logger = logging.getLogger("annotate_doc")
@@ -62,8 +62,7 @@ def cli(raw_args: list[str] | None = None) -> None:
     def make_histogram_url(score: GenomicScore, score_id: str) -> str | None:
         return score.get_histogram_image_url(score_id)
 
-    template = get_jinja_env().get_template(
-        "annotate_doc_pipeline_template.jinja")
+    template = get_template("annotate_doc_pipeline_template.jinja")
     html_doc = template.render(pipeline=pipeline,
                                pipeline_path=pipeline_path,
                                markdown=markdown,

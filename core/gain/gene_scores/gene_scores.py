@@ -28,7 +28,7 @@ from gain.genomic_resources.resource_implementation import (
     ResourceConfigValidationMixin,
     get_base_resource_schema,
 )
-from gain.templates import get_jinja_env
+from gain.templates import get_template
 
 logger = logging.getLogger(__name__)
 
@@ -400,13 +400,11 @@ def _build_gene_score_help(
     score_def: ScoreDef,
     gene_score: GeneScore,
 ) -> str:
-    env = get_jinja_env()
-
     score_id = score_def.score_id
     hist_url = gene_score.get_histogram_image_url(score_id)
     assert score_def is not None
 
-    histogram = env.get_template("score_histogram.jinja").render(
+    histogram = get_template("score_histogram.jinja").render(
         hist_url=hist_url,
         score_def=score_def,
     )
@@ -419,7 +417,7 @@ def _build_gene_score_help(
         "resource_url": f"{gene_score.resource.get_public_url()}/index.html",
         "histogram": histogram,
     }
-    return env.get_template("gene_score_help.jinja").render(data=data)
+    return get_template("gene_score_help.jinja").render(data=data)
 
 
 class GeneScoresDb:
