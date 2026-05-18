@@ -1,5 +1,6 @@
 - allele_score:
     resource_id: scores/allele1
+    mode: allele
     attributes:
     - source: freq
     - source: allele
