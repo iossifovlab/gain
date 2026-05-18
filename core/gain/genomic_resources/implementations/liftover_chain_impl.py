@@ -34,7 +34,6 @@ class LiftoverChainImplementation(
 
     template_name: ClassVar[str] = "liftover_chain.jinja"
 
-
     def _get_template_data(self) -> dict[str, Any]:
         info = copy.deepcopy(self.config)
 

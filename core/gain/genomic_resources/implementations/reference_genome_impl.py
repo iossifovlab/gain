@@ -322,7 +322,6 @@ class ReferenceGenomeImplementation(
     template_name: ClassVar[str] = "reference_genome.jinja"
     styles_template_name: ClassVar[str] = "reference_genome_styles.jinja"
 
-
     def _get_template_data(self) -> dict[str, Any]:
         info = copy.deepcopy(self.config)
         info["chromosomes"] = list(

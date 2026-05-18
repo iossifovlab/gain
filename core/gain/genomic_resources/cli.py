@@ -763,6 +763,7 @@ def _run_repo_info_command(
     if dry_run:
         return status
 
+    assert isinstance(proto, FsspecReadWriteProtocol)
     proto.build_index_info()
     for res in resources:
         try:

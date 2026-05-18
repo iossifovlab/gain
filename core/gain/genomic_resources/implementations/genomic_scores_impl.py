@@ -611,5 +611,3 @@ def build_score_implementation_from_resource(
     if resource.get_type() == "cnv_collection":
         return CnvCollectionImplementation(resource)
     return GenomicScoreImplementation(resource)
-
-

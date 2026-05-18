@@ -174,7 +174,3 @@ class GeneScoreImplementation(
             ],
             "score_file": manifest[score_filename].md5,
         }, sort_keys=True, indent=2).encode()
-
-
-
-

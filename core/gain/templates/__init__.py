@@ -12,6 +12,7 @@ Raises ``jinja2.TemplateNotFound`` if a name is not found in either stage.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from importlib.metadata import entry_points
 from typing import TYPE_CHECKING
 
@@ -27,13 +28,18 @@ from jinja2 import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-_env: Environment | None = None
-_provider_cache: dict[str, str] | None = None
+
+@dataclass
+class _TemplateCache:
+    env: Environment | None = field(default=None)
+    provider_cache: dict[str, str] | None = field(default=None)
+
+
+_state = _TemplateCache()
 
 
 def _get_provider_templates() -> dict[str, str]:
-    global _provider_cache
-    if _provider_cache is None:
+    if _state.provider_cache is None:
         merged: dict[str, str] = {}
         for ep in entry_points(group="gain.templates.providers"):
             provider_fn = ep.load()
@@ -42,11 +48,11 @@ def _get_provider_templates() -> dict[str, str]:
                     raise ValueError(
                         f"Template name conflict: '{name}' registered by "
                         f"provider '{ep.name}' conflicts with an existing "
-                        f"provider registration."
+                        f"provider registration.",
                     )
                 merged[name] = source
-        _provider_cache = merged
-    return _provider_cache
+        _state.provider_cache = merged
+    return _state.provider_cache
 
 
 class _ProviderLoader(BaseLoader):
@@ -63,15 +69,14 @@ class _ProviderLoader(BaseLoader):
 
 def get_jinja_env() -> Environment:
     """Return the singleton GAIn Jinja2 Environment."""
-    global _env
-    if _env is None:
-        _env = Environment(  # noqa: S701
+    if _state.env is None:
+        _state.env = Environment(  # noqa: S701
             loader=ChoiceLoader([
                 PackageLoader("gain.templates", "template_files"),
                 _ProviderLoader(),
             ]),
         )
-    return _env
+    return _state.env
 
 
 def get_template(name: str) -> Template:

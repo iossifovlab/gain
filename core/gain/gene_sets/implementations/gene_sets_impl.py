@@ -319,7 +319,3 @@ class GeneSetCollectionImpl(
     @staticmethod
     def get_schema() -> dict[str, Any]:
         raise NotImplementedError
-
-
-
-
