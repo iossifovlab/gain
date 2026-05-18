@@ -21,81 +21,82 @@ from gain.genomic_resources.testing import (
 #  T   A   C   C    C    T    T    G    C    G
 #  67  68  69  70   71   72   73   74   75   76
 #
-@pytest.mark.parametrize("variant,pos_aggregator,nuc_aggregator,expected", [
-    (("1", 14970, "C", "A"), "mean", "max", 0.001),
+_NP_SCORE1_REPO = {
+    "np_score1": {
+        "genomic_resource.yaml":
+        """\
+        type: np_score
+        table:
+            filename: data.mem
+            reference:
+              name: reference
+            alternative:
+              name: alternative
+        scores:
+        - id: test_raw
+          type: float
+          desc: "test values"
+          name: raw
+        """,
+        "data.mem": """
+            chrom  pos_begin  reference alternative raw
+            1      14968      A         C           0.00001
+            1      14968      A         G           0.00002
+            1      14968      A         T           0.00004
+            1      14969      C         A           0.0001
+            1      14969      C         G           0.0002
+            1      14969      C         T           0.0004
+            1      14970      C         A           0.001
+            1      14970      C         G           0.002
+            1      14970      C         T           0.004
+            1      14971      C         A           0.01
+            1      14971      C         G           0.02
+            1      14971      C         T           0.04
+            1      14972      T         A           0.1
+            1      14972      T         C           0.2
+            1      14972      T         G           0.4
+        """,
+    },
+}
 
-    (("1", 14970, "CA", "C"), "mean", "max", (0.004 + 0.04 + 0.4) / 3),
-    (("1", 14970, "CA", "C"), "max", "max", 0.4),
 
-    (("1", 14970, "C", "CA"), "mean", "max", 0.022),
-    (("1", 14970, "C", "CA"), "max", "max", 0.04),
-])
-def test_np_score_annotator(
-        variant: tuple,
-        pos_aggregator: str, nuc_aggregator: str, expected: float) -> None:
-
-    annotatable = VCFAllele(*variant)
-    assert annotatable is not None
-    print(annotatable)
-    repo = build_inmemory_test_repository({
-        "np_score1": {
-            "genomic_resource.yaml":
-            """\
-            type: np_score
-            table:
-                filename: data.mem
-                reference:
-                  name: reference
-                alternative:
-                  name: alternative
-            scores:
-            - id: test_raw
-              type: float
-              desc: "test values"
-              name: raw
-            """,
-            "data.mem": """
-                chrom  pos_begin  reference alternative raw
-                1      14968      A         C           0.00001
-                1      14968      A         G           0.00002
-                1      14968      A         T           0.00004
-                1      14969      C         A           0.0001
-                1      14969      C         G           0.0002
-                1      14969      C         T           0.0004
-                1      14970      C         A           0.001
-                1      14970      C         G           0.002
-                1      14970      C         T           0.004
-                1      14971      C         A           0.01
-                1      14971      C         G           0.02
-                1      14971      C         T           0.04
-                1      14972      T         A           0.1
-                1      14972      T         C           0.2
-                1      14972      T         G           0.4
-            """,
-        },
-    })
-
-    pipeline_config = textwrap.dedent(f"""
+def test_np_score_annotator() -> None:
+    repo = build_inmemory_test_repository(_NP_SCORE1_REPO)
+    pipeline_config = textwrap.dedent("""
         - np_score:
             resource_id: np_score1
             attributes:
             - source: test_raw
               name: test
-              position_aggregator: {pos_aggregator}
-              allele_aggregator: {nuc_aggregator}
         """)
-
     pipeline = load_pipeline_from_yaml(pipeline_config, repo)
-
-    # pipeline.get_schema -> ["attribute", "type", "resource", "scores"]
-    # pipeline.annotate_allele(sa) -> {("a1": v1), "a2": v2}}
-    result = None
     with pipeline.open() as work_pipeline:
-        result = work_pipeline.annotate(annotatable)
-    assert result is not None
+        result = work_pipeline.annotate(VCFAllele("1", 14970, "C", "A"))
+        assert result is not None
+        assert result.get("test") == pytest.approx(0.001, rel=1e-2)
 
-    print(annotatable, result)
-    assert result.get("test") == pytest.approx(expected, rel=1e-2), annotatable
+
+@pytest.mark.parametrize("variant,aggregator,expected", [
+    (("1", 14970, "CA", "C"), "max", 0.4),
+    (("1", 14970, "C", "CA"), "max", 0.04),
+])
+def test_np_score_region_annotator(
+        variant: tuple, aggregator: str, expected: float) -> None:
+    repo = build_inmemory_test_repository(_NP_SCORE1_REPO)
+    pipeline_config = textwrap.dedent(f"""
+        - np_score:
+            resource_id: np_score1
+            mode: region
+            attributes:
+            - source: test_raw
+              name: test
+              aggregator: {aggregator}
+        """)
+    pipeline = load_pipeline_from_yaml(pipeline_config, repo)
+    with pipeline.open() as work_pipeline:
+        result = work_pipeline.annotate(VCFAllele(*variant))
+        assert result is not None
+        assert result.get("test") == pytest.approx(expected, rel=1e-2)
 
 
 @pytest.fixture(scope="module")
@@ -158,31 +159,26 @@ def np_score2_repo(
     return build_filesystem_test_repository(root_path)
 
 
-@pytest.mark.parametrize("variant,pos_aggregator,nuc_aggregator,s1,s2", [
-    (("chr1", 1, "A", "G"), "max", "max", 0.1, 1.0),
-    (("chr1", 60, "A", "G"), "max", "max", 0.3, 3.0),
-    (("chr1", 60, "A", "C"), "max", "max", 0.33, 3.3),
+@pytest.mark.parametrize("variant,s1,s2", [
+    (("chr1", 1, "A", "G"), 0.1, 1.0),
+    (("chr1", 60, "A", "G"), 0.3, 3.0),
+    (("chr1", 60, "A", "C"), 0.33, 3.3),
 ])
 def test_np_score2_annotator(
     np_score2_repo: GenomicResourceRepo,
     variant: tuple,
-    pos_aggregator: str, nuc_aggregator: str,
     s1: float,
     s2: float,
 ) -> None:
 
-    pipeline_config = textwrap.dedent(f"""
+    pipeline_config = textwrap.dedent("""
         - np_score:
             resource_id: np_score2
             attributes:
             - source: s1
               name: s1
-              position_aggregator: {pos_aggregator}
-              allele_aggregator: {nuc_aggregator}
             - source: s2
               name: s2
-              position_aggregator: {pos_aggregator}
-              allele_aggregator: {nuc_aggregator}
         """)
 
     pipeline = load_pipeline_from_yaml(pipeline_config, np_score2_repo)
