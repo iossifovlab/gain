@@ -410,7 +410,7 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
                 raise AnnotationConfigurationError(
                     f"Error parsing cnv_filter: {e}") from e
 
-        mode = info.parameters.get("mode", "allele")
+        mode = info.parameters.get("mode", "region")
         if mode not in {"allele", "region"}:
             raise AnnotationConfigurationError(
                 f"Invalid mode '{mode}' for allele_score annotator; "

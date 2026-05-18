@@ -212,7 +212,6 @@ def test_allele_score_annotator(
     pipeline_config = textwrap.dedent(f"""
         - allele_score:
             resource_id: allele_score1
-            mode: region
             attributes:
             - source: score
               name: test

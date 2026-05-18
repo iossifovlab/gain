@@ -74,6 +74,7 @@ def annotation_pipeline(tmp_path: pathlib.Path) -> AnnotationPipeline:
     annotation_configuration = textwrap.dedent("""
         - allele_score:
             resource_id: allele_score
+            mode: allele
     """)
     return load_pipeline_from_yaml(annotation_configuration, local_repo)
 
@@ -161,6 +162,7 @@ def test_allele_score_with_default_score_annotation(
     annotation_configuration = textwrap.dedent("""
         - allele_score:
             resource_id: allele_score
+            mode: allele
     """)
     pipeline = load_pipeline_from_yaml(annotation_configuration, local_repo)
 
@@ -219,6 +221,7 @@ def test_allele_annotator_add_chrom_prefix_vcf_table(
     pipeline_config = textwrap.dedent("""
             - allele_score:
                 resource_id: allele_score1
+                mode: allele
                 attributes:
                 - source: test100way
             """)
@@ -307,7 +310,6 @@ def test_allele_score_annotator_region_with_default_annotation(
         textwrap.dedent("""
             - allele_score:
                 resource_id: allele_score
-                mode: region
         """),
         local_repo,
     )
@@ -389,6 +391,7 @@ def test_allele_score_exact_match_allele_attribute(
         textwrap.dedent("""
             - allele_score:
                 resource_id: allele_score
+                mode: allele
                 attributes:
                 - source: freq
                   name: allele_freq
@@ -409,6 +412,7 @@ def test_allele_score_exact_match_allele_attribute_renamed(
         textwrap.dedent("""
             - allele_score:
                 resource_id: allele_score
+                mode: allele
                 attributes:
                 - source: freq
                   name: allele_freq
@@ -430,6 +434,7 @@ def test_allele_score_exact_match_allele_with_include_attributes(
         textwrap.dedent("""
             - allele_score:
                 resource_id: allele_score
+                mode: allele
                 attributes:
                 - source: freq
                   name: allele_freq
@@ -451,6 +456,7 @@ def test_allele_score_exact_match_allele_filtered(
         textwrap.dedent("""
             - allele_score:
                 resource_id: allele_score
+                mode: allele
                 allele_filter: "freq > 0.03"
                 attributes:
                 - source: freq
@@ -497,7 +503,6 @@ def test_allele_score_region_allele_filter(
         textwrap.dedent(f"""
             - allele_score:
                 resource_id: allele_score
-                mode: region
                 allele_filter: "{allele_filter}"
                 attributes:
                 - source: allele
@@ -516,7 +521,6 @@ def test_allele_score_region_allele_with_include_attributes(
         textwrap.dedent("""
             - allele_score:
                 resource_id: allele_score
-                mode: region
                 allele_filter: "freq > 0.03"
                 attributes:
                 - source: allele
@@ -542,7 +546,6 @@ def test_allele_score_region_with_no_lines(
         textwrap.dedent("""
             - allele_score:
                 resource_id: allele_score
-                mode: region
                 allele_filter: "freq > 0.03"
                 attributes:
                 - source: allele
@@ -563,7 +566,6 @@ def test_allele_score_region_filter_all_alleles(
         textwrap.dedent("""
             - allele_score:
                 resource_id: allele_score
-                mode: region
                 allele_filter: "freq > 2.0"
                 attributes:
                 - source: allele
@@ -585,6 +587,7 @@ def test_allele_score_include_multiple_attributes(
         textwrap.dedent("""
             - allele_score:
                 resource_id: allele_score
+                mode: allele
                 attributes:
                 - source: allele
                   include_attributes:
