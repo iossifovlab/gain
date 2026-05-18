@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import logging
-import textwrap
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from cerberus import Validator
-from jinja2 import Template
 from markdown2 import markdown
 
 from gain.task_graph.graph import TaskDesc
+from gain.templates import get_template
 from gain.utils.helpers import convert_size
 
 from .repository import GenomicResource
@@ -154,14 +153,8 @@ class InfoImplementationMixin:
         md5: str | None
 
     resource: GenomicResource
-
-    def get_template(self) -> Template:
-        return Template(textwrap.dedent("""
-                {% extends base %}
-                {% block content %}
-
-                {% endblock %}
-            """))
+    template_name: ClassVar[str] = "base_implementation.jinja"
+    styles_template_name: ClassVar[str] = "base_implementation_styles.jinja"
 
     def _get_template_data(self) -> dict:
         return {}
@@ -201,24 +194,26 @@ class InfoImplementationMixin:
             if entry.name.startswith("statistics")]
         return template_data
 
-    def get_info(self) -> str:
+    def get_info(self, **kwargs: Any) -> str:  # noqa: ARG002
         """Construct the contents of the implementation's HTML info page."""
         template_data = self.get_template_data()
-        return self.get_template().render(
+        return get_template(self.template_name).render(
             resource=self.resource,
             markdown=markdown,
             data=template_data,
-            base=RESOURCE_TEMPLATE,
+            base="resource_template.jinja",
+            styles_template=self.styles_template_name,
         )
 
-    def get_statistics_info(self) -> str:
+    def get_statistics_info(self, **kwargs: Any) -> str:  # noqa: ARG002
         """Construct the contents of the implementation's HTML info page."""
         template_data = self.get_statistics_template_data()
-        return self.get_template().render(
+        return get_template(self.template_name).render(
             resource=self.resource,
             markdown=markdown,
             data=template_data,
-            base=STATISTICS_TEMPLATE,
+            base="statistics_template.jinja",
+            styles_template=self.styles_template_name,
         )
 
 
@@ -245,382 +240,3 @@ class ResourceConfigValidationMixin:
                 validator.errors)
             raise ValueError(f"Invalid configuration: {resource.resource_id}")
         return cast(dict, validator.document)
-
-
-RESOURCE_TEMPLATE = Template("""
-<html>
-  <head>
-    <meta charset="utf-8">
-    <style>
-      *, *::before, *::after {
-        box-sizing: border-box;
-      }
-
-      * {
-        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      }
-
-      body {
-        margin: 0;
-      }
-
-      .page-content {
-        max-width: 1200px;
-        margin: 0 auto;
-        padding: 40px 40px 100px;
-      }
-
-      h2 {
-        margin-top: 50px;
-        margin-bottom: 10px;
-      }
-
-      h3,h4 {
-        margin-top:0.5em;
-        margin-bottom:0.5em;
-      }
-
-      table {
-        border-collapse: collapse;
-        width: 100%
-      }
-
-      th {
-        background: #ecf1f6;
-      }
-
-      td,
-      th {
-        border: 1px solid #cfd8df;
-        padding: 5px 10px;
-      }
-
-      tr {
-        height: 38px;
-      }
-
-      #resource-table {
-        margin-bottom: 70px;
-      }
-
-      #resource-table th {
-        text-align: end;
-        width: 100px;
-      }
-
-      ul {
-        list-style-type: '-  ';
-        padding-left: 15px;
-        margin: 0;
-      }
-
-      a {
-        text-decoration: none;
-        color: #24699E;
-      }
-
-      a:hover {
-        color: #4C93C9;
-      }
-
-      .nowrap {
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-
-      .modal {
-        display: none;
-        position: fixed;
-        z-index: 1;
-        padding-top: 100px;
-        left: 0;
-        top: 0;
-        width: 100%;
-        height: 100%;
-        background-color: rgba(0,0,0,0.5);
-        justify-content: center;
-      }
-
-      .modal-content {
-        margin: auto;
-        display: block;
-        width: 80%;
-        max-width: 800px;
-      }
-
-      .close {
-        float: right;
-        font-size: 40px;
-        font-weight: bold;
-      }
-
-      .close:hover,
-      .close:focus {
-        color: #bbb;
-        text-decoration: none;
-        cursor: pointer;
-      }
-      #page-header {
-        display: flex;
-        align-items: center;
-        padding: 14px clamp(20px, 10%, 64px);
-        border-bottom: 1px solid #e4edf2;
-      }
-
-      #page-header a {
-        color: #24699E;
-        font-weight: 500;
-        text-decoration: none;
-        transition: color 0.15s ease-out;
-        font-size: 18px;
-      }
-
-      #page-header a:hover {
-        color: #4C93C9;
-      }
-
-      {% block extra_styles %}{% endblock %}
-    </style>
-
-    <script>
-        document.addEventListener("DOMContentLoaded", function () {
-            document.querySelectorAll("[data-modal-trigger]").forEach(function (trigger) {
-                trigger.addEventListener("click", function () {
-                    var modalId = this.getAttribute("data-modal-trigger");
-                    var modal = document.getElementById(modalId);
-                    if (modal) {
-                        modal.style.display = "block";
-                        document.currentOpenModal = modal;
-                    }
-                });
-            });
-
-            document.querySelectorAll(".close").forEach(function (closeButton) {
-                closeButton.addEventListener("click", function () {
-                    this.closest(".modal").style.display = "none";
-                    document.currentOpenModal = null;
-                });
-            });
-
-            window.addEventListener("click", function (event) {
-                if (event.target.classList.contains("modal")) {
-                    event.target.style.display = "none";
-                    document.currentOpenModal = null;
-                }
-            });
-
-            document.addEventListener("keydown", function (event) {
-                if (event.key === "Escape" && document.currentOpenModal) {
-                    document.currentOpenModal.style.display = "none";
-                    document.currentOpenModal = null;
-                }
-            });
-        });
-    </script>
-  </head>
-  <body>
-    <nav id="page-header">
-      <a href="/index.html">← Back to main page</a>
-    </nav>
-    <div class="page-content">
-    <h2>Resource</h2>
-    <div>
-        <table border="1" id="resource-table">
-            <tr>
-                <th>Id</th>
-                <td>{{ resource.resource_id }}</td>
-            </tr>
-            <tr>
-                <th>Type</th>
-                <td>{{ resource.get_type() }}</td>
-            </tr>
-            <tr>
-                <th>Version</th>
-                <td>{{ resource.get_version_str() }}</td>
-            </tr>
-            <tr>
-                <th>Summary</th>
-                <td>
-                    <div>
-                        <template shadowrootmode="open">
-                            {%- set summary = resource.get_summary() -%}
-                            {{
-                                summary if summary else "N/A"
-                            }}
-                        </template>
-                    </div>
-                </td>
-            </tr>
-            <tr>
-                <th>Description</th>
-                <td>
-                    <div>
-                        <template shadowrootmode="open">
-                             <style>
-                              img {
-                                max-width: min(100%, 800px);
-                                max-height: 50vh;
-                                width: auto;
-                                height: auto;
-                                display: block;
-                              }
-
-                              a {
-                                text-decoration: none;
-                                color: #24699E;
-                              }
-
-                              a:hover {
-                                color: #4C93C9;
-                              }
-                            </style>
-                            {%- set description = resource.get_description() -%}
-                            {{
-                                markdown(description, extras=["tables"]) if description else "N/A"
-                            }}
-                        </template>
-                    </div>
-                </td>
-            </tr>
-            <tr>
-                <th>Labels</th>
-                <td>
-                {% if resource.get_labels() %}
-                    <ul>
-                    {% for label, value in resource.get_labels().items() %}
-                        <li>{{ label }}: {{ value }}</li>
-                    {% endfor %}
-                    </ul>
-                {% endif %}
-                </td>
-            </tr>
-        </table>
-    </div>
-
-    {% block content %}
-    N/A
-    {% endblock %}
-
-    <h2 style="margin-top: 70px;">Files</h2>
-    <table>
-    <thead>
-        <tr>
-            <th>Filename</th>
-            <th>Size</th>
-            <th>md5</th>
-        </tr>
-    </thead>
-    <tbody>
-        {%- for entry in data["resource_files"] %}
-            <tr>
-                {% if entry.name == "statistics/" %}
-                    <td class="nowrap">
-                        <a href='statistics/index.html'>{{entry.name}}</a>
-                    </td>
-                {% else %}
-                    <td class="nowrap">
-                        <a href='{{entry.name}}'>{{entry.name}}</a>
-                    </td>
-                {% endif %}
-                <td class="nowrap">{{entry.size}}</td>
-                <td class="nowrap">{{entry.md5}}</td>
-            </tr>
-        {%- endfor %}
-    </tbody>
-    </table>
-    </div>
-  </body>
-</html>
-""")  # noqa: E501
-
-STATISTICS_TEMPLATE = Template("""
-<html>
-  <head>
-    <style>
-      body {
-        max-width: 1200px;
-        margin: 50px auto 100px auto;
-        padding: 0 40px;
-      }
-
-      h2 {
-        margin-top: 50px;
-        margin-bottom: 10px;
-      }
-
-      * {
-        font-family: sans-serif
-      }
-
-      h3,h4 {
-        margin-top:0.5em;
-        margin-bottom:0.5em;
-      }
-
-      table {
-        border-collapse: collapse;
-        width: 100%
-      }
-
-      th {
-        background: #ecf1f6;
-      }
-
-      td,
-      th {
-        border: 1px solid #cfd8df;
-        padding: 5px 10px;
-      }
-
-      tr {
-        height: 38px;
-      }
-
-      ul {
-        list-style-type: '-  ';
-        padding-left: 15px;
-        margin: 0;
-      }
-
-      a {
-        text-decoration: none;
-        color: #24699E;
-      }
-
-      a:hover {
-        color: #4C93C9;
-      }
-
-      .nowrap {
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      {% block extra_styles %}{% endblock %}
-    </style>
-  </head>
-  <body>
-      <table>
-        <thead>
-          <tr>
-            <th>Filename</th>
-            <th>Size</th>
-            <th>md5</th>
-          </tr>
-        </thead>
-        <tbody>
-          {%- for entry in data["statistic_files"] %}
-          <tr>
-            <td class="nowrap">
-                <a href='{{entry.name}}'>{{entry.name}}</a>
-            </td>
-            <td class="nowrap">{{entry.size}}</td>
-            <td class="nowrap">{{entry.md5}}</td>
-          </tr>
-          {%- endfor %}
-        </tbody>
-      </table>
-  </body>
-</html>
-""")

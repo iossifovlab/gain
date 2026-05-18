@@ -1,0 +1,32 @@
+#gene-sets-table {
+    border-collapse: separate;
+    border-spacing: 0;
+    width: 1200px;
+    table-layout: fixed;
+}
+#gene-sets-table th {
+    word-break: break-word;
+    max-width: 200px;
+    border-top: 1px solid;
+    border-bottom: 1px solid;
+    border-right: 1px solid;
+}
+#gene-sets-table td {
+    word-break: break-word;
+    max-width: 200px;
+    border-bottom: 1px solid;
+    border-right: 1px solid;
+}
+#gene-sets-table th:first-child,
+#gene-sets-table td:first-child {
+    border-left: 1px solid;
+}
+#gene-sets-table thead tr:nth-of-type(2) th {
+    border-top: none;
+}
+#gene-sets-table thead {
+    position: sticky; top: 0; background-color: white;
+}
+.histogram {
+    margin-bottom: 16px;
+}

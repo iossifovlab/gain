@@ -227,7 +227,7 @@
       </table>
     {% endif %}
 
-    {% if pipeline_path is not none %}
+    {% if pipeline_path is defined and pipeline_path is not none %}
     <div class="pipeline_path">
       Pipeline path: {{pipeline_path}}
     </div>

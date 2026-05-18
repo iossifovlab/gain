@@ -1,5 +1,5 @@
 from gain.gene_scores.implementations.gene_scores_impl import (
-    build_gene_score_implementation_from_resource,
+    GeneScoreImplementation,
 )
 from gain.genomic_resources import (
     get_resource_implementation_builder,
@@ -8,8 +8,6 @@ from gain.genomic_resources import (
 
 
 def test_register_implementation() -> None:
-    register_implementation(
-        "test_gene_score", build_gene_score_implementation_from_resource,
-    )
+    register_implementation("test_gene_score", GeneScoreImplementation)
 
     assert get_resource_implementation_builder("test_gene_score") is not None
