@@ -36,7 +36,7 @@ from gain.genomic_resources.genomic_scores import (
     ScoreQuery,
 )
 from gain.genomic_resources.repository import GenomicResource
-from gain.templates import get_jinja_env
+from gain.templates import get_template
 
 logger = logging.getLogger(__name__)
 
@@ -216,13 +216,11 @@ class GenomicScoreAnnotatorBase(Annotator):
 
     def build_attribute_help(self, attr_info: AttributeInfo) -> str:
         """Build attribute help."""
-        env = get_jinja_env()
-
         hist_url = self.score.get_histogram_image_url(attr_info.source)
         score_def = self.score.get_score_definition(attr_info.source)
         assert score_def is not None
 
-        histogram = env.get_template("score_histogram.jinja").render(
+        histogram = get_template("score_histogram.jinja").render(
             hist_url=hist_url,
             score_def=score_def,
         )
@@ -243,7 +241,7 @@ class GenomicScoreAnnotatorBase(Annotator):
             "annotator_type": self.get_info().type,
             "annotator_doc": self.get_info().documentation,
         }
-        return env.get_template("genomic_score_help.jinja").render(data=data)
+        return get_template("genomic_score_help.jinja").render(data=data)
 
 
 def build_position_score_annotator(pipeline: AnnotationPipeline,
