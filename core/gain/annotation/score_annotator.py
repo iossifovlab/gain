@@ -357,7 +357,40 @@ def build_allele_score_annotator(pipeline: AnnotationPipeline,
 
 
 class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
-    """This class implements allele_score annotator."""
+    """Annotator for allele-level genomic scores (frequencies, pathogenicity…).
+
+    Operates in one of two modes, selected by the ``mode`` parameter:
+
+    - ``region`` (**default**): iterates all allele lines that overlap the
+      annotatable's span and aggregates their scores.  Works with any
+      ``Annotatable`` (``VCFAllele``, ``Region``, CNV, …).  An aggregator
+      must be defined for every score attribute, either in the attribute config
+      or as the score's ``allele_aggregator`` default in the resource YAML.
+
+    - ``allele``: performs an exact chrom/pos/ref/alt lookup and returns the
+      single matching line's scores.  The annotatable must be a ``VCFAllele``;
+      other types receive an empty result.
+
+    Virtual ``allele`` attribute
+    ----------------------------
+    All annotators expose a virtual attribute ``"allele"`` (``default=False``)
+    that is synthesised rather than read from the data file.
+
+    - In ``allele`` mode: returns ``["chrom:pos:ref:alt"]`` for the matched
+      line.
+    - In ``region`` mode: returns the set of ``"chrom:pos:ref:alt"`` strings
+      for all lines that pass the optional ``allele_filter``.
+
+    Optionally append score values to each allele string with
+    ``include_attributes``.
+
+    ``allele_filter``
+    -----------------
+    An optional annotator-level boolean expression evaluated against each
+    ``ScoreLine`` before it is included in the result.  Supported operators:
+    ``>``, ``<``, ``==``, ``in``, ``and``, ``or``.  Variables resolve via
+    ``ScoreLine.get_score``.
+    """
 
     ALLELE_FILTER_GRAMMAR = textwrap.dedent("""
         ?start: filter | and_ | or
@@ -424,6 +457,12 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
 Annotator to use with scores that depend on allele like
 variant frequencies, etc.
 
+**Mode** (``mode`` parameter):
+
+- ``region`` (default): aggregates scores for all allele lines
+  overlapping the annotatable's span.
+- ``allele``: exact chrom/pos/ref/alt match; VCFAllele inputs only.
+
 <a href="{self.BASE_DOC_URL}#allele-score-annotator" target="_blank">More info</a>
 
 """)  # noqa
@@ -477,6 +516,7 @@ variant frequencies, etc.
     def _build_allele_filter_func(
         cls, tree: Tree,
     ) -> Callable[[ScoreLine], bool]:
+        """Recursively compile a Lark parse tree into a ScoreLine predicate."""
         if tree.data == "and_":
             assert isinstance(tree.children[0], Tree)
             assert isinstance(tree.children[1], Tree)
@@ -557,6 +597,7 @@ variant frequencies, etc.
         raise ValueError(f"Unsupported operator {operator.data}")
 
     def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
+        """Return score attribute descriptions plus the virtual ``allele``."""
         result = super().get_all_attribute_descriptions()
         result["allele"] = AttributeDesc(
             source="allele",
@@ -587,6 +628,7 @@ variant frequencies, etc.
     def _annotate_allele(
         self, annotatable: VCFAllele,
     ) -> dict[str, Any]:
+        """Return scores for an exact chrom/pos/ref/alt match."""
         line = self.allele_score.fetch_allele_line(
             annotatable.chrom,
             annotatable.position,
@@ -622,11 +664,16 @@ variant frequencies, etc.
     def _annotate_region(
         self, annotatable: Annotatable,
     ) -> dict[str, Any]:
+        """Aggregate scores for all allele lines overlapping the annotatable."""
         score_aggs = {}
         for q in self.allele_score_queries:
             scr_def = self.allele_score.score_definitions[q.score]
             agg_type = q.allele_aggregator or scr_def.allele_aggregator
-            assert agg_type is not None
+            if agg_type is None:
+                raise AnnotationConfigurationError(
+                    f"No aggregator defined for score '{q.score}' in "
+                    "region mode; set 'aggregator' on the attribute or "
+                    "'allele_aggregator' in the resource config")
             score_aggs[q.score] = build_aggregator(agg_type)
         alleles: set[str] = set()
         has_lines = False
@@ -668,7 +715,7 @@ variant frequencies, etc.
         self, annotatable: Annotatable | None,
         context: dict[str, Any],  # noqa: ARG002
     ) -> dict[str, Any]:
-
+        """Dispatch to allele or region annotation based on ``self.mode``."""
         if annotatable is None:
             return self._empty_result()
 

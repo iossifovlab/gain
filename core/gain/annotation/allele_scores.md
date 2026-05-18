@@ -26,23 +26,51 @@
   exist in the resource's `score_definitions`. Virtual attributes (like `"allele"`)
   are excluded, preventing a `KeyError` when `fetch_scores` is called.
 
-### `AlleleScoreAnnotator` — new `allele` attribute
+### `AlleleScoreAnnotator` — modes
 
-A new virtual attribute `allele` (source `"allele"`, `default=False`) is
-available on all allele score annotators. It is not a column in the underlying
-data file; its value is synthesised from the matched line(s).
+The annotator has two modes selected by the `mode` parameter:
 
-#### Exact-match path (`VCFAllele`)
+- **`region`** (**default**): iterates all allele lines overlapping the
+  annotatable's span and aggregates their scores. Works with any `Annotatable`.
+  Each score attribute must have an aggregator defined either in the attribute
+  config or as the resource's `allele_aggregator` default.
 
-Returns a string `"chrom:pos:ref:alt"` for the matched allele.
-
-Optionally, one or more score values can be appended by setting
-`include_attributes` on the attribute. Score values also have to be present
-in the annotator's attributes and references by source.
+- **`allele`**: performs an exact chrom/pos/ref/alt lookup. The annotatable must
+  be a `VCFAllele`; any other type produces an empty result.
 
 ```yaml
-- allele_score_annotator:
+- allele_score:
     resource_id: my_score
+    # mode: region   # default — omit for region behaviour
+    attributes:
+    - source: freq
+      aggregator: max
+```
+
+```yaml
+- allele_score:
+    resource_id: my_score
+    mode: allele     # exact-match only; VCFAllele required
+    attributes:
+    - source: freq
+```
+
+### `AlleleScoreAnnotator` — `allele` virtual attribute
+
+A virtual attribute `allele` (source `"allele"`, `default=False`) is available
+on all allele score annotators. It is not a column in the underlying data file;
+its value is synthesised from the matched line(s).
+
+#### `allele` mode (exact match)
+
+Returns `["chrom:pos:ref:alt"]` for the single matched line.
+
+Optionally append score values by setting `include_attributes`:
+
+```yaml
+- allele_score:
+    resource_id: my_score
+    mode: allele
     attributes:
     - source: allele
       include_attributes: freq       # single score id
@@ -50,26 +78,28 @@ in the annotator's attributes and references by source.
 ```
 
 ```yaml
-- allele_score_annotator:
+- allele_score:
     resource_id: my_score
+    mode: allele
     attributes:
     - source: allele
       include_attributes:
-        - freq 
+        - freq
         - id
     - source: freq
     - source: id
 ```
 
-#### Aggregated path (`Region`)
+#### `region` mode (default)
 
-Collects allele strings from lines in the region and joins them with `,`.
+Collects allele strings from all lines in the region.
 
 - **No `allele_filter`**: every allele in the region is collected.
-- **With `allele_filter`**: only alleles whose scores satisfy the expression are collected.
+- **With `allele_filter`**: only alleles whose scores satisfy the expression are
+  collected.
 
 ```yaml
-- allele_score_annotator:
+- allele_score:
     resource_id: my_score
     allele_filter: "freq > 0.05"   # optional; omit to collect all alleles
     attributes:
@@ -89,19 +119,18 @@ Supported syntax:
 | `variable < number` | `freq < 0.05` |
 | `variable == number` | `freq == 0.05` |
 | `variable == "string"` | `type == "SNV"` |
-| `variable in variable` | (variable on right is also a score lookup) |
+| `variable in variable` | (right-hand variable is also a score lookup) |
 | `expr and expr` | `freq > 0.01 and freq < 0.1` |
 | `expr or expr` | `freq < 0.01 or freq > 0.9` |
 
-Variables resolve to score values via `ScoreLine.get_score(name)`. These map
-to the sources of the annotator's attributes.
+Variables resolve to score values via `ScoreLine.get_score(name)`.
 
-### New / renamed methods
+### Methods
 
 | Method | Visibility | Description |
 |---|---|---|
-| `AlleleScoreAnnotator._annotate_exact_match` | private | Replaces `_fetch_substitution_scores` + `_fetch_vcf_allele_score`; handles `allele` attribute for `VCFAllele`. |
-| `AlleleScoreAnnotator.aggregate_scores` | **public** | Replaces old `_fetch_aggregated_scores` logic; handles position/allele aggregation and allele string collection. |
-| `AlleleScoreAnnotator._annotate_aggregated` | private | Wraps `aggregate_scores` for `Region` inputs. |
 | `AlleleScoreAnnotator._build_allele_filter_func` | class method | Recursively compiles a Lark parse tree into a `ScoreLine → bool` callable. |
-| `AlleleScoreAnnotator.get_all_attribute_descriptions` | override | Adds `"allele"` to the attribute description map with `default=False`. |
+| `AlleleScoreAnnotator.get_all_attribute_descriptions` | override | Extends the parent implementation to add the virtual `"allele"` attribute with `default=False`. |
+| `AlleleScoreAnnotator._annotate_allele` | private | Exact chrom/pos/ref/alt lookup; used in `allele` mode. |
+| `AlleleScoreAnnotator._annotate_region` | private | Aggregates scores for all allele lines overlapping the annotatable span; used in `region` mode. |
+| `AlleleScoreAnnotator.annotate` | public | Dispatches to `_annotate_allele` or `_annotate_region` based on `self.mode`. |
