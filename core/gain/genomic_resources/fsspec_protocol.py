@@ -45,6 +45,7 @@ from gain.genomic_resources.repository import (
     is_gr_id_token,
     parse_gr_id_version_token,
 )
+from gain.templates import get_jinja_env
 from gain.utils.helpers import convert_size
 
 logger = logging.getLogger(__name__)
@@ -766,7 +767,6 @@ class FsspecReadWriteProtocol(
         about_template: str | None = "grr_about.jinja",
     ) -> dict:
         """Build info dict for the repository."""
-        from gain.templates import get_jinja_env
         env = get_jinja_env()
 
         result = {}

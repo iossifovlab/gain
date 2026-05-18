@@ -9,6 +9,7 @@ from cerberus import Validator
 from markdown2 import markdown
 
 from gain.task_graph.graph import TaskDesc
+from gain.templates import get_jinja_env
 from gain.utils.helpers import convert_size
 
 from .repository import GenomicResource
@@ -155,14 +156,6 @@ class InfoImplementationMixin:
     template_name: ClassVar[str] = "base_implementation.jinja"
     styles_template_name: ClassVar[str] = "base_implementation_styles.jinja"
 
-    @classmethod
-    def get_template(cls) -> str | None:
-        return None
-
-    @classmethod
-    def get_styles_template(cls) -> str | None:
-        return None
-
     def _get_template_data(self) -> dict:
         return {}
 
@@ -203,9 +196,6 @@ class InfoImplementationMixin:
 
     def get_info(self, **kwargs: Any) -> str:  # noqa: ARG002
         """Construct the contents of the implementation's HTML info page."""
-        from gain.templates import (
-            get_jinja_env,  # lazy — avoids circular import
-        )
         template_data = self.get_template_data()
         return get_jinja_env().get_template(self.template_name).render(
             resource=self.resource,
@@ -217,9 +207,6 @@ class InfoImplementationMixin:
 
     def get_statistics_info(self, **kwargs: Any) -> str:  # noqa: ARG002
         """Construct the contents of the implementation's HTML info page."""
-        from gain.templates import (
-            get_jinja_env,  # lazy — avoids circular import
-        )
         template_data = self.get_statistics_template_data()
         return get_jinja_env().get_template(self.template_name).render(
             resource=self.resource,
