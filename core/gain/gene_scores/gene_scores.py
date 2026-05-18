@@ -28,6 +28,7 @@ from gain.genomic_resources.resource_implementation import (
     ResourceConfigValidationMixin,
     get_base_resource_schema,
 )
+from gain.templates import get_jinja_env
 
 logger = logging.getLogger(__name__)
 
@@ -399,7 +400,6 @@ def _build_gene_score_help(
     score_def: ScoreDef,
     gene_score: GeneScore,
 ) -> str:
-    from gain.templates import get_jinja_env
     env = get_jinja_env()
 
     score_id = score_def.score_id

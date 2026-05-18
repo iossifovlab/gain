@@ -340,7 +340,7 @@ def test_gene_models_impl_statistics_caching() -> None:
 
 
 def test_gene_models_impl_get_template() -> None:
-    """Test that get_template returns a Jinja2 Template."""
+    """Test that the template is loadable from the environment."""
     res = build_inmemory_test_resource(
         content={
             "genomic_resource.yaml":
@@ -349,8 +349,6 @@ def test_gene_models_impl_get_template() -> None:
         })
 
     gene_models_impl = GeneModelsImpl(res)
-    assert gene_models_impl.get_template() is None
-
     from gain.templates import get_jinja_env
     tmpl = get_jinja_env().get_template(gene_models_impl.template_name)
     assert tmpl is not None

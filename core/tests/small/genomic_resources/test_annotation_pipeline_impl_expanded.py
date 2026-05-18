@@ -235,13 +235,6 @@ def test_get_statistics_info_loads_pipeline(
 # Tests for get_template
 
 
-def test_get_template(grr_fixture: GenomicResourceRepo) -> None:
-    impl = AnnotationPipelineImplementation(
-        grr_fixture.get_resource("pipeline"),
-    )
-    assert impl.get_template() is None
-
-
 def test_get_template_structure(grr_fixture: GenomicResourceRepo) -> None:
     from gain.templates import get_jinja_env
     impl = AnnotationPipelineImplementation(

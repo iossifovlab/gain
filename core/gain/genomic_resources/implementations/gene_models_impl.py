@@ -98,7 +98,6 @@ class GeneModelsImpl(
     template_name: ClassVar[str] = "gene_models.jinja"
     styles_template_name: ClassVar[str] = "gene_models_styles.jinja"
 
-
     def _get_template_data(self) -> dict[str, Any]:
         return {"config": self.config,
                 "stats": self.get_statistics()}

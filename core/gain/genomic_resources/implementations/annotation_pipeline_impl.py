@@ -13,6 +13,7 @@ from gain.genomic_resources.resource_implementation import (
     InfoImplementationMixin,
 )
 from gain.task_graph.graph import TaskDesc
+from gain.templates import get_jinja_env
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,6 @@ class AnnotationPipelineImplementation(
         return InfoImplementationMixin.get_statistics_info(self)
 
     template_name: ClassVar[str] = "annotation_pipeline.jinja"
-
 
     @property
     def _relative_prefix_to_root_dir(self) -> str:
@@ -94,9 +94,6 @@ class AnnotationPipelineImplementation(
     def _get_template_data(self) -> dict[str, Any]:
         if self.pipeline is None:
             raise ValueError
-        from gain.templates import (
-            get_jinja_env,  # lazy — avoids circular import
-        )
         doc_template = get_jinja_env().get_template(
             "annotate_doc_pipeline_template.jinja")
         return {
