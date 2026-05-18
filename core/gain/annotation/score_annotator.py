@@ -9,7 +9,6 @@ import textwrap
 from collections.abc import Callable
 from typing import Any, cast
 
-from jinja2 import Template
 from lark import Lark, Token, Tree
 
 from gain.annotation.annotatable import Annotatable, VCFAllele
@@ -37,6 +36,7 @@ from gain.genomic_resources.genomic_scores import (
     ScoreQuery,
 )
 from gain.genomic_resources.repository import GenomicResource
+from gain.templates import get_template
 
 logger = logging.getLogger(__name__)
 
@@ -59,72 +59,6 @@ def get_genomic_resource(
 
 class GenomicScoreAnnotatorBase(Annotator):
     """Genomic score base annotator."""
-
-    SCORE_HISTOGRAM = textwrap.dedent("""
-    <div class="modal-histogram">
-
-    <div class="histogram-image">
-
-    ![HISTOGRAM]({{ hist_url }})
-
-    </div>
-
-    </div>
-    """)
-
-    GENOMIC_SCORE_HELP = textwrap.dedent("""
-
-    <div class="score-description">
-
-    ## {{ data.name }}
-
-    {{ data.description}}
-
-    {{ data.resource_summary }}
-
-    {{ data.histogram }}
-
-    Genomic resource:
-    <a href={{data.resource_url}} target="_blank">{{ data.resource_id }}</a>
-
-    <details>
-
-    <summary class="details">
-
-    #### Details
-
-    </summary>
-
-    <div class="details-body">
-
-    ##### Attribute properties:
-
-    * **source**: {{ data.source }}
-    {% for aggregator in data.aggregators %}
-
-    * {{ aggregator }}
-
-    {% endfor %}
-
-
-    ##### Resource properties:
-
-    * **resource_type**: `{{ data.resource_type }}`
-
-
-    ##### Annotator documentation:
-
-    * **annotator_type**: `{{ data.annotator_type }}`
-
-    {{ data.annotator_doc }}
-
-    </div>
-
-    </details>
-
-    </div>
-
-    """)
 
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo,
                  score: GenomicScore):
@@ -286,7 +220,7 @@ class GenomicScoreAnnotatorBase(Annotator):
         score_def = self.score.get_score_definition(attr_info.source)
         assert score_def is not None
 
-        histogram = Template(self.SCORE_HISTOGRAM).render(
+        histogram = get_template("score_histogram.jinja").render(
             hist_url=hist_url,
             score_def=score_def,
         )
@@ -307,8 +241,7 @@ class GenomicScoreAnnotatorBase(Annotator):
             "annotator_type": self.get_info().type,
             "annotator_doc": self.get_info().documentation,
         }
-        template = Template(self.GENOMIC_SCORE_HELP)
-        return template.render(data=data)
+        return get_template("genomic_score_help.jinja").render(data=data)
 
 
 def build_position_score_annotator(pipeline: AnnotationPipeline,

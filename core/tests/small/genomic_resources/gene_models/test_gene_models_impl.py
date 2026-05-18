@@ -16,7 +16,6 @@ from gain.genomic_resources.testing import (
 )
 from gain.task_graph.cli_tools import task_graph_run
 from gain.task_graph.graph import TaskGraph
-from jinja2 import Template
 
 # this content follows the 'refflat' gene model format
 REFFLAT_CONTENT = """
@@ -341,7 +340,7 @@ def test_gene_models_impl_statistics_caching() -> None:
 
 
 def test_gene_models_impl_get_template() -> None:
-    """Test that get_template returns a Jinja2 Template."""
+    """Test that the template is loadable from the environment."""
     res = build_inmemory_test_resource(
         content={
             "genomic_resource.yaml":
@@ -350,9 +349,9 @@ def test_gene_models_impl_get_template() -> None:
         })
 
     gene_models_impl = GeneModelsImpl(res)
-    template = gene_models_impl.get_template()
-
-    assert isinstance(template, Template)
+    from gain.templates import get_jinja_env
+    tmpl = get_jinja_env().get_template(gene_models_impl.template_name)
+    assert tmpl is not None
 
 
 def test_gene_models_impl_only_noncoding_transcripts() -> None:

@@ -235,24 +235,13 @@ def test_get_statistics_info_loads_pipeline(
 # Tests for get_template
 
 
-def test_get_template(grr_fixture: GenomicResourceRepo) -> None:
-    """Test get_template returns a Template object."""
-    impl = AnnotationPipelineImplementation(
-        grr_fixture.get_resource("pipeline"),
-    )
-    template = impl.get_template()
-    assert template is not None
-
-
 def test_get_template_structure(grr_fixture: GenomicResourceRepo) -> None:
-    """Test template has expected structure."""
+    from gain.templates import get_jinja_env
     impl = AnnotationPipelineImplementation(
         grr_fixture.get_resource("pipeline"),
     )
-    template = impl.get_template()
-    # Jinja2 Template objects can be rendered
-    # Let's just verify it's callable/renderable
-    assert hasattr(template, "render")
+    tmpl = get_jinja_env().get_template(impl.template_name)
+    assert tmpl is not None
 
 
 # Tests for _relative_prefix_to_root_dir

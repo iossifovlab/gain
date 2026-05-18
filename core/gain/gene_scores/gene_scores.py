@@ -10,7 +10,6 @@ from urllib.parse import quote
 
 import numpy as np
 import pandas as pd
-from jinja2 import Template
 
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.histogram import (
@@ -29,20 +28,9 @@ from gain.genomic_resources.resource_implementation import (
     ResourceConfigValidationMixin,
     get_base_resource_schema,
 )
+from gain.templates import get_template
 
 logger = logging.getLogger(__name__)
-
-SCORE_HISTOGRAM = """
-<div class="modal-histogram">
-
-<div class="histogram-image">
-
-![HISTOGRAM]({{ hist_url }})
-
-</div>
-
-</div>
-"""
 
 
 @dataclass
@@ -408,26 +396,6 @@ class ScoreDesc:
     large_values_desc: str | None
 
 
-GENE_SCORE_HELP = """
-
-<div class="score-description">
-
-## {{ data.name }}
-
-{{ data.description}}
-
-{{ data.resource_summary }}
-
-{{ data.histogram }}
-
-Genomic resource:
-<a href={{data.resource_url}} target="_blank">{{ data.resource_id }}</a>
-
-</div>
-
-"""
-
-
 def _build_gene_score_help(
     score_def: ScoreDef,
     gene_score: GeneScore,
@@ -436,7 +404,7 @@ def _build_gene_score_help(
     hist_url = gene_score.get_histogram_image_url(score_id)
     assert score_def is not None
 
-    histogram = Template(SCORE_HISTOGRAM).render(
+    histogram = get_template("score_histogram.jinja").render(
         hist_url=hist_url,
         score_def=score_def,
     )
@@ -449,8 +417,7 @@ def _build_gene_score_help(
         "resource_url": f"{gene_score.resource.get_public_url()}/index.html",
         "histogram": histogram,
     }
-    template = Template(GENE_SCORE_HELP)
-    return template.render(data=data)
+    return get_template("gene_score_help.jinja").render(data=data)
 
 
 class GeneScoresDb:

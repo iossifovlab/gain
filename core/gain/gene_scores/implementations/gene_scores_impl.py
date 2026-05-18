@@ -3,9 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import math
-from typing import Any
-
-from jinja2 import Template
+from typing import Any, ClassVar
 
 from gain.gene_scores.gene_scores import (
     GeneScore,
@@ -42,8 +40,7 @@ class GeneScoreImplementation(
             resource,
         )
 
-    def get_template(self) -> Template:
-        return Template(GENE_SCORES_TEMPLATE)
+    template_name: ClassVar[str] = "gene_score.jinja"
 
     def _get_template_data(self) -> dict[str, Any]:
         data = {}
@@ -177,86 +174,3 @@ class GeneScoreImplementation(
             ],
             "score_file": manifest[score_filename].md5,
         }, sort_keys=True, indent=2).encode()
-
-
-def build_gene_score_implementation_from_resource(
-        resource: GenomicResource) -> GenomicResourceImplementation:
-    if resource is None:
-        raise ValueError(f"missing resource {resource}")
-    return GeneScoreImplementation(resource)
-
-
-GENE_SCORES_TEMPLATE = """
-{% extends base %}
-{% block content %}
-
-{% set score = data.gene_score %}
-
-<h1>Scores ({{ score.score_definitions|length }})</h1>
-    <table border="1">
-        <tr>
-            <th>ID</th>
-            <th>Type</th>
-            <th>Description</th>
-            <th>Histograms</th>
-            <th>Range</th>
-        </tr>
-
-        {% for score_id, score_def in score.score_definitions.items() %}
-            <tr>
-                <td>{{ score_id }}</td>
-
-                <td>{{ score.value_type }}</td>
-
-                <td>
-                    <div>{{ score_def.description }}</div>
-                    {% if score_def.small_values_desc %}
-                        <div style="color: rgb(145,145,145)">
-                            {{ "Small values desc: " + score_def.small_values_desc }}
-                        </div>
-                    {% endif %}
-                    {% if score_def.large_values_desc %}
-                        <div style="color: rgb(145,145,145)">
-                            {{ "Large values desc: " + score_def.large_values_desc }}
-                        </div>
-                    {% endif %}
-                </td>
-
-                {% set hist = score.get_score_histogram(score_id) %}
-                <td>
-                {% if hist %}
-                    <div class="histogram">
-                        <img src="{{score.get_histogram_image_filename(score_id)}}"
-                            style="width: 200px; cursor: pointer;"
-                            alt={{ score_id }}
-                            title=" {{ score_id | replace(" ", "_") }}"
-                            data-modal-trigger="modal-{{ score_id | replace(" ", "_") }}">
-                    </div>
-                {% endif %}
-                </td>
-
-                <td>
-                {%- if hist.type != 'null_histogram' %}
-                    {{ hist.values_domain() }}
-                {%- else -%}
-                    NO DOMAIN
-                {%- endif -%}
-                </td>
-            </tr>
-        {% endfor %}
-
-        {%- for score_id in score.score_definitions.keys() -%}
-            <div id="modal-{{ score_id | replace(" ", "_") }}" class="modal">
-                <div class="modal-content"
-                    style="padding: 10px 20px; background-color: #fff; height: fit-content; width: fit-content;">
-                    <span class="close">&times;</span>
-                    <img src="{{ score.get_histogram_image_filename(score_id) }}"
-                        alt="{{ "HISTOGRAM FOR " + score_id }}"
-                        title="{{ score_id | replace(" ", "_") }}"
-                        style="max-width: min(100%, 800px);">
-                </div>
-            </div>
-        {%- endfor %}
-    </table>
-{% endblock %}
-"""  # noqa: E501

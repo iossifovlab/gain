@@ -23,7 +23,6 @@ from urllib.parse import urlparse
 
 import apsw
 import fsspec
-import jinja2
 import pyBigWig
 import pysam
 import yaml
@@ -46,6 +45,7 @@ from gain.genomic_resources.repository import (
     is_gr_id_token,
     parse_gr_id_version_token,
 )
+from gain.templates import get_template
 from gain.utils.helpers import convert_size
 
 logger = logging.getLogger(__name__)
@@ -763,8 +763,8 @@ class FsspecReadWriteProtocol(
 
     def build_index_info(
         self,
-        repository_template: jinja2.Template,
-        about_template: jinja2.Template | None = None,
+        repository_template: str = "grr_index.jinja",
+        about_template: str | None = "grr_about.jinja",
     ) -> dict:
         """Build info dict for the repository."""
         result = {}
@@ -804,7 +804,7 @@ class FsspecReadWriteProtocol(
                 os.path.join(self.url, "about.html"), "wt", encoding="utf8",
             ) as outfile:
                 if about_template is not None:
-                    outfile.write(about_template.render(
+                    outfile.write(get_template(about_template).render(
                         about_contents=about_html_content))
                 else:
                     outfile.write(about_html_content)
@@ -812,7 +812,7 @@ class FsspecReadWriteProtocol(
         content_filepath = os.path.join(self.url, GR_INDEX_FILE_NAME)
         with self.filesystem.open(
                 content_filepath, "wt", encoding="utf8") as outfile:
-            outfile.write(repository_template.render(
+            outfile.write(get_template(repository_template).render(
                 data=result,
                 has_about=has_about,
             ))

@@ -5,11 +5,9 @@ import itertools
 import json
 import logging
 import os
-import textwrap
-from typing import Any
+from typing import Any, ClassVar
 
 import yaml
-from jinja2 import Template
 
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.reference_genome import (
@@ -321,116 +319,8 @@ class ReferenceGenomeImplementation(
         index_file_name = config.get("index_file", f"{file_name}.fai")
         return {file_name, index_file_name}
 
-    def get_template(self) -> Template:
-        return Template(textwrap.dedent("""
-            {% extends base %}
-            {% block extra_styles %}
-            #chromosomes-table {
-                border-collapse: separate;
-                border-spacing: 0;
-                margin-bottom: 50px;
-            }
-            #chromosomes-table th {
-                border: 0;
-                border-top: 1px solid #cfd8df;
-                border-bottom: 1px solid #cfd8df;
-                border-right: 1px solid #cfd8df;
-            }
-            #chromosomes-table td {
-                border: 0;
-                border-bottom: 1px solid #cfd8df;
-                border-right: 1px solid #cfd8df;
-            }
-            #chromosomes-table th:first-child,
-            #chromosomes-table td:first-child {
-                border-left: 1px solid #cfd8df;
-            }
-            #chromosomes-table thead tr:nth-of-type(2) th {
-                border-top: none;
-            }
-            #chromosomes-table thead {
-                position: sticky; top: 0; background-color: white;
-            }
-            {% endblock %}
-
-            {% block content %}
-
-            {% if data["PARS"] %}
-            <h3>Pseudoautosomal regions:</h6>
-            {% if data["PARS"]["X"] %}
-            <p>X chromosome:</p>
-            <ul>
-            {% for region in data["PARS"]["X"] %}
-            <li>{{region}}</li>
-            {% endfor %}
-            </ul>
-            {% endif %}
-
-            {% if data["PARS"]["Y"] %}
-            <p>Y chromosome: </p>
-            <ul>
-            {% for region in data["PARS"]["Y"] %}
-            <li>{{region}}</li>
-            {% endfor %}
-            </ul>
-            {% endif %}
-            {% endif %}
-
-            <h3>{{ "Chromosomes ({0}):".format(data["chromosomes"]|length) }}</h3>
-            <div style="max-height: 50%; overflow-y: auto; width: fit-content; margin-bottom: 14px;">
-                <table id="chromosomes-table">
-                    <thead>
-                        <tr>
-                            <th>Chrom</th>
-                            <th>Length</th>
-                            {% for nucleotide in ["A", "T", "C", "G", "N"] %}
-                                <th>{{ nucleotide }}</th>
-                            {% endfor %}
-                        </tr>
-                        <tr>
-                            <th>Global</th>
-                            <td>{{ '{:,}'.format(data["global_statistic"]["length"]) }}</td>
-                            {% for nucleotide in ["A", "T", "C", "G", "N"] %}
-                                <td>{{ "%0.2f%%" % data["global_statistic"]["nuc_distribution"][nucleotide] }}</td>
-                            {% endfor %}
-                        </tr>
-                    </thead>
-                    {%- for chrom, length in data["chromosomes"] -%}
-                        <tr>
-                            <td>{{ chrom }}</td>
-                            <td>{{ '{:,}'.format(length) }}</td>
-                            {% for nucleotide in ["A", "T", "C", "G", "N"] %}
-                                {% if data["chrom_statistics"].get(chrom) %}
-                                    <td>{{ "%0.2f%%" % data["chrom_statistics"].get(chrom).nucleotide_distribution.get(nucleotide) }}</td>
-                                {% else %}
-                                    <td></td>
-                                {% endif %}
-                            {% endfor %}
-                        </tr>
-                    {%- endfor -%}
-                </table>
-            </div>
-            {% if data["global_statistic"] %}
-                <h3>Bi-Nucleotide distribution:</h3>
-                <table border="1" style="width: fit-content;">
-                    <tr>
-                        <th>{{ nucleotide }}</th>
-                        {% for nucleotide in ["A", "T", "C", "G", "N"] %}
-                            <th>{{ nucleotide }}</th>
-                        {% endfor %}
-                    </tr>
-                    {% for first_nucleotide in ["A", "T", "C", "G", "N"] %}
-                        <tr>
-                            <th>{{ first_nucleotide }}</th>
-                            {% for second_nucleotide in ["A", "T", "C", "G", "N"] %}
-                                <td>{{ "%0.2f%%" %  data["global_statistic"]["bi_nuc_distribution"].get(first_nucleotide + second_nucleotide) }}</td>
-                            {% endfor %}
-                        </tr>
-                    {% endfor %}
-                </table>
-            {% endif %}
-            {% endblock %}
-        """))  # noqa: E501
+    template_name: ClassVar[str] = "reference_genome.jinja"
+    styles_template_name: ClassVar[str] = "reference_genome_styles.jinja"
 
     def _get_template_data(self) -> dict[str, Any]:
         info = copy.deepcopy(self.config)

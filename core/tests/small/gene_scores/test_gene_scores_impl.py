@@ -7,7 +7,6 @@ import pytest
 from gain.gene_scores.gene_scores import ScoreDef
 from gain.gene_scores.implementations.gene_scores_impl import (
     GeneScoreImplementation,
-    build_gene_score_implementation_from_resource,
 )
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
@@ -24,7 +23,6 @@ from gain.genomic_resources.testing import (
     setup_directories,
 )
 from gain.task_graph.graph import TaskDesc
-from jinja2 import Template
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -100,13 +98,13 @@ def linear_impl(inmemory_repo: GenomicResourceRepo) -> GeneScoreImplementation:
 
 def test_factory_creates_impl(inmemory_repo: GenomicResourceRepo) -> None:
     res = inmemory_repo.get_resource("LinearScore")
-    impl = build_gene_score_implementation_from_resource(res)
+    impl = GeneScoreImplementation(res)
     assert isinstance(impl, GeneScoreImplementation)
 
 
 def test_factory_raises_on_none() -> None:
     with pytest.raises((ValueError, AttributeError)):
-        build_gene_score_implementation_from_resource(None)  # type: ignore[arg-type]
+        GeneScoreImplementation(None)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -126,11 +124,12 @@ def test_init_builds_gene_score(
 # get_template / _get_template_data
 # ---------------------------------------------------------------------------
 
-def test_get_template_returns_template(
+def test_template_loadable_from_environment(
     linear_impl: GeneScoreImplementation,
 ) -> None:
-    tmpl = linear_impl.get_template()
-    assert isinstance(tmpl, Template)
+    from gain.templates import get_jinja_env
+    tmpl = get_jinja_env().get_template(linear_impl.template_name)
+    assert tmpl is not None
 
 
 def test_get_template_data_contains_gene_score(
