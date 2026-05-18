@@ -1,14 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 import * as utils from '../utils';
 
-async function navigateToQuotas(page: Page): Promise<void> {
-  const quotasResponse = page.waitForResponse(
-    resp => resp.url().includes('/api/quotas') && resp.status() === 200
-  );
-  await page.getByRole('link', { name: 'Quotas' }).click();
-  await quotasResponse;
-  await page.waitForSelector('app-user-quotas', { state: 'visible' });
-}
 
 async function getDailyCurrentValue(page: Page, category: string): Promise<number> {
   const text = await page.locator(`#daily-current-${category}`).innerText();
@@ -47,7 +39,7 @@ test.describe('Quotas page', () => {
   test.describe('user with extra units', () => {
     test.beforeEach(async({ page }) => {
       await createUserWithExtraUnits(page, 100);
-      await navigateToQuotas(page);
+      await utils.navigateToQuotas(page);
     });
 
     test('should show dashes for daily cells', async({ page }) => {
@@ -83,7 +75,7 @@ test.describe('Quotas page', () => {
       const password = 'aaabbb';
       await utils.registerUser(page, email, password);
       await utils.loginUser(page, email, password);
-      await navigateToQuotas(page);
+      await utils.navigateToQuotas(page);
     });
 
     test('should show numbers instead of dashes for daily and monthly cells', async({ page }) => {
@@ -113,7 +105,7 @@ test.describe('Quotas page', () => {
   test.describe('anonymous user', () => {
     test.beforeEach(async({ page }) => {
       await page.goto('/', { waitUntil: 'load' });
-      await navigateToQuotas(page);
+      await utils.navigateToQuotas(page);
     });
 
     test('should not show extra cells and note', async({ page }) => {
@@ -137,7 +129,7 @@ test.describe('Quota changes', () => {
     });
 
     test('should decrease variant and attribute quotas after single annotation', async({ page }) => {
-      await navigateToQuotas(page);
+      await utils.navigateToQuotas(page);
       const initialDailyVariants = await getDailyCurrentValue(page, 'variants');
       const initialDailyAttributes = await getDailyCurrentValue(page, 'attributes');
       const initialMonthlyVariants = await getMonthlyCurrentValue(page, 'variants');
@@ -145,12 +137,12 @@ test.describe('Quota changes', () => {
 
       await page.getByRole('link', { name: 'Single Annotation' }).click();
       await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-      await customDefaultPipeline(page);
+      await utils.customDefaultPipeline(page);
       await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
       await page.getByRole('button', { name: 'Go', exact: true }).click();
       await page.waitForSelector('#report', { timeout: 120000 });
 
-      await navigateToQuotas(page);
+      await utils.navigateToQuotas(page);
       expect(await getDailyCurrentValue(page, 'variants')).toBe(initialDailyVariants - 1);
       expect(
         await getDailyCurrentValue(page, 'attributes')
@@ -160,7 +152,7 @@ test.describe('Quota changes', () => {
     });
 
     test('should decrease job, variant and attribute quotas after job annotation', async({ page }) => {
-      await navigateToQuotas(page);
+      await utils.navigateToQuotas(page);
       const initialDailyJobs = await getDailyCurrentValue(page, 'jobs');
       const initialDailyVariants = await getDailyCurrentValue(page, 'variants');
       const initialDailyAttributes = await getDailyCurrentValue(page, 'attributes');
@@ -170,12 +162,12 @@ test.describe('Quota changes', () => {
 
       await page.getByRole('link', { name: 'Annotation Jobs' }).click();
       await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-      await customDefaultPipeline(page);
+      await utils.customDefaultPipeline(page);
       await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
       await page.locator('#create-button').click();
       await page.waitForSelector('.success-status', { timeout: 120000 });
 
-      await navigateToQuotas(page);
+      await utils.navigateToQuotas(page);
       expect(await getDailyCurrentValue(page, 'jobs')).toBe(initialDailyJobs - 1);
       expect(await getDailyCurrentValue(page, 'variants')).toBe(initialDailyVariants - 2); // vcf file has 2 variants
       expect(
@@ -190,10 +182,25 @@ test.describe('Quota changes', () => {
   test.describe('anonymous user', () => {
     test.beforeEach(async({ page }) => {
       await page.goto('/', { waitUntil: 'load' });
+      // IP quota is shared across parallel workers — keep it far above the
+      // session value so min(session, ip) == session always, making exact
+      // toBe assertions independent of what other workers consume.
+      await utils.setAnonymousUserIpQuota(page, 'daily_variants', 100_000);
+      await utils.setAnonymousUserSessionQuota(page, 'daily_variants', 1_000);
+      await utils.setAnonymousUserIpQuota(page, 'monthly_variants', 100_000);
+      await utils.setAnonymousUserSessionQuota(page, 'monthly_variants', 1_000);
+      await utils.setAnonymousUserIpQuota(page, 'daily_attributes', 100_000);
+      await utils.setAnonymousUserSessionQuota(page, 'daily_attributes', 1_000);
+      await utils.setAnonymousUserIpQuota(page, 'monthly_attributes', 100_000);
+      await utils.setAnonymousUserSessionQuota(page, 'monthly_attributes', 1_000);
+      await utils.setAnonymousUserIpQuota(page, 'daily_jobs', 100_000);
+      await utils.setAnonymousUserSessionQuota(page, 'daily_jobs', 1_000);
+      await utils.setAnonymousUserIpQuota(page, 'monthly_jobs', 100_000);
+      await utils.setAnonymousUserSessionQuota(page, 'monthly_jobs', 1_000);
+      await utils.navigateToQuotas(page);
     });
 
     test('should decrease variant and attribute quotas after single annotation', async({ page }) => {
-      await navigateToQuotas(page);
       const initialDailyVariants = await getDailyCurrentValue(page, 'variants');
       const initialDailyAttributes = await getDailyCurrentValue(page, 'attributes');
       const initialMonthlyVariants = await getMonthlyCurrentValue(page, 'variants');
@@ -201,19 +208,20 @@ test.describe('Quota changes', () => {
 
       await page.getByRole('link', { name: 'Single Annotation' }).click();
       await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+      await utils.customDefaultPipeline(page);
       await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
       await page.getByRole('button', { name: 'Go', exact: true }).click();
       await page.waitForSelector('#report', { timeout: 120000 });
 
-      await navigateToQuotas(page);
+      await utils.navigateToQuotas(page);
       expect(await getDailyCurrentValue(page, 'variants')).toBe(initialDailyVariants - 1);
-      expect(await getDailyCurrentValue(page, 'attributes')).toBeLessThan(initialDailyAttributes);
+      expect(await getDailyCurrentValue(page, 'attributes'))
+        .toBe(initialDailyAttributes - 3); // pipeline has 3 attributes
       expect(await getMonthlyCurrentValue(page, 'variants')).toBe(initialMonthlyVariants - 1);
-      expect(await getMonthlyCurrentValue(page, 'attributes')).toBeLessThan(initialMonthlyAttributes);
+      expect(await getMonthlyCurrentValue(page, 'attributes')).toBe(initialMonthlyAttributes - 3);
     });
 
     test('should decrease job, variant and attribute quotas after job annotation', async({ page }) => {
-      await navigateToQuotas(page);
       const initialDailyJobs = await getDailyCurrentValue(page, 'jobs');
       const initialDailyVariants = await getDailyCurrentValue(page, 'variants');
       const initialDailyAttributes = await getDailyCurrentValue(page, 'attributes');
@@ -223,12 +231,12 @@ test.describe('Quota changes', () => {
 
       await page.getByRole('link', { name: 'Annotation Jobs' }).click();
       await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-      await customDefaultPipeline(page);
+      await utils.customDefaultPipeline(page);
       await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
       await page.locator('#create-button').click();
       await page.waitForSelector('.success-status', { timeout: 120000 });
 
-      await navigateToQuotas(page);
+      await utils.navigateToQuotas(page);
       expect(await getDailyCurrentValue(page, 'jobs')).toBe(initialDailyJobs - 1);
       expect(await getDailyCurrentValue(page, 'variants')).toBe(initialDailyVariants - 2); // vcf file has 2 variants
       expect(
@@ -242,17 +250,20 @@ test.describe('Quota changes', () => {
 });
 
 test.describe('Quota limit', () => {
-  test.describe('daily', () => {
+  test.describe('user daily quotas', () => {
+    let email: string;
+    test.beforeEach(async({ page }) => {
+      email = utils.getRandomString() + '@email.com';
+      await utils.registerUser(page, email, 'aaabbb');
+      await utils.loginUser(page, email, 'aaabbb');
+    });
+
     test('single annotation is blocked when daily variant quota is exhausted', async({ page }) => {
-      const email = utils.getRandomString() + '@email.com';
-      const password = 'aaabbb';
-      await utils.registerUser(page, email, password);
-      await utils.loginUser(page, email, password);
       await utils.setCurrentQuota(page, email, 'daily_variants', 0);
 
       await page.getByRole('link', { name: 'Single Annotation' }).click();
       await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-      await customDefaultPipeline(page);
+      await utils.customDefaultPipeline(page);
       await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
 
       const quotaResponse = page.waitForResponse(
@@ -266,15 +277,11 @@ test.describe('Quota limit', () => {
     });
 
     test('job annotation shows error message when daily job quota is exhausted', async({ page }) => {
-      const email = utils.getRandomString() + '@email.com';
-      const password = 'aaabbb';
-      await utils.registerUser(page, email, password);
-      await utils.loginUser(page, email, password);
       await utils.setCurrentQuota(page, email, 'daily_jobs', 0);
 
       await page.getByRole('link', { name: 'Annotation Jobs' }).click();
       await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-      await customDefaultPipeline(page);
+      await utils.customDefaultPipeline(page);
       await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
       await page.locator('#create-button').click();
 
@@ -282,17 +289,20 @@ test.describe('Quota limit', () => {
     });
   });
 
-  test.describe('monthly', () => {
+  test.describe('user monthly quotas', () => {
+    let email: string;
+    test.beforeEach(async({ page }) => {
+      email = utils.getRandomString() + '@email.com';
+      await utils.registerUser(page, email, 'aaabbb');
+      await utils.loginUser(page, email, 'aaabbb');
+    });
+
     test('single annotation is blocked when monthly variant quota is exhausted', async({ page }) => {
-      const email = utils.getRandomString() + '@email.com';
-      const password = 'aaabbb';
-      await utils.registerUser(page, email, password);
-      await utils.loginUser(page, email, password);
       await utils.setCurrentQuota(page, email, 'monthly_variants', 0);
 
       await page.getByRole('link', { name: 'Single Annotation' }).click();
       await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-      await customDefaultPipeline(page);
+      await utils.customDefaultPipeline(page);
       await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
 
       const quotaResponse = page.waitForResponse(
@@ -306,15 +316,65 @@ test.describe('Quota limit', () => {
     });
 
     test('job annotation shows error message when monthly job quota is exhausted', async({ page }) => {
-      const email = utils.getRandomString() + '@email.com';
-      const password = 'aaabbb';
-      await utils.registerUser(page, email, password);
-      await utils.loginUser(page, email, password);
       await utils.setCurrentQuota(page, email, 'monthly_jobs', 0);
 
       await page.getByRole('link', { name: 'Annotation Jobs' }).click();
       await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-      await customDefaultPipeline(page);
+      await utils.customDefaultPipeline(page);
+      await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
+      await page.locator('#create-button').click();
+
+      await expect(page.locator('#creation-error')).toHaveText('Job quota exceeded!');
+    });
+  });
+
+  test.describe('anonymous user daily quotas', () => {
+    test.beforeEach(async({ page }) => {
+      await page.goto('/single-annotation', { waitUntil: 'load' });
+      // IP stays high so the initial "> 0" check always passes;
+      // tests set only the session quota to 0 to avoid blocking parallel workers.
+      await utils.setAnonymousUserIpQuota(page, 'daily_variants', 100_000);
+      await utils.setAnonymousUserSessionQuota(page, 'daily_variants', 100);
+      await utils.setAnonymousUserIpQuota(page, 'daily_jobs', 100_000);
+      await utils.setAnonymousUserSessionQuota(page, 'daily_jobs', 100);
+    });
+
+    test('single annotation is blocked when variants quota is exhausted', async({ page }) => {
+      await utils.navigateToQuotas(page);
+      expect(await getDailyCurrentValue(page, 'variants')).toBeGreaterThan(0);
+
+      await utils.setAnonymousUserSessionQuota(page, 'daily_variants', 0);
+
+      await page.reload({ waitUntil: 'load' });
+      expect(await getDailyCurrentValue(page, 'variants')).toBe(0);
+
+      await page.getByRole('link', { name: 'Single Annotation' }).click();
+
+      await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+      await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
+
+      const quotaResponse = page.waitForResponse(
+        resp => resp.url().includes('/api/single_allele/annotate') && resp.status() === 429
+      );
+      await page.getByRole('button', { name: 'Go', exact: true }).click();
+      await quotaResponse;
+
+      await expect(page.locator('.error-message')).toHaveText('Single allele query quota exceeded!');
+      await expect(page.locator('#report')).not.toBeVisible();
+    });
+
+    test('job annotation shows error message when job quota is exhausted', async({ page }) => {
+      await utils.navigateToQuotas(page);
+      expect(await getDailyCurrentValue(page, 'jobs')).toBeGreaterThan(0);
+
+      await utils.setAnonymousUserSessionQuota(page, 'daily_jobs', 0);
+
+      await page.reload({ waitUntil: 'load' });
+      expect(await getDailyCurrentValue(page, 'jobs')).toBe(0);
+
+      await page.getByRole('link', { name: 'Annotation Jobs' }).click();
+      await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+      await utils.customDefaultPipeline(page);
       await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
       await page.locator('#create-button').click();
 
@@ -333,16 +393,16 @@ test.describe('User quotas - extra units consumption', () => {
     await utils.setCurrentQuota(page, email, 'daily_variants', 0);
     await utils.setCurrentQuota(page, email, 'daily_attributes', 0);
 
-    await navigateToQuotas(page);
+    await utils.navigateToQuotas(page);
 
     await page.getByRole('link', { name: 'Single Annotation' }).click();
     await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-    await customDefaultPipeline(page);
+    await utils.customDefaultPipeline(page);
     await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
     await page.getByRole('button', { name: 'Go', exact: true }).click();
     await page.waitForSelector('#report', { timeout: 120000 });
 
-    await navigateToQuotas(page);
+    await utils.navigateToQuotas(page);
     expect(await getExtraValue(page, 'variants')).toBe(99);
     expect(await getExtraValue(page, 'attributes')).toBe(97); // pipeline has 3 attributes
   });
@@ -360,16 +420,16 @@ test.describe('User quotas - extra units consumption', () => {
     await utils.setCurrentQuota(page, email, 'daily_jobs', 0);
 
 
-    await navigateToQuotas(page);
+    await utils.navigateToQuotas(page);
 
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
     await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-    await customDefaultPipeline(page);
+    await utils.customDefaultPipeline(page);
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
     await page.locator('#create-button').click();
     await page.waitForSelector('.success-status', { timeout: 120000 });
 
-    await navigateToQuotas(page);
+    await utils.navigateToQuotas(page);
     expect(await getExtraValue(page, 'jobs')).toBe(99);
     expect(await getExtraValue(page, 'variants')).toBe(98); // vcf file has 2 variants
     expect(await getExtraValue(page, 'attributes')).toBe(97); // pipeline has 3 attributes
@@ -378,7 +438,7 @@ test.describe('User quotas - extra units consumption', () => {
   test('should not consume extra units when regular quota is still available', async({ page }) => {
     await createUserWithExtraUnits(page, 100);
 
-    await navigateToQuotas(page);
+    await utils.navigateToQuotas(page);
     const initialExtraVariants = await getExtraValue(page, 'variants');
     const initialExtraAttributes = await getExtraValue(page, 'attributes');
     const initialMonthlyVariants = await getMonthlyCurrentValue(page, 'variants');
@@ -386,12 +446,12 @@ test.describe('User quotas - extra units consumption', () => {
 
     await page.getByRole('link', { name: 'Single Annotation' }).click();
     await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-    await customDefaultPipeline(page);
+    await utils.customDefaultPipeline(page);
     await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
     await page.getByRole('button', { name: 'Go', exact: true }).click();
     await page.waitForSelector('#report', { timeout: 120000 });
 
-    await navigateToQuotas(page);
+    await utils.navigateToQuotas(page);
     expect(await getExtraValue(page, 'variants')).toBe(initialExtraVariants);
     expect(await getExtraValue(page, 'attributes')).toBe(initialExtraAttributes);
     expect(await getMonthlyCurrentValue(page, 'variants')).toBe(initialMonthlyVariants - 1);
@@ -399,29 +459,3 @@ test.describe('User quotas - extra units consumption', () => {
   });
 });
 
-async function customDefaultPipeline(page: Page): Promise<void> {
-  await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
-  await expect(page.locator('#pipelines-input')).toBeEmpty();
-  await expect(page.locator('.monaco-editor').nth(0)).toBeEmpty();
-
-  const saveResponse = page.waitForResponse(
-    resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
-  );
-
-  await utils.typeInPipelineEditor(
-    page,
-    '- effect_annotator:\n' +
-    '   gene_models: hg38/gene_models/GENCODE/48/basic/ALL\n' +
-    '   genome: hg38/genomes/GRCh38.p13\n' +
-    '   attributes:\n' +
-    '   - worst_effect\n' +
-    '   - gene_effects\n' +
-    '   - effect_details\n' +
-    '   - name: gene_list \n' +
-    '     internal: true\n'
-  );
-
-  await saveResponse;
-
-  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-}

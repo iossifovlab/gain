@@ -7,6 +7,12 @@ test.describe('Anonymous user tests', () => {
     await page.goto('/', {waitUntil: 'load'});
     // wait for default pipeline to load
     await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await utils.setAnonymousUserIpQuota(page, 'daily_jobs', 100_000);
+    await utils.setAnonymousUserSessionQuota(page, 'daily_jobs', 1_000);
+    await utils.setAnonymousUserIpQuota(page, 'daily_variants', 100_000);
+    await utils.setAnonymousUserSessionQuota(page, 'daily_variants', 1_000);
+    await utils.setAnonymousUserIpQuota(page, 'daily_attributes', 100_000);
+    await utils.setAnonymousUserSessionQuota(page, 'daily_attributes', 1_000);
   });
 
   test('should check if delete and save pipelines buttons are hidden', async({ page }) => {
@@ -181,7 +187,7 @@ test.describe('Anonymous user tests', () => {
 
   test('should annotate with tsv file', async({ page }) => {
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-    await customDefaultPipeline(page);
+    await utils.customDefaultPipeline(page);
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-tsv-file.tsv');
     await page.locator('#create-button').click();
     await page.waitForSelector('.success-status', {timeout: 120000});
@@ -190,7 +196,7 @@ test.describe('Anonymous user tests', () => {
   test('should annotate with csv file', async({ page }) => {
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
 
-    await customDefaultPipeline(page);
+    await utils.customDefaultPipeline(page);
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-csv-file.csv');
     await page.locator('#create-button').click();
     await page.waitForSelector('.success-status', {timeout: 120000});
@@ -198,7 +204,7 @@ test.describe('Anonymous user tests', () => {
 
   test('should download job result', async({ page }) => {
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-    await customDefaultPipeline(page);
+    await utils.customDefaultPipeline(page);
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
     await page.locator('#create-button').click();
 
@@ -238,7 +244,7 @@ test.describe('Web socket tests', () => {
 
   test('should download job result by link copy', async({ page }) => {
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-    await customDefaultPipeline(page);
+    await utils.customDefaultPipeline(page);
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
     await page.locator('#create-button').click();
 
@@ -261,29 +267,3 @@ test.describe('Web socket tests', () => {
   });
 });
 
-async function customDefaultPipeline(page: Page): Promise<void> {
-  await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
-  await expect(page.locator('#pipelines-input')).toBeEmpty();
-  await expect(page.locator('.monaco-editor').nth(0)).toBeEmpty();
-
-  const saveResponse = page.waitForResponse(
-    resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
-  );
-
-  await utils.typeInPipelineEditor(
-    page,
-    '- effect_annotator:\n' +
-    '   gene_models: hg38/gene_models/GENCODE/48/basic/ALL\n' +
-    '   genome: hg38/genomes/GRCh38.p13\n' +
-    '   attributes:\n' +
-    '   - worst_effect\n' +
-    '   - gene_effects\n' +
-    '   - effect_details\n' +
-    '   - name: gene_list \n' +
-    '     internal: true\n'
-  );
-
-  await saveResponse;
-
-  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-}

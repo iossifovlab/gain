@@ -91,7 +91,7 @@ export type CurrentQuotaType =
   | 'daily_attributes'
   | 'monthly_attributes';
 
-const backendUrl = process.env['CI'] === '1' ? 'http://backend:9001' : 'http://localhost:8000';
+export const backendUrl = process.env['CI'] === '1' ? 'http://backend:9001' : 'http://localhost:8000';
 
 export async function resetDailyQuota(page: Page): Promise<void> {
   const response = await page.request.get(`${backendUrl}/admin-panel/reset-daily-quota`);
@@ -119,10 +119,63 @@ export async function setCurrentQuota(
   expect(response.status()).toBe(200);
 }
 
+export async function setAnonymousUserSessionQuota(
+  page: Page, quotaType: CurrentQuotaType, amount: number
+): Promise<void> {
+  const params = new URLSearchParams({ quota_type: quotaType, amount: String(amount) });
+  const response = await page.request.get(`${backendUrl}/admin-panel/set-session-quota?${params.toString()}`);
+  expect(response.status()).toBe(200);
+}
+
+export async function setAnonymousUserIpQuota(
+  page: Page, quotaType: CurrentQuotaType, amount: number
+): Promise<void> {
+  const params = new URLSearchParams({ quota_type: quotaType, amount: String(amount) });
+  const response = await page.request.get(`${backendUrl}/admin-panel/set-ip-quota?${params.toString()}`);
+  expect(response.status()).toBe(200);
+}
+
 export async function selectPipeline(page: Page, pipeline: string): Promise<void> {
   await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
   await page.locator('.dropdown-icon').click();
   await page.getByRole('option', { name: 'circle ' + pipeline, exact: true }).click();
   await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+}
+
+export async function customDefaultPipeline(page: Page): Promise<void> {
+  await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+  await expect(page.locator('#pipelines-input')).toBeEmpty();
+  await expect(page.locator('.monaco-editor').nth(0)).toBeEmpty();
+
+  const saveResponse = page.waitForResponse(
+    resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
+  );
+
+  await typeInPipelineEditor(
+    page,
+    '- effect_annotator:\n' +
+    '   gene_models: hg38/gene_models/GENCODE/48/basic/ALL\n' +
+    '   genome: hg38/genomes/GRCh38.p13\n' +
+    '   attributes:\n' +
+    '   - worst_effect\n' +
+    '   - gene_effects\n' +
+    '   - effect_details\n' +
+    '   - name: gene_list \n' +
+    '     internal: true\n'
+  );
+
+  await saveResponse;
+
+  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+}
+
+export async function navigateToQuotas(page: Page): Promise<void> {
+  const quotasResponse = page.waitForResponse(
+    resp => resp.url().includes('/api/quotas') && resp.status() === 200,
+    { timeout: 120000 }
+  );
+  await page.getByRole('link', { name: 'Quotas' }).click();
+  await quotasResponse;
+  await page.waitForSelector('app-user-quotas', { state: 'visible' });
 }
 
