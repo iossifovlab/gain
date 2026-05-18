@@ -122,7 +122,12 @@ export async function setCurrentQuota(
 export async function setAnonymousUserSessionQuota(
   page: Page, quotaType: CurrentQuotaType, amount: number
 ): Promise<void> {
+  const cookies = await page.context().cookies();
+  const sessionId = cookies.find(c => c.name === 'sessionid')?.value;
   const params = new URLSearchParams({ quota_type: quotaType, amount: String(amount) });
+  if (sessionId) {
+    params.append('session_id', sessionId);
+  }
   const response = await page.request.get(`${backendUrl}/admin-panel/set-session-quota?${params.toString()}`);
   expect(response.status()).toBe(200);
 }
