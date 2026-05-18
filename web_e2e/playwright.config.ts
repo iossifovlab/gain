@@ -62,7 +62,20 @@ export default defineConfig({
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 1920, height: 1080 }
-      }
-    }
+      },
+      testIgnore: /rate-limit-anon\.spec\.ts/,
+    },
+    {
+      // Runs after 'chromium' so the 1-minute IP throttle window has reset
+      // before the anonymous rate limit test fires. See rate-limit-anon.spec.ts.
+      // To run standalone: npx playwright test --project=rate-limit-anon --ignore-dependencies
+      name: 'rate-limit-anon',
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1920, height: 1080 }
+      },
+      testMatch: /rate-limit-anon\.spec\.ts/,
+      dependencies: ['chromium'],
+    },
   ],
 });
