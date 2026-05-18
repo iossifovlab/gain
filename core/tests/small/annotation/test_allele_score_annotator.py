@@ -318,7 +318,7 @@ def test_allele_score_annotator_region_with_default_annotation(
     assert len(result) == 2
     assert result["allele_freq"] == 2.0
     assert set(result["variant_id"]) == {
-        "ag", "ac", "at", "cag", "ct", "ca", "cca", "ccg"
+        "ag", "ac", "at", "cag", "ct", "ca", "cca", "ccg",
     }
 
 

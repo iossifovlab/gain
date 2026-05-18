@@ -672,7 +672,8 @@ variant frequencies, etc.
         if annotatable is None:
             return self._empty_result()
 
-        if annotatable.chromosome not in self.allele_score.get_all_chromosomes():
+        all_chroms = self.allele_score.get_all_chromosomes()
+        if annotatable.chromosome not in all_chroms:
             return self._empty_result()
 
         if self.mode == "allele":
