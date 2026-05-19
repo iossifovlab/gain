@@ -1330,44 +1330,38 @@ class AlleleScore(GenomicScore):
         first_line = next(region_lines, None)
         if first_line is None:
             return
-        lchrom, left, right, val, line = first_line
-        if left != right:
-            raise ValueError(
-                f"value for a region in allele score "
-                f"{chrom}:{left}-{right}")
+        lchrom, _left, _right, val, line = first_line
+        pos = line.pos_begin
 
         returned_region: tuple[
             str, int | None, int | None, list[ScoreValue] | None,
             set[tuple[str | None, str | None]],
-        ] = (lchrom, left, right, val, {(line.ref, line.alt)})
-        yield (left, line.ref, line.alt, val)
+        ] = (lchrom, pos, pos, val, {(line.ref, line.alt)})
+        yield (pos, line.ref, line.alt, val)
 
-        for lchrom, left, right, val, line in region_lines:
-            if left != right:
-                raise ValueError(
-                    f"value for a region in allele score "
-                    f"{chrom}:{left}-{right}")
+        for lchrom, _left, _right, val, line in region_lines:
+            pos = line.pos_begin
             returned_nucleotides = (line.ref, line.alt)
-            if (left, right) == (returned_region[1], returned_region[2]):
+            if (pos, pos) == (returned_region[1], returned_region[2]):
                 if returned_nucleotides in returned_region[4]:
                     logger.debug(
-                        "multiple values for positions %s:%s-%s "
+                        "multiple values for positions %s:%s "
                         "and nucleotides %s",
-                        chrom, left, right, returned_nucleotides)
+                        chrom, pos, returned_nucleotides)
 
                 returned_region[4].add((line.ref, line.alt))
-                yield (left, line.ref, line.alt, val)
+                yield (pos, line.ref, line.alt, val)
                 continue
             prev_chrom = returned_region[0]
             if lchrom != prev_chrom:
                 returned_region = (lchrom, None, None, None, set())
             prev_right = returned_region[2]
-            if prev_right is not None and left < prev_right:
+            if prev_right is not None and pos < prev_right:
                 raise ValueError(
-                    f"multiple values for positions [{left}, {prev_right}]")
+                    f"multiple values for positions [{pos}, {prev_right}]")
             returned_region = (
-                lchrom, left, right, val, {(line.ref, line.alt)})
-            yield (left, line.ref, line.alt, val)
+                lchrom, pos, pos, val, {(line.ref, line.alt)})
+            yield (pos, line.ref, line.alt, val)
 
     def fetch_allele_line(
         self, chrom: str, pos: int, ref: str, alt: str,

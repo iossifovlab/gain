@@ -631,7 +631,7 @@ def test_allele_score_region_vcf_repeated_annotation_idempotent(
                 """),
             },
         })
-    # pos 10: dinucleotide GG→AA spans positions 10–11 (1-based)
+    # pos 10: dinucleotide GG→AA spans positions 10-11 (1-based)
     # pos 11: SNV G→A sits exactly at position 11
     # A region query for position 11 should include both records.
     setup_vcf(
