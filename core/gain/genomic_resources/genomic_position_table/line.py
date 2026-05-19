@@ -79,7 +79,7 @@ class VCFLine:
         self.chrom: str = raw_line.contig
         self.fchrom: str = raw_line.contig
         self.pos_begin: int = raw_line.pos
-        self.pos_end: int = raw_line.pos
+        self.pos_end: int = raw_line.stop
 
         assert raw_line.ref is not None
         self.ref: str | None = raw_line.ref
@@ -224,7 +224,7 @@ class LineBuffer:
 
         while mid_index > 0:
             prev = self.deque[mid_index - 1]
-            if pos > prev.pos_begin:
+            if pos > prev.pos_end:
                 break
             mid_index -= 1
 

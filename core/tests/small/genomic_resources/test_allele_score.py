@@ -308,7 +308,7 @@ def test_allele_score_fetch_scores_invalid_chromosome() -> None:
         score.fetch_scores("2", 10, "A", "G")
 
 
-def test_allele_score_fetch_region_rejects_spanning_records() -> None:
+def test_allele_score_fetch_region_spanning_record_at_pos_begin() -> None:
     res = build_allele_resource(
         """
         type: allele_score
@@ -333,8 +333,8 @@ def test_allele_score_fetch_region_rejects_spanning_records() -> None:
     score = AlleleScore(res)
     score.open()
 
-    with pytest.raises(ValueError, match="value for a region in allele score"):
-        list(score.fetch_region("1", 10, 12, ["freq"]))
+    result = list(score.fetch_region("1", 10, 12, ["freq"]))
+    assert result == [(10, "A", "G", [0.02])]
 
 
 def test_allele_score_build_scores_agg_defaults() -> None:
