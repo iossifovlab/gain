@@ -364,21 +364,6 @@ def collect_dvc_entries(
     return result
 
 
-def _do_resource_stats_hash_and_manifest(
-    proto: ReadWriteRepositoryProtocol,
-    res: GenomicResource,
-    dry_run: bool,  # noqa: FBT001
-    force: bool,  # noqa: FBT001
-    use_dvc: bool,  # noqa: FBT001
-) -> None:
-    _store_stats_hash(proto, res)
-    _do_resource_manifest_command(
-        proto, res,
-        dry_run=dry_run,
-        force=force,
-        use_dvc=use_dvc)
-
-
 def _do_resource_manifest_command(
     proto: ReadWriteRepositoryProtocol,
     res: GenomicResource,
@@ -448,12 +433,6 @@ def _run_repo_manifest_command_internal(
             force=force,
             use_dvc=use_dvc,
         )
-
-    if dry_run:
-        return updates_needed
-
-    assert isinstance(proto, FsspecReadWriteProtocol)
-    proto.build_content_file()
 
     return updates_needed
 
@@ -545,6 +524,8 @@ def _run_repo_manifest_command(
         proto, resources, **kwargs)
     if dry_run:
         return len(updates_needed)
+    assert isinstance(proto, FsspecReadWriteProtocol)
+    proto.build_content_file()
     return 0
 
 
@@ -611,7 +592,6 @@ def _read_stats_hash(
 def _store_stats_hash(
     proto: ReadWriteRepositoryProtocol,
     resource: GenomicResource,
-    *args: Any,  # noqa: ARG001
 ) -> bool:
 
     impl = build_resource_implementation(resource)
@@ -629,15 +609,12 @@ def _store_stats_hash(
     return True
 
 
-def _collect_impl_stats_tasks(  # pylint: disable=too-many-arguments
+def _collect_impl_stats_tasks(
     graph: TaskGraph,
     proto: ReadWriteRepositoryProtocol,
     impl: GenomicResourceImplementation,
     grr: GenomicResourceRepo,
     *,
-    dry_run: bool,
-    force: bool,
-    use_dvc: bool,
     region_size: int,
 ) -> None:
 
@@ -645,18 +622,18 @@ def _collect_impl_stats_tasks(  # pylint: disable=too-many-arguments
         region_size=region_size, grr=grr)
 
     last_task: list[Task] = [tasks[-1].task] if len(tasks) > 0 else []
-    manifest_task = graph.make_task(
-        f"{impl.resource.get_full_id()}_stats_hash_and_manifest_rebuild",
-        _do_resource_stats_hash_and_manifest,
-        args=[proto, impl.resource, dry_run, force, use_dvc],
+    hash_task = graph.make_task(
+        f"{impl.resource.get_full_id()}_stats_hash_rebuild",
+        _store_stats_hash,
+        args=[proto, impl.resource],
         deps=last_task,
     )
     if len(tasks) == 1:
-        merged_task = chain_tasks(tasks[0], manifest_task)
+        merged_task = chain_tasks(tasks[0], hash_task)
         graph.add_task(merged_task)
     else:
         graph.add_tasks(tasks)
-        graph.add_task(manifest_task)
+        graph.add_task(hash_task)
 
 
 def _stats_need_rebuild(
@@ -706,26 +683,21 @@ def _run_repo_stats_command(
     graph = TaskGraph()
 
     status = 0
+    stats_resources: list[GenomicResource] = []
     for res in resources:
-        if updates_needed[res.resource_id]:
-            status += 1
-            logger.info(
-                "Manifest of <%s> needs update, cannot check statistics",
-                res.resource_id,
-            )
-            continue
         impl = build_resource_implementation(res)
-        needs_rebuild = _stats_need_rebuild(proto, impl)
-        if (force or needs_rebuild) and not dry_run:
+        manifest_updated = updates_needed[res.resource_id]
+        needs_rebuild = manifest_updated or _stats_need_rebuild(proto, impl)
+        if dry_run:
+            if needs_rebuild:
+                logger.info(
+                    "Statistics of <%s> needs update", res.resource_id)
+                status += 1
+        elif force or needs_rebuild:
             _collect_impl_stats_tasks(
                 graph, proto, impl, repo,
-                dry_run=dry_run,
-                force=force,
-                use_dvc=use_dvc,
                 region_size=region_size)
-        elif dry_run and needs_rebuild:
-            logger.info("Statistics of <%s> needs update", res.resource_id)
-            status += 1
+            stats_resources.append(res)
 
     if dry_run:
         return status
@@ -741,6 +713,13 @@ def _run_repo_stats_command(
         TaskGraphCli.process_graph(
             graph, task_progress_mode=False, **modified_kwargs)
 
+    if stats_resources:
+        _run_repo_manifest_command_internal(
+            proto, stats_resources,
+            dry_run=False, force=True, use_dvc=use_dvc)
+
+    assert isinstance(proto, FsspecReadWriteProtocol)
+    proto.build_content_file()
     return 0
 
 
