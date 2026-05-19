@@ -269,7 +269,7 @@ describe('SingleAnnotationReportComponent', () => {
     component.saveReport();
 
     const savedText = await (saveAsSpy.mock.calls[0][0] as Blob).text();
-    expect(savedText).toContain('effects\t["missense","synonymous"]\teffect list\n');
+    expect(savedText).toContain('effects\tmissense;synonymous\teffect list\n');
   });
 
   it('should write empty string for null attribute value in saved report', async() => {
