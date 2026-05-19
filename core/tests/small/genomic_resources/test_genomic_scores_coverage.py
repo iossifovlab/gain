@@ -398,8 +398,8 @@ def test_allele_score_fetch_region_spanning_record() -> None:
     score = AlleleScore(res)
     score.open()
 
-    with pytest.raises(ValueError, match="value for a region in allele score"):
-        list(score.fetch_region("1", 10, 20, ["freq"]))
+    result = list(score.fetch_region("1", 10, 20, ["freq"]))
+    assert result == [(10, "A", "G", [0.02])]
 
 
 def test_allele_score_fetch_region_overlapping_positions(
