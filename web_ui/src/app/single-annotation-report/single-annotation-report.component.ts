@@ -9,6 +9,7 @@ import { MatDialog } from '@angular/material/dialog';
 import { FormatResultValuePipe } from '../format-result-value.pipe';
 import { SingleAnnotationReportStateService } from './single-annotation-report-state.service';
 import { ViewportService } from '../viewport.service';
+import { isArray } from 'lodash';
 
 @Component({
   selector: 'app-single-annotation-report',
@@ -78,7 +79,9 @@ export class SingleAnnotationReportComponent {
             value = value.slice(0, -1); // Remove trailing ;
           }
         } else if (val !== null) {
-          if (typeof val === 'object') {
+          if (isArray(val)) {
+            value = val.join(';');
+          } else if (typeof val === 'object') {
             try {
               value = JSON.stringify(val);
             } catch {
