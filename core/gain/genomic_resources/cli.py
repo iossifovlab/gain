@@ -19,7 +19,6 @@ from gain import __version__
 from gain.genomic_resources.cached_repository import GenomicResourceCachedRepo
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
-    FsspecRepositoryProtocol,
     build_fsspec_protocol,
 )
 from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
@@ -203,8 +202,8 @@ def _run_repo_init_command(**kwargs: str) -> None:
         cwd = pathlib.Path(repository).absolute()
 
     proto = _create_proto(str(cwd))
-    assert isinstance(proto, FsspecRepositoryProtocol)
-    proto.build_content_file()
+    assert isinstance(proto, FsspecReadWriteProtocol)
+    _build_content_file(proto)
 
 
 def _configure_repo_manifest_subparser(
@@ -437,6 +436,17 @@ def _run_repo_manifest_command_internal(
     return updates_needed
 
 
+def _build_content_file(proto: FsspecReadWriteProtocol) -> None:
+    """Build CONTENTS.json and rebuild the FTS DB if content changed."""
+    try:
+        old_md5 = proto.md5_contents()
+    except Exception:  # noqa: BLE001
+        old_md5 = None
+    proto.build_content_file()
+    if old_md5 != proto.md5_contents():
+        _create_contents_db(proto)
+
+
 def _run_build_fts_db_command(
     proto: FsspecReadWriteProtocol,
 ) -> None:
@@ -525,7 +535,7 @@ def _run_repo_manifest_command(
     if dry_run:
         return len(updates_needed)
     assert isinstance(proto, FsspecReadWriteProtocol)
-    proto.build_content_file()
+    _build_content_file(proto)
     return 0
 
 
@@ -719,7 +729,7 @@ def _run_repo_stats_command(
             dry_run=False, force=True, use_dvc=use_dvc)
 
     assert isinstance(proto, FsspecReadWriteProtocol)
-    proto.build_content_file()
+    _build_content_file(proto)
     return 0
 
 
