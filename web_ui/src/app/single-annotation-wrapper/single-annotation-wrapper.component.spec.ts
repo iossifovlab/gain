@@ -207,4 +207,21 @@ describe('SingleAnnotationWrapperComponent', () => {
     component.autoSavePipeline();
     expect(pipelinesComponentSpy).not.toHaveBeenCalled();
   });
+
+  it('should set hideHistory to false when window width is at most 1200 on resize', () => {
+    component.hideHistory = true;
+    Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 1000 });
+    window.dispatchEvent(new Event('resize'));
+    expect(component.hideHistory).toBe(false);
+  });
+
+  it('should call annotate directly when pipeline is unchanged and config is valid', () => {
+    fixture.detectChanges();
+    pipelineStateService.isConfigValid.set(true);
+    jest.spyOn(component.pipelinesComponent, 'isPipelineChanged').mockReturnValue(false);
+    const annotateSpy = jest.spyOn(component.singleAnnotationComponent, 'annotate').mockImplementation(() => {});
+
+    component.autoSavePipeline();
+    expect(annotateSpy).toHaveBeenCalledWith();
+  });
 });

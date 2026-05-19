@@ -4,7 +4,7 @@ import { NewAnnotatorComponent } from './new-annotator.component';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
-import { Observable, of } from 'rxjs';
+import { Observable, of, throwError } from 'rxjs';
 import { PipelineEditorService } from '../pipeline-editor.service';
 import {
   AnnotatorConfig,
@@ -764,6 +764,50 @@ describe('NewAnnotatorComponent', () => {
       expect(component.displayWarningMessage).toBe(false);
     });
   });
+
+  it('should set errorMessage when requestAttributes fails', () => {
+    jest.spyOn(pipelineEditorServiceMock, 'getAttributes').mockReturnValueOnce(
+      throwError(() => new Error('attr error'))
+    );
+    component.annotatorStep.setControl('annotator', new FormControl('gene_set_annotator'));
+    component.requestAttributes();
+    expect(component.errorMessage).toBe('attr error');
+  });
+
+  it('should set errorMessage when getAnnotatorYml fails in onFinish', () => {
+    jest.spyOn(pipelineEditorServiceMock, 'getAnnotatorYml').mockReturnValueOnce(
+      throwError(() => new Error('yml error'))
+    );
+    component.configurationStep.setControl('resource_id', new FormControl('gene_properties/gene_scores/RVIS'));
+    component.annotatorStep.setControl('annotator', new FormControl('gene_set_annotator'));
+    component.selectedAttributes = [];
+    component.onFinish();
+    expect(component.errorMessage).toBe('yml error');
+  });
+
+  it('should append more attributes when loading next attribute page', () => {
+    component.requestAttributes();
+    component.attributePage = new AttributePage(attributesMock, 0, 3, 9);
+    component.filteredAttributes = [...attributesMock];
+    const extraAttr = new AttributeData('extra', 'string', 'src', false, false, 'desc');
+    jest.spyOn(pipelineEditorServiceMock, 'getAttributes').mockReturnValueOnce(
+      of(new AttributePage([extraAttr], 1, 3, 9))
+    );
+    component['loadMoreAttributes']();
+    expect(component.filteredAttributes).toStrictEqual([...attributesMock, extraAttr]);
+    expect(component.isAttributeLoading).toBe(false);
+  });
+
+  it('should set isAttributeLoading to false when loadMoreAttributes fails', () => {
+    component.requestAttributes();
+    component.attributePage = new AttributePage(attributesMock, 0, 3, 9);
+    jest.spyOn(pipelineEditorServiceMock, 'getAttributes').mockReturnValueOnce(
+      throwError(() => new Error('error'))
+    );
+    component.isAttributeLoading = true;
+    component['loadMoreAttributes']();
+    expect(component.isAttributeLoading).toBe(false);
+  });
 });
 
 describe('Annotator created by resource', () => {
@@ -1080,5 +1124,60 @@ describe('Annotator created by resource', () => {
         'phastCons20way summary'
       )
     ]);
+  });
+
+  it('should set isLoading to false when loadMore fails', () => {
+    jest.spyOn(pipelineEditorServiceMock, 'getResourcesBySearch').mockReturnValueOnce(
+      throwError(() => new Error('load error'))
+    );
+    component.resourceStep.get('resourceId').setValue('');
+    component.resourceStep.get('resourceType').setValue('position_score');
+    component.loadMore();
+    expect(component.isLoading).toBe(false);
+  });
+
+  it('should get resource by id from resource page', () => {
+    component.resourceStep.get('resourceId').setValue('hg19/scores/phyloP46_primates');
+    const resource = component.getResourceById();
+    expect(resource.fullId).toBe('hg19/scores/phyloP46_primates');
+  });
+
+  it('should set searchError when resource search fails', () => {
+    jest.clearAllMocks();
+    jest.spyOn(pipelineEditorServiceMock, 'getResourcesBySearch').mockReturnValueOnce(
+      throwError(() => new Error('search failed'))
+    );
+    component.resourceStep.get('resourceType').setValue('genome', { emitEvent: true });
+    expect(component.searchError).toBe('search failed');
+  });
+
+  it('should set errorMessage when annotator cannot be auto-selected with createWithDefaults', () => {
+    component.createWithDefaults = true;
+    component.resourceStep.get('resourceId').setValue('hg38/scores/phastCons20way');
+    component.requestResourceAnnotators();
+    expect(component.errorMessage).toBe('Error while setting annotator in step 2');
+  });
+
+  it('should set errorMessage when configuration step is invalid with createWithDefaults', () => {
+    // requestResources calls getAnnotatorConfig twice in resource workflow — mock both calls
+    jest.spyOn(pipelineEditorServiceMock, 'getAnnotatorConfig').mockReturnValue(of(
+      new AnnotatorConfig('effect_annotator', 'url', [
+        new AnnotatorConfigResource('gene_models', 'resource', 'gene_models', '', [], false, '')
+      ])
+    ));
+    component.resourceAnnotators = new ResourceAnnotatorConfigs(null, [
+      new ResourceAnnotator('effect_annotator', 'gene_models: hg19/gene_models/ccds_v201309')
+    ]);
+    component.annotatorStep.get('annotator').setValue('effect_annotator');
+    component.createWithDefaults = true;
+    component.requestResources();
+    expect(component.errorMessage).toBe('Error while configuring annotator in step 3');
+  });
+
+  it('should set errorMessage when attributes are invalid with createWithDefaults', () => {
+    component.createWithDefaults = true;
+    component.selectedAttributes = [attributesMock[0]]; // mpc — also present in getPipelineAttributesNames mock
+    component['getPipelineAttributesNames']();
+    expect(component.errorMessage).toBe('Error while configuring attributes in step 4');
   });
 });

@@ -137,4 +137,16 @@ describe('ColumnSpecifyingComponent', () => {
 
     expect(component.getFileColumnNewName('REF')).toBeNull();
   });
+
+  it('should set error when all mapped columns are removed', () => {
+    component.mappedColumns = new Map([['pos', 'POSITION']]);
+    component.onSelectName('None', 'POSITION');
+    expect(component.error).toBe('No columns selected!');
+  });
+
+  it('should set error when no file columns match known column names', () => {
+    component.fileContent = new FileContent(',', ['FOO', 'BAR'], []);
+    component.ngOnChanges();
+    expect(component.error).toBe('No columns selected!');
+  });
 });

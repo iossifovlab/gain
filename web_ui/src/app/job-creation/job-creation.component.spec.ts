@@ -251,4 +251,24 @@ describe('JobCreationComponent', () => {
     expect(getGenomesSpy).toHaveBeenCalledWith();
     expect(component.genomes).toStrictEqual(['hg38', 'hg19']);
   });
+
+  it('should set requireGenome when columns include location or variant key', () => {
+    component.getColumns(new Map([['location', 'LOC']]));
+    expect(component.requireGenome).toBe(true);
+
+    component.getColumns(new Map([['variant', 'VAR']]));
+    expect(component.requireGenome).toBe(true);
+  });
+
+  it('should prevent default on dragover event', () => {
+    const mockEvent = { preventDefault: jest.fn() } as unknown as Event;
+    component.onDragOver(mockEvent);
+    expect(mockEvent.preventDefault).toHaveBeenCalledWith();
+  });
+
+  it('should emit genome when onSelectGenome is called', () => {
+    const emitSpy = jest.spyOn(component.emitGenome, 'emit');
+    component.onSelectGenome('hg38');
+    expect(emitSpy).toHaveBeenCalledWith('hg38');
+  });
 });

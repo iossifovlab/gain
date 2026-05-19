@@ -177,4 +177,25 @@ describe('UsersService', () => {
     const result = await lastValueFrom(service.getQuotas().pipe(take(1)));
     expect(result).toStrictEqual(mockRateLimits);
   });
+
+  it('should update userData when refreshUserData is called', () => {
+    const mockUserData: UserData = {
+      email: 'user@example.com',
+      isAdmin: false,
+      loggedIn: true,
+      limitations: {
+        dailyJobs: 5,
+        filesize: '30M',
+        todayJobsCount: 0,
+        variantCount: 100,
+        diskSpace: ''
+      }
+    };
+    const httpGetSpy = jest.spyOn(HttpClient.prototype, 'get');
+    httpGetSpy.mockReturnValue(of(mockUserData));
+
+    service.refreshUserData();
+
+    expect(service.userData.value).toStrictEqual(mockUserData);
+  });
 });

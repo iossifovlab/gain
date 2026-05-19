@@ -105,7 +105,7 @@ export class Result {
   ) {}
 
   public static fromJson(
-    json: { histogram: string, value: number | string | boolean },
+    json: { histogram: string, value: number | string | boolean | string[] },
     type: string
   ): Result {
     if (!json) {

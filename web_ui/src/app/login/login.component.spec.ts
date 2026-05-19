@@ -6,7 +6,7 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { UsersService } from '../users.service';
 import { UserData } from '../users';
 import { BehaviorSubject, Observable, of, throwError } from 'rxjs';
-import { provideRouter, Router } from '@angular/router';
+import { ActivatedRoute, convertToParamMap, provideRouter, Router } from '@angular/router';
 
 class UsersServiceMock {
   public userData = new BehaviorSubject<UserData>(null);
@@ -109,5 +109,30 @@ describe('LoginComponent', () => {
     component.login();
     expect(emailInput.value).toBe('mockEmail@email.com');
     expect(passwordInput.value).toBe('mockPassword');
+  });
+
+  it('should set activationStatus to empty string when activation_successful param is absent', () => {
+    const activatedRoute = TestBed.inject(ActivatedRoute);
+    jest.spyOn(activatedRoute, 'queryParamMap', 'get').mockReturnValue(of(convertToParamMap({})));
+    component.ngOnInit();
+    expect(component.activationStatus).toBe('');
+  });
+
+  it('should set activationStatus to successful when activation_successful is True', () => {
+    const activatedRoute = TestBed.inject(ActivatedRoute);
+    jest.spyOn(activatedRoute, 'queryParamMap', 'get')
+      // eslint-disable-next-line camelcase
+      .mockReturnValue(of(convertToParamMap({ activation_successful: 'True' })));
+    component.ngOnInit();
+    expect(component.activationStatus).toBe('successful');
+  });
+
+  it('should set activationStatus to failed when activation_successful is not True', () => {
+    const activatedRoute = TestBed.inject(ActivatedRoute);
+    jest.spyOn(activatedRoute, 'queryParamMap', 'get')
+      // eslint-disable-next-line camelcase
+      .mockReturnValue(of(convertToParamMap({ activation_successful: 'False' })));
+    component.ngOnInit();
+    expect(component.activationStatus).toBe('failed');
   });
 });

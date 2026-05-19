@@ -110,4 +110,22 @@ describe('AppComponent', () => {
     component.login();
     expect(navigateSpy).toHaveBeenCalledWith(['/login']);
   });
+
+  it('should call refreshUserData after logout completes', () => {
+    const originalLocation = window.location;
+    Object.defineProperty(window, 'location', {
+      value: { reload: jest.fn() },
+      configurable: true,
+      writable: true,
+    });
+    jest.spyOn(usersServiceMock, 'logout').mockReturnValue(of({}));
+    const refreshUserDataSpy = jest.spyOn(usersServiceMock, 'refreshUserData');
+    component.logout();
+    expect(refreshUserDataSpy).toHaveBeenCalledWith();
+    Object.defineProperty(window, 'location', {
+      value: originalLocation,
+      configurable: true,
+      writable: true,
+    });
+  });
 });

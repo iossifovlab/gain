@@ -934,4 +934,121 @@ describe('AnnotationPipelineComponent', () => {
     expect(component.currentPipelineText).toBe('content3');
     expect(component.dropdownControl.value).toBe('name3');
   });
+
+  it('should set disableActions to false when pipelines fetch fails', () => {
+    pipelineStateService.pipelines.set([]);
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines').mockReturnValueOnce(throwError(() => new Error('error')));
+    component.disableActions = true;
+    component['getPipelines']();
+    expect(component.disableActions).toBe(false);
+  });
+
+  it('should set pipelineInfo to null when getPipelineInfo fails', () => {
+    jest.spyOn(annotationPipelineServiceMock, 'getPipelineInfo')
+      .mockReturnValueOnce(throwError(() => new Error('error')));
+    component.selectedPipeline = mockPipelines[0];
+    component['getPipelineInfo']();
+    expect(component.pipelineInfo).toBeNull();
+    expect(pipelineStateService.pipelineInfo()).toBeNull();
+  });
+
+  it('should return early from clearPipeline when both text and pipeline are empty', () => {
+    component.selectedPipeline = null;
+    component.currentPipelineText = '';
+    const doClearSpy = jest.spyOn(component, 'doClear');
+    component.clearPipeline();
+    expect(doClearSpy).not.toHaveBeenCalled();
+  });
+
+  it('should show confirm create popup when clearing pipeline with unsaved changes', () => {
+    component.currentPipelineText = 'some content';
+    component.currentTemporaryPipelineId = 'temp123';
+    component.clearPipeline();
+    expect(component.showConfimPipelineCreatePopup).toBe(true);
+  });
+
+  it('should call save on Ctrl+S when user pipeline is selected and config is valid', () => {
+    component.selectedPipeline = mockPipelines[2]; // type 'user'
+    component.configError = '';
+    component.isUserLoggedIn = true;
+    component.currentPipelineText = 'changed content';
+    const saveSpy = jest.spyOn(component, 'save').mockImplementation(() => {});
+    const mockEvent = { preventDefault: jest.fn() } as unknown as Event;
+    component.onKeydownHandler(mockEvent);
+    expect(mockEvent.preventDefault).toHaveBeenCalledWith();
+    expect(saveSpy).toHaveBeenCalledWith();
+  });
+
+  it('should not call save on Ctrl+S when pipeline type is default', () => {
+    component.selectedPipeline = mockPipelines[0]; // type 'default'
+    component.configError = '';
+    component.isUserLoggedIn = true;
+    const saveSpy = jest.spyOn(component, 'save').mockImplementation(() => {});
+    const mockEvent = { preventDefault: jest.fn() } as unknown as Event;
+    component.onKeydownHandler(mockEvent);
+    expect(mockEvent.preventDefault).toHaveBeenCalledWith();
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it('should shrink textarea when window width is at most 1200 on window resize', () => {
+    const shrinkSpy = jest.spyOn(component, 'shrinkTextarea');
+    Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 1200 });
+    component.onWindowResize();
+    expect(shrinkSpy).toHaveBeenCalledWith();
+  });
+
+  it('should not shrink textarea when window width is above 1200 on window resize', () => {
+    const shrinkSpy = jest.spyOn(component, 'shrinkTextarea');
+    Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 1201 });
+    component.onWindowResize();
+    expect(shrinkSpy).not.toHaveBeenCalled();
+  });
+
+  it('should call shrinkTextarea in ResizeObserver callback when window is narrow', () => {
+    let capturedCallback: ResizeObserverCallback;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
+    jest.spyOn(global as any, 'ResizeObserver').mockImplementation((...args: unknown[]) => {
+      capturedCallback = args[0] as ResizeObserverCallback;
+      return { observe: jest.fn(), unobserve: jest.fn(), disconnect: jest.fn() };
+    });
+
+    Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 800 });
+    const shrinkSpy = jest.spyOn(component, 'shrinkTextarea');
+    component.ngAfterViewInit();
+    capturedCallback([], null);
+    expect(shrinkSpy).toHaveBeenCalledWith();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
+    (global as any).ResizeObserver = class {
+      public observe(): void {}
+      public unobserve(): void {}
+      public disconnect(): void {}
+    };
+  });
+
+  it('should call resolveComponentsVisibility in ResizeObserver callback when window is wide', () => {
+    let capturedCallback: ResizeObserverCallback;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
+    jest.spyOn(global as any, 'ResizeObserver').mockImplementation((...args: unknown[]) => {
+      capturedCallback = args[0] as ResizeObserverCallback;
+      return { observe: jest.fn(), unobserve: jest.fn(), disconnect: jest.fn() };
+    });
+
+    Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 1500 });
+    // Wide window: shrinkTextarea not called, showParentComponents via resolveComponentsVisibility
+    const shrinkSpy = jest.spyOn(component, 'shrinkTextarea');
+    component.expandTextarea();
+    component.ngAfterViewInit();
+    capturedCallback([], null);
+    // remainingWidth = 1500 - 0 (clientWidth in jsdom) = 1500 > 750 → showParentComponents
+    expect(pipelineStateService.hideComponents()).toBe(false);
+    expect(shrinkSpy).not.toHaveBeenCalled();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
+    (global as any).ResizeObserver = class {
+      public observe(): void {}
+      public unobserve(): void {}
+      public disconnect(): void {}
+    };
+  });
 });

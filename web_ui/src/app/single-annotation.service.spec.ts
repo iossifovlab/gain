@@ -1,14 +1,15 @@
 import { TestBed } from '@angular/core/testing';
 import { SingleAnnotationService } from './single-annotation.service';
-import { HttpClient, provideHttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse, provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
-import { lastValueFrom, of, take } from 'rxjs';
+import { lastValueFrom, of, take, throwError } from 'rxjs';
 import {
   Annotator,
   AnnotatorDetails,
   Attribute,
   SingleAnnotationReport,
   Annotatable,
+  AnnotatableHistory,
   Result,
   NumberHistogram,
   CategoricalHistogram,
@@ -436,5 +437,71 @@ describe('SingleAnnotationService', () => {
 
     const res = await lastValueFrom(getReport.pipe(take(1)));
     expect(res.annotators[0].attributes[0].result.value).toStrictEqual(new Map([['MTHFR', 14.0], ['ABC', 2.0]]));
+  });
+
+  it('should include CSRF token header in report request when token is present', () => {
+    const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
+    httpPostSpy.mockReturnValue(of(null));
+
+    document.cookie = 'csrftoken=testtoken123';
+
+    service.getReport(new Annotatable('chr14', 204000100, 'A', 'AA', null, null, null), 'pipeline');
+
+    expect(httpPostSpy).toHaveBeenCalledWith(
+      '//localhost:8000/api/single_allele/annotate',
+      expect.any(Object),
+      expect.objectContaining({ headers: {'X-CSRFToken': 'testtoken123'} })
+    );
+  });
+
+  it('should throw 429 rate limit error when getting report', async() => {
+    const httpError = new HttpErrorResponse({status: 429, error: {reason: 'Rate limit exceeded!'}});
+    jest.spyOn(HttpClient.prototype, 'post').mockReturnValue(throwError(() => httpError));
+
+    const result = service.getReport(new Annotatable('chr14', 204000100, 'A', 'AA', null, null, null), 'pipeline');
+
+    await expect(() => lastValueFrom(result.pipe(take(1)))).rejects.toThrow('Rate limit exceeded!');
+  });
+
+  it('should throw default error for other errors when getting report', async() => {
+    const httpError = new HttpErrorResponse({status: 500});
+    jest.spyOn(HttpClient.prototype, 'post').mockReturnValue(throwError(() => httpError));
+
+    const result = service.getReport(new Annotatable('chr14', 204000100, 'A', 'AA', null, null, null), 'pipeline');
+
+    await expect(() => lastValueFrom(result.pipe(take(1)))).rejects.toThrow('Error occurred!');
+  });
+
+  it('should get annotatables history', async() => {
+    document.cookie = 'csrftoken=historyToken';
+    const httpGetSpy = jest.spyOn(HttpClient.prototype, 'get');
+    httpGetSpy.mockReturnValue(of([
+      {id: 1, allele: 'chr14 204000100 A AA'},
+      {id: 2, allele: 'chr1 100 T C'},
+    ]));
+
+    const res = await lastValueFrom(service.getAnnotatablesHistory().pipe(take(1)));
+
+    expect(httpGetSpy).toHaveBeenLastCalledWith(
+      '//localhost:8000/api/single_allele/history',
+      { headers: {'X-CSRFToken': 'historyToken'}, withCredentials: true }
+    );
+    expect(res).toStrictEqual([
+      new AnnotatableHistory(1, 'chr14 204000100 A AA'),
+      new AnnotatableHistory(2, 'chr1 100 T C'),
+    ]);
+  });
+
+  it('should delete annotatable by id', () => {
+    document.cookie = 'csrftoken=deleteToken';
+    const httpDeleteSpy = jest.spyOn(HttpClient.prototype, 'delete');
+    httpDeleteSpy.mockReturnValue(of({}));
+
+    service.deleteAnnotatable(3);
+
+    expect(httpDeleteSpy).toHaveBeenCalledWith(
+      '//localhost:8000/api/single_allele/history?id=3',
+      { headers: {'X-CSRFToken': 'deleteToken'}, withCredentials: true }
+    );
   });
 });

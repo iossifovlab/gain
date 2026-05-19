@@ -85,4 +85,50 @@ describe('SocketNotificationsService', () => {
     expect(service['socketNotifications']).toBeNull();
     expect(completeSpy).toHaveBeenCalledWith();
   });
+
+  it('should propagate non-CloseEvent errors for job notifications', async() => {
+    const error = new Error('connection error');
+    const resultPromise = firstValueFrom(service.getJobNotifications());
+    subject.error(error);
+    await expect(resultPromise).rejects.toThrow('connection error');
+  });
+
+  it('should propagate non-CloseEvent errors for pipeline notifications', async() => {
+    const error = new Error('connection error');
+    const resultPromise = firstValueFrom(service.getPipelineNotifications());
+    subject.error(error);
+    await expect(resultPromise).rejects.toThrow('connection error');
+  });
+});
+
+describe('JobNotification', () => {
+  beforeAll(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('should return undefined when fromJson is called with null', () => {
+    expect(JobNotification.fromJson(null)).toBeUndefined();
+  });
+
+  it('should create a JobNotification from valid json', () => {
+    // eslint-disable-next-line camelcase
+    const result = JobNotification.fromJson({job_id: 42, status: 'success'});
+    expect(result).toStrictEqual(new JobNotification(42, 'success'));
+  });
+});
+
+describe('PipelineNotification', () => {
+  beforeAll(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('should return undefined when fromJson is called with null', () => {
+    expect(PipelineNotification.fromJson(null)).toBeUndefined();
+  });
+
+  it('should create a PipelineNotification from valid json', () => {
+    // eslint-disable-next-line camelcase
+    const result = PipelineNotification.fromJson({pipeline_id: 7, status: 'loaded'});
+    expect(result).toStrictEqual(new PipelineNotification('7', 'loaded'));
+  });
 });

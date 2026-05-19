@@ -496,4 +496,26 @@ describe('AnnotationJobsWrapperComponent', () => {
     component.creationError = 'some error';
     expect(component.disableCreate()).toBe(true);
   });
+
+  it('should set hideHistory to false when window width is at most 1200 on resize', () => {
+    component.hideHistory = true;
+    Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 1000 });
+    window.dispatchEvent(new Event('resize'));
+    expect(component.hideHistory).toBe(false);
+  });
+
+  it('should not auto save when pipeline config is invalid', () => {
+    pipelineStateService.isConfigValid.set(false);
+    const pipelinesComponentSpy = jest.spyOn(component.pipelinesComponent, 'autoSave');
+    component.autoSavePipeline();
+    expect(pipelinesComponentSpy).not.toHaveBeenCalled();
+  });
+
+  it('should set creationError when getCurrentJobDetails fails', () => {
+    jest.spyOn(jobsServiceMock, 'getJobDetails').mockReturnValueOnce(throwError(new Error('Job not found')));
+    component.currentJobId = 1;
+    component.isUserLoggedIn = true;
+    component.ngOnInit();
+    expect(component.creationError).toBe('Job not found');
+  });
 });

@@ -309,6 +309,25 @@ describe('CategoricalHistogramComponent', () => {
     expect(component.getCoordinate('E')).toBe(370.16129032258067);
   });
 
+  it('should sort values by descending count when valueOrder is empty', () => {
+    component.histogram = new CategoricalHistogram(
+      [
+        { name: 'A', value: 30 },
+        { name: 'B', value: 10 },
+        { name: 'C', value: 20 },
+      ],
+      [],
+      'large',
+      'small',
+      false,
+      0
+    );
+    component.ngOnInit();
+    expect(component.values[0].name).toBe('A');
+    expect(component.values[1].name).toBe('C');
+    expect(component.values[2].name).toBe('B');
+  });
+
   it('should get correct coordinate for x when score value is on other values bar', () => {
     component.histogram = new CategoricalHistogram(
       [

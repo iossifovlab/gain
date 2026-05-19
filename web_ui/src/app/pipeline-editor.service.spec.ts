@@ -613,4 +613,87 @@ describe('PipelineEditorService', () => {
     const res = await lastValueFrom(getResponse.pipe(take(1)));
     expect(res).toStrictEqual(['cadd_phred', 'cadd_raw']);
   });
+
+  it('should include parsed resource fields in request body when resourcesJsonString is provided', () => {
+    document.cookie = 'csrftoken=editorToken';
+    const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
+    httpPostSpy.mockReturnValue(of(
+      /* eslint-disable camelcase */
+      {
+        annotator_type: 'gene_set_annotator',
+        documentation_url: 'url',
+        input_gene_list: { field_type: 'string', optional: false }
+      }
+      /* eslint-enable */
+    ));
+
+    // eslint-disable-next-line camelcase
+    const resourcesJson = JSON.stringify({gene_list: 'hg19/geneSets/SFARI'});
+    service.getAnnotatorConfig('gene_set_annotator', resourcesJson);
+
+    expect(httpPostSpy).toHaveBeenCalledWith(
+      '//localhost:8000/api/editor/annotator_config',
+      // eslint-disable-next-line camelcase
+      {annotator_type: 'gene_set_annotator', gene_list: 'hg19/geneSets/SFARI'},
+      {headers: {'X-CSRFToken': 'editorToken'}, withCredentials: true}
+    );
+  });
+
+  it('should catch error 400 when requesting annotator attributes', async() => {
+    const httpError = new HttpErrorResponse({status: 400, error: {error: 'Invalid annotator configuration!'}});
+    jest.spyOn(HttpClient.prototype, 'post').mockReturnValue(throwError(() => httpError));
+
+    // eslint-disable-next-line camelcase
+    const result = service.getAttributes('pipelineId', 'position_score', {resource_id: 'res1'});
+
+    await expect(() => lastValueFrom(result.pipe(take(1))))
+      .rejects.toThrow('Invalid annotator configuration!');
+  });
+
+  it('should throw default error for other errors when requesting attributes', async() => {
+    const httpError = new HttpErrorResponse({status: 415});
+    jest.spyOn(HttpClient.prototype, 'post').mockReturnValue(throwError(() => httpError));
+
+    // eslint-disable-next-line camelcase
+    const result = service.getAttributes('pipelineId', 'position_score', {resource_id: 'res1'});
+
+    await expect(() => lastValueFrom(result.pipe(take(1))))
+      .rejects.toThrow('Error occurred!');
+  });
+
+  it('should include page parameter in search request when page is provided', () => {
+    const httpGetSpy = jest.spyOn(HttpClient.prototype, 'get');
+    httpGetSpy.mockReturnValue(of({
+      // eslint-disable-next-line camelcase
+      page: 2, pages: 5, resources: [], total_resources: 50
+    }));
+
+    service.getResourcesBySearch('cadd', 'allele_score', 2);
+
+    const params = new HttpParams().set('type', 'allele_score').set('search', 'cadd').set('page', 2);
+    expect(httpGetSpy).toHaveBeenCalledWith(
+      '//localhost:8000/api/resources/search',
+      {params: params}
+    );
+  });
+
+  it('should throw invalid search value error for 500 status when searching resources', async() => {
+    const httpError = new HttpErrorResponse({status: 500});
+    jest.spyOn(HttpClient.prototype, 'get').mockReturnValue(throwError(() => httpError));
+
+    const result = service.getResourcesBySearch('cadd', 'allele_score');
+
+    await expect(() => lastValueFrom(result.pipe(take(1))))
+      .rejects.toThrow('Invalid search value');
+  });
+
+  it('should throw default error for other errors when searching resources', async() => {
+    const httpError = new HttpErrorResponse({status: 404});
+    jest.spyOn(HttpClient.prototype, 'get').mockReturnValue(throwError(() => httpError));
+
+    const result = service.getResourcesBySearch('cadd', 'allele_score');
+
+    await expect(() => lastValueFrom(result.pipe(take(1))))
+      .rejects.toThrow('Error occurred!');
+  });
 });

@@ -17,6 +17,9 @@ import { JobsService } from '../job-creation/jobs.service';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import FileSaver from 'file-saver';
+import { MatDialog } from '@angular/material/dialog';
+import { ViewportService } from '../viewport.service';
+import { SingleAnnotationReportStateService } from './single-annotation-report-state.service';
 
 
 describe('SingleAnnotationReportComponent', () => {
@@ -199,5 +202,156 @@ describe('SingleAnnotationReportComponent', () => {
       + 'attr3\tmock_value\tdesc3 blabla3\n'
       +'attr4\tfo:5;po:3\tdesc4 blabla4\n';
     expect(savedText).toBe(expectedText);
+  });
+
+  it('should open dialog with desktop dimensions when not on mobile', () => {
+    const dialog = TestBed.inject(MatDialog);
+    const openSpy = jest.spyOn(dialog, 'open').mockImplementation(jest.fn());
+    TestBed.inject(ViewportService).isMobile.set(false);
+
+    const mockAnnotator = new Annotator(
+      new AnnotatorDetails('score', 'desc', [new Resource('rid', 'rurl')]), []
+    );
+    component.showInfo(mockAnnotator);
+
+    expect(openSpy).toHaveBeenCalledWith(
+      component.infoModalRef,
+      expect.objectContaining({
+        data: mockAnnotator,
+        width: '50vw',
+        maxWidth: '1000px',
+        minWidth: '500px',
+        maxHeight: '700px',
+      })
+    );
+  });
+
+  it('should open dialog with mobile dimensions when on mobile', () => {
+    const dialog = TestBed.inject(MatDialog);
+    const openSpy = jest.spyOn(dialog, 'open').mockImplementation(jest.fn());
+    TestBed.inject(ViewportService).isMobile.set(true);
+
+    component.showInfo(new Annotator(new AnnotatorDetails('score', 'desc', []), []));
+
+    expect(openSpy).toHaveBeenCalledWith(
+      component.infoModalRef,
+      expect.objectContaining({
+        width: '95vw',
+        maxWidth: '95vw',
+        minWidth: 'unset',
+        maxHeight: '70vh',
+      })
+    );
+  });
+
+  it('should flip isFullReport state when toggleView is called', () => {
+    const stateService = TestBed.inject(SingleAnnotationReportStateService);
+
+    component.toggleView();
+
+    expect(stateService.isFullReport()).toBe(true);
+  });
+
+  it('should serialize array attribute value as JSON in saved report', async() => {
+    const saveAsSpy = jest.spyOn(FileSaver, 'saveAs').mockImplementation(() => null);
+    saveAsSpy.mockClear();
+    const report = new SingleAnnotationReport(
+      new Annotatable('chr1', 100, 'A', 'T', 'snv', null, null),
+      [
+        new Annotator(new AnnotatorDetails('score', 'desc', [new Resource('rid', 'rurl')]), [
+          new Attribute('effects', 'effect list', 'AF',
+            {value: ['missense', 'synonymous'], histogramLink: null} as Result),
+        ]),
+      ],
+    );
+
+    component.report = report;
+    component.saveReport();
+
+    const savedText = await (saveAsSpy.mock.calls[0][0] as Blob).text();
+    expect(savedText).toContain('effects\t["missense","synonymous"]\teffect list\n');
+  });
+
+  it('should write empty string for null attribute value in saved report', async() => {
+    const saveAsSpy = jest.spyOn(FileSaver, 'saveAs').mockImplementation(() => null);
+    saveAsSpy.mockClear();
+    const report = new SingleAnnotationReport(
+      new Annotatable('chr1', 100, 'A', 'T', 'snv', null, null),
+      [
+        new Annotator(new AnnotatorDetails('score', 'desc', [new Resource('rid', 'rurl')]), [
+          new Attribute('score', 'score desc', 'AF',
+            {value: null, histogramLink: null} as Result),
+        ]),
+      ],
+    );
+
+    component.report = report;
+    component.saveReport();
+
+    const savedText = await (saveAsSpy.mock.calls[0][0] as Blob).text();
+    expect(savedText).toContain('score\t\tscore desc\n');
+  });
+
+  it('should return unfold_more when attribute has no sort state', () => {
+    const attribute = new Attribute('attr1', 'desc', 'AF', new Result(null, null));
+    expect(component.getSortIcon('Value', attribute)).toBe('unfold_more');
+  });
+
+  it('should return unfold_more when queried column differs from sorted column', () => {
+    const attribute = new Attribute('attr1', 'desc', 'AF', new Result(
+      new Map([['K', 1]]), null
+    ));
+    component.sort('Key', attribute);
+    expect(component.getSortIcon('Value', attribute)).toBe('unfold_more');
+  });
+
+  it('should return keyboard_arrow_up when column is sorted ascending', () => {
+    const attribute = new Attribute('attr1', 'desc', 'AF', new Result(
+      new Map([['K', 1]]), null
+    ));
+    component.sort('Key', attribute);
+    expect(component.getSortIcon('Key', attribute)).toBe('keyboard_arrow_up');
+  });
+
+  it('should return keyboard_arrow_down when column is sorted descending', () => {
+    const attribute = new Attribute('attr1', 'desc', 'AF', new Result(
+      new Map([['K', 1]]), null
+    ));
+    component.sort('Key', attribute);
+    component.sort('Key', attribute);
+    expect(component.getSortIcon('Key', attribute)).toBe('keyboard_arrow_down');
+  });
+
+  it('should not mutate attribute value when sortData is called with no sort state', () => {
+    const attribute = new Attribute('attr1', 'desc', 'AF', new Result(
+      new Map([['B', 2], ['A', 1]]), null
+    ));
+
+    component.sortData(attribute);
+
+    expect([...(attribute.result.value as Map<string, number>).keys()]).toStrictEqual(['B', 'A']);
+  });
+
+  it('should sort array attribute values ascending', () => {
+    const attribute = new Attribute('attr1', 'desc', 'AF', new Result(['c', 'a', 'b'], null));
+    component.sort('Value', attribute);
+    expect(attribute.result.value).toStrictEqual(['a', 'b', 'c']);
+  });
+
+  it('should sort array attribute values descending', () => {
+    const attribute = new Attribute('attr1', 'desc', 'AF', new Result(['c', 'a', 'b'], null));
+    component.sort('Value', attribute);
+    component.sort('Value', attribute);
+    expect(attribute.result.value).toStrictEqual(['c', 'b', 'a']);
+  });
+
+  it('should cast value to string array via asArray', () => {
+    const arr = ['alpha', 'beta'];
+    expect(component.asArray(arr)).toBe(arr);
+  });
+
+  it('should convert Map to key-value entries array via asMapEntries', () => {
+    const map = new Map<string, number>([['x', 1], ['y', 2]]);
+    expect(component.asMapEntries(map)).toStrictEqual([['x', 1], ['y', 2]]);
   });
 });

@@ -427,4 +427,169 @@ describe('JobsService', () => {
     expect(res).toStrictEqual(
       new FileContent('\t', ['CHROM', 'POS', 'REF', 'ALT'], [['chr1', '151405427', 'T', 'TCGTCATCA']]));
   });
+
+  it('should catch error 403 when creating non-vcf job', async() => {
+    const httpError = new HttpErrorResponse({status: 403, error: {reason: 'Daily quota limit reached!'}});
+    const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
+    httpPostSpy.mockReturnValue(throwError(() => httpError));
+
+    const mockInputFile = new File(['mockData'], 'mockInput.tsv');
+    const postResult = service.createNonVcfJob(mockInputFile, 'autism', null, '\t', new Map());
+
+    await expect(() => lastValueFrom(postResult.pipe(take(1))))
+      .rejects.toThrow('Daily quota limit reached!');
+  });
+
+  it('should catch error 413 for upload limit when creating non-vcf job', async() => {
+    const httpError = new HttpErrorResponse({status: 413});
+    const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
+    httpPostSpy.mockReturnValue(throwError(() => httpError));
+
+    const mockInputFile = new File(['mockData'], 'mockInput.tsv');
+    const postResult = service.createNonVcfJob(mockInputFile, 'autism', null, '\t', new Map());
+
+    await expect(() => lastValueFrom(postResult.pipe(take(1))))
+      .rejects.toThrow('Upload limit reached!');
+  });
+
+  it('should catch error 400 for invalid config when creating non-vcf job', async() => {
+    const httpError = new HttpErrorResponse({status: 400, error: {reason: 'Invalid pipeline configuration!'}});
+    const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
+    httpPostSpy.mockReturnValue(throwError(() => httpError));
+
+    const mockInputFile = new File(['mockData'], 'mockInput.tsv');
+    const postResult = service.createNonVcfJob(mockInputFile, 'autism', null, '\t', new Map());
+
+    await expect(() => lastValueFrom(postResult.pipe(take(1))))
+      .rejects.toThrow('Invalid pipeline configuration!');
+  });
+
+  it('should throw default error for other error cases when creating non-vcf job', async() => {
+    const httpError = new HttpErrorResponse({status: 422});
+    const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
+    httpPostSpy.mockReturnValue(throwError(() => httpError));
+
+    const mockInputFile = new File(['mockData'], 'mockInput.tsv');
+    const postResult = service.createNonVcfJob(mockInputFile, 'autism', null, '\t', new Map());
+
+    await expect(() => lastValueFrom(postResult.pipe(take(1))))
+      .rejects.toThrow('Error occurred!');
+  });
+
+  it('should submit separator and return updated file preview', async() => {
+    const mockPreview = {
+      separator: ';',
+      columns: ['CHROM', 'POS', 'REF', 'ALT'],
+      preview: [
+        {
+          CHROM: 'chr1',
+          POS: '151405427',
+          REF: 'T',
+          ALT: 'TCGTCATCA'
+        }
+      ]
+    };
+    const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
+    httpPostSpy.mockReturnValue(of(mockPreview));
+
+    const postResult = service.submitSeparator(new File(['mockData'], 'mockInput.tsv'), ';');
+
+    const res = await lastValueFrom(postResult.pipe(take(1)));
+    expect(res).toStrictEqual(
+      new FileContent(';', ['CHROM', 'POS', 'REF', 'ALT'], [['chr1', '151405427', 'T', 'TCGTCATCA']]));
+  });
+
+  it('should include separator in form data when submitting separator', () => {
+    const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
+    httpPostSpy.mockReturnValue(of({}));
+
+    document.cookie = 'csrftoken=separatorToken';
+    const mockInputFile = new File(['mockData'], 'mockInput.tsv');
+    const formData = new FormData();
+    formData.append('data', mockInputFile);
+    formData.append('separator', ';');
+
+    service.submitSeparator(mockInputFile, ';');
+
+    expect(httpPostSpy).toHaveBeenCalledWith(
+      '//localhost:8000/api/jobs/preview',
+      formData,
+      { headers: {'X-CSRFToken': 'separatorToken'}, withCredentials: true }
+    );
+  });
+
+  it('should get file data by job id', async() => {
+    const mockFileContent = new FileContent('\t', ['CHROM', 'POS'], [['chr1', '100']]);
+    const fromJsonSpy = jest.spyOn(FileContent, 'fromJson').mockReturnValue(mockFileContent);
+
+    document.cookie = 'csrftoken=fileDataToken';
+    const httpGetSpy = jest.spyOn(HttpClient.prototype, 'get');
+    httpGetSpy.mockReturnValue(of({
+      id: 5,
+      columns: ['CHROM', 'POS'],
+      head: [{ CHROM: 'chr1', POS: '100' }]
+    }));
+
+    const res = await lastValueFrom(service.getFileData(5).pipe(take(1)));
+
+    expect(httpGetSpy).toHaveBeenCalledWith(
+      '//localhost:8000/api/jobs/5',
+      { headers: {'X-CSRFToken': 'fileDataToken'}, withCredentials: true }
+    );
+    expect(fromJsonSpy).toHaveBeenCalledWith({
+      id: 5,
+      columns: ['CHROM', 'POS'],
+      head: [{ CHROM: 'chr1', POS: '100' }]
+    });
+    expect(res).toBe(mockFileContent);
+  });
+
+  it('should validate pipeline config and return errors string', async() => {
+    document.cookie = 'csrftoken=validateToken';
+    const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
+    httpPostSpy.mockReturnValue(of({errors: ''}));
+
+    const res = await lastValueFrom(service.validatePipelineConfig('- position_score:').pipe(take(1)));
+
+    expect(httpPostSpy).toHaveBeenCalledWith(
+      '//localhost:8000/api/pipelines/validate',
+      {config: '- position_score:'},
+      { headers: {'X-CSRFToken': 'validateToken'}, withCredentials: true }
+    );
+    expect(res).toBe('');
+  });
+
+  it('should validate column specification and return annotatable type and errors', async() => {
+    document.cookie = 'csrftoken=validateToken';
+    const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
+    /* eslint-disable camelcase */
+    httpPostSpy.mockReturnValue(of({annotatable: 'snv', errors: ''}));
+
+    const columns = new Map<string, string>([['chrom', 'CHROM'], ['pos', 'POS'], ['ref', 'REF'], ['alt', 'ALT']]);
+    const res = await lastValueFrom(
+      service.validateColumnSpecification(['CHROM', 'POS', 'REF', 'ALT'], columns).pipe(take(1))
+    );
+
+    expect(httpPostSpy).toHaveBeenCalledWith(
+      '//localhost:8000/api/jobs/validate_columns',
+      {
+        file_columns: ['CHROM', 'POS', 'REF', 'ALT'],
+        column_mapping: {
+          col_chrom: 'CHROM',
+          col_pos: 'POS',
+          col_ref: 'REF',
+          col_alt: 'ALT',
+          col_pos_beg: '-',
+          col_pos_end: '-',
+          col_cnv_type: '-',
+          col_vcf_like: '-',
+          col_variant: '-',
+          col_location: '-',
+        },
+      },
+      { headers: {'X-CSRFToken': 'validateToken'}, withCredentials: true }
+    );
+    /* eslint-enable */
+    expect(res).toStrictEqual(['snv', '']);
+  });
 });

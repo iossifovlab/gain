@@ -359,4 +359,17 @@ describe('SingleAnnotationComponent', () => {
     expect(component.loading).toBe(false);
     expect(component.report).toBeNull();
   });
+
+  it('should show error for input with only chromosome and no position', () => {
+    component.annotatableInput.setValue('chr1');
+    component.annotate();
+    expect(component.annotatableInput.valid).toBe(false);
+  });
+
+  it('should not call annotation service when pipeline config is invalid', () => {
+    pipelineStateService.isConfigValid.set(false);
+    component.annotatableInput.setValue('chr1 11796321 G A');
+    component.annotate();
+    expect(component.report).toBeNull();
+  });
 });

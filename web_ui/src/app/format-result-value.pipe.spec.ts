@@ -54,4 +54,11 @@ describe('FormatResultValuePipe', () => {
     const pipe = new FormatResultValuePipe();
     expect(pipe.transform(['MTHFR', 'ABC'])).toBe('MTHFR, ABC');
   });
+
+  it('should return string representation of non-finite numbers', () => {
+    const pipe = new FormatResultValuePipe();
+    expect(pipe.transform(Infinity)).toBe('Infinity');
+    expect(pipe.transform(-Infinity)).toBe('-Infinity');
+    expect(pipe.transform(NaN)).toBe('NaN');
+  });
 });

@@ -109,4 +109,19 @@ describe('HistogramWrapperComponent', () => {
     expect(component.getValuesAsString(null)).toStrictEqual([]);
     expect(component.getValuesAsString('')).toStrictEqual([]);
   });
+
+  it('should parse Map values to number array', () => {
+    const map = new Map([['a', 1], ['b', 2], ['c', 3]]);
+    expect(component.getValuesAsNumber(map)).toStrictEqual([1, 2, 3]);
+  });
+
+  it('should parse Map values to string array', () => {
+    const map = new Map([['x', 10], ['y', 20]]);
+    expect(component.getValuesAsString(map)).toStrictEqual(['10', '20']);
+  });
+
+  it('should return array as-is from getValuesAsString', () => {
+    const arr = ['alpha', 'beta', 'gamma'];
+    expect(component.getValuesAsString(arr)).toBe(arr);
+  });
 });

@@ -160,9 +160,6 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
         const pipeline = this.pipelines.find(p => p.id === notification.pipelineId);
         if (pipeline) {
           pipeline.status = notification.status;
-        } else {
-          // eslint-disable-next-line no-console
-          console.log(notification.pipelineId);
         }
       },
       error: err => console.error(err)
