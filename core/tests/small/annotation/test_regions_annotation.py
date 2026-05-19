@@ -131,14 +131,14 @@ def test_position_score_annotator(
         assert result.get("test100") == expected
 
 
-@pytest.mark.parametrize("region,pos_aggregator,nuc_aggregator,expected", [
-    (("chr1", 10, 13), "max", "max", 0.04),
-    (("chr1", 10, 13), "min", "min", 0.00001),
-    (("chr1", 10, 14), "max", "min", 0.1),
+@pytest.mark.parametrize("region,aggregator,expected", [
+    (("chr1", 10, 13), "max", 0.04),
+    (("chr1", 10, 13), "min", 0.00001),
+    (("chr1", 10, 14), "max", 0.4),
 ])
 def test_np_score_annotator(
         region: tuple,
-        pos_aggregator: str, nuc_aggregator: str, expected: float,
+        aggregator: str, expected: float,
         fixture_repo: GenomicResourceRepo) -> None:
 
     annotatable = Region(*region)
@@ -146,11 +146,11 @@ def test_np_score_annotator(
     pipeline_config = textwrap.dedent(f"""
         - np_score:
             resource_id: np_score1
+            mode: region
             attributes:
             - source: test_raw
               name: test
-              position_aggregator: {pos_aggregator}
-              nucleotide_aggregator: {nuc_aggregator}
+              aggregator: {aggregator}
         """)
 
     pipeline = load_pipeline_from_yaml(pipeline_config, fixture_repo)
@@ -163,14 +163,14 @@ def test_np_score_annotator(
     assert result["test"] == expected, annotatable
 
 
-@pytest.mark.parametrize("region,pos_aggregator,nuc_aggregator,expected", [
-    (("chr1", 10, 12), "max", "max", 0.004),
-    (("chr1", 10, 13), "min", "min", None),
-    (("chr1", 10, 14), "max", "min", None),
+@pytest.mark.parametrize("region,aggregator,expected", [
+    (("chr1", 10, 12), "max", 0.004),
+    (("chr1", 10, 13), "max", None),
+    (("chr1", 10, 14), "max", None),
 ])
 def test_np_score_annotator_region_length_cutoff(
         region: tuple,
-        pos_aggregator: str, nuc_aggregator: str, expected: float,
+        aggregator: str, expected: float,
         fixture_repo: GenomicResourceRepo) -> None:
 
     annotatable = Region(*region)
@@ -178,12 +178,12 @@ def test_np_score_annotator_region_length_cutoff(
     pipeline_config = textwrap.dedent(f"""
         - np_score:
             resource_id: np_score1
+            mode: region
             region_length_cutoff: 3
             attributes:
             - source: test_raw
               name: test
-              position_aggregator: {pos_aggregator}
-              nucleotide_aggregator: {nuc_aggregator}
+              aggregator: {aggregator}
         """)
 
     pipeline = load_pipeline_from_yaml(pipeline_config, fixture_repo)
@@ -197,14 +197,14 @@ def test_np_score_annotator_region_length_cutoff(
     assert result["test"] == expected, annotatable
 
 
-@pytest.mark.parametrize("region,pos_aggregator,allele_aggregator,expected", [
-    (("chr1", 10, 13), "max", "max", 0.02),
-    (("chr1", 10, 13), "min", "min", 0.00001),
-    (("chr1", 10, 14), "max", "min", 0.1),
+@pytest.mark.parametrize("region,aggregator,expected", [
+    (("chr1", 10, 13), "max", 0.02),
+    (("chr1", 10, 13), "min", 0.00001),
+    (("chr1", 10, 14), "max", 0.2),
 ])
 def test_allele_score_annotator(
         region: tuple,
-        pos_aggregator: str, allele_aggregator: str, expected: float,
+        aggregator: str, expected: float,
         fixture_repo: GenomicResourceRepo) -> None:
 
     annotatable = Region(*region)
@@ -215,8 +215,7 @@ def test_allele_score_annotator(
             attributes:
             - source: score
               name: test
-              position_aggregator: {pos_aggregator}
-              allele_aggregator: {allele_aggregator}
+              aggregator: {aggregator}
         """)
 
     pipeline = load_pipeline_from_yaml(pipeline_config, fixture_repo)

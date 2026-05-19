@@ -74,6 +74,7 @@ def annotation_pipeline(tmp_path: pathlib.Path) -> AnnotationPipeline:
     annotation_configuration = textwrap.dedent("""
         - allele_score:
             resource_id: allele_score
+            mode: allele
     """)
     return load_pipeline_from_yaml(annotation_configuration, local_repo)
 
@@ -161,6 +162,7 @@ def test_allele_score_with_default_score_annotation(
     annotation_configuration = textwrap.dedent("""
         - allele_score:
             resource_id: allele_score
+            mode: allele
     """)
     pipeline = load_pipeline_from_yaml(annotation_configuration, local_repo)
 
@@ -219,6 +221,7 @@ def test_allele_annotator_add_chrom_prefix_vcf_table(
     pipeline_config = textwrap.dedent("""
             - allele_score:
                 resource_id: allele_score1
+                mode: allele
                 attributes:
                 - source: test100way
             """)
@@ -241,12 +244,6 @@ def test_allele_annotator_add_chrom_prefix_vcf_table(
     (VCFAllele("1", 16, "CA", "G"), (0.03, "cag")),
     (VCFAllele("1", 16, "C", "CG"), (2.0, "ccg")),
     (VCFAllele("1", 16, "C", "CA"), (1.0, "cca")),
-    (
-        Region("1", 10, 20),
-        (
-            1.02, ["ac", "ag", "at", "ca", "cca", "ccg", "ct", "cag"],
-        ),
-    ),
 ])
 def test_allele_score_annotator_with_default_annotation(
     annotation_pipeline: AnnotationPipeline,
@@ -258,6 +255,71 @@ def test_allele_score_annotator_with_default_annotation(
         assert len(result) == 2
         assert result["allele_freq"] == expected[0]
         assert result["variant_id"] == expected[1]
+
+
+def test_allele_score_annotator_region_with_default_annotation(
+    tmp_path: pathlib.Path,
+) -> None:
+    root_path = tmp_path
+    setup_directories(
+        root_path / "grr", {
+            "allele_score": {
+                GR_CONF_FILE_NAME: """
+                    type: allele_score
+                    allele_score_mode: alleles
+                    table:
+                        filename: data.txt
+                        reference:
+                          name: reference
+                        alternative:
+                          name: alternative
+                    scores:
+                        - id: ID
+                          type: str
+                          desc: "variant ID"
+                          name: ID
+                        - id: freq
+                          type: float
+                          desc: ""
+                          name: freq
+                    default_annotation:
+                    - source: freq
+                      name: allele_freq
+                    - source: ID
+                      name: variant_id
+                """,
+                "data.txt": convert_to_tab_separated("""
+                    chrom  pos_begin  reference  alternative ID   freq
+                    1      10         A          G           ag   0.02
+                    1      10         A          C           ac   0.03
+                    1      10         A          T           at   0.04
+                    1      16         CA         G           cag  0.03
+                    1      16         C          T           ct   0.04
+                    1      16         C          A           ca   0.05
+                    1      16         C          CA          cca  1.0
+                    1      16         C          CG          ccg  2.0
+                """),
+            },
+        })
+    local_repo = build_genomic_resource_repository({
+        "id": "allele_score_local",
+        "type": "directory",
+        "directory": str(root_path / "grr"),
+    })
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent("""
+            - allele_score:
+                resource_id: allele_score
+        """),
+        local_repo,
+    )
+    with pipeline.open() as work_pipeline:
+        result = work_pipeline.annotate(Region("1", 10, 20))
+    assert len(result) == 2
+    assert result["allele_freq"] == 2.0
+    assert set(result["variant_id"]) == {
+        "ag", "ac", "at", "cag", "ct", "ca", "cca", "ccg",
+    }
 
 
 _ALLELE_SCORE_GRR_CONF = """
@@ -329,6 +391,7 @@ def test_allele_score_exact_match_allele_attribute(
         textwrap.dedent("""
             - allele_score:
                 resource_id: allele_score
+                mode: allele
                 attributes:
                 - source: freq
                   name: allele_freq
@@ -342,6 +405,28 @@ def test_allele_score_exact_match_allele_attribute(
     assert result["allele"] == ["1:10:A:G"]
 
 
+def test_allele_score_exact_match_allele_attribute_renamed(
+    allele_score_repository: GenomicResourceRepo,
+) -> None:
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent("""
+            - allele_score:
+                resource_id: allele_score
+                mode: allele
+                attributes:
+                - source: freq
+                  name: allele_freq
+                - source: allele
+                  name: variant_key
+        """),
+        allele_score_repository,
+    )
+    with pipeline.open() as work_pipeline:
+        result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
+    assert result["allele_freq"] == pytest.approx(0.02)
+    assert result["variant_key"] == ["1:10:A:G"]
+
+
 def test_allele_score_exact_match_allele_with_include_attributes(
     allele_score_repository: GenomicResourceRepo,
 ) -> None:
@@ -349,6 +434,7 @@ def test_allele_score_exact_match_allele_with_include_attributes(
         textwrap.dedent("""
             - allele_score:
                 resource_id: allele_score
+                mode: allele
                 attributes:
                 - source: freq
                   name: allele_freq
@@ -370,6 +456,7 @@ def test_allele_score_exact_match_allele_filtered(
         textwrap.dedent("""
             - allele_score:
                 resource_id: allele_score
+                mode: allele
                 allele_filter: "freq > 0.03"
                 attributes:
                 - source: freq
@@ -500,6 +587,7 @@ def test_allele_score_include_multiple_attributes(
         textwrap.dedent("""
             - allele_score:
                 resource_id: allele_score
+                mode: allele
                 attributes:
                 - source: allele
                   include_attributes:
