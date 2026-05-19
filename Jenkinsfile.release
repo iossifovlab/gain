@@ -297,10 +297,20 @@ pipeline {
                         anaconda --token "$ANACONDA_TOKEN" whoami
                 '''
                 sh '''
+                    # #10: validate registry creds in an isolated
+                    # per-build DOCKER_CONFIG. The old bare `docker
+                    # logout "$REGISTRY"` here mutated the shared
+                    # ~/.docker/config.json and could wipe a
+                    # concurrent build's push auth (cf. gpf #5742 /
+                    # iossifovlab/gpf#856) — this preflight is a prime
+                    # trigger. Removing the private config dir IS the
+                    # logout, and touches no shared state.
+                    export DOCKER_CONFIG="$WORKSPACE/.docker-cfg-$BUILD_NUMBER-preflight"
+                    mkdir -p "$DOCKER_CONFIG"
+                    trap 'rm -rf "$DOCKER_CONFIG"' EXIT
                     printf '%s' "$REGISTRY_PASS" | docker login \
                         -u "$REGISTRY_USER" \
                         --password-stdin "$REGISTRY"
-                    docker logout "$REGISTRY"
                 '''
             }
         }
@@ -565,10 +575,17 @@ EOF
                 // Re-pushing same digest is a registry no-op
                 // (D10).
                 sh '''
+                    # #10: per-build DOCKER_CONFIG so a concurrent
+                    # job's `docker logout` can't drop our auth
+                    # between pushes (auth instance of the tb-w8d /
+                    # build #137 shared-daemon race; cf. iossifovlab/
+                    # gpf#856).
+                    export DOCKER_CONFIG="$WORKSPACE/.docker-cfg-$BUILD_NUMBER-push"
+                    mkdir -p "$DOCKER_CONFIG"
                     printf '%s' "$REGISTRY_PASS" | docker login \
                         -u "$REGISTRY_USER" \
                         --password-stdin "$REGISTRY"
-                    trap 'docker logout "$REGISTRY" || true' EXIT
+                    trap 'docker logout "$REGISTRY" || true; rm -rf "$DOCKER_CONFIG"' EXIT
 
                     for repo in "$BACKEND_REPO" "$FRONTEND_REPO"; do
                         docker tag "$repo:$TAG_NAME" \
