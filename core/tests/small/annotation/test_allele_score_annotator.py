@@ -601,3 +601,65 @@ def test_allele_score_include_multiple_attributes(
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
     assert result["allele"] == ["1:10:A:G:0.02,ag"]
+
+
+def test_allele_score_region_vcf_repeated_annotation_idempotent(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Annotating the same position twice must return identical results.
+
+    Regression test for a bug where VCFLine stored pos_end = raw_line.pos
+    (the 1-based VCF POS) for all variants, instead of the actual end
+    position (raw_line.stop).  A multi-base variant whose span overlaps a
+    query position was included by the tabix path on the first call but
+    silently dropped by the LineBuffer on the second call, because
+    buffer.fetch skips records whose pos_end < query pos_begin.
+    """
+    setup_directories(
+        tmp_path, {
+            "allele_score": {
+                "genomic_resource.yaml": textwrap.dedent("""
+                    type: allele_score
+                    table:
+                        filename: data.vcf.gz
+                        format: vcf_info
+                    scores:
+                    - id: label
+                      type: str
+                      desc: "variant label"
+                      name: label
+                """),
+            },
+        })
+    # pos 10: dinucleotide GG→AA spans positions 10–11 (1-based)
+    # pos 11: SNV G→A sits exactly at position 11
+    # A region query for position 11 should include both records.
+    setup_vcf(
+        tmp_path / "allele_score" / "data.vcf.gz",
+        textwrap.dedent("""
+##fileformat=VCFv4.1
+##INFO=<ID=label,Number=1,Type=String,Description="variant label">
+##contig=<ID=chr1>
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   10  .  GG  AA  .    .      label=dinucleotide
+chr1   11  .  G   A   .    .      label=snv
+chr1   20  .  A   T   .    .      label=other
+"""))
+    repo = build_filesystem_test_repository(tmp_path)
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent("""
+            - allele_score:
+                resource_id: allele_score
+                mode: region
+                attributes:
+                - source: label
+        """),
+        repo,
+    )
+    annotatable = VCFAllele("chr1", 11, "G", "A")
+    with pipeline.open() as work_pipeline:
+        result_one = work_pipeline.annotate(annotatable)
+        result_two = work_pipeline.annotate(annotatable)
+
+    assert result_one == result_two
+    assert set(result_one["label"]) == {"dinucleotide", "snv"}
