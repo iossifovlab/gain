@@ -4,7 +4,7 @@
 {% set scores = impl.score %}
 
 <h2>Scores ({{ scores.score_definitions|length }})</h2>
-<table border="1">
+<table>
     <tr>
         <th>ID</th>
         <th>Type</th>
@@ -32,12 +32,12 @@
             <td>
                 <div>{{ score.desc }}</div>
                 {% if score.small_values_desc %}
-                    <div style="color: rgb(145,145,145)">
+                    <div class="text-muted">
                         {{ "Small values desc: " + score.small_values_desc }}
                     </div>
                 {% endif %}
                 {% if score.large_values_desc %}
-                    <div style="color: rgb(145,145,145)">
+                    <div class="text-muted">
                         {{ "Large values desc: " + score.large_values_desc }}
                     </div>
                 {% endif %}
@@ -49,7 +49,7 @@
                 <img src="{{ hist_image_file }}"
                     alt="{{ "HISTOGRAM FOR " + score_id }}"
                     title={{ score_id | replace(" ", "_") }}
-                    style="max-width: 200px; cursor: pointer;"
+                    class="histogram-thumbnail"
                     data-modal-trigger="modal-{{ score_id | replace(" ", "_") }}">
                 {%- else -%}
                 <p>No histogram: {{ hist.reason }}</p>
@@ -66,7 +66,7 @@
     {%- endfor %}
     {%- for score_id in scores.score_definitions.keys() -%}
         <div id="modal-{{score_id | replace(" ", "_")}}" class="modal">
-            <div class="modal-content" style="padding: 10px 20px; background-color: #fff; height: fit-content; width: fit-content;">
+            <div class="modal-content">
                 <span title={{score_id | replace(" ", "_")}} class="close">&times;</span>
                 <img src="{{ impl.score.get_histogram_image_filename(score_id) }}"
                     alt="{{ "HISTOGRAM FOR " + score_id }}"

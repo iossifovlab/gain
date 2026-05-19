@@ -2,15 +2,9 @@
 <html>
   <head>
     <meta charset="utf-8">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;800&display=swap">
     <style>
-      *, *::before, *::after {
-        box-sizing: border-box;
-      }
-
-      * {
-        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      }
-
       body {
         margin: 0;
       }
@@ -48,8 +42,9 @@
       .modal-content {
         margin: auto;
         display: block;
-        width: 80%;
-        max-width: 800px;
+        width: fit-content;
+        padding: 10px 20px;
+        background-color: #fff;
       }
 
       .close {
@@ -75,7 +70,7 @@
                     var modalId = this.getAttribute("data-modal-trigger");
                     var modal = document.getElementById(modalId);
                     if (modal) {
-                        modal.style.display = "block";
+                        modal.style.display = "flex";
                         document.currentOpenModal = modal;
                     }
                 });
@@ -111,7 +106,7 @@
     <div class="page-content">
     <h2>Resource</h2>
     <div>
-        <table border="1" id="resource-table">
+        <table id="resource-table">
             <tr>
                 <th>Id</th>
                 <td>{{ resource.resource_id }}</td>
