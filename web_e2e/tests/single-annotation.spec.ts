@@ -194,8 +194,12 @@ test.describe('Single annotation annotator modal', () => {
     await page.locator('.info-icon').nth(1).click();
     await expect(page.locator('.annotator-header')).toHaveText('allele_score');
     await expect(page.locator('#modal-content .annotator-description')).toHaveText(
-      'Annotator to use with scores that depend on allele like variant frequencies, etc.\n' +
-      'More info\n' +
+      'Annotator to use with scores that depend on allele like\nvariant frequencies, etc.\n' +
+      'Mode (mode parameter):\n\n' +
+      'region (default): aggregates scores for all allele lines\n' +
+      'overlapping the annotatable\'s span.\n'+
+      'allele: exact chrom/pos/ref/alt match; VCFAllele inputs only.\n\n' +
+      'More info\n\n' +
       'input_annotatable: normalized_allele\n\n'
     );
     await expect(page.locator('#modal-content .resource')).toHaveCount(1);
