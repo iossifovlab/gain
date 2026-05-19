@@ -489,7 +489,38 @@ pipeline {
                         }
                     }
                 }
-        
+
+                stage('Core wheel (docs-only)') {
+                    when { environment name: 'DOCS_ONLY', value: 'true' }
+                    // Invariant: every green iossifovlab/gain/master
+                    // build must carry dist/core/*.whl. gpf's root
+                    // Jenkinsfile "Fetch gain wheel" copyArtifacts the
+                    // wheel from gain/master's lastSuccessful build; a
+                    // docs-only commit skips Sub-projects (where
+                    // runProject builds the wheel), so without this the
+                    // build is a wheel-less green and breaks EVERY gpf
+                    // build on every branch until a non-docs gain build
+                    // supersedes it. Build just the gain-core wheel
+                    // (pure-Python, seconds; no lint/pytest) into
+                    // dist/core/ so it matches this exact commit and
+                    // the post archiveArtifacts picks it up. Mirrors
+                    // runProject()'s wheel recipe; the gain-core-ci
+                    // image build is a near-instant cache hit shared
+                    // with the Build docs stage below.
+                    steps {
+                        sh '''
+                            docker build -f core/Dockerfile \
+                                -t gain-core-ci:${BUILD_NUMBER} .
+                            mkdir -p dist/core
+                            docker run --rm \
+                                -v $PWD/dist/core:/dist \
+                                -v $PWD/.git:/workspace/.git:ro \
+                                gain-core-ci:${BUILD_NUMBER} \
+                                sh -c 'uv build --package gain-core --out-dir /dist && chmod -R a+rw /dist'
+                        '''
+                    }
+                }
+
                 stage('Build docs') {
                     when { changeset 'docs/**' }
                     // Migrated from iossifovlab/gpf_documentation
