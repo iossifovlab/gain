@@ -5,7 +5,7 @@ Release Notes
     * Added admin panel views for managing anonymous users and their
       quotas; monthly quotas are now always displayed.
     * Anonymous-user quotas are now tracked by session ID.
-    * Restyled the GRR browser about and index pages.
+    * Restyled the GRR repository about and index pages.
     * Introduced a new template infrastructure for resource
       implementations.
     * Fixed BigWig score-definition validation.
