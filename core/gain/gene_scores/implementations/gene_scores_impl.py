@@ -41,6 +41,7 @@ class GeneScoreImplementation(
         )
 
     template_name: ClassVar[str] = "gene_score.jinja"
+    styles_template_name: ClassVar[str] = "gene_score_styles.jinja"
 
     def _get_template_data(self) -> dict[str, Any]:
         data = {}

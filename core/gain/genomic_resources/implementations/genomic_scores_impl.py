@@ -75,6 +75,7 @@ class GenomicScoreImplementation(
         return result
 
     template_name: ClassVar[str] = "genomic_score.jinja"
+    styles_template_name: ClassVar[str] = "genomic_score_styles.jinja"
 
     def _get_template_data(self) -> dict[str, Any]:
         return {"genomic_scores": self}

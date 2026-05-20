@@ -3,8 +3,17 @@
 
 {% set score = data.gene_score %}
 
-<h1>Scores ({{ score.score_definitions|length }})</h1>
-    <table>
+<h2>Scores ({{ score.score_definitions|length }})</h2>
+<div class="scrollable-table-container">  
+<table>
+      <colgroup>
+          <col style="width: 15%">
+          <col style="width: 6%">
+          <col>
+          <col style="width: 220px">
+          <col style="width: 15%">
+      </colgroup>
+      <thead>
         <tr>
             <th>ID</th>
             <th>Type</th>
@@ -12,6 +21,7 @@
             <th>Histograms</th>
             <th>Range</th>
         </tr>
+      </thead>
 
         {% for score_id, score_def in score.score_definitions.items() %}
             <tr>
@@ -68,4 +78,5 @@
             </div>
         {%- endfor %}
     </table>
+    </div>
 {% endblock %}

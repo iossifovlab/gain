@@ -4,15 +4,26 @@
 {% set scores = impl.score %}
 
 <h2>Scores ({{ scores.score_definitions|length }})</h2>
+<div class="scrollable-table-container">  
 <table>
-    <tr>
-        <th>ID</th>
-        <th>Type</th>
-        <th>Default annotation</th>
-        <th>Description</th>
-        <th>Histogram</th>
-        <th>Range</th>
-    </tr>
+    <colgroup>
+        <col style="width: 15%">
+        <col style="width: 6%">
+        <col style="width: 15%">
+        <col>
+        <col style="width: 220px">
+        <col style="width: 15%">
+    </colgroup>
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Type</th>
+            <th>Default annotation</th>
+            <th>Description</th>
+            <th>Histogram</th>
+            <th>Range</th>
+        </tr>
+    </thead>
 
     {%- for score_id, score in scores.score_definitions.items() -%}
         <tr class="score-definition">
@@ -76,4 +87,5 @@
         </div>
     {%- endfor %}
 </table>
+</div>
 {% endblock %}
