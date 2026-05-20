@@ -90,7 +90,6 @@ def annotate_directory_fixture(
             "annotation_multiallelic.yaml": """
                 - allele_score:
                     resource_id: two
-                    mode: allele
             """,
             "annotation_forbidden_symbols.yaml": """
                 - allele_score: three

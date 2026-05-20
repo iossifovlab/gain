@@ -443,7 +443,7 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
                 raise AnnotationConfigurationError(
                     f"Error parsing cnv_filter: {e}") from e
 
-        mode = info.parameters.get("mode", "region")
+        mode = info.parameters.get("mode", "allele")
         if mode not in {"allele", "region"}:
             raise AnnotationConfigurationError(
                 f"Invalid mode '{mode}' for allele_score annotator; "
@@ -457,11 +457,13 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
 Annotator to use with scores that depend on allele like
 variant frequencies, etc.
 
-**Mode** (``mode`` parameter):
+**Mode** (``mode`` parameter, applies to ``VCFAllele`` inputs only):
 
-- ``region`` (default): aggregates scores for all allele lines
-  overlapping the annotatable's span.
-- ``allele``: exact chrom/pos/ref/alt match; VCFAllele inputs only.
+- ``allele`` (default): exact chrom/pos/ref/alt match.
+- ``region``: aggregates scores for all allele lines overlapping the
+  annotatable's span.
+
+Non-``VCFAllele`` annotatables always use region aggregation.
 
 <a href="{self.BASE_DOC_URL}#allele-score-annotator" target="_blank">More info</a>
 
@@ -715,7 +717,11 @@ variant frequencies, etc.
         self, annotatable: Annotatable | None,
         context: dict[str, Any],  # noqa: ARG002
     ) -> dict[str, Any]:
-        """Dispatch to allele or region annotation based on ``self.mode``."""
+        """Dispatch annotation based on annotatable type and mode.
+
+        For VCFAllele: mode selects between exact-match and region aggregation.
+        For all other annotatables: always use region aggregation.
+        """
         if annotatable is None:
             return self._empty_result()
 
@@ -723,12 +729,11 @@ variant frequencies, etc.
         if annotatable.chromosome not in all_chroms:
             return self._empty_result()
 
-        if self.mode == "allele":
-            if not isinstance(annotatable, VCFAllele):
-                return self._empty_result()
-            return self._annotate_allele(annotatable)
+        if isinstance(annotatable, VCFAllele):
+            if self.mode == "allele":
+                return self._annotate_allele(annotatable)
+            return self._annotate_region(annotatable)
 
-        # region mode
         if len(annotatable) > self._region_length_cutoff:
             return self._empty_result()
         return self._annotate_region(annotatable)

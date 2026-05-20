@@ -116,7 +116,6 @@ def test_vcf_info_annotator(
     pipeline_config = textwrap.dedent("""
         - allele_score:
             resource_id: score1
-            mode: allele
             attributes:
             - source: A
               name: score1_a
