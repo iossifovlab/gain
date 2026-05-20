@@ -1,4 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+from urllib.parse import quote
+
 import numpy as np
 from gain.annotation.annotate_utils import build_output_path, stringify
 
@@ -107,31 +109,43 @@ def test_stringify_gene_rank_score_values() -> None:
 
 
 def test_stringify_list_notvcf() -> None:
-    assert stringify([1, 2, 3], vcf=False) == "1,2,3"
-    assert stringify(["a", "b", "c"], vcf=False) == "a,b,c"
-    assert stringify([1.5, 123.5, 123456.7], vcf=False) == "1.5,123.5,1.23e+05"
-    assert stringify([None, "", True], vcf=False) == ",,yes"
-    assert stringify([], vcf=False) == ""
+    assert stringify([1, 2, 3], vcf=False) == "[1, 2, 3]"
+    assert stringify(["a", "b", "c"], vcf=False) == "['a', 'b', 'c']"
+    assert (
+        stringify([1.5, 123.5, 123456.7], vcf=False)
+        == "[1.5, 123.5, 123456.7]"
+    )
+    assert stringify([None, "", True], vcf=False) == "[None, '', True]"
+    assert stringify([], vcf=False) == "[]"
 
 
 def test_stringify_list_vcf() -> None:
-    assert stringify([1, 2, 3], vcf=True) == "1,2,3"
-    assert stringify(["a", "b", "c"], vcf=True) == "a,b,c"
-    assert stringify([None, "", True], vcf=True) == ".,.,yes"
-    assert stringify([], vcf=True) == ""
+    assert stringify([1, 2, 3], vcf=True) == quote("[1, 2, 3]", safe="")
+    assert (
+        stringify(["a", "b", "c"], vcf=True)
+        == quote("['a', 'b', 'c']", safe="")
+    )
+    assert (
+        stringify([None, "", True], vcf=True)
+        == quote("[None, '', True]", safe="")
+    )
+    assert stringify([], vcf=True) == quote("[]", safe="")
 
 
 def test_stringify_tuple_notvcf() -> None:
-    assert stringify((1, 2, 3), vcf=False) == "1,2,3"
-    assert stringify(("a", "b"), vcf=False) == "a,b"
-    assert stringify((None, True, "x"), vcf=False) == ",yes,x"
-    assert stringify((), vcf=False) == ""
+    assert stringify((1, 2, 3), vcf=False) == "[1, 2, 3]"
+    assert stringify(("a", "b"), vcf=False) == "['a', 'b']"
+    assert stringify((None, True, "x"), vcf=False) == "[None, True, 'x']"
+    assert stringify((), vcf=False) == "[]"
 
 
 def test_stringify_tuple_vcf() -> None:
-    assert stringify((1, 2, 3), vcf=True) == "1,2,3"
-    assert stringify((None, True, "x"), vcf=True) == ".,yes,x"
-    assert stringify((), vcf=True) == ""
+    assert stringify((1, 2, 3), vcf=True) == quote("[1, 2, 3]", safe="")
+    assert (
+        stringify((None, True, "x"), vcf=True)
+        == quote("[None, True, 'x']", safe="")
+    )
+    assert stringify((), vcf=True) == quote("[]", safe="")
 
 
 def test_stringify_dict_notvcf() -> None:
@@ -142,14 +156,23 @@ def test_stringify_dict_notvcf() -> None:
 
 
 def test_stringify_dict_vcf() -> None:
-    assert stringify({"a": 1, "b": 2}, vcf=True) == "a:1;b:2"
-    assert stringify({"key": None}, vcf=True) == "key:."
-    assert stringify({"x": True, "y": False}, vcf=True) == "x:yes;y:."
-    assert stringify({}, vcf=True) == ""
+    assert (
+        stringify({"a": 1, "b": 2}, vcf=True)
+        == quote("{'a': 1, 'b': 2}", safe="")
+    )
+    assert (
+        stringify({"key": None}, vcf=True)
+        == quote("{'key': None}", safe="")
+    )
+    assert (
+        stringify({"x": True, "y": False}, vcf=True)
+        == quote("{'x': True, 'y': False}", safe="")
+    )
+    assert stringify({}, vcf=True) == quote("{}", safe="")
 
 
 def test_stringify_nested_structures() -> None:
-    assert stringify([[1, 2], [3, 4]], vcf=False) == "1,2,3,4"
-    assert stringify([{"a": 1}, {"b": 2}], vcf=False) == "a:1,b:2"
-    assert stringify({"a": [1, 2], "b": 3.5}, vcf=False) == "a:1,2;b:3.5"
+    assert stringify([[1, 2], [3, 4]], vcf=False) == "[[1, 2], [3, 4]]"
+    assert stringify([{"a": 1}, {"b": 2}], vcf=False) == "[{'a': 1}, {'b': 2}]"
+    assert stringify({"a": [1, 2], "b": 3.5}, vcf=False) == "a:[1, 2];b:3.5"
     assert stringify({"outer": {"inner": 1}}, vcf=False) == "outer:inner:1"
