@@ -33,7 +33,7 @@ and Python interfaces.
     gain_getting_started_cli
     gain_getting_started_grr
     grr
-    annotation_infrastructure2
+    annotation_infrastructure
     web_interface
     plugin_library
     python_interface

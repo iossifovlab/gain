@@ -627,7 +627,7 @@ def test_single_annotation(admin_client: Client) -> None:
             "\n\nAnnotator to use with genomic scores depending on genomic"
             " position like\nphastCons, phyloP, FitCons2, etc.\n"
             '\n<a href="https://iossifovlab.com/gaindocs/'
-            'annotation_infrastructure2.html'
+            'annotation_infrastructure.html'
             '#position-score-annotator" '
             'target="_blank">More info</a>\n\n'
         ),
@@ -691,7 +691,7 @@ def test_single_annotation_unauthorized(anonymous_client: Client) -> None:
             "\n\nAnnotator to use with genomic scores depending on genomic"
             " position like\nphastCons, phyloP, FitCons2, etc.\n"
             '\n<a href="https://iossifovlab.com/gaindocs/'
-            'annotation_infrastructure2.html#position-score-annotator" '
+            'annotation_infrastructure.html#position-score-annotator" '
             'target="_blank">More info</a>\n\n'
         ),
         "resources": [

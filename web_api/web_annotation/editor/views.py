@@ -39,7 +39,7 @@ class EditorView(AnnotationBaseView):
             "normalize_allele_annotator",
         ]
 
-    BASE_DOC_URL = "https://iossifovlab.com/gaindocs/annotation_infrastructure2.html#"
+    BASE_DOC_URL = "https://iossifovlab.com/gaindocs/annotation_infrastructure.html#"
 
     def _get_annotator_config_template(
         self, annotator_type: str,
