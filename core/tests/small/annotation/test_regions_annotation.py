@@ -146,7 +146,6 @@ def test_np_score_annotator(
     pipeline_config = textwrap.dedent(f"""
         - np_score:
             resource_id: np_score1
-            mode: region
             attributes:
             - source: test_raw
               name: test
@@ -178,7 +177,6 @@ def test_np_score_annotator_region_length_cutoff(
     pipeline_config = textwrap.dedent(f"""
         - np_score:
             resource_id: np_score1
-            mode: region
             region_length_cutoff: 3
             attributes:
             - source: test_raw

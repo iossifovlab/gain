@@ -64,7 +64,6 @@ def test_np_score_annotator() -> None:
     pipeline_config = textwrap.dedent("""
         - np_score:
             resource_id: np_score1
-            mode: allele
             attributes:
             - source: test_raw
               name: test
@@ -86,6 +85,7 @@ def test_np_score_region_annotator(
     pipeline_config = textwrap.dedent(f"""
         - np_score:
             resource_id: np_score1
+            mode: region
             attributes:
             - source: test_raw
               name: test
@@ -173,7 +173,6 @@ def test_np_score2_annotator(
     pipeline_config = textwrap.dedent("""
         - np_score:
             resource_id: np_score2
-            mode: allele
             attributes:
             - source: s1
               name: s1
