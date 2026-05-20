@@ -514,10 +514,15 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   public clearAttributeInput(): void {
-    if (!this.attributeStep.get('attribute').value) {
+    const value = this.attributeStep.get('attribute').value;
+    if (!value) {
       return;
     }
     this.attributeStep.get('attribute').setValue(null);
+
+    if (typeof value !== 'string') {
+      return;
+    }
 
     this.attributesSubscription.unsubscribe();
     this.attributesSubscription = this.getAttributesObservable().subscribe(res => {
@@ -552,11 +557,6 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
   public removeSelectedAttribute(attribute: AttributeData): void {
     this.selectedAttributes = this.selectedAttributes.filter(a => a !== attribute);
     this.validateAttributes();
-
-    this.attributesSubscription = this.getAttributesObservable().subscribe(res => {
-      this.attributePage = res;
-      this.filteredAttributes = res.attributes;
-    });
   }
 
   private onAttributePanelScroll(panel: HTMLElement): void {
@@ -622,12 +622,14 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
 
     const searchValue = this.attributeStep.get('attribute').value ?? null;
     const remainingPages = Array.from({ length: totalPages - nextPage }, (_, i) => nextPage + i);
+    const snapshot = this.filteredAttributes;
 
     forkJoin(remainingPages.map(page => this.getAttributesObservable(searchValue ?? undefined, page)))
       .subscribe(pages => {
-        const allAttributes = [...this.filteredAttributes, ...pages.flatMap(p => p.attributes)];
+        const allAttributes = [...snapshot, ...pages.flatMap(p => p.attributes)];
         this.filteredAttributes = allAttributes;
-        this.attributePage = pages[pages.length - 1];
+        this.attributePage.attributes = allAttributes;
+        this.attributePage.page = totalPages - 1;
         this.selectedAttributes = cloneDeep(allAttributes);
       });
   }

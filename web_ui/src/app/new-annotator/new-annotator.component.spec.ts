@@ -708,7 +708,9 @@ describe('NewAnnotatorComponent', () => {
       );
       expect(component.filteredAttributes).toStrictEqual([...page1Attributes, ...page2Attributes]);
       expect(component.selectedAttributes).toStrictEqual([...page1Attributes, ...page2Attributes]);
-      expect(component.attributePage).toStrictEqual(page2Mock);
+      expect(component.attributePage).toStrictEqual(
+        new AttributePage([...page1Attributes, ...page2Attributes], 1, 2, 4)
+      );
     });
 
     it('should fetch multiple remaining pages via forkJoin', () => {
@@ -751,7 +753,9 @@ describe('NewAnnotatorComponent', () => {
       expect(component.selectedAttributes).toStrictEqual([
         ...page1Attributes, ...page2Attrs, ...page3Attrs
       ]);
-      expect(component.attributePage).toStrictEqual(page3Mock);
+      expect(component.attributePage).toStrictEqual(
+        new AttributePage([...page1Attributes, ...page2Attrs, ...page3Attrs], 2, 3, 5)
+      );
     });
 
     it('should clear displayWarningMessage when pages were fetched after a previous warning', () => {
@@ -762,6 +766,21 @@ describe('NewAnnotatorComponent', () => {
       component.selectAllAttributes();
 
       expect(component.displayWarningMessage).toBe(false);
+    });
+
+    // eslint-disable-next-line @stylistic/max-len
+    it('should have only the one picked attribute selected after: select all → remove all → pick one from dropdown', () => {
+      component.selectAllAttributes();
+      expect(component.selectedAttributes).toHaveLength(attributesMock.length);
+
+      component.removeAllSelectedAttributes();
+      expect(component.selectedAttributes).toHaveLength(0);
+
+      // simulate mat-autocomplete: sets FormControl value to the selected object, then fires (optionSelected)
+      component.attributeStep.get('attribute').setValue(attributesMock[1].name);
+      component.onSelectAttribute(attributesMock[1]);
+
+      expect(component.selectedAttributes).toStrictEqual([attributesMock[1]]);
     });
   });
 

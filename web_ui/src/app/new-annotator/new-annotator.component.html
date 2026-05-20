@@ -357,7 +357,7 @@
             }
           </div>
           <div class="modal-footer">
-            @if(!areAttributesValid) {
+            @if(!areAttributesValid && selectedAttributes.length) {
             <div class="error-message">Attribute with this name already exists</div>
             }@if(errorMessage) {
             <div class="error-message">{{ errorMessage }}</div>

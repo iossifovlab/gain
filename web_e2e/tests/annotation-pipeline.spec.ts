@@ -1116,6 +1116,33 @@ test.describe('Add annotator to pipeline tests', () => {
 
     expect(value).toContain('name: gene_list\n      source: gene_list\n      internal: false');
   });
+
+  // eslint-disable-next-line max-len
+  test('should select all attributes, remove all, then select one from dropdown as the only selected', async({ page }) => {
+    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+
+    await page.getByRole('combobox', { name: 'Select annotator' }).click();
+    await page.locator('mat-option').getByText('simple_effect_annotator').click();
+    await page.getByRole('button', { name: 'Next' }).click();
+
+    await page.locator('[id="gene_models-dropdown"]').click();
+    await page.locator('mat-option').getByText('hg19/gene_models/ccds_v201309').click();
+    await page.getByRole('button', { name: 'Next' }).click();
+
+    await expect(page.locator('.attribute-source')).toHaveCount(3);
+
+    await page.getByRole('button', { name: 'Select all' }).click();
+    await expect(page.locator('.attributes-section-label')).toContainText('(15)');
+
+    await page.getByRole('button', { name: 'Remove all' }).click();
+    await expect(page.locator('.attributes-section-label')).not.toBeVisible();
+
+    await page.locator('#attributes-dropdown .dropdown-icon').click();
+    await page.locator('mat-option.attribute-option').first().click();
+
+    await expect(page.locator('.attribute-source')).toHaveCount(1);
+    await expect(page.locator('.attribute-source').first()).toHaveText('worst_effect');
+  });
 });
 
 
