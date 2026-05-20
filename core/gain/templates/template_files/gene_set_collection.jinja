@@ -1,7 +1,6 @@
 {% extends base %}
 {% block content %}
 {% set gsc = data.impl.gene_set_collection %}
-<hr>
 <h2>Gene set ID: {{ data["id"] }}</h2>
 <h3>Statistics:</h3>
 <p>Number of gene sets: {{ data["number_of_gene_sets"] }}</p>
@@ -29,8 +28,7 @@
     </div>
 </div>
 <div id="genes-per-gene-set" class="modal">
-    <div class="modal-content"
-        style="padding: 10px 20px; background-color: #fff; height: fit-content; width: fit-content;">
+    <div class="modal-content">
         <span class="close">&times;</span>
         <img src="{{ gsc.get_genes_per_gene_set_hist_image_filename() }}"
             alt="genes per gene set histogram"
@@ -38,15 +36,14 @@
     </div>
 </div>
 <div id="gene-sets-per-gene" class="modal">
-    <div class="modal-content"
-        style="padding: 10px 20px; background-color: #fff; height: fit-content; width: fit-content;">
+    <div class="modal-content">
         <span class="close">&times;</span>
         <img src="{{ gsc.get_gene_sets_per_gene_hist_image_filename() }}"
             alt="genes per gene set histogram"
             title="gene-sets-per-gene">
     </div>
 </div>
-<div style="max-height: 50%; overflow-y: auto; width: fit-content; margin-bottom: 16px;">
+<div class="scrollable-table-container">
     <table id="gene-sets-table">
         <thead>
             <tr>

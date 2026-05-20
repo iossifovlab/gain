@@ -3,8 +3,17 @@
 
 {% set score = data.gene_score %}
 
-<h1>Scores ({{ score.score_definitions|length }})</h1>
-    <table border="1">
+<h2>Scores ({{ score.score_definitions|length }})</h2>
+<div class="scrollable-table-container">  
+<table>
+      <colgroup>
+          <col style="width: 15%">
+          <col style="width: 6%">
+          <col>
+          <col style="width: 220px">
+          <col style="width: 15%">
+      </colgroup>
+      <thead>
         <tr>
             <th>ID</th>
             <th>Type</th>
@@ -12,6 +21,7 @@
             <th>Histograms</th>
             <th>Range</th>
         </tr>
+      </thead>
 
         {% for score_id, score_def in score.score_definitions.items() %}
             <tr>
@@ -22,12 +32,12 @@
                 <td>
                     <div>{{ score_def.description }}</div>
                     {% if score_def.small_values_desc %}
-                        <div style="color: rgb(145,145,145)">
+                        <div class="text-muted">
                             {{ "Small values desc: " + score_def.small_values_desc }}
                         </div>
                     {% endif %}
                     {% if score_def.large_values_desc %}
-                        <div style="color: rgb(145,145,145)">
+                        <div class="text-muted">
                             {{ "Large values desc: " + score_def.large_values_desc }}
                         </div>
                     {% endif %}
@@ -38,7 +48,7 @@
                 {% if hist %}
                     <div class="histogram">
                         <img src="{{score.get_histogram_image_filename(score_id)}}"
-                            style="width: 200px; cursor: pointer;"
+                            class="histogram-thumbnail"
                             alt={{ score_id }}
                             title=" {{ score_id | replace(" ", "_") }}"
                             data-modal-trigger="modal-{{ score_id | replace(" ", "_") }}">
@@ -58,8 +68,7 @@
 
         {%- for score_id in score.score_definitions.keys() -%}
             <div id="modal-{{ score_id | replace(" ", "_") }}" class="modal">
-                <div class="modal-content"
-                    style="padding: 10px 20px; background-color: #fff; height: fit-content; width: fit-content;">
+                <div class="modal-content">
                     <span class="close">&times;</span>
                     <img src="{{ score.get_histogram_image_filename(score_id) }}"
                         alt="{{ "HISTOGRAM FOR " + score_id }}"
@@ -69,4 +78,5 @@
             </div>
         {%- endfor %}
     </table>
+    </div>
 {% endblock %}

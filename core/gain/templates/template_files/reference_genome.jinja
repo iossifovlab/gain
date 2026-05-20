@@ -2,7 +2,7 @@
 {% block content %}
 
 {% if data["PARS"] %}
-<h3>Pseudoautosomal regions:</h6>
+<h3>Pseudoautosomal regions:</h3>
 {% if data["PARS"]["X"] %}
 <p>X chromosome:</p>
 <ul>
@@ -23,7 +23,7 @@
 {% endif %}
 
 <h3>{{ "Chromosomes ({0}):".format(data["chromosomes"]|length) }}</h3>
-<div style="max-height: 50%; overflow-y: auto; width: fit-content; margin-bottom: 14px;">
+<div class="scrollable-table-container">
     <table id="chromosomes-table">
         <thead>
             <tr>
@@ -58,7 +58,7 @@
 </div>
 {% if data["global_statistic"] %}
     <h3>Bi-Nucleotide distribution:</h3>
-    <table border="1" style="width: fit-content;">
+    <table style="width: fit-content;">
         <tr>
             <th>{{ nucleotide }}</th>
             {% for nucleotide in ["A", "T", "C", "G", "N"] %}
