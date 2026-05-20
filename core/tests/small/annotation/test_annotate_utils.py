@@ -1,9 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pytest
 import pytest_mock
-from gain.annotation.annotate_utils import (
-    handle_default_args,
-)
+from gain.annotation.annotate_utils import handle_default_args
 
 
 @pytest.mark.parametrize(

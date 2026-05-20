@@ -1,6 +1,7 @@
 import argparse
 import logging
 import os
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -80,8 +81,11 @@ def stringify(value: Any, *, vcf: bool = False) -> str:
     if vcf is True and value == "":
         return "."
     if isinstance(value, (list, tuple)):
-        return ",".join(stringify(v, vcf=vcf) for v in value)
+        s = str(list(value))
+        return urllib.parse.quote(s, safe="") if vcf else s
     if isinstance(value, dict):
+        if vcf:
+            return urllib.parse.quote(str(value), safe="")
         return ";".join(
             f"{stringify(k, vcf=vcf)}:{stringify(v, vcf=vcf)}"
             for k, v in value.items()
