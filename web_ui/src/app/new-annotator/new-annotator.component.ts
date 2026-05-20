@@ -135,6 +135,7 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
     this.annotatorStep = this.formBuilder.group({
       annotator: ['', Validators.required],
     });
+    this.setupAnnotatorValueFiltering();
 
     if (this.data.isResourceWorkflow) {
       this.resourceStep = this.formBuilder.group({
@@ -242,9 +243,9 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
   private requestAnnotators(): void {
     this.clearErrorMessage();
     this.editorService.getAnnotators().subscribe(res => {
-      this.annotatorTypes = res;
-      this.filteredAnnotatorTypes = res.sort();
-      this.setupAnnotatorValueFiltering();
+      this.annotatorTypes = res.sort();
+      const currentValue = this.annotatorStep.get('annotator').value;
+      this.filteredAnnotatorTypes = this.filterDropdownContent(currentValue, this.annotatorTypes);
     });
   }
 
@@ -254,8 +255,8 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
     ).subscribe(res => {
       this.resourceAnnotators = res;
       this.annotatorTypes = res.annotators.map(r => r.annotatorType);
-      this.filteredAnnotatorTypes = res.annotators.map(r => r.annotatorType);
-      this.setupAnnotatorValueFiltering();
+      const currentValue = this.annotatorStep.get('annotator').value;
+      this.filteredAnnotatorTypes = this.filterDropdownContent(currentValue, this.annotatorTypes);
       if (this.resourceAnnotators.annotators.length === 1) {
         this.autoSelectAnnotator(this.resourceAnnotators.annotators[0].annotatorType);
       } else if (this.resourceAnnotators.defaultAnnotator) {
