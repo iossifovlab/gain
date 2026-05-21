@@ -2,29 +2,17 @@
 from typing import Any
 
 from gain.annotation.annotatable import Annotatable
-from gain.annotation.annotation_config import AnnotatorInfo, AttributeInfo
+from gain.annotation.annotation_config import AnnotatorInfo
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
     AttributeDesc,
 )
+from gain.annotation.annotator_base import AnnotatorBase
 
 
-class HelloWorldAnnotator(Annotator):
+class HelloWorldAnnotator(AnnotatorBase):
     """Defines example annotator."""
-
-    def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
-        super().__init__(pipeline, info)
-
-    def annotate(
-        self, annotatable: Annotatable | None,  # noqa: ARG002
-        context: dict[str, Any],  # noqa: ARG002
-    ) -> dict[str, Any]:
-        result = {}
-        for attribute_config in self._info.attributes:
-            assert attribute_config.source == "hi"
-            result[attribute_config.name] = "hello world"
-        return result
 
     def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
         return {
@@ -36,22 +24,14 @@ class HelloWorldAnnotator(Annotator):
             ),
         }
 
+    def _do_annotate(
+        self, annotatable: Annotatable,  # noqa: ARG002
+        context: dict[str, Any],  # noqa: ARG002
+    ) -> dict[str, Any]:
+        return {attr.name: "hello world" for attr in self._info.attributes}
+
 
 def build_annotator(pipeline: AnnotationPipeline,
                     info: AnnotatorInfo) -> Annotator:
     """Create an example hello world annotator."""
-    if not info.attributes:
-        info.attributes = [AttributeInfo(
-            "hi", "hi",
-            internal=False,
-            parameters={})]
-
-    for attribute_info in info.attributes:
-        if attribute_info.source != "hi":
-            raise ValueError(f"The {info.type} does not provide the source "
-                             f"{attribute_info.source}. The only source "
-                             "provided is 'hi'")
-        attribute_info.value_type = "str"
-        attribute_info.description = \
-            "The attribute 'hi' has as constant value of 'hello world.'"
     return HelloWorldAnnotator(pipeline, info)

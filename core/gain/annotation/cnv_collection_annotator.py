@@ -8,13 +8,13 @@ from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
     AnnotationConfigurationError,
     AnnotatorInfo,
-    AttributeInfo,
 )
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
     AttributeDesc,
 )
+from gain.annotation.annotator_base import AnnotatorBase
 from gain.genomic_resources.aggregators import build_aggregator
 from gain.genomic_resources.genomic_scores import CNV, CnvCollection
 
@@ -24,8 +24,8 @@ def build_cnv_collection_annotator(pipeline: AnnotationPipeline,
     return CnvCollectionAnnotator(pipeline, info)
 
 
-class CnvCollectionAnnotator(Annotator):
-    """Simple effect annotator class."""
+class CnvCollectionAnnotator(AnnotatorBase):
+    """CNV collection annotator class."""
 
     CNV_FILTER_GRAMMAR = textwrap.dedent("""
         ?start: filter | and_ | or
@@ -84,36 +84,17 @@ class CnvCollectionAnnotator(Annotator):
                 raise AnnotationConfigurationError(
                     f"Error parsing cnv_filter: {e}") from e
 
-        all_attributes = self.get_all_attribute_descriptions()
+        super().__init__(pipeline, info)
 
-        if not info.attributes:
-            for attr in all_attributes.values():
-                info.attributes.append(AttributeInfo(
-                    attr.name or attr.source, attr.source,
-                    internal=attr.internal, parameters=attr.params,
-                    _type=attr.type, description=attr.description,
-                    attribute_type=attr.attribute_type))
-            info.attributes = [AttributeInfo(
-                "count", "count",
-                internal=False, parameters={})]
-
-        self.cnv_attributes = {}
+        self.cnv_attributes: dict[str, tuple[AttributeDesc, str | None]] = {}
         for attribute_def in info.attributes:
-            if attribute_def.source not in all_attributes:
-                raise ValueError(f"The source {attribute_def.source} "
-                                 " is not supported for the annotator "
-                                 f"{info.type}")
-
-            attribute = all_attributes[attribute_def.source]
-            attribute_name = attribute_def.source
+            attribute = self.attribute_descriptions[attribute_def.source]
             if "aggregator" in attribute_def.parameters:
                 aggregator = attribute_def.parameters["aggregator"]
             else:
                 aggregator = attribute.params.get("aggregator")
-            attribute_def.value_type = attribute.type
-            attribute_def.description = attribute.description
             res_attribute_def = self.cnv_collection\
-                .get_score_definition(attribute_name)
+                .get_score_definition(attribute_def.source)
             if res_attribute_def is not None:
                 attribute_def._documentation = f"""
                     {attribute_def.description}
@@ -123,13 +104,10 @@ class CnvCollectionAnnotator(Annotator):
                     aggregator: {aggregator}
                 """  # noqa: SLF001
 
-            self.cnv_attributes[attribute_def.name] = \
-                (attribute, aggregator)
-
-        super().__init__(pipeline, info)
+            self.cnv_attributes[attribute_def.name] = (attribute, aggregator)
 
     def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
-        attributes = {
+        attributes: dict[str, AttributeDesc] = {
             "count": AttributeDesc(
                 source="count",
                 type="int",
@@ -143,6 +121,7 @@ class CnvCollectionAnnotator(Annotator):
                 source=score_id,
                 type=score_def.value_type,
                 description=score_def.desc,
+                default=False,
                 params={"aggregator": score_def.allele_aggregator},
             )
         return attributes
@@ -230,19 +209,17 @@ class CnvCollectionAnnotator(Annotator):
 
     def open(self) -> Annotator:
         self.cnv_collection.open()
-        return super().open()
+        Annotator.open(self)
+        return self
 
     def close(self) -> None:
         self.cnv_collection.close()
         super().close()
 
-    def annotate(
-        self, annotatable: Annotatable | None,
+    def _do_annotate(
+        self, annotatable: Annotatable,
         context: dict[str, Any],  # noqa: ARG002
     ) -> dict[str, Any]:
-        if annotatable is None:
-            return {attr.name: None for attr in self._info.attributes}
-
         cnvs = self.cnv_collection.fetch_cnvs(
             annotatable.chrom, annotatable.pos, annotatable.pos_end)
 
@@ -260,15 +237,14 @@ class CnvCollectionAnnotator(Annotator):
             for name, (attribute, _) in self.cnv_attributes.items():
                 if name not in aggregators:
                     continue
-                assert attribute.name is not None
-                aggregators[name].add(cnv.attributes[attribute.name])
+                aggregators[name].add(cnv.attributes[attribute.source])
 
-        ret = {}
+        result = {}
         for attribute_config in self._info.attributes:
             if attribute_config.name in aggregators:
-                ret[attribute_config.name] = \
+                result[attribute_config.name] = \
                     aggregators[attribute_config.name].get_final()
             else:
-                ret[attribute_config.name] = len(cnvs)
+                result[attribute_config.name] = len(cnvs)
 
-        return ret
+        return result

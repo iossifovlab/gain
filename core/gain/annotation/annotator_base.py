@@ -71,10 +71,8 @@ class AnnotatorBase(Annotator):
             if attribute_config.internal is None:
                 attribute_config.internal = attr_desc.internal
 
-        if info.parameters.get("work_dir") is None:
-            raise ValueError(
-                f"Missing a 'work_dir' parameter in annotator {info}.")
-        self.work_dir = Path(info.parameters["work_dir"])
+        work_dir = info.parameters.get("work_dir")
+        self.work_dir = Path(work_dir) if work_dir is not None else None
         super().__init__(pipeline, info)
 
     def open(self) -> Annotator:

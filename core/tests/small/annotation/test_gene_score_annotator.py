@@ -3,6 +3,7 @@
 import textwrap
 
 import pytest
+from gain.annotation.annotatable import Region
 from gain.annotation.annotation_pipeline import AnnotatorInfo, AttributeInfo
 from gain.annotation.gene_score_annotator import GeneScoreAnnotator
 from gain.genomic_resources.repository import (
@@ -10,6 +11,8 @@ from gain.genomic_resources.repository import (
     GenomicResourceRepo,
 )
 from gain.genomic_resources.testing import build_inmemory_test_repository
+
+_DUMMY_ANNOTATABLE = Region("chr1", 1, 1)
 
 
 @pytest.fixture
@@ -87,7 +90,7 @@ def test_gene_score_annotator(scores_repo: GenomicResourceRepo) -> None:
         "gene_list",
     )
 
-    result = annotator.annotate(None, {"gene_list": ["LRP1", "TRRAP"]})
+    result = annotator.annotate(_DUMMY_ANNOTATABLE, {"gene_list": ["LRP1", "TRRAP"]})
 
     assert result == {"LGD_rank": 1}
 
@@ -115,7 +118,7 @@ def test_gene_score_annotator_int_attributes(
 
     assert attribute_descs["int_score"].type == "int"
 
-    result = annotator.annotate(None, {"gene_list": ["G2"]})
+    result = annotator.annotate(_DUMMY_ANNOTATABLE, {"gene_list": ["G2"]})
 
     assert result == {"int_score": 2}
 
@@ -127,7 +130,7 @@ def test_gene_score_annotator_default_aggregator(
                                    AnnotatorInfo("gosho", [], {}),
                                    resource, "gene_list")
 
-    result = annotator.annotate(None, {"gene_list": ["LRP1", "TRRAP"]})
+    result = annotator.annotate(_DUMMY_ANNOTATABLE, {"gene_list": ["LRP1", "TRRAP"]})
 
     assert result == {"LGD_rank": {"LRP1": 1, "TRRAP": 3}}
 
@@ -225,7 +228,7 @@ def test_default_annotation_custom_aggregator(
     annotator = GeneScoreAnnotator(
         None, AnnotatorInfo("gosho", [], {}), resource, "gene_list",
     )
-    result = annotator.annotate(None, {"gene_list": ["G1", "G2"]})
+    result = annotator.annotate(_DUMMY_ANNOTATABLE, {"gene_list": ["G1", "G2"]})
     assert result["score1"] == {"G1": 1, "G2": 2}
     assert result["score2"] == 10
 
@@ -245,7 +248,7 @@ def test_default_annotation_non_default_accessible_explicitly(
         resource,
         "gene_list",
     )
-    result = annotator.annotate(None, {"gene_list": ["G1", "G2"]})
+    result = annotator.annotate(_DUMMY_ANNOTATABLE, {"gene_list": ["G1", "G2"]})
     assert result == {"score3": 200}
 
 
