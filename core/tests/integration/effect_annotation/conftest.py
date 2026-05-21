@@ -13,6 +13,11 @@ from gain.genomic_resources.reference_genome import (
 
 @pytest.fixture(scope="session")
 def gene_models_2013() -> GeneModels:
+    pytest.skip(
+        "refGene_v201309 is being retired; tests using it are skipped "
+        "pending migration to refGene_v20190211 or deletion "
+        "(see iossifovlab/gain#15)",
+    )
     gene_models = build_gene_models_from_resource_id(
         "hg19/gene_models/refGene_v201309")
     gene_models.load()
