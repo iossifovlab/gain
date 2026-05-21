@@ -34,6 +34,11 @@ def genomic_sequence_2013(
 @pytest.fixture(scope="module")
 def gene_models_2013(
         grr_repository: GenomicResourceRepo) -> GeneModels:
+    pytest.skip(
+        "refGene_v201309 is being retired; tests using it are skipped "
+        "pending migration to refGene_v20190211 or deletion "
+        "(see iossifovlab/gain#15)",
+    )
     resource = grr_repository.get_resource(
         "hg19/gene_models/refGene_v201309")
     return build_gene_models_from_resource(resource).load()
