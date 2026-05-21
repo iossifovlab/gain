@@ -90,7 +90,8 @@ def test_gene_score_annotator(scores_repo: GenomicResourceRepo) -> None:
         "gene_list",
     )
 
-    result = annotator.annotate(_DUMMY_ANNOTATABLE, {"gene_list": ["LRP1", "TRRAP"]})
+    result = annotator.annotate(
+        _DUMMY_ANNOTATABLE, {"gene_list": ["LRP1", "TRRAP"]})
 
     assert result == {"LGD_rank": 1}
 
@@ -130,7 +131,8 @@ def test_gene_score_annotator_default_aggregator(
                                    AnnotatorInfo("gosho", [], {}),
                                    resource, "gene_list")
 
-    result = annotator.annotate(_DUMMY_ANNOTATABLE, {"gene_list": ["LRP1", "TRRAP"]})
+    result = annotator.annotate(
+        _DUMMY_ANNOTATABLE, {"gene_list": ["LRP1", "TRRAP"]})
 
     assert result == {"LGD_rank": {"LRP1": 1, "TRRAP": 3}}
 
