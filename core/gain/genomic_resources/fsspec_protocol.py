@@ -744,12 +744,23 @@ class FsspecReadWriteProtocol(
         content_filepath = os.path.join(
             self.url, GR_CONTENTS_FILE_NAME)
 
+        # gzip header OS byte (offset 9) is normalised to 0xff
+        # ("unknown") so the file is byte-deterministic across
+        # Python distributions. Upstream CPython hardcodes 0xff,
+        # but Debian's Python patches gzip.compress to emit 0x03
+        # ("Unix"), which means the same input produces different
+        # bytes between a conda Python and a python:3.x-slim
+        # container — enough to flag .CONTENTS.json.gz as modified
+        # under `git status --porcelain` in CI even when the JSON
+        # payload is identical.
+        gz = gzip.compress(
+            json.dumps(
+                content, indent=2, sort_keys=True).encode("utf8"),
+            mtime=0)
+        gz = gz[:9] + b"\xff" + gz[10:]
+
         with self.filesystem.open(content_filepath, "wb") as outfile:
-            outfile.write(
-                gzip.compress(
-                    json.dumps(
-                        content, indent=2, sort_keys=True).encode("utf8"),
-                    mtime=0))
+            outfile.write(gz)
 
         with self.filesystem.open(
                 content_filepath[:-3],

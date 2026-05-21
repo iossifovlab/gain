@@ -514,9 +514,16 @@ def _create_contents_db(
                     full_row,
                 )
 
+    # mtime=0 strips the current-time stamp from the gzip header
+    # so re-running this on an unchanged repo produces identical
+    # bytes (gzip.open's default writes the wall-clock time, which
+    # changes every run). The OS byte at offset 9 is normalised to
+    # 0xff for cross-Python-distribution determinism — see the
+    # matching note in fsspec_protocol.build_content_file.
     raw_data = pathlib.Path(sqlite_filepath).read_bytes()
-    with gzip.open(gzip_sqlite_filepath, mode="wb") as gzip_out:
-        gzip_out.write(raw_data)
+    gz = gzip.compress(raw_data, mtime=0)
+    gz = gz[:9] + b"\xff" + gz[10:]
+    pathlib.Path(gzip_sqlite_filepath).write_bytes(gz)
     os.remove(sqlite_filepath)
 
 
