@@ -227,7 +227,7 @@ Simple effect annotator.
         self, annotatable: Annotatable | None, context: dict[str, Any],
     ) -> dict[str, Any]:
         if annotatable is None:
-            return self._empty_result()
+            return {attr.name: None for attr in self._info.attributes}
         source_values = self._do_annotate(annotatable, context)
         result: dict[str, Any] = {}
         for attr in self.get_info().attributes:

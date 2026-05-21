@@ -241,7 +241,7 @@ class CnvCollectionAnnotator(Annotator):
         context: dict[str, Any],  # noqa: ARG002
     ) -> dict[str, Any]:
         if annotatable is None:
-            return self._empty_result()
+            return {attr.name: None for attr in self._info.attributes}
 
         cnvs = self.cnv_collection.fetch_cnvs(
             annotatable.chrom, annotatable.pos, annotatable.pos_end)

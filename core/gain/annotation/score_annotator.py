@@ -23,7 +23,7 @@ from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
 )
-from gain.annotation.annotator_base import AttributeDesc
+from gain.annotation.annotator_base import AnnotatorBase, AttributeDesc
 from gain.genomic_resources.aggregators import (
     build_aggregator,
     validate_aggregator,
@@ -59,46 +59,16 @@ def get_genomic_resource(
     return resource
 
 
-class GenomicScoreAnnotatorBase(Annotator):
+class GenomicScoreAnnotatorBase(AnnotatorBase):
     """Genomic score base annotator."""
 
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo,
                  score: GenomicScore):
         self.score = score
+        info.resources.append(score.resource)
         super().__init__(pipeline, info)
         self._region_length_cutoff = info.parameters.get(
             "region_length_cutoff", 500_000)
-
-        info.resources.append(score.resource)
-
-        if info.attributes:
-            for attribute_info in info.attributes:
-                if attribute_info.source not in self.score.score_definitions:
-                    continue
-                score_def = score.get_score_definition(attribute_info.source)
-                if score_def is None:
-                    message = (
-                        f"The score '{attribute_info.source}' is "
-                        f"unknown in '{score.resource.get_id()}' "
-                        "resource!")
-                    raise ValueError(message)
-                attribute_info.value_type = score_def.value_type
-                attribute_info.description = score_def.desc
-        else:
-            info.attributes = []
-            for attr_desc in self.get_all_attribute_descriptions().values():
-                if attr_desc.default:
-                    attr = AttributeInfo(
-                        name=cast(str, attr_desc.name),
-                        source=attr_desc.source,
-                        internal=attr_desc.internal,
-                        parameters={},
-                        _type=attr_desc.type,
-                        description=attr_desc.description,
-                        attribute_type=attr_desc.attribute_type,
-                        default=attr_desc.default,
-                    )
-                    info.attributes.append(attr)
 
         self.simple_score_queries: list[str] = [
             attr.source for attr in info.attributes
@@ -106,6 +76,7 @@ class GenomicScoreAnnotatorBase(Annotator):
 
     def open(self) -> Annotator:
         self.score.open()
+        Annotator.open(self)
         return self
 
     def is_open(self) -> bool:
@@ -314,13 +285,10 @@ phastCons, phyloP, FitCons2, etc.
         )
         return [sagg.get_final() for sagg in scores_agg]
 
-    def annotate(
-        self, annotatable: Annotatable | None,
+    def _do_annotate(
+        self, annotatable: Annotatable,
         context: dict[str, Any],  # noqa: ARG002
     ) -> dict[str, Any]:
-
-        if annotatable is None:
-            return self._empty_result()
 
         if annotatable.chromosome not in self.score.get_all_chromosomes():
             return self._empty_result()
@@ -712,8 +680,8 @@ Non-``VCFAllele`` annotatables always use region aggregation.
 
         return {attr.name: scores.get(attr.source) for attr in self.attributes}
 
-    def annotate(
-        self, annotatable: Annotatable | None,
+    def _do_annotate(
+        self, annotatable: Annotatable,
         context: dict[str, Any],  # noqa: ARG002
     ) -> dict[str, Any]:
         """Dispatch annotation based on annotatable type and mode.
@@ -721,9 +689,6 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         For VCFAllele: mode selects between exact-match and region aggregation.
         For all other annotatables: always use region aggregation.
         """
-        if annotatable is None:
-            return self._empty_result()
-
         all_chroms = self.allele_score.get_all_chromosomes()
         if annotatable.chromosome not in all_chroms:
             return self._empty_result()

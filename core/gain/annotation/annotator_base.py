@@ -96,10 +96,11 @@ class AnnotatorBase(Annotator):
         self, annotatable: Annotatable | None, context: dict[str, Any],
     ) -> dict[str, Any]:
         if annotatable is None:
-            return self._empty_result()
-        source_values = self._do_annotate(annotatable, context)
+            values = self._empty_result()
+        else:
+            values = self._do_annotate(annotatable, context)
         return {
-            attribute_config.name: source_values[attribute_config.source]
+            attribute_config.name: values[attribute_config.name]
             for attribute_config in self._info.attributes
         }
 
@@ -128,6 +129,6 @@ class AnnotatorBase(Annotator):
             annotatables, contexts, batch_work_dir=batch_work_dir,
         )
         return [{
-            attr.name: result[attr.source]
+            attr.name: result[attr.name]
             for attr in self._info.attributes
         } for result in inner_output]

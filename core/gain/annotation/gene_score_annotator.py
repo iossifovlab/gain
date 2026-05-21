@@ -172,7 +172,7 @@ class GeneScoreAnnotator(Annotator):
     ) -> dict[str, Any]:
         genes = context.get(self.input_gene_list)
         if genes is None:
-            return self._empty_result()
+            return {attr.name: None for attr in self._info.attributes}
 
         attributes = {}
         for attr, aggregator_type in zip(

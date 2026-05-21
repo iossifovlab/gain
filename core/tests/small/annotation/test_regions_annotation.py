@@ -23,9 +23,8 @@ def fixture_repo() -> GenomicResourceRepo:
               desc: "test values"
               name: 100way
             default_annotation:
-                attributes:
-                - source: test100way
-                  name: test100
+            - source: test100way
+              name: test100
             """),
             "data.mem": """
                 chrom  pos_begin  pos_end  100way
