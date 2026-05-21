@@ -92,7 +92,7 @@ test.describe('Pipeline tests', () => {
   });
 
   test('should edit public pipeline and annotate with it', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Clinical_annotation');
+    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
     /* eslint-disable */
     await page.evaluate(() => {
       const monaco = (window as any).monaco;
@@ -162,7 +162,7 @@ test.describe('Pipeline tests', () => {
         {
           range: new monaco.Range(6, 1, 13, 1),
           text: '- position_score_annotator:\n' +
-                '    resource_id: hg19/scores/fitCons2/E035\n' +
+                '    resource_id: hg19/scores/FitCons2/E035\n' +
                 '    attributes:\n' +
                 '    - internal: false\n' +
                 '      name: FitCons2_E035\n' +
@@ -214,11 +214,11 @@ test.describe('Pipeline tests', () => {
 
     await page.getByRole('button', { name: 'Delete' }).click();
     await page.locator('#confirm-delete').click();
-    await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/Autism_annotation');
+    await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/T2T_clinical_annotation');
   });
 
   test('should make copy of public pipeline by clicking \'save as\'', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Clinical_annotation');
+    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
     await page.getByRole('button', { name: 'Save as' }).click();
 
     await expect(page.locator('#name-modal')).toBeVisible();
@@ -290,18 +290,17 @@ test.describe('Pipeline tests', () => {
   });
 
   test('should not be able to delete and save public pipeline', async({ page }) => {
-    await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/Autism_annotation');
+    await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/T2T_clinical_annotation');
     await expect(page.getByRole('button', { name: 'Delete' })).not.toBeVisible();
     await expect(page.getByRole('button', { name: 'Save', exact: true })).not.toBeVisible();
   });
 
-  test('should search and select pipeline from dropdown', async({ page }) => {
+  test('should search pipeline from dropdown', async({ page }) => {
     await page.locator('#pipelines-input').fill('clini');
-    await expect(page.locator('mat-option')).toHaveCount(4);
-    await expect(page.getByTitle('pipeline/Clinical_annotation')).toBeVisible();
-    await expect(page.getByTitle('pipeline/T2T_Clinical_annotation')).toBeVisible();
-    await expect(page.getByTitle('pipeline/hg38_Clinical_annotation')).toBeVisible();
-    await expect(page.getByTitle('pipeline/hg19_Clinical_annotation')).toBeVisible();
+    await expect(page.locator('mat-option')).toHaveCount(3);
+    await expect(page.getByRole('option', { name: 'circle pipeline/T2T_clinical_annotation' })).toBeVisible();
+    await expect(page.getByRole('option', { name: 'circle pipeline/hg38_clinical_annotation' })).toBeVisible();
+    await expect(page.getByRole('option', { name: 'circle pipeline/hg19_clinical_annotation' })).toBeVisible();
   });
 
   test('should search for nonexistent pipeline in dropdown', async({ page }) => {
@@ -660,7 +659,7 @@ test.describe('Add annotator to pipeline tests', () => {
   });
 
   test('should append gene set annotator', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Clinical_annotation');
+    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
     await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
 
     await page.getByRole('combobox', { name: 'Select annotator' }).click();
@@ -668,7 +667,7 @@ test.describe('Add annotator to pipeline tests', () => {
     await page.getByRole('button', { name: 'Next' }).click();
 
     await page.locator('[id="resource_id-dropdown"]').click();
-    await page.locator('mat-option').getByText('gene_properties/gene_sets/spark').click();
+    await page.locator('mat-option').getByText('gene_properties/gene_sets/autism').click();
     await page.locator('[id="input_gene_list-dropdown"]').click();
     await page.locator('mat-option').getByText('gene_list').click();
     await page.getByRole('button', { name: 'Next' }).click();
@@ -691,7 +690,7 @@ test.describe('Add annotator to pipeline tests', () => {
 
     expect(value).toContain(
       '- gene_set_annotator:\n'+
-      '    resource_id: gene_properties/gene_sets/spark\n' +
+      '    resource_id: gene_properties/gene_sets/autism\n' +
       '    input_gene_list: gene_list\n'+
       '    attributes:\n'+
       '    - name: in_sets\n'+
@@ -739,7 +738,7 @@ test.describe('Add annotator to pipeline tests', () => {
     await page.getByRole('button', { name: 'Next' }).click();
 
     await page.locator('[id="resource_id-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg19/scores/fitCons2/E050').click();
+    await page.locator('mat-option').getByText('hg19/scores/FitCons2/E050').click();
 
     await page.getByRole('button', { name: 'Next' }).click();
 
@@ -768,7 +767,7 @@ test.describe('Add annotator to pipeline tests', () => {
       '      internal: true\n' +
       '\n' +
       '- position_score_annotator:\n' +
-      '    resource_id: hg19/scores/fitCons2/E050\n' +
+      '    resource_id: hg19/scores/FitCons2/E050\n' +
       '    attributes:\n' +
       '    - name: FitCons2_E050\n' +
       '      source: FitCons2_E050\n' +
@@ -804,7 +803,7 @@ test.describe('Add annotator to pipeline tests', () => {
     await page.getByRole('button', { name: 'Next' }).click();
 
     await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg19/gene_models/ccds_v201309').click();
+    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
 
     await page.getByRole('button', { name: 'Next' }).click();
 
@@ -831,7 +830,7 @@ test.describe('Add annotator to pipeline tests', () => {
       '    resource_id: hg38/scores/CADD_v1.7\n' +
       '\n' +
       '- simple_effect_annotator:\n' +
-      '    gene_models: hg19/gene_models/ccds_v201309\n' +
+      '    gene_models: hg38/gene_models/GENCODE/46/basic/PRI\n' +
       '    attributes:\n' +
       '    - name: worst_effect\n' +
       '      source: worst_effect\n' +
@@ -912,7 +911,7 @@ test.describe('Add annotator to pipeline tests', () => {
     await page.getByRole('button', { name: 'Next' }).click();
 
     await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg19/gene_models/ccds_v201309').click();
+    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
     await page.getByRole('button', { name: 'Next' }).click();
 
     await expect(page.locator('.attribute-source')).toHaveCount(3);
@@ -931,7 +930,7 @@ test.describe('Add annotator to pipeline tests', () => {
     await page.getByRole('button', { name: 'Next' }).click();
 
     await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg19/gene_models/ccds_v201309').click();
+    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
     await page.getByRole('button', { name: 'Next' }).click();
 
     await page.locator('.editable-name').first().fill('my_worst_effect');
@@ -954,7 +953,7 @@ test.describe('Add annotator to pipeline tests', () => {
   });
 
   test('should show duplicate attribute name error and hide Finish button', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Clinical_annotation');
+    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
     await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
 
     await page.getByRole('combobox', { name: 'Select annotator' }).click();
@@ -962,7 +961,7 @@ test.describe('Add annotator to pipeline tests', () => {
     await page.getByRole('button', { name: 'Next' }).click();
 
     await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg19/gene_models/ccds_v201309').click();
+    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
     await page.getByRole('button', { name: 'Next' }).click();
 
     await expect(page.locator('.attribute-source')).toHaveCount(3);
@@ -1013,7 +1012,7 @@ test.describe('Add annotator to pipeline tests', () => {
     await expect(page.getByRole('button', { name: 'Next' })).toBeDisabled();
 
     await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg19/gene_models/ccds_v201309').click();
+    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
 
     // Next is enabled without filling optional genome field
     await expect(page.getByRole('button', { name: 'Next' })).toBeEnabled();
@@ -1027,7 +1026,7 @@ test.describe('Add annotator to pipeline tests', () => {
     await page.getByRole('button', { name: 'Next' }).click();
 
     await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg19/gene_models/ccds_v201309').click();
+    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
     await expect(page.getByRole('button', { name: 'Next' })).toBeEnabled();
 
     await page.locator('[id="genome-dropdown"]').click();
@@ -1094,7 +1093,7 @@ test.describe('Add annotator to pipeline tests', () => {
     await page.getByRole('button', { name: 'Next' }).click();
 
     await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg19/gene_models/ccds_v201309').click();
+    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
     await page.getByRole('button', { name: 'Next' }).click();
 
     // gene_list is the 3rd attribute (index 2) and internal: true by default
@@ -1126,7 +1125,7 @@ test.describe('Add annotator to pipeline tests', () => {
     await page.getByRole('button', { name: 'Next' }).click();
 
     await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg19/gene_models/ccds_v201309').click();
+    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
     await page.getByRole('button', { name: 'Next' }).click();
 
     await expect(page.locator('.attribute-source')).toHaveCount(3);
@@ -1179,18 +1178,17 @@ test.describe('Add resource to pipeline tests', () => {
       )
     ]);
 
-    await expect(page.locator('#resource-count')).toHaveText('3 resources');
-    await expect(page.getByTitle('hg19/scores/CADD')).toBeVisible();
+    await expect(page.locator('#resource-count')).toHaveText('2 resources');
     await expect(page.getByTitle('hg38/scores/CADD_v1.7')).toBeVisible();
     await expect(page.getByTitle('hg38/scores/dbNSFP4.9a')).toBeVisible();
   });
 
   test('should filter resources by resource type', async({ page }) => {
     await page.locator('#pipeline-actions').locator('#add-resource-button').click();
-    await expect(page.locator('#resource-count')).toHaveText('274 resources');
+    await expect(page.locator('#resource-count')).toHaveText('8181 resources');
     await page.locator('#resource-type mat-select').click();
-    await page.locator('mat-option').filter({ hasText: 'position_score' }).click();
-    await expect(page.locator('#resource-count')).toHaveText('143 resources');
+    await page.locator('mat-option').filter({ hasText: 'gene_score' }).click();
+    await expect(page.locator('#resource-count')).toHaveText('10 resources');
   });
 
   test('should navigate past select annotator step after clicking continue', async({ page }) => {
@@ -1452,7 +1450,7 @@ test.describe('Pipeline status bar tests', () => {
     await page.getByRole('button', { name: 'Next' }).click();
 
     await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg19/gene_models/ccds_v201309').click();
+    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
     await page.getByRole('button', { name: 'Next' }).click();
 
     await Promise.all([

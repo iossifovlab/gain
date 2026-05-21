@@ -9,18 +9,18 @@ test.describe('Single annotation input tests', () => {
   });
 
   test('should disable Go button when no annotatable is typed', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Clinical_annotation');
+    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
     await expect(page.getByRole('button', { name: 'Go' })).toBeDisabled();
   });
 
   test('should disable Go button when annotatable format is invalid', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Clinical_annotation');
+    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
     await page.getByPlaceholder('Type annotatable...').fill('invalid input');
     await expect(page.getByRole('button', { name: 'Go' })).toBeDisabled();
   });
 
   test('should enable Go button when valid annotatable and pipeline are selected', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Clinical_annotation');
+    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
     await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
     await expect(page.getByRole('button', { name: 'Go' })).toBeEnabled();
   });
@@ -132,14 +132,14 @@ test.describe('Single annotation report tests', () => {
   test('should clear report after selecting other pipeline', async({ page }) => {
     await page.locator('#pipelines-input').click();
     await page.getByRole('button', { name: 'Continue' }).click();
-    await page.locator('mat-option').getByText('pipeline/T2T_Clinical_annotation').click();
+    await page.locator('mat-option').getByText('pipeline/T2T_clinical_annotation').click();
     await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
 
     await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
     await page.getByRole('button', { name: 'Go', exact: true }).click();
     await page.waitForSelector('#report', { timeout: 120000 });
 
-    await utils.selectPipeline(page, 'pipeline/Clinical_annotation');
+    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
     await expect(page.locator('#report')).not.toBeVisible();
   });
 

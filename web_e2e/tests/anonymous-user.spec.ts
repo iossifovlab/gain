@@ -22,7 +22,7 @@ test.describe('Anonymous user tests', () => {
   });
 
   test('should append gene set annotator', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Clinical_annotation');
+    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
     await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
 
     await page.getByRole('combobox', { name: 'Select annotator' }).click();
@@ -30,7 +30,7 @@ test.describe('Anonymous user tests', () => {
     await page.getByRole('button', { name: 'Next' }).click();
 
     await page.locator('[id="resource_id-dropdown"]').click();
-    await page.locator('mat-option').getByText('gene_properties/gene_sets/spark').click();
+    await page.locator('mat-option').getByText('gene_properties/gene_sets/autism').click();
     await page.locator('[id="input_gene_list-dropdown"]').click();
     await page.locator('mat-option').getByText('gene_list').click();
     await page.getByRole('button', { name: 'Next' }).click();
@@ -53,7 +53,7 @@ test.describe('Anonymous user tests', () => {
 
     expect(value).toContain(
       '- gene_set_annotator:\n'+
-      '    resource_id: gene_properties/gene_sets/spark\n' +
+      '    resource_id: gene_properties/gene_sets/autism\n' +
       '    input_gene_list: gene_list\n'+
       '    attributes:\n'+
       '    - name: in_sets\n'+
@@ -74,24 +74,23 @@ test.describe('Anonymous user tests', () => {
     await utils.typeInPipelineEditor(
       page,
       '- effect_annotator:\n' +
+      '    gene_models: hg38/gene_models/MANE/1.1\n' +
       '    attributes:\n' +
-      '    - internal: false\n' +
-      '      name: worst_effect\n' +
+      '    - name: worst_effect\n' +
       '      source: worst_effect\n' +
-      '    - internal: false\n' +
-      '      name: worst_effect_genes\n' +
+      '      internal: false\n' +
+      '    - name: worst_effect_genes\n' +
       '      source: worst_effect_genes\n' +
-      '    - internal: false\n' +
-      '      name: gene_effects\n' +
+      '      internal: false\n' +
+      '    - name: gene_effects\n' +
       '      source: gene_effects\n' +
-      '    - internal: false\n' +
-      '      name: effect_details\n' +
+      '      internal: false\n' +
+      '    - name: effect_details\n' +
       '      source: effect_details\n' +
-      '    - internal: true\n' +
-      '      name: gene_list\n' +
+      '      internal: false\n' +
+      '    - name: gene_list\n' +
       '      source: gene_list\n' +
-      '    gene_models: hg19/gene_models/refGene_v201309\n' +
-      '    genome: hg38/genomes/GRCh38-hg38'
+      '      internal: true\n'
     );
 
     await saveResponse;
@@ -106,7 +105,7 @@ test.describe('Anonymous user tests', () => {
 
   test('should use public pipeline for single annotation', async({ page }) => {
     await page.locator('#pipelines-input').click();
-    await page.locator('mat-option').getByText('pipeline/T2T_Clinical_annotation').click();
+    await page.locator('mat-option').getByText('pipeline/T2T_clinical_annotation').click();
 
     await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
     await page.getByRole('button', {name: 'Go'}).click();
@@ -117,7 +116,7 @@ test.describe('Anonymous user tests', () => {
   test('should download single annotation report', async({ page }) => {
     await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
     await page.locator('.dropdown-icon').click();
-    await page.locator('mat-option').getByText('pipeline/T2T_Clinical_annotation').click();
+    await page.locator('mat-option').getByText('pipeline/T2T_clinical_annotation').click();
 
     await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
     await page.getByRole('button', {name: 'Go'}).click();
@@ -137,7 +136,7 @@ test.describe('Anonymous user tests', () => {
 
   test('should use public pipeline for job annotation', async({ page }) => {
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-    await utils.selectPipeline(page, 'pipeline/Clinical_annotation');
+    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
     await page.locator('#create-button').click();
 
@@ -164,16 +163,14 @@ test.describe('Anonymous user tests', () => {
       '- normalize_allele_annotator:\n' +
       '    genome: hg38/genomes/GRCh38-hg38\n' +
       '\n' +
-      '- allele_score:\n' +
-      '    attributes:\n' +
-      '    - internal: false\n' +
-      '      name: cadd_raw\n' +
-      '      source: cadd_raw\n' +
-      '    - internal: false\n' +
-      '      name: cadd_phred\n' +
-      '      source: cadd_phred\n' +
+      '- allele_score_annotator:\n' +
+      '    resource_id: hg38/scores/ClinVar_20240730\n' +
       '    input_annotatable: normalized_allele\n' +
-      '    resource_id: hg19/scores/CADD\n'
+      '    attributes:\n' +
+      '    - name: clinical_significance\n' +
+      '      source: CLNSIG\n' +
+      '    - name: clinical_disease_name\n' +
+      '      source: CLNDN \n'
     );
 
     await saveResponse;
@@ -224,7 +221,7 @@ test.describe('Anonymous user tests', () => {
 
   test('should be able to create new job after the previous one', async({ page }) => {
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-    await utils.selectPipeline(page, 'pipeline/Clinical_annotation');
+    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
     await page.locator('#create-button').click();
 

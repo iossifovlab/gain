@@ -71,22 +71,22 @@ test.describe('Annotation pipeline state persistence across navigation', () => {
   });
 
   test('selected pipeline is restored on Annotation Jobs after navigating from Single Annotation', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Clinical_annotation');
-    await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/Clinical_annotation');
+    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
+    await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/hg38_clinical_annotation');
 
     await goToAnnotationJobs(page);
 
-    await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/Clinical_annotation');
+    await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/hg38_clinical_annotation');
     await expect(page.locator('#pipeline-editor')).toHaveClass(/loaded-editor/);
   });
 
   test('selected pipeline is restored on Single Annotation after round-trip navigation', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Clinical_annotation');
+    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
 
     await goToAnnotationJobs(page);
     await goToSingleAnnotation(page);
 
-    await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/Clinical_annotation');
+    await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/hg38_clinical_annotation');
     await expect(page.locator('#pipeline-editor')).toHaveClass(/loaded-editor/);
   });
 

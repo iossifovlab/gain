@@ -20,7 +20,7 @@ test.describe('Create job tests', () => {
   });
 
   test('should create job with vcf file', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Clinical_annotation');
+    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
     await page.locator('#create-button').click();
 
@@ -190,7 +190,7 @@ test.describe('Job details tests', () => {
   });
 
   test('should check job details modal of failed job', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Clinical_annotation');
+    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-csv-file.csv');
 
     await expect(page.locator('app-column-specifying')).toBeVisible();
@@ -252,7 +252,6 @@ test.describe('Jobs table tests', () => {
   });
 
   test('should upload tsv file and check specify columns component content', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/GPF-SFARI_annotation');
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-tsv-file.tsv');
 
     await expect(page.locator('app-column-specifying')).toBeVisible();
@@ -277,7 +276,6 @@ test.describe('Jobs table tests', () => {
   });
 
   test('should show error message when specifying invalid combination of columns', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/GPF-SFARI_annotation');
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-csv-file.csv');
 
     await page.locator('[id="CHROM-header"]').locator('mat-select').click();
@@ -312,7 +310,7 @@ test.describe('Jobs validation tests', () => {
   });
 
   test('should upload invalid vcf file', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/Clinical_annotation');
+    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/invalid-vcf-input-file.vcf');
 
     await page.locator('#create-button').click();
