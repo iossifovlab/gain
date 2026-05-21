@@ -1,6 +1,28 @@
 Release Notes
 =============
 
+* 2026.5.3
+    * Refactored the allele score annotator: its default mode now
+      operates only on VCF alleles, and the legacy
+      ``allele_aggregator`` attribute was deprecated in favor of
+      ``aggregator``.
+    * Fixed VCF processing where incorrect end positions caused
+      spanning records to be skipped, and corrected how allele
+      scores access positions.
+    * Standardized canonical annotator names throughout the
+      documentation and fixed attribute-selection bugs in the
+      new-annotator UI.
+    * Fixed a race condition when filtering annotators.
+    * URL-encode lists, tuples, and dicts when stringifying
+      annotation attributes.
+    * Improved GRR browser page styles and table layout, and
+      refactored the templates for visual cohesion.
+    * Fixed broken annotation infrastructure links.
+    * Updated the FTS search database when creating the contents
+      file and fixed a statistics-manifest bug.
+    * The single-annotation report now handles array result
+      values.
+
 * 2026.5.2
     * Added admin panel views for managing anonymous users and their
       quotas; monthly quotas are now always displayed.
