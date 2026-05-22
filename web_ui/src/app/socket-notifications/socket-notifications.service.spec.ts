@@ -108,11 +108,11 @@ describe('SocketNotificationsService', () => {
         const s = new Subject<object>();
         subjects.push(s);
         const sub = s.subscribe(subscriber);
-        return () => sub.unsubscribe();
+        return (): void => sub.unsubscribe();
       });
       (webSocket as unknown as jest.Mock).mockReturnValue(mockWs);
       service = new SocketNotificationsService();
-      return { subjects };
+      return { subjects: subjects };
     }
 
     it('should not propagate CloseEvent and retry immediately for job notifications', () => {
@@ -176,11 +176,13 @@ describe('SocketNotificationsService', () => {
       const values: JobNotification[] = [];
       service.getJobNotifications().subscribe({ next: v => values.push(v) });
 
+      // eslint-disable-next-line camelcase
       subjects[0].next({ type: 'job_status', job_id: 1, status: 3 });
       subjects[0].error(new CloseEvent('error'));
+      // eslint-disable-next-line camelcase
       subjects[1].next({ type: 'job_status', job_id: 2, status: 4 });
 
-      expect(values).toEqual([job1, job2]);
+      expect(values).toStrictEqual([job1, job2]);
     });
   });
 });
