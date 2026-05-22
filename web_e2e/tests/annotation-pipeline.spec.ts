@@ -1185,7 +1185,7 @@ test.describe('Add resource to pipeline tests', () => {
 
   test('should filter resources by resource type', async({ page }) => {
     await page.locator('#pipeline-actions').locator('#add-resource-button').click();
-    await expect(page.locator('#resource-count')).toHaveText('8181 resources');
+    await expect(page.locator('#resource-count')).toHaveText('259 resources');
     await page.locator('#resource-type mat-select').click();
     await page.locator('mat-option').filter({ hasText: 'gene_score' }).click();
     await expect(page.locator('#resource-count')).toHaveText('10 resources');
