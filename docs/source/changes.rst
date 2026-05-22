@@ -1,6 +1,14 @@
 Release Notes
 =============
 
+* 2026.5.5
+    * Moved the ``to_gpf_gene_models_format`` CLI from ``gpf`` into
+      ``gain``.
+
+* 2026.5.4
+    * Made ``.CONTENTS.json.gz`` and ``.CONTENTS.sqlite3.gz``
+      byte-reproducible across platforms.
+
 * 2026.5.3
     * Refactored the allele score annotator: its default mode now
       operates only on VCF alleles, and the legacy
