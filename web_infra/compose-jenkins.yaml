@@ -161,7 +161,7 @@ services:
     # --fail rejects non-2xx, --max-time bounds the call.
     healthcheck:
       test: ["CMD", "curl", "--fail", "--max-time", "120",
-             "http://localhost:9001/api/editor/pipeline_status?pipeline_id=pipeline/Clinical_annotation"]
+             "http://localhost:9001/api/editor/pipeline_status?pipeline_id=pipeline/hg38_clinical_annotation"]
       interval: 10s
       timeout: 125s
       retries: 3
