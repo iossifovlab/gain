@@ -152,8 +152,7 @@ hr {
 
 .value-grid-container {
   display: grid;
-  width: 65%;
-  max-width: 100%;
+  width: 100%;
 }
 
 .value-grid-header {

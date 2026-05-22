@@ -70,7 +70,8 @@
             <div class="attribute-header">{{ attribute.name }}</div>
             @if(showFullReport) {
             <div class="attribute-result">
-              @if(!tableViewSources.includes(attribute.source)) { @if(isValueArray(attribute.result.value)) {
+              @if(!tableViewSources.includes(attribute.source)) { @if(isValueArray(attribute.result.value) &&
+              asArray(attribute.result.value).length > 0) {
               <div class="value-grid-container" style="grid-template-columns: auto">
                 <div class="value-grid-header sortable-header" (click)="sort('Value', attribute)">
                   Value
