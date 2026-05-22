@@ -1,5 +1,5 @@
 
-import { Subject, firstValueFrom } from 'rxjs';
+import { Observable, Subject, firstValueFrom } from 'rxjs';
 import { webSocket } from 'rxjs/webSocket';
 import { SocketNotificationsService } from './socket-notifications.service';
 import { JobNotification, PipelineNotification } from './socket-notifications';
@@ -20,6 +20,7 @@ describe('SocketNotificationsService', () => {
 
   afterEach(() => {
     jest.resetAllMocks();
+    jest.useRealTimers();
   });
 
   it('should get job failed notification', async() => {
@@ -86,18 +87,101 @@ describe('SocketNotificationsService', () => {
     expect(completeSpy).toHaveBeenCalledWith();
   });
 
-  it('should propagate non-CloseEvent errors for job notifications', async() => {
+  it('should propagate non-retryable errors for job notifications', async() => {
     const error = new Error('connection error');
     const resultPromise = firstValueFrom(service.getJobNotifications());
     subject.error(error);
     await expect(resultPromise).rejects.toThrow('connection error');
   });
 
-  it('should propagate non-CloseEvent errors for pipeline notifications', async() => {
+  it('should propagate non-retryable errors for pipeline notifications', async() => {
     const error = new Error('connection error');
     const resultPromise = firstValueFrom(service.getPipelineNotifications());
     subject.error(error);
     await expect(resultPromise).rejects.toThrow('connection error');
+  });
+
+  describe('retry behavior', () => {
+    function makeMultiSubscriptionWs(): { subjects: Subject<object>[] } {
+      const subjects: Subject<object>[] = [];
+      const mockWs = new Observable<object>(subscriber => {
+        const s = new Subject<object>();
+        subjects.push(s);
+        const sub = s.subscribe(subscriber);
+        return () => sub.unsubscribe();
+      });
+      (webSocket as unknown as jest.Mock).mockReturnValue(mockWs);
+      service = new SocketNotificationsService();
+      return { subjects };
+    }
+
+    it('should not propagate CloseEvent and retry immediately for job notifications', () => {
+      const { subjects } = makeMultiSubscriptionWs();
+      const errorSpy = jest.fn();
+
+      service.getJobNotifications().subscribe({ error: errorSpy });
+      subjects[0].error(new CloseEvent('error'));
+
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(subjects).toHaveLength(2);
+    });
+
+    it('should not propagate CloseEvent and retry immediately for pipeline notifications', () => {
+      const { subjects } = makeMultiSubscriptionWs();
+      const errorSpy = jest.fn();
+
+      service.getPipelineNotifications().subscribe({ error: errorSpy });
+      subjects[0].error(new CloseEvent('error'));
+
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(subjects).toHaveLength(2);
+    });
+
+    it('should not propagate Event error and retry after 2000ms', () => {
+      jest.useFakeTimers();
+      const { subjects } = makeMultiSubscriptionWs();
+      const errorSpy = jest.fn();
+
+      service.getJobNotifications().subscribe({ error: errorSpy });
+      subjects[0].error(new Event('error'));
+
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(subjects).toHaveLength(1);
+
+      jest.advanceTimersByTime(2000);
+
+      expect(subjects).toHaveLength(2);
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
+
+    it('should not retry Event error before 2000ms have elapsed', () => {
+      jest.useFakeTimers();
+      const { subjects } = makeMultiSubscriptionWs();
+
+      service.getJobNotifications().subscribe();
+      subjects[0].error(new Event('error'));
+
+      jest.advanceTimersByTime(1999);
+      expect(subjects).toHaveLength(1);
+    });
+
+    it('should receive messages after recovery from CloseEvent', () => {
+      const { subjects } = makeMultiSubscriptionWs();
+      const job1 = new JobNotification(1, 'success');
+      const job2 = new JobNotification(2, 'failed');
+      jest.spyOn(JobNotification, 'fromJson')
+        .mockReturnValueOnce(job1)
+        .mockReturnValueOnce(job2);
+
+      const values: JobNotification[] = [];
+      service.getJobNotifications().subscribe({ next: v => values.push(v) });
+
+      subjects[0].next({ type: 'job_status', job_id: 1, status: 3 });
+      subjects[0].error(new CloseEvent('error'));
+      subjects[1].next({ type: 'job_status', job_id: 2, status: 4 });
+
+      expect(values).toEqual([job1, job2]);
+    });
   });
 });
 

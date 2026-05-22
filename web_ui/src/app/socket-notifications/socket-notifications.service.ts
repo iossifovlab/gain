@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import { BehaviorSubject, catchError, filter, map, Observable, repeat, switchMap, throwError } from 'rxjs';
+import { BehaviorSubject, catchError, filter, map, Observable, repeat, switchMap, throwError, timer } from 'rxjs';
 import { webSocket, WebSocketSubject } from 'rxjs/webSocket';
 import { environment } from '../../../environments/environment';
 import { JobNotification, PipelineNotification } from './socket-notifications';
@@ -14,13 +14,27 @@ export class SocketNotificationsService {
   private socketNotifications: WebSocketSubject<object> = webSocket(this.socketNotificationsUrl);
   private readonly socket$ = new BehaviorSubject<WebSocketSubject<object>>(this.socketNotifications);
 
+  private retryAfterError<T>(): (source: Observable<T>) => Observable<T> {
+    return source => source.pipe(
+      catchError((err: unknown, caught) => {
+        if (err instanceof CloseEvent) {
+          return caught;
+        }
+        if (err instanceof Event) {
+          return timer(2000).pipe(switchMap(() => caught));
+        }
+        return throwError(() => err as Error);
+      }),
+      repeat()
+    );
+  }
+
   public getJobNotifications(): Observable<JobNotification> {
     return this.socket$.pipe(
       switchMap(ws => ws.pipe(
         filter(n => n['type'] === 'job_status'),
         map((n: object) => JobNotification.fromJson(n)),
-        catchError((err: unknown, caught) => err instanceof CloseEvent ? caught : throwError(() => err)),
-        repeat()
+        this.retryAfterError()
       ))
     );
   }
@@ -30,8 +44,7 @@ export class SocketNotificationsService {
       switchMap(ws => ws.pipe(
         filter(n => n['type'] === 'pipeline_status'),
         map((n: object) => PipelineNotification.fromJson(n)),
-        catchError((err: unknown, caught) => err instanceof CloseEvent ? caught : throwError(() => err)),
-        repeat()
+        this.retryAfterError()
       ))
     );
   }
