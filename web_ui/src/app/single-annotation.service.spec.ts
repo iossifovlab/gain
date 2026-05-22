@@ -487,8 +487,8 @@ describe('SingleAnnotationService', () => {
       { headers: {'X-CSRFToken': 'historyToken'}, withCredentials: true }
     );
     expect(res).toStrictEqual([
-      new AnnotatableHistory(1, 'chr14 204000100 A AA'),
-      new AnnotatableHistory(2, 'chr1 100 T C'),
+      new AnnotatableHistory(1, 'chr14 204000100 A AA', ''),
+      new AnnotatableHistory(2, 'chr1 100 T C', ''),
     ]);
   });
 
@@ -502,6 +502,34 @@ describe('SingleAnnotationService', () => {
     expect(httpDeleteSpy).toHaveBeenCalledWith(
       '//localhost:8000/api/single_allele/history?id=3',
       { headers: {'X-CSRFToken': 'deleteToken'}, withCredentials: true }
+    );
+  });
+
+  it('should post note update with allele and note body', () => {
+    document.cookie = 'csrftoken=noteToken';
+    const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
+    httpPostSpy.mockReturnValue(of({}));
+
+    service.updateNote('chr1 100 A T', 'BRCA1 review');
+
+    expect(httpPostSpy).toHaveBeenCalledWith(
+      '//localhost:8000/api/single_allele/note',
+      { allele: 'chr1 100 A T', note: 'BRCA1 review' },
+      { headers: {'X-CSRFToken': 'noteToken'}, withCredentials: true }
+    );
+  });
+
+  it('should post empty string to clear a note', () => {
+    document.cookie = 'csrftoken=noteToken';
+    const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
+    httpPostSpy.mockReturnValue(of({}));
+
+    service.updateNote('chr1 100 A T', '');
+
+    expect(httpPostSpy).toHaveBeenCalledWith(
+      '//localhost:8000/api/single_allele/note',
+      { allele: 'chr1 100 A T', note: '' },
+      { headers: {'X-CSRFToken': 'noteToken'}, withCredentials: true }
     );
   });
 });

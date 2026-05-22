@@ -1,7 +1,7 @@
 #grid-container {
   display: grid;
   width: max-content;
-  grid-template-columns: repeat(2, minmax(100px, max-content));
+  grid-template-columns: minmax(100px, 260px) minmax(80px, max-content);
   border: 1px solid #cfd8df;
   border-radius: 15px;
   margin: 5px auto;
@@ -25,33 +25,116 @@
 }
 
 .grid-cell {
-  border-top: 1px solid #cfd8df;
+  border-top: 1px solid oklch(90% 0.012 220);
   display: flex;
+  flex-direction: column;
   justify-content: center;
-  align-items: center;
-  line-height: 2rem;
   padding: 8px 0 5px 10px;
+  line-height: 2rem;
 }
 
-#delete-annotatable {
-  background: none;
-  border: none;
+.annotatable-cell {
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
 }
 
-#note {
+.annotatable-cell.editing {
+  background: #f4f7fb;
+  padding: 8px 12px;
+}
+
+.actions-cell {
+  align-items: center;
+  flex-direction: row;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 8px;
+}
+
+.actions-cell.editing {
+  background: #f4f7fb;
+}
+
+/* Eyebrow label */
+.note-label {
+  font-size: 0.69rem;
+  color: #85a2b9;
+  letter-spacing: 0.01em;
+  line-height: 1.5;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.note-label.empty {
   font-style: italic;
-  color: #5b778c;
-  margin-top: 5px;
+  color: #85a2b9;
 }
 
-.annotatable-button {
-  color: #5b778c;
+/* Allele link */
+.annotatable-link {
+  cursor: pointer;
+  line-height: 1.5;
+  color: #435869;
   text-decoration: underline;
 }
 
-.annotatable-button:hover {
+.annotatable-link:hover {
   cursor: pointer;
   color: #85a2b9;
+}
+
+/* Edit-mode input */
+.note-input {
+  width: 100%;
+  font-size: 0.875rem;
+  font-family: inherit;
+  color: oklch(25% 0.03 220);
+  border: 1px solid oklch(70% 0.06 230);
+  border-radius: 4px;
+  padding: 3px 7px;
+  outline: none;
+  box-sizing: border-box;
+  margin-bottom: 10px;
+}
+
+.note-input:focus {
+  border-color: oklch(50% 0.1 230);
+  box-shadow: 0 0 0 2px oklch(50% 0.1 230 / 0.15);
+}
+
+/* Action buttons */
+.action-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 3px 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #435869;
+}
+
+.action-btn:hover {
+  color: #85a2b9;
+}
+
+.confirm-btn:hover {
+  color: #85a2b9;
+}
+
+.cancel-btn:hover {
+  color: #eb8b94;
+}
+
+/* Footer note */
+#note {
+  font-style: italic;
+  font-size: 0.78rem;
+  color: oklch(56% 0.03 220);
+  margin-top: 6px;
+  display: block;
+  text-align: center;
 }
 
 #history-header {

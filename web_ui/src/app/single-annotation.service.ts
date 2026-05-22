@@ -17,6 +17,7 @@ export class SingleAnnotationService {
   private readonly getGenomesUrl = `${environment.apiPath}/jobs/genomes`;
   private readonly annotatablesHistoryUrl = `${environment.apiPath}/single_allele/history`;
   private readonly getHistogramUrl = `${environment.apiPath}/single_allele`;
+  private readonly updateNoteUrl = `${environment.apiPath}/single_allele/note`;
   public constructor(private http: HttpClient) { }
 
   private getCSRFToken(): string {
@@ -89,5 +90,10 @@ export class SingleAnnotationService {
   public deleteAnnotatable(annotatableId: number): Observable<object> {
     const options = { headers: {'X-CSRFToken': this.getCSRFToken()}, withCredentials: true };
     return this.http.delete(`${this.annotatablesHistoryUrl}?id=${annotatableId}`, options);
+  }
+
+  public updateNote(allele: string, note: string): Observable<object> {
+    const options = { headers: {'X-CSRFToken': this.getCSRFToken()}, withCredentials: true };
+    return this.http.post(this.updateNoteUrl, { allele: allele, note: note }, options);
   }
 }

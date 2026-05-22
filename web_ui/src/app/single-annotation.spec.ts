@@ -60,4 +60,25 @@ describe('AnnotatableHistory', () => {
   it('should return undefined when fromJson is called with null', () => {
     expect(AnnotatableHistory.fromJson(null)).toBeUndefined();
   });
+
+  it('should parse id, allele and note from JSON', () => {
+    const result = AnnotatableHistory.fromJson({ id: 7, allele: 'chr1 100 A T', note: 'BRCA1 review' });
+    expect(result).toStrictEqual(new AnnotatableHistory(7, 'chr1 100 A T', 'BRCA1 review'));
+  });
+
+  it('should default note to empty string when absent', () => {
+    const result = AnnotatableHistory.fromJson({ id: 3, allele: 'chr2 500 G C' });
+    expect(result.note).toBe('');
+  });
+
+  it('should parse an array of history entries', () => {
+    const results = AnnotatableHistory.fromJsonArray([
+      { id: 1, allele: 'chr1 100 A T', note: 'first' },
+      { id: 2, allele: 'chr2 200 G C', note: '' },
+    ]);
+    expect(results).toStrictEqual([
+      new AnnotatableHistory(1, 'chr1 100 A T', 'first'),
+      new AnnotatableHistory(2, 'chr2 200 G C', ''),
+    ]);
+  });
 });

@@ -2,16 +2,19 @@ import { Component, EventEmitter, OnDestroy, OnInit, Output } from '@angular/cor
 import { Subscription, take } from 'rxjs';
 import { SingleAnnotationService } from '../single-annotation.service';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { AnnotatableHistory } from '../single-annotation';
 
 @Component({
   selector: 'app-annotatables-table',
-  imports: [CommonModule],
+  imports: [CommonModule, FormsModule],
   templateUrl: './annotatables-table.component.html',
   styleUrl: './annotatables-table.component.css'
 })
 export class AnnotatablesTableComponent implements OnInit, OnDestroy {
   public annotatables: AnnotatableHistory[] = [];
+  public editingId: number = null;
+  public editingNote = '';
   private refreshAnnotatablesSubscription = new Subscription();
   @Output() public emitAnnotatable = new EventEmitter<string>();
 
@@ -38,6 +41,24 @@ export class AnnotatablesTableComponent implements OnInit, OnDestroy {
 
   public onDelete(annotatableId: number): void {
     this.singleAnnotationService.deleteAnnotatable(annotatableId).subscribe(() => this.getAnnotatables());
+  }
+
+  public startEdit(annotatable: AnnotatableHistory): void {
+    this.editingId = annotatable.id;
+    this.editingNote = annotatable.note;
+  }
+
+  public cancelEdit(): void {
+    this.editingId = null;
+    this.editingNote = '';
+  }
+
+  public saveEdit(annotatable: AnnotatableHistory): void {
+    this.singleAnnotationService.updateNote(annotatable.name, this.editingNote).subscribe(() => {
+      annotatable.note = this.editingNote;
+      this.editingId = null;
+      this.editingNote = '';
+    });
   }
 
   public ngOnDestroy(): void {

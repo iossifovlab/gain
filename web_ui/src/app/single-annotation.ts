@@ -268,6 +268,7 @@ export class AnnotatableHistory {
   public constructor(
     public id: number,
     public name: string,
+    public note: string,
   ) {}
 
   public static fromJsonArray(jsonArray: object[]): AnnotatableHistory[] {
@@ -286,6 +287,7 @@ export class AnnotatableHistory {
     return new AnnotatableHistory(
       json['id'] as number,
       json['allele'] as string,
+      (json['note'] as string) ?? '',
     );
   }
 }
