@@ -148,7 +148,7 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
         return self._rap
 
     def _build_score_aggregator_documentation(
-        self, attribute_info: Attribute,
+        self, attr: Attribute,
         aggregator: str,
         attribute_conf_agg: str | None,
     ) -> str:
@@ -173,7 +173,7 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
                 lambda sc: sc.allele_aggregator,
             }
         if attribute_conf_agg is None:
-            score_def = self.score.get_score_definition(attribute_info.source)
+            score_def = self.score.get_score_definition(attr.source)
             assert score_def is not None
             value = aggregators_score_def_att[aggregator](
                 cast(ScoreDef, score_def))
@@ -187,27 +187,27 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
         return f"**{aggregator}**: {value_str}"
 
     def add_score_aggregator_documentation(
-            self, attribute_info: Attribute,
+            self, attr: Attribute,
             aggregator: str,
             attribute_conf_agg: str | None) -> None:
         """Collect score aggregator documentation."""
         aggregator_doc = self._build_score_aggregator_documentation(
-            attribute_info, aggregator, attribute_conf_agg)
+            attr, aggregator, attribute_conf_agg)
 
-        attribute_info._documentation = (  # noqa: SLF001
-            f"{attribute_info.documentation}"
+        attr._documentation = (  # noqa: SLF001
+            f"{attr.documentation}"
             f"\n\n{aggregator_doc}")
 
     @abc.abstractmethod
     def build_score_aggregator_documentation(
-        self, attr_info: Attribute,
+        self, attr: Attribute,
     ) -> list[str]:
         """Construct score aggregator documentation."""
 
-    def build_attribute_help(self, attr_info: Attribute) -> str:
+    def build_attribute_help(self, attr: Attribute) -> str:
         """Build attribute help."""
-        hist_url = self.score.get_histogram_image_url(attr_info.source)
-        score_def = self.score.get_score_definition(attr_info.source)
+        hist_url = self.score.get_histogram_image_url(attr.source)
+        score_def = self.score.get_score_definition(attr.source)
         assert score_def is not None
 
         histogram = get_template("score_histogram.jinja").render(
@@ -215,19 +215,19 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
             score_def=score_def,
         )
 
-        assert attr_info.spec is not None
+        assert attr.spec is not None
         data = {
-            "name": attr_info.name,
-            "description": attr_info.spec.description,
+            "name": attr.name,
+            "description": attr.spec.description,
             "resource_id": self.score.resource_id,
             "resource_summary": self.score.resource.get_summary(),
             "resource_url":
             f"{self.score.resource.get_public_url()}/index.html",
             "resource_type": self.score.resource.get_type(),
             "histogram": histogram,
-            "source": attr_info.source,
+            "source": attr.source,
             "aggregators": self.build_score_aggregator_documentation(
-                attr_info,
+                attr,
             ),
             "annotator_type": self.get_info().type,
             "annotator_doc": self.get_info().documentation,
@@ -270,27 +270,27 @@ phastCons, phyloP, FitCons2, etc.
 
 """)  # noqa
 
-        for att_info in self._attributes:
-            if att_info.parameters.get("nucleotide_aggregator") is not None:
+        for attr in self._attributes:
+            if attr.parameters.get("nucleotide_aggregator") is not None:
                 raise AnnotationConfigurationError(
                     "nucleotide_aggregator is not supported by "
                     "position_score_annotator")
-            pos_aggregator = att_info.parameters.get("position_aggregator")
+            pos_aggregator = attr.parameters.get("position_aggregator")
             if pos_aggregator:
                 validate_aggregator(pos_aggregator)
             self.position_score_queries.append(
-                PositionScoreQuery(att_info.source, pos_aggregator))
+                PositionScoreQuery(attr.source, pos_aggregator))
 
             self.add_score_aggregator_documentation(
-                att_info, "position_aggregator", pos_aggregator)
+                attr, "position_aggregator", pos_aggregator)
 
     def build_score_aggregator_documentation(
-        self, attr_info: Attribute,
+        self, attr: Attribute,
     ) -> list[str]:
         """Collect score aggregator documentation."""
-        pos_aggregator = attr_info.parameters.get("position_aggregator")
+        pos_aggregator = attr.parameters.get("position_aggregator")
         doc = self._build_score_aggregator_documentation(
-            attr_info, "position_aggregator", pos_aggregator)
+            attr, "position_aggregator", pos_aggregator)
         return [doc]
 
     def _fetch_substitution_scores(self, allele: VCFAllele) \
@@ -459,22 +459,22 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         self.allele_attribute = None
         self.attrs_to_include = []
 
-        for att_info in self._attributes:
-            if att_info.source == "allele":
-                self.attrs_to_include = att_info.parameters.get(
+        for attr in self._attributes:
+            if attr.source == "allele":
+                self.attrs_to_include = attr.parameters.get(
                     "include_attributes", [])
                 if isinstance(self.attrs_to_include, str):
                     self.attrs_to_include = [self.attrs_to_include]
-                self.allele_attribute = att_info
+                self.allele_attribute = attr
                 continue
-            pos_agg = att_info.parameters.get("position_aggregator")
+            pos_agg = attr.parameters.get("position_aggregator")
             if pos_agg is not None:
                 logger.warning(
                     "attribute `position_aggregator` is no longer used "
                     "in allele_score_annotator and will be ignored")
-            nuc_agg = att_info.parameters.get("nucleotide_aggregator")
-            allele_agg = att_info.parameters.get("allele_aggregator")
-            agg = att_info.parameters.get("aggregator")
+            nuc_agg = attr.parameters.get("nucleotide_aggregator")
+            allele_agg = attr.parameters.get("allele_aggregator")
+            agg = attr.parameters.get("aggregator")
             if nuc_agg is not None:
                 if allele_agg is not None or agg is not None:
                     raise AnnotationConfigurationError(
@@ -497,9 +497,9 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             if agg:
                 validate_aggregator(agg)
             self.allele_score_queries.append(
-                AlleleScoreQuery(att_info.source, allele_aggregator=agg))
+                AlleleScoreQuery(attr.source, allele_aggregator=agg))
             self.add_score_aggregator_documentation(
-                att_info, "allele_aggregator", agg)
+                attr, "allele_aggregator", agg)
 
     @classmethod
     def _build_allele_filter_func(
@@ -598,18 +598,18 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         return result
 
     def build_score_aggregator_documentation(
-        self, attr_info: Attribute,
+        self, attr: Attribute,
     ) -> list[str]:
         """Collect score aggregator documentation."""
-        nuc_agg = attr_info.parameters.get("nucleotide_aggregator")
-        allele_agg = attr_info.parameters.get("allele_aggregator")
-        agg = attr_info.parameters.get("aggregator")
+        nuc_agg = attr.parameters.get("nucleotide_aggregator")
+        allele_agg = attr.parameters.get("allele_aggregator")
+        agg = attr.parameters.get("aggregator")
         if nuc_agg is not None:
             agg = nuc_agg
         elif allele_agg is not None:
             agg = allele_agg
         allele_doc = self._build_score_aggregator_documentation(
-            attr_info, "allele_aggregator", agg,
+            attr, "allele_aggregator", agg,
         )
         return [allele_doc]
 

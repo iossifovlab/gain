@@ -68,8 +68,8 @@ class GeneScoreAnnotator(AnnotatorBase):
         super().__init__(pipeline, info)
 
         self.aggregators: list[str] = []
-        for attribute_config in self._attributes:
-            aggregator_type = attribute_config.parameters.get("gene_aggregator")
+        for attr in self._attributes:
+            aggregator_type = attr.parameters.get("gene_aggregator")
             assert aggregator_type is not None
             validate_aggregator(aggregator_type)
 
@@ -78,19 +78,19 @@ class GeneScoreAnnotator(AnnotatorBase):
             aggregator_doc = f"**gene_aggregator**: {aggregator_type}"
             if aggregator_type == "dict":
                 aggregator_doc = f"{aggregator_doc} [default]"
-                assert attribute_config.spec is not None
-                attribute_config.spec = AttributeSpec(
-                    source=attribute_config.spec.source,
+                assert attr.spec is not None
+                attr.spec = AttributeSpec(
+                    source=attr.spec.source,
                     value_type="object",
-                    description=attribute_config.spec.description,
-                    is_default=attribute_config.spec.is_default,
-                    internal_default=attribute_config.spec.internal_default,
-                    supports_aggregation=attribute_config.spec.supports_aggregation,
-                    attribute_type=attribute_config.spec.attribute_type,
+                    description=attr.spec.description,
+                    is_default=attr.spec.is_default,
+                    internal_default=attr.spec.internal_default,
+                    supports_aggregation=attr.spec.supports_aggregation,
+                    attribute_type=attr.spec.attribute_type,
                 )
 
-            attribute_config._documentation = (  # noqa: SLF001
-                f"{attribute_config.documentation}\n\n"
+            attr._documentation = (  # noqa: SLF001
+                f"{attr.documentation}\n\n"
                 f"{aggregator_doc}"
             )
 

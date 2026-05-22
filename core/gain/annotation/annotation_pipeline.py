@@ -458,9 +458,9 @@ class ValueTransformAnnotatorDecorator(AnnotatorDecorator):
     def decorate(child: Annotator) -> Annotator:
         """Apply value transform decorator to an annotator."""
         value_transformers: dict[str, Callable[[Any], Any]] = {}
-        for attribute_info in child.attributes:
-            if "value_transform" in attribute_info.parameters:
-                transform_str = attribute_info.parameters["value_transform"]
+        for attr in child.attributes:
+            if "value_transform" in attr.parameters:
+                transform_str = attr.parameters["value_transform"]
                 try:
                     # pylint: disable=eval-used
                     transform = eval(  # noqa: S307
@@ -470,10 +470,10 @@ class ValueTransformAnnotatorDecorator(AnnotatorDecorator):
                     raise ValueError(
                         f"The value trasform |{transform_str}| is "
                         f"sytactically invalid.", error) from error
-                value_transformers[attribute_info.name] = transform
+                value_transformers[attr.name] = transform
                 # pylint: disable=protected-access
-                attribute_info._documentation = (  # noqa: SLF001
-                    f"{attribute_info.documentation}\n\n"
+                attr._documentation = (  # noqa: SLF001
+                    f"{attr.documentation}\n\n"
                     f"**value_transform:** {transform_str}"
                 )
         if value_transformers:

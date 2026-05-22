@@ -87,21 +87,21 @@ class CnvCollectionAnnotator(AnnotatorBase):
         super().__init__(pipeline, info)
 
         self.cnv_attributes: dict[str, tuple[AttributeSpec, str | None]] = {}
-        for attribute_def in self._attributes:
-            spec = self.attribute_specs[attribute_def.source]
-            aggregator = attribute_def.parameters.get("aggregator")
-            res_attribute_def = self.cnv_collection\
-                .get_score_definition(attribute_def.source)
-            if res_attribute_def is not None:
-                attribute_def._documentation = f"""
+        for attr in self._attributes:
+            spec = self.attribute_specs[attr.source]
+            aggregator = attr.parameters.get("aggregator")
+            score_def = self.cnv_collection\
+                .get_score_definition(attr.source)
+            if score_def is not None:
+                attr._documentation = f"""
                     {spec.description}
 
-                    small values: {res_attribute_def.small_values_desc},
-                    large_values: {res_attribute_def.large_values_desc}
+                    small values: {score_def.small_values_desc},
+                    large_values: {score_def.large_values_desc}
                     aggregator: {aggregator}
                 """  # noqa: SLF001
 
-            self.cnv_attributes[attribute_def.name] = (spec, aggregator)
+            self.cnv_attributes[attr.name] = (spec, aggregator)
 
     def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         attributes: dict[str, AttributeSpec] = {
@@ -244,11 +244,10 @@ class CnvCollectionAnnotator(AnnotatorBase):
                 aggregators[name].add(cnv.attributes[attribute.source])
 
         result = {}
-        for attribute_config in self._attributes:
-            if attribute_config.name in aggregators:
-                result[attribute_config.name] = \
-                    aggregators[attribute_config.name].get_final()
+        for attr in self._attributes:
+            if attr.name in aggregators:
+                result[attr.name] = aggregators[attr.name].get_final()
             else:
-                result[attribute_config.name] = len(cnvs)
+                result[attr.name] = len(cnvs)
 
         return result
