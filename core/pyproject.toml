@@ -58,6 +58,7 @@ annotate_columns = "gain.annotation.annotate_columns:cli"
 annotate_vcf = "gain.annotation.annotate_vcf:cli"
 annotate_doc = "gain.annotation.annotate_doc:cli"
 draw_score_histograms = "gain.genomic_resources.draw_score_histograms:main"
+to_gpf_gene_models_format = "gain.genomic_resources.gene_models.to_gpf_gene_models_format:main"
 
 [project.entry-points."gain.genomic_resources.plugins"]
 default_grr = "gain.genomic_resources.genomic_context:DefaultRepositoryContextProvider"
