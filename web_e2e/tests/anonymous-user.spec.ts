@@ -1,4 +1,4 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { scanCSV } from 'nodejs-polars';
 import * as utils from '../utils';
 
@@ -7,6 +7,7 @@ test.describe('Anonymous user tests', () => {
     await page.goto('/', {waitUntil: 'load'});
     // wait for default pipeline to load
     await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await utils.waitForSession(page);
     await utils.setAnonymousUserIpQuota(page, 'daily_jobs', 100_000);
     await utils.setAnonymousUserSessionQuota(page, 'daily_jobs', 1_000);
     await utils.setAnonymousUserIpQuota(page, 'daily_variants', 100_000);

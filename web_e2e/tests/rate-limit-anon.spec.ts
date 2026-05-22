@@ -11,6 +11,7 @@ test.describe('Single annotation rate limit tests - anonymous user', () => {
   test.beforeEach(async({ page }) => {
     await page.goto('/', { waitUntil: 'load' });
     await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await utils.waitForSession(page);
     // Keep quota well above the throttle limit so quota exhaustion never
     // masks the throttle response.
     await utils.setAnonymousUserIpQuota(page, 'daily_variants', 100_000);

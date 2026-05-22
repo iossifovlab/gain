@@ -140,6 +140,13 @@ export async function setAnonymousUserIpQuota(
   expect(response.status()).toBe(200);
 }
 
+export async function waitForSession(page: Page): Promise<void> {
+  await expect.poll(async() => {
+    const cookies = await page.context().cookies();
+    return cookies.some(c => c.name === 'sessionid');
+  }, { timeout: 30000 }).toBe(true);
+}
+
 export async function selectPipeline(page: Page, pipeline: string): Promise<void> {
   await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
   await page.locator('.dropdown-icon').click();

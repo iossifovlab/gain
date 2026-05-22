@@ -182,6 +182,7 @@ test.describe('Quota changes', () => {
   test.describe('anonymous user', () => {
     test.beforeEach(async({ page }) => {
       await page.goto('/', { waitUntil: 'load' });
+      await utils.waitForSession(page);
       // IP quota is shared across parallel workers — keep it far above the
       // session value so min(session, ip) == session always, making exact
       // toBe assertions independent of what other workers consume.
@@ -331,6 +332,7 @@ test.describe('Quota limit', () => {
   test.describe('anonymous user daily quotas', () => {
     test.beforeEach(async({ page }) => {
       await page.goto('/single-annotation', { waitUntil: 'load' });
+      await utils.waitForSession(page);
       // IP stays high so the initial "> 0" check always passes;
       // tests set only the session quota to 0 to avoid blocking parallel workers.
       await utils.setAnonymousUserIpQuota(page, 'daily_variants', 100_000);
