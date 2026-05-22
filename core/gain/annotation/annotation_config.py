@@ -4,10 +4,10 @@ import copy
 import fnmatch
 import logging
 import textwrap
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from textwrap import dedent
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import yaml
 from lark import Lark, Token, Tree
@@ -16,6 +16,9 @@ from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
 )
+
+if TYPE_CHECKING:
+    from gain.annotation.annotation_pipeline import AttributeSpec
 
 logger = logging.getLogger(__name__)
 
@@ -83,113 +86,62 @@ class AnnotationConfigurationError(Exception):
         return result
 
 
-class ParamsUsageMonitor(Mapping):
-    """Class to monitor usage of annotator parameters."""
-
-    def __init__(self, data: dict[str, Any]):
-        self._data = dict(data)
-        self._used_keys: set[str] = set()
-
-    def __hash__(self) -> int:
-        return hash(tuple(sorted(self._data.items())))
-
-    def __getitem__(self, key: str) -> Any:
-        self._used_keys.add(key)
-        return self._data[key]
-
-    def __len__(self) -> int:
-        return len(self._data)
-
-    def __iter__(self) -> Iterator:
-        raise ValueError("Should not iterate a parameter dictionary.")
-
-    def __repr__(self) -> str:
-        return self._data.__repr__()
-
-    def __eq__(self, other: Any) -> bool:
-        if not isinstance(other, ParamsUsageMonitor):
-            return False
-        return self._data == other._data
-
-    def get_used_keys(self) -> set[str]:
-        return self._used_keys
-
-    def get_unused_keys(self) -> set[str]:
-        return set(self._data.keys()) - self._used_keys
-
-
-@dataclass(init=False, eq=True, unsafe_hash=True)
-class AttributeInfo:
-    """Defines annotation attribute configuration."""
-
-    def __init__(self, name: str, source: str, *,
-                 internal: bool | None,
-                 parameters: ParamsUsageMonitor | dict[str, Any],
-                 _type: str = "str", description: str = "",
-                 documentation: str | None = None,
-                 attribute_type: str = "attribute",
-                 default: bool = True):
-        self.name = name
-        self.source = source
-        self.internal = internal
-        if isinstance(parameters, ParamsUsageMonitor):
-            self.parameters = parameters
-        else:
-            self.parameters = ParamsUsageMonitor(parameters)
-        self.value_type = _type
-        self.description = description
-        self._documentation = documentation
-        self.attribute_type = attribute_type
-        self.default = default
+@dataclass(eq=True)
+class AttributeConfig:
+    """Configuration for an annotator attribute (from pipeline YAML)."""
 
     name: str
     source: str
-    internal: bool | None
-    parameters: ParamsUsageMonitor
-    value_type: str = "str"           # str, int, float, or object
-    default: bool = True
-    attribute_type: str = "attribute"  # attrbute, annotatable or gene_list
-    description: str = ""       # interpreted as md
-    _documentation: str | None = None
+    internal: bool | None = None
+    parameters: dict[str, Any] = field(
+        default_factory=dict, compare=False, hash=False)
+
+    def __hash__(self) -> int:
+        return hash((self.name, self.source, self.internal))
+
+
+@dataclass(eq=True)
+class Attribute:
+    """Runtime attribute instance produced by an annotator."""
+
+    name: str
+    source: str
+    internal: bool | None = None
+    parameters: dict[str, Any] = field(
+        default_factory=dict, compare=False, hash=False)
+    spec: AttributeSpec | None = field(
+        default=None, compare=False, hash=False)
+    _documentation: str | None = field(
+        default=None, compare=False, hash=False)
+
+    def __hash__(self) -> int:
+        return hash((self.name, self.source, self.internal))
 
     @property
     def documentation(self) -> str:
         if self._documentation is None:
-            return self.description
+            return self.spec.description if self.spec else ""
         return self._documentation
-
-    @staticmethod
-    def create(
-        source: str,
-        name: str | None = None, *,
-        internal: bool = False,
-    ) -> AttributeInfo:
-        """Create an AttributeInfo instance."""
-        if name is None:
-            name = source
-        return AttributeInfo(
-            name, source, internal=internal,
-            parameters={},
-        )
 
 
 @dataclass(init=False)
 class AnnotatorInfo:
     """Defines annotator configuration."""
 
-    def __init__(self, _type: str, attributes: list[AttributeInfo],
-                 parameters: ParamsUsageMonitor | dict[str, Any],
-                 documentation: str = "",
-                 resources: list[GenomicResource] | None = None,
-                 annotator_id: str = "N/A"):
+    def __init__(
+        self,
+        _type: str,
+        attributes: list[AttributeConfig],
+        parameters: dict[str, Any],
+        documentation: str = "",
+        resources: list[GenomicResource] | None = None,
+        annotator_id: str = "N/A",
+    ):
         self.type = _type
         self.annotator_id = f"{annotator_id}"
         self.attributes = attributes
         self.documentation = documentation
-        if isinstance(parameters, ParamsUsageMonitor):
-            self.parameters = parameters
-        else:
-            self.parameters = ParamsUsageMonitor(parameters)
+        self.parameters = dict(parameters)
         if resources is None:
             self.resources = []
         else:
@@ -197,21 +149,21 @@ class AnnotatorInfo:
 
     annotator_id: str = field(compare=False, hash=None)
     type: str
-    attributes: list[AttributeInfo]
-    parameters: ParamsUsageMonitor
+    attributes: list[AttributeConfig]
+    parameters: dict[str, Any]
     documentation: str = ""
     resources: list[GenomicResource] = field(default_factory=list)
 
     def __hash__(self) -> int:
         attrs_hash = "".join(str(hash(attr)) for attr in self.attributes)
         resources_hash = "".join(str(hash(res)) for res in self.resources)
-        params_hash = "".join(str(hash(self.parameters)))
+        params_hash = hash(str(self.parameters))
         return hash(f"{self.type}{attrs_hash}{resources_hash}{params_hash}")
 
     def to_dict(self) -> dict[str, Any]:
         """Convert annotator info to a configuration dictionary."""
         result = {
-            **self.parameters._data,  # noqa: SLF001
+            **self.parameters,
             "attributes": [
                 {
                     "name": attr.name,
@@ -570,7 +522,7 @@ class AnnotationConfigParser:
 
     @staticmethod
     def parse_raw_attribute_config(
-            raw_attribute_config: dict[str, Any]) -> AttributeInfo:
+            raw_attribute_config: dict[str, Any]) -> AttributeConfig:
         """Parse annotation attribute raw configuration."""
         attribute_config = copy.deepcopy(raw_attribute_config)
         if "destination" in attribute_config:
@@ -592,8 +544,6 @@ class AnnotationConfigParser:
         name = name or source
         source = source or name
 
-        attr_type = attribute_config.get("type", "str")
-
         internal = attribute_config.get("internal")
         if internal is not None and not isinstance(internal, bool):
             raise TypeError(
@@ -607,18 +557,18 @@ class AnnotationConfigParser:
             raise TypeError(message)
 
         parameters = {k: v for k, v in attribute_config.items()
-                      if k not in ["name", "source", "internal"]}
+                      if k not in ["name", "source", "internal", "type"]}
 
-        return AttributeInfo(
-            name, source,
+        return AttributeConfig(
+            name=name,
+            source=source,
             internal=internal,
             parameters=parameters,
-            _type=attr_type,
         )
 
     @staticmethod
     def parse_raw_attributes(
-            raw_attributes_config: Any) -> list[AttributeInfo]:
+            raw_attributes_config: Any) -> list[AttributeConfig]:
         """Parse annotator pipeline attribute configuration."""
         if not isinstance(raw_attributes_config, list):
             message = "The attributes parameters should be a list."

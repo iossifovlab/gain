@@ -7,22 +7,20 @@ from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 from gain.annotation.annotatable import Annotatable, VCFAllele
 from gain.annotation.annotation_config import (
     AnnotatorInfo,
-    AttributeInfo,
+    Attribute,
 )
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
+    AttributeSpec,
 )
-from gain.annotation.annotator_base import (
-    AnnotatorBase,
-    AttributeDesc,
-)
+from gain.annotation.annotator_base import AnnotatorBase
 from gain.genomic_resources.aggregators import (
     Aggregator,
     build_aggregator,
@@ -213,131 +211,104 @@ models to predict splice site variant effects.
             self._max_insertion_length = self.DEFAULT_MAX_INSERTION_LENGTH
         self._models: list | None = None
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
+    _ATTR_DEFAULTS: ClassVar[dict[str, dict[str, Any]]] = {
+        "gene":         {"aggregator": "join(,)"},
+        "transcript_ids": {"aggregator": "join(,)"},
+        "DS_AG":        {"aggregator": "max"},
+        "DS_AL":        {"aggregator": "max"},
+        "DS_DG":        {"aggregator": "max"},
+        "DS_DL":        {"aggregator": "max"},
+        "DS_MAX":       {"aggregator": "max"},
+        "DP_AG":        {"aggregator": "join(;)"},
+        "DP_AL":        {"aggregator": "join(;)"},
+        "DP_DG":        {"aggregator": "join(;)"},
+        "DP_DL":        {"aggregator": "join(;)"},
+        "ref_A_p":      {"aggregator": "join(;)"},
+        "ref_D_p":      {"aggregator": "join(;)"},
+        "alt_A_p":      {"aggregator": "join(;)"},
+        "alt_D_p":      {"aggregator": "join(;)"},
+        "delta_score":  {"aggregator": "join(;)"},
+    }
+
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         return {
-            "gene": AttributeDesc(
-                source="gene",
-                type="str",
+            "gene": AttributeSpec(
+                source="gene", value_type="str",
                 description="Gene symbol",
-                params={"aggregator": "join(,)"},
-                default=True,
-                internal=False,
+                is_default=True, internal_default=False,
             ),
-            "transcript_ids": AttributeDesc(
-                source="transcript_ids",
-                type="str",
+            "transcript_ids": AttributeSpec(
+                source="transcript_ids", value_type="str",
                 description="Transcript IDs",
-                params={"aggregator": "join(,)"},
-                default=True,
-                internal=False,
+                is_default=True, internal_default=False,
             ),
-            "DS_AG": AttributeDesc(
-                source="DS_AG",
-                type="float",
+            "DS_AG": AttributeSpec(
+                source="DS_AG", value_type="float",
                 description="Delta score for acceptor gain",
-                params={"aggregator": "max"},
-                default=True,
-                internal=False,
+                is_default=True, internal_default=False,
             ),
-            "DS_AL": AttributeDesc(
-                source="DS_AL",
-                type="float",
+            "DS_AL": AttributeSpec(
+                source="DS_AL", value_type="float",
                 description="Delta score for acceptor loss",
-                params={"aggregator": "max"},
-                default=True,
-                internal=False,
+                is_default=True, internal_default=False,
             ),
-            "DS_DG": AttributeDesc(
-                source="DS_DG",
-                type="float",
+            "DS_DG": AttributeSpec(
+                source="DS_DG", value_type="float",
                 description="Delta score for donor gain",
-                params={"aggregator": "max"},
-                default=True,
-                internal=False,
+                is_default=True, internal_default=False,
             ),
-            "DS_DL": AttributeDesc(
-                source="DS_DL",
-                type="float",
+            "DS_DL": AttributeSpec(
+                source="DS_DL", value_type="float",
                 description="Delta score for donor loss",
-                params={"aggregator": "max"},
-                default=True,
-                internal=False,
+                is_default=True, internal_default=False,
             ),
-            "DS_MAX": AttributeDesc(
-                source="DS_MAX",
-                type="float",
+            "DS_MAX": AttributeSpec(
+                source="DS_MAX", value_type="float",
                 description="Maximum delta score",
-                params={"aggregator": "max"},
-                default=True,
-                internal=False,
+                is_default=True, internal_default=False,
             ),
-            "DP_AG": AttributeDesc(
-                source="DP_AG",
-                type="int",
+            "DP_AG": AttributeSpec(
+                source="DP_AG", value_type="int",
                 description="Delta position for acceptor gain",
-                params={"aggregator": "join(;)"},
-                default=False,
-                internal=False,
+                is_default=False, internal_default=False,
             ),
-            "DP_AL": AttributeDesc(
-                source="DP_AL",
-                type="int",
+            "DP_AL": AttributeSpec(
+                source="DP_AL", value_type="int",
                 description="Delta position for acceptor loss",
-                params={"aggregator": "join(;)"},
-                default=False,
-                internal=False,
+                is_default=False, internal_default=False,
             ),
-            "DP_DG": AttributeDesc(
-                source="DP_DG",
-                type="int",
+            "DP_DG": AttributeSpec(
+                source="DP_DG", value_type="int",
                 description="Delta position for donor gain",
-                params={"aggregator": "join(;)"},
-                default=False,
-                internal=False,
+                is_default=False, internal_default=False,
             ),
-            "DP_DL": AttributeDesc(
-                source="DP_DL",
-                type="int",
+            "DP_DL": AttributeSpec(
+                source="DP_DL", value_type="int",
                 description="Delta position for donor loss",
-                params={"aggregator": "join(;)"},
-                default=False,
-                internal=False,
+                is_default=False, internal_default=False,
             ),
-            "ref_A_p": AttributeDesc(
-                source="ref_A_p",
-                type="str",
+            "ref_A_p": AttributeSpec(
+                source="ref_A_p", value_type="str",
                 description="Reference acceptor probabilities",
-                params={"aggregator": "join(;)"},
-                default=False,
-                internal=True,
+                is_default=False, internal_default=True,
             ),
-            "ref_D_p": AttributeDesc(
-                source="ref_D_p",
-                type="str",
+            "ref_D_p": AttributeSpec(
+                source="ref_D_p", value_type="str",
                 description="Reference donor probabilities",
-                params={"aggregator": "join(;)"},
-                default=False,
-                internal=True,
+                is_default=False, internal_default=True,
             ),
-            "alt_A_p": AttributeDesc(
-                source="alt_A_p",
-                type="str",
+            "alt_A_p": AttributeSpec(
+                source="alt_A_p", value_type="str",
                 description="Alternative acceptor probabilities",
-                params={"aggregator": "join(;)"},
-                default=False,
-                internal=True,
+                is_default=False, internal_default=True,
             ),
-            "alt_D_p": AttributeDesc(
-                source="alt_D_p",
-                type="str",
+            "alt_D_p": AttributeSpec(
+                source="alt_D_p", value_type="str",
                 description="Alternative donor probabilities",
-                params={"aggregator": "join(;)"},
-                default=False,
-                internal=True,
+                is_default=False, internal_default=True,
             ),
-            "delta_score": AttributeDesc(
-                source="delta_score",
-                type="str",
+            "delta_score": AttributeSpec(
+                source="delta_score", value_type="str",
                 description="Delta score calculated using SpliceAI models."
                 "These include delta scores (DS) and "
                 "delta positions (DP) for acceptor gain (AG), "
@@ -347,44 +318,43 @@ models to predict splice site variant effects.
                 "ALLELE|SYMBOL|DS\\_AG|DS\\_AL|DS\\_DG|DS\\_DL|"
                 "DP\\_AG|DP\\_AL|DP\\_DG|DP\\_DL"
                 "</em>",
-                params={"aggregator": "join(;)"},
-                default=False,
-                internal=False,
+                is_default=False, internal_default=False,
             ),
         }
 
+    def get_attribute_defaults(self, spec: AttributeSpec) -> dict[str, Any]:
+        return dict(self._ATTR_DEFAULTS.get(spec.source, {}))
+
     def _collect_attributes_definitions(
         self,
-        attributes: list[AttributeInfo],
+        attributes: list[Attribute],
     ) -> list[_AttrDef]:
         """Collect attributes configuration."""
         result = []
-        attribute_descriptions = self.get_all_attribute_descriptions()
+        specs = self.get_attribute_specs()
         for attr in attributes:
-            if attr.source not in attribute_descriptions:
+            if attr.source not in specs:
                 logger.error(
                     "Attribute %s is not supported by SpliceAI annotator",
                     attr.source,
                 )
                 continue
 
-            attr_config = attribute_descriptions[attr.source]
+            spec = specs[attr.source]
             aggregator = attr.parameters.get("aggregator")
-            if aggregator is not None:
-                documenation = (
-                    f"{attr_config.description}\n"
-                    f"Aggregator: {aggregator}"
+            if aggregator is None:
+                logger.error(
+                    "No aggregator defined for attribute %s", attr.source,
                 )
-            else:
-                aggregator = attr_config.params["aggregator"]
-                documenation = (
-                    f"{attr_config.description}\n\n"
-                    f"Aggregator (<em>default</em>): {aggregator}"
-                )
-            attr._documentation = documenation  # noqa: SLF001
+                continue
+            documentation = (
+                f"{spec.description}\n"
+                f"Aggregator: {aggregator}"
+            )
+            attr._documentation = documentation  # noqa: SLF001
             result.append(_AttrDef(
                 attr.source,
-                documenation,
+                documentation,
                 build_aggregator(aggregator),
             ))
         return result

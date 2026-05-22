@@ -7,7 +7,7 @@ import itertools
 import logging
 import traceback
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from types import TracebackType
 from typing import Any
 
@@ -15,7 +15,7 @@ from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
     AnnotationPreamble,
     AnnotatorInfo,
-    AttributeInfo,
+    Attribute,
     RawPipelineConfig,
 )
 from gain.genomic_resources.repository import (
@@ -26,7 +26,7 @@ from gain.genomic_resources.repository import (
 logger = logging.getLogger(__name__)
 
 _AnnotationDependencyGraph = dict[
-    AnnotatorInfo, list[tuple[AnnotatorInfo, AttributeInfo]],
+    AnnotatorInfo, list[tuple[AnnotatorInfo, Attribute]],
 ]
 
 
@@ -44,9 +44,9 @@ def _build_dependency_graph(
 def _get_dependencies_for(
     annotator: Annotator,
     pipeline: AnnotationPipeline,
-) -> list[tuple[AnnotatorInfo, AttributeInfo]]:
+) -> list[tuple[AnnotatorInfo, Attribute]]:
     """Get all dependencies for a given annotator."""
-    result: list[tuple[AnnotatorInfo, AttributeInfo]] = []
+    result: list[tuple[AnnotatorInfo, Attribute]] = []
     used_attrs = annotator.used_context_attributes
     for attr in used_attrs:
         attr_info = pipeline.get_attribute_info(attr)
@@ -91,33 +91,35 @@ def _get_deleted_attributes(
 ) -> list[str]:
     """Get a list of attributes that are deleted in the new annotation."""
     infos_new = pipeline_current.get_info()
-    infos_old = pipeline_previous.get_info()
 
     if full_reannotation is True:
-        return [attr.name for info in infos_old for attr in info.attributes]
+        return [
+            attr.name
+            for annotator in pipeline_previous.annotators
+            for attr in annotator.attributes
+        ]
 
     result: list[str] = []
-    for deleted_info in [i for i in infos_old if i not in infos_new]:
-        result.extend([attr.name for attr in deleted_info.attributes
-                       if not attr.internal])
+    for annotator in pipeline_previous.annotators:
+        if annotator.get_info() not in infos_new:
+            result.extend(
+                attr.name for attr in annotator.attributes
+                if not attr.internal
+            )
     return result
 
 
 @dataclass
-class AttributeDesc:
-    """Holds default attribute configuration for annotators."""
+class AttributeSpec:
+    """Describes a single attribute an annotator can produce."""
 
     source: str
-    type: str
+    value_type: str
     description: str
-    name: str | None = None
-    default: bool = True
-    internal: bool = False
-    params: dict[str, Any] = field(default_factory=dict)
+    is_default: bool = True
+    internal_default: bool = False
+    supports_aggregation: bool = True
     attribute_type: str = "attribute"
-
-    def __post_init__(self) -> None:
-        self.name = self.name or self.source
 
 
 class Annotator(abc.ABC):
@@ -168,20 +170,19 @@ class Annotator(abc.ABC):
         return {resource.get_id() for resource in self._info.resources}
 
     @property
-    def attributes(self) -> list[AttributeInfo]:
-        return self._info.attributes
+    def attributes(self) -> list[Attribute]:
+        return []
 
     @property
     def used_context_attributes(self) -> tuple[str, ...]:
         return ()
 
     def _empty_result(self) -> dict[str, Any]:
-        return {attribute_info.name: None
-                for attribute_info in self._info.attributes}
+        return {attr.name: None for attr in self.attributes}
 
     @abc.abstractmethod
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
-        """Get descriptions of all attributes provided by the annotator."""
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
+        """Get specs of all attributes the annotator can produce."""
 
 
 class AnnotationPipeline:
@@ -197,14 +198,14 @@ class AnnotationPipeline:
     def get_info(self) -> list[AnnotatorInfo]:
         return [annotator.get_info() for annotator in self.annotators]
 
-    def get_attributes(self) -> list[AttributeInfo]:
+    def get_attributes(self) -> list[Attribute]:
         return [attribute_info for annotator in self.annotators for
                 attribute_info in annotator.attributes]
 
     def get_attribute_info(
-            self, attribute_name: str) -> AttributeInfo | None:
+            self, attribute_name: str) -> Attribute | None:
         for annotator in self.annotators:
-            for attribute_info in annotator.get_info().attributes:
+            for attribute_info in annotator.attributes:
                 if attribute_info.name == attribute_name:
                     return attribute_info
         return None
@@ -214,7 +215,7 @@ class AnnotationPipeline:
                 for r_id in annotator.resource_ids}
 
     def get_annotator_by_attribute_info(
-        self, attribute_info: AttributeInfo,
+        self, attribute_info: Attribute,
     ) -> Annotator | None:
         for annotator in self.annotators:
             if attribute_info in annotator.attributes:
@@ -244,10 +245,11 @@ class AnnotationPipeline:
 
     def get_attributes_by_type(
         self, attribute_type: str,
-    ) -> list[AttributeInfo]:
+    ) -> list[Attribute]:
         return [
             attribute_info for attribute_info in self.get_attributes()
-            if attribute_info.attribute_type == attribute_type
+            if attribute_info.spec is not None
+            and attribute_info.spec.attribute_type == attribute_type
         ]
 
     def batch_annotate(
@@ -358,7 +360,7 @@ class ReannotationPipeline(AnnotationPipeline):
             pipeline_new, pipeline_previous,
             full_reannotation=full_reannotation)
 
-    def get_attributes(self) -> list[AttributeInfo]:
+    def get_attributes(self) -> list[Attribute]:
         return self.pipeline_new.get_attributes()
 
 
@@ -369,8 +371,12 @@ class AnnotatorDecorator(Annotator):
         super().__init__(child.pipeline, child.get_info())
         self.child = child
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
-        return self.child.get_all_attribute_descriptions()
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
+        return self.child.get_attribute_specs()
+
+    @property
+    def attributes(self) -> list[Attribute]:
+        return self.child.attributes
 
     def close(self) -> None:
         self.child.close()
@@ -408,14 +414,16 @@ class InputAnnotableAnnotatorDecorator(AnnotatorDecorator):
         att_info = self.pipeline.get_attribute_info(
             self.input_annotatable_name)
         if att_info is None:
-            available_attributes = \
-                ",".join([f"'{att.name}' [{att.attribute_type}]"
-                          for att in self.pipeline.get_attributes()])
+            available_attributes = ",".join([
+                f"'{att.name}' [{att.spec.attribute_type if att.spec else '?'}]"
+                for att in self.pipeline.get_attributes()
+            ])
             raise ValueError(f"The attribute '{self.input_annotatable_name}' "
                              "has not been defined before its use. The "
                              "available attributes are: "
                              f"{available_attributes}")
-        if att_info.attribute_type != "annotatable":
+        if att_info.spec is None \
+                or att_info.spec.attribute_type != "annotatable":
             raise ValueError(f"The attribute '{self.input_annotatable_name}' "
                              "is expected to be of type annotatable.")
         self.child._info.documentation += (  # noqa: SLF001
@@ -450,7 +458,7 @@ class ValueTransformAnnotatorDecorator(AnnotatorDecorator):
     def decorate(child: Annotator) -> Annotator:
         """Apply value transform decorator to an annotator."""
         value_transformers: dict[str, Callable[[Any], Any]] = {}
-        for attribute_info in child.get_info().attributes:
+        for attribute_info in child.attributes:
             if "value_transform" in attribute_info.parameters:
                 transform_str = attribute_info.parameters["value_transform"]
                 try:

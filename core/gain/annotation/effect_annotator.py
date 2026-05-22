@@ -9,11 +9,9 @@ from gain.annotation.annotation_config import (
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
+    AttributeSpec,
 )
-from gain.annotation.annotator_base import (
-    AnnotatorBase,
-    AttributeDesc,
-)
+from gain.annotation.annotator_base import AnnotatorBase
 from gain.annotation.utils import (
     find_annotator_gene_models,
     find_annotator_reference_genome,
@@ -58,7 +56,7 @@ Annotator to identify the effect of the variant on protein coding.
         super().__init__(pipeline, info)
 
         self.used_attributes = [
-            attr.source for attr in self.get_info().attributes
+            attr.source for attr in self._attributes
         ]
         self.genome = genome
         self.gene_models = gene_models
@@ -67,16 +65,16 @@ Annotator to identify the effect of the variant on protein coding.
             "region_length_cutoff", 15_000_000)
 
         self.gene_list_aggregators: dict[str, Aggregator] = {}
-        for attr in info.attributes:
+        for attr in self._attributes:
             gene_list_aggregator = attr.parameters.get("gene_list_aggregator")
             if gene_list_aggregator is None:
                 continue
 
             validate_aggregator(gene_list_aggregator)
             assert isinstance(gene_list_aggregator, str)
-            attr_desc = self.attribute_descriptions[attr.source]
-            if attr_desc.type != "object" \
-                    or not attr_desc.params.get("gene_list"):
+            assert attr.spec is not None
+            if attr.spec.value_type != "object" \
+                    or attr.spec.attribute_type != "gene_list":
                 raise ValueError(
                     f"Attribute {attr.source} is not a gene list attribute "
                     f"but gene_list_aggregator is specified.")
@@ -89,116 +87,110 @@ Annotator to identify the effect of the variant on protein coding.
             promoter_len=self._promoter_len,
         )
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
-        effect_gene_lists = {}
-        effect_genes = {}
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
+        self._effect_params: dict[str, dict[str, Any]] = {}
+        effect_gene_lists: dict[str, AttributeSpec] = {}
+        effect_genes: dict[str, AttributeSpec] = {}
         for group in [
                 *EffectTypesMixin.EFFECT_GROUPS,
                 *EffectTypesMixin.EFFECT_TYPES]:
-            effect_gene_lists[f"{group}_gene_list"] = AttributeDesc(
-                source=f"{group}_gene_list",
-                type="object",
+            source_gl = f"{group}_gene_list"
+            source_ge = f"{group}_genes"
+            effect_gene_lists[source_gl] = AttributeSpec(
+                source=source_gl,
+                value_type="object",
                 description=f"List of all {group} genes",
-                internal=True,
-                default=False,
-                params={
-                    "effect_type": group,
-                    "gene_list": True,
-                },
+                internal_default=True,
+                is_default=False,
                 attribute_type="gene_list",
             )
-            effect_genes[f"{group}_genes"] = AttributeDesc(
-                source=f"{group}_genes",
-                type="str",
+            self._effect_params[source_gl] = {"effect_type": group}
+            effect_genes[source_ge] = AttributeSpec(
+                source=source_ge,
+                value_type="str",
                 description=f"Comma separated list of {group} genes",
-                internal=False,
-                default=False,
-                params={
-                    "effect_type": group,
-                },
+                internal_default=False,
+                is_default=False,
             )
-        effect_gene_lists["LGD_gene_list"] = AttributeDesc(
+            self._effect_params[source_ge] = {"effect_type": group}
+        effect_gene_lists["LGD_gene_list"] = AttributeSpec(
             source="LGD_gene_list",
-            type="object",
+            value_type="object",
             description=(
                 "List of all LGD genes (deprecated, use LGDs_gene_list)"
             ),
-            internal=True,
-            default=False,
-            params={
-                "effect_type": "LGDs",
-                "gene_list": True,
-            },
+            internal_default=True,
+            is_default=False,
             attribute_type="gene_list",
         )
+        self._effect_params["LGD_gene_list"] = {"effect_type": "LGDs"}
         return {
-            "worst_effect": AttributeDesc(
+            "worst_effect": AttributeSpec(
                 source="worst_effect",
-                type="str",
+                value_type="str",
                 description="Worst effect across all transcripts.",
-                default=True,
-                internal=False),
-            "worst_effect_genes": AttributeDesc(
+                is_default=True,
+                internal_default=False),
+            "worst_effect_genes": AttributeSpec(
                 source="worst_effect_genes",
-                type="str",
+                value_type="str",
                 description="comma separated list of genes with worst effect.",
-                internal=False,
-                default=True,
-                params={
-                    "gene_list": True,
-                }),
-            "worst_effect_gene_list": AttributeDesc(
+                internal_default=False,
+                is_default=True),
+            "worst_effect_gene_list": AttributeSpec(
                 source="worst_effect_gene_list",
-                type="object",
+                value_type="object",
                 description="list of genes with worst effect.",
-                internal=True,
-                default=False,
+                internal_default=True,
+                is_default=False,
                 attribute_type="gene_list"),
-            "gene_effects": AttributeDesc(
+            "gene_effects": AttributeSpec(
                 source="gene_effects",
-                type="str",
+                value_type="str",
                 description=(
                     "`<gene_1>:<effect_1>|...` A gene can be repeated."
                 ),
-                internal=False,
-                default=True),
-            "effect_details": AttributeDesc(
+                internal_default=False,
+                is_default=True),
+            "effect_details": AttributeSpec(
                 source="effect_details",
-                type="str",
+                value_type="str",
                 description=(
                     "Effect details for each affected "
                     "transcript. Format: `< transcript 1 >:"
                     "<gene 1>:<effect 1>:<details 1>|...`"
                 ),
-                internal=False,
-                default=True),
-            "allele_effects": AttributeDesc(
+                internal_default=False,
+                is_default=True),
+            "allele_effects": AttributeSpec(
                 source="allele_effects",
-                type="object",
+                value_type="object",
                 description=("The a list of a python objects with "
                 "details of the effects for each "
                 "affected transcript."),
-                internal=True,
-                default=False),
-            "gene_list": AttributeDesc(
+                internal_default=True,
+                is_default=False),
+            "gene_list": AttributeSpec(
                 source="gene_list",
-                type="object",
+                value_type="object",
                 description="List of all genes",
-                internal=True,
-                default=True,
-                params={
-                    "gene_list": True,
-                },
+                internal_default=True,
+                is_default=True,
                 attribute_type="gene_list"),
-            "genes": AttributeDesc(
+            "genes": AttributeSpec(
                 source="genes",
-                type="str",
+                value_type="str",
                 description="Comma separated list of all affected genes.",
-                internal=False,
-                default=False),
+                internal_default=False,
+                is_default=False),
             **effect_gene_lists,
             **effect_genes,
         }
+
+    def get_attribute_defaults(
+        self, spec: AttributeSpec,
+    ) -> dict[str, Any]:
+        return dict(self._effect_params.get(spec.source, {}))
 
     def close(self) -> None:
         self.genome.close()
@@ -314,12 +306,12 @@ Annotator to identify the effect of the variant on protein coding.
             "worst_effect_genes": ",".join(worst_effect_genes),
         }
         for attr in self.attributes:
-            attr_desc = self.attribute_descriptions[attr.source]
-            effect_type = attr_desc.params.get("effect_type")
+            effect_type = attr.parameters.get("effect_type")
             if effect_type is not None:
                 genes = sorted(
                     AnnotationEffect.filter_genes(effects, effect_type))
-                if attr_desc.params.get("gene_list"):
+                assert attr.spec is not None
+                if attr.spec.attribute_type == "gene_list":
                     result[attr.source] = genes
                 else:
                     result[attr.source] = ",".join(genes)
@@ -329,10 +321,10 @@ Annotator to identify the effect of the variant on protein coding.
         self, annotatable: Annotatable | None, context: dict[str, Any],
     ) -> dict[str, Any]:
         if annotatable is None:
-            return {attr.name: None for attr in self._info.attributes}
+            return {attr.name: None for attr in self._attributes}
         source_values = self._do_annotate(annotatable, context)
         result: dict[str, Any] = {}
-        for attr in self.get_info().attributes:
+        for attr in self._attributes:
             if attr.name not in self.gene_list_aggregators:
                 result[attr.name] = source_values[attr.source]
                 continue

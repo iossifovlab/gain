@@ -16,8 +16,8 @@ from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
     AnnotatorInfo,
+    AttributeSpec,
 )
-from gain.annotation.annotator_base import AttributeDesc
 from gain.annotation.docker_annotator import DockerAnnotator
 from gain.annotation.utils import (
     find_annotator_gene_models,
@@ -298,9 +298,9 @@ class VEPCacheAnnotator(VEPAnnotatorBase):
 
         """)  # noqa
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         return {
-            k: AttributeDesc(source=k, type=v[0], description=v[1])
+            k: AttributeSpec(source=k, value_type=v[0], description=v[1])
             for k, v in full_attributes.items()
         }
 
@@ -330,7 +330,7 @@ class VEPCacheAnnotator(VEPAnnotatorBase):
 
         with out_path.open("r") as out_file:
             self.read_output(
-                out_file, contexts, self.get_all_attribute_descriptions(),
+                out_file, contexts, self.get_attribute_specs(),
             )
 
         self.aggregate_attributes(contexts)
@@ -415,9 +415,9 @@ class VEPEffectAnnotator(VEPAnnotatorBase):
         """Find genome from info, resource label or genomic context."""
         return cast(GenomicResource, self.genome_resource)
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         return {
-            k: AttributeDesc(source=k, type=v[0], description=v[1])
+            k: AttributeSpec(source=k, value_type=v[0], description=v[1])
             for k, v in effect_attributes.items()
         }
 
@@ -462,7 +462,7 @@ class VEPEffectAnnotator(VEPAnnotatorBase):
 
         with out_path.open("r") as out_file:
             self.read_output(
-                out_file, contexts, self.get_all_attribute_descriptions(),
+                out_file, contexts, self.get_attribute_specs(),
             )
 
         self.aggregate_attributes(contexts)

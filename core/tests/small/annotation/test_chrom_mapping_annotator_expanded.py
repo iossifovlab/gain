@@ -12,7 +12,7 @@ from gain.annotation.annotatable import (
     Region,
     VCFAllele,
 )
-from gain.annotation.annotation_config import AnnotatorInfo, AttributeInfo
+from gain.annotation.annotation_config import AttributeConfig, AnnotatorInfo
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.chrom_mapping_annotator import (
     ChromMappingAnnotator,
@@ -110,7 +110,8 @@ def test_init_creates_default_attributes_when_none(tmp_path: Path) -> None:
 
     assert annotator is not None
     assert len(info.attributes) == 1
-    attr = info.attributes[0]
+    assert info.attributes[0].name == "renamed_chromosome"
+    attr = annotator.attributes[0]
     assert attr.name == "renamed_chromosome"
     assert attr.internal is True
 
@@ -118,7 +119,7 @@ def test_init_creates_default_attributes_when_none(tmp_path: Path) -> None:
 def test_init_preserves_existing_attributes(tmp_path: Path) -> None:
     """Test that existing attributes are preserved."""
     # Use the actual supported attribute
-    custom_attr = AttributeInfo(
+    custom_attr = AttributeConfig(
         "renamed_chromosome",
         "renamed_chromosome",
         internal=False,
@@ -315,7 +316,7 @@ def test_do_annotate_returns_empty_when_no_mapping(tmp_path: Path) -> None:
     pos = Position("2", 100)
     result = annotator._do_annotate(pos, {})
 
-    assert not result
+    assert result["renamed_chromosome"] is None
 
 
 def test_do_annotate_preserves_original_annotatable(tmp_path: Path) -> None:

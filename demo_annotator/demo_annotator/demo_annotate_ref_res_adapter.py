@@ -12,11 +12,9 @@ from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
     AnnotatorInfo,
+    AttributeSpec,
 )
-from gain.annotation.annotator_base import (
-    AnnotatorBase,
-    AttributeDesc,
-)
+from gain.annotation.annotator_base import AnnotatorBase
 from gain.genomic_resources.cached_repository import GenomicResourceCachedRepo
 
 
@@ -41,14 +39,14 @@ class DemoAnnotateGenomeAdapter(AnnotatorBase):
         self.genome_filename = \
             self.genome_resource.get_config()["filename"]
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         return {
-            "ref_sequence": AttributeDesc(
+            "ref_sequence": AttributeSpec(
                 source="ref_sequence",
-                type="object",
+                value_type="object",
                 description="Sequence in the reference genome",
-                internal=False,
-                default=True,
+                internal_default=False,
+                is_default=True,
             ),
         }
 

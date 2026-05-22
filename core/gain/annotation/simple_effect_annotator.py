@@ -12,11 +12,9 @@ from gain.annotation.annotation_config import (
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
+    AttributeSpec,
 )
-from gain.annotation.annotator_base import (
-    AnnotatorBase,
-    AttributeDesc,
-)
+from gain.annotation.annotator_base import AnnotatorBase
 from gain.genomic_resources.aggregators import (
     Aggregator,
     build_aggregator,
@@ -59,75 +57,81 @@ class SimpleEffectAnnotator(AnnotatorBase):
             "intergenic",
         ]
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
-        gene_lists = {}
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
+        self._simple_effect_params: dict[str, dict[str, Any]] = {}
+        gene_lists: dict[str, AttributeSpec] = {}
         for effect in SimpleEffectAnnotator.effect_types()[:-1]:
-            gene_lists[f"{effect}_gene_list"] = AttributeDesc(
-                    source=f"{effect}_gene_list", type="object",
-                    description=f"list of genes with {effect} effect.",
-                    internal=False,
-                    default=False,
-                    params={"effect_type": effect, "gene_list": True},
-                    attribute_type="gene_list",
-                )
-            gene_lists[f"{effect}_genes"] = AttributeDesc(
-                    source=f"{effect}_genes", type="str",
-                    description=f"comma separated list of genes with "
-                    f"{effect} effect.",
-                    internal=False,
-                    default=False,
-                    params={"effect_type": effect},
-                )
+            source_gl = f"{effect}_gene_list"
+            source_ge = f"{effect}_genes"
+            gene_lists[source_gl] = AttributeSpec(
+                source=source_gl, value_type="object",
+                description=f"list of genes with {effect} effect.",
+                internal_default=False,
+                is_default=False,
+                attribute_type="gene_list",
+            )
+            self._simple_effect_params[source_gl] = {"effect_type": effect}
+            gene_lists[source_ge] = AttributeSpec(
+                source=source_ge, value_type="str",
+                description=(
+                    f"comma separated list of genes with {effect} effect."),
+                internal_default=False,
+                is_default=False,
+            )
+            self._simple_effect_params[source_ge] = {"effect_type": effect}
 
         return {
-            "worst_effect": AttributeDesc(
-                source="worst_effect", type="str",
+            "worst_effect": AttributeSpec(
+                source="worst_effect", value_type="str",
                 description="The worst effect.",
-                internal=False,
-                default=True,
+                internal_default=False,
+                is_default=True,
             ),
-            "worst_effect_genes": AttributeDesc(
-                source="worst_effect_genes", type="str",
+            "worst_effect_genes": AttributeSpec(
+                source="worst_effect_genes", value_type="str",
                 description="comma separated list of genes with worst effect.",
-                internal=False,
-                default=True,
+                internal_default=False,
+                is_default=True,
             ),
-            "worst_effect_gene_list": AttributeDesc(
-                source="worst_effect_gene_list", type="object",
+            "worst_effect_gene_list": AttributeSpec(
+                source="worst_effect_gene_list", value_type="object",
                 description="list of genes with worst effect.",
-                internal=False,
-                default=False,
-                params={"gene_list": True},
+                internal_default=False,
+                is_default=False,
                 attribute_type="gene_list",
             ),
-            "gene_list": AttributeDesc(
-                source="gene_list", type="object",
+            "gene_list": AttributeSpec(
+                source="gene_list", value_type="object",
                 description="List of all affected genes.",
-                internal=True,
-                default=True,
-                params={"gene_list": True},
+                internal_default=True,
+                is_default=True,
                 attribute_type="gene_list",
             ),
-            "genes": AttributeDesc(
-                source="genes", type="str",
+            "genes": AttributeSpec(
+                source="genes", value_type="str",
                 description="Comma separated list of all affected genes.",
-                internal=False,
-                default=False,
+                internal_default=False,
+                is_default=False,
             ),
-            "gene_effects": AttributeDesc(
-                source="gene_effects", type="str",
+            "gene_effects": AttributeSpec(
+                source="gene_effects", value_type="str",
                 description="list of gene:effect pairs.",
-                internal=False,
-                default=False,
+                internal_default=False,
+                is_default=False,
             ),
-            "effect_details": AttributeDesc(
-                source="effect_details", type="str",
+            "effect_details": AttributeSpec(
+                source="effect_details", value_type="str",
                 description="list of transcript:gene:effect tuples.",
-                internal=False,
-                default=False,
+                internal_default=False,
+                is_default=False,
             ),
             **gene_lists,
         }
+
+    def get_attribute_defaults(
+        self, spec: AttributeSpec,
+    ) -> dict[str, Any]:
+        return dict(self._simple_effect_params.get(spec.source, {}))
 
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
 
@@ -158,16 +162,16 @@ Simple effect annotator.
 
         self.gene_models = gene_models
         self.gene_list_aggregators: dict[str, Aggregator] = {}
-        for attr in info.attributes:
+        for attr in self._attributes:
             gene_list_aggregator = attr.parameters.get("gene_list_aggregator")
             if gene_list_aggregator is None:
                 continue
 
             validate_aggregator(gene_list_aggregator)
             assert isinstance(gene_list_aggregator, str)
-            attr_desc = self.attribute_descriptions[attr.source]
-            if attr_desc.type != "object" \
-                    or not attr_desc.params.get("gene_list"):
+            assert attr.spec is not None
+            if attr.spec.value_type != "object" \
+                    or attr.spec.attribute_type != "gene_list":
                 raise ValueError(
                     f"Attribute {attr.source} is not a gene list attribute "
                     f"but gene_list_aggregator is specified.")
@@ -218,7 +222,7 @@ Simple effect annotator.
         result["gene_effects"] = "|".join(
             f"{gene}:{effect}" for gene, effect in gene_effects)
         result["effect_details"] = "|".join(details)
-        for attr in self.get_info().attributes:
+        for attr in self._attributes:
             if attr.source not in result:
                 result[attr.source] = None
         return result
@@ -227,10 +231,10 @@ Simple effect annotator.
         self, annotatable: Annotatable | None, context: dict[str, Any],
     ) -> dict[str, Any]:
         if annotatable is None:
-            return {attr.name: None for attr in self._info.attributes}
+            return {attr.name: None for attr in self._attributes}
         source_values = self._do_annotate(annotatable, context)
         result: dict[str, Any] = {}
-        for attr in self.get_info().attributes:
+        for attr in self._attributes:
             if attr.name not in self.gene_list_aggregators:
                 result[attr.name] = source_values[attr.source]
                 continue

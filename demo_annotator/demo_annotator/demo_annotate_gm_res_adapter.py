@@ -12,11 +12,9 @@ from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
     AnnotatorInfo,
+    AttributeSpec,
 )
-from gain.annotation.annotator_base import (
-    AnnotatorBase,
-    AttributeDesc,
-)
+from gain.annotation.annotator_base import AnnotatorBase
 from gain.genomic_resources.cached_repository import GenomicResourceCachedRepo
 
 
@@ -45,15 +43,15 @@ class DemoAnnotateGeneModelsAdapter(AnnotatorBase):
         self.gene_model_format = \
             self.gene_models_resource.get_config()["format"]
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         return {
-            "gene_symbols": AttributeDesc(
+            "gene_symbols": AttributeSpec(
                 source="gene_symbols",
-                type="object",
+                value_type="object",
                 description="Gene symbols overlapping with the "
                 "annotatable",
-                internal=False,
-                default=True,
+                internal_default=False,
+                is_default=True,
             ),
         }
 

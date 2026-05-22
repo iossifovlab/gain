@@ -8,11 +8,9 @@ from gain.annotation.annotation_config import (
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
+    AttributeSpec,
 )
-from gain.annotation.annotator_base import (
-    AnnotatorBase,
-    AttributeDesc,
-)
+from gain.annotation.annotator_base import AnnotatorBase
 from gain.gene_sets.gene_set import (
     GeneSet,
     build_gene_set_collection_from_resource,
@@ -47,7 +45,8 @@ def build_gene_set_annotator(
     if input_gene_list_info is None:
         raise ValueError(f"The {input_gene_list} is not privided by the "
                          "pipeline.")
-    if input_gene_list_info.value_type != "object":
+    if input_gene_list_info.spec is None \
+            or input_gene_list_info.spec.value_type != "object":
         raise ValueError(f"The {input_gene_list} privided by the pipeline "
                          "is not of type object.")
     return GeneSetAnnotator(
@@ -91,15 +90,13 @@ class GeneSetAnnotator(AnnotatorBase):
             if attribute_config.source == "in_sets":
                 continue
             aggregator_type = attribute_config.parameters.get("aggregator")
-            if aggregator_type is None:
-                aggregator_type = self.attribute_descriptions[
-                    attribute_config.source
-                ].params.get("aggregator", self.DEFAULT_AGGREGATOR_TYPE)
-            else:
+            if aggregator_type is not None:
                 validate_aggregator(aggregator_type)
+            else:
+                aggregator_type = self.DEFAULT_AGGREGATOR_TYPE
             self.aggregators[attribute_config.source] = aggregator_type
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         gene_sets_list = self.gene_set_collection \
             .get_gene_sets_list_statistics()
         if gene_sets_list is None:
@@ -116,27 +113,31 @@ class GeneSetAnnotator(AnnotatorBase):
                     key=lambda gs: (-gs.count, gs.name),
                 )
             ]
-        in_sets_desc = AttributeDesc(
-            source="in_sets", type="object", description=(
-                "List of the gene sets of the collection, "
-                "which have at least one gene from the input gene "
-                "list"
-            ))
-        source_type_desc = {
-            "in_sets": in_sets_desc,
+        result: dict[str, AttributeSpec] = {
+            "in_sets": AttributeSpec(
+                source="in_sets", value_type="object", description=(
+                    "List of the gene sets of the collection, "
+                    "which have at least one gene from the input gene "
+                    "list"
+                )),
         }
-        source_type_desc["in_sets"] = in_sets_desc
-        source_type_desc.update({
-            gs["name"]: AttributeDesc(
+        result.update({
+            gs["name"]: AttributeSpec(
                 source=gs["name"],
-                type="object",
+                value_type="object",
                 description=f"({gs['count']}) {gs['desc']}",
-                default=False,
-                params={"aggregator": self.DEFAULT_AGGREGATOR_TYPE},
+                is_default=False,
             )
             for gs in gene_sets_list
         })
-        return source_type_desc
+        return result
+
+    def get_attribute_defaults(
+        self, spec: AttributeSpec,
+    ) -> dict[str, Any]:
+        if spec.source == "in_sets":
+            return {}
+        return {"aggregator": self.DEFAULT_AGGREGATOR_TYPE}
 
     @property
     def used_context_attributes(self) -> tuple[str, ...]:

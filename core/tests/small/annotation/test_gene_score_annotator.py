@@ -4,7 +4,7 @@ import textwrap
 
 import pytest
 from gain.annotation.annotatable import Region
-from gain.annotation.annotation_pipeline import AnnotatorInfo, AttributeInfo
+from gain.annotation.annotation_config import AttributeConfig, AnnotatorInfo
 from gain.annotation.gene_score_annotator import GeneScoreAnnotator
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
@@ -79,7 +79,7 @@ def test_gene_score_annotator(scores_repo: GenomicResourceRepo) -> None:
         None,
         AnnotatorInfo(
             "gosho",
-            [AttributeInfo(
+            [AttributeConfig(
                 "LGD_rank",
                 "LGD_rank",
                 internal=False,
@@ -104,7 +104,7 @@ def test_gene_score_annotator_int_attributes(
         None,
         AnnotatorInfo(
             "gosho",
-            [AttributeInfo(
+            [AttributeConfig(
                 "int_score",
                 "int_score",
                 internal=False,
@@ -115,9 +115,9 @@ def test_gene_score_annotator_int_attributes(
         "gene_list",
     )
 
-    attribute_descs = annotator.get_all_attribute_descriptions()
+    attribute_specs = annotator.get_attribute_specs()
 
-    assert attribute_descs["int_score"].type == "int"
+    assert attribute_specs["int_score"].value_type == "int"
 
     result = annotator.annotate(_DUMMY_ANNOTATABLE, {"gene_list": ["G2"]})
 
@@ -155,7 +155,7 @@ def test_gene_score_annotator_used_context_attributes(
         None,
         AnnotatorInfo(
             "gosho",
-            [AttributeInfo(
+            [AttributeConfig(
                 "LGD_rank",
                 "LGD_rank",
                 internal=False,
@@ -243,8 +243,8 @@ def test_default_annotation_non_default_accessible_explicitly(
         None,
         AnnotatorInfo(
             "gosho",
-            [AttributeInfo("score3", "score3", internal=False,
-                           parameters={"gene_aggregator": "max"})],
+            [AttributeConfig("score3", "score3", internal=False,
+                       parameters={"gene_aggregator": "max"})],
             {},
         ),
         resource,
@@ -293,9 +293,10 @@ def test_default_annotation_attribute_descriptions(
     annotator = GeneScoreAnnotator(
         None, AnnotatorInfo("gosho", [], {}), resource, "gene_list",
     )
-    descs = annotator.get_all_attribute_descriptions()
-    assert descs["score1"].default is True
-    assert descs["score2"].default is True
-    assert descs["score3"].default is False
-    assert descs["score2"].params["gene_aggregator"] == "min"
-    assert descs["score1"].params["gene_aggregator"] == "dict"
+    specs = annotator.get_attribute_specs()
+    assert specs["score1"].is_default is True
+    assert specs["score2"].is_default is True
+    assert specs["score3"].is_default is False
+    attrs = {a.source: a for a in annotator.attributes}
+    assert attrs["score2"].parameters["gene_aggregator"] == "min"
+    assert attrs["score1"].parameters["gene_aggregator"] == "dict"

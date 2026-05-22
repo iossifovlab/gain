@@ -12,7 +12,7 @@ from gain.annotation.annotation_config import (
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
-    AttributeDesc,
+    AttributeSpec,
 )
 from gain.annotation.annotator_base import AnnotatorBase
 from gain.genomic_resources.aggregators import build_aggregator
@@ -86,45 +86,49 @@ class CnvCollectionAnnotator(AnnotatorBase):
 
         super().__init__(pipeline, info)
 
-        self.cnv_attributes: dict[str, tuple[AttributeDesc, str | None]] = {}
-        for attribute_def in info.attributes:
-            attribute = self.attribute_descriptions[attribute_def.source]
-            if "aggregator" in attribute_def.parameters:
-                aggregator = attribute_def.parameters["aggregator"]
-            else:
-                aggregator = attribute.params.get("aggregator")
+        self.cnv_attributes: dict[str, tuple[AttributeSpec, str | None]] = {}
+        for attribute_def in self._attributes:
+            spec = self.attribute_specs[attribute_def.source]
+            aggregator = attribute_def.parameters.get("aggregator")
             res_attribute_def = self.cnv_collection\
                 .get_score_definition(attribute_def.source)
             if res_attribute_def is not None:
                 attribute_def._documentation = f"""
-                    {attribute_def.description}
+                    {spec.description}
 
                     small values: {res_attribute_def.small_values_desc},
                     large_values: {res_attribute_def.large_values_desc}
                     aggregator: {aggregator}
                 """  # noqa: SLF001
 
-            self.cnv_attributes[attribute_def.name] = (attribute, aggregator)
+            self.cnv_attributes[attribute_def.name] = (spec, aggregator)
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
-        attributes: dict[str, AttributeDesc] = {
-            "count": AttributeDesc(
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
+        attributes: dict[str, AttributeSpec] = {
+            "count": AttributeSpec(
                 source="count",
-                type="int",
+                value_type="int",
                 description="The number of CNVs overlapping with the "
                 "annotatable.",
             ),
         }
         for score_id, score_def in \
                 self.cnv_collection.score_definitions.items():
-            attributes[score_id] = AttributeDesc(
+            attributes[score_id] = AttributeSpec(
                 source=score_id,
-                type=score_def.value_type,
+                value_type=score_def.value_type,
                 description=score_def.desc,
-                default=False,
-                params={"aggregator": score_def.allele_aggregator},
+                is_default=False,
             )
         return attributes
+
+    def get_attribute_defaults(
+        self, spec: AttributeSpec,
+    ) -> dict[str, Any]:
+        score_def = self.cnv_collection.get_score_definition(spec.source)
+        if score_def is not None:
+            return {"aggregator": score_def.allele_aggregator}
+        return {}
 
     @classmethod
     def _build_cnv_filter_func(
@@ -240,7 +244,7 @@ class CnvCollectionAnnotator(AnnotatorBase):
                 aggregators[name].add(cnv.attributes[attribute.source])
 
         result = {}
-        for attribute_config in self._info.attributes:
+        for attribute_config in self._attributes:
             if attribute_config.name in aggregators:
                 result[attribute_config.name] = \
                     aggregators[attribute_config.name].get_final()

@@ -11,7 +11,7 @@ from gain.annotation.annotation_config import (
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
-    AttributeDesc,
+    AttributeSpec,
 )
 from gain.annotation.annotator_base import AnnotatorBase
 from gain.gene_scores.gene_scores import build_gene_score_from_resource
@@ -43,7 +43,8 @@ def build_gene_score_annotator(pipeline: AnnotationPipeline,
     if input_gene_list_info is None:
         raise ValueError(f"The {input_gene_list} is not provided by the "
                          "pipeline.")
-    if input_gene_list_info.value_type != "object":
+    if input_gene_list_info.spec is None \
+            or input_gene_list_info.spec.value_type != "object":
         raise ValueError(f"The {input_gene_list} provided by the pipeline "
                          "is not of type object.")
     return GeneScoreAnnotator(pipeline, info,
@@ -57,7 +58,8 @@ class GeneScoreAnnotator(AnnotatorBase):
 
     def __init__(self, pipeline: AnnotationPipeline | None,
                  info: AnnotatorInfo,
-                 gene_score_resource: GenomicResource, input_gene_list: str):
+                 gene_score_resource: GenomicResource,
+                 input_gene_list: str):
 
         self.gene_score_resource = gene_score_resource
         self.score = build_gene_score_from_resource(self.gene_score_resource)
@@ -66,69 +68,89 @@ class GeneScoreAnnotator(AnnotatorBase):
         super().__init__(pipeline, info)
 
         self.aggregators: list[str] = []
-        for attribute_config in info.attributes:
+        for attribute_config in self._attributes:
             aggregator_type = attribute_config.parameters.get("gene_aggregator")
-            if aggregator_type is None:
-                aggregator_type = self.attribute_descriptions[
-                    attribute_config.source].params.get("gene_aggregator")
-                assert aggregator_type is not None
-            else:
-                validate_aggregator(aggregator_type)
+            assert aggregator_type is not None
+            validate_aggregator(aggregator_type)
 
             self.aggregators.append(aggregator_type)
 
             aggregator_doc = f"**gene_aggregator**: {aggregator_type}"
             if aggregator_type == "dict":
                 aggregator_doc = f"{aggregator_doc} [default]"
-                attribute_config.value_type = "object"
+                assert attribute_config.spec is not None
+                attribute_config.spec = AttributeSpec(
+                    source=attribute_config.spec.source,
+                    value_type="object",
+                    description=attribute_config.spec.description,
+                    is_default=attribute_config.spec.is_default,
+                    internal_default=attribute_config.spec.internal_default,
+                    supports_aggregation=attribute_config.spec.supports_aggregation,
+                    attribute_type=attribute_config.spec.attribute_type,
+                )
 
             attribute_config._documentation = (  # noqa: SLF001
                 f"{attribute_config.documentation}\n\n"
                 f"{aggregator_doc}"
             )
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
-        attributes = {}
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
+        specs: dict[str, AttributeSpec] = {}
         for score_id, score_def in self.score.score_definitions.items():
-            attributes[score_id] = AttributeDesc(
+            specs[score_id] = AttributeSpec(
                 source=score_id,
-                type=score_def.value_type,
+                value_type=score_def.value_type,
                 description=score_def.description,
-                params={"gene_aggregator": self.DEFAULT_AGGREGATOR_TYPE},
             )
 
         default_annotation = self.score.config.get("default_annotation")
         if default_annotation is not None:
-            for desc in attributes.values():
-                desc.default = False
+            for source in list(specs):
+                specs[source] = AttributeSpec(
+                    source=specs[source].source,
+                    value_type=specs[source].value_type,
+                    description=specs[source].description,
+                    is_default=False,
+                    internal_default=specs[source].internal_default,
+                    supports_aggregation=specs[source].supports_aggregation,
+                    attribute_type=specs[source].attribute_type,
+                )
             for attr in default_annotation:
                 default_attr = \
                     AnnotationConfigParser.parse_raw_attribute_config(attr)
-                if default_attr.source not in attributes:
+                if default_attr.source not in specs:
                     raise ValueError(
                         f"Default annotation attribute "
                         f"'{default_attr.source}' is not defined in the "
                         f"{self.gene_score_resource.get_id()} gene score "
                         "resource!")
-                if default_attr.name:
-                    attributes[default_attr.source].name = default_attr.name
-                if default_attr.description:
-                    attributes[default_attr.source].description = \
-                        default_attr.description
-                params: dict[str, Any] = {
-                    "gene_aggregator": self.DEFAULT_AGGREGATOR_TYPE,
-                }
+                desc_override = default_attr.parameters.get("description")
+                if desc_override:
+                    specs[default_attr.source].description = desc_override
+                specs[default_attr.source].is_default = True
+                if default_attr.internal is not None:
+                    specs[default_attr.source].internal_default = \
+                        default_attr.internal
                 gene_agg = default_attr.parameters.get("gene_aggregator")
                 if gene_agg is not None:
                     validate_aggregator(gene_agg)
-                    params["gene_aggregator"] = gene_agg
-                attributes[default_attr.source].params = params
-                attributes[default_attr.source].default = True
-                if default_attr.internal is not None:
-                    attributes[default_attr.source].internal = \
-                        default_attr.internal
+                    self._resource_gene_aggregators[default_attr.source] = \
+                        gene_agg
 
-        return attributes
+        return specs
+
+    def get_attribute_defaults(
+        self, spec: AttributeSpec,
+    ) -> dict[str, Any]:
+        agg = self._resource_gene_aggregators.get(
+            spec.source, self.DEFAULT_AGGREGATOR_TYPE)
+        return {"gene_aggregator": agg}
+
+    @property
+    def _resource_gene_aggregators(self) -> dict[str, str]:
+        if not hasattr(self, "_rga"):
+            self._rga: dict[str, str] = {}
+        return self._rga
 
     @property
     def used_context_attributes(self) -> tuple[str, ...]:

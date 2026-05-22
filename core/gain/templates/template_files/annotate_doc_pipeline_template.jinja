@@ -202,7 +202,7 @@
     {% for annotator in pipeline.annotators %}
       <div class="annotator-doc">
         <div class="attribute-list">
-          {% for attribute_info in annotator._info.attributes %}
+          {% for attribute_info in annotator.attributes %}
             <div class="attribute">
               <div class="attribute-info {{'attribute-internal' if attribute_info.internal }}">
                 <div class="attribute-name">
@@ -221,7 +221,7 @@
           {% endfor %}
         </div>
 
-        <div class="annotator-line {{'sticky-line' if annotator._info.attributes|length > 1 }}">
+        <div class="annotator-line {{'sticky-line' if annotator.attributes|length > 1 }}">
           <div class="annotator">
             <div class="annotator-title">Annotator type: {{annotator._info.type}}</div>
           </div>

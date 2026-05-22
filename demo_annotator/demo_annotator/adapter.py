@@ -16,7 +16,7 @@ from gain.annotation.annotation_config import (
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
-    AttributeDesc,
+    AttributeSpec,
 )
 from gain.annotation.docker_annotator import DockerAnnotator
 
@@ -39,11 +39,11 @@ class DemoAnnotatorAdapter(DockerAnnotator):
         )
         self.work_dir: Path = cast(Path, info.parameters.get("work_dir"))
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         return {
-            "annotatable_length": AttributeDesc(
+            "annotatable_length": AttributeSpec(
                 source="annotatable_length",
-                type="int",
+                value_type="int",
                 description="Positional length of the annotatable",
             ),
         }

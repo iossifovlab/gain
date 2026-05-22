@@ -6,7 +6,8 @@ import textwrap
 import pytest
 import pytest_mock
 from gain.annotation.annotatable import Position
-from gain.annotation.annotation_config import AttributeInfo
+from gain.annotation.annotation_config import Attribute
+from gain.annotation.annotation_pipeline import AttributeSpec
 from gain.annotation.annotation_factory import (
     AnnotationConfigurationError,
     load_pipeline_from_yaml,
@@ -132,11 +133,12 @@ def test_input_annotatable_decorator_used_context_attributes(
 ) -> None:
     pipeline = AnnotationPipeline(test_grr)
     dummy_annotatable_provider = DummyAnnotator()
-    dummy_annotatable_provider.attributes.append(
-        AttributeInfo("dummy_annotatable", "dummy_annotatable",
-                      internal=False, parameters={},
-                      _type="annotatable", attribute_type="annotatable"),
+    attr = Attribute("dummy_annotatable", "dummy_annotatable", internal=False)
+    attr.spec = AttributeSpec(
+        source="dummy_annotatable", value_type="object", description="",
+        attribute_type="annotatable",
     )
+    dummy_annotatable_provider.attributes.append(attr)
     dummy_annotatable_provider.pipeline = pipeline
     pipeline.add_annotator(dummy_annotatable_provider)
 
@@ -145,7 +147,7 @@ def test_input_annotatable_decorator_used_context_attributes(
     pipeline.add_annotator(annotator)
     assert not annotator.used_context_attributes
 
-    annotator._info.parameters._data["input_annotatable"] = "dummy_annotatable"
+    annotator._info.parameters["input_annotatable"] = "dummy_annotatable"
     annotator = \
         InputAnnotableAnnotatorDecorator.decorate(annotator)  # type: ignore
 

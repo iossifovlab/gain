@@ -7,10 +7,9 @@ import pytest
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
 )
+from gain.annotation.annotation_config import AttributeConfig, AnnotatorInfo
 from gain.annotation.annotation_pipeline import (
     AnnotationPreamble,
-    AnnotatorInfo,
-    AttributeInfo,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
@@ -300,15 +299,15 @@ def test_annotator_config_with_attributes() -> None:
 
     assert pipeline_config == \
         [AnnotatorInfo("annotator", [
-            AttributeInfo("att1", "att1", internal=None, parameters={}),
-            AttributeInfo("att2", "att2", internal=None, parameters={}),
-            AttributeInfo("att3", "some_score",
+            AttributeConfig("att1", "att1", internal=None, parameters={}),
+            AttributeConfig("att2", "att2", internal=None, parameters={}),
+            AttributeConfig("att3", "some_score",
                           internal=None, parameters={}),
-            AttributeInfo("att4", "some_score",
+            AttributeConfig("att4", "some_score",
                           internal=None, parameters={"att_param": "foo"}),
-            AttributeInfo("att5", "att5",
+            AttributeConfig("att5", "att5",
                           internal=True, parameters={"att_param": "raz"}),
-            AttributeInfo("att6", "att6", internal=None, parameters={})],
+            AttributeConfig("att6", "att6", internal=None, parameters={})],
             {}, annotator_id="A0")]
 
 
@@ -323,8 +322,8 @@ def test_annotator_config_with_params_and_attributes() -> None:
 
     assert pipeline_config == \
         [AnnotatorInfo("annotator", [
-            AttributeInfo("att1", "att1", internal=None, parameters={}),
-            AttributeInfo("att2", "att2", internal=None, parameters={}),
+            AttributeConfig("att1", "att1", internal=None, parameters={}),
+            AttributeConfig("att2", "att2", internal=None, parameters={}),
         ], {
             "resource_id": "resource",
         }, annotator_id="A0")]
@@ -349,13 +348,13 @@ def test_effect_annotator_extra_attributes() -> None:
 
     assert pipeline_config == [
         AnnotatorInfo("effect_annotator", [
-            AttributeInfo("list_of_genes", "genes",
+            AttributeConfig("list_of_genes", "genes",
                           internal=True, parameters={"format": "list"}),
-            AttributeInfo("genes", "genes",
+            AttributeConfig("genes", "genes",
                           internal=None, parameters={"format": "str"}),
-            AttributeInfo("genes_LGD", "genes_LGD",
+            AttributeConfig("genes_LGD", "genes_LGD",
                           internal=None, parameters={}),
-            AttributeInfo("genes_missense", "genes_missense",
+            AttributeConfig("genes_missense", "genes_missense",
                           internal=None, parameters={})], {
             "gene_models": "hg38/gene_models/refSeq_20200330",
             "genome": "hg38/genomes/GRCh38-hg38",
@@ -569,8 +568,8 @@ def test_wildcard_in_complete_syntax(test_grr: GenomicResourceRepo) -> None:
 def test_annotator_info_to_dict() -> None:
     annotator_info = AnnotatorInfo(
         "sample_annotator", [
-            AttributeInfo("attribute_1", "att1", internal=None, parameters={}),
-            AttributeInfo("attribute_2", "att2", internal=None, parameters={}),
+            AttributeConfig("attribute_1", "att1", internal=None, parameters={}),
+            AttributeConfig("attribute_2", "att2", internal=None, parameters={}),
         ], {
             "resource_id": "resource",
             "param_1": "val1",

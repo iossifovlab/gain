@@ -17,13 +17,15 @@ from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotationConfigurationError,
     AnnotatorInfo,
-    AttributeInfo,
+    Attribute,
+    AttributeConfig,
 )
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
+    AttributeSpec,
 )
-from gain.annotation.annotator_base import AnnotatorBase, AttributeDesc
+from gain.annotation.annotator_base import AnnotatorBase
 from gain.genomic_resources.aggregators import (
     build_aggregator,
     validate_aggregator,
@@ -66,12 +68,43 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
                  score: GenomicScore):
         self.score = score
         info.resources.append(score.resource)
+
+        default_annotation = self.score.get_config().get("default_annotation")
+        if default_annotation is not None:
+            score_defs = self.score.score_definitions
+            parsed_defaults = [
+                AnnotationConfigParser.parse_raw_attribute_config(attr)
+                for attr in default_annotation
+            ]
+            for parsed in parsed_defaults:
+                if parsed.source not in score_defs:
+                    raise ValueError(
+                        f"Default annotation attribute '{parsed.source}' is "
+                        "not defined in the score resource!")
+                params = {
+                    k: v for k, v in parsed.parameters.items()
+                    if k != "description"
+                }
+                if params:
+                    self._resource_attr_params[parsed.source] = params
+            if not info.attributes:
+                defaults_by_source = {p.source: p for p in parsed_defaults}
+                for source in score_defs:
+                    if source not in defaults_by_source:
+                        continue
+                    parsed = defaults_by_source[source]
+                    info.attributes.append(AttributeConfig(
+                        name=parsed.name or parsed.source,
+                        source=parsed.source,
+                        internal=parsed.internal,
+                    ))
+
         super().__init__(pipeline, info)
         self._region_length_cutoff = info.parameters.get(
             "region_length_cutoff", 500_000)
 
         self.simple_score_queries: list[str] = [
-            attr.source for attr in info.attributes
+            attr.source for attr in self._attributes
             if attr.source in self.score.score_definitions]
 
     def open(self) -> Annotator:
@@ -89,48 +122,33 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
         self.score.close()
         super().close()
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
-        attribute_defs = self.score.score_definitions
-        result = {}
-        for attr_source, attr_def in attribute_defs.items():
-            result[attr_source] = AttributeDesc(
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
+        has_default_annotation = \
+            self.score.get_config().get("default_annotation") is not None
+        return {
+            attr_source: AttributeSpec(
                 source=attr_def.score_id,
-                name=attr_def.score_id,
-                type=attr_def.value_type,
+                value_type=attr_def.value_type,
                 description=attr_def.desc,
-                default=True,
-                internal=False,
+                is_default=not has_default_annotation,
+                internal_default=False,
             )
+            for attr_source, attr_def in self.score.score_definitions.items()
+        }
 
-        default_annotation = self.score.get_config().get("default_annotation")
-        if default_annotation is not None:
-            for desc in result.values():
-                desc.default = False
-            for attr in default_annotation:
-                default_attr = \
-                    AnnotationConfigParser.parse_raw_attribute_config(attr)
-                if default_attr.source not in result:
-                    raise ValueError(
-                        f"Default annotation attribute '{attr}' is not "
-                        "defined in the score resource!")
+    def get_attribute_defaults(
+        self, spec: AttributeSpec,
+    ) -> dict[str, Any]:
+        return dict(self._resource_attr_params.get(spec.source, {}))
 
-                result[default_attr.source].source = default_attr.source
-                if default_attr.name:
-                    result[default_attr.source].name = default_attr.name
-                if default_attr.description:
-                    result[default_attr.source].description = \
-                        default_attr.description
-                if len(default_attr.parameters) > 0:
-                    result[default_attr.source].params = cast(
-                        dict, default_attr.parameters)
-                result[default_attr.source].default = True
-                if default_attr.internal is not None:
-                    result[default_attr.source].internal = \
-                        default_attr.internal
-        return result
+    @property
+    def _resource_attr_params(self) -> dict[str, dict[str, Any]]:
+        if not hasattr(self, "_rap"):
+            self._rap: dict[str, dict[str, Any]] = {}
+        return self._rap
 
     def _build_score_aggregator_documentation(
-        self, attribute_info: AttributeInfo,
+        self, attribute_info: Attribute,
         aggregator: str,
         attribute_conf_agg: str | None,
     ) -> str:
@@ -169,11 +187,10 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
         return f"**{aggregator}**: {value_str}"
 
     def add_score_aggregator_documentation(
-            self, attribute_info: AttributeInfo,
+            self, attribute_info: Attribute,
             aggregator: str,
             attribute_conf_agg: str | None) -> None:
         """Collect score aggregator documentation."""
-        # pylint: disable=protected-access
         aggregator_doc = self._build_score_aggregator_documentation(
             attribute_info, aggregator, attribute_conf_agg)
 
@@ -183,11 +200,11 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
 
     @abc.abstractmethod
     def build_score_aggregator_documentation(
-        self, attr_info: AttributeInfo,
+        self, attr_info: Attribute,
     ) -> list[str]:
         """Construct score aggregator documentation."""
 
-    def build_attribute_help(self, attr_info: AttributeInfo) -> str:
+    def build_attribute_help(self, attr_info: Attribute) -> str:
         """Build attribute help."""
         hist_url = self.score.get_histogram_image_url(attr_info.source)
         score_def = self.score.get_score_definition(attr_info.source)
@@ -198,9 +215,10 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
             score_def=score_def,
         )
 
+        assert attr_info.spec is not None
         data = {
             "name": attr_info.name,
-            "description": attr_info.description,
+            "description": attr_info.spec.description,
             "resource_id": self.score.resource_id,
             "resource_summary": self.score.resource.get_summary(),
             "resource_url":
@@ -252,7 +270,11 @@ phastCons, phyloP, FitCons2, etc.
 
 """)  # noqa
 
-        for att_info in info.attributes:
+        for att_info in self._attributes:
+            if att_info.parameters.get("nucleotide_aggregator") is not None:
+                raise AnnotationConfigurationError(
+                    "nucleotide_aggregator is not supported by "
+                    "position_score_annotator")
             pos_aggregator = att_info.parameters.get("position_aggregator")
             if pos_aggregator:
                 validate_aggregator(pos_aggregator)
@@ -263,12 +285,10 @@ phastCons, phyloP, FitCons2, etc.
                 att_info, "position_aggregator", pos_aggregator)
 
     def build_score_aggregator_documentation(
-        self, attr_info: AttributeInfo,
+        self, attr_info: Attribute,
     ) -> list[str]:
         """Collect score aggregator documentation."""
-        # pylint: disable=protected-access
         pos_aggregator = attr_info.parameters.get("position_aggregator")
-
         doc = self._build_score_aggregator_documentation(
             attr_info, "position_aggregator", pos_aggregator)
         return [doc]
@@ -439,7 +459,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         self.allele_attribute = None
         self.attrs_to_include = []
 
-        for att_info in info.attributes:
+        for att_info in self._attributes:
             if att_info.source == "allele":
                 self.attrs_to_include = att_info.parameters.get(
                     "include_attributes", [])
@@ -565,21 +585,20 @@ Non-``VCFAllele`` annotatables always use region aggregation.
 
         raise ValueError(f"Unsupported operator {operator.data}")
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
-        """Return score attribute descriptions plus the virtual ``allele``."""
-        result = super().get_all_attribute_descriptions()
-        result["allele"] = AttributeDesc(
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
+        """Return score attribute specs plus the virtual ``allele``."""
+        result = super().get_attribute_specs()
+        result["allele"] = AttributeSpec(
             source="allele",
-            name="allele",
-            type="list",
+            value_type="list",
             description="The allele in the format 'chr:pos:ref:alt'",
-            default=False,
-            internal=False,
+            is_default=False,
+            internal_default=False,
         )
         return result
 
     def build_score_aggregator_documentation(
-        self, attr_info: AttributeInfo,
+        self, attr_info: Attribute,
     ) -> list[str]:
         """Collect score aggregator documentation."""
         nuc_agg = attr_info.parameters.get("nucleotide_aggregator")

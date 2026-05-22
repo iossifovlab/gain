@@ -22,7 +22,7 @@ from gain.annotation.annotate_vcf import (
     annotate_vcf,
     cli,
 )
-from gain.annotation.annotation_config import AttributeInfo
+from gain.annotation.annotation_config import Attribute
 from gain.annotation.annotation_factory import (
     build_annotation_pipeline,
 )
@@ -949,7 +949,7 @@ def test_writer_does_not_omit_literal_zeros_from_info(
     sample_vcf: pathlib.Path,
 ) -> None:
     attributes = [
-        AttributeInfo("score_1", "source_number",
+        Attribute("score_1", "source_number",
                       internal=False, parameters={}),
     ]
 
@@ -972,9 +972,9 @@ def test_writer_does_not_write_empty_values_into_info(
     sample_vcf: pathlib.Path,
 ) -> None:
     attributes = [
-        AttributeInfo("score_1", "source_string",
+        Attribute("score_1", "source_string",
                       internal=False, parameters={}),
-        AttributeInfo("score_2", "source_bool",
+        Attribute("score_2", "source_bool",
                       internal=False, parameters={}),
     ]
 

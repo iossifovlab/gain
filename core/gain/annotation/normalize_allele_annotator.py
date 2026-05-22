@@ -7,11 +7,9 @@ from gain.annotation.annotation_config import AnnotatorInfo
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
+    AttributeSpec,
 )
-from gain.annotation.annotator_base import (
-    AnnotatorBase,
-    AttributeDesc,
-)
+from gain.annotation.annotator_base import AnnotatorBase
 from gain.genomic_resources.genomic_context import get_genomic_context
 from gain.genomic_resources.reference_genome import (
     ReferenceGenome,
@@ -52,14 +50,14 @@ class NormalizeAlleleAnnotator(AnnotatorBase):
 
         self.genome = genome
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         return {
-            "normalized_allele": AttributeDesc(
+            "normalized_allele": AttributeSpec(
                 source="normalized_allele",
-                type="annotatable",
+                value_type="annotatable",
                 description="Normalized allele.",
-                internal=True,
-                default=True,
+                internal_default=True,
+                is_default=True,
                 attribute_type="annotatable",
             ),
         }

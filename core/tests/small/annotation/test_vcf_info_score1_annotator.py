@@ -61,7 +61,9 @@ def test_vcf_info_annotator_all_attributes(
         ("D", "D", "str", "Score D"),
     ]
     observed_name_src_type_desc = \
-        [(at.name, at.source, at.value_type, at.description)
+        [(at.name, at.source,
+          at.spec.value_type if at.spec else None,
+          at.spec.description if at.spec else None)
          for at in pipeline.get_attributes()]
 
     assert observed_name_src_type_desc == expected_name_scr_type_desc
