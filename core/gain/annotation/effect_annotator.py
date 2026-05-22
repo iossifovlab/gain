@@ -22,11 +22,6 @@ from gain.effect_annotation.effect import (
     AnnotationEffect,
     EffectTypesMixin,
 )
-from gain.genomic_resources.aggregators import (
-    Aggregator,
-    build_aggregator,
-    validate_aggregator,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -64,22 +59,6 @@ Annotator to identify the effect of the variant on protein coding.
         self._region_length_cutoff = info.parameters.get(
             "region_length_cutoff", 15_000_000)
 
-        self.gene_list_aggregators: dict[str, Aggregator] = {}
-        for attr in self._attributes:
-            gene_list_aggregator = attr.parameters.get("gene_list_aggregator")
-            if gene_list_aggregator is None:
-                continue
-
-            validate_aggregator(gene_list_aggregator)
-            assert isinstance(gene_list_aggregator, str)
-            assert attr.spec is not None
-            if attr.spec.value_type != "object" \
-                    or attr.spec.attribute_type != "gene_list":
-                raise ValueError(
-                    f"Attribute {attr.source} is not a gene list attribute "
-                    f"but gene_list_aggregator is specified.")
-            self.gene_list_aggregators[attr.name] = build_aggregator(
-                gene_list_aggregator)
 
         self.effect_annotator = EffectAnnotator(
             self.genome,
@@ -315,21 +294,8 @@ Annotator to identify the effect of the variant on protein coding.
                     result[attr.source] = genes
                 else:
                     result[attr.source] = ",".join(genes)
-        return result
 
-    def annotate(
-        self, annotatable: Annotatable | None, context: dict[str, Any],
-    ) -> dict[str, Any]:
-        if annotatable is None:
-            return {attr.name: None for attr in self._attributes}
-        source_values = self._do_annotate(annotatable, context)
-        result: dict[str, Any] = {}
-        for attr in self._attributes:
-            if attr.name not in self.gene_list_aggregators:
-                result[attr.name] = source_values[attr.source]
-                continue
-            aggregator = self.gene_list_aggregators[attr.name]
-            result[attr.name] = aggregator.aggregate(
-                source_values[attr.source])
-
-        return result
+        return {
+            attr.name: result.get(attr.source)
+            for attr in self._attributes
+        }

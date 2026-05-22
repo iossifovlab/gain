@@ -16,10 +16,6 @@ from gain.gene_sets.gene_set import (
     build_gene_set_collection_from_resource,
 )
 from gain.genomic_resources import GenomicResource
-from gain.genomic_resources.aggregators import (
-    build_aggregator,
-    validate_aggregator,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -84,17 +80,6 @@ class GeneSetAnnotator(AnnotatorBase):
         )
         self._info = info
         super().__init__(pipeline, info)
-
-        self.aggregators: dict[str, str] = {}
-        for attribute_config in self._info.attributes:
-            if attribute_config.source == "in_sets":
-                continue
-            aggregator_type = attribute_config.parameters.get("aggregator")
-            if aggregator_type is not None:
-                validate_aggregator(aggregator_type)
-            else:
-                aggregator_type = self.DEFAULT_AGGREGATOR_TYPE
-            self.aggregators[attribute_config.source] = aggregator_type
 
     def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         gene_sets_list = self.gene_set_collection \
@@ -167,12 +152,7 @@ class GeneSetAnnotator(AnnotatorBase):
                 f"is not open.")
         for gs in self.gene_sets:
             intersecting = list(genes_set.intersection(set(gs.syms)))
-            aggregator_type = self.aggregators.get(
-                gs.name, self.DEFAULT_AGGREGATOR_TYPE)
-            agg = build_aggregator(aggregator_type)
-            for gene in intersecting:
-                agg.add(gene)
-            output[gs.name] = agg.get_final()
+            output[gs.name] = intersecting
             if intersecting:
                 in_sets.append(gs.name)
 

@@ -341,7 +341,7 @@ def test_position_score_annotator_attributes_with_aggr_fails(
         position_score_repo: GenomicResourceRepo) -> None:
     with pytest.raises(
         AnnotationConfigurationError,
-        match="nucleotide_aggregator",
+        match="aggregator",
     ):
         load_pipeline_from_yaml("""
             - position_score:

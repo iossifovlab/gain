@@ -16,10 +16,6 @@ from gain.annotation.annotation_pipeline import (
 from gain.annotation.annotator_base import AnnotatorBase
 from gain.gene_scores.gene_scores import build_gene_score_from_resource
 from gain.genomic_resources import GenomicResource
-from gain.genomic_resources.aggregators import (
-    build_aggregator,
-    validate_aggregator,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +50,6 @@ def build_gene_score_annotator(pipeline: AnnotationPipeline,
 class GeneScoreAnnotator(AnnotatorBase):
     """Gene score annotator class."""
 
-    DEFAULT_AGGREGATOR_TYPE = "dict"
-
     def __init__(self, pipeline: AnnotationPipeline | None,
                  info: AnnotatorInfo,
                  gene_score_resource: GenomicResource,
@@ -68,40 +62,14 @@ class GeneScoreAnnotator(AnnotatorBase):
         self.input_gene_list = input_gene_list
         super().__init__(pipeline, info)
 
-        self.aggregators: list[str] = []
-        for attr in self._attributes:
-            aggregator_type = attr.parameters.get("gene_aggregator")
-            assert aggregator_type is not None
-            validate_aggregator(aggregator_type)
-
-            self.aggregators.append(aggregator_type)
-
-            aggregator_doc = f"**gene_aggregator**: {aggregator_type}"
-            if aggregator_type == "dict":
-                aggregator_doc = f"{aggregator_doc} [default]"
-                assert attr.spec is not None
-                attr.spec = AttributeSpec(
-                    source=attr.spec.source,
-                    value_type="object",
-                    description=attr.spec.description,
-                    is_default=attr.spec.is_default,
-                    internal_default=attr.spec.internal_default,
-                    supports_aggregation=attr.spec.supports_aggregation,
-                    attribute_type=attr.spec.attribute_type,
-                )
-
-            attr._documentation = (  # noqa: SLF001
-                f"{attr.documentation}\n\n"
-                f"{aggregator_doc}"
-            )
-
     def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         specs: dict[str, AttributeSpec] = {}
         for score_id, score_def in self.score.score_definitions.items():
             specs[score_id] = AttributeSpec(
                 source=score_id,
-                value_type=score_def.value_type,
+                value_type="object",
                 description=score_def.description,
+                supports_aggregation=False,
             )
 
         default_annotation = self.score.config.get("default_annotation")
@@ -109,11 +77,11 @@ class GeneScoreAnnotator(AnnotatorBase):
             for source in list(specs):
                 specs[source] = AttributeSpec(
                     source=specs[source].source,
-                    value_type=specs[source].value_type,
+                    value_type="object",
                     description=specs[source].description,
                     is_default=False,
                     internal_default=specs[source].internal_default,
-                    supports_aggregation=specs[source].supports_aggregation,
+                    supports_aggregation=False,
                     attribute_type=specs[source].attribute_type,
                 )
             for attr in default_annotation:
@@ -132,21 +100,8 @@ class GeneScoreAnnotator(AnnotatorBase):
                 if default_attr.internal is not None:
                     specs[default_attr.source].internal_default = \
                         default_attr.internal
-                gene_agg = default_attr.parameters.get("gene_aggregator")
-                if gene_agg is not None:
-                    validate_aggregator(gene_agg)
-                    self._resource_gene_aggregators[default_attr.source] = \
-                        gene_agg
 
         return specs
-
-    def get_attribute_defaults(
-        self, spec: AttributeSpec,
-    ) -> dict[str, Any]:
-        agg = self._resource_gene_aggregators.get(
-            spec.source, self.DEFAULT_AGGREGATOR_TYPE)
-        return {"gene_aggregator": agg}
-
 
     @property
     def used_context_attributes(self) -> tuple[str, ...]:
@@ -161,25 +116,11 @@ class GeneScoreAnnotator(AnnotatorBase):
         if genes is None:
             return self._empty_result()
         return {
-            attr.name: self.aggregate_gene_values(
-                attr.source, genes, aggregator_type,
-            )
-            for attr, aggregator_type in zip(
-                self.attributes, self.aggregators, strict=True,
-            )
+            attr.name: {
+                sym: score
+                for sym in genes
+                if (score := self.score.get_gene_value(attr.source, sym))
+                is not None
+            }
+            for attr in self.attributes
         }
-
-    def aggregate_gene_values(
-            self, score_id: str,
-            gene_symbols: list[str],
-            aggregator_type: str) -> Any:
-        """Aggregate gene score values."""
-        aggregator = build_aggregator(aggregator_type)
-
-        for symbol in gene_symbols:
-            aggregator.add(
-                self.score.get_gene_value(score_id, symbol),
-                key=symbol,
-            )
-
-        return aggregator.get_final()

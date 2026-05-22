@@ -15,11 +15,6 @@ from gain.annotation.annotation_pipeline import (
     AttributeSpec,
 )
 from gain.annotation.annotator_base import AnnotatorBase
-from gain.genomic_resources.aggregators import (
-    Aggregator,
-    build_aggregator,
-    validate_aggregator,
-)
 from gain.genomic_resources.gene_models import (
     GeneModels,
     TranscriptModel,
@@ -161,22 +156,6 @@ Simple effect annotator.
         super().__init__(pipeline, info)
 
         self.gene_models = gene_models
-        self.gene_list_aggregators: dict[str, Aggregator] = {}
-        for attr in self._attributes:
-            gene_list_aggregator = attr.parameters.get("gene_list_aggregator")
-            if gene_list_aggregator is None:
-                continue
-
-            validate_aggregator(gene_list_aggregator)
-            assert isinstance(gene_list_aggregator, str)
-            assert attr.spec is not None
-            if attr.spec.value_type != "object" \
-                    or attr.spec.attribute_type != "gene_list":
-                raise ValueError(
-                    f"Attribute {attr.source} is not a gene list attribute "
-                    f"but gene_list_aggregator is specified.")
-            self.gene_list_aggregators[attr.name] = build_aggregator(
-                gene_list_aggregator)
 
     def open(self) -> Annotator:
         self.gene_models.load()
@@ -222,27 +201,10 @@ Simple effect annotator.
         result["gene_effects"] = "|".join(
             f"{gene}:{effect}" for gene, effect in gene_effects)
         result["effect_details"] = "|".join(details)
-        for attr in self._attributes:
-            if attr.source not in result:
-                result[attr.source] = None
-        return result
-
-    def annotate(
-        self, annotatable: Annotatable | None, context: dict[str, Any],
-    ) -> dict[str, Any]:
-        if annotatable is None:
-            return {attr.name: None for attr in self._attributes}
-        source_values = self._do_annotate(annotatable, context)
-        result: dict[str, Any] = {}
-        for attr in self._attributes:
-            if attr.name not in self.gene_list_aggregators:
-                result[attr.name] = source_values[attr.source]
-                continue
-            aggregator = self.gene_list_aggregators[attr.name]
-            result[attr.name] = aggregator.aggregate(
-                source_values[attr.source])
-
-        return result
+        return {
+            attr.name: result.get(attr.source)
+            for attr in self._attributes
+        }
 
     def cds_intron_regions(
         self,

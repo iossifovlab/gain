@@ -83,7 +83,7 @@ def test_gene_score_annotator(scores_repo: GenomicResourceRepo) -> None:
                 "LGD_rank",
                 "LGD_rank",
                 internal=False,
-                parameters={"gene_aggregator": "min"})],
+                parameters={})],
             {},
         ),
         resource,
@@ -93,7 +93,7 @@ def test_gene_score_annotator(scores_repo: GenomicResourceRepo) -> None:
     result = annotator.annotate(
         _DUMMY_ANNOTATABLE, {"gene_list": ["LRP1", "TRRAP"]})
 
-    assert result == {"LGD_rank": 1}
+    assert result == {"LGD_rank": {"LRP1": 1, "TRRAP": 3}}
 
 
 def test_gene_score_annotator_int_attributes(
@@ -108,7 +108,7 @@ def test_gene_score_annotator_int_attributes(
                 "int_score",
                 "int_score",
                 internal=False,
-                parameters={"gene_aggregator": "min"})],
+                parameters={})],
             {},
         ),
         resource,
@@ -117,11 +117,11 @@ def test_gene_score_annotator_int_attributes(
 
     attribute_specs = annotator.get_attribute_specs()
 
-    assert attribute_specs["int_score"].value_type == "int"
+    assert attribute_specs["int_score"].value_type == "object"
 
     result = annotator.annotate(_DUMMY_ANNOTATABLE, {"gene_list": ["G2"]})
 
-    assert result == {"int_score": 2}
+    assert result == {"int_score": {"G2": 2}}
 
 
 def test_gene_score_annotator_default_aggregator(
@@ -178,7 +178,6 @@ def default_annotation_repo() -> GenomicResourceRepo:
                 default_annotation:
                   - source: score1
                   - source: score2
-                    gene_aggregator: min
                 scores:
                   - id: score1
                     desc: first score
@@ -232,7 +231,7 @@ def test_default_annotation_custom_aggregator(
     )
     result = annotator.annotate(_DUMMY_ANNOTATABLE, {"gene_list": ["G1", "G2"]})
     assert result["score1"] == {"G1": 1, "G2": 2}
-    assert result["score2"] == 10
+    assert result["score2"] == {"G1": 10, "G2": 20}
 
 
 def test_default_annotation_non_default_accessible_explicitly(
@@ -244,14 +243,14 @@ def test_default_annotation_non_default_accessible_explicitly(
         AnnotatorInfo(
             "gosho",
             [AttributeConfig("score3", "score3", internal=False,
-                       parameters={"gene_aggregator": "max"})],
+                       parameters={})],
             {},
         ),
         resource,
         "gene_list",
     )
     result = annotator.annotate(_DUMMY_ANNOTATABLE, {"gene_list": ["G1", "G2"]})
-    assert result == {"score3": 200}
+    assert result == {"score3": {"G1": 100, "G2": 200}}
 
 
 def test_default_annotation_invalid_score_raises(
@@ -297,6 +296,3 @@ def test_default_annotation_attribute_descriptions(
     assert specs["score1"].is_default is True
     assert specs["score2"].is_default is True
     assert specs["score3"].is_default is False
-    attrs = {a.source: a for a in annotator.attributes}
-    assert attrs["score2"].parameters["gene_aggregator"] == "min"
-    assert attrs["score1"].parameters["gene_aggregator"] == "dict"

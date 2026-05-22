@@ -15,7 +15,6 @@ from gain.annotation.annotation_pipeline import (
     AttributeSpec,
 )
 from gain.annotation.annotator_base import AnnotatorBase
-from gain.genomic_resources.aggregators import build_aggregator
 from gain.genomic_resources.genomic_scores import CNV, CnvCollection
 
 
@@ -86,10 +85,8 @@ class CnvCollectionAnnotator(AnnotatorBase):
 
         super().__init__(pipeline, info)
 
-        self.cnv_attributes: dict[str, tuple[AttributeSpec, str | None]] = {}
         for attr in self._attributes:
             spec = self.attribute_specs[attr.source]
-            aggregator = attr.parameters.get("aggregator")
             score_def = self.cnv_collection\
                 .get_score_definition(attr.source)
             if score_def is not None:
@@ -98,10 +95,8 @@ class CnvCollectionAnnotator(AnnotatorBase):
 
                     small values: {score_def.small_values_desc},
                     large_values: {score_def.large_values_desc}
-                    aggregator: {aggregator}
+                    aggregator: {attr.aggregator}
                 """  # noqa: SLF001
-
-            self.cnv_attributes[attr.name] = (spec, aggregator)
 
     def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         attributes: dict[str, AttributeSpec] = {
@@ -230,23 +225,21 @@ class CnvCollectionAnnotator(AnnotatorBase):
         if self.cnv_filter:
             cnvs = [cnv for cnv in cnvs if self.cnv_filter(cnv)]
 
-        aggregators = {
-            name: build_aggregator(aggregator)
-            for name, (_, aggregator)
-            in self.cnv_attributes.items()
-            if aggregator is not None
+        raw: dict[str, list] = {
+            attr.name: []
+            for attr in self._attributes
+            if attr.aggregator is not None
         }
 
         for cnv in cnvs:
-            for name, (attribute, _) in self.cnv_attributes.items():
-                if name not in aggregators:
-                    continue
-                aggregators[name].add(cnv.attributes[attribute.source])
+            for attr in self._attributes:
+                if attr.name in raw:
+                    raw[attr.name].append(cnv.attributes[attr.source])
 
         result = {}
         for attr in self._attributes:
-            if attr.name in aggregators:
-                result[attr.name] = aggregators[attr.name].get_final()
+            if attr.name in raw:
+                result[attr.name] = raw[attr.name]
             else:
                 result[attr.name] = len(cnvs)
 

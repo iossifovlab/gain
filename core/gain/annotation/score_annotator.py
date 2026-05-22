@@ -26,10 +26,7 @@ from gain.annotation.annotation_pipeline import (
     AttributeSpec,
 )
 from gain.annotation.annotator_base import AnnotatorBase
-from gain.genomic_resources.aggregators import (
-    build_aggregator,
-    validate_aggregator,
-)
+from gain.genomic_resources.aggregators import build_aggregator
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     AlleleScoreQuery,
@@ -86,6 +83,8 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
                     k: v for k, v in parsed.parameters.items()
                     if k != "description"
                 }
+                if parsed.aggregator is not None:
+                    params["aggregator"] = parsed.aggregator
                 if params:
                     self._resource_attr_params[parsed.source] = params
             if not info.attributes:
@@ -98,6 +97,7 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
                         name=parsed.name or parsed.source,
                         source=parsed.source,
                         internal=parsed.internal,
+                        aggregator=parsed.aggregator,
                     ))
 
         super().__init__(pipeline, info)
@@ -267,26 +267,18 @@ phastCons, phyloP, FitCons2, etc.
 """)  # noqa
 
         for attr in self._attributes:
-            if attr.parameters.get("nucleotide_aggregator") is not None:
-                raise AnnotationConfigurationError(
-                    "nucleotide_aggregator is not supported by "
-                    "position_score_annotator")
-            pos_aggregator = attr.parameters.get("position_aggregator")
-            if pos_aggregator:
-                validate_aggregator(pos_aggregator)
             self.position_score_queries.append(
-                PositionScoreQuery(attr.source, pos_aggregator))
+                PositionScoreQuery(attr.source, attr.aggregator))
 
             self.add_score_aggregator_documentation(
-                attr, "position_aggregator", pos_aggregator)
+                attr, "position_aggregator", attr.aggregator)
 
     def build_score_aggregator_documentation(
         self, attr: Attribute,
     ) -> list[str]:
         """Collect score aggregator documentation."""
-        pos_aggregator = attr.parameters.get("position_aggregator")
         doc = self._build_score_aggregator_documentation(
-            attr, "position_aggregator", pos_aggregator)
+            attr, "position_aggregator", attr.aggregator)
         return [doc]
 
     def _fetch_substitution_scores(self, allele: VCFAllele) \
@@ -463,39 +455,10 @@ Non-``VCFAllele`` annotatables always use region aggregation.
                     self.attrs_to_include = [self.attrs_to_include]
                 self.allele_attribute = attr
                 continue
-            pos_agg = attr.parameters.get("position_aggregator")
-            if pos_agg is not None:
-                logger.warning(
-                    "attribute `position_aggregator` is no longer used "
-                    "in allele_score_annotator and will be ignored")
-            nuc_agg = attr.parameters.get("nucleotide_aggregator")
-            allele_agg = attr.parameters.get("allele_aggregator")
-            agg = attr.parameters.get("aggregator")
-            if nuc_agg is not None:
-                if allele_agg is not None or agg is not None:
-                    raise AnnotationConfigurationError(
-                        "Cannot specify both `nucleotide_aggregator` and "
-                        "`aggregator` for the same attribute")
-                logger.warning(
-                    "attribute `nucleotide_aggregator` is deprecated, "
-                    "use `aggregator` instead")
-                agg = nuc_agg
-            elif allele_agg is not None:
-                if agg is not None:
-                    raise AnnotationConfigurationError(
-                        "Cannot specify both `allele_aggregator` and "
-                        "`aggregator` for the same attribute")
-                logger.warning(
-                    "attribute `allele_aggregator` is deprecated, "
-                    "use `aggregator` instead")
-                agg = allele_agg
-
-            if agg:
-                validate_aggregator(agg)
             self.allele_score_queries.append(
-                AlleleScoreQuery(attr.source, allele_aggregator=agg))
+                AlleleScoreQuery(attr.source, allele_aggregator=attr.aggregator))
             self.add_score_aggregator_documentation(
-                attr, "allele_aggregator", agg)
+                attr, "allele_aggregator", attr.aggregator)
 
     @classmethod
     def _build_allele_filter_func(
@@ -597,15 +560,8 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         self, attr: Attribute,
     ) -> list[str]:
         """Collect score aggregator documentation."""
-        nuc_agg = attr.parameters.get("nucleotide_aggregator")
-        allele_agg = attr.parameters.get("allele_aggregator")
-        agg = attr.parameters.get("aggregator")
-        if nuc_agg is not None:
-            agg = nuc_agg
-        elif allele_agg is not None:
-            agg = allele_agg
         allele_doc = self._build_score_aggregator_documentation(
-            attr, "allele_aggregator", agg,
+            attr, "allele_aggregator", attr.aggregator,
         )
         return [allele_doc]
 

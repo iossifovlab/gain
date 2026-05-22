@@ -19,6 +19,11 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
+from gain.genomic_resources.aggregators import (
+    Aggregator,
+    build_aggregator,
+    validate_aggregator,
+)
 
 
 class AnnotatorBase(Annotator):
@@ -62,14 +67,36 @@ class AnnotatorBase(Annotator):
                 else spec.internal_default
             )
             defaults = self.get_attribute_defaults(spec)
-            parameters = {**defaults, **attr_config.parameters}
+            default_aggregator = defaults.get("aggregator")
+            parameters = {
+                **{k: v for k, v in defaults.items() if k != "aggregator"},
+                **attr_config.parameters,
+            }
+            aggregator = (
+                attr_config.aggregator
+                if attr_config.aggregator is not None
+                else default_aggregator
+            )
             self._attributes.append(Attribute(
                 name=attr_config.name,
                 source=attr_config.source,
                 internal=internal,
+                aggregator=aggregator,
                 spec=spec,
                 parameters=parameters,
             ))
+
+        self._aggregator_instances: list[Aggregator | None] = []
+        for attr in self._attributes:
+            if attr.aggregator is not None:
+                validate_aggregator(
+                    attr.aggregator,
+                    attr.spec.value_type if attr.spec else None,
+                )
+                self._aggregator_instances.append(
+                    build_aggregator(attr.aggregator))
+            else:
+                self._aggregator_instances.append(None)
 
         work_dir = info.parameters.get("work_dir")
         self.work_dir = Path(work_dir) if work_dir is not None else None
@@ -99,6 +126,20 @@ class AnnotatorBase(Annotator):
         all name-keyed attributes defined for this annotator instance.
         """
 
+    def _apply_aggregators(
+        self, values: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = {}
+        for attr, aggregator in zip(
+            self._attributes, self._aggregator_instances, strict=True,
+        ):
+            value = values[attr.name]
+            if aggregator is not None and isinstance(value, list):
+                result[attr.name] = aggregator.aggregate(value)
+            else:
+                result[attr.name] = value
+        return result
+
     def annotate(
         self, annotatable: Annotatable | None, context: dict[str, Any],
     ) -> dict[str, Any]:
@@ -106,7 +147,7 @@ class AnnotatorBase(Annotator):
             values = self._empty_result()
         else:
             values = self._do_annotate(annotatable, context)
-        return {attr.name: values[attr.name] for attr in self._attributes}
+        return self._apply_aggregators(values)
 
     def _do_batch_annotate(
         self,
@@ -128,7 +169,4 @@ class AnnotatorBase(Annotator):
         inner_output = self._do_batch_annotate(
             annotatables, contexts, batch_work_dir=batch_work_dir,
         )
-        return [{
-            attr.name: result[attr.name]
-            for attr in self._attributes
-        } for result in inner_output]
+        return [self._apply_aggregators(result) for result in inner_output]

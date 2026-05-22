@@ -197,7 +197,7 @@ def test_cnv_filter_and_attribute(
                   source: "affected_status"
                 - name: status2
                   source: "affected_status"
-                  aggregator: max
+                  aggregator: mode
                 - source: "collection"
             """),
         grr)
@@ -220,7 +220,7 @@ def test_cnv_filter_and_attribute(
     assert collection_info is not None
 
     assert "aggregator: join(,)" in status_info.documentation
-    assert "aggregator: max" in status2_info.documentation
+    assert "aggregator: mode" in status2_info.documentation
     assert "aggregator: join(,)" in collection_info.documentation
 
 

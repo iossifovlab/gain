@@ -93,11 +93,12 @@ class AttributeConfig:
     name: str
     source: str
     internal: bool | None = None
+    aggregator: str | None = None
     parameters: dict[str, Any] = field(
         default_factory=dict, compare=False, hash=False)
 
     def __hash__(self) -> int:
-        return hash((self.name, self.source, self.internal))
+        return hash((self.name, self.source, self.internal, self.aggregator))
 
 
 @dataclass(eq=True)
@@ -107,6 +108,7 @@ class Attribute:
     name: str
     source: str
     internal: bool | None = None
+    aggregator: str | None = None
     parameters: dict[str, Any] = field(
         default_factory=dict, compare=False, hash=False)
     spec: AttributeSpec | None = field(
@@ -115,7 +117,7 @@ class Attribute:
         default=None, compare=False, hash=False)
 
     def __hash__(self) -> int:
-        return hash((self.name, self.source, self.internal))
+        return hash((self.name, self.source, self.internal, self.aggregator))
 
     @property
     def value_type(self) -> str:
@@ -564,13 +566,38 @@ class AnnotationConfigParser:
                        f"config {attribute_config} should be a string")
             raise TypeError(message)
 
-        parameters = {k: v for k, v in attribute_config.items()
-                      if k not in ["name", "source", "internal", "type"]}
+        _deprecated_aggregator_params = {
+            "position_aggregator",
+            "allele_aggregator",
+            "nucleotide_aggregator",
+            "gene_list_aggregator",
+        }
+        aggregator = attribute_config.get("aggregator")
+        for old_name in _deprecated_aggregator_params:
+            if old_name not in attribute_config:
+                continue
+            if aggregator is not None:
+                raise ValueError(
+                    f"Cannot specify both 'aggregator' and '{old_name}' "
+                    f"for attribute '{source}'")
+            logger.warning(
+                "'%s' is deprecated in attribute config; use 'aggregator'",
+                old_name)
+            aggregator = attribute_config[old_name]
+
+        _excluded = (
+            {"name", "source", "internal", "type", "aggregator"}
+            | _deprecated_aggregator_params
+        )
+        parameters = {
+            k: v for k, v in attribute_config.items() if k not in _excluded
+        }
 
         return AttributeConfig(
             name=name,
             source=source,
             internal=internal,
+            aggregator=aggregator,
             parameters=parameters,
         )
 
@@ -586,7 +613,10 @@ class AnnotationConfigParser:
         for raw_attribute_config in raw_attributes_config:
             if isinstance(raw_attribute_config, str):
                 raw_attribute_config = {"name": raw_attribute_config}
-            attribute_config.append(
-                AnnotationConfigParser.parse_raw_attribute_config(
-                    raw_attribute_config))
+            try:
+                attribute_config.append(
+                    AnnotationConfigParser.parse_raw_attribute_config(
+                        raw_attribute_config))
+            except ValueError as e:
+                raise AnnotationConfigurationError(str(e)) from e
         return attribute_config
