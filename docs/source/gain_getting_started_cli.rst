@@ -2,27 +2,44 @@
 Getting started on CLI
 ======================
 
+Prerequisites
+-------------
+
+This guide assumes that you are working on a recent Linux or Mac OS X machine.
+
+We distribute GAIn as a Conda package and you can install it using 
+``conda install``. For a faster installation, we recommend using libmamba 
+solver with conda or directly using the mamba alternative. If you do not have 
+a distribution of Conda or Mamba package manager or if you don't understand 
+this description, we suggest following the instruction to install mamba 
+through Miniforge distribution available 
+at `https://github.com/conda-forge/miniforge <https://github.com/conda-forge/miniforge>`_.
+
+
+
+
 Installation
 ------------
-The GAIn platform is developed in Python and supports Python 3.11 and up.
 
-Begin by creating an empty Conda environment named ``gain``:
+We assume that you have a working ``mamba``. If you don't have ``mamba`` but a working ``conda``, replace ``mamba`` with ``conda`` in the commands bellow. See above if you have no working conda or mamba.
+
+Start by creating an empty Conda environment named ``gain_cli``:
 
 .. code-block:: bash
 
-    mamba create -n gain
+    mamba create -n gain_cli
 
 To use this environment, you need to activate it using the following command:
 
 .. code-block:: bash
 
-    mamba activate gain
+    mamba activate gain_cli
 
 Afterwards, install the ``gain_core`` conda package:
 
 .. code-block:: bash
 
-    mamba install -c bioconda -c iossifovlab gain_core
+    mamba install -c conda-forge -c bioconda -c iossifovlab gain-core
 
 This command is going to install GAIn and all of its dependencies.
 
