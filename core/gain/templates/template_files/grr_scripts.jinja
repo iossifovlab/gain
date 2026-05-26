@@ -52,6 +52,19 @@
         })
         window.rowData = rowData;
 
+        let sortOrder = 'none'; // 'none' | 'asc' | 'desc'
+        let lastIds = [];
+
+        function sortedIds(ids) {
+            if (sortOrder === 'none') return ids;
+            const sorted = [...ids].sort((a, b) => a.localeCompare(b));
+            return sortOrder === 'desc' ? sorted.reverse() : sorted;
+        }
+
+        function applyRefreshData(ids) {
+            lastIds = ids;
+            refreshData(sortedIds(ids));
+        }
 
         function UpdateStatus() {
             const status = $(`#status`);
@@ -68,9 +81,9 @@
         }
 
         function refreshData(ids) {
-            let newIds = new Set(ids)
-            let currentIds = new Set(window.currentIds)
-            if (newIds.size === currentIds.size && newIds.isSubsetOf(currentIds)) {
+            // Check both length and order so re-sorting the same set still re-renders.
+            if (ids.length === (window.currentIds || []).length
+                    && ids.every((id, i) => id === window.currentIds[i])) {
                 UpdateStatus();
                 return;
             }
@@ -108,7 +121,7 @@
                 option.textContent = type;
                 typeFilter.append(option);
             }
-            refreshData(Array.from(window.all_ids))
+            applyRefreshData(Array.from(window.all_ids))
 
             resolve(window.sqlite3)
         });
@@ -123,7 +136,7 @@
             const typeFilter = $("#type-filter").val();
             if (searchValue === "" && typeFilter === "all") {
                 window.last_error = null;
-                refreshData(Array.from(window.all_ids))
+                applyRefreshData(Array.from(window.all_ids))
                 return;
             }
 
@@ -145,12 +158,12 @@
             window.last_error = null;
             try {
                 const displayIds = window.sqlite3.query(query).map((row) => row[0]);
-                refreshData(displayIds);
+                applyRefreshData(displayIds);
             }
             catch (error) {
                 window.last_error = error;
                 console.error("Error during search:", error);
-                refreshData(Array.from(window.all_ids))
+                applyRefreshData(Array.from(window.all_ids))
             }
             finally {
                 $(".searching").hide()
@@ -202,6 +215,15 @@
           )
         });
 
+        document.getElementById('id-col-header').addEventListener('click', (e) => {
+            if (e.target.closest('.col-resizer')) return;
+            sortOrder = sortOrder === 'none' ? 'asc' : sortOrder === 'asc' ? 'desc' : 'none';
+            const sortIcons = { none: 'unfold_more', asc: 'arrow_upward', desc: 'arrow_downward' };
+            const indicator = document.getElementById('id-sort-indicator');
+            indicator.textContent = sortIcons[sortOrder];
+            refreshData(sortedIds(lastIds));
+        });
+
     </script>
     <script type="module">
         const table = document.getElementById('resource-table');
@@ -216,7 +238,7 @@
 
         // Proportionally rescale all columns when the wrapper changes size.
         const wrapper = document.getElementById('table-wrapper');
-        new ResizeObserver(() => {
+        const wrapperObserver = new ResizeObserver(() => {
           const newWidth = wrapper.clientWidth;
           const colTotal = cols.reduce((s, c) => s + parseInt(c.style.width, 10), 0);
           // Guard < 2px to avoid an infinite loop: writing col widths can itself
@@ -224,7 +246,8 @@
           if (!colTotal || Math.abs(newWidth - colTotal) < 2) return;
           const scale = newWidth / colTotal;
           cols.forEach(c => { c.style.width = Math.round(parseInt(c.style.width, 10) * scale) + 'px'; });
-        }).observe(wrapper);
+        });
+        wrapperObserver.observe(wrapper);
 
         // Keep resizer handles as tall as the full table so they are draggable
         // anywhere in the column, not just in the header row.
@@ -234,7 +257,8 @@
           resizers.forEach(r => { r.style.height = h; });
         }
         updateResizerHeights();
-        new ResizeObserver(updateResizerHeights).observe(table);
+        const tableObserver = new ResizeObserver(updateResizerHeights);
+        tableObserver.observe(table);
 
         ths.forEach((th, i) => {
           const resizer = th.querySelector('.col-resizer');

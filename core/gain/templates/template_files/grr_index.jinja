@@ -157,6 +157,18 @@
         margin-left: auto;
       }
 
+      #id-col-header {
+        cursor: pointer;
+        user-select: none;
+      }
+
+      #id-sort-indicator {
+        margin-left: 2px;
+        font-size: 18px;
+        vertical-align: middle;
+        color: #5b778c;
+      }
+
       #resource-table th {
         position: relative;
         overflow: visible;
@@ -230,7 +242,7 @@
           <thead>
             <tr>
               <th class="nowrap type-cell">Type<div class="col-resizer"></div></th>
-              <th class="nowrap id-cell">ID<div class="col-resizer"></div></th>
+              <th class="nowrap id-cell" id="id-col-header">ID<span id="id-sort-indicator" class="material-symbols-outlined">unfold_more</span><div class="col-resizer"></div></th>
               <th class="nowrap version-cell">Version<div class="col-resizer"></div></th>
               <th
                 class="nowrap size-cell"
