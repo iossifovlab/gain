@@ -67,6 +67,7 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo,
                  score: GenomicScore):
         self.score = score
+        self._resource_attr_params: dict[str, dict[str, Any]] = {}
         info.resources.append(score.resource)
 
         default_annotation = self.score.get_config().get("default_annotation")
@@ -141,11 +142,6 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
     ) -> dict[str, Any]:
         return dict(self._resource_attr_params.get(spec.source, {}))
 
-    @property
-    def _resource_attr_params(self) -> dict[str, dict[str, Any]]:
-        if not hasattr(self, "_rap"):
-            self._rap: dict[str, dict[str, Any]] = {}
-        return self._rap
 
     def _build_score_aggregator_documentation(
         self, attr: Attribute,

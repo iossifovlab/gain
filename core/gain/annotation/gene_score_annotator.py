@@ -63,6 +63,7 @@ class GeneScoreAnnotator(AnnotatorBase):
 
         self.gene_score_resource = gene_score_resource
         self.score = build_gene_score_from_resource(self.gene_score_resource)
+        self._resource_gene_aggregators: dict[str, str] = {}
         info.resources += [gene_score_resource]
         self.input_gene_list = input_gene_list
         super().__init__(pipeline, info)
@@ -146,11 +147,6 @@ class GeneScoreAnnotator(AnnotatorBase):
             spec.source, self.DEFAULT_AGGREGATOR_TYPE)
         return {"gene_aggregator": agg}
 
-    @property
-    def _resource_gene_aggregators(self) -> dict[str, str]:
-        if not hasattr(self, "_rga"):
-            self._rga: dict[str, str] = {}
-        return self._rga
 
     @property
     def used_context_attributes(self) -> tuple[str, ...]:

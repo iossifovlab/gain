@@ -331,40 +331,38 @@ class AnnotatorAttributes(EditorView):
             )
         annotator_info = annotator.get_info()
         annotator_type = annotator_info.type
+        all_specs = annotator.get_attribute_specs()
         if search_term is None:
-            attribute_descs: Any = \
-                annotator.get_all_attribute_descriptions().values()
+            attribute_items: Any = list(all_specs.items())
         else:
             if not isinstance(search_term, str):
                 return Response(
                     {"error": "Search term must be a string"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            attribute_descs = list(filter(
-                lambda desc:
-                    search_term.lower() in desc.source.lower() or
-                    search_term.lower() in desc.description.lower(),
-                annotator.get_all_attribute_descriptions().values(),
-            ))
-        total_attribute_count = len(attribute_descs)
+            attribute_items = [
+                (name, spec)
+                for name, spec in all_specs.items()
+                if search_term.lower() in spec.source.lower()
+                or search_term.lower() in spec.description.lower()
+            ]
+        total_attribute_count = len(attribute_items)
         page_attributes = islice(
-            attribute_descs,
+            attribute_items,
             page * self.ATTRIBUTE_PAGE_SIZE,
             (page + 1) * self.ATTRIBUTE_PAGE_SIZE,
         )
         attributes_result = []
         used_attributes = set()
-        for attribute in page_attributes:
-            used_attributes.add(attribute.name)
-            if attribute.internal is None:
-                attribute.internal = False
+        for name, spec in page_attributes:
+            used_attributes.add(name)
             attributes_result.append({
-                "name": attribute.name,
-                "source": attribute.source,
-                "type": attribute.type,
-                "description": attribute.description,
-                "default": attribute.default,
-                "internal": attribute.internal,
+                "name": name,
+                "source": spec.source,
+                "type": spec.value_type,
+                "description": spec.description,
+                "default": spec.is_default,
+                "internal": spec.internal_default,
             })
 
         return Response(

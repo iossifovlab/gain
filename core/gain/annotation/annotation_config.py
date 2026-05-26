@@ -118,6 +118,14 @@ class Attribute:
         return hash((self.name, self.source, self.internal))
 
     @property
+    def value_type(self) -> str:
+        return self.spec.value_type if self.spec else ""
+
+    @property
+    def description(self) -> str:
+        return self.spec.description if self.spec else ""
+
+    @property
     def documentation(self) -> str:
         if self._documentation is None:
             return self.spec.description if self.spec else ""

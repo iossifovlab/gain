@@ -11,7 +11,7 @@ from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
     AnnotationPreamble,
     AnnotatorInfo,
-    AttributeInfo,
+    Attribute,
     RawPipelineConfig,
 )
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
@@ -60,18 +60,18 @@ class ThreadSafePipeline(AnnotationPipeline):
     def get_info(self) -> list[AnnotatorInfo]:
         return self.pipeline.get_info()
 
-    def get_attributes(self) -> list[AttributeInfo]:
+    def get_attributes(self) -> list[Attribute]:
         return self.pipeline.get_attributes()
 
     def get_attribute_info(
-            self, attribute_name: str) -> AttributeInfo | None:
+            self, attribute_name: str) -> Attribute | None:
         return self.pipeline.get_attribute_info(attribute_name)
 
     def get_resource_ids(self) -> set[str]:
         return self.pipeline.get_resource_ids()
 
     def get_annotator_by_attribute_info(
-        self, attribute_info: AttributeInfo,
+        self, attribute_info: Attribute,
     ) -> Annotator | None:
         return self.pipeline.get_annotator_by_attribute_info(attribute_info)
 

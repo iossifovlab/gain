@@ -7,7 +7,8 @@ from unittest.mock import MagicMock
 import pytest
 from django.test import Client
 from django.utils import timezone
-from gain.annotation.annotation_config import AttributeInfo
+from gain.annotation.annotation_config import Attribute
+from gain.annotation.annotation_pipeline import AttributeSpec
 from gain.genomic_resources.repository import GenomicResourceRepo
 from pytest_mock import MockerFixture
 
@@ -61,13 +62,15 @@ def test_build_attribute_description_with_histogram(
     resource = DummyResource("dummy_resource")
     view._grr = cast(GenomicResourceRepo, DummyRepo(resource))
 
-    attribute_info = AttributeInfo(
+    attribute_info = Attribute(
         "attr_name",
         "score_id",
         internal=False,
-        parameters={},
-        _type="str",
-        description="desc",
+        spec=AttributeSpec(
+            source="score_id",
+            value_type="str",
+            description="desc",
+        ),
     )
 
     result = {"attr_name": 123}
@@ -109,12 +112,15 @@ def test_build_attribute_description_stringifies_non_mapping_objects(
     resource = DummyResource("dummy_resource")
     view._grr = cast(GenomicResourceRepo, DummyRepo(resource))
 
-    attribute_info = AttributeInfo(
+    attribute_info = Attribute(
         "attr_name",
         "score_id",
         internal=False,
-        parameters={},
-        _type="object",
+        spec=AttributeSpec(
+            source="score_id",
+            value_type="object",
+            description="",
+        ),
     )
 
     result = {"attr_name": 456}
