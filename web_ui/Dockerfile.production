@@ -57,6 +57,13 @@ FROM ${HTTPD_IMAGE} AS runtime
 # Angular SPA at the document root.
 COPY --from=angular /app/dist/frontend/browser /usr/local/apache2/htdocs/
 
+# Preserve the Angular-built index.html as a template the
+# entrypoint reads on every container start. Lets us
+# runtime-inject GA_MEASUREMENT_ID from the host's .env
+# without rebuilding the image per environment.
+RUN cp /usr/local/apache2/htdocs/index.html \
+       /usr/local/apache2/htdocs/index.html.tmpl
+
 # Django admin / DRF static files baked alongside. The
 # django-static stage's STATIC_ROOT was /static/gpf/static
 # (settings_daphne); we re-root it under /static/ so the
@@ -68,6 +75,13 @@ COPY --from=django-static /static/gpf/static \
 # `backend:9001`, /static `Alias`, gzip + cache headers.
 COPY web_ui/httpd.conf /usr/local/apache2/conf/httpd.conf
 
+# Entrypoint shim renders index.html from index.html.tmpl
+# on container start, substituting the GA snippet if
+# GA_MEASUREMENT_ID is set in the container env. CMD stays
+# `httpd-foreground` (inherited from httpd:2.4-alpine).
+COPY web_ui/docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["httpd-foreground"]
+
 EXPOSE 80
-# httpd:2.4-alpine's default CMD is `httpd-foreground`, which
-# is the single foreground process we want — no override.
