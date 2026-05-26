@@ -1,6 +1,19 @@
 Release Notes
 =============
 
+* 2026.5.6
+    * The web UI now runtime-injects the Google Analytics
+      snippet from the ``GA_MEASUREMENT_ID`` container
+      environment variable, so the same image runs with or
+      without GA depending on the host's deploy-time config.
+    * Improved the getting-started CLI documentation with
+      installation prerequisites.
+    * The notifications WebSocket now retries on transport-level
+      errors (e.g. a 502 during handshake) after a 2 s delay,
+      preventing the subscription from dying permanently.
+    * Fixed empty-array table header rendering and scrollable
+      grid alignment in the single-annotation report.
+
 * 2026.5.5
     * Moved the ``to_gpf_gene_models_format`` CLI from ``gpf`` into
       ``gain``.
