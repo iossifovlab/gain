@@ -203,3 +203,79 @@
         });
 
     </script>
+    <script type="module">
+        const table = document.getElementById('resource-table');
+        const cols = Array.from(table.querySelectorAll('colgroup col'));
+        const ths = Array.from(table.querySelectorAll('thead th'));
+
+        // Snapshot each th's natural rendered width onto its <col> before switching
+        // to fixed layout — table-layout:fixed ignores content/CSS hints and only
+        // respects explicit <col> widths, so we must set them first.
+        ths.forEach((th, i) => { cols[i].style.width = th.offsetWidth + 'px'; });
+        table.style.tableLayout = 'fixed';
+
+        // Proportionally rescale all columns when the wrapper changes size.
+        const wrapper = document.getElementById('table-wrapper');
+        new ResizeObserver(() => {
+          const newWidth = wrapper.clientWidth;
+          const colTotal = cols.reduce((s, c) => s + parseInt(c.style.width, 10), 0);
+          // Guard < 2px to avoid an infinite loop: writing col widths can itself
+          // trigger the observer.
+          if (!colTotal || Math.abs(newWidth - colTotal) < 2) return;
+          const scale = newWidth / colTotal;
+          cols.forEach(c => { c.style.width = Math.round(parseInt(c.style.width, 10) * scale) + 'px'; });
+        }).observe(wrapper);
+
+        // Keep resizer handles as tall as the full table so they are draggable
+        // anywhere in the column, not just in the header row.
+        const resizers = Array.from(table.querySelectorAll('.col-resizer'));
+        function updateResizerHeights() {
+          const h = table.offsetHeight + 'px';
+          resizers.forEach(r => { r.style.height = h; });
+        }
+        updateResizerHeights();
+        new ResizeObserver(updateResizerHeights).observe(table);
+
+        ths.forEach((th, i) => {
+          const resizer = th.querySelector('.col-resizer');
+          if (!resizer) return;
+
+          let startX, startLeftWidth, startRightWidth;
+
+          resizer.addEventListener('mousedown', (e) => {
+            // Snapshot widths at drag start so delta is always relative to the
+            // original size, not the continuously updated col width.
+            startX = e.clientX;
+            startLeftWidth = cols[i].offsetWidth;
+            startRightWidth = cols[i + 1] ? cols[i + 1].offsetWidth : 0;
+            resizer.classList.add('resizing');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+
+            const onMouseMove = (e) => {
+              const delta = e.clientX - startX;
+              const newLeft = Math.max(85, startLeftWidth + delta);
+              // Transfer space to/from the right neighbour so total width stays fixed.
+              const newRight = startRightWidth - (newLeft - startLeftWidth);
+              if (newRight < 85) return;
+              cols[i].style.width = newLeft + 'px';
+              if (cols[i + 1]) cols[i + 1].style.width = newRight + 'px';
+            };
+
+            const onMouseUp = () => {
+              resizer.classList.remove('resizing');
+              document.body.style.cursor = '';
+              document.body.style.userSelect = '';
+              document.removeEventListener('mousemove', onMouseMove);
+              document.removeEventListener('mouseup', onMouseUp);
+            };
+
+            // Listeners on document, not the handle, so dragging outside the
+            // element doesn't break the interaction.
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+            // Prevent text selection while dragging.
+            e.preventDefault();
+          });
+        });
+    </script>

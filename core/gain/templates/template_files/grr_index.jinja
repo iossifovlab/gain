@@ -15,7 +15,8 @@
 
       td, th {
         padding: 5px;
-        max-width: 100px;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       #search-container {
@@ -26,7 +27,7 @@
         gap: 15px;
         position: sticky;
         top: 0;
-        z-index: 1;
+        z-index: 2;
         background-color: white;
         height: 70px;
       }
@@ -113,10 +114,13 @@
         text-align: center;
       }
 
-      #resource-table {
+      #table-wrapper {
         margin: 10px 10%;
-        width: 80%;
+      }
+
+      #resource-table {
         border: 1px solid #cfd8df;
+        width: 100%;
       }
 
       .version-cell {
@@ -151,6 +155,37 @@
 
       #nav-about {
         margin-left: auto;
+      }
+
+      #resource-table th {
+        position: relative;
+        overflow: visible;
+      }
+
+      .col-resizer {
+        position: absolute;
+        right: -3px;
+        top: 0;
+        height: 100%;
+        width: 6px;
+        cursor: col-resize;
+        user-select: none;
+        z-index: 1;
+      }
+
+      .col-resizer::after {
+        content: '';
+        display: block;
+        width: 2px;
+        height: 100%;
+        margin: 0 auto;
+        background: #cfd8df;
+        transition: background 0.15s;
+      }
+
+      .col-resizer:hover::after,
+      .col-resizer.resizing::after {
+        background: #85a2b9;
       }
     </style>
  </head>
@@ -187,16 +222,20 @@
         </div>
         <p id="status-error"></p>
         <div id="status"></div>
+        <div id="table-wrapper">
         <table id="resource-table" class="contents">
+          <colgroup>
+            <col><col><col><col><col>
+          </colgroup>
           <thead>
             <tr>
-              <th class="nowrap type-cell">Type</th>
-              <th class="nowrap id-cell">ID</th>
-              <th class="nowrap version-cell">Version</th>
+              <th class="nowrap type-cell">Type<div class="col-resizer"></div></th>
+              <th class="nowrap id-cell">ID<div class="col-resizer"></div></th>
+              <th class="nowrap version-cell">Version<div class="col-resizer"></div></th>
               <th
                 class="nowrap size-cell"
                 title="Total size (bytes)"
-              >Total size (bytes)</th>
+              >Total size (bytes)<div class="col-resizer"></div></th>
               <th class="nowrap">Summary</th>
             </tr>
           </thead>
@@ -223,6 +262,7 @@
             {%- endfor %}
           </tbody>
         </table>
+        </div>
         <p class="searching" style="display: none;">Searching</p>
      </div>
      <div class="pagination"></div>
