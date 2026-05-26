@@ -119,6 +119,7 @@ Outline for the rest of the guide
   * By default, the annotation uses the resource from the web, but this is not practical for annotating large number of variants.
     GAIn supports caching of resources, so that if a resouce is needed it is first downloaded in a local cache and the local copy is used for annotation.
   * To enable caching, explicitly configure the grr definition by adding the following to the GRR definition file (e.g. ``~/.gain/grr_definitions.yaml``):
+  
     .. code-block:: yaml
         id: default
         type: http
