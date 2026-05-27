@@ -142,7 +142,6 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
     ) -> dict[str, Any]:
         return dict(self._resource_attr_params.get(spec.source, {}))
 
-
     def _build_score_aggregator_documentation(
         self, attr: Attribute,
         aggregator: str,
@@ -456,7 +455,8 @@ Non-``VCFAllele`` annotatables always use region aggregation.
                 self.allele_attribute = attr
                 continue
             self.allele_score_queries.append(
-                AlleleScoreQuery(attr.source, allele_aggregator=attr.aggregator))
+                AlleleScoreQuery(
+                    attr.source, allele_aggregator=attr.aggregator))
             self.add_score_aggregator_documentation(
                 attr, "allele_aggregator", attr.aggregator)
 

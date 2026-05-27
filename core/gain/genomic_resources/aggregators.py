@@ -307,7 +307,6 @@ class BoolAggregator(Aggregator):
         return bool(self.values)
 
 
-
 class CounterAggregator(Aggregator):
     """Aggregator that counts values."""
 
@@ -413,5 +412,5 @@ def validate_aggregator(
                 and value_type not in {"int", "float"}:
             raise ValueError(
                 f"Aggregator '{aggregator_type}' requires a numeric value "
-                f"type (int or float), but attribute has type '{value_type}'"
+                f"type (int or float), but attribute has type '{value_type}'",
             )
