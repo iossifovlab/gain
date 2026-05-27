@@ -17,12 +17,12 @@ import os
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
-from pysam import tabix_compress, tabix_index
+from pysam import BGZFile, tabix_index
 
 from gain import __version__
 from gain.annotation.annotatable import (
@@ -304,71 +304,134 @@ def _build_sort_cmd(
     return cmd
 
 
-def _sort_body_to_file(
+def _iter_processed_rows(
+    *,
+    input_path: str,
+    plan: _SortPlan,
+    input_separator: str,
+    chrom_rank: dict[str, int] | None,
+    unknown_chroms: dict[str, int],
+) -> Iterable[bytes]:
+    """Yield body rows as utf-8 bytes, tab-joined.
+
+    Performs injection of computed columns and (optionally) prepends a
+    numeric chromosome-order rank column. ``unknown_chroms`` is mutated
+    in place with counts of chromosome names not present in
+    ``chrom_rank``.
+    """
+    rank_prefix = chrom_rank is not None
+    unknown_rank = len(chrom_rank) if chrom_rank is not None else 0
+    sep = _OUTPUT_SEPARATOR
+
+    with _open_text(input_path) as f_in:
+        f_in.readline()  # skip header
+        for line in f_in:
+            stripped = line.rstrip("\r\n")
+            if not stripped:
+                continue
+            cols = stripped.split(input_separator)
+            _check_no_output_separator_in_cells(cols)
+            if plan.inject is not None:
+                record = dict(zip(plan.output_header, cols, strict=False))
+                cols = [*cols, *plan.inject(record)]
+            if rank_prefix:
+                assert chrom_rank is not None
+                chrom = cols[plan.chrom_col_idx]
+                rank = chrom_rank.get(chrom)
+                if rank is None:
+                    unknown_chroms[chrom] = unknown_chroms.get(chrom, 0) + 1
+                    rank = unknown_rank
+                yield (f"{rank}{sep}" + sep.join(cols) + "\n").encode()
+            else:
+                yield (sep.join(cols) + "\n").encode()
+
+
+def _stream_input_to_bgzip(
     *,
     input_path: str,
     output_path: str,
     plan: _SortPlan,
-    chrom_rank: dict[str, int] | None,
     input_separator: str,
+    chrom_rank: dict[str, int] | None,
+    skip_sort: bool,
     work_dir: str,
     threads: int | None,
     buffer: str | None,
 ) -> None:
-    """Stream input lines through ``sort`` and write a sorted body file.
+    """Stream input through ``sort`` (when needed) and into a bgzip output.
 
-    Input rows are split on ``input_separator``; the produced body is
-    always tab-separated. The file has no header.
+    No intermediate uncompressed files are created. The header is
+    written first, followed by the (optionally sorted) body. When a
+    chromosome-order rank prefix is in use, it is stripped from each
+    line on the way out of ``sort`` before being written to the bgzip
+    stream.
     """
-    rank_prefix = chrom_rank is not None
-    sort_cmd = _build_sort_cmd(
-        plan, rank_prefix=rank_prefix, separator=_OUTPUT_SEPARATOR,
-        work_dir=work_dir, threads=threads, buffer=buffer)
-    logger.info("sort command: %s", " ".join(sort_cmd))
-
-    env = {**os.environ, "LC_ALL": "C"}
-
-    sorted_with_rank = os.path.join(work_dir, "sorted_with_rank.tsv")
-    sort_target = sorted_with_rank if rank_prefix else output_path
-
+    rank_prefix = chrom_rank is not None and not skip_sort
     unknown_chroms: dict[str, int] = {}
+    sep_bytes = _OUTPUT_SEPARATOR.encode()
+    header_bytes = (
+        _OUTPUT_SEPARATOR.join(plan.output_header) + "\n").encode()
 
-    with open(sort_target, "wb") as sort_out:
-        sort_proc = subprocess.Popen(
-            sort_cmd, stdin=subprocess.PIPE, stdout=sort_out, env=env,
-        )
-        assert sort_proc.stdin is not None
-        unknown_rank = len(chrom_rank) if chrom_rank is not None else 0
-        try:
-            with _open_text(input_path) as f_in:
-                f_in.readline()  # skip header
-                for line in f_in:
-                    stripped = line.rstrip("\r\n")
-                    if not stripped:
-                        continue
-                    cols = stripped.split(input_separator)
-                    _check_no_output_separator_in_cells(cols)
-                    if plan.inject is not None:
-                        record = dict(zip(plan.output_header, cols,
-                                          strict=False))
-                        cols = [*cols, *plan.inject(record)]
-                    if rank_prefix:
-                        assert chrom_rank is not None
-                        chrom = cols[plan.chrom_col_idx]
-                        rank = chrom_rank.get(chrom)
-                        if rank is None:
-                            unknown_chroms[chrom] = \
-                                unknown_chroms.get(chrom, 0) + 1
-                            rank = unknown_rank
-                        out_line = f"{rank}{_OUTPUT_SEPARATOR}" \
-                            + _OUTPUT_SEPARATOR.join(cols) + "\n"
-                    else:
-                        out_line = _OUTPUT_SEPARATOR.join(cols) + "\n"
-                    sort_proc.stdin.write(out_line.encode())
-        finally:
-            sort_proc.stdin.close()
+    def write_header_and(body_iter: Iterable[bytes]) -> None:
+        with BGZFile(output_path, "wb") as bgz:
+            bgz.write(header_bytes)
+            for chunk in body_iter:
+                bgz.write(chunk)
+
+    try:
+        if skip_sort:
+            logger.info("--skip-sort set; streaming input straight to bgzip")
+            write_header_and(_iter_processed_rows(
+                input_path=input_path, plan=plan,
+                input_separator=input_separator,
+                chrom_rank=None, unknown_chroms=unknown_chroms,
+            ))
+        else:
+            sort_cmd = _build_sort_cmd(
+                plan, rank_prefix=rank_prefix,
+                separator=_OUTPUT_SEPARATOR,
+                work_dir=work_dir, threads=threads, buffer=buffer)
+            logger.info("sort command: %s", " ".join(sort_cmd))
+            env = {**os.environ, "LC_ALL": "C"}
+            sort_proc = subprocess.Popen(
+                sort_cmd,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env,
+            )
+            assert sort_proc.stdin is not None
+            assert sort_proc.stdout is not None
+            try:
+                # Feed all input to sort. GNU sort drains stdin into its
+                # internal --temporary-directory before emitting output,
+                # so no deadlock on a synchronous write-then-read loop.
+                for row in _iter_processed_rows(
+                        input_path=input_path, plan=plan,
+                        input_separator=input_separator,
+                        chrom_rank=chrom_rank,
+                        unknown_chroms=unknown_chroms):
+                    sort_proc.stdin.write(row)
+            finally:
+                sort_proc.stdin.close()
+
+            def stripped_sort_output() -> Iterable[bytes]:
+                assert sort_proc.stdout is not None
+                if rank_prefix:
+                    for line in sort_proc.stdout:
+                        idx = line.index(sep_bytes)
+                        yield line[idx + len(sep_bytes):]
+                else:
+                    yield from sort_proc.stdout
+
+            write_header_and(stripped_sort_output())
+    except BaseException:
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        raise
+
+    if not skip_sort:
         rc = sort_proc.wait()
         if rc != 0:
+            if os.path.exists(output_path):
+                os.remove(output_path)
             raise RuntimeError(
                 f"native sort failed with exit code {rc}: "
                 f"{' '.join(sort_cmd)}")
@@ -381,54 +444,6 @@ def _sort_body_to_file(
             ", ".join(
                 f"{c}({n})" for c, n in sorted(unknown_chroms.items())[:10]),
         )
-
-    if rank_prefix:
-        with open(sorted_with_rank, "rb") as f_in, \
-                open(output_path, "wb") as f_out:
-            sep_bytes = _OUTPUT_SEPARATOR.encode()
-            for line in f_in:
-                idx = line.index(sep_bytes)
-                f_out.write(line[idx + len(sep_bytes):])
-        os.remove(sorted_with_rank)
-
-
-def _augment_body_to_file(
-    *,
-    input_path: str,
-    output_path: str,
-    plan: _SortPlan,
-    input_separator: str,
-) -> None:
-    """Stream input body to output (no sorting), converting to TSV and
-    injecting any computed columns."""
-    with _open_text(input_path) as f_in, open(output_path, "w") as f_out:
-        f_in.readline()  # skip header
-        for line in f_in:
-            stripped = line.rstrip("\r\n")
-            if not stripped:
-                continue
-            cols = stripped.split(input_separator)
-            _check_no_output_separator_in_cells(cols)
-            if plan.inject is not None:
-                record = dict(zip(plan.output_header, cols, strict=False))
-                cols = [*cols, *plan.inject(record)]
-            f_out.write(_OUTPUT_SEPARATOR.join(cols))
-            f_out.write("\n")
-
-
-def _write_with_header(
-    *,
-    body_path: str,
-    header: list[str],
-    output_path: str,
-) -> None:
-    """Concatenate header + body into the final uncompressed (TSV) output."""
-    with open(output_path, "w") as f_out:
-        f_out.write(_OUTPUT_SEPARATOR.join(header))
-        f_out.write("\n")
-        with open(body_path, "r") as f_body:
-            while chunk := f_body.read(1 << 20):
-                f_out.write(chunk)
 
 
 def _default_output_path(input_path: str) -> str:
@@ -584,36 +599,17 @@ def cli(argv: list[str] | None = None) -> None:
         with tempfile.TemporaryDirectory(
                 prefix="prepare_tabular_",
                 dir=provided_work_dir or output_dir) as work_dir:
-            body_path = os.path.join(work_dir, "body.tsv")
-            if args["skip_sort"]:
-                logger.info("--skip-sort set; not sorting")
-                _augment_body_to_file(
-                    input_path=input_path,
-                    output_path=body_path,
-                    plan=plan,
-                    input_separator=input_separator,
-                )
-            else:
-                _sort_body_to_file(
-                    input_path=input_path,
-                    output_path=body_path,
-                    plan=plan,
-                    chrom_rank=chrom_rank,
-                    input_separator=input_separator,
-                    work_dir=work_dir,
-                    threads=args.get("sort_threads"),
-                    buffer=args.get("sort_buffer"),
-                )
-
-            plain_output = os.path.join(work_dir, "ready.tsv")
-            _write_with_header(
-                body_path=body_path,
-                header=plan.output_header,
-                output_path=plain_output,
+            _stream_input_to_bgzip(
+                input_path=input_path,
+                output_path=output_path,
+                plan=plan,
+                input_separator=input_separator,
+                chrom_rank=chrom_rank,
+                skip_sort=args["skip_sort"],
+                work_dir=work_dir,
+                threads=args.get("sort_threads"),
+                buffer=args.get("sort_buffer"),
             )
-
-            logger.info("bgzip-compressing to %s", output_path)
-            tabix_compress(plain_output, output_path, force=True)
 
             logger.info(
                 "tabix indexing %s (seq_col=%d, start_col=%d, end_col=%d)",
