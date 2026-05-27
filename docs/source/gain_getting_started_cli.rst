@@ -99,13 +99,13 @@ Outline for the rest of the guide
   * Without any set up, GAIn is ready to annotate small sets of variants using the command-line tools. This is useful for testing and for annotating small datasets, but it is not recommended for large annotation jobs because it does not take advantage of GAIn's parallelization and caching features. To test the annotation of a small number of variants, follow these steps.
   * Download the small input CSV file :download:`Download the example input CSV <files/small_input.csv>`
   * This small files contains three allele annotatable, indicated by the available columns: chrom, pos, ref, alt, that happen to be column names expected by GAIn default. See below for more information of how to configure columns in inputs.
-  * annotate_columns small_input.csv pipeline/hg38_clinical_anotation
+  * annotate_tabular small_input.csv pipeline/hg38_clinical_anotation
   * This produces many attributes. See the pipelines summary page in the main GRR for description of the attributes produced by this pipeline.
   
 * Annotation of small number of variants with a custom pipeline
 
   * Download the small custom pipeline yaml file :download:`Download the example custom pipeline YAML <files/custom_pipeline.yaml>`
-  * annotate_columns small_input.csv custom_pipeline.yaml
+  * annotate_tabular small_input.csv custom_pipeline.yaml
   * NOTE: this works reasonable well only for small (less than 1000) number of variants. For larger number of variants, it will be unreasonably slow. Luckily, GAIn provides features to enable annotation of large number of variants, as described in the next sections.
   * To get documentation for the custom pipeline:
     annotate_doc custom_pipeline.yaml > doc.html
@@ -127,7 +127,7 @@ Outline for the rest of the guide
   * GAIn will automatically download the needed resources before annotation, but it provides a special too grr_chache_repo <pipeline> that can be use to pre-download resources before annotation. This is useful for large pipelines that use many large resources, because it allows the user to download all the needed resrouces in one step before annotation, and then run annotation without needing to wait for the resrouces to download during annotation.
   * Custom pipeline are thus important, because they allow the user to specify exactly which resources are needed for their annotation needs and that may require much smaller size of the needes resrouces. For example, the simple_pipeline.yaml above needs resrouces of total size of ~8G.
   * :download:`Download the example input CSV <files/medium_50k_input.csv>`
-  * annotate_columns medium_50k_input.csv pipeline/hg38_clinical_anotation
+  * annotate_tabular medium_50k_input.csv pipeline/hg38_clinical_anotation
 
 * Running large annotation jobs through parallelization
 
@@ -157,10 +157,10 @@ Outline for the rest of the guide
   * :download:`Download the example input CSV <files/large_200k_input.csv>`
   * sort ... large_200K_input.csv | bgzip > large_200K_input.csv.gz
   * tabix -s 1 -b 2 -e 2 large_200K_input.csv.gz
-  * annotate_columns large_200K_input.csv pipeline/hg38_clinical_anotation
-  * annotate_columns large_200K_input.csv pipeline/hg38_clinical_anotation -r 30_000_000
+  * annotate_tabular large_200K_input.csv pipeline/hg38_clinical_anotation
+  * annotate_tabular large_200K_input.csv pipeline/hg38_clinical_anotation -r 30_000_000
   * If you have a DASK cluster named ``my_sge_cluster`` that creates workers on an SGE cluster, you can run the following command to use that cluster for annotation:
-    * annotate_columns large_200K_input.csv pipeline/hg38_clinical_anotation -r 30_000_000 -N my_sge_cluster -j 100
+    * annotate_tabular large_200K_input.csv pipeline/hg38_clinical_anotation -r 30_000_000 -N my_sge_cluster -j 100
 
 
 * Annotation of VCF
@@ -247,7 +247,7 @@ Now that all three are in place, we can execute the following command to apply t
 
 .. code-block:: bash
 
-    annotate_columns variants.txt annotation_pipeline.yaml
+    annotate_tabular variants.txt annotation_pipeline.yaml
 
 This command tells GAIn to annotate the tabular file called ``variants.txt`` using ``annotation_pipeline.yaml``. 
 Running this command produces an output file named ``variants_annotated.txt``, shown below.
@@ -263,7 +263,7 @@ Running this command produces an output file named ``variants_annotated.txt``, s
 Annotating VCF input
 -----------------------------
 
-GAIn can also annotate variants stored in VCF files. The command is similar to ``annotate_columns``, but the input and 
+GAIn can also annotate variants stored in VCF files. The command is similar to ``annotate_tabular``, but the input and 
 output files are in VCF format. Here, the same variants are stored in a file called ``variants.vcf``. 
 
 .. code-block:: yaml
@@ -318,7 +318,7 @@ regulatory intervals detected by ATAC-seq and ChIP-seq. For researchers working 
 it is often valuable to interpret them using the same kinds of genomic resources used in variant annotation. 
 Although positions and regions do not contain allele information, and therefore cannot support every type of 
 variant-based annotation, GAIn can still take these inputs and annotate them with many relevant resources using 
-the ``annotate_columns`` tool.
+the ``annotate_tabular`` tool.
 
 Position inputs require only two columns: chromosome and position. Save the following tab-delimited text in a 
 file called ``positions.txt``.
@@ -346,7 +346,7 @@ Then run the following command to annotate the positions:
 
 .. code-block:: bash
 
-    annotate_columns positions.txt annotation_pipeline2.yaml
+    annotate_tabular positions.txt annotation_pipeline2.yaml
 
 This produces ``positions_annotated.txt`` which contains:
 
@@ -380,7 +380,7 @@ Then run the command again:
 
 .. code-block:: bash
 
-    annotate_columns positions.txt annotation_pipeline2.yaml
+    annotate_tabular positions.txt annotation_pipeline2.yaml
 
 This produces ``positions_annotated.txt`` which contains: 
 
@@ -434,7 +434,7 @@ Then run the following command to annotate the regions:
 
 .. code-block:: bash
 
-    annotate_columns regions.txt annotation_pipeline2.yaml
+    annotate_tabular regions.txt annotation_pipeline2.yaml
 
 This produces ``regions_annotated.txt`` which contains:
 
@@ -487,7 +487,7 @@ Run the pipeline on your input variants:
 
 .. code-block:: bash
 
-    annotate_columns variants.txt pipeline_A.yaml -o variants_A.txt
+    annotate_tabular variants.txt pipeline_A.yaml -o variants_A.txt
 
 This produces ``variants_A.txt``, which includes the requested attributes:
 
@@ -526,7 +526,7 @@ that produced the existing annotations:
 
 .. code-block:: bash
 
-    annotate_columns variants_A.txt pipeline_B.yaml --reannotate pipeline_A.yaml -o variants_B.txt
+    annotate_tabular variants_A.txt pipeline_B.yaml --reannotate pipeline_A.yaml -o variants_B.txt
 
 
 When you run the command above, ``variants_A.txt`` is used as the input table 

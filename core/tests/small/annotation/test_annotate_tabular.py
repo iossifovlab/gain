@@ -6,7 +6,7 @@ import pathlib
 import textwrap
 from typing import Any
 
-import gain.annotation.annotate_columns
+import gain.annotation.annotate_tabular
 import pysam
 import pytest
 import pytest_mock
@@ -17,13 +17,13 @@ from gain.annotation.annotatable import (
     Region,
     VCFAllele,
 )
-from gain.annotation.annotate_columns import (
+from gain.annotation.annotate_tabular import (
     _CSVBatchSource,
     _CSVBatchWriter,
     _CSVHeader,
     _CSVSource,
     _CSVWriter,
-    annotate_columns,
+    annotate_tabular,
     cli,
 )
 from gain.annotation.annotation_factory import (
@@ -269,7 +269,7 @@ def test_renamed_columns_excludes() -> None:
     assert str(annotatable) == str(Position("chr1", 4))
 
 
-def test_annotate_columns_basic_setup(
+def test_annotate_tabular_basic_setup(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
@@ -304,7 +304,7 @@ def test_annotate_columns_basic_setup(
     assert out_file_content == out_expected_content
 
 
-def test_annotate_columns_batch_mode(
+def test_annotate_tabular_batch_mode(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
     mocker: pytest_mock.MockerFixture,
@@ -350,7 +350,7 @@ def test_annotate_columns_batch_mode(
     assert spy.call_args.args[-1] == 1  # the last arg is the batch size
 
 
-def test_annotate_columns_produce_tabix_correctly_position(
+def test_annotate_tabular_produce_tabix_correctly_position(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
@@ -391,7 +391,7 @@ def test_annotate_columns_produce_tabix_correctly_position(
     assert not (tmp_path / "out.txt").exists()
 
 
-def test_annotate_columns_produce_tabix_correctly_vcf_allele(
+def test_annotate_tabular_produce_tabix_correctly_vcf_allele(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
@@ -432,7 +432,7 @@ def test_annotate_columns_produce_tabix_correctly_vcf_allele(
     assert not (tmp_path / "out.txt").exists()
 
 
-def test_annotate_columns_produce_tabix_correctly_region_or_cnv_annotatable(
+def test_annotate_tabular_produce_tabix_correctly_region_or_cnv_annotatable(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
@@ -472,7 +472,7 @@ def test_annotate_columns_produce_tabix_correctly_region_or_cnv_annotatable(
     assert len(list(pysam.TabixFile(str(out_file)).fetch())) == 2
 
 
-def test_annotate_columns_idempotence(
+def test_annotate_tabular_idempotence(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
@@ -509,7 +509,7 @@ def test_annotate_columns_idempotence(
         assert out_file_content == out_expected_content
 
 
-def test_annotate_columns_multiple_chrom(
+def test_annotate_tabular_multiple_chrom(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
@@ -564,7 +564,7 @@ def test_annotate_columns_multiple_chrom(
     }
 
 
-def test_annotate_columns_multiple_chrom_repeated_attr(
+def test_annotate_tabular_multiple_chrom_repeated_attr(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
@@ -619,7 +619,7 @@ def test_annotate_columns_multiple_chrom_repeated_attr(
     }
 
 
-def test_annotate_columns_none_values(
+def test_annotate_tabular_none_values(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
@@ -664,7 +664,7 @@ def test_annotate_columns_none_values(
     assert result == expected
 
 
-def test_annotate_columns_repeated_attributes(
+def test_annotate_tabular_repeated_attributes(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
@@ -737,7 +737,7 @@ def test_annotate_with_pipeline_from_grr(
     assert out_file_content == out_expected_content
 
 
-def test_annotate_columns_autodetect_columns_with_underscore(
+def test_annotate_tabular_autodetect_columns_with_underscore(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
@@ -772,7 +772,7 @@ def test_annotate_columns_autodetect_columns_with_underscore(
     assert out_file_content == out_expected_content
 
 
-def test_annotate_columns_float_precision(
+def test_annotate_tabular_float_precision(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
@@ -805,7 +805,7 @@ def test_annotate_columns_float_precision(
     assert out_file_content == out_expected_content
 
 
-def test_annotate_columns_internal_attributes(
+def test_annotate_tabular_internal_attributes(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
@@ -1128,7 +1128,7 @@ def test_cli_annotatables_that_need_ref_genome(
     assert out_file_content == out_expected_content
 
 
-def test_annotate_columns_concatenate_empty_regions(
+def test_annotate_tabular_concatenate_empty_regions(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
@@ -1167,7 +1167,7 @@ def test_annotate_columns_concatenate_empty_regions(
         assert len(out_file_content) == 5
 
 
-def test_annotate_columns_region_boundary(
+def test_annotate_tabular_region_boundary(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
@@ -1209,7 +1209,7 @@ def test_annotate_columns_region_boundary(
         assert len(out_file_content) == 8
 
 
-def test_annotate_columns_keep_parts(
+def test_annotate_tabular_keep_parts(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
     mocker: pytest_mock.MockerFixture,
@@ -1271,7 +1271,7 @@ def test_annotate_columns_keep_parts(
     ("-vvv", logging.DEBUG),
     ("-vvvv", logging.DEBUG),
 ])
-def test_annotate_columns_logging_level(
+def test_annotate_tabular_logging_level(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
     mocker: pytest_mock.MockerFixture,
@@ -1312,7 +1312,7 @@ def test_annotate_columns_logging_level(
     assert handler.level == expected_level
 
 
-def test_annotate_columns_append_columns(
+def test_annotate_tabular_append_columns(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
@@ -1351,7 +1351,7 @@ def test_annotate_columns_append_columns(
 
 
 @pytest.mark.parametrize("sep", [",", ";", "\t"])
-def test_annotate_columns_adjust_output_separator(
+def test_annotate_tabular_adjust_output_separator(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
     sep: str,
@@ -1397,7 +1397,7 @@ def test_annotate_columns_adjust_output_separator(
         ("\t", ","),
         (",", "\t"),
     ])
-def test_annotate_columns_output_separator(
+def test_annotate_tabular_output_separator(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
     isep: str,
@@ -1439,7 +1439,7 @@ def test_annotate_columns_output_separator(
     assert out_file_content == out_expected_content
 
 
-def test_annotate_columns_cross_region_boundary(
+def test_annotate_tabular_cross_region_boundary(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
@@ -1478,7 +1478,7 @@ def test_annotate_columns_cross_region_boundary(
         assert len(out_file_content) == 6
 
 
-def test_annotate_columns_no_regions(
+def test_annotate_tabular_no_regions(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
     mocker: pytest_mock.MockerFixture,
@@ -1504,7 +1504,7 @@ def test_annotate_columns_no_regions(
                 seq_col=0, start_col=1, end_col=2)
 
     spy = mocker.spy(
-        gain.annotation.annotate_columns, "_annotate_csv")
+        gain.annotation.annotate_tabular, "_annotate_csv")
 
     cli([
         str(a) for a in [
@@ -1519,7 +1519,7 @@ def test_annotate_columns_no_regions(
     assert spy.call_count == 1
 
 
-def test_annotate_columns_version_report(
+def test_annotate_tabular_version_report(
     capsys: pytest.CaptureFixture,
 ) -> None:
     capsys.readouterr()
@@ -1620,8 +1620,8 @@ def test_cli_annotatables_dae_that_need_ref_genome_but_do_not_have_it(
     assert out_file_content == out_expected_content
 
 
-def _build_annotate_columns_args(**overrides: Any) -> dict[str, Any]:
-    """Build args dict for annotate_columns function with sensible defaults."""
+def _build_annotate_tabular_args(**overrides: Any) -> dict[str, Any]:
+    """Build args dict for annotate_tabular function with sensible defaults."""
     defaults = {
         "input_separator": "\t",
         "output_separator": "\t",
@@ -1643,11 +1643,11 @@ def _build_annotate_columns_args(**overrides: Any) -> dict[str, Any]:
     return defaults
 
 
-def test_annotate_columns_function_basic(
+def test_annotate_tabular_function_basic(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
-    """Test annotate_columns function with basic position data."""
+    """Test annotate_tabular function with basic position data."""
 
     in_content = textwrap.dedent("""
         chrom   pos
@@ -1676,10 +1676,10 @@ def test_annotate_columns_function_basic(
         pipeline_config, grr,
     )
 
-    # Test annotate_columns function
-    args = _build_annotate_columns_args()
+    # Test annotate_tabular function
+    args = _build_annotate_tabular_args()
 
-    annotate_columns(
+    annotate_tabular(
         str(in_file),
         pipeline,
         str(out_file),
@@ -1690,12 +1690,12 @@ def test_annotate_columns_function_basic(
     assert out_file_content == out_expected_content
 
 
-def test_annotate_columns_function_with_batch_mode(
+def test_annotate_tabular_function_with_batch_mode(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
     mocker: pytest_mock.MockerFixture,
 ) -> None:
-    """Test annotate_columns function with batch processing."""
+    """Test annotate_tabular function with batch processing."""
     in_content = textwrap.dedent("""
         chrom   pos
         chr1    23
@@ -1725,10 +1725,10 @@ def test_annotate_columns_function_with_batch_mode(
 
     spy = mocker.spy(_CSVBatchSource, "__init__")
 
-    # Test annotate_columns function with batch mode
-    args = _build_annotate_columns_args(batch_size=10)
+    # Test annotate_tabular function with batch mode
+    args = _build_annotate_tabular_args(batch_size=10)
 
-    annotate_columns(
+    annotate_tabular(
         str(in_file),
         pipeline,
         str(out_file),
@@ -1743,11 +1743,11 @@ def test_annotate_columns_function_with_batch_mode(
     assert spy.call_args.args[5] == 10  # batch_size is the 6th positional arg
 
 
-def test_annotate_columns_function_with_vcf_alleles(
+def test_annotate_tabular_function_with_vcf_alleles(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
-    """Test annotate_columns function with VCF alleles."""
+    """Test annotate_tabular function with VCF alleles."""
     in_content = textwrap.dedent("""
         chrom   pos   ref   alt
         chr1    23    C     T
@@ -1775,10 +1775,10 @@ def test_annotate_columns_function_with_vcf_alleles(
         pipeline_config, grr,
     )
 
-    # Test annotate_columns function
-    args = _build_annotate_columns_args()
+    # Test annotate_tabular function
+    args = _build_annotate_tabular_args()
 
-    annotate_columns(
+    annotate_tabular(
         str(in_file),
         pipeline,
         str(out_file),
@@ -1789,11 +1789,11 @@ def test_annotate_columns_function_with_vcf_alleles(
     assert out_file_content == out_expected_content
 
 
-def test_annotate_columns_function_with_region(
+def test_annotate_tabular_function_with_region(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
-    """Test annotate_columns function - region parameter is accepted."""
+    """Test annotate_tabular function - region parameter is accepted."""
 
     # Note: Region filtering only works with tabix-indexed files in the
     # full CLI workflow. For the direct function call, we just verify
@@ -1825,10 +1825,10 @@ def test_annotate_columns_function_with_region(
         pipeline_config, grr,
     )
 
-    # Test annotate_columns function - region parameter is accepted
-    args = _build_annotate_columns_args()
+    # Test annotate_tabular function - region parameter is accepted
+    args = _build_annotate_tabular_args()
 
-    annotate_columns(
+    annotate_tabular(
         str(in_file),
         pipeline,
         str(out_file),
@@ -1840,11 +1840,11 @@ def test_annotate_columns_function_with_region(
     assert out_file_content == out_expected_content
 
 
-def test_annotate_columns_function_with_attributes_to_delete(
+def test_annotate_tabular_function_with_attributes_to_delete(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
-    """Test annotate_columns function with attributes_to_delete parameter."""
+    """Test annotate_tabular function with attributes_to_delete parameter."""
     in_content = textwrap.dedent("""
         chrom   pos   old_score
         chr1    23    999
@@ -1872,10 +1872,10 @@ def test_annotate_columns_function_with_attributes_to_delete(
         pipeline_config, grr,
     )
 
-    # Test annotate_columns function with attributes to delete
-    args = _build_annotate_columns_args()
+    # Test annotate_tabular function with attributes to delete
+    args = _build_annotate_tabular_args()
 
-    annotate_columns(
+    annotate_tabular(
         str(in_file),
         pipeline,
         str(out_file),
@@ -1887,11 +1887,11 @@ def test_annotate_columns_function_with_attributes_to_delete(
     assert out_file_content == out_expected_content
 
 
-def test_annotate_columns_function_with_compressed_input(
+def test_annotate_tabular_function_with_compressed_input(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
-    """Test annotate_columns function with compressed input file."""
+    """Test annotate_tabular function with compressed input file."""
     in_content = textwrap.dedent("""
         chrom   pos
         chr1    23
@@ -1916,10 +1916,10 @@ def test_annotate_columns_function_with_compressed_input(
         pipeline_config, grr,
     )
 
-    # Test annotate_columns function with compressed input
-    args = _build_annotate_columns_args()
+    # Test annotate_tabular function with compressed input
+    args = _build_annotate_tabular_args()
 
-    annotate_columns(
+    annotate_tabular(
         str(in_file),
         pipeline,
         str(out_file),
@@ -1938,11 +1938,11 @@ def test_annotate_columns_function_with_compressed_input(
     assert "chr1\t24\t0.2\n" in out_file_content
 
 
-def test_annotate_columns_function_with_reference_genome(
+def test_annotate_tabular_function_with_reference_genome(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
-    """Test annotate_columns function with reference genome for CSHL format."""
+    """Test annotate_tabular function with reference genome for CSHL format."""
     in_content = textwrap.dedent("""
         location  variant
         chr1:23   sub(C->T)
@@ -1973,10 +1973,10 @@ def test_annotate_columns_function_with_reference_genome(
         pipeline_config, grr,
     )
 
-    # Test annotate_columns function with reference genome
-    args = _build_annotate_columns_args()
+    # Test annotate_tabular function with reference genome
+    args = _build_annotate_tabular_args()
 
-    annotate_columns(
+    annotate_tabular(
         str(in_file),
         pipeline,
         str(out_file),
@@ -1988,11 +1988,11 @@ def test_annotate_columns_function_with_reference_genome(
     assert out_file_content == out_expected_content
 
 
-def test_annotate_columns_function_with_compressed_input_output(
+def test_annotate_tabular_function_with_compressed_input_output(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
-    """Test annotate_columns function with reference genome for CSHL format."""
+    """Test annotate_tabular function with reference genome for CSHL format."""
     in_content = textwrap.dedent("""
         location  variant
         chr1:23   sub(C->T)
@@ -2023,10 +2023,10 @@ def test_annotate_columns_function_with_compressed_input_output(
         pipeline_config, grr,
     )
 
-    # Test annotate_columns function with reference genome
-    args = _build_annotate_columns_args()
+    # Test annotate_tabular function with reference genome
+    args = _build_annotate_tabular_args()
 
-    annotate_columns(
+    annotate_tabular(
         str(in_file),
         pipeline,
         str(out_file),

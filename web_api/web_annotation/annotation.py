@@ -14,11 +14,11 @@ def annotate_vcf_file(*args: str) -> subprocess.CompletedProcess:
     )
 
 
-def annotate_columns_file(*args: str) -> subprocess.CompletedProcess:
-    """Run annotate columns on the files from a task."""
+def annotate_tabular_file(*args: str) -> subprocess.CompletedProcess:
+    """Run annotate tabular on the files from a task."""
     reset_lock()
 
     return subprocess.run(
-        ["annotate_columns", *args],  # noqa: S607
+        ["annotate_tabular", *args],  # noqa: S607
         check=True,
     )

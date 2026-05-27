@@ -5,7 +5,7 @@ import textwrap
 
 import pysam
 import pytest
-from gain.annotation.annotate_columns import cli as cli_columns
+from gain.annotation.annotate_tabular import cli as cli_tabular
 from gain.annotation.annotate_vcf import cli as cli_vcf
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
@@ -19,7 +19,7 @@ from gain.genomic_resources.testing import (
     setup_vcf,
 )
 import pytest_mock
-import gain.annotation.annotate_columns
+import gain.annotation.annotate_tabular
 import gain.annotation.annotate_vcf
 from gain.testing.foobar_import import foobar_genes, foobar_genome
 
@@ -194,7 +194,7 @@ def reannotation_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
     ))
 
 
-def test_annotate_columns_reannotation(
+def test_annotate_tabular_reannotation(
     tmp_path: pathlib.Path,
     reannotation_grr: GenomicResourceRepo,
     mocker: pytest_mock.MockerFixture,
@@ -216,10 +216,10 @@ def test_annotate_columns_reannotation(
 
     setup_denovo(in_file, in_content)
 
-    spy = mocker.spy(gain.annotation.annotate_columns,
+    spy = mocker.spy(gain.annotation.annotate_tabular,
                      "ReannotationPipeline")
 
-    cli_columns([
+    cli_tabular([
         str(a) for a in [
             in_file, annotation_file_new,
             "-o", out_file,
@@ -236,7 +236,7 @@ def test_annotate_columns_reannotation(
     assert out_file_header == out_expected_header
 
 
-def test_annotate_columns_reannotation_internal(
+def test_annotate_tabular_reannotation_internal(
     tmp_path: pathlib.Path,
     reannotation_grr: GenomicResourceRepo,
     mocker: pytest_mock.MockerFixture,
@@ -258,10 +258,10 @@ def test_annotate_columns_reannotation_internal(
 
     setup_denovo(in_file, in_content)
 
-    spy = mocker.spy(gain.annotation.annotate_columns,
+    spy = mocker.spy(gain.annotation.annotate_tabular,
                      "ReannotationPipeline")
 
-    cli_columns([
+    cli_tabular([
         str(a) for a in [
             in_file, annotation_file_new,
             "-o", out_file,
@@ -277,7 +277,7 @@ def test_annotate_columns_reannotation_internal(
     assert out_file_header == out_expected_header
 
 
-def test_annotate_columns_reannotation_batched(
+def test_annotate_tabular_reannotation_batched(
     tmp_path: pathlib.Path,
     reannotation_grr: GenomicResourceRepo,
     mocker: pytest_mock.MockerFixture,
@@ -302,10 +302,10 @@ def test_annotate_columns_reannotation_batched(
 
     setup_denovo(in_file, in_content)
 
-    spy = mocker.spy(gain.annotation.annotate_columns,
+    spy = mocker.spy(gain.annotation.annotate_tabular,
                      "ReannotationPipeline")
 
-    cli_columns([
+    cli_tabular([
         str(a) for a in [
             in_file, annotation_file_new,
             "-o", out_path,
