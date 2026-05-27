@@ -110,6 +110,37 @@ def load_pipeline_from_file(
     raise ValueError(f"Unsupported annotation config format {path.suffix}")
 
 
+def load_pipeline_from_file_or_resource(
+    arg: str, grr: GenomicResourceRepo, *,
+    allow_repeated_attributes: bool = False,
+    work_dir: Path | None = None,
+) -> AnnotationPipeline:
+    """Load a pipeline from a file path or a GRR resource id.
+
+    Tries to interpret ``arg`` as a filesystem path first; on miss, falls
+    back to looking it up as a GRR resource of type ``annotation_pipeline``.
+    """
+    path = Path(arg)
+    if path.exists():
+        return load_pipeline_from_file(
+            arg, grr,
+            allow_repeated_attributes=allow_repeated_attributes,
+            work_dir=work_dir,
+        )
+    resource = grr.find_resource(arg)
+    if resource is None:
+        raise ValueError(
+            f"'{arg}' is neither a valid file path "
+            f"nor a valid GRR resource id")
+    if resource.get_type() != "annotation_pipeline":
+        raise TypeError("Expected an annotation_pipeline resource.")
+    raw = resource.get_file_content(resource.get_config()["filename"])
+    return load_pipeline_from_yaml(
+        raw, grr,
+        allow_repeated_attributes=allow_repeated_attributes,
+        work_dir=work_dir)
+
+
 def load_pipeline_from_yaml(
     raw: str, grr: GenomicResourceRepo, *,
     allow_repeated_attributes: bool = False,
