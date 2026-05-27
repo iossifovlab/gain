@@ -2,6 +2,11 @@ Release Notes
 =============
 
 * 2026.5.6
+    * Renamed the ``annotate_columns`` CLI to
+      ``annotate_tabular``. The old name is kept as a deprecated
+      alias (stderr banner on the CLI, ``DeprecationWarning`` on
+      ``import gain.annotation.annotate_columns``) and will be
+      removed in a future release.
     * The web UI now runtime-injects the Google Analytics
       snippet from the ``GA_MEASUREMENT_ID`` container
       environment variable, so the same image runs with or
