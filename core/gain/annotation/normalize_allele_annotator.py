@@ -75,12 +75,12 @@ class NormalizeAlleleAnnotator(AnnotatorBase):
         context: dict[str, Any],  # noqa: ARG002
     ) -> dict[str, Any]:
         if not isinstance(annotatable, VCFAllele):
-            return {"normalized_allele": annotatable}
+            return {attr.name: annotatable for attr in self._attributes}
 
         assert isinstance(annotatable, VCFAllele), annotatable
 
         normalized_allele = normalize_allele(annotatable, self.genome)
-        return {"normalized_allele": normalized_allele}
+        return {attr.name: normalized_allele for attr in self._attributes}
 
 
 def normalize_allele(allele: VCFAllele, genome: ReferenceGenome) -> VCFAllele:

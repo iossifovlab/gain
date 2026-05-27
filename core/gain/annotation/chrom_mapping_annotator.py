@@ -68,9 +68,9 @@ Annotator that maps chromsomes from one naming convention to another.
 
         new_chrom = self.chrom_mapping(new_annotatable.chrom)
         if new_chrom is None:
-            return {"renamed_chromosome": None}
+            return {attr.name: None for attr in self._attributes}
         new_annotatable._chrom = new_chrom  # noqa: SLF001
-        return {"renamed_chromosome": new_annotatable}
+        return {attr.name: new_annotatable for attr in self._attributes}
 
 
 def build_chrom_mapping_annotator(
