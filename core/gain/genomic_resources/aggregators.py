@@ -307,7 +307,6 @@ class BoolAggregator(Aggregator):
         return bool(self.values)
 
 
-
 class CounterAggregator(Aggregator):
     """Aggregator that counts values."""
 
@@ -402,6 +401,7 @@ NUMERIC_ONLY_AGGREGATORS = {"max", "min", "mean", "median"}
 def validate_aggregator(
     aggregator_type: str, value_type: str | None = None,
 ) -> None:
+    """Validate that the aggregator type string is valid and compatible."""
     try:
         build_aggregator(aggregator_type)
     except Exception as ex:
@@ -413,5 +413,5 @@ def validate_aggregator(
                 and value_type not in {"int", "float"}:
             raise ValueError(
                 f"Aggregator '{aggregator_type}' requires a numeric value "
-                f"type (int or float), but attribute has type '{value_type}'"
+                f"type (int or float), but attribute has type '{value_type}'",
             )

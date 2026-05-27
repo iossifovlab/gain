@@ -921,7 +921,7 @@ class FsspecReadWriteProtocol(
         gz = gz[:9] + b"\xff" + gz[10:]
 
         with self.filesystem.open(content_filepath, "wb") as outfile:
-            outfile.write(gz)
+            cast(IO[bytes], outfile).write(gz)
 
         with self.filesystem.open(
                 content_filepath[:-3],

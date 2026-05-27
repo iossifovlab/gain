@@ -118,18 +118,18 @@ class GenomicResourceImplementation(ABC):
         res = self.resource
         meta = res.get_config().get("meta", {}) or {}
         labels: dict = res.get_labels() or {}
-        header: tuple[str, ...] = (
+        header: tuple[str, ...] = cast(tuple[str, ...], (
             "full_id", "id", "type", "description", "summary",
             *labels.keys(),
-        )
-        row: tuple[str, ...] = (
+        ))
+        row: tuple[str, ...] = cast(tuple[str, ...], (
             res.get_full_id(),
             res.resource_id,
             res.get_type(),
             meta.get("description", "") or "",
             meta.get("summary", "") or "",
             *[str(v) for v in labels.values()],
-        )
+        ))
         return header, row
 
     def get_statistics(self) -> ResourceStatistics | None:

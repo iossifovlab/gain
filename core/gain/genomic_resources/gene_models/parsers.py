@@ -93,8 +93,8 @@ def parse_default_gene_models_format(
             attributes = {
                 a[0]: a[1] for a in astep
             }
-        gene = line["gene"]
-        gene = gene_mapping.get(gene, gene)
+        gene = cast(str, line["gene"])
+        gene = cast(str, gene_mapping.get(gene, gene))
         transcript_model = TranscriptModel(
             gene=gene,
             tr_id=line["trID"],
@@ -144,8 +144,8 @@ def parse_ref_flat_gene_models_format(
 
     transcript_models = {}
     for rec in records:
-        gene = rec["#geneName"]
-        gene = gene_mapping.get(gene, gene)
+        gene = cast(str, rec["#geneName"])
+        gene = cast(str, gene_mapping.get(gene, gene))
         tr_name = rec["name"]
         chrom = rec["chrom"]
         strand = rec["strand"]
@@ -222,8 +222,8 @@ def parse_ref_seq_gene_models_format(
         gene_mapping = {}
     transcript_models = {}
     for rec in records:
-        gene = rec["name2"]
-        gene = gene_mapping.get(gene, gene)
+        gene = cast(str, rec["name2"])
+        gene = cast(str, gene_mapping.get(gene, gene))
 
         tr_name = rec["name"]
         chrom = rec["chrom"]
@@ -367,8 +367,8 @@ def parse_ccds_gene_models_format(
 
     transcript_models = {}
     for rec in records:
-        gene = rec["name"]
-        gene = gene_mapping.get(gene, gene)
+        gene = cast(str, rec["name"])
+        gene = cast(str, gene_mapping.get(gene, gene))
 
         tr_name = rec["name"]
         chrom = rec["chrom"]
@@ -455,8 +455,8 @@ def parse_known_gene_models_format(
         gene_mapping = {}
     transcript_models = {}
     for rec in records:
-        gene = rec["name"]
-        gene = gene_mapping.get(gene, gene)
+        gene = cast(str, rec["name"])
+        gene = cast(str, gene_mapping.get(gene, gene))
 
         tr_name = rec["name"]
         chrom = rec["chrom"]
@@ -578,10 +578,8 @@ def parse_ucscgenepred_models_format(
         gene_mapping = {}
     transcript_models = {}
     for rec in records:
-        gene = rec.get("name2")
-        if not gene:
-            gene = rec["name"]
-        gene = gene_mapping.get(gene, gene)
+        gene = cast(str, rec.get("name2") or rec["name"])
+        gene = cast(str, gene_mapping.get(gene, gene))
 
         tr_name = rec["name"]
         chrom = rec["chrom"]
