@@ -7,9 +7,11 @@ import textwrap
 import pytest
 from gain.annotation.annotatable import VCFAllele
 from gain.annotation.prepare_tabular import (
+    _build_argument_parser,
     _build_direct_sort_plan,
     _build_indirect_sort_plan,
     _default_output_path,
+    _detect_input_separator,
     _read_header,
     cli,
 )
@@ -34,9 +36,14 @@ pytestmark = pytest.mark.usefixtures("clean_genomic_context")
 
 @pytest.mark.parametrize(
     "input_path,expected", [
-        ("a/foo.tsv", "a/foo.tsv.sorted.gz"),
-        ("a/foo.tsv.gz", "a/foo.tsv.sorted.gz"),
-        ("a/data", "a/data.sorted.gz"),
+        ("a/foo.tsv", "a/foo.tsv.sorted.bgz"),
+        ("a/foo.tsv.gz", "a/foo.tsv.sorted.bgz"),
+        ("a/foo.tsv.bgz", "a/foo.tsv.sorted.bgz"),
+        ("a/data", "a/data.sorted.bgz"),
+        # csv inputs become .tsv outputs since output is always TSV
+        ("a/foo.csv", "a/foo.tsv.sorted.bgz"),
+        ("a/foo.csv.gz", "a/foo.tsv.sorted.bgz"),
+        ("a/foo.CSV", "a/foo.tsv.sorted.bgz"),
     ],
 )
 def test_default_output_path(input_path: str, expected: str) -> None:
@@ -344,5 +351,83 @@ def test_cli_default_output_path(tmp_path: pathlib.Path) -> None:
         1     10
     """)
     cli([str(in_file)])
-    assert (tmp_path / "in.tsv.sorted.gz").exists()
-    assert (tmp_path / "in.tsv.sorted.gz.tbi").exists()
+    assert (tmp_path / "in.tsv.sorted.bgz").exists()
+    assert (tmp_path / "in.tsv.sorted.bgz.tbi").exists()
+
+
+# --- input separator handling --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "input_path,expected", [
+        ("data.csv", ","),
+        ("data.CSV", ","),
+        ("data.csv.gz", ","),
+        ("data.tsv", "\t"),
+        ("data.tsv.gz", "\t"),
+        ("data.txt", "\t"),
+        ("data", "\t"),
+    ],
+)
+def test_detect_input_separator(input_path: str, expected: str) -> None:
+    assert _detect_input_separator(input_path) == expected
+
+
+def test_help_excludes_inapplicable_options() -> None:
+    """Pipeline / gene-models / repeated-attributes flags shouldn't be
+    surfaced — they don't apply to a sort+index tool."""
+    parser = _build_argument_parser()
+    help_text = parser.format_help()
+    # No annotation-pipeline positional, no gene-models, no -ar flag.
+    assert "pipeline" not in help_text.lower().split("positional arguments:")[1]
+    assert "--gene-models-resource-id" not in help_text
+    assert "-G " not in help_text
+    assert "--allow-repeated-attributes" not in help_text
+    assert " -ar" not in help_text
+
+
+def test_cli_csv_input_produces_tsv_output(tmp_path: pathlib.Path) -> None:
+    """A .csv input is parsed with ',' but the output is always TSV
+    (tabix requires tabs)."""
+    in_file = tmp_path / "in.csv"
+    in_file.write_text(
+        "chrom,pos,ref,alt,score\n"
+        "2,200,C,T,0.9\n"
+        "1,300,A,G,0.5\n"
+        "1,100,G,A,0.3\n",
+    )
+    out_file = tmp_path / "out.tsv.gz"
+    cli([str(in_file), "-o", str(out_file)])
+
+    assert _read_gz_text(out_file) == textwrap.dedent("""\
+        chrom\tpos\tref\talt\tscore
+        1\t100\tG\tA\t0.3
+        1\t300\tA\tG\t0.5
+        2\t200\tC\tT\t0.9
+        """)
+    # Tabix index is queryable on the tab-separated output.
+    with TabixFile(str(out_file)) as tf:
+        assert list(tf.fetch("1", 0, 1000)) == [
+            "1\t100\tG\tA\t0.3", "1\t300\tA\tG\t0.5",
+        ]
+
+
+def test_cli_explicit_input_separator_overrides_detection(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A .csv input with --input-separator '\\t' is parsed as TSV."""
+    in_file = tmp_path / "in.csv"  # extension is misleading on purpose
+    in_file.write_text("chrom\tpos\n1\t10\n1\t5\n")
+    out_file = tmp_path / "out.tsv.gz"
+    cli([str(in_file), "-o", str(out_file), "--input-separator", "\t"])
+
+    assert _read_gz_text(out_file) == "chrom\tpos\n1\t5\n1\t10\n"
+
+
+def test_cli_rejects_tab_in_csv_cell(tmp_path: pathlib.Path) -> None:
+    """A tab inside a CSV cell would break the tab-separated output."""
+    in_file = tmp_path / "in.csv"
+    in_file.write_text("chrom,pos\n1,10\n1,2\t3\n")
+    out_file = tmp_path / "out.tsv.gz"
+    with pytest.raises(ValueError, match="tab character"):
+        cli([str(in_file), "-o", str(out_file)])

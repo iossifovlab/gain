@@ -43,7 +43,6 @@ from gain.annotation.record_to_annotatable import (
     build_record_to_annotatable,
 )
 from gain.genomic_resources.genomic_context import (
-    context_providers_add_argparser_arguments,
     context_providers_init,
     get_genomic_context,
 )
@@ -53,10 +52,30 @@ from gain.utils.verbosity_configuration import VerbosityConfiguration
 
 logger = logging.getLogger("prepare_tabular")
 
+# tabix requires tab-separated body. We accept other input separators
+# (commas for csv inputs) but always emit tab-separated output.
+_OUTPUT_SEPARATOR = "\t"
+
 
 _DIRECT_R2A_TYPES = (
     RecordToPosition, RecordToRegion, RecordToVcfAllele, RecordToCNVAllele,
 )
+
+
+def _detect_input_separator(input_path: str) -> str:
+    """Pick a default column separator based on the input filename."""
+    name = input_path.lower().removesuffix(".gz")
+    if name.endswith(".csv"):
+        return ","
+    return "\t"
+
+
+def _check_no_output_separator_in_cells(cols: list[str]) -> None:
+    for c in cols:
+        if _OUTPUT_SEPARATOR in c:
+            raise ValueError(
+                f"input cell contains a tab character which would "
+                f"break the tab-separated output: {c!r}")
 
 
 @dataclass
@@ -291,19 +310,19 @@ def _sort_body_to_file(
     output_path: str,
     plan: _SortPlan,
     chrom_rank: dict[str, int] | None,
-    separator: str,
+    input_separator: str,
     work_dir: str,
     threads: int | None,
     buffer: str | None,
 ) -> None:
     """Stream input lines through ``sort`` and write a sorted body file.
 
-    The produced file has no header — it contains the sorted, possibly
-    injected, body rows.
+    Input rows are split on ``input_separator``; the produced body is
+    always tab-separated. The file has no header.
     """
     rank_prefix = chrom_rank is not None
     sort_cmd = _build_sort_cmd(
-        plan, rank_prefix=rank_prefix, separator=separator,
+        plan, rank_prefix=rank_prefix, separator=_OUTPUT_SEPARATOR,
         work_dir=work_dir, threads=threads, buffer=buffer)
     logger.info("sort command: %s", " ".join(sort_cmd))
 
@@ -327,7 +346,8 @@ def _sort_body_to_file(
                     stripped = line.rstrip("\r\n")
                     if not stripped:
                         continue
-                    cols = stripped.split(separator)
+                    cols = stripped.split(input_separator)
+                    _check_no_output_separator_in_cells(cols)
                     if plan.inject is not None:
                         record = dict(zip(plan.output_header, cols,
                                           strict=False))
@@ -340,10 +360,10 @@ def _sort_body_to_file(
                             unknown_chroms[chrom] = \
                                 unknown_chroms.get(chrom, 0) + 1
                             rank = unknown_rank
-                        out_line = f"{rank}{separator}" \
-                            + separator.join(cols) + "\n"
+                        out_line = f"{rank}{_OUTPUT_SEPARATOR}" \
+                            + _OUTPUT_SEPARATOR.join(cols) + "\n"
                     else:
-                        out_line = separator.join(cols) + "\n"
+                        out_line = _OUTPUT_SEPARATOR.join(cols) + "\n"
                     sort_proc.stdin.write(out_line.encode())
         finally:
             sort_proc.stdin.close()
@@ -365,7 +385,7 @@ def _sort_body_to_file(
     if rank_prefix:
         with open(sorted_with_rank, "rb") as f_in, \
                 open(output_path, "wb") as f_out:
-            sep_bytes = separator.encode()
+            sep_bytes = _OUTPUT_SEPARATOR.encode()
             for line in f_in:
                 idx = line.index(sep_bytes)
                 f_out.write(line[idx + len(sep_bytes):])
@@ -377,20 +397,22 @@ def _augment_body_to_file(
     input_path: str,
     output_path: str,
     plan: _SortPlan,
-    separator: str,
+    input_separator: str,
 ) -> None:
-    """Stream input body to output, injecting columns (no sorting)."""
+    """Stream input body to output (no sorting), converting to TSV and
+    injecting any computed columns."""
     with _open_text(input_path) as f_in, open(output_path, "w") as f_out:
         f_in.readline()  # skip header
         for line in f_in:
             stripped = line.rstrip("\r\n")
             if not stripped:
                 continue
-            cols = stripped.split(separator)
+            cols = stripped.split(input_separator)
+            _check_no_output_separator_in_cells(cols)
             if plan.inject is not None:
                 record = dict(zip(plan.output_header, cols, strict=False))
                 cols = [*cols, *plan.inject(record)]
-            f_out.write(separator.join(cols))
+            f_out.write(_OUTPUT_SEPARATOR.join(cols))
             f_out.write("\n")
 
 
@@ -398,12 +420,11 @@ def _write_with_header(
     *,
     body_path: str,
     header: list[str],
-    separator: str,
     output_path: str,
 ) -> None:
-    """Concatenate header + body into the final uncompressed output."""
+    """Concatenate header + body into the final uncompressed (TSV) output."""
     with open(output_path, "w") as f_out:
-        f_out.write(separator.join(header))
+        f_out.write(_OUTPUT_SEPARATOR.join(header))
         f_out.write("\n")
         with open(body_path, "r") as f_body:
             while chunk := f_body.read(1 << 20):
@@ -412,9 +433,12 @@ def _write_with_header(
 
 def _default_output_path(input_path: str) -> str:
     p = Path(input_path)
-    if p.suffix == ".gz":
+    if p.suffix in (".gz", ".bgz"):
         p = p.with_suffix("")
-    return str(p) + ".sorted.gz"
+    # The output is always tab-separated; reflect that in the name.
+    if p.suffix.lower() == ".csv":
+        p = p.with_suffix(".tsv")
+    return str(p) + ".sorted.bgz"
 
 
 def _build_argument_parser() -> argparse.ArgumentParser:
@@ -429,11 +453,14 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         help="Input tabular file (plain text or gzip/bgzip compressed).")
     parser.add_argument(
         "-o", "--output", default=None,
-        help=("Output bgzip-compressed file path. "
-              "Defaults to <input-stem>.sorted.gz next to the input."))
+        help=("Output bgzip-compressed file path (must end with .bgz "
+              "or .gz). Defaults to <input-stem>.sorted.bgz next to "
+              "the input."))
     parser.add_argument(
-        "--input-separator", "--in-sep", default="\t",
-        help="The column separator in the input.")
+        "--input-separator", "--in-sep", default=None,
+        help=("The column separator in the input. If not specified, "
+              "defaults to ',' for .csv/.csv.gz inputs and to a tab "
+              "otherwise. The output is always tab-separated."))
     parser.add_argument(
         "--skip-sort", action="store_true",
         help=("Assume the input is already sorted; only bgzip and tabix "
@@ -455,9 +482,33 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         help="Show the GAIn version and exit.")
 
     add_record_to_annotable_arguments(parser)
-    context_providers_add_argparser_arguments(parser)
+    _add_genomic_context_arguments(parser)
     VerbosityConfiguration.set_arguments(parser)
     return parser
+
+
+def _add_genomic_context_arguments(
+    parser: argparse.ArgumentParser,
+) -> None:
+    """Register only the GRR + reference-genome flags we need.
+
+    We deliberately skip ``context_providers_add_argparser_arguments``
+    because it would also register annotation-pipeline-specific options
+    (``pipeline`` positional, ``-ar``) and gene-models options (``-G``)
+    that are irrelevant to prepare_tabular.
+    """
+    parser.add_argument(
+        "-g", "--grr-filename", "--grr", default=None,
+        help="The GRR configuration file. If absent, the default "
+             "GRR repository is used.")
+    parser.add_argument(
+        "--grr-directory", default=None,
+        help="Local GRR directory to use as the repository.")
+    parser.add_argument(
+        "-R", "--reference-genome-resource-id", "--ref", default=None,
+        help="The resource id for the reference genome whose chromosome "
+             "order will be used. If absent, chromosomes are sorted "
+             "lexicographically.")
 
 
 def _get_reference_genome(args: dict[str, Any]) -> ReferenceGenome | None:
@@ -484,12 +535,14 @@ def cli(argv: list[str] | None = None) -> None:
     if not os.path.exists(input_path):
         raise FileNotFoundError(input_path)
 
-    separator = args["input_separator"]
+    input_separator = args["input_separator"] \
+        or _detect_input_separator(input_path)
+    logger.info("input separator: %r", input_separator)
     output_path = args["output"] or _default_output_path(input_path)
-    if not output_path.endswith(".gz"):
+    if not output_path.endswith((".gz", ".bgz")):
         raise ValueError(
-            f"--output must end with .gz (tabix needs a bgzip file); "
-            f"got: {output_path}")
+            f"--output must end with .bgz or .gz "
+            f"(tabix needs a bgzip file); got: {output_path}")
 
     output_dir = os.path.dirname(os.path.abspath(output_path)) or "."
     os.makedirs(output_dir, exist_ok=True)
@@ -508,7 +561,7 @@ def cli(argv: list[str] | None = None) -> None:
             "sorting chromosomes lexicographically")
 
     try:
-        header = _read_header(input_path, separator)
+        header = _read_header(input_path, input_separator)
         columns_args = {
             f"col_{c}": args[f"col_{c}"]
             for cols in RECORD_TO_ANNOTATABLE_CONFIGURATION
@@ -520,7 +573,8 @@ def cli(argv: list[str] | None = None) -> None:
         if isinstance(r2a, _DIRECT_R2A_TYPES):
             plan = _build_direct_sort_plan(r2a, header)
         else:
-            first_row = _read_first_data_row(input_path, separator, header)
+            first_row = _read_first_data_row(
+                input_path, input_separator, header)
             if first_row is None:
                 raise ValueError(
                     f"input file {input_path} has no data rows")
@@ -537,7 +591,7 @@ def cli(argv: list[str] | None = None) -> None:
                     input_path=input_path,
                     output_path=body_path,
                     plan=plan,
-                    separator=separator,
+                    input_separator=input_separator,
                 )
             else:
                 _sort_body_to_file(
@@ -545,7 +599,7 @@ def cli(argv: list[str] | None = None) -> None:
                     output_path=body_path,
                     plan=plan,
                     chrom_rank=chrom_rank,
-                    separator=separator,
+                    input_separator=input_separator,
                     work_dir=work_dir,
                     threads=args.get("sort_threads"),
                     buffer=args.get("sort_buffer"),
@@ -555,7 +609,6 @@ def cli(argv: list[str] | None = None) -> None:
             _write_with_header(
                 body_path=body_path,
                 header=plan.output_header,
-                separator=separator,
                 output_path=plain_output,
             )
 
