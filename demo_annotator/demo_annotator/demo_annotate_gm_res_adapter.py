@@ -26,6 +26,7 @@ class DemoAnnotateGeneModelsAdapter(AnnotatorBase):
         info: AnnotatorInfo,
     ):
         super().__init__(pipeline, info)
+        assert self.work_dir is not None
         self.cache_repo = GenomicResourceCachedRepo(
             pipeline.repository, str(self.work_dir / "grr_cache"),
         )
@@ -97,6 +98,7 @@ class DemoAnnotateGeneModelsAdapter(AnnotatorBase):
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,
     ) -> list[dict[str, Any]]:
+        assert self.work_dir is not None
         if batch_work_dir is None:
             work_dir = self.work_dir
         else:

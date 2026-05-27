@@ -1,3 +1,5 @@
+"""Score aggregator classes and factory utilities."""
+
 from __future__ import annotations
 
 import abc
@@ -19,10 +21,12 @@ class Aggregator(abc.ABC):
         return self.get_final()
 
     def add(self, value: Any, count: int = 1) -> None:
+        """Add a single value to the aggregator."""
         self.total_count += count
         self._add_internal(value)
 
     def aggregate(self, values: list[Any] | None) -> Any:
+        """Clear state, add all values, and return the final result."""
         self.clear()
         if values is None:
             return self.get_final()
@@ -35,6 +39,7 @@ class Aggregator(abc.ABC):
         raise NotImplementedError
 
     def clear(self) -> None:
+        """Reset the aggregator to its initial state."""
         self.total_count = 0
         self.used_count = 0
         self._clear_internal()
@@ -44,12 +49,15 @@ class Aggregator(abc.ABC):
         raise NotImplementedError
 
     def get_final(self) -> Any:
+        """Return the aggregated result."""
         raise NotImplementedError
 
     def get_total_count(self) -> int:
+        """Return the total number of values seen (including None)."""
         return self.total_count
 
     def get_used_count(self) -> int:
+        """Return the number of non-None values that were added."""
         return self.used_count
 
     def __eq__(self, obj: object) -> bool:
@@ -362,6 +370,7 @@ AGGREGATOR_SCHEMA = {
 
 
 def get_aggregator_class(aggregator: str) -> Callable[[], Aggregator]:
+    """Return the aggregator class for the given aggregator name."""
     return AGGREGATOR_CLASS_DICT[aggregator]
 
 
@@ -391,6 +400,7 @@ def create_aggregator(aggregator_def: dict[str, Any]) -> Aggregator:
 
 
 def build_aggregator(aggregator_type: str) -> Aggregator:
+    """Build an aggregator from an aggregator type string."""
     aggregator_def = create_aggregator_definition(aggregator_type)
     return create_aggregator(aggregator_def)
 
@@ -401,6 +411,7 @@ NUMERIC_ONLY_AGGREGATORS = {"max", "min", "mean", "median"}
 def validate_aggregator(
     aggregator_type: str, value_type: str | None = None,
 ) -> None:
+    """Raise ValueError if the aggregator type or value type combination is invalid."""
     try:
         build_aggregator(aggregator_type)
     except Exception as ex:

@@ -310,6 +310,7 @@ class VEPCacheAnnotator(VEPAnnotatorBase):
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,
     ) -> list[dict[str, Any]]:
+        assert self.work_dir is not None
         if batch_work_dir is None:
             work_dir = self.work_dir
         else:
@@ -373,6 +374,7 @@ class VEPEffectAnnotator(VEPAnnotatorBase):
         super().__init__(pipeline, info)
 
         assert pipeline is not None
+        assert self.work_dir is not None
 
         self.cache_repo = GenomicResourceCachedRepo(
             pipeline.repository, str(self.work_dir / "grr_cache"),
@@ -434,6 +436,7 @@ class VEPEffectAnnotator(VEPAnnotatorBase):
         assert self.genome_resource is not None
         assert self.genome_filename is not None
         assert self.gtf_path_gz is not None
+        assert self.work_dir is not None
 
         self.genome_resource.get_file_url(self.genome_filename)
         self.genome_resource.get_file_url(f"{self.genome_filename}.fai")
