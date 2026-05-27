@@ -411,7 +411,7 @@ NUMERIC_ONLY_AGGREGATORS = {"max", "min", "mean", "median"}
 def validate_aggregator(
     aggregator_type: str, value_type: str | None = None,
 ) -> None:
-    """Raise ValueError if the aggregator type or value type combination is invalid."""
+    """Raise ValueError for invalid aggregator or value type combinations."""
     try:
         build_aggregator(aggregator_type)
     except Exception as ex:
