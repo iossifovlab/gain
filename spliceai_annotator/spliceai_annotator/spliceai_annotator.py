@@ -13,7 +13,6 @@ import numpy as np
 from gain.annotation.annotatable import Annotatable, VCFAllele
 from gain.annotation.annotation_config import (
     AnnotatorInfo,
-    Attribute,
 )
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
@@ -21,10 +20,6 @@ from gain.annotation.annotation_pipeline import (
     AttributeSpec,
 )
 from gain.annotation.annotator_base import AnnotatorBase
-from gain.genomic_resources.aggregators import (
-    Aggregator,
-    build_aggregator,
-)
 from gain.genomic_resources.gene_models.gene_models import (
     GeneModels,
 )
@@ -60,25 +55,6 @@ def _module_cleaner(root_module: str) -> None:
     for module_name, module in to_remove.items():
         del sys.modules[module_name]
         del module
-
-
-@dataclass
-class _AttrConfig:
-    """SpliceAI attributes definition class."""
-
-    name: str
-    value_type: str
-    description: str
-    aggregator: str
-
-
-@dataclass
-class _AttrDef:
-    """SpliceAI attributes definition class."""
-
-    source: str
-    documentation: str
-    aggregator: Aggregator
 
 
 @dataclass
@@ -172,13 +148,6 @@ models to predict splice site variant effects.
         info.resources += [genome.resource, gene_models.resource]
 
         super().__init__(pipeline, info)
-
-        self.used_attributes = [
-            attr.source for attr in self.get_info().attributes
-        ]
-        self._attribute_defs = self._collect_attributes_definitions(
-            self.get_info().attributes,
-        )
 
         self.genome = genome
         self.gene_models = gene_models
@@ -325,40 +294,6 @@ models to predict splice site variant effects.
     def get_attribute_defaults(self, spec: AttributeSpec) -> dict[str, Any]:
         return dict(self._ATTR_DEFAULTS.get(spec.source, {}))
 
-    def _collect_attributes_definitions(
-        self,
-        attributes: list[Attribute],
-    ) -> list[_AttrDef]:
-        """Collect attributes configuration."""
-        result = []
-        specs = self.get_attribute_specs()
-        for attr in attributes:
-            if attr.source not in specs:
-                logger.error(
-                    "Attribute %s is not supported by SpliceAI annotator",
-                    attr.source,
-                )
-                continue
-
-            spec = specs[attr.source]
-            aggregator = attr.parameters.get("aggregator")
-            if aggregator is None:
-                logger.error(
-                    "No aggregator defined for attribute %s", attr.source,
-                )
-                continue
-            documentation = (
-                f"{spec.description}\n"
-                f"Aggregator: {aggregator}"
-            )
-            attr._documentation = documentation  # noqa: SLF001
-            result.append(_AttrDef(
-                attr.source,
-                documentation,
-                build_aggregator(aggregator),
-            ))
-        return result
-
     def close(self) -> None:
         logger.info("Closing SpliceAI annotator")
         if not self.is_open():
@@ -385,24 +320,7 @@ models to predict splice site variant effects.
         return super().open()
 
     def _not_found(self) -> dict[str, Any]:
-        return {
-            "gene": None,
-            "transcript_ids": None,
-            "DS_AG": None,
-            "DS_AL": None,
-            "DS_DG": None,
-            "DS_DL": None,
-            "DS_MAX": None,
-            "DP_AG": None,
-            "DP_AL": None,
-            "DP_DG": None,
-            "DP_DL": None,
-            "ref_A_p": None,
-            "ref_D_p": None,
-            "alt_A_p": None,
-            "alt_D_p": None,
-            "delta_score": None,
-        }
+        return {attr.name: None for attr in self._attributes}
 
     @cached_property
     def _width(self) -> int:
@@ -630,8 +548,8 @@ models to predict splice site variant effects.
         if not results:
             return self._not_found()
         return {
-            attr.source: attr.aggregator.aggregate(results[attr.source])
-            for attr in self._attribute_defs
+            attr.name: results[attr.source]
+            for attr in self._attributes
         }
 
     def _ref_sequence(self, annotatable: VCFAllele) -> str:
