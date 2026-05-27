@@ -91,6 +91,106 @@ The next lines list the resources available to us on that server, including thei
 The resource ID is what we will use to refer to these resources in our annotation pipelines.
 
 
+Quick annotation test
+------------------
+
+After installation, GAIn can immediately run a small annotation test using the default IossifovLab GRR. This is a useful way to confirm that the command-line tools are working and can access the public resources.
+
+In this example, we annotate a small CSV file containing three variants. The test uses resources directly from the public GRR, so it is convenient for checking the setup but not intended for large annotation jobs.
+
+:download:`Download the example input CSV file. <files/small_input.csv>` The file contains three variant annotatables, each described by the columns ``chrom``, ``pos``, ``ref``, and ``alt``, which specify the chromosome, genomic position, reference allele, and alternate allele:
+
+.. csv-table::
+    :header-rows: 1
+
+    chrom,pos,ref,alt
+    chr14,21415880,G,A
+    chr17,7674904,TCT,T
+    chr7,117587806,G,A
+
+
+To annotate the file, run:
+
+.. code-block:: bash
+    
+    annotate_tabular small_input.csv pipeline/hg38_clinical_annotation
+
+This command annotates ``small_input.csv`` using the predefined ``pipeline/hg38_clinical_annotation`` pipeline, which is hosted in the default GRR.
+
+GAIn writes the annotated output to a new file whose name is derived from the input file. For example, the command above produces ``small_input_annotated.csv``, with the following content:
+
+.. csv-table::
+    :header-rows: 1
+
+    chrom,pos,ref,alt,worst_effect_MANE_1_3,effect_details_MANE_1_3,gene_effects_MANE_1_3,dbSNP_rs_number,gnomad_v4_exome_ALL_af,gnomad_v4_genome_ALL_af,clinical_significance,clinical_disease_name,CADD_raw_score,CADD_phred_score,AlphaMissense_pathogenicity,AlphaMissense_class,MPC_score,worst_effect_GENCODE_48,effect_details_GENCODE_48,gene_effects_GENCODE_48,pLI_rank_all,pLI_rank_min,LOEUF_rank_all,LOEUF_rank_min
+    chr14,21415880,G,A,nonsense,"ENST00000646647.2:CHD8:nonsense:582/2581(Arg->End)",CHD8:nonsense,863224857,,,Pathogenic/Likely_pathogenic,Intellectual_developmental_disorder_with_autism_and_macrocephaly|not_provided,8.9,39,,,,nonsense,"ENST00000645929.1:CHD8:nonsense:303/2302(Arg->End)|ENST00000646647.2:CHD8:nonsense:582/2581(Arg->End)|ENST00000643469.1:CHD8:nonsense:582/2581(Arg->End)|ENST00000557364.6:CHD8:nonsense:582/2581(Arg->End)|ENST00000430710.8:CHD8:nonsense:303/2302(Arg->End)",CHD8:nonsense,CHD8:45,45,CHD8:112.5,112.5
+    chr17,7674904,TCT,T,frame-shift,ENST00000269305.9:TP53:frame-shift:209/393,TP53:frame-shift,1057517840,6.84e-07,,Pathogenic,Li-Fraumeni_syndrome_1|Hereditary_cancer-predisposing_syndrome|Li-Fraumeni_syndrome|Ovarian_neoplasm|not_provided|TP53-related_disorder,,,,,,frame-shift,"ENST00000420246.6:TP53:frame-shift:209/341|ENST00000455263.6:TP53:frame-shift:209/346|ENST00000610538.4:TP53:frame-shift:170/307|ENST00000622645.4:TP53:frame-shift:170/302|ENST00000620739.4:TP53:frame-shift:170/354|ENST00000714357.1:TP53:frame-shift:209/393|ENST00000510385.5:TP53:frame-shift:77/209|ENST00000610623.4:TP53:frame-shift:50/187|ENST00000504290.5:TP53:frame-shift:77/214|ENST00000618944.4:TP53:frame-shift:50/182|ENST00000504937.5:TP53:frame-shift:77/261|ENST00000619186.4:TP53:frame-shift:50/234|ENST00000445888.6:TP53:frame-shift:209/393|ENST00000604348.6:TP53:frame-shift:202/386|ENST00000619485.4:TP53:frame-shift:170/354|ENST00000269305.9:TP53:frame-shift:209/393|ENST00000714408.1:TP53:frame-shift:209/411|ENST00000714409.1:TP53:frame-shift:209/367|ENST00000413465.6:TP53:frame-shift:209/285|ENST00000576024.2:TP53:frame-shift:209/344|ENST00000714359.1:TP53:frame-shift:209/393|ENST00000714356.1:TP53:frame-shift:170/347|ENST00000359597.8:TP53:frame-shift:209/343|ENST00000610292.4:TP53:frame-shift:170/354",TP53:frame-shift,TP53:3122,3122,TP53:4446.5,4446.5
+    chr7,117587806,G,A,missense,"ENST00000003084.11:CFTR:missense:551/1480(Gly->Asp)",CFTR:missense,75527207,0.000404,0.000276,Pathogenic,Hereditary_pancreatitis|CFTR-related_disorder|Cystic_fibrosis|Congenital_bilateral_aplasia_of_vas_deferens_from_CFTR_mutation|ivacaftor_response_-_Efficacy|Bronchiectasis_with_or_without_elevated_sweat_chloride_1|not_provided,5.05,28.2,0.99,likely_pathogenic,0.015,missense,"ENST00000003084.11:CFTR:missense:551/1480(Gly->Asp)|ENST00000699605.1:CFTR:missense:409/1338(Gly->Asp)|ENST00000649781.2:CFTR:missense:490/1419(Gly->Asp)|ENST00000699602.1:CFTR:missense:551/1478(Gly->Asp)|ENST00000649406.1:CFTR:missense:490/1187(Gly->Asp)|ENST00000648260.1:CFTR:intron:10/16[15019]",CFTR:missense|CFTR:intron,CFTR:18190,18190,CFTR:13993.5,13993.5
+
+The output contains the original variant columns followed by the annotation attributes produced by ``pipeline/hg38_clinical_annotation``. See the `pipeline summary page <https://grr.iossifovlab.com/pipeline/hg38_clinical_annotation/index.html>`_ in the main GRR for a description of the attributes produced by this pipeline.
+
+
+Custom annotation pipelines
+----------------------
+
+In the quick annotation test, we used a predefined pipeline from the default GRR. GAIn also allows users to define their own annotation pipelines as YAML files. A custom pipeline is useful when you want to select genomic resources from one or more GRRs that fit a specific project or research question.
+
+In this example, we will annotate the same three variants from ``small_input.csv``, but this time using a custom pipeline stored locally as ``custom_pipeline.yaml``.
+
+:download:`Download the example custom annotation pipeline file <files/custom_pipeline.yaml>`, whose content is shown below. 
+
+.. code-block:: yaml
+
+    preamble:
+    summary: Simple custom pipeline
+    input_reference_genome: hg38/genomes/GRCh38-hg38
+
+    annotators:
+    - effect_annotator:
+        gene_models: hg38/gene_models/MANE/1.5
+        attributes:
+        - worst_effect
+        - gene_list
+
+    - position_score_annotator:
+        resource_id: hg38/scores/phyloP7way
+
+    - normalize_allele_annotator
+
+    - allele_score_annotator:
+        resource_id: hg38/scores/ClinVar_20251019
+        input_annotatable: normalized_allele
+        attributes:
+        - CLNSIG
+        - CLNDN
+
+This pipeline has an optional preamble section, which records metadata about the pipeline and specifies that the input variants use the ``hg38/genomes/GRCh38-hg38`` reference genome. The annotators section lists the annotation steps that GAIn will run from top to bottom. This pipeline first uses the ``MANE 1.5`` gene model to identify affected genes and predict the worst effect of each variant. It then adds a conservation score from ``phyloP7way``. Finally, it normalizes each allele and looks up selected ``ClinVar`` attributes: ``CLNSIG``, which describes clinical significance, and ``CLNDN``, which reports associated disease names. To review the attributes produced by the custom pipeline, generate an HTML summary with:
+
+.. code-block:: bash
+
+    annotate_doc custom_pipeline.yaml > doc.html
+
+To annotate the input file with this custom pipeline, run:
+
+.. code-block:: bash
+
+    annotate_tabular small_input.csv custom_pipeline.yaml -o small_input_custom_annotated.csv
+
+This command applies the local ``custom_pipeline.yaml`` file to the variants in ``small_input.csv``. To avoid overwriting the output from the previous section, we write the result to ``small_input_custom_annotated.csv``, whose content is shown below.
+
+.. csv-table::
+    :header-rows: 1
+
+    chrom,pos,ref,alt,worst_effect,phyloP7way,CLNSIG,CLNDN
+    chr14,21415880,G,A,nonsense,0.917,Pathogenic/Likely_pathogenic,not_provided|Intellectual_developmental_disorder_with_autism_and_macrocephaly
+    chr17,7674904,TCT,T,frame-shift,-0.12,Pathogenic,Hereditary_cancer-predisposing_syndrome|TP53-related_disorder|not_provided|Li-Fraumeni_syndrome_1|Ovarian_neoplasm|Li-Fraumeni_syndrome
+    chr7,117587806,G,A,missense,0.917,Pathogenic,CFTR-related_disorder|Cystic_fibrosis|Congenital_bilateral_aplasia_of_vas_deferens_from_CFTR_mutation|not_provided|Hereditary_pancreatitis|Bronchiectasis_with_or_without_elevated_sweat_chloride_1|ivacaftor_response_-_Efficacy
+
+
+This approach is convenient for small tests and for developing custom pipelines. However, when annotation uses resources directly from the public GRR, it is practical only for small inputs. For larger inputs, configure local resource caching and parallel execution as described in the next sections.
+
+
+
 Outline for the rest of the guide
 ---------------------------------
 
@@ -115,7 +215,7 @@ Outline for the rest of the guide
   * By default, the annotation uses the resource from the web, but this is not practical for annotating large number of variants.
     GAIn supports caching of resources, so that if a resouce is needed it is first downloaded in a local cache and the local copy is used for annotation.
   * To enable caching, explicitly configure the grr definition by adding the following to the GRR definition file (e.g. ``~/.gain/grr_definitions.yaml``):
-  
+
     .. code-block:: yaml
         id: default
         type: http
