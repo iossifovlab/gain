@@ -811,7 +811,7 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=desc)
     parser.add_argument(
         "--version", action="store_true", default=False,
-        help="Prints GPF version and exists.")
+        help="Prints the GAIn version and exits.")
     VerbosityConfiguration.set_arguments(parser)
 
     commands_parser: argparse._SubParsersAction = parser.add_subparsers(
@@ -833,7 +833,7 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
     VerbosityConfiguration.set(args)
 
     if args.version:
-        print(f"GPF version: {__version__}")
+        print(f"GAIn version: {__version__}")
         sys.exit(0)
 
     command = args.command
@@ -1010,7 +1010,7 @@ def cli_browse(cli_args: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=desc)
     parser.add_argument(
         "--version", action="store_true", default=False,
-        help="Prints GPF version and exists.")
+        help="Prints the GAIn version and exits.")
     VerbosityConfiguration.set_arguments(parser)
 
     group = parser.add_argument_group(title="Repository/Resource")
@@ -1032,7 +1032,7 @@ def cli_browse(cli_args: list[str] | None = None) -> None:
     VerbosityConfiguration.set(args)
 
     if args.version:
-        print(f"GPF version: {__version__}")
+        print(f"GAIn version: {__version__}")
         sys.exit(0)
 
     definition_path = args.grr if args.grr is not None \

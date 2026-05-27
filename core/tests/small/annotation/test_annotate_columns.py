@@ -1528,7 +1528,7 @@ def test_annotate_columns_version_report(
         cli(["--version"])
 
     out, _err = capsys.readouterr()
-    assert out.startswith("GPF version")
+    assert out.startswith("GAIn version: ")
 
 
 def test_cli_annotatables_that_need_ref_genome_but_do_not_have_it(

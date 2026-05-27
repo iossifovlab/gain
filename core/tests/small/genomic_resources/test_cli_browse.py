@@ -128,3 +128,15 @@ def test_cli_browse_default_defintion(
         "Basic                0        2 7.0 B        test_grr one\n"
         "gene_models          1.0      2 50.0 B       test_grr sub/two\n"
     )
+
+
+def test_grr_browse_version_report(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit):
+        cli_browse(["--version"])
+
+    out, _err = capsys.readouterr()
+    assert out.startswith("GAIn version: ")

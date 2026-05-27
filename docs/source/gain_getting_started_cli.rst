@@ -52,11 +52,7 @@ The result should be something like this:
 
 .. code-block:: bash
 
-    GPF version: 2026.5.5
-
-.. error::
-
-    GPF???
+    GAIn version: 2026.5.5
 
 Note that the version number may be different depending on when you install GAIn, but the command should run without error and print a version number.
 
