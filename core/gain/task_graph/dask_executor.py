@@ -3,7 +3,7 @@ import threading
 import time
 from collections.abc import Iterator
 from copy import copy
-from typing import Any, cast
+from typing import Any
 
 from dask.distributed import Client, Future, wait
 
@@ -79,7 +79,6 @@ class DaskExecutor(TaskGraphExecutorBase):
                             params=self._params,
                         )
 
-            total_running = 0
             with running_lock:
                 for future, task in zip(futures, tasks, strict=True):
                     assert task is not None
@@ -125,9 +124,7 @@ class DaskExecutor(TaskGraphExecutorBase):
                     futures, tasks = zip(*completed_queue, strict=True)
                     completed_queue.clear()
 
-                    results = cast(
-                        list[Any],
-                        self._dask_client.gather(futures, errors="skip"))
+                    results = self._dask_client.gather(futures, errors="skip")
 
                     if len(results) == len(tasks):
                         with results_lock:
@@ -218,13 +215,11 @@ class DaskExecutor(TaskGraphExecutorBase):
                 completed = set()
             else:
                 try:
-                    completed, not_completed = cast(
-                        tuple[set[Any], set[Any]],
-                        wait(
-                            not_completed,
-                            return_when="FIRST_COMPLETED",
-                            timeout=0.05,
-                        ))
+                    completed, not_completed = wait(
+                        not_completed,
+                        return_when="FIRST_COMPLETED",
+                        timeout=0.05,
+                    )
                     logger.debug(
                         "waited for completed tasks return %s futures",
                         len(completed))

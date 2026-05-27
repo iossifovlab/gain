@@ -566,14 +566,14 @@ class AnnotationConfigParser:
                        f"config {attribute_config} should be a string")
             raise TypeError(message)
 
-        deprecated_aggregator_params = {
+        _deprecated_aggregator_params = {
             "position_aggregator",
             "allele_aggregator",
             "nucleotide_aggregator",
             "gene_list_aggregator",
         }
         aggregator = attribute_config.get("aggregator")
-        for old_name in deprecated_aggregator_params:
+        for old_name in _deprecated_aggregator_params:
             if old_name not in attribute_config:
                 continue
             if aggregator is not None:
@@ -585,12 +585,12 @@ class AnnotationConfigParser:
                 old_name)
             aggregator = attribute_config[old_name]
 
-        excluded = (
+        _excluded = (
             {"name", "source", "internal", "type", "aggregator"}
-            | deprecated_aggregator_params
+            | _deprecated_aggregator_params
         )
         parameters = {
-            k: v for k, v in attribute_config.items() if k not in excluded
+            k: v for k, v in attribute_config.items() if k not in _excluded
         }
 
         return AttributeConfig(

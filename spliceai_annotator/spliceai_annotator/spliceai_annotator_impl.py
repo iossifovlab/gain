@@ -3,7 +3,7 @@ from importlib.resources import as_file, files
 from typing import cast
 
 import numpy as np
-from tensorflow import keras  # type: ignore[import-untyped,attr-defined]
+import tensorflow as tf
 
 
 def spliceai_load_models() -> list:
@@ -12,7 +12,7 @@ def spliceai_load_models() -> list:
     models = []
     for i in range(1, 6):
         with as_file(package / "models" / f"spliceai{i}.h5") as model_path:
-            models.append(keras.models.load_model(str(model_path)))
+            models.append(tf.keras.models.load_model(str(model_path)))
     return models
 
 

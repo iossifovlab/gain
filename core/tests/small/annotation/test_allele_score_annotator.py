@@ -314,11 +314,11 @@ def test_allele_score_annotator_region_with_default_annotation(
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 10, 20))
-        assert len(result) == 2
-        assert result["allele_freq"] == 2.0
-        assert set(result["variant_id"]) == {
-            "ag", "ac", "at", "cag", "ct", "ca", "cca", "ccg",
-        }
+    assert len(result) == 2
+    assert result["allele_freq"] == 2.0
+    assert set(result["variant_id"]) == {
+        "ag", "ac", "at", "cag", "ct", "ca", "cca", "ccg",
+    }
 
 
 _ALLELE_SCORE_GRR_CONF = """
@@ -399,8 +399,8 @@ def test_allele_score_exact_match_allele_attribute(
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
-        assert result["allele_freq"] == pytest.approx(0.02)
-        assert result["allele"] == ["1:10:A:G"]
+    assert result["allele_freq"] == pytest.approx(0.02)
+    assert result["allele"] == ["1:10:A:G"]
 
 
 def test_allele_score_exact_match_allele_attribute_renamed(
@@ -420,8 +420,8 @@ def test_allele_score_exact_match_allele_attribute_renamed(
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
-        assert result["allele_freq"] == pytest.approx(0.02)
-        assert result["variant_key"] == ["1:10:A:G"]
+    assert result["allele_freq"] == pytest.approx(0.02)
+    assert result["variant_key"] == ["1:10:A:G"]
 
 
 def test_allele_score_exact_match_allele_with_include_attributes(
@@ -441,8 +441,8 @@ def test_allele_score_exact_match_allele_with_include_attributes(
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
-        assert result["allele_freq"] == pytest.approx(0.02)
-        assert result["allele"] == ["1:10:A:G:0.02"]
+    assert result["allele_freq"] == pytest.approx(0.02)
+    assert result["allele"] == ["1:10:A:G:0.02"]
 
 
 def test_allele_score_exact_match_allele_filtered(
@@ -463,8 +463,8 @@ def test_allele_score_exact_match_allele_filtered(
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
-        assert result["allele_freq"] is None
-        assert result["allele"] is None
+    assert result["allele_freq"] is None
+    assert result["allele"] is None
 
 
 @pytest.mark.parametrize("allele_filter, expected_alleles", [
@@ -506,7 +506,7 @@ def test_allele_score_region_allele_filter(
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 10, 16))
-        assert set(result["allele"]) == expected_alleles
+    assert set(result["allele"]) == expected_alleles
 
 
 def test_allele_score_region_allele_with_include_attributes(
@@ -525,13 +525,13 @@ def test_allele_score_region_allele_with_include_attributes(
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 10, 16))
-        alleles = set(result["allele"])
-        assert "1:10:A:T:0.02" not in alleles
-        assert "1:10:A:T:0.03" not in alleles
-        assert "1:10:A:T:0.04" in alleles
-        assert "1:16:C:T:0.04" in alleles
-        assert "1:16:C:A:0.05" in alleles
-        assert not any(a.startswith("1:10:A:G") for a in alleles)
+    alleles = set(result["allele"])
+    assert "1:10:A:T:0.02" not in alleles
+    assert "1:10:A:T:0.03" not in alleles
+    assert "1:10:A:T:0.04" in alleles
+    assert "1:16:C:T:0.04" in alleles
+    assert "1:16:C:A:0.05" in alleles
+    assert not any(a.startswith("1:10:A:G") for a in alleles)
 
 
 def test_allele_score_region_with_no_lines(
@@ -551,7 +551,7 @@ def test_allele_score_region_with_no_lines(
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 200, 300))
-        assert result == {"freq": None, "allele": None}
+    assert result == {"freq": None, "allele": None}
 
 
 def test_allele_score_region_filter_all_alleles(
@@ -571,8 +571,8 @@ def test_allele_score_region_filter_all_alleles(
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 10, 16))
-        assert result["allele"] == []
-        assert result["freq"] is None
+    assert result["allele"] == []
+    assert result["freq"] is None
 
 
 def test_allele_score_include_multiple_attributes(
@@ -594,7 +594,7 @@ def test_allele_score_include_multiple_attributes(
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
-        assert result["allele"] == ["1:10:A:G:0.02,ag"]
+    assert result["allele"] == ["1:10:A:G:0.02,ag"]
 
 
 def test_allele_score_region_vcf_repeated_annotation_idempotent(
@@ -654,5 +654,6 @@ chr1   20  .  A   T   .    .      label=other
     with pipeline.open() as work_pipeline:
         result_one = work_pipeline.annotate(annotatable)
         result_two = work_pipeline.annotate(annotatable)
-        assert result_one == result_two
-        assert set(result_one["label"]) == {"dinucleotide", "snv"}
+
+    assert result_one == result_two
+    assert set(result_one["label"]) == {"dinucleotide", "snv"}

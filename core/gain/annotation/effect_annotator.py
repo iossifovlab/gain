@@ -59,6 +59,7 @@ Annotator to identify the effect of the variant on protein coding.
         self._region_length_cutoff = info.parameters.get(
             "region_length_cutoff", 15_000_000)
 
+
         self.effect_annotator = EffectAnnotator(
             self.genome,
             self.gene_models,

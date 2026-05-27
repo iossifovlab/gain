@@ -8,10 +8,10 @@ from typing import Any, TextIO
 
 import fsspec
 from gain.annotation.annotatable import Annotatable
-from gain.annotation.annotation_config import AnnotatorInfo
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
+    AnnotatorInfo,
     AttributeSpec,
 )
 from gain.annotation.annotator_base import AnnotatorBase
@@ -26,7 +26,6 @@ class DemoAnnotateGenomeAdapter(AnnotatorBase):
         info: AnnotatorInfo,
     ):
         super().__init__(pipeline, info)
-        assert self.work_dir is not None
         self.cache_repo = GenomicResourceCachedRepo(
             pipeline.repository, str(self.work_dir / "grr_cache"),
         )
@@ -90,7 +89,6 @@ class DemoAnnotateGenomeAdapter(AnnotatorBase):
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,
     ) -> list[dict[str, Any]]:
-        assert self.work_dir is not None
         if batch_work_dir is None:
             work_dir = self.work_dir
         else:

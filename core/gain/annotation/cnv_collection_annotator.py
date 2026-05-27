@@ -236,7 +236,7 @@ class CnvCollectionAnnotator(AnnotatorBase):
                 if attr.name in raw:
                     raw[attr.name].append(cnv.attributes[attr.source])
 
-        result: dict[str, Any] = {}
+        result = {}
         for attr in self._attributes:
             if attr.name in raw:
                 result[attr.name] = raw[attr.name]

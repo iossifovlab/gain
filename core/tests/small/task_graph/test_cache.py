@@ -56,7 +56,8 @@ def test_get_record_force_returns_needs_compute(tmp_path: Path) -> None:
     task = graph.create_task("Task", noop, args=[], deps=[])
     with graph:
         record = cache.get_record(graph.get_task_desc(task))
-        assert record.type == CacheRecordType.NEEDS_COMPUTE
+
+    assert record.type == CacheRecordType.NEEDS_COMPUTE
 
 
 def test_get_record_returns_cached_entry(tmp_path: Path) -> None:
@@ -67,7 +68,8 @@ def test_get_record_returns_cached_entry(tmp_path: Path) -> None:
     cache.cache(task, is_error=False, result=cached.result_or_error)
     with graph:
         record = cache.get_record(graph.get_task_desc(task))
-        assert record == cached
+
+    assert record == cached
 
 
 def test_get_record_reads_serialized_cache(
@@ -90,7 +92,8 @@ def test_get_record_reads_serialized_cache(
     with graph as graph_tasks:
         task_node = graph_tasks[task]
         result = cache.get_record(graph.get_task_desc(task_node.task))
-        assert result == expected
+
+    assert result == expected
 
 
 def test_file_cache_clear_state(
@@ -139,7 +142,6 @@ def test_file_cache_mod_input_file_of_intermediate_node(
 ) -> None:
     dep_fn = str(tmp_path / "file-used-by-intermediate-node")
     touch(dep_fn)
-    int_node: _Task | None = None
     with graph as graph_tasks:
         int_node = graph_tasks[Task("Intermediate")]
 
@@ -177,7 +179,6 @@ def test_file_cache_mod_flag_file_of_intermediate_node(
             record = cache.get_record(graph.get_task_desc(task.task))
             assert record.type == CacheRecordType.COMPUTED
 
-    first_task: _Task | None = None
     with graph as graph_tasks:
         first_task = graph_tasks[Task("First")]
     assert first_task is not None

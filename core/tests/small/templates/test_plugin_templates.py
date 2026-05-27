@@ -87,7 +87,6 @@ class TestPluginTemplateRegistration:
         ep = _make_ep("sneaky", sneaky_plugin)
         with patch("gain.templates.entry_points", return_value=[ep]):
             env = templates_module.get_jinja_env()
-            assert env.loader is not None
             source, _, _ = env.loader.get_source(env, builtin_name)
 
         assert source != "OVERRIDDEN"
