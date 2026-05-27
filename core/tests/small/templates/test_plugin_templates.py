@@ -1,3 +1,4 @@
+# pylint: disable=W0621,C0114,C0115,C0116,W0212,W0613
 """Tests for third-party plugin template registration via entry points."""
 from __future__ import annotations
 

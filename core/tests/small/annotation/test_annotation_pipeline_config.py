@@ -6,8 +6,9 @@ import textwrap
 import pytest
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
+    AnnotatorInfo,
+    AttributeConfig,
 )
-from gain.annotation.annotation_config import AttributeConfig, AnnotatorInfo
 from gain.annotation.annotation_pipeline import (
     AnnotationPreamble,
 )
@@ -568,8 +569,8 @@ def test_wildcard_in_complete_syntax(test_grr: GenomicResourceRepo) -> None:
 def test_annotator_info_to_dict() -> None:
     annotator_info = AnnotatorInfo(
         "sample_annotator", [
-            AttributeConfig("attribute_1", "att1", internal=None, parameters={}),
-            AttributeConfig("attribute_2", "att2", internal=None, parameters={}),
+            AttributeConfig("attribute_1", "att1", internal=None),
+            AttributeConfig("attribute_2", "att2", internal=None),
         ], {
             "resource_id": "resource",
             "param_1": "val1",

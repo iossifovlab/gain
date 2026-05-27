@@ -409,7 +409,6 @@ def test_gene_list_aggregator(
     assert atts["coding_genes"] == coding_genes
 
 
-
 def test_gene_list_aggregator_wrong_aggregator(
     grr2: GenomicResourceRepo,
 ) -> None:

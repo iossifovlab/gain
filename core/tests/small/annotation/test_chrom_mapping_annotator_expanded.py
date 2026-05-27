@@ -12,7 +12,7 @@ from gain.annotation.annotatable import (
     Region,
     VCFAllele,
 )
-from gain.annotation.annotation_config import AttributeConfig, AnnotatorInfo
+from gain.annotation.annotation_config import AnnotatorInfo, AttributeConfig
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.chrom_mapping_annotator import (
     ChromMappingAnnotator,

@@ -5,10 +5,12 @@ from unittest.mock import Mock
 
 import pytest
 from gain.annotation.annotatable import Annotatable, Position
-from gain.annotation.annotation_config import Attribute, AttributeConfig, AnnotatorInfo
+from gain.annotation.annotation_config import (
+    AnnotatorInfo,
+    AttributeConfig,
+)
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
-    Annotator,
     AttributeSpec,
     InputAnnotableAnnotatorDecorator,
     ReannotationPipeline,
@@ -717,8 +719,8 @@ def test_value_transform_decorator_annotate() -> None:
 
         def _do_annotate(
             self,
-            annotatable: Annotatable | None,  # noqa: ARG002
-            context: dict[str, Any],  # noqa: ARG002
+            annotatable: Annotatable | None,
+            context: dict[str, Any],
         ) -> dict[str, Any]:
             return {"doubled": 5, "normal": 10}
 

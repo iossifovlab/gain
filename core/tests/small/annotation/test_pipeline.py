@@ -7,13 +7,13 @@ import pytest
 import pytest_mock
 from gain.annotation.annotatable import Position
 from gain.annotation.annotation_config import Attribute
-from gain.annotation.annotation_pipeline import AttributeSpec
 from gain.annotation.annotation_factory import (
     AnnotationConfigurationError,
     load_pipeline_from_yaml,
 )
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
+    AttributeSpec,
     InputAnnotableAnnotatorDecorator,
 )
 from gain.genomic_resources.genomic_context import (

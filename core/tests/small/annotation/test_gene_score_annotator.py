@@ -4,7 +4,7 @@ import textwrap
 
 import pytest
 from gain.annotation.annotatable import Region
-from gain.annotation.annotation_config import AttributeConfig, AnnotatorInfo
+from gain.annotation.annotation_config import AnnotatorInfo, AttributeConfig
 from gain.annotation.gene_score_annotator import GeneScoreAnnotator
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,

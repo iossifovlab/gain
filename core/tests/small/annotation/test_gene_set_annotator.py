@@ -6,9 +6,10 @@ import pytest
 from gain.annotation.annotatable import VCFAllele
 from gain.annotation.annotation_config import (
     AnnotationConfigurationError,
+    AnnotatorInfo,
+    AttributeConfig,
 )
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
-from gain.annotation.annotation_config import AttributeConfig, AnnotatorInfo
 from gain.annotation.gene_set_annotator import GeneSetAnnotator
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
@@ -114,9 +115,9 @@ def test_gene_set_annotator_intersecting_genes(
         AnnotatorInfo(
             "gosho",
             [
-                AttributeConfig("set_0", "set_0", internal=False, parameters={}),
-                AttributeConfig("set_1", "set_1", internal=False, parameters={}),
-                AttributeConfig("set_2", "set_2", internal=False, parameters={}),
+                AttributeConfig("set_0", "set_0", internal=False),
+                AttributeConfig("set_1", "set_1", internal=False),
+                AttributeConfig("set_2", "set_2", internal=False),
             ],
             {"work_dir": "some/dir"},
         ),

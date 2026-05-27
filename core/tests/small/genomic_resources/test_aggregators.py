@@ -177,7 +177,6 @@ def test_list_aggregator() -> None:
     assert agg.get_final() == values
 
 
-
 def test_bool_aggregator_with_values() -> None:
     agg = BoolAggregator()
     agg.add("g1")

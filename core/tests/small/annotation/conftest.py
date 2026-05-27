@@ -3,12 +3,16 @@
 import os
 import pathlib
 import textwrap
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
 from gain.annotation.annotatable import Annotatable
-from gain.annotation.annotation_config import Attribute, AttributeConfig, AnnotatorInfo
-from collections.abc import Sequence
+from gain.annotation.annotation_config import (
+    AnnotatorInfo,
+    Attribute,
+    AttributeConfig,
+)
 from gain.annotation.annotation_pipeline import Annotator, AttributeSpec
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
