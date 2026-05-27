@@ -560,7 +560,7 @@ def cli(argv: list[str] | None = None) -> None:
     args = vars(arg_parser.parse_args(argv))
 
     if args.get("version"):
-        print(f"GPF version {__version__}")
+        print(f"GAIn version: {__version__}")
         sys.exit(0)
 
     VerbosityConfiguration.set(args)

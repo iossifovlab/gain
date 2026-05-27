@@ -248,3 +248,15 @@ def test_repo_init_inside_repo(
     # Then
     assert not (path / "inside" / GR_CONTENTS_FILE_NAME).exists()
     assert not (path / "inside" / GR_CONTENTS_FILE_NAME[:-3]).exists()
+
+
+def test_grr_manage_version_report(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit):
+        cli_manage(["--version"])
+
+    out, _err = capsys.readouterr()
+    assert out.startswith("GAIn version: ")

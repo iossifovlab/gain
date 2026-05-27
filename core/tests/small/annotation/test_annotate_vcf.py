@@ -891,7 +891,7 @@ def test_annotate_vcf_version_report(
         cli(["--version"])
 
     out, _err = capsys.readouterr()
-    assert out.startswith("GPF version")
+    assert out.startswith("GAIn version: ")
 
 
 def _build_annotate_vcf_args(**overrides: Any) -> dict[str, Any]:
