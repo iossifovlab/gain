@@ -447,13 +447,13 @@ def _stream_input_to_bgzip(
 
 
 def _default_output_path(input_path: str) -> str:
+    """Map ``FFF.<ext>[.gz|.bgz]`` to ``FFF.sorted.tsv.bgz``."""
     p = Path(input_path)
-    if p.suffix in (".gz", ".bgz"):
+    if p.suffix.lower() in (".gz", ".bgz"):
         p = p.with_suffix("")
-    # The output is always tab-separated; reflect that in the name.
-    if p.suffix.lower() == ".csv":
-        p = p.with_suffix(".tsv")
-    return str(p) + ".sorted.bgz"
+    if p.suffix:
+        p = p.with_suffix("")
+    return str(p) + ".sorted.tsv.bgz"
 
 
 def _build_argument_parser() -> argparse.ArgumentParser:

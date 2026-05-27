@@ -36,14 +36,15 @@ pytestmark = pytest.mark.usefixtures("clean_genomic_context")
 
 @pytest.mark.parametrize(
     "input_path,expected", [
-        ("a/foo.tsv", "a/foo.tsv.sorted.bgz"),
-        ("a/foo.tsv.gz", "a/foo.tsv.sorted.bgz"),
-        ("a/foo.tsv.bgz", "a/foo.tsv.sorted.bgz"),
-        ("a/data", "a/data.sorted.bgz"),
-        # csv inputs become .tsv outputs since output is always TSV
-        ("a/foo.csv", "a/foo.tsv.sorted.bgz"),
-        ("a/foo.csv.gz", "a/foo.tsv.sorted.bgz"),
-        ("a/foo.CSV", "a/foo.tsv.sorted.bgz"),
+        ("a/foo.tsv", "a/foo.sorted.tsv.bgz"),
+        ("a/foo.tsv.gz", "a/foo.sorted.tsv.bgz"),
+        ("a/foo.tsv.bgz", "a/foo.sorted.tsv.bgz"),
+        ("a/foo.csv", "a/foo.sorted.tsv.bgz"),
+        ("a/foo.csv.gz", "a/foo.sorted.tsv.bgz"),
+        ("a/foo.CSV", "a/foo.sorted.tsv.bgz"),
+        ("a/foo.txt", "a/foo.sorted.tsv.bgz"),
+        ("a/foo.txt.gz", "a/foo.sorted.tsv.bgz"),
+        ("a/data", "a/data.sorted.tsv.bgz"),
     ],
 )
 def test_default_output_path(input_path: str, expected: str) -> None:
@@ -351,8 +352,8 @@ def test_cli_default_output_path(tmp_path: pathlib.Path) -> None:
         1     10
     """)
     cli([str(in_file)])
-    assert (tmp_path / "in.tsv.sorted.bgz").exists()
-    assert (tmp_path / "in.tsv.sorted.bgz.tbi").exists()
+    assert (tmp_path / "in.sorted.tsv.bgz").exists()
+    assert (tmp_path / "in.sorted.tsv.bgz.tbi").exists()
 
 
 # --- input separator handling --------------------------------------------
