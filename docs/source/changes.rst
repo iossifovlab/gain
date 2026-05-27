@@ -2,12 +2,21 @@ Release Notes
 =============
 
 * 2026.5.7
+    * Moved the ``grr_cache_repo`` CLI from ``gpf`` into
+      ``gain``.
+    * Fixed the ``--version`` label on the ``grr_manage``,
+      ``grr_browse``, ``annotate_columns``, and ``annotate_vcf``
+      CLIs.
+    * The GRR index table now supports sorting by the ID column
+      and resizing columns by dragging.
     * Silenced the spurious htslib
       ``[W::hts_idx_load3] The index file is older than the data file``
       warning emitted when reading parallel-downloaded GRR resources
       (caching protocol or DVC). htslib verbosity is now level 1
       (errors only) for any process that imports
       ``gain.genomic_resources.fsspec_protocol``.
+    * Revised the getting-started CLI tutorial and refreshed the
+      overview diagram.
 
 * 2026.5.6
     * Renamed the ``annotate_columns`` CLI to
