@@ -335,7 +335,10 @@ class VEPCacheAnnotator(VEPAnnotatorBase):
 
         self.aggregate_attributes(contexts)
 
-        return contexts
+        return [
+            {attr.name: context[attr.source] for attr in self._attributes}
+            for context in contexts
+        ]
 
     def run(self, **kwargs: Any) -> None:
         args = [
@@ -467,7 +470,10 @@ class VEPEffectAnnotator(VEPAnnotatorBase):
 
         self.aggregate_attributes(contexts)
 
-        return contexts
+        return [
+            {attr.name: context[attr.source] for attr in self._attributes}
+            for context in contexts
+        ]
 
     def run(self, **kwargs: Any) -> None:
         assert self.genome_resource is not None
