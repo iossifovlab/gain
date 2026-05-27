@@ -48,6 +48,14 @@ from gain.genomic_resources.repository import (
 from gain.templates import get_template
 from gain.utils.helpers import convert_size
 
+# Silence the spurious "[W::hts_idx_load3] The index file is older than the
+# data file" warning that htslib emits when a tabix/VCF index has an older
+# mtime than its data file. In our GRR workflow this is benign: both the
+# caching protocol and DVC download index and data files in parallel, and
+# the smaller index typically lands first. Level 1 (errors only) keeps real
+# htslib errors visible while suppressing notices (3) and warnings (2).
+pysam.set_verbosity(1)
+
 logger = logging.getLogger(__name__)
 
 

@@ -1,6 +1,14 @@
 Release Notes
 =============
 
+* 2026.5.7
+    * Silenced the spurious htslib
+      ``[W::hts_idx_load3] The index file is older than the data file``
+      warning emitted when reading parallel-downloaded GRR resources
+      (caching protocol or DVC). htslib verbosity is now level 1
+      (errors only) for any process that imports
+      ``gain.genomic_resources.fsspec_protocol``.
+
 * 2026.5.6
     * Renamed the ``annotate_columns`` CLI to
       ``annotate_tabular``. The old name is kept as a deprecated

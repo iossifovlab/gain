@@ -4,6 +4,7 @@ import gzip
 import io
 from typing import Any, cast
 
+import pysam
 import pytest
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.repository import (
@@ -436,3 +437,11 @@ def test_build_manifest_should_not_update_existing_resource_state(
 
     # Then
     assert not proto.save_resource_file_state.called  # type: ignore
+
+
+def test_htslib_verbosity_is_lowered_at_module_import() -> None:
+    # Importing gain.genomic_resources.fsspec_protocol must lower htslib's
+    # verbosity to 1 (errors only), suppressing the benign
+    # "[W::hts_idx_load3] index older than data" warning emitted on opens
+    # of parallel-downloaded GRR resources (caching protocol + DVC).
+    assert pysam.get_verbosity() == 1
