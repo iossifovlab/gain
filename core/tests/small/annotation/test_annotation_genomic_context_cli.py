@@ -276,7 +276,7 @@ def test_cli_genomic_context_provider_bad_pipeline(
     args = parser.parse_args(argv)
     with pytest.raises(
             ValueError,
-            match=r"The provided argument for an annotation pipeline "):
+            match=r"neither a valid file path nor a valid GRR resource id"):
         context_providers_init(**vars(args))
 
 

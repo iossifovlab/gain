@@ -129,6 +129,8 @@ def add_input_files_to_task_graph(args: dict, task_graph: TaskGraph) -> None:
 def cache_pipeline_resources(
     grr: GenomicResourceRepo,
     pipeline: AnnotationPipeline,
+    *,
+    workers: int | None = None,
 ) -> None:
     """Cache resources that the given pipeline will use."""
     resource_ids: set[str] = {
@@ -136,7 +138,7 @@ def cache_pipeline_resources(
         for annotator in pipeline.annotators
         for res in annotator.resources
     }
-    cache_resources(grr, resource_ids)
+    cache_resources(grr, resource_ids, workers=workers)
 
 
 def handle_default_args(args: dict[str, Any]) -> dict[str, Any]:

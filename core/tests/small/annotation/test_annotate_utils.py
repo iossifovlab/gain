@@ -1,7 +1,12 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+from unittest.mock import MagicMock
+
 import pytest
 import pytest_mock
-from gain.annotation.annotate_utils import handle_default_args
+from gain.annotation.annotate_utils import (
+    cache_pipeline_resources,
+    handle_default_args,
+)
 
 
 @pytest.mark.parametrize(
@@ -33,3 +38,17 @@ def test_handle_default_args_work_dir(
     result = handle_default_args(args)
     assert result["output"] == expected_output
     assert result["work_dir"] == expected_work_dir
+
+
+def test_cache_pipeline_resources_forwards_workers(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    mocked_cache = mocker.patch(
+        "gain.annotation.annotate_utils.cache_resources")
+    pipeline = MagicMock()
+    pipeline.annotators = []
+    grr = MagicMock()
+
+    cache_pipeline_resources(grr, pipeline, workers=7)
+
+    mocked_cache.assert_called_once_with(grr, set(), workers=7)
