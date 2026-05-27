@@ -205,7 +205,7 @@ def _build_indirect_sort_plan(
     def inject(record: dict[str, str]) -> list[str]:
         ann = r2a.build(record)
         if not isinstance(ann, ann_type):
-            raise ValueError(
+            raise TypeError(
                 f"non-uniform annotatable types in input: expected "
                 f"{ann_type.__name__}, got {type(ann).__name__} "
                 f"for record {record}")
@@ -227,7 +227,7 @@ def _build_indirect_sort_plan(
 def _open_text(path: str) -> TextIO:
     if is_compressed_filename(path):
         return gzip.open(path, "rt")
-    return open(path, "rt")  # noqa: SIM115
+    return open(path, "rt")
 
 
 def _read_header(path: str, separator: str) -> list[str]:
@@ -315,7 +315,7 @@ def _sort_body_to_file(
     unknown_chroms: dict[str, int] = {}
 
     with open(sort_target, "wb") as sort_out:
-        sort_proc = subprocess.Popen(  # noqa: S603
+        sort_proc = subprocess.Popen(
             sort_cmd, stdin=subprocess.PIPE, stdout=sort_out, env=env,
         )
         assert sort_proc.stdin is not None
