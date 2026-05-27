@@ -6,9 +6,9 @@ from pathlib import Path
 from django.core.files.uploadedfile import SimpleUploadedFile
 
 from web_annotation.annotate_helpers import (
-    columns_file_preview,
     extract_head,
     extract_header,
+    tabular_file_preview,
 )
 
 
@@ -19,11 +19,11 @@ def _gzip_file(name: str, content: str) -> SimpleUploadedFile:
     return SimpleUploadedFile(name, buffer.getvalue())
 
 
-def test_columns_file_preview_detects_separator_from_gzip() -> None:
+def test_tabular_file_preview_detects_separator_from_gzip() -> None:
     file_content = "col1,col2\n1,2\n3,4\n5,6\n7,8\n9,10\n"
     uploaded_file = _gzip_file("data.csv.gz", file_content)
 
-    preview = columns_file_preview(uploaded_file, separator=None)
+    preview = tabular_file_preview(uploaded_file, separator=None)
 
     assert preview["separator"] == ","
     assert preview["columns"] == ["col1", "col2"]
@@ -68,11 +68,11 @@ def test_extract_head_compressed(tmp_path: Path) -> None:
     ]
 
 
-def test_columns_file_preview_uses_provided_separator() -> None:
+def test_tabular_file_preview_uses_provided_separator() -> None:
     file_content = "col1\tcol2\n1\t2\n3\t4\n5\t6\n7\t8\n"
     uploaded_file = SimpleUploadedFile("data.tsv", file_content.encode())
 
-    preview = columns_file_preview(uploaded_file, separator="\t")
+    preview = tabular_file_preview(uploaded_file, separator="\t")
 
     assert preview["separator"] == "\t"
     assert preview["columns"] == ["col1", "col2"]
@@ -84,11 +84,11 @@ def test_columns_file_preview_uses_provided_separator() -> None:
     ]
 
 
-def test_columns_file_preview_bad_separator_handling() -> None:
+def test_tabular_file_preview_bad_separator_handling() -> None:
     file_content = "col1\tcol2\n1\t2\n3,4\t4\n5,1\t6\n7\t8\n"
     uploaded_file = SimpleUploadedFile("data.tsv", file_content.encode())
 
-    preview = columns_file_preview(uploaded_file, separator=",")
+    preview = tabular_file_preview(uploaded_file, separator=",")
 
     assert preview["separator"] == ","
     assert preview["columns"] == ["col1\tcol2"]

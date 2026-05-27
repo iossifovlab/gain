@@ -598,7 +598,7 @@ The annotator configuration looks like this:
 
 By default, the annotator produces only the following attributes: ``SYMBOL``, ``Feature``, ``Feature_type``, ``Consequence``, ``worst_consequence``, ``highest_impact``, and ``gene_consequence``.
 
-The full VEP annotator can optionally emit many additional VEP fields (listed below) by selecting them as pipeline attributes. VEP annotators are run via annotate_columns in batch mode. See the example command at the end of the VEP Effect Annotator section.
+The full VEP annotator can optionally emit many additional VEP fields (listed below) by selecting them as pipeline attributes. VEP annotators are run via annotate_tabular in batch mode. See the example command at the end of the VEP Effect Annotator section.
 
 All available output attributes:
 
@@ -739,11 +739,11 @@ All available output attributes:
   | **gene_consequence**: List of gene consequence pairs reported by VEP
   | **<gene model filename>**: Value from provided gene models
 
-With a prepared variants file and an ``annotation.yaml`` pipeline configuration, VEP-based annotation can be run via ``annotate_columns`` in batch mode using the --batch-mode flag. For example:
+With a prepared variants file and an ``annotation.yaml`` pipeline configuration, VEP-based annotation can be run via ``annotate_tabular`` in batch mode using the --batch-mode flag. For example:
 
 .. code:: bash
 
-    annotate_columns ./variants.tsv.gz ./annotation.yaml \
+    annotate_tabular ./variants.tsv.gz ./annotation.yaml \
         -w work -o ./out.tsv -v -j 4 --batch-mode \
         --col-chrom CHROM --col-pos POS --col-ref REF -r 10000 --col-alt ALT \
         --allow-repeated-attributes
@@ -758,7 +758,7 @@ GAIn provides three command-line tools for working with annotation pipelines.
 Two tools run annotation over different input formats (tabular files or VCF). 
 A third tool generates a human-readable HTML description of a pipeline for documentation and review.
 
-* **annotate_columns**: annotate delimiter-separated tabular files (TSV/CSV and similar)
+* **annotate_tabular**: annotate delimiter-separated tabular files (TSV/CSV and similar)
 
 * **annotate_vcf**: annotate VCF/VCF.gz files
 
@@ -767,7 +767,7 @@ A third tool generates a human-readable HTML description of a pipeline for docum
 Notes on usage
 ^^^^^^^^^^^^^^^^^^^^^
 
-Across the two annotation runners (annotate_columns, annotate_vcf), the same basic pattern applies:
+Across the two annotation runners (annotate_tabular, annotate_vcf), the same basic pattern applies:
 
 * **Input data**: the dataset to be annotated.
 
@@ -783,39 +783,39 @@ Across the two annotation runners (annotate_columns, annotate_vcf), the same bas
 
 * **Capture logs for reproducibility**: for long runs, prefer --logfile and keep the pipeline YAML alongside the produced output so the annotation can be reproduced later.
 
-* **Indexing improves parallelization**: for bgzip-compressed tabular and VCF files, tabix-indexing enables region-based task splitting (via ``annotate_columns`` and ``annotate_vcf``), which is typically faster and more memory efficient than single-process runs.
+* **Indexing improves parallelization**: for bgzip-compressed tabular and VCF files, tabix-indexing enables region-based task splitting (via ``annotate_tabular`` and ``annotate_vcf``), which is typically faster and more memory efficient than single-process runs.
 
-* **Tabular inputs (annotate_columns)**: Be explicit about annotatable columns when needed: ``annotate_columns`` tries to infer the chromosome/position/ref/alt columns from the header, but for nonstandard headers you should pass the appropriate ``--col-*`` arguments to avoid mis-detection.
+* **Tabular inputs (annotate_tabular)**: Be explicit about annotatable columns when needed: ``annotate_tabular`` tries to infer the chromosome/position/ref/alt columns from the header, but for nonstandard headers you should pass the appropriate ``--col-*`` arguments to avoid mis-detection.
 
 
-annotate_columns
+annotate_tabular
 ^^^^^^^^^^^^^^^^^^^^^
 
-``annotate_columns`` annotates delimiter-separated tabular files (TSV, CSV, and similar). 
+``annotate_tabular`` annotates delimiter-separated tabular files (TSV, CSV, and similar). 
 It reads annotatables from columns in the input table, runs the specified annotation pipeline, 
-and writes an annotated table as output. ``annotate_columns`` works for all annotatables (variant, position, region).
+and writes an annotated table as output. ``annotate_tabular`` works for all annotatables (variant, position, region).
 
 The minimal invocation is the input table and the pipeline YAML:
 
 .. code:: bash
 
-    annotate_columns input.tsv annotation.yaml
+    annotate_tabular input.tsv annotation.yaml
 
 By default, the output is written next to the input as ``input_annotated.tsv``. To choose a different output filename, use -o / --output:
 
 .. code:: bash
 
-    annotate_columns input.tsv annotation.yaml -o my_output.tsv
+    annotate_tabular input.tsv annotation.yaml -o my_output.tsv
 
 
-The input file should be a table with a header. ``annotate_columns`` identifies annotatable fields from column names when 
+The input file should be a table with a header. ``annotate_tabular`` identifies annotatable fields from column names when 
 possible (e.g., chromosome, position, reference, alternative, or interval columns). If your input uses nonstandard names, map them explicitly with ``--col-*`` options.
 
 For example, if the chromosome column is named ``CHROMOSOME`` (instead of the default ``chrom``), you can run:
 
 .. code:: bash
 
-    annotate_columns input.tsv annotation.yaml --col-chrom CHROMOSOME
+    annotate_tabular input.tsv annotation.yaml --col-chrom CHROMOSOME
 
 Common column mapping flags are:
 
@@ -836,7 +836,7 @@ Common options:
   * **--reannotate and --full-reannotation**: re-run annotation over existing outputs.
   * **-ar, --allow-repeated-attributes**: allow duplicate attribute names by suffixing them with annotator IDs.
 
-For a full list of options run ``annotate_columns --help``
+For a full list of options run ``annotate_tabular --help``
 
 annotate_vcf
 ^^^^^^^^^^^^^^^^^^^^^
@@ -958,7 +958,7 @@ To run this annotation pipeline, enter the following command, which annotates ``
 
 .. code:: bash
 
-    annotate_columns variants.txt annotation_pipeline_1.yaml
+    annotate_tabular variants.txt annotation_pipeline_1.yaml
 
 After the run is complete, there will be a new file called ``variants_annotated.txt``, which includes 
 two additional columns showing the genes affected by each variant and the corresponding worst effect.
@@ -989,7 +989,7 @@ Create a file called ``annotation_pipeline_2.yaml`` with this content. This time
 
 .. code:: bash
 
-    annotate_columns variants.txt annotation_pipeline_2.yaml -o annotation_2.txt
+    annotate_tabular variants.txt annotation_pipeline_2.yaml -o annotation_2.txt
 
 After the run is complete, a new file called ``annotation_2.txt`` will appear with the content below. The phyloP7way column indicates the evolutionary conservation at these genomic positions.
 
@@ -1064,7 +1064,7 @@ To annotate with this pipeline, run:
 .. code:: bash
 
 
-    annotate_columns variants.txt annotation_pipeline_3.yaml -o annotation_3.txt
+    annotate_tabular variants.txt annotation_pipeline_3.yaml -o annotation_3.txt
 
 
 This produces ``annotation_3.txt`` with the requested ClinVar fields:
@@ -1120,7 +1120,7 @@ annotators but not written to the final output. To annotate with this pipeline, 
 
 .. code:: bash
 
-    annotate_columns variants.txt annotation_pipeline_4.yaml -o annotation_4.txt
+    annotate_tabular variants.txt annotation_pipeline_4.yaml -o annotation_4.txt
 
 This produces ``annotation_4.txt`` with the effect outputs plus the requested gene score:
 
@@ -1176,7 +1176,7 @@ To annotate with this pipeline, run:
 
 .. code:: bash
 
-    annotate_columns variants.txt annotation_pipeline_6.yaml -o annotation_6.txt
+    annotate_tabular variants.txt annotation_pipeline_6.yaml -o annotation_6.txt
 
 
 This produces ``annotation_6.txt`` with the lifted-over annotatable plus the hg19 score:
@@ -1209,7 +1209,7 @@ To run this pipeline, execute:
 
 .. code:: bash
 
-    annotate_columns variants.txt annotation_pipeline_cnv_1.yaml -o annotation_cnv_1.txt
+    annotate_tabular variants.txt annotation_pipeline_cnv_1.yaml -o annotation_cnv_1.txt
 
 
 This produces ``annotation_cnv_1.txt`` with the default count column:
@@ -1243,7 +1243,7 @@ Run:
 
 .. code:: bash
 
-    annotate_columns variants.txt annotation_pipeline_cnv_2.yaml -o annotation_cnv_2.txt
+    annotate_tabular variants.txt annotation_pipeline_cnv_2.yaml -o annotation_cnv_2.txt
 
 
 This produces ``annotation_cnv_2.txt`` with the requested event-level fields:
@@ -1301,7 +1301,7 @@ To annotate with this pipeline, run:
 
 .. code:: bash
 
-    annotate_columns variants.txt annotation_pipeline_5.yaml -o annotation_5.txt
+    annotate_tabular variants.txt annotation_pipeline_5.yaml -o annotation_5.txt
 
 
 This produces ``annotation_5.txt`` with the effect outputs plus the requested gene set annotations:

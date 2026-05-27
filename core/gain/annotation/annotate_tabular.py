@@ -76,7 +76,7 @@ from gain.utils.processing_pipeline import Filter, PipelineProcessor, Source
 from gain.utils.regions import Region
 from gain.utils.verbosity_configuration import VerbosityConfiguration
 
-logger = logging.getLogger("annotate_columns")
+logger = logging.getLogger("annotate_tabular")
 
 
 class _CSVSource(Source):
@@ -438,7 +438,7 @@ def _annotate_csv(
             full_reannotation=args["full_reannotation"])
         attributes_to_delete = pipeline.deleted_attributes
 
-    _annotate_columns_helper(
+    _annotate_tabular_helper(
         input_path=args["input"],
         pipeline=pipeline,
         output_path=output_path,
@@ -674,7 +674,7 @@ def _adjust_default_output_separator(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def cli(argv: list[str] | None = None) -> None:
-    """Entry point for running the columns annotation tool."""
+    """Entry point for running the tabular annotation tool."""
     if not argv:
         argv = sys.argv[1:]
 
@@ -739,7 +739,7 @@ def cli(argv: list[str] | None = None) -> None:
     gc.collect()
 
 
-def _annotate_columns_helper(
+def _annotate_tabular_helper(
     input_path: str,
     pipeline: AnnotationPipeline,
     output_path: str,
@@ -748,7 +748,7 @@ def _annotate_columns_helper(
     region: Region | None = None,
     attributes_to_delete: Sequence[str] | None = None,
 ) -> None:
-    """Annotate a columns file using a processing pipeline."""
+    """Annotate a tabular file using a processing pipeline."""
     attributes_to_delete = attributes_to_delete or []
 
     filters: list[Filter] = []
@@ -789,7 +789,7 @@ def _annotate_columns_helper(
         processor.process_region(region)
 
 
-def annotate_columns(
+def annotate_tabular(
     input_path: str,
     pipeline: AnnotationPipeline,
     output_path: str,
@@ -798,12 +798,12 @@ def annotate_columns(
     region: Region | None = None,
     attributes_to_delete: Sequence[str] | None = None,
 ) -> None:
-    """Annotate a columns file using a processing pipeline."""
+    """Annotate a tabular file using a processing pipeline."""
     temp_output_path = output_path
     if is_compressed_filename(output_path):
         temp_output_path = str(pathlib.Path(output_path).with_suffix(""))
 
-    _annotate_columns_helper(
+    _annotate_tabular_helper(
         input_path,
         pipeline,
         temp_output_path,

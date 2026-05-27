@@ -2,7 +2,7 @@ import gzip
 from pathlib import Path
 from typing import cast
 
-from gain.annotation.annotate_columns import cli
+from gain.annotation.annotate_tabular import cli
 from gain.annotation.annotation_factory import load_pipeline_from_file
 from gain.genomic_resources.genomic_context import (
     clear_registered_contexts,

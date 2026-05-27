@@ -23,7 +23,7 @@ and Python interfaces.
 .. figure:: figures/main_diagram.png
 
 
-    **Overview of GAIn**. Genomic resources (reference genomes, gene models, scores, CNV collections, gene scores) are organized in a Genomic Resource Repository (GRR). An annotation pipeline chains annotators that draw on these resources to produce an annotated table or VCF. The example highlights dependency flow: a gene score annotator consumes the gene list produced by the effect annotator. Right: core GAIn tools for GRR management (``grr_browse``, ``grr_manage``), pipeline documentation (``annotate_doc``), and annotation (``annotate_columns``, ``annotate_vcf``).
+    **Overview of GAIn**. Genomic resources (reference genomes, gene models, scores, CNV collections, gene scores) are organized in a Genomic Resource Repository (GRR). An annotation pipeline chains annotators that draw on these resources to produce an annotated table or VCF. The example highlights dependency flow: a gene score annotator consumes the gene list produced by the effect annotator. Right: core GAIn tools for GRR management (``grr_browse``, ``grr_manage``), pipeline documentation (``annotate_doc``), and annotation (``annotate_tabular``, ``annotate_vcf``).
 
 .. toctree::
     :maxdepth: 2

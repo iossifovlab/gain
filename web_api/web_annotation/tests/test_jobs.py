@@ -1856,7 +1856,7 @@ async def test_annotate_columns_notifications(
     cache = LRUPipelineCache(test_grr, 16)
     mocker.patch(
         "web_annotation.jobs"
-        ".views.AnnotateColumns.lru_cache",
+        ".views.AnnotateTabular.lru_cache",
         new=cache,
     )
     user = await sync_to_async(User.objects.get)(email="user@example.com")
@@ -2008,12 +2008,12 @@ async def test_annotate_columns_notifications_fail(
     cache = LRUPipelineCache(test_grr, 16)
     mocker.patch(
         "web_annotation.jobs"
-        ".views.AnnotateColumns.lru_cache",
+        ".views.AnnotateTabular.lru_cache",
         new=cache,
     )
     mocker.patch(
         "web_annotation.jobs"
-        ".views.run_columns_job",
+        ".views.run_tabular_job",
         side_effect=ValueError("some error"),
     )
     user = await sync_to_async(User.objects.get)(email="user@example.com")

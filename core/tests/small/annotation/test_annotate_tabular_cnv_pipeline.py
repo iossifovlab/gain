@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-from gain.annotation.annotate_columns import cli as cli_columns
+from gain.annotation.annotate_tabular import cli as cli_tabular
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
@@ -20,7 +20,7 @@ pytestmark = pytest.mark.usefixtures("clean_genomic_context")
 
 @pytest.fixture
 def annotate_cnv_fixture(tmp_path: Path) -> Path:
-    root_path = tmp_path / "annotate_columns_cnv_pipeline"
+    root_path = tmp_path / "annotate_tabular_cnv_pipeline"
 
     foobar_genome(
         root_path / "grr" / "genome")
@@ -114,7 +114,7 @@ def annotate_cnv_fixture(tmp_path: Path) -> Path:
     return root_path
 
 
-def test_cnv_cli_columns_basic_setup(
+def test_cnv_cli_tabular_basic_setup(
     annotate_cnv_fixture: Path,
 ) -> None:
     root_path = annotate_cnv_fixture
@@ -155,7 +155,7 @@ def test_cnv_effect_annotation(
             - source: gene_effects
         """),
     })
-    cli_columns([
+    cli_tabular([
         str(root_path / "input" / infile),
         str(root_path / "effect_annotation.yaml"),
         "-o", str(root_path / "result.tsv"),
@@ -194,7 +194,7 @@ def test_cnv_gene_score_annotation(
               gene_aggregator: max
         """),
     })
-    cli_columns([
+    cli_tabular([
         str(root_path / "input" / infile),
         str(root_path / "gene_score_annotation.yaml"),
         "-o", str(root_path / "result.tsv"),
@@ -236,7 +236,7 @@ def test_bad_cnv_effect_annotation(
         match=r"errors occured during reading of CSV file starting at line"
         r".*unexpected CNV variant type: bla",
     ):
-        cli_columns([
+        cli_tabular([
             str(root_path / "input" / infile),
             str(root_path / "effect_annotation.yaml"),
             "-o", str(root_path / "result.tsv"),
@@ -279,7 +279,7 @@ def test_bad_cnv_gene_score_annotation(
         ValueError,
         match="errors occured during reading of CSV file",
     ):
-        cli_columns([
+        cli_tabular([
             str(root_path / "input" / infile),
             str(root_path / "gene_score_annotation.yaml"),
             "-o", str(root_path / "result.tsv"),

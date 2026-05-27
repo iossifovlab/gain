@@ -3,7 +3,7 @@ import pathlib
 import textwrap
 
 import pytest
-from gain.annotation.annotate_columns import cli as cli_columns
+from gain.annotation.annotate_tabular import cli as cli_tabular
 from gain.annotation.annotate_vcf import cli as cli_vcf
 from gain.genomic_resources.testing import (
     convert_to_tab_separated,
@@ -54,7 +54,7 @@ def vcf_fixture(tmp_path: pathlib.Path) -> pathlib.Path:
         """)
 
 
-def test_annotate_columns_simple(
+def test_annotate_tabular_simple(
     tmp_path: pathlib.Path,
     grr_fixture: pathlib.Path,
     columns_fixture: pathlib.Path,
@@ -67,7 +67,7 @@ def test_annotate_columns_simple(
                 gene_models: t4c8_genes
             """))
 
-    cli_columns([
+    cli_tabular([
         "--grr-directory", str(grr_fixture),
         "-j", "2",
         "-f",
@@ -79,7 +79,7 @@ def test_annotate_columns_simple(
     assert (tmp_path / "work" / "out.txt").exists()
 
 
-def test_annotate_columns_cli_gene_models(
+def test_annotate_tabular_cli_gene_models(
     tmp_path: pathlib.Path,
     grr_fixture: pathlib.Path,
     columns_fixture: pathlib.Path,
@@ -91,7 +91,7 @@ def test_annotate_columns_cli_gene_models(
                 genome: t4c8_genome
             """))
 
-    cli_columns([
+    cli_tabular([
         "--grr-directory", str(grr_fixture),
         "-j", "2",
         "-f",
@@ -104,7 +104,7 @@ def test_annotate_columns_cli_gene_models(
     assert (tmp_path / "work" / "out.txt").exists()
 
 
-def test_annotate_columns_cli_reference_genome(
+def test_annotate_tabular_cli_reference_genome(
     tmp_path: pathlib.Path,
     grr_fixture: pathlib.Path,
     columns_fixture: pathlib.Path,
@@ -116,7 +116,7 @@ def test_annotate_columns_cli_reference_genome(
                 gene_models: t4c8_genes
             """))
 
-    cli_columns([
+    cli_tabular([
         "--grr-directory", str(grr_fixture),
         "-j", "2",
         "-f",
@@ -129,7 +129,7 @@ def test_annotate_columns_cli_reference_genome(
     assert (tmp_path / "work" / "out.txt").exists()
 
 
-def test_annotate_columns_cli_gene_models_and_reference_genome(
+def test_annotate_tabular_cli_gene_models_and_reference_genome(
     tmp_path: pathlib.Path,
     grr_fixture: pathlib.Path,
     columns_fixture: pathlib.Path,
@@ -140,7 +140,7 @@ def test_annotate_columns_cli_gene_models_and_reference_genome(
             - effect_annotator
             """))
 
-    cli_columns([
+    cli_tabular([
         "--grr-directory", str(grr_fixture),
         "-j", "2",
         "-f",
@@ -154,7 +154,7 @@ def test_annotate_columns_cli_gene_models_and_reference_genome(
     assert (tmp_path / "work" / "out.txt").exists()
 
 
-def test_annotate_columns_simple_effect_annotator_cli_gene_models(
+def test_annotate_tabular_simple_effect_annotator_cli_gene_models(
     tmp_path: pathlib.Path,
     grr_fixture: pathlib.Path,
     columns_fixture: pathlib.Path,
@@ -165,7 +165,7 @@ def test_annotate_columns_simple_effect_annotator_cli_gene_models(
             - simple_effect_annotator
             """))
 
-    cli_columns([
+    cli_tabular([
         "--grr-directory", str(grr_fixture),
         "-j", "2",
         "-f",

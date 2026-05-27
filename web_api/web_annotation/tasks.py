@@ -5,7 +5,7 @@ from typing import Any
 
 from django.conf import settings
 from django.utils import timezone
-from gain.annotation.annotate_columns import annotate_columns
+from gain.annotation.annotate_tabular import annotate_tabular
 from gain.annotation.annotate_vcf import annotate_vcf
 from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.genomic_resources.reference_genome import (
@@ -93,7 +93,7 @@ def delete_old_jobs(days_old: int = 0) -> None:
         job.deactivate()
 
 
-def get_args_columns(
+def get_args_tabular(
     job: Job | AnonymousJob,
     details: JobDetails | AnonymousJobDetails,
     pipeline: AnnotationPipeline, storage_dir: str,
@@ -159,17 +159,17 @@ def get_args_columns(
     return fn_args
 
 
-def run_columns_job(  # pylint: disable=too-many-branches
+def run_tabular_job(  # pylint: disable=too-many-branches
     input_path: str,
     pipeline: AnnotationPipeline,
     output_path: str,
     args: dict[str, Any],
     reference_genome: ReferenceGenome | None = None,
 ) -> None:
-    """Run a columnar annotation."""
-    logger.debug("Running columns job")
+    """Run a tabular annotation."""
+    logger.debug("Running tabular job")
     logger.debug(args)
-    annotate_columns(
+    annotate_tabular(
         input_path, pipeline, output_path,
         args, reference_genome=reference_genome)
 

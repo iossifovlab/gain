@@ -1,12 +1,12 @@
 import pathlib
 import textwrap
 
-from gain.annotation.annotate_columns import cli as cli_columns
+from gain.annotation.annotate_tabular import cli as cli_tabular
 from gain.annotation.annotate_vcf import cli as cli_vcf
 from gain.genomic_resources.testing import setup_tabix, setup_vcf
 
 
-def test_annotate_columns_rerun(
+def test_annotate_tabular_rerun(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
 ) -> None:
@@ -30,7 +30,7 @@ def test_annotate_columns_rerun(
     setup_tabix(in_file, in_content,
                 seq_col=0, start_col=1, end_col=1)
 
-    cli_columns([
+    cli_tabular([
         str(a) for a in [
             in_file, annotation_file, "-o", out_file,
             "-w", work_dir,
@@ -45,7 +45,7 @@ def test_annotate_columns_rerun(
     out_file.unlink()
     assert not out_file.exists()
 
-    cli_columns([
+    cli_tabular([
         str(a) for a in [
             in_file, annotation_file, "-o", out_file,
             "-w", work_dir,

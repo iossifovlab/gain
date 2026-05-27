@@ -3,7 +3,7 @@ import pathlib
 import textwrap
 
 import pytest
-from gain.annotation.annotate_columns import cli as cli_columns
+from gain.annotation.annotate_tabular import cli as cli_tabular
 from gain.genomic_resources.testing import (
     convert_to_tab_separated,
     setup_denovo,
@@ -21,7 +21,7 @@ def get_file_content_as_string(file: str) -> str:
 
 @pytest.fixture
 def annotate_directory_fixture(tmp_path: pathlib.Path) -> pathlib.Path:
-    root_path = tmp_path / "annotate_columns_cshl"
+    root_path = tmp_path / "annotate_tabular_cshl"
     setup_directories(
         root_path,
         {
@@ -71,7 +71,7 @@ def annotate_directory_fixture(tmp_path: pathlib.Path) -> pathlib.Path:
     return root_path
 
 
-def test_annotate_columns_cshl_basic_setup(
+def test_annotate_tabular_cshl_basic_setup(
     annotate_directory_fixture: pathlib.Path,
 ) -> None:
     # Given
@@ -98,7 +98,7 @@ def test_annotate_columns_cshl_basic_setup(
     work_dir = root_path / "work"
 
     # When
-    cli_columns([
+    cli_tabular([
         str(a) for a in [
             in_file, annotation_file, "--grr", grr_file, "-o", out_file,
             "--ref", "foobar_genome",

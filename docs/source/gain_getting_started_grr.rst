@@ -1085,7 +1085,7 @@ Run the following command to annotate your variants using this pipeline.
 
 .. code-block:: bash
 
-    annotate_columns variants.txt annotation_pipeline_local.yaml
+    annotate_tabular variants.txt annotation_pipeline_local.yaml
 
 
 This will create a ``variants_annotated.txt`` file with the following content:

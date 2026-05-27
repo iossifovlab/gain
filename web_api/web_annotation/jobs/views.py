@@ -19,9 +19,9 @@ from rest_framework.request import MultiValueDict
 from rest_framework.views import Request, Response
 
 from web_annotation.annotate_helpers import (
-    columns_file_preview,
     extract_head,
     is_compressed_filename,
+    tabular_file_preview,
 )
 from web_annotation.annotation_base_view import (
     AnnotationBaseView,
@@ -39,9 +39,9 @@ from web_annotation.models import (
 from web_annotation.permissions import has_job_permission
 from web_annotation.serializers import JobSerializer
 from web_annotation.tasks import (
-    get_args_columns,
+    get_args_tabular,
     get_args_vcf,
-    run_columns_job,
+    run_tabular_job,
     run_vcf_job,
     specify_job,
 )
@@ -294,7 +294,7 @@ class AnnotateVCF(AnnotationBaseView):
         )
 
 
-class AnnotateColumns(AnnotationBaseView):
+class AnnotateTabular(AnnotationBaseView):
     """View for creating jobs."""
 
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
@@ -382,7 +382,7 @@ class AnnotateColumns(AnnotationBaseView):
             return Response(status=views.status.HTTP_404_NOT_FOUND)
 
         pipeline = build_annotation_pipeline(pipeline.raw, pipeline.repository)
-        args = get_args_columns(
+        args = get_args_tabular(
             job, details, pipeline, str(work_dir))
         start_time = time.time()
 
@@ -414,7 +414,7 @@ class AnnotateColumns(AnnotationBaseView):
             )
             if isinstance(exception, CalledProcessError):
                 reason = (
-                    "annotate_columns failed internally:\n"
+                    "annotate_tabular failed internally:\n"
                     f"{exception.stderr}"
                 )
             if isinstance(
@@ -424,20 +424,20 @@ class AnnotateColumns(AnnotationBaseView):
                     "Failed to execute annotate_vcf\n"
                     f"{exception!s}"
                 )
-            logger.error("columns annotation job failed!\n%s", reason)
+            logger.error("tabular annotation job failed!\n%s", reason)
             job.update_job_failed(str(args), str(exception))
             self._notify_user_job(request.user, str(job.pk), job.status)
 
-        def run_columns_wrapper(*args: Any, **kwargs: Any) -> None:
+        def run_tabular_wrapper(*args: Any, **kwargs: Any) -> None:
             """Wrapper to run VCF job."""
             job.update_job_in_progress()
             self._notify_user_job(request.user, str(job.pk), job.status)
-            run_columns_job(*args, **kwargs)
+            run_tabular_job(*args, **kwargs)
 
         self._notify_user_job(request.user, str(job.pk), job.status)
 
         self.JOB_EXECUTOR.execute(
-            run_columns_wrapper,
+            run_tabular_wrapper,
             callback_success=on_success,
             callback_failure=on_failure,
             **args,
@@ -588,7 +588,7 @@ class PreviewFileUpload(AnnotationBaseView):
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
 
-        preview_data = columns_file_preview(
+        preview_data = tabular_file_preview(
             file, request.data.get("separator"))
         return Response(
             preview_data,
