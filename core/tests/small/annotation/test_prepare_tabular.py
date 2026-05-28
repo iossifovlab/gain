@@ -5,13 +5,18 @@ import pathlib
 import textwrap
 
 import pytest
-from gain.annotation.annotatable import VCFAllele
+from gain.annotation.annotatable import (
+    Annotatable,
+    CNVAllele,
+    VCFAllele,
+)
 from gain.annotation.prepare_tabular import (
     _build_argument_parser,
     _build_direct_sort_plan,
     _build_indirect_sort_plan,
     _default_output_path,
     _detect_input_separator,
+    _injected_values_for,
     _read_header,
     cli,
 )
@@ -127,6 +132,12 @@ def test_indirect_sort_plan_collision_errors() -> None:
     with pytest.raises(ValueError, match="cannot inject sort columns"):
         _build_indirect_sort_plan(
             r2a, header, {"vcf_like": "chr1:4:C:T", "chrom": "x"})
+
+
+def test_injected_values_for_cnv_allele() -> None:
+    ann = CNVAllele("chr1", 100, 200, Annotatable.Type.LARGE_DELETION)
+    assert _injected_values_for(ann) == \
+        ["chr1", "100", "200", "LARGE_DELETION"]
 
 
 # --- CLI integration tests -----------------------------------------------
