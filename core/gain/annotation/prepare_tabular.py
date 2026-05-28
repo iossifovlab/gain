@@ -169,7 +169,7 @@ def _injected_values_for(ann: Annotatable) -> list[str]:
         return [ann.chrom, str(ann.position), ann.reference, ann.alternative]
     if isinstance(ann, CNVAllele):
         return [ann.chrom, str(ann.position), str(ann.end_position),
-                ann.cnv_type.name]
+                ann.type.name]
     if isinstance(ann, Region):
         return [ann.chrom, str(ann.position), str(ann.end_position)]
     if isinstance(ann, Position):
@@ -373,7 +373,7 @@ def _stream_input_to_bgzip(
         _OUTPUT_SEPARATOR.join(plan.output_header) + "\n").encode()
 
     def write_header_and(body_iter: Iterable[bytes]) -> None:
-        with BGZFile(output_path, "wb") as bgz:
+        with BGZFile(output_path, "wb", index=None) as bgz:
             bgz.write(header_bytes)
             for chunk in body_iter:
                 bgz.write(chunk)
@@ -393,7 +393,9 @@ def _stream_input_to_bgzip(
                 work_dir=work_dir, threads=threads, buffer=buffer)
             logger.info("sort command: %s", " ".join(sort_cmd))
             env = {**os.environ, "LC_ALL": "C"}
-            sort_proc = subprocess.Popen(
+            # long-lived: stdin/stdout are driven manually below and the
+            # process is wait()-ed at the end, so a `with` block won't fit.
+            sort_proc = subprocess.Popen(  # pylint: disable=consider-using-with
                 sort_cmd,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env,
             )
