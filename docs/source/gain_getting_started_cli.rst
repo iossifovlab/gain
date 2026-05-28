@@ -674,12 +674,12 @@ To use these resources, add GRR-ENCODE to the GRR definition file, ``~/.grr_defi
       type: "url"
       url: "https://grr-encode.iossifovlab.com"
 
-With this configuration, GAIn can use resources from both repositories. For example, after adding GRR-ENCODE to the GRR definition file, a pipeline can use an ENCODE transcription factor ChIP-seq resource as a position score annotator:
+With this configuration, GAIn can use resources from both repositories. For example, after adding GRR-ENCODE to the GRR definition file, a pipeline can use an ENCODE ATAC-seq resource as a position score annotator:
 
 .. code-block:: yaml
 
     - position_score_annotator:
-        resource_id: TF_ChIP-seq/ENCSR000AHD
+        resource_id: ATAC-seq_ENCSR814RGG
 
 This makes ENCODE-derived regulatory tracks available through the same pipeline syntax used for other position score resources.
 
