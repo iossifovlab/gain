@@ -720,6 +720,11 @@ def cli(argv: list[str] | None = None) -> None:
             ref_genome_id,
         )
     else:
+        logger.info(
+            "input %s cannot be split into genomic regions; "
+            "forcing sequential execution (-j 1)",
+            args["input"])
+        args["jobs"] = 1
         _add_tasks_plaintext(
             args,
             task_graph,

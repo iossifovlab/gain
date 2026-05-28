@@ -192,6 +192,84 @@ def test_basic_vcf(
     assert result == ["0.1", "0.2"]
 
 
+def test_annotate_vcf_non_splittable_forces_sequential(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    in_content = textwrap.dedent("""
+        ##fileformat=VCFv4.2
+        ##contig=<ID=chr1>
+        #CHROM POS ID REF ALT QUAL FILTER INFO
+        chr1   23  .  C   T   .    .      .
+        chr1   24  .  C   A   .    .      .
+    """)
+    root_path = annotate_directory_fixture
+    in_file = tmp_path / "in.vcf"  # plaintext, no tabix index -> no split
+    out_file = tmp_path / "out.vcf"
+    work_dir = tmp_path / "output"
+    annotation_file = root_path / "annotation.yaml"
+    grr_file = root_path / "grr.yaml"
+
+    setup_vcf(in_file, in_content)
+
+    process_graph = mocker.patch(
+        "gain.task_graph.cli_tools.TaskGraphCli.process_graph")
+
+    cli([
+        str(a) for a in [
+            in_file,
+            annotation_file,
+            "--grr", grr_file,
+            "-o", out_file,
+            "-w", work_dir,
+            "-j", 5,  # must be overridden to 1 because input can't be split
+        ]
+    ])
+
+    process_graph.assert_called_once()
+    assert process_graph.call_args.kwargs["jobs"] == 1
+
+
+def test_annotate_vcf_splittable_keeps_jobs(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    in_content = textwrap.dedent("""
+        ##fileformat=VCFv4.2
+        ##contig=<ID=chr1>
+        #CHROM POS ID REF ALT QUAL FILTER INFO
+        chr1   23  .  C   T   .    .      .
+        chr1   24  .  C   A   .    .      .
+    """)
+    root_path = annotate_directory_fixture
+    in_file = tmp_path / "in.vcf.gz"  # tabixed -> splittable
+    out_file = tmp_path / "out.vcf.gz"
+    work_dir = tmp_path / "output"
+    annotation_file = root_path / "annotation.yaml"
+    grr_file = root_path / "grr.yaml"
+
+    setup_vcf(in_file, in_content)
+
+    process_graph = mocker.patch(
+        "gain.task_graph.cli_tools.TaskGraphCli.process_graph")
+
+    cli([
+        str(a) for a in [
+            in_file,
+            annotation_file,
+            "--grr", grr_file,
+            "-o", out_file,
+            "-w", work_dir,
+            "-j", 5,  # splittable input must keep the user's -j untouched
+        ]
+    ])
+
+    process_graph.assert_called_once()
+    assert process_graph.call_args.kwargs["jobs"] == 5
+
+
 def test_batch(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
