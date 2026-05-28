@@ -656,8 +656,10 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     )
     add_record_to_annotable_arguments(parser)
     parser.add_argument(
-        "--input-separator", "--in-sep", default="\t",
-        help="The column separator in the input")
+        "--input-separator", "--in-sep", default=None,
+        help="The column separator in the input; defaults to a tab, "
+             "or a comma when the input filename ends in .csv "
+             "(optionally .gz/.bgz compressed)")
     parser.add_argument(
         "--output-separator", "--out-sep", default=None,
         help="The column separator in the output")
@@ -665,6 +667,22 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     add_common_annotation_arguments(parser)
 
     return parser
+
+
+def _adjust_default_input_separator(args: dict[str, Any]) -> dict[str, Any]:
+    if args["input_separator"] is not None:
+        return args
+    suffixes = [s.lower() for s in Path(args["input"]).suffixes]
+    if suffixes and suffixes[-1] in (".gz", ".bgz"):
+        suffixes = suffixes[:-1]
+    if suffixes and suffixes[-1] == ".csv":
+        args["input_separator"] = ","
+        logger.info(
+            "input '%s' has a .csv extension; "
+            "defaulting --input-separator to comma", args["input"])
+    else:
+        args["input_separator"] = "\t"
+    return args
 
 
 def _adjust_default_output_separator(args: dict[str, Any]) -> dict[str, Any]:
@@ -687,6 +705,7 @@ def cli(argv: list[str] | None = None) -> None:
 
     VerbosityConfiguration.set(args)
     args = handle_default_args(args)
+    args = _adjust_default_input_separator(args)
     args = _adjust_default_output_separator(args)
 
     context = build_cli_genomic_context(args)

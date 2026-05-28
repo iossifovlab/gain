@@ -18,6 +18,7 @@ from gain.annotation.annotatable import (
     VCFAllele,
 )
 from gain.annotation.annotate_tabular import (
+    _adjust_default_input_separator,
     _CSVBatchSource,
     _CSVBatchWriter,
     _CSVHeader,
@@ -1509,6 +1510,94 @@ def test_annotate_tabular_output_separator(
     ])
     out_file_content = out_file.read_text()
     assert out_file_content == out_expected_content
+
+
+def test_annotate_tabular_csv_extension_defaults_to_comma(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> None:
+    in_content = (
+        "chrom,pos,score\n"
+        "chr1,23,1.0\n"
+        "chr1,24,2.0\n"
+    )
+    out_expected_content = (
+        "chrom,pos,score,score\n"
+        "chr1,23,1.0,0.1\n"
+        "chr1,24,2.0,0.2\n"
+    )
+    root_path = annotate_directory_fixture
+    in_file = tmp_path / "in.csv"
+    out_file = tmp_path / "out.csv"
+    work_dir = tmp_path / "work"
+
+    annotation_file = root_path / "annotation.yaml"
+    grr_file = root_path / "grr.yaml"
+
+    setup_directories(in_file, in_content)
+
+    cli([
+        str(a) for a in [
+            in_file,
+            annotation_file,
+            "--grr", grr_file,
+            "-o", out_file,
+            "-w", work_dir,
+            "-j", 1,
+        ]
+    ])
+    out_file_content = out_file.read_text()
+    assert out_file_content == out_expected_content
+
+
+@pytest.mark.parametrize(
+    "filename,expected", [
+        ("data.csv", ","),
+        ("data.CSV", ","),
+        ("data.csv.gz", ","),
+        ("data.csv.bgz", ","),
+        ("data.Csv.GZ", ","),
+        ("path/to/my.data.csv", ","),
+        ("data.txt", "\t"),
+        ("data.tsv", "\t"),
+        ("data.tsv.gz", "\t"),
+        ("data", "\t"),
+        ("data.csvx", "\t"),
+    ])
+def test_adjust_default_input_separator_from_extension(
+    filename: str,
+    expected: str,
+) -> None:
+    args = {"input": filename, "input_separator": None}
+    assert _adjust_default_input_separator(args)["input_separator"] == expected
+
+
+@pytest.mark.parametrize("filename", ["data.csv", "data.txt"])
+def test_adjust_default_input_separator_explicit_flag_wins(
+    filename: str,
+) -> None:
+    args = {"input": filename, "input_separator": "\t"}
+    assert _adjust_default_input_separator(args)["input_separator"] == "\t"
+
+
+def test_adjust_default_input_separator_logs_only_on_inference(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger="annotate_tabular"):
+        _adjust_default_input_separator(
+            {"input": "data.csv", "input_separator": None})
+    assert any(
+        "defaulting --input-separator to comma" in r.message
+        for r in caplog.records
+    )
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="annotate_tabular"):
+        _adjust_default_input_separator(
+            {"input": "data.txt", "input_separator": None})
+        _adjust_default_input_separator(
+            {"input": "data.csv", "input_separator": "\t"})
+    assert caplog.records == []
 
 
 def test_annotate_tabular_cross_region_boundary(
