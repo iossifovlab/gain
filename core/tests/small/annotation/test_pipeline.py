@@ -147,7 +147,7 @@ def test_input_annotatable_decorator_used_context_attributes(
     pipeline.add_annotator(annotator)
     assert not annotator.used_context_attributes
 
-    annotator._info.parameters["input_annotatable"] = "dummy_annotatable"
+    annotator._info.parameters._data["input_annotatable"] = "dummy_annotatable"
     annotator = \
         InputAnnotableAnnotatorDecorator.decorate(annotator)  # type: ignore
 

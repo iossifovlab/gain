@@ -181,15 +181,15 @@ def build_pipeline_annotator(
 ) -> Annotator:
     """Build an annotator for the pipeline."""
     try:
-        if "work_dir" not in annotator_config.parameters:
-            annotator_config.parameters["work_dir"] = str(work_dir)
+        params = annotator_config.parameters
+        if "work_dir" not in params.as_dict():
+            params._data["work_dir"] = str(work_dir)  # noqa: SLF001
+        params._used_keys.add("work_dir")  # noqa: SLF001
         builder = get_annotator_factory(annotator_config.type)
         annotator = builder(pipeline, annotator_config)
         annotator = InputAnnotableAnnotatorDecorator.decorate(annotator)
         annotator = ValueTransformAnnotatorDecorator.decorate(annotator)
-        # Unused-parameter validation was removed when ParamsUsageMonitor was
-        # replaced with a plain dict. Re-add explicit validation per annotator
-        # if needed (e.g. via an accepted_parameters() classmethod).
+        check_for_unused_parameters(annotator_config)
         check_for_repeated_attributes_in_annotator(annotator_config)
     except (ValueError, FileNotFoundError) as value_error:
         assert annotator_config is not None
@@ -295,3 +295,11 @@ def resolve_repeated_attributes(
                 if attribute.name == rep:
                     attribute.name = \
                         f"{attribute.name}_{annotator.get_info().annotator_id}"
+
+
+def check_for_unused_parameters(info: AnnotatorInfo) -> None:
+    """Check annotator configuration for unused parameters."""
+    unused_annotator_parameters = info.parameters.get_unused_keys()
+    if unused_annotator_parameters:
+        raise ValueError("There are unused annotator parameters: "
+                         f"{unused_annotator_parameters}")

@@ -628,7 +628,7 @@ def test_input_annotatable_decorator_no_param() -> None:
 def test_input_annotatable_decorator_no_pipeline() -> None:
     """Test decorator raises error without pipeline."""
     annotator = DummyAnnotator()
-    annotator._info.parameters["input_annotatable"] = "input_ann"
+    annotator._info.parameters._data["input_annotatable"] = "input_ann"
 
     with pytest.raises(ValueError, match="can only work within a pipeline"):
         InputAnnotableAnnotatorDecorator(annotator)
@@ -642,7 +642,7 @@ def test_input_annotatable_decorator_missing_attribute(
 
     annotator = DummyAnnotator()
     annotator.pipeline = pipeline
-    annotator._info.parameters["input_annotatable"] = "missing_attr"
+    annotator._info.parameters._data["input_annotatable"] = "missing_attr"
 
     with pytest.raises(ValueError, match="has not been defined"):
         InputAnnotableAnnotatorDecorator(annotator)

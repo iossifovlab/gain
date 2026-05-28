@@ -4,7 +4,7 @@ import copy
 import fnmatch
 import logging
 import textwrap
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -86,6 +86,45 @@ class AnnotationConfigurationError(Exception):
         return result
 
 
+class ParamsUsageMonitor(Mapping):
+    """Class to monitor usage of annotator parameters."""
+
+    def __init__(self, data: dict[str, Any]):
+        self._data = dict(data)
+        self._used_keys: set[str] = set()
+
+    def __hash__(self) -> int:
+        return hash(tuple(sorted(self._data.items())))
+
+    def __getitem__(self, key: str) -> Any:
+        self._used_keys.add(key)
+        return self._data[key]
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __iter__(self) -> Iterator:
+        raise ValueError("Should not iterate a parameter dictionary.")
+
+    def __repr__(self) -> str:
+        return self._data.__repr__()
+
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, ParamsUsageMonitor):
+            return False
+        return self._data == other._data
+
+    def get_used_keys(self) -> set[str]:
+        return self._used_keys
+
+    def get_unused_keys(self) -> set[str]:
+        return set(self._data.keys()) - self._used_keys
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a plain copy of all parameters without tracking."""
+        return dict(self._data)
+
+
 @dataclass(eq=True)
 class AttributeConfig:
     """Configuration for an annotator attribute (from pipeline YAML)."""
@@ -142,7 +181,7 @@ class AnnotatorInfo:
         self,
         _type: str,
         attributes: list[AttributeConfig],
-        parameters: dict[str, Any],
+        parameters: ParamsUsageMonitor | dict[str, Any],
         documentation: str = "",
         resources: list[GenomicResource] | None = None,
         annotator_id: str = "N/A",
@@ -151,7 +190,10 @@ class AnnotatorInfo:
         self.annotator_id = f"{annotator_id}"
         self.attributes = attributes
         self.documentation = documentation
-        self.parameters = dict(parameters)
+        if isinstance(parameters, ParamsUsageMonitor):
+            self.parameters = parameters
+        else:
+            self.parameters = ParamsUsageMonitor(parameters)
         if resources is None:
             self.resources = []
         else:
@@ -160,7 +202,7 @@ class AnnotatorInfo:
     annotator_id: str = field(compare=False, hash=None)
     type: str
     attributes: list[AttributeConfig]
-    parameters: dict[str, Any]
+    parameters: ParamsUsageMonitor
     documentation: str = ""
     resources: list[GenomicResource] = field(default_factory=list)
 
@@ -173,7 +215,7 @@ class AnnotatorInfo:
     def to_dict(self) -> dict[str, Any]:
         """Convert annotator info to a configuration dictionary."""
         result = {
-            **self.parameters,
+            **self.parameters.as_dict(),
             "attributes": [
                 {
                     "name": attr.name,
