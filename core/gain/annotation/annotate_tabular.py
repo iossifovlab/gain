@@ -101,9 +101,10 @@ class _CSVSource(Source):
         path = Path(self.path)
         filename = path.name
         parent = path.parent
-        if filename.endswith(".gz") and (parent / f"{filename}.tbi").exists():
+        if (filename.endswith(".gz") and (parent / f"{filename}.tbi").exists()) or \
+           (filename.endswith(".bgz") and (parent / f"{filename}.tbi").exists()):
             self.source_file = TabixFile(self.path)
-        elif filename.endswith(".gz"):
+        elif filename.endswith(".gz") or filename.endswith(".bgz"):
             self.source_file = gzip.open(self.path, "rt")
             self.source_file.readline()  # Skip header line
         else:
