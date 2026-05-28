@@ -165,6 +165,19 @@ def handle_default_args(args: dict[str, Any]) -> dict[str, Any]:
         args["task_log_dir"] = os.path.join(
             args["work_dir"], ".task-log")
 
+    for key in ("input", "output", "work_dir",
+                "task_status_dir", "task_log_dir",
+                "reannotate", "dask_cluster_config_file",
+                "grr_filename", "grr_directory"):
+        if args.get(key):
+            args[key] = os.path.abspath(args[key])
+
+    # The pipeline argument may be a sentinel ("context"/"gpf_instance")
+    # rather than a file; only absolutize it when it is an actual file.
+    pipeline = args.get("pipeline")
+    if pipeline and os.path.exists(pipeline):
+        args["pipeline"] = os.path.abspath(pipeline)
+
     return args
 
 

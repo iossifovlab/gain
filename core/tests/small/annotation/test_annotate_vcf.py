@@ -32,6 +32,7 @@ from gain.genomic_resources.testing import (
     setup_denovo,
     setup_vcf,
 )
+from gain.task_graph.cli_tools import TaskGraphCli
 from gain.testing.acgt_import import acgt_grr
 from gain.utils.regions import Region
 
@@ -229,6 +230,49 @@ def test_annotate_vcf_non_splittable_forces_sequential(
 
     process_graph.assert_called_once()
     assert process_graph.call_args.kwargs["jobs"] == 1
+
+
+def test_annotate_vcf_cli_runs_in_work_dir_and_restores_cwd(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    in_content = textwrap.dedent("""
+        ##fileformat=VCFv4.2
+        ##contig=<ID=chr1>
+        #CHROM POS ID REF ALT QUAL FILTER INFO
+        chr1   23  .  C   T   .    .      .
+        chr1   24  .  C   A   .    .      .
+    """)
+    root_path = annotate_directory_fixture
+    in_file = tmp_path / "in.vcf"
+    out_file = tmp_path / "out.vcf"
+    work_dir = tmp_path / "work"
+    annotation_file = root_path / "annotation.yaml"
+    grr_file = root_path / "grr.yaml"
+
+    setup_vcf(in_file, in_content)
+
+    real_process_graph = TaskGraphCli.process_graph
+    captured_cwd: dict[str, str] = {}
+
+    def _spy(task_graph: Any, **kwargs: Any) -> bool:
+        captured_cwd["value"] = os.getcwd()
+        return real_process_graph(task_graph, **kwargs)
+
+    mocker.patch.object(TaskGraphCli, "process_graph", side_effect=_spy)
+
+    cwd_before = os.getcwd()
+    cli([
+        str(a) for a in [
+            in_file, annotation_file, "--grr", grr_file, "-o", out_file,
+            "-w", work_dir, "-j", 1,
+        ]
+    ])
+
+    assert os.path.realpath(captured_cwd["value"]) == \
+        os.path.realpath(work_dir)
+    assert os.getcwd() == cwd_before
 
 
 def test_annotate_vcf_splittable_keeps_jobs(
