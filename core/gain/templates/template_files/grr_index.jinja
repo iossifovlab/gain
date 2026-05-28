@@ -282,7 +282,7 @@
               <td class="nowrap size-cell">{{value['res_size']}}</td>
               <td
                 class="nowrap"
-                title="{{value['res_summary']}}"
+                title="{{value['res_summary']|e}}"
               >{{value['res_summary']}}</td>
               </tr>
             {%- endfor %}
