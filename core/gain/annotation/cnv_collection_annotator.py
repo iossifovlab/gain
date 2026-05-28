@@ -226,21 +226,20 @@ class CnvCollectionAnnotator(AnnotatorBase):
             cnvs = [cnv for cnv in cnvs if self.cnv_filter(cnv)]
 
         raw: dict[str, list] = {
-            attr.name: []
+            attr.source: []
             for attr in self._attributes
             if attr.aggregator is not None
         }
 
         for cnv in cnvs:
-            for attr in self._attributes:
-                if attr.name in raw:
-                    raw[attr.name].append(cnv.attributes[attr.source])
+            for source in raw:
+                raw[source].append(cnv.attributes[source])
 
         result: dict[str, Any] = {}
         for attr in self._attributes:
-            if attr.name in raw:
-                result[attr.name] = raw[attr.name]
+            if attr.source in raw:
+                result[attr.source] = raw[attr.source]
             else:
-                result[attr.name] = len(cnvs)
+                result[attr.source] = len(cnvs)
 
         return result

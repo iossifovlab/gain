@@ -133,7 +133,7 @@ class AnnotatorBase(Annotator):
         for attr, aggregator in zip(
             self._attributes, self._aggregator_instances, strict=True,
         ):
-            value = values[attr.name]
+            value = values.get(attr.source)
             if aggregator is not None and isinstance(value, list):
                 result[attr.name] = aggregator.aggregate(value)
             else:

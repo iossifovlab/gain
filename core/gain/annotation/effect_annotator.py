@@ -294,7 +294,4 @@ Annotator to identify the effect of the variant on protein coding.
                 else:
                     result[attr.source] = ",".join(genes)
 
-        return {
-            attr.name: result.get(attr.source)
-            for attr in self._attributes
-        }
+        return result

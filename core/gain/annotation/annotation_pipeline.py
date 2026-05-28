@@ -178,7 +178,7 @@ class Annotator(abc.ABC):
         return ()
 
     def _empty_result(self) -> dict[str, Any]:
-        return {attr.name: None for attr in self.attributes}
+        return {attr.source: None for attr in self.attributes}
 
     @abc.abstractmethod
     def get_attribute_specs(self) -> dict[str, AttributeSpec]:

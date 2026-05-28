@@ -144,7 +144,7 @@ Annotator to lift over a variant from one reference genome to another.
         if value is None:
             logger.debug("unable to liftover allele: %s", annotatable)
 
-        return {attr.name: value for attr in self._attributes}
+        return {"liftover_annotatable": value}
 
     def liftover_allele(self, allele: VCFAllele) -> VCFAllele | None:
         """Liftover an allele."""

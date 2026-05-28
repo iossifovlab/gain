@@ -40,8 +40,8 @@ from gain.annotation.annotation_factory import (
     load_pipeline_from_file,
 )
 from gain.annotation.annotation_pipeline import (
-    Attribute,
     AnnotationPipeline,
+    Attribute,
     ReannotationPipeline,
 )
 from gain.annotation.processing_pipeline import (

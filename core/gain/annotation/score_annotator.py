@@ -32,7 +32,6 @@ from gain.genomic_resources.genomic_scores import (
     AlleleScoreQuery,
     GenomicScore,
     PositionScore,
-    PositionScoreQuery,
     ScoreDef,
     ScoreLine,
 )
@@ -255,7 +254,6 @@ class PositionScoreAnnotator(GenomicScoreAnnotatorBase):
         self.position_score = PositionScore(resource)
         super().__init__(pipeline, info, self.position_score)
 
-        self.position_score_queries = []
         info.documentation += textwrap.dedent(f"""
 
 Annotator to use with genomic scores depending on genomic position like
@@ -265,12 +263,21 @@ phastCons, phyloP, FitCons2, etc.
 
 """)  # noqa
 
-        for attr in self._attributes:
-            self.position_score_queries.append(
-                PositionScoreQuery(attr.source, attr.aggregator))
-
+        for attr, attr_config in zip(
+            self._attributes, self.get_info().attributes, strict=True,
+        ):
             self.add_score_aggregator_documentation(
-                attr, "position_aggregator", attr.aggregator)
+                attr, "position_aggregator", attr_config.aggregator)
+
+    def get_attribute_defaults(
+        self, spec: AttributeSpec,
+    ) -> dict[str, Any]:
+        defaults = super().get_attribute_defaults(spec)
+        if "aggregator" not in defaults:
+            score_def = self.position_score.get_score_definition(spec.source)
+            if score_def is not None and score_def.pos_aggregator is not None:
+                defaults["aggregator"] = score_def.pos_aggregator
+        return defaults
 
     def build_score_aggregator_documentation(
         self, attr: Attribute,
@@ -280,17 +287,22 @@ phastCons, phyloP, FitCons2, etc.
             attr, "position_aggregator", attr.aggregator)
         return [doc]
 
-    def _fetch_substitution_scores(self, allele: VCFAllele) \
-            -> list[Any] | None:
-        return self.position_score.fetch_scores(
-            allele.chromosome, allele.position, self.simple_score_queries)
-
-    def _fetch_aggregated_scores(
-            self, chrom: str, pos_begin: int, pos_end: int) -> list[Any]:
-        scores_agg = self.position_score.fetch_scores_agg(
-            chrom, pos_begin, pos_end, self.position_score_queries,
+    def _fetch_raw_region_scores(
+        self, chrom: str, pos_begin: int, pos_end: int,
+        sources: list[str],
+    ) -> dict[str, list[Any]]:
+        raw: dict[str, list[Any]] = {source: [] for source in sources}
+        fetch = self.position_score.fetch_region_values(
+            chrom, pos_begin, pos_end, sources,
         )
-        return [sagg.get_final() for sagg in scores_agg]
+        for row_left, row_right, values in fetch:
+            if values is None:
+                continue
+            n = max(pos_begin, row_left), min(pos_end, row_right)
+            n_positions = n[1] - n[0] + 1
+            for i, source in enumerate(sources):
+                raw[source].extend([values[i]] * n_positions)
+        return raw
 
     def _do_annotate(
         self, annotatable: Annotatable,
@@ -300,21 +312,24 @@ phastCons, phyloP, FitCons2, etc.
         if annotatable.chromosome not in self.score.get_all_chromosomes():
             return self._empty_result()
 
+        sources = list(dict.fromkeys(
+            attr.source for attr in self._attributes))
+
         if annotatable.type == Annotatable.Type.SUBSTITUTION:
             assert isinstance(annotatable, VCFAllele)
-            scores = self._fetch_substitution_scores(annotatable)
-        else:
-            if len(annotatable) > self._region_length_cutoff:
-                scores = None
-            else:
-                scores = self._fetch_aggregated_scores(
-                    annotatable.chrom, annotatable.pos, annotatable.pos_end)
-        if not scores:
-            return self._empty_result()
+            point_scores = self.position_score.fetch_scores(
+                annotatable.chromosome, annotatable.position, sources)
+            if not point_scores:
+                return self._empty_result()
+            return dict(zip(sources, point_scores, strict=True))
 
-        return dict(zip(
-                [att.name for att in self.attributes],
-                scores, strict=True))
+        if len(annotatable) > self._region_length_cutoff:
+            return self._empty_result()
+        raw = self._fetch_raw_region_scores(
+            annotatable.chrom, annotatable.pos, annotatable.pos_end, sources)
+        if not any(raw.values()):
+            return self._empty_result()
+        return raw
 
 
 def build_np_score_annotator(pipeline: AnnotationPipeline,
@@ -599,7 +614,9 @@ Non-``VCFAllele`` annotatables always use region aggregation.
                 allele_str += f":{attrs_str}"
             scores[self.allele_attribute.source] = [allele_str]
 
-        return {attr.name: scores.get(attr.source) for attr in self.attributes}
+        return {
+            attr.source: scores.get(attr.source) for attr in self.attributes
+        }
 
     def _annotate_region(
         self, annotatable: Annotatable,
@@ -649,7 +666,9 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         if self.allele_attribute is not None:
             scores[self.allele_attribute.source] = list(alleles)
 
-        return {attr.name: scores.get(attr.source) for attr in self.attributes}
+        return {
+            attr.source: scores.get(attr.source) for attr in self.attributes
+        }
 
     def _do_annotate(
         self, annotatable: Annotatable,

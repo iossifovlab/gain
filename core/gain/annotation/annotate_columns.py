@@ -7,11 +7,6 @@ import warnings
 from gain.annotation.annotate_tabular import (
     annotate_tabular as annotate_columns,
 )
-from gain.annotation.annotation_config import (
-    Attribute,
-    RawAnnotatorsConfig,
-    RawPipelineConfig,
-)
 
 warnings.warn(
     "gain.annotation.annotate_columns is deprecated; "

@@ -183,8 +183,7 @@ def build_pipeline_annotator(
     try:
         params = annotator_config.parameters
         if "work_dir" not in params.as_dict():
-            params._data["work_dir"] = str(work_dir)  # noqa: SLF001
-        params._used_keys.add("work_dir")  # noqa: SLF001
+            params.inject("work_dir", str(work_dir))
         builder = get_annotator_factory(annotator_config.type)
         annotator = builder(pipeline, annotator_config)
         annotator = InputAnnotableAnnotatorDecorator.decorate(annotator)

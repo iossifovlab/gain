@@ -28,7 +28,7 @@ class HelloWorldAnnotator(AnnotatorBase):
         self, annotatable: Annotatable,  # noqa: ARG002
         context: dict[str, Any],  # noqa: ARG002
     ) -> dict[str, Any]:
-        return {attr.name: "hello world" for attr in self._attributes}
+        return {attr.source: "hello world" for attr in self._attributes}
 
 
 def build_annotator(pipeline: AnnotationPipeline,

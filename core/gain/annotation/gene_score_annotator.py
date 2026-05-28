@@ -116,7 +116,7 @@ class GeneScoreAnnotator(AnnotatorBase):
         if genes is None:
             return self._empty_result()
         return {
-            attr.name: {
+            attr.source: {
                 sym: score
                 for sym in genes
                 if (score := self.score.get_gene_value(attr.source, sym))

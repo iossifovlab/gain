@@ -201,10 +201,7 @@ Simple effect annotator.
         result["gene_effects"] = "|".join(
             f"{gene}:{effect}" for gene, effect in gene_effects)
         result["effect_details"] = "|".join(details)
-        return {
-            attr.name: result.get(attr.source)
-            for attr in self._attributes
-        }
+        return result
 
     def cds_intron_regions(
         self,

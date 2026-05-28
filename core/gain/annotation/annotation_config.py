@@ -115,14 +115,21 @@ class ParamsUsageMonitor(Mapping):
         return self._data == other._data
 
     def get_used_keys(self) -> set[str]:
+        """Return the set of keys that have been accessed."""
         return self._used_keys
 
     def get_unused_keys(self) -> set[str]:
+        """Return the set of keys that have not been accessed."""
         return set(self._data.keys()) - self._used_keys
 
     def as_dict(self) -> dict[str, Any]:
         """Return a plain copy of all parameters without tracking."""
         return dict(self._data)
+
+    def inject(self, key: str, value: Any) -> None:
+        """Add a parameter and mark it as used (for framework injection)."""
+        self._data[key] = value
+        self._used_keys.add(key)
 
 
 @dataclass(eq=True)

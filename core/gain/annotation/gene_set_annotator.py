@@ -156,7 +156,4 @@ class GeneSetAnnotator(AnnotatorBase):
             if intersecting:
                 in_sets.append(gs.name)
 
-        return {
-            attr.name: source_output.get(attr.source)
-            for attr in self._attributes
-        }
+        return source_output

@@ -28,10 +28,10 @@ from gain.genomic_resources.testing import (
     setup_gzip,
 )
 
-
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def allele_score_grr() -> GenomicResourceRepo:
@@ -183,7 +183,8 @@ def test_position_score_default_name(t4c8_grr: GenomicResourceRepo) -> None:
     assert result["score_one"] == pytest.approx(0.01)
 
 
-def test_position_score_renamed_attribute(t4c8_grr: GenomicResourceRepo) -> None:
+def test_position_score_renamed_attribute(
+        t4c8_grr: GenomicResourceRepo) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - position_score:
             resource_id: genomic_scores/score_one
@@ -201,7 +202,8 @@ def test_position_score_renamed_attribute(t4c8_grr: GenomicResourceRepo) -> None
 # allele_score_annotator
 # ---------------------------------------------------------------------------
 
-def test_allele_score_default_name(allele_score_grr: GenomicResourceRepo) -> None:
+def test_allele_score_default_name(
+        allele_score_grr: GenomicResourceRepo) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - allele_score: allele_res
     """), allele_score_grr)
@@ -210,7 +212,8 @@ def test_allele_score_default_name(allele_score_grr: GenomicResourceRepo) -> Non
     assert result["af"] == pytest.approx(0.05)
 
 
-def test_allele_score_renamed_attribute(allele_score_grr: GenomicResourceRepo) -> None:
+def test_allele_score_renamed_attribute(
+        allele_score_grr: GenomicResourceRepo) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - allele_score:
             resource_id: allele_res
@@ -277,7 +280,8 @@ def test_normalize_allele_default_name(t4c8_grr: GenomicResourceRepo) -> None:
     assert result["normalized_allele"].pos == 5
 
 
-def test_normalize_allele_renamed_attribute(t4c8_grr: GenomicResourceRepo) -> None:
+def test_normalize_allele_renamed_attribute(
+        t4c8_grr: GenomicResourceRepo) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - normalize_allele_annotator:
             genome: normalize_genome_1
@@ -342,7 +346,8 @@ def test_effect_annotator_default_name(t4c8_grr: GenomicResourceRepo) -> None:
     assert result["gene_effects"] is not None
 
 
-def test_effect_annotator_renamed_attribute(t4c8_grr: GenomicResourceRepo) -> None:
+def test_effect_annotator_renamed_attribute(
+        t4c8_grr: GenomicResourceRepo) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - effect_annotator:
             gene_models: t4c8_genes
