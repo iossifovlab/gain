@@ -190,6 +190,60 @@ This command applies the local ``custom_pipeline.yaml`` file to the variants in 
 This approach is convenient for small tests and for developing custom pipelines. However, when annotation uses resources directly from the public GRR, it is practical only for small inputs. For larger inputs, configure local resource caching and parallel execution as described in the next sections.
 
 
+Caching resources for large annotation jobs
+-----------------------
+
+By default, GAIn can access genomic resources directly from a remote GRR. This works well for small examples, but large annotation jobs may require repeated access to many large resources over the network. To make these jobs faster and more reliable, GAIn supports local resource caching.
+
+When caching is enabled, GAIn downloads a required resource into a local cache directory the first time the resource is used. After that, GAIn uses the local copy for annotation and reuses it in future jobs without downloading it again.
+
+To enable caching, explicitly configure the GRR definition by adding a cache directory to the GRR definition file (i.e. ``~/grr_definition.yaml``). For example:
+
+.. code-block:: yaml
+
+    id: "my grrss"
+    type: group
+    children:
+    - id: "default"
+      type: "url"
+      url: "https://grr.iossifovlab.com"
+      cache_dir: "<cache_path>/grr_default_cache"
+
+After this configuration, GAIn downloads each required resource to the specified cache directory before using it for annotation. Because genomic resources can be large, the cache directory should have sufficient disk space and write permission for the user.
+
+This is especially important for large annotation pipelines. For example, a comprehensive clinical pipeline such as ``pipeline/hg38_clinical_annotation`` may require many large resources. These resources total approximately 120 GB and may take substantial time to download, depending on network speed and storage performance. Once cached, however, they can be reused directly from the local cache, making future annotation jobs much faster.
+
+GAIn can automatically download required resources during annotation. For large pipelines, however, it is often better to pre-download them before starting the annotation job. GAIn provides a dedicated tool for this purpose:
+
+.. code-block:: bash
+
+    grr_cache_repo pipeline/hg38_clinical_annotation
+
+This command downloads the resources required by the pipeline in one step, so that the actual annotation job does not need to pause while resources are being retrieved.
+
+Custom pipelines can also reduce the amount of data that must be cached. A broad clinical pipeline may require more than 100 GB of resources, whereas a focused custom pipeline may require only the resources needed for a specific analysis. For example, the custom pipeline shown above requires approximately 9 GB of resources. Custom pipelines therefore help control annotation content while reducing storage requirements and setup time. You can cache the resources for the custom pipeline used above with:
+
+.. code-block:: bash
+
+    grr_cache_repo custom_pipeline.yaml
+
+After the necessary resources have been cached, users can run large annotation jobs without waiting for GAIn to download each resource during the annotation process. To test this workflow, download the example :download:`50k_variants.txt <files/50k_variants.txt>` input file, which contains 50,000 variants.
+
+
+Depending on which pipeline you cached above, you can now run the annotation normally:
+
+.. code-block:: bash
+
+    annotate_tabular 50kvariants.csv pipeline/hg38_clinical_annotation
+
+or
+
+.. code-block:: bash
+
+    annotate_tabular 50kvariants.csv custom_pipeline.yaml
+
+Without caching, annotating a file of this size through remote resource access can take a very long time. With the required resources already cached, GAIn uses the local copies for annotation, making the same large-scale job much faster and less dependent on network performance.
+
 
 Outline for the rest of the guide
 ---------------------------------
