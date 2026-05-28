@@ -262,11 +262,11 @@
         dragLine.id = 'col-drag-line';
         document.body.appendChild(dragLine);
 
+        const MIN_WIDTH = 85;
+
         ths.forEach((th, i) => {
           const resizer = th.querySelector('.col-resizer');
           if (!resizer) return;
-
-          let startX, startLeftWidth, startRightWidth, minX, maxX;
 
           resizer.addEventListener('mousedown', (e) => {
             // Convert CSS percentage col widths to pixels on first drag so the
@@ -275,12 +275,21 @@
               ths.forEach((t, idx) => { cols[idx].style.width = t.offsetWidth + 'px'; });
               pixelWidthsInitialized = true;
             }
-            startX = e.clientX;
-            startLeftWidth = cols[i].offsetWidth;
-            startRightWidth = cols[i + 1] ? cols[i + 1].offsetWidth : 0;
-            // Clamp bounds so neither neighbour shrinks below 85px.
-            minX = startX - (startLeftWidth - 85);
-            maxX = cols[i + 1] ? startX + (startRightWidth - 85) : Infinity;
+
+            const startWidths = cols.map(c => parseInt(c.style.width, 10));
+            const startX = e.clientX;
+
+            // Cascade bounds: sum shrinkable space across all cols in each direction.
+            let rightRoom = 0;
+            for (let j = i + 1; j < cols.length; j++) {
+              rightRoom += Math.max(0, startWidths[j] - MIN_WIDTH);
+            }
+            let leftRoom = 0;
+            for (let j = i; j >= 0; j--) {
+              leftRoom += Math.max(0, startWidths[j] - MIN_WIDTH);
+            }
+            const minX = startX - leftRoom;
+            const maxX = startX + rightRoom;
 
             resizer.classList.add('resizing');
             document.body.style.cursor = 'col-resize';
@@ -305,10 +314,32 @@
               document.removeEventListener('mousemove', onMouseMove);
               document.removeEventListener('mouseup', onMouseUp);
 
-              // Apply the width change in one reflow on release.
               const delta = Math.min(maxX, Math.max(minX, ev.clientX)) - startX;
-              cols[i].style.width = (startLeftWidth + delta) + 'px';
-              if (cols[i + 1]) cols[i + 1].style.width = (startRightWidth - delta) + 'px';
+              const newWidths = [...startWidths];
+
+              if (delta > 0) {
+                // Dragging right: col[i] grows, right cols shrink one by one.
+                let toTake = delta;
+                for (let j = i + 1; j < cols.length && toTake > 0; j++) {
+                  const taken = Math.min(toTake, startWidths[j] - MIN_WIDTH);
+                  newWidths[j] = startWidths[j] - taken;
+                  toTake -= taken;
+                }
+                newWidths[i] = startWidths[i] + (delta - toTake);
+              } else if (delta < 0) {
+                // Dragging left: left cols shrink one by one, col[i+1] grows.
+                let toTake = -delta;
+                for (let j = i; j >= 0 && toTake > 0; j--) {
+                  const taken = Math.min(toTake, startWidths[j] - MIN_WIDTH);
+                  newWidths[j] = startWidths[j] - taken;
+                  toTake -= taken;
+                }
+                if (i + 1 < cols.length) {
+                  newWidths[i + 1] = startWidths[i + 1] + (-delta - toTake);
+                }
+              }
+
+              cols.forEach((c, j) => { c.style.width = newWidths[j] + 'px'; });
             };
 
             // Listeners on document, not the handle, so dragging outside the
