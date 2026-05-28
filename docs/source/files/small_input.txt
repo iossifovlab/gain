@@ -1,0 +1,4 @@
+chrom	pos	ref	alt
+chr14	21415880	G	A
+chr17	7674904	TCT	T
+chr7	117587806	G	A

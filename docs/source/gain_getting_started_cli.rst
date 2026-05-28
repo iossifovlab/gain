@@ -91,9 +91,9 @@ Quick annotation test
 
 After installation, GAIn can immediately run a small annotation test using the default IossifovLab GRR. This is a useful way to confirm that the command-line tools are working and can access the public resources.
 
-In this example, we annotate a small CSV file containing three variants. The test uses resources directly from the public GRR, so it is convenient for checking the setup but not intended for large annotation jobs.
+In this example, we annotate a small tab-separated text file containing three variants. The test uses resources directly from the public GRR, so it is convenient for checking the setup but not intended for large annotation jobs.
 
-:download:`Download the example input CSV file. <files/small_input.csv>` The file contains three variant annotatables, each described by the columns ``chrom``, ``pos``, ``ref``, and ``alt``, which specify the chromosome, genomic position, reference allele, and alternate allele:
+:download:`Download the example input file. <files/small_input.txt>` The file contains three variant annotatables, each described by the columns ``chrom``, ``pos``, ``ref``, and ``alt``, which specify the chromosome, genomic position, reference allele, and alternate allele:
 
 .. csv-table::
     :header-rows: 1
@@ -108,11 +108,11 @@ To annotate the file, run:
 
 .. code-block:: bash
     
-    annotate_tabular small_input.csv pipeline/hg38_clinical_annotation
+    annotate_tabular small_input.txt pipeline/hg38_clinical_annotation
 
-This command annotates ``small_input.csv`` using the predefined ``pipeline/hg38_clinical_annotation`` pipeline, which is hosted in the default GRR.
+This command annotates ``small_input.txt`` using the predefined ``pipeline/hg38_clinical_annotation`` pipeline, which is hosted in the default GRR.
 
-GAIn writes the annotated output to a new file whose name is derived from the input file. For example, the command above produces ``small_input_annotated.csv``, with the following content:
+GAIn writes the annotated output to a new file whose name is derived from the input file. For example, the command above produces ``small_input_annotated.txt``, with the following content:
 
 .. csv-table::
     :header-rows: 1
