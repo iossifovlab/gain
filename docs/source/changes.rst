@@ -1,6 +1,14 @@
 Release Notes
 =============
 
+* 2026.5.8
+    * ``annotate_tabular`` (and the deprecated ``annotate_columns``
+      alias) now defaults ``--input-separator`` to a comma when the
+      input filename has a ``.csv`` extension (optionally ``.gz`` or
+      ``.bgz`` compressed); all other inputs still default to a tab.
+      An explicit ``--input-separator``/``--in-sep`` always takes
+      precedence.
+
 * 2026.5.7
     * Moved the ``grr_cache_repo`` CLI from ``gpf`` into
       ``gain``.
