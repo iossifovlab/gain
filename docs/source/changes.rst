@@ -2,12 +2,34 @@ Release Notes
 =============
 
 * 2026.5.8
+    * Added a ``prepare_tabular`` CLI that sorts a (optionally
+      gzip-compressed) tabular file by genomic coordinates and writes
+      a bgzip-compressed, tabix-indexed output, so that
+      ``annotate_tabular`` can parallelize annotation across genomic
+      regions. It reuses the same ``--col-*`` options to derive the
+      sort and tabix keys, and orders chromosomes by a reference
+      genome when one is supplied (lexicographically otherwise).
     * ``annotate_tabular`` (and the deprecated ``annotate_columns``
       alias) now defaults ``--input-separator`` to a comma when the
       input filename has a ``.csv`` extension (optionally ``.gz`` or
       ``.bgz`` compressed); all other inputs still default to a tab.
       An explicit ``--input-separator``/``--in-sep`` always takes
       precedence.
+    * ``annotate_tabular`` and ``annotate_vcf`` now run sequentially
+      (forcing ``-j 1``) when the input cannot be split into genomic
+      regions — when it has no tabix index, or ``--region-size`` is
+      zero or negative — avoiding needless parallel-executor startup
+      overhead for what is a single-task run.
+    * ``annotate_tabular`` and ``annotate_vcf`` now run inside their
+      ``work_dir``, so the ``.tbi`` index files htslib downloads for
+      tabix/VCF score resources served over an http(s) GRR land in
+      ``work_dir`` instead of littering the directory the tool was
+      launched from. Path-bearing CLI arguments are absolutized
+      first, so the change of working directory is transparent.
+    * Fixed flicker and column-resize lag in the GRR browser index
+      table.
+    * Expanded the getting-started CLI tutorial with parallelization
+      and resource-caching sections.
 
 * 2026.5.7
     * Moved the ``grr_cache_repo`` CLI from ``gpf`` into
