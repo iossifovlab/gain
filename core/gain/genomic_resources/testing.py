@@ -9,6 +9,7 @@ import pathlib
 import shutil
 import tempfile
 import textwrap
+import uuid
 from collections.abc import Generator
 from typing import Any, cast
 from urllib.parse import urlparse
@@ -385,7 +386,13 @@ def build_http_test_protocol(
     http_path = pathlib.Path(__file__).parent.parent.parent
     http_path = http_path / "tests" / ".test_grr"
     assert http_path.parts[-2:] == ("tests", ".test_grr"), http_path
-    http_path = http_path / root_path.name
+    # Unique per invocation: the python-matrix runs the three core cells
+    # (py3.12/3.13/3.14) in parallel against a single host-mounted
+    # .test_grr, all running the same tests. Keying the serving directory
+    # on root_path.name alone made the cells collide -- one cell's rmtree
+    # deleted a directory another was still serving (gain-python-matrix
+    # build 30).
+    http_path = http_path / f"{root_path.name}-{uuid.uuid4().hex}"
     http_path.mkdir(parents=True, exist_ok=True)
     dest_proto = build_filesystem_test_protocol(http_path)
     copy_proto_genomic_resources(
