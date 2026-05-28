@@ -145,15 +145,18 @@ class GeneSetAnnotator(AnnotatorBase):
         genes_set = set(genes)
 
         in_sets: list[str] = []
-        output: dict[str, Any] = {"in_sets": in_sets}
+        source_output: dict[str, Any] = {"in_sets": in_sets}
         if self.gene_sets is None:
             raise ValueError(
                 f"The GeneSetAnnotator {self.gene_set_resource} "
                 f"is not open.")
         for gs in self.gene_sets:
             intersecting = list(genes_set.intersection(set(gs.syms)))
-            output[gs.name] = intersecting
+            source_output[gs.name] = intersecting
             if intersecting:
                 in_sets.append(gs.name)
 
-        return output
+        return {
+            attr.name: source_output.get(attr.source)
+            for attr in self._attributes
+        }
