@@ -5,22 +5,19 @@ Getting started on CLI
 Prerequisites
 -------------
 
-This guide assumes that you are working on a recent Linux or Mac OS X machine.
+This guide assumes that you are working on a recent Linux or macOS X machine.
 
 .. warning::
 
-    GAIn is not currently supported on Windows, but it can be run on Windows Subsystem for Linux (WSL) if you have that set up.
+    GAIn is not currently supported on Windows, but it can be run through Windows Subsystem for Linux (WSL) if you have WSL configured.
 
-We distribute GAIn as a Conda package and you can install it using ``conda install``. For a faster installation, we recommend using libmamba solver with conda or directly using the mamba alternative.
-If you do not have a distribution of Conda or Mamba package manager or if you don't understand this description, we suggest following the instruction to install mamba through Miniforge distribution available at `https://github.com/conda-forge/miniforge <https://github.com/conda-forge/miniforge>`_.
-
-
+GAIn is distributed as a Conda package and can be installed with ``conda install``. For faster installation, we recommend using the ``libmamba solver`` with Conda or using Mamba directly. If you do not already have Conda or Mamba installed, or if you are unfamiliar with these package managers, we recommend installing Mamba through the Miniforge distribution, available at: `https://github.com/conda-forge/miniforge <https://github.com/conda-forge/miniforge>`_.
 
 
 Installation
 ------------
 
-We assume that you have a working ``mamba``. If you don't have ``mamba`` but a working ``conda``, replace ``mamba`` with ``conda`` in the commands bellow. See above if you have no working conda or mamba.
+We assume that you have a working ``mamba`` installation. If you do not have ``mamba`` but have a working ``conda`` installation, replace ``mamba`` with ``conda`` in the commands below. If you have neither, install Mamba through Miniforge as described above.
 
 Start by creating an empty Conda environment named ``gain_cli``:
 
@@ -28,46 +25,47 @@ Start by creating an empty Conda environment named ``gain_cli``:
 
     mamba create -n gain_cli
 
-To use this environment, you need to activate it using the following command:
+To use this environment, activate it using the following command:
 
 .. code-block:: bash
 
     mamba activate gain_cli
 
-Afterwards, install the ``gain_core`` conda package:
+Then install the ``gain_core`` conda package:
 
 .. code-block:: bash
 
     mamba install -c conda-forge -c bioconda -c iossifovlab gain-core
 
-This command is going to install GAIn and all of its dependencies.
-
-A simple test to confirm that GAIn is installed correctly is to run the following command:
+This command installs GAIn and all of its dependencies. A simple test to confirm that GAIn is installed correctly is to run:
 
 .. code-block:: bash
 
-    grr_browse --version
+    grr_browse --version []
 
-The result should be something like this:
+The result should look similar to this:
 
 .. code-block:: bash
 
     GAIn version: 2026.5.5
 
+
 Note that the version number may be different depending on when you install GAIn, but the command should run without error and print a version number.
+
+
 
 Browse available resources
 -----------------------------------------
 
 
-GAIn installs with access to the default IossifovLab GRR.
-You can confirm which GRRs are available to you and browse the resources hosted on them by running the command below:
+GAIn is installed with access to the default IossifovLab GRR. You can confirm which GRRs are available to you and browse the resources hosted on them by running:
+
 
 .. code-block:: bash
 
     grr_browse
 
-This will show that you have access to the IossifovLab GRR server and lists all the resources available to you on that server.
+This shows that you have access to the IossifovLab GRR server and lists all the resources available from that server.
 
 .. code-block:: bash
 
@@ -85,10 +83,7 @@ This will show that you have access to the IossifovLab GRR server and lists all 
     ...
 
 
-This contains tons information. The first line, tells us that we are using the default GRR definition, which points to the IossifovLab GRR server.
-The next three lines show the default configuration. This where the tools shows the configuration even it is not default, so it is always good to check this section to confirm that you are connected to the expected GRR server and that the configuration is correct. In this case, the default GRR server is ``https://grr.iossifovlab.com`` and the default resource namespace is ``default``.
-The next lines list the resources available to us on that server, including their type (gene_score), their size, and their resource ID (e.g. ``default/gene_properties/gene_scores/GTEx_V11_RNAexpression``).
-The resource ID is what we will use to refer to these resources in our annotation pipelines.
+This output contains several pieces of information. The first line shows that GAIn is using the default GRR definition, which points to the IossifovLab GRR server. The next three lines show the default configuration. This section is useful for confirming that GAIn is connected to the expected GRR server. In this example, the GRR server is ``https://grr.iossifovlab.com`` and the resource namespace is ``default``. The following lines list the resources available on that server, including their type, size, and resource ID. For example, ``default/gene_properties/gene_scores/GTEx_V11_RNAexpression`` is the resource ID for the GTEx V11 RNA expression gene score resource. Resource IDs are used to refer to resources in annotation pipelines.
 
 
 Quick annotation test
@@ -245,6 +240,49 @@ or
 Without caching, annotating a file of this size through remote resource access can take a very long time. With the required resources already cached, GAIn uses the local copies for annotation, making the same large-scale job much faster and less dependent on network performance.
 
 
+
+Parallelizing large annotation jobs
+-----------
+
+Annotation can be computationally intensive, especially for large input files or pipelines with many steps. Because GAIn annotates each annotatable independently, these jobs can be accelerated by splitting the input into genomic regions and processing those regions in parallel across multiple CPU cores or cluster workers. Users could do this manually by splitting an input file into chunks, annotating each chunk separately, and merging the results. To avoid this extra workflow management, GAIn provides built-in parallelization support for indexed input files.
+
+To use GAIn's parallelization features, the input file must be sorted by genomic coordinates and indexed with tabix, a widely used genomic indexing tool that is installed automatically with GAIn. This requirement applies to both input formats supported by GAIn: tabular files and VCF files. VCF files can be sorted and indexed with bcftools, while tabular files can be sorted, compressed with bgzip, and indexed with tabix. See the “Preparing annotation input files for parallelization”[] section for details and examples.
+
+When GAIn detects an indexed input file, it splits the annotation job into smaller tasks and executes them in parallel using a Dask cluster. By default, GAIn uses the available CPU cores on the host where the annotation command is run. For larger jobs, users can control both how the input is split and how many workers are used.
+
+The degree of parallelization can be controlled with the ``-j`` option, which specifies the number of workers. The optimal value depends on the input size, pipeline complexity, available CPU cores, memory, and storage performance.
+
+For example, after downloading the example :download:`200k_variants.txt <files/200k_variants.txt>` input file which has 200,000 variants, sort and index it:
+
+.. code-block:: bash
+
+    sort ... 200K_variants.txt | bgzip > 200K_variants.txt.gz
+    tabix -s 1 -b 2 -e 2 200K_variants.txt.gz
+
+Then run the annotation:
+
+.. code-block:: bash
+
+    annotate_tabular 200K_variants.txt.gz pipeline/hg38_clinical_annotation
+
+GAIn splits indexed inputs by chromosome. For very large input files, chromosome-level splitting may create tasks that are too large or uneven. The ``-r`` option can instead split the input into genomic regions of a specified size:
+
+.. code-block:: bash
+
+    annotate_tabular 200K_variants.txt.gz pipeline/hg38_clinical_annotation -r 30_000_000
+
+GAIn can also use a configured Dask cluster that creates workers on a larger compute system, such as SGE or SLURM. For example, if a Dask cluster named ``my_sge_cluster`` has been configured to create workers on an SGE cluster, the annotation can be run with:
+
+.. code-block:: bash
+
+    annotate_tabular 200K_variants.txt.gz pipeline/hg38_clinical_annotation -r 30_000_000 -N my_sge_cluster -j 100
+
+This runs the annotation across up to 100 workers on the configured cluster. See the “Configuring parallelization”[] and “Configuring Dask clusters”[] sections for more details on region splitting, worker configuration, and cluster setup.
+
+
+
+
+
 Outline for the rest of the guide
 ---------------------------------
 
@@ -275,6 +313,7 @@ Outline for the rest of the guide
         type: http
         url: https://grr.iossifovlab.com
         cache_dir: </path/to/cache/dir>
+
   * After this configuration, when GAIn needs a resrouce it will first downloaded to the specified cache directory. Unfortunately, resource are often large and downloading them takes time and space. The use should choose the cache directory carefully to ensure that it has enough space and that the user has permission to write to it. After the resource is downloaded, it will be used for annotation, and it will be available for future annotation jobs without needing to download it again.
   * The resource size is particualry big problem for large annotation pipeline, like the ``pipeline/hg38_clinical_anotation``, that use many large resrouces.
   * The total size of resources need by the ``pipeline/hg38_clinical_anotation`` is 120G, and it may take ~1 hour to download them all. But once they are downloaded, they can be used for annotation without needing to download them again, and all future annotations will be much faster.
