@@ -8,7 +8,7 @@ import pathlib
 import sys
 import traceback
 from collections.abc import Iterable, Sequence
-from contextlib import closing
+from contextlib import chdir, closing
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -567,41 +567,46 @@ def cli(argv: list[str] | None = None) -> None:
 
     args = handle_default_args(args)
 
-    context = build_cli_genomic_context(args)
-    pipeline = get_pipeline_from_context(context)
-    grr = get_grr_from_context(context)
-    assert grr.definition is not None
+    # Run inside work_dir so that intermediate files created by worker
+    # processes (e.g. htslib downloading a remote tabix .tbi index over
+    # http) land in work_dir instead of the launch directory. Workers
+    # spawned by process_graph inherit this working directory.
+    with chdir(args["work_dir"]):
+        context = build_cli_genomic_context(args)
+        pipeline = get_pipeline_from_context(context)
+        grr = get_grr_from_context(context)
+        assert grr.definition is not None
 
-    cache_pipeline_resources(grr, pipeline)
+        cache_pipeline_resources(grr, pipeline)
 
-    output_path = args["output"]
-    region_size = args["region_size"]
+        output_path = args["output"]
+        region_size = args["region_size"]
 
-    task_graph = TaskGraph()
-    if tabix_index_filename(args["input"]) and region_size > 0:
-        _add_tasks_tabixed(
-            args,
-            task_graph,
-            output_path,
-            pipeline.raw,
-            grr.definition,
-        )
-    else:
-        logger.info(
-            "input %s cannot be split into genomic regions; "
-            "forcing sequential execution (-j 1)",
-            args["input"])
-        args["jobs"] = 1
-        _add_tasks_plaintext(
-            args,
-            task_graph,
-            output_path,
-            pipeline.raw,
-            grr.definition,
-        )
+        task_graph = TaskGraph()
+        if tabix_index_filename(args["input"]) and region_size > 0:
+            _add_tasks_tabixed(
+                args,
+                task_graph,
+                output_path,
+                pipeline.raw,
+                grr.definition,
+            )
+        else:
+            logger.info(
+                "input %s cannot be split into genomic regions; "
+                "forcing sequential execution (-j 1)",
+                args["input"])
+            args["jobs"] = 1
+            _add_tasks_plaintext(
+                args,
+                task_graph,
+                output_path,
+                pipeline.raw,
+                grr.definition,
+            )
 
-    add_input_files_to_task_graph(args, task_graph)
-    TaskGraphCli.process_graph(task_graph, **args)
+        add_input_files_to_task_graph(args, task_graph)
+        TaskGraphCli.process_graph(task_graph, **args)
 
 
 def _annotate_vcf_helper(

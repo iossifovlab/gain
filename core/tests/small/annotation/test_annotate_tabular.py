@@ -48,12 +48,14 @@ from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
 from gain.genomic_resources.testing import (
+    build_http_test_protocol,
     setup_denovo,
     setup_directories,
     setup_genome,
     setup_gzip,
     setup_tabix,
 )
+from gain.task_graph.cli_tools import TaskGraphCli
 from gain.task_graph.logging import FsspecHandler
 from gain.utils.regions import Region as GenomicRegion
 
@@ -337,6 +339,127 @@ def test_annotate_tabular_non_splittable_forces_sequential(
 
     process_graph.assert_called_once()
     assert process_graph.call_args.kwargs["jobs"] == 1
+
+
+def test_annotate_tabular_cli_runs_in_work_dir_and_restores_cwd(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    in_content = textwrap.dedent("""
+        chrom   pos
+        chr1    23
+        chr1    24
+    """)
+    root_path = annotate_directory_fixture
+    in_file = tmp_path / "in.txt"
+    out_file = tmp_path / "out.txt"
+    work_dir = tmp_path / "work"
+    annotation_file = root_path / "annotation.yaml"
+    grr_file = root_path / "grr.yaml"
+    setup_denovo(in_file, in_content)
+
+    real_process_graph = TaskGraphCli.process_graph
+    captured_cwd: dict[str, str] = {}
+
+    def _spy(task_graph: Any, **kwargs: Any) -> bool:
+        captured_cwd["value"] = os.getcwd()
+        return real_process_graph(task_graph, **kwargs)
+
+    mocker.patch.object(TaskGraphCli, "process_graph", side_effect=_spy)
+
+    cwd_before = os.getcwd()
+    cli([
+        str(a) for a in [
+            in_file, annotation_file, "--grr", grr_file, "-o", out_file,
+            "-w", work_dir, "-j", 1,
+        ]
+    ])
+
+    # During the run, the working directory is the work_dir so that
+    # worker-side htslib index downloads land inside it.
+    assert os.path.realpath(captured_cwd["value"]) == \
+        os.path.realpath(work_dir)
+    # The original working directory is restored once the tool finishes.
+    assert os.getcwd() == cwd_before
+
+
+@pytest.mark.grr_http
+def test_annotate_tabular_http_grr_contains_tbi_in_work_dir(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    if not request.config.getoption("enable_http"):
+        pytest.skip("HTTP testing not enabled (use --enable-http-testing)")
+
+    repo_path = tmp_path / "grr_repo"
+    setup_directories(repo_path, {
+        "score_one": {
+            "genomic_resource.yaml": textwrap.dedent("""
+                type: position_score
+                table:
+                  filename: data.txt.gz
+                  format: tabix
+                  header_mode: none
+                  chrom:
+                    index: 0
+                  pos_begin:
+                    index: 1
+                  pos_end:
+                    index: 2
+                scores:
+                - id: score
+                  index: 3
+                  type: float
+            """),
+        },
+    })
+    setup_tabix(
+        repo_path / "score_one" / "data.txt.gz",
+        textwrap.dedent("""
+        chr1   23   23   0.1
+        chr1   24   24   0.2
+        """).strip(),
+        seq_col=0, start_col=1, end_col=2)
+
+    in_file = tmp_path / "in.txt"
+    setup_denovo(in_file, textwrap.dedent("""
+        chrom   pos
+        chr1    23
+        chr1    24
+    """))
+
+    with build_http_test_protocol(repo_path) as http_proto:
+        annotation_file = tmp_path / "annotation.yaml"
+        annotation_file.write_text("- position_score: score_one\n")
+        grr_file = tmp_path / "grr.yaml"
+        grr_file.write_text(f"type: http\nurl: {http_proto.url}\n")
+
+        out_file = tmp_path / "out.txt"
+        work_dir = tmp_path / "work"
+
+        # Launch from a clean directory: htslib downloads the remote .tbi
+        # index relative to the working directory, and that must be work_dir
+        # rather than the directory the user launched the tool from.
+        launch_dir = tmp_path / "launch"
+        launch_dir.mkdir()
+        monkeypatch.chdir(launch_dir)
+        cwd_before = os.getcwd()
+
+        cli([
+            str(a) for a in [
+                in_file, annotation_file, "--grr", grr_file,
+                "-o", out_file, "-w", work_dir, "-j", 1,
+            ]
+        ])
+
+    assert list(launch_dir.glob("*.tbi")) == [], \
+        "remote tabix index leaked into the launch directory"
+    assert list(work_dir.rglob("*.tbi")), \
+        "expected the remote tabix index to be contained in work_dir"
+    assert os.getcwd() == cwd_before
+    assert out_file.read_text().splitlines()[0].split("\t")[-1] == "score"
 
 
 def test_annotate_tabular_splittable_keeps_jobs(
