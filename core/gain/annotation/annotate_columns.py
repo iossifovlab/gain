@@ -7,6 +7,9 @@ import warnings
 from gain.annotation.annotate_tabular import (
     annotate_tabular as annotate_columns,
 )
+from gain.annotation.annotate_tabular import (
+    cli as _cli,
+)
 
 warnings.warn(
     "gain.annotation.annotate_columns is deprecated; "
