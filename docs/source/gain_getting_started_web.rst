@@ -106,3 +106,33 @@ This concludes the Getting Started on the Web section, which demonstrated how to
 The `GAIn web Interface <https://iossifovlab.com/gaindocs/web_interface.html>`_ section below will describe the 
 web interface in more detail, 
 including custom annotation pipelines, registration, and additional features of the site.
+
+
+Adding public GRRs
+-------------------------
+
+So far, the annotation examples have used resources from the main IossifovLab GRR. We also provide another public repository, `GRR-ENCODE <https://grr-encode.iossifovlab.com/>`_, which contains ENCODE-derived functional genomics tracks that can be used in annotation pipelines. GRR-ENCODE contains approximately 8,000 resources, including ATAC-seq, DNase-seq, histone ChIP-seq, and transcription factor ChIP-seq tracks. 
+
+To use these resources, add GRR-ENCODE to the GRR definition file, ``~/.grr_definition.yaml``. The configuration below connects GAIn to both the main GRR and GRR-ENCODE:
+
+.. code-block:: yaml
+
+    id: "development"
+    type: group
+    children:
+    - id: "GRR"
+      type: "url"
+      url: "https://grr.iossifovlab.com"
+
+    - id: "GRR-ENCODE"
+      type: "url"
+      url: "https://grr-encode.iossifovlab.com"
+
+With this configuration, GAIn can use resources from both repositories. For example, after adding GRR-ENCODE to the GRR definition file, a pipeline can use an ENCODE transcription factor ChIP-seq resource as a position score annotator:
+
+.. code-block:: yaml
+
+    - position_score_annotator:
+        resource_id: TF_ChIP-seq/ENCSR000AHD
+
+This makes ENCODE-derived regulatory tracks available through the same pipeline syntax used for other position score resources.

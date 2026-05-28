@@ -93,7 +93,7 @@ After installation, GAIn can immediately run a small annotation test using the d
 
 In this example, we annotate a small tab-separated text file containing three variants. The test uses resources directly from the public GRR, so it is convenient for checking the setup but not intended for large annotation jobs.
 
-:download:`Download the example input file. <files/small_input.txt>` The file contains three variant annotatables, each described by the columns ``chrom``, ``pos``, ``ref``, and ``alt``, which specify the chromosome, genomic position, reference allele, and alternate allele:
+Download the example input CSV file (:download:`small_input.csv<files/small_input.csv>`), whose content is shown below. The file contains three variant annotatables, each described by the columns ``chrom``, ``pos``, ``ref``, and ``alt``, which specify the chromosome, genomic position, reference allele, and alternate allele:
 
 .. csv-table::
     :header-rows: 1
@@ -110,9 +110,9 @@ To annotate the file, run:
     
     annotate_tabular small_input.txt pipeline/hg38_clinical_annotation
 
-This command annotates ``small_input.txt`` using the predefined ``pipeline/hg38_clinical_annotation`` pipeline, which is hosted in the default GRR.
+This command annotates ``small_input.csv`` using the predefined ``pipeline/hg38_clinical_annotation`` pipeline, which is hosted in the default GRR.
 
-GAIn writes the annotated output to a new file whose name is derived from the input file. For example, the command above produces ``small_input_annotated.txt``, with the following content:
+GAIn writes the annotated output to a new file whose name is derived from the input file. For example, the command above produces ``small_input_annotated.csv``, with the following content:
 
 .. csv-table::
     :header-rows: 1
@@ -132,7 +132,7 @@ In the quick annotation test, we used a predefined pipeline from the default GRR
 
 In this example, we will annotate the same three variants from ``small_input.csv``, but this time using a custom pipeline stored locally as ``custom_pipeline.yaml``.
 
-:download:`Download the example custom annotation pipeline file <files/custom_pipeline.yaml>`, whose content is shown below. 
+Download the example custom annotation pipeline file (:download:`custom_pipeline.yaml <files/custom_pipeline.yaml>`), whose content is shown below. 
 
 .. code-block:: yaml
 
@@ -182,7 +182,7 @@ This command applies the local ``custom_pipeline.yaml`` file to the variants in 
     chr7,117587806,G,A,missense,0.917,Pathogenic,CFTR-related_disorder|Cystic_fibrosis|Congenital_bilateral_aplasia_of_vas_deferens_from_CFTR_mutation|not_provided|Hereditary_pancreatitis|Bronchiectasis_with_or_without_elevated_sweat_chloride_1|ivacaftor_response_-_Efficacy
 
 
-This approach is convenient for small tests and for developing custom pipelines. However, when annotation uses resources directly from the public GRR, it is practical only for small inputs. For larger inputs, configure local resource caching and parallel execution as described in the next sections.
+This approach is convenient for small tests and for developing custom pipelines. However, when annotation uses resources directly from the public GRR, it is practical only for small inputs. For larger inputs, input files should be sorted by genomic coordinates for more efficient processing. Users can also configure local resource caching and parallel execution, as described in the next sections.
 
 
 Caching resources for large annotation jobs
@@ -192,7 +192,7 @@ By default, GAIn can access genomic resources directly from a remote GRR. This w
 
 When caching is enabled, GAIn downloads a required resource into a local cache directory the first time the resource is used. After that, GAIn uses the local copy for annotation and reuses it in future jobs without downloading it again.
 
-To enable caching, explicitly configure the GRR definition by adding a cache directory to the GRR definition file (i.e. ``~/grr_definition.yaml``). For example:
+To enable caching, explicitly configure the GRR definition by adding a cache directory to the GRR definition file (i.e. ``~/.grr_definition.yaml``). For example:
 
 .. code-block:: yaml
 
@@ -212,7 +212,7 @@ GAIn can automatically download required resources during annotation. For large 
 
 .. code-block:: bash
 
-    grr_cache_repo pipeline/hg38_clinical_annotation
+    grr_cache_repo --pipeline pipeline/hg38_clinical_annotation
 
 This command downloads the resources required by the pipeline in one step, so that the actual annotation job does not need to pause while resources are being retrieved.
 
@@ -220,29 +220,29 @@ Custom pipelines can also reduce the amount of data that must be cached. A broad
 
 .. code-block:: bash
 
-    grr_cache_repo custom_pipeline.yaml
+    grr_cache_repo --pipeline custom_pipeline.yaml
 
-After the necessary resources have been cached, users can run large annotation jobs without waiting for GAIn to download each resource during the annotation process. To test this workflow, download the example :download:`50k_variants.txt <files/50k_variants.txt>` input file, which contains 50,000 variants.
+After the necessary resources have been cached, users can run large annotation jobs without waiting for GAIn to download each resource during the annotation process. To test this workflow, download the example input file (:download:`50k_variants.txt <files/50k_variants.txt>`), which contains 50,000 variants.
 
 
 Depending on which pipeline you cached above, you can now run the annotation normally:
 
 .. code-block:: bash
 
-    annotate_tabular 50kvariants.csv pipeline/hg38_clinical_annotation
+    annotate_tabular 50k_variants.txt pipeline/hg38_clinical_annotation
 
 or
 
 .. code-block:: bash
 
-    annotate_tabular 50kvariants.csv custom_pipeline.yaml
+    annotate_tabular 50k_variants.txt custom_pipeline.yaml
 
 Without caching, annotating a file of this size through remote resource access can take a very long time. With the required resources already cached, GAIn uses the local copies for annotation, making the same large-scale job much faster and less dependent on network performance.
 
 
 
 Parallelizing large annotation jobs
------------
+-----------------------------------
 
 Annotation can be computationally intensive, especially for large input files or pipelines with many steps. Because GAIn annotates each annotatable independently, these jobs can be accelerated by splitting the input into genomic regions and processing those regions in parallel across multiple CPU cores or cluster workers. Users could do this manually by splitting an input file into chunks, annotating each chunk separately, and merging the results. To avoid this extra workflow management, GAIn provides built-in parallelization support for indexed input files.
 
@@ -252,30 +252,33 @@ When GAIn detects an indexed input file, it splits the annotation job into small
 
 The degree of parallelization can be controlled with the ``-j`` option, which specifies the number of workers. The optimal value depends on the input size, pipeline complexity, available CPU cores, memory, and storage performance.
 
-For example, after downloading the example :download:`200k_variants.txt <files/200k_variants.txt>` input file which has 200,000 variants, sort and index it:
+
+For example, after downloading the example input file (:download:`200k_variants.txt <files/200k_variants.txt>`), which contains 200,000 variants, prepare it for parallel annotation by running:
 
 .. code-block:: bash
 
-    sort ... 200K_variants.txt | bgzip > 200K_variants.txt.gz
-    tabix -s 1 -b 2 -e 2 200K_variants.txt.gz
+    prepare_tabular 200k_variants.txt
+
+When run successfully, this command produces two files: ``200k_variants.sorted.tsv.bgz``, which contains the sorted and compressed version of the input file, and ``200k_variants.sorted.tsv.bgz.tbi``, its associated tabix index. These two files enable parallelization and fast genomic-region access in GAIn.
+
 
 Then run the annotation:
 
 .. code-block:: bash
 
-    annotate_tabular 200K_variants.txt.gz pipeline/hg38_clinical_annotation
+    annotate_tabular 200k_variants.sorted.tsv.bgz pipeline/hg38_clinical_annotation
 
 GAIn splits indexed inputs by chromosome. For very large input files, chromosome-level splitting may create tasks that are too large or uneven. The ``-r`` option can instead split the input into genomic regions of a specified size:
 
 .. code-block:: bash
 
-    annotate_tabular 200K_variants.txt.gz pipeline/hg38_clinical_annotation -r 30_000_000
+    annotate_tabular 200k_variants.sorted.tsv.bgz pipeline/hg38_clinical_annotation -r 30_000_000
 
 GAIn can also use a configured Dask cluster that creates workers on a larger compute system, such as SGE or SLURM. For example, if a Dask cluster named ``my_sge_cluster`` has been configured to create workers on an SGE cluster, the annotation can be run with:
 
 .. code-block:: bash
 
-    annotate_tabular 200K_variants.txt.gz pipeline/hg38_clinical_annotation -r 30_000_000 -N my_sge_cluster -j 100
+    annotate_tabular 200k_variants.sorted.tsv.bgz pipeline/hg38_clinical_annotation -r 30_000_000 -N my_sge_cluster -j 100
 
 This runs the annotation across up to 100 workers on the configured cluster. See the “Configuring parallelization”[] and “Configuring Dask clusters”[] sections for more details on region splitting, worker configuration, and cluster setup.
 
@@ -361,97 +364,7 @@ Outline for the rest of the guide
 * Re-annotation
 * Add grr-encode
 
-Simple annotation pipeline
---------------------------
 
-Using the command-line tools, users can annotate large sets of variants, positions, or regions 
-on a standard personal computer. 
-As a simple example, we will annotate the following three variants.
-
-.. csv-table::
-    :file: files/small_input.csv
-    :header-rows: 1
-
-
-Bala :download:`Download the example input CSV <files/small_input.csv>` nica.
-
-
-The input consists of chromosomal positions, the reference allele and the alternate allele. 
-The user should create a file named ``variants.txt`` with this content in a working folder of their choice. The columns should be tab-separated.
-
-In order to tell GAIn which annotation attributes we are interested in, we use simple YAML files called annotation pipelines. 
-Below we will introduce a simple annotation pipeline which we will use on ``variants.txt`` in the next section.
-
-The preamble section is optional and can be used to define the genome the variants are in and to store additional 
-metadata about the pipeline.
-
-.. code-block:: yaml
-
-    preamble:
-      summary: Simple pipeline 
-      input_reference_genome: hg38/genomes/GRCh38-hg38
-
-After the preamble, various annotators are listed. Annotation runs from top to bottom. 
-Attributes produced by earlier annotators can be used by later annotators. The following 
-lines tell GAIn to use version 1.3 of the MANE gene model to find which genes are affected by 
-each variant and what the worst predicted effect is.
-
-.. code-block:: yaml
-
-    annotators:
-
-    - effect_annotator:
-        gene_models: hg38/gene_models/MANE/1.3
-        attributes:
-        - worst_effect
-        - gene_list
-
-Next is a position score annotator. phyloP7way provides a score for conservation at this genomic coordinate, 
-computed from a multiple alignment of seven species.
-
-.. code-block:: yaml
-
-    - position_score_annotator:
-        resource_id: hg38/scores/phyloP7way
-
-Next, we add allele scores from ClinVar: CLNSIG, which encodes the clinical significance of a 
-variant (e.g. benign, pathogenic), and CLNDN, the associated disease name. Allele score annotators are 
-preceded by a ``normalize_allele_annotator``, which expresses the allele in canonical form.
-
-.. code-block:: yaml
-
-    - normalize_allele_annotator
-
-    - allele_score_annotator: 
-        resource_id: hg38/scores/ClinVar_20240730 
-        input_annotatable: normalized_allele
-        attributes:
-        - CLNSIG
-        - CLNDN
-
-Copy all of the pipeline lines above into a new text file called ``annotation_pipeline.yaml``.
-
-Annotating tabular input
----------------------------------
-
-GAIn performs annotations by combining three ingredients: the genomic resources (in one or more GRRs), 
-the annotatables to annotate, and a YAML annotation pipeline describing which attributes to compute. 
-Now that all three are in place, we can execute the following command to apply the pipeline to our tabular variant file:
-
-.. code-block:: bash
-
-    annotate_tabular variants.txt annotation_pipeline.yaml
-
-This command tells GAIn to annotate the tabular file called ``variants.txt`` using ``annotation_pipeline.yaml``. 
-Running this command produces an output file named ``variants_annotated.txt``, shown below.
-
-.. csv-table::
-    :header-rows: 1
-
-    chrom,pos,ref,alt,worst_effect,genes,phylop7way,CLNSIG,CLNDN
-    chr14,21415880,G,A,nonsense,CHD8,0.917,Pathogenic/Likely_pathogenic,Intellectual_developmental_disorder_with_autism_and_macrocephaly|not_provided
-    chr17,7674904,TCT,T,frame-shift,TP53,-0.12,Pathogenic,Li-Fraumeni_syndrome_1|Hereditary_cancer-predisposing_syndrome|Li-Fraumeni_syndrome|Ovarian_neoplasm|not_provided|TP53-related_disorder
-    chr7,117587806,G,A,missense,CFTR,0.917,Pathogenic,Hereditary_pancreatitis|CFTR-related_disorder|Cystic_fibrosis|Congenital_bilateral_aplasia_of_vas_deferens_from_CFTR_mutation|ivacaftor_response_-_Efficacy|Bronchiectasis_with_or_without_elevated_sweat_chloride_1|not_provided
 
 Annotating VCF input
 -----------------------------
@@ -739,3 +652,143 @@ from the earlier run.
     chr17,7674904,TCT,T,TP53,frame-shift,-0.12,-0.076,-1.14
     chr7,117587806,G,A,CFTR,missense,0.917,1.18,8.82
 
+
+
+Adding public GRRs
+-------------------------
+
+So far, the annotation examples have used resources from the main IossifovLab GRR. We also provide another public repository, `GRR-ENCODE <https://grr-encode.iossifovlab.com/>`_, which contains ENCODE-derived functional genomics tracks that can be used in annotation pipelines. GRR-ENCODE contains approximately 8,000 resources, including ATAC-seq, DNase-seq, histone ChIP-seq, and transcription factor ChIP-seq tracks. 
+
+To use these resources, add GRR-ENCODE to the GRR definition file, ``~/.grr_definition.yaml``. The configuration below connects GAIn to both the main GRR and GRR-ENCODE:
+
+.. code-block:: yaml
+
+    id: "development"
+    type: group
+    children:
+    - id: "GRR"
+      type: "url"
+      url: "https://grr.iossifovlab.com"
+
+    - id: "GRR-ENCODE"
+      type: "url"
+      url: "https://grr-encode.iossifovlab.com"
+
+With this configuration, GAIn can use resources from both repositories. For example, after adding GRR-ENCODE to the GRR definition file, a pipeline can use an ENCODE transcription factor ChIP-seq resource as a position score annotator:
+
+.. code-block:: yaml
+
+    - position_score_annotator:
+        resource_id: TF_ChIP-seq/ENCSR000AHD
+
+This makes ENCODE-derived regulatory tracks available through the same pipeline syntax used for other position score resources.
+
+
+
+Adding local GRRs
+-----------------
+
+In addition to connecting GAIn to public GRRs, users can create local GRRs containing their own resources. These resources may come from downloaded public data, processed datasets, or experimental results generated in a specific project.
+
+As a minimal example resource, download the experimental score file (:download:`experimental_scores.tsv <files/experimental_scores.tsv>`) which contains five scores measured at five genomic positions:suppose we have an experimental score measured at five genomic positions. Three of these positions correspond to the variants used in "`Quick Annotation Test <file:///Users/muratcokol/Desktop/gain/docs/build/html/gain_getting_started_cli.html#quick-annotation-test>`_".
+
+.. csv-table::
+    :header-rows: 1
+
+    chrom,pos,experimental_scores
+    chr14,21415880,0.82
+    chr17,7674904,0.15
+    chr7,117587806,0.94
+    chr1,11800000,0.31
+    chr3,50000000,0.67
+
+To make this file available as a GAIn resource, place it in a folder together with a :download:`genomic_resource.yaml <files/genomic_resource.yaml>` file:
+
+.. code-block:: text
+
+    My_First_GRR/
+    └── my_score/
+        ├── experimental_scores.tsv
+        └── genomic_resource.yaml
+
+The ``genomic_resource.yaml`` file describes the resource to GAIn:
+
+.. code-block:: yaml
+
+    type: position_score
+
+    table:
+    filename: experimental_scores.tsv
+    header_mode: file
+
+    scores:
+    - id: my_score
+        type: float
+        name: experimental_scores
+
+After creating this folder structure, initialize ``My_First_GRR`` as a local GRR:
+
+.. code-block:: bash
+
+    cd My_First_GRR
+    grr_manage repo-init
+
+Then add the local GRR to the GRR definition file, ``~/.grr_definition.yaml``. For example, the configuration below connects GAIn to the main GRR, GRR-ENCODE, and the new local GRR:
+
+.. code-block:: yaml
+
+    id: "development"
+    type: group
+    children:
+    - id: "GRR"
+      type: "url"
+      url: "https://grr.iossifovlab.com"
+
+    - id: "GRR-ENCODE"
+      type: "url"
+      url: "https://grr-encode.iossifovlab.com"
+
+    - id: "My_First_GRR"
+      type: "directory"
+      directory: "<path>/My_First_GRR"
+
+
+With this configuration, GAIn can use the local resource in annotation pipelines, as well as the public resources in the main GRR and GRR-ENCODE. For example, the following custom pipeline combines resources from all three repositories: a gene-effect annotator from the main GRR, a transcription factor ChIP-seq track from GRR-ENCODE, and the local experimental score from ``My_First_GRR``.
+
+Download the example pipeline (:download:`multiple_grr_pipeline.yaml <files/multiple_grr_pipeline.yaml>`) which uses multiple GRRs: 
+
+.. code-block:: yaml
+
+    preamble:
+      summary: Pipeline using public and local GRRs
+      input_reference_genome: hg38/genomes/GRCh38-hg38
+
+    annotators:
+    - effect_annotator:
+        gene_models: hg38/gene_models/MANE/1.5
+        attributes:
+        - worst_effect
+        - gene_list
+
+    - position_score_annotator:
+        resource_id: ATAC-seq_ENCSR814RGG
+
+    - position_score_annotator:
+        resource_id: my_score
+
+
+To annotate the original example input with this pipeline, run:
+
+.. code-block:: bash
+
+    annotate_tabular small_input.csv multiple_grr_pipeline.yaml -o small_input_multiple_grr_annotated.csv
+
+The output contains the effect annotations, the ENCODE-derived position score, and the local experimental score. The local score column comes from ``experimental_scores.tsv``:
+
+.. csv-table::
+    :header-rows: 1
+
+    chrom,pos,ref,alt,worst_effect,genes,ATAC-seq_ENCSR814RGG,my_score
+    chr14,21415880,G,A,nonsense,CHD8,,0.82
+    chr17,7674904,TCT,T,frame-shift,TP53,2.18,0.15
+    chr7,117587806,G,A,missense,CFTR,,0.94

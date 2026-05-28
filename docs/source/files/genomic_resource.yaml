@@ -1,0 +1,18 @@
+type: position_score
+
+table:
+  filename: experimental_scores.tsv
+  header_mode: file
+  zero_based: True
+
+  # chrom:
+  #   index: 0
+  # pos_begin:
+  #   index: 1
+  # pos_end:
+  #   index: 1
+
+scores:
+  - id: my_score
+    type: float
+    name: experimental_scores
