@@ -48,6 +48,7 @@ urlpatterns = [
     *quotas_urls,
 
     path("api/about", views.AboutPage.as_view()),
+    path("api/version", views.Version.as_view()),
 
     path("api/users", views.UserList.as_view()),
     path("api/users/<int:pk>", views.UserDetail.as_view()),

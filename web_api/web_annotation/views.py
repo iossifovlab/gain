@@ -2,6 +2,7 @@
 """View classes for web annotation."""
 import logging
 import pathlib
+from importlib.metadata import version
 from typing import ClassVar, cast
 
 from django import forms
@@ -430,5 +431,16 @@ class AboutPage(views.APIView):
         return Response(
             about,
             content_type="text/markdown",
+            status=views.status.HTTP_200_OK,
+        )
+
+
+class Version(views.APIView):
+    """View that returns the gain-core package version."""
+
+    def get(self, _: Request) -> Response:
+        """Return the gain-core version string."""
+        return Response(
+            {"version": version("gain-core")},
             status=views.status.HTTP_200_OK,
         )
