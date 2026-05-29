@@ -1,5 +1,7 @@
+import zoneinfo
 from typing import Any
 
+from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
@@ -23,7 +25,8 @@ class Command(BaseCommand):
         )
 
     def handle(self, *_args: Any, **options: Any) -> None:
-        today_start = timezone.now().replace(
+        tz = zoneinfo.ZoneInfo(settings.QUOTA_RESET_TIMEZONE)
+        today_start = timezone.now().astimezone(tz).replace(
             hour=0, minute=0, second=0, microsecond=0)
         already_ran = DailyQuotaRefreshLog.objects.filter(
             executed_at__gte=today_start).exists()

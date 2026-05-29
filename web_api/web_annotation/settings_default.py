@@ -211,6 +211,12 @@ USE_I18N = True
 
 USE_TZ = True
 
+# Timezone whose calendar day/month boundary the quota-refresh commands
+# (refreshdaily / refreshmonthly) use for their "already ran today/this
+# month" guard. Defaults to UTC; set to the deployment's local zone (e.g.
+# "America/New_York") so the guard aligns with locally-scheduled timers.
+QUOTA_RESET_TIMEZONE = "UTC"
+
 
 # Static files (CSS, JavaScript, Images).
 # https://docs.djangoproject.com/en/5.2/howto/static-files/

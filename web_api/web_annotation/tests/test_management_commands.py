@@ -1,10 +1,12 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import csv
+import datetime
 import io
 import pathlib
 
 import pytest
 import pytest_mock
+from django.conf import LazySettings
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
@@ -195,6 +197,83 @@ def test_refreshdaily_force_runs_even_if_already_ran(
     assert user_quota.daily_jobs == user_quota.get_daily_job_max()
 
 
+def test_refreshdaily_uses_configured_timezone_for_day_boundary(
+    user_quota: UserQuota,
+    settings: LazySettings,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """The already-ran guard counts a day in QUOTA_RESET_TIMEZONE.
+
+    A zone behind UTC (New York): a refresh logged at 02:00 UTC is the
+    previous New York day, so a run at 06:00 UTC -- a new NY day, but the
+    same UTC calendar day -- must still reset.
+    """
+    settings.QUOTA_RESET_TIMEZONE = "America/New_York"
+    utc = datetime.timezone.utc
+    DailyQuotaRefreshLog.objects.create(
+        executed_at=datetime.datetime(2026, 1, 15, 2, 0, tzinfo=utc))
+    user_quota.daily_jobs = 0
+    user_quota.save()
+    mocker.patch(
+        "django.utils.timezone.now",
+        return_value=datetime.datetime(2026, 1, 15, 6, 0, tzinfo=utc))
+
+    call_command("refreshdaily")
+
+    user_quota.refresh_from_db()
+    assert user_quota.daily_jobs == user_quota.get_daily_job_max()
+
+
+def test_refreshdaily_timezone_ahead_of_utc_stays_aligned(
+    user_quota: UserQuota,
+    settings: LazySettings,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """A zone ahead of UTC (Tokyo) tracks the local day, not the UTC day.
+
+    A refresh logged at 10:00 UTC (19:00 JST, Jan 15) must not block a run
+    at 20:00 UTC (05:00 JST, Jan 16) -- a new Tokyo day, but still the same
+    UTC calendar day. This is the case the old UTC-only guard got wrong.
+    """
+    settings.QUOTA_RESET_TIMEZONE = "Asia/Tokyo"
+    utc = datetime.timezone.utc
+    DailyQuotaRefreshLog.objects.create(
+        executed_at=datetime.datetime(2026, 1, 15, 10, 0, tzinfo=utc))
+    user_quota.daily_jobs = 0
+    user_quota.save()
+    mocker.patch(
+        "django.utils.timezone.now",
+        return_value=datetime.datetime(2026, 1, 15, 20, 0, tzinfo=utc))
+
+    call_command("refreshdaily")
+
+    user_quota.refresh_from_db()
+    assert user_quota.daily_jobs == user_quota.get_daily_job_max()
+
+
+def test_refreshdaily_defaults_to_utc_day_boundary(
+    user_quota: UserQuota,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """With QUOTA_RESET_TIMEZONE unset, the guard stays a UTC day.
+
+    Two runs within the same UTC calendar day: the second is skipped.
+    """
+    utc = datetime.timezone.utc
+    DailyQuotaRefreshLog.objects.create(
+        executed_at=datetime.datetime(2026, 1, 15, 2, 0, tzinfo=utc))
+    user_quota.daily_jobs = 0
+    user_quota.save()
+    mocker.patch(
+        "django.utils.timezone.now",
+        return_value=datetime.datetime(2026, 1, 15, 6, 0, tzinfo=utc))
+
+    call_command("refreshdaily")
+
+    user_quota.refresh_from_db()
+    assert user_quota.daily_jobs == 0
+
+
 def test_refreshdaily_rolls_back_all_changes_on_failure(
     user_quota: UserQuota,
     anonymous_quota: AnonymousUserQuota,
@@ -305,6 +384,83 @@ def test_refreshmonthly_force_runs_even_if_already_ran(
 
     user_quota.refresh_from_db()
     assert user_quota.monthly_jobs == user_quota.get_monthly_job_max()
+
+
+def test_refreshmonthly_uses_configured_timezone_for_month_boundary(
+    user_quota: UserQuota,
+    settings: LazySettings,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """The already-ran guard counts a month in QUOTA_RESET_TIMEZONE.
+
+    A zone behind UTC (New York): a refresh logged at 02:00 UTC on the
+    1st is still the previous New York month, so a run at 06:00 UTC -- a
+    new NY month, but the same UTC calendar month -- must still reset.
+    """
+    settings.QUOTA_RESET_TIMEZONE = "America/New_York"
+    utc = datetime.timezone.utc
+    MonthlyQuotaRefreshLog.objects.create(
+        executed_at=datetime.datetime(2026, 2, 1, 2, 0, tzinfo=utc))
+    user_quota.monthly_jobs = 0
+    user_quota.save()
+    mocker.patch(
+        "django.utils.timezone.now",
+        return_value=datetime.datetime(2026, 2, 1, 6, 0, tzinfo=utc))
+
+    call_command("refreshmonthly")
+
+    user_quota.refresh_from_db()
+    assert user_quota.monthly_jobs == user_quota.get_monthly_job_max()
+
+
+def test_refreshmonthly_timezone_ahead_of_utc_stays_aligned(
+    user_quota: UserQuota,
+    settings: LazySettings,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """A zone ahead of UTC (Tokyo) tracks the local month, not the UTC one.
+
+    A refresh logged at 10:00 UTC (19:00 JST, Jan 31) must not block a run
+    at 20:00 UTC (05:00 JST, Feb 1) -- a new Tokyo month, but still the same
+    UTC calendar month.
+    """
+    settings.QUOTA_RESET_TIMEZONE = "Asia/Tokyo"
+    utc = datetime.timezone.utc
+    MonthlyQuotaRefreshLog.objects.create(
+        executed_at=datetime.datetime(2026, 1, 31, 10, 0, tzinfo=utc))
+    user_quota.monthly_jobs = 0
+    user_quota.save()
+    mocker.patch(
+        "django.utils.timezone.now",
+        return_value=datetime.datetime(2026, 1, 31, 20, 0, tzinfo=utc))
+
+    call_command("refreshmonthly")
+
+    user_quota.refresh_from_db()
+    assert user_quota.monthly_jobs == user_quota.get_monthly_job_max()
+
+
+def test_refreshmonthly_defaults_to_utc_month_boundary(
+    user_quota: UserQuota,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """With QUOTA_RESET_TIMEZONE unset, the guard stays a UTC month.
+
+    Two runs within the same UTC calendar month: the second is skipped.
+    """
+    utc = datetime.timezone.utc
+    MonthlyQuotaRefreshLog.objects.create(
+        executed_at=datetime.datetime(2026, 2, 1, 2, 0, tzinfo=utc))
+    user_quota.monthly_jobs = 0
+    user_quota.save()
+    mocker.patch(
+        "django.utils.timezone.now",
+        return_value=datetime.datetime(2026, 2, 1, 6, 0, tzinfo=utc))
+
+    call_command("refreshmonthly")
+
+    user_quota.refresh_from_db()
+    assert user_quota.monthly_jobs == 0
 
 
 def test_refreshmonthly_rolls_back_all_changes_on_failure(
