@@ -1,6 +1,38 @@
 Release Notes
 =============
 
+* 2026.5.10
+    * ``grr_cache_repo`` no longer aborts a long HTTP download at
+      htslib's 300 s read cap (which killed caching of large
+      resources such as the genome-wide gnomAD file): the HTTP
+      filesystem now applies no overall timeout, only per-read and
+      per-connect limits. A single failed file is retried with
+      exponential backoff and, if it still fails, reported in a
+      summary rather than discarding every other download's
+      progress. Caching is resumable, so a re-run only refetches
+      what failed.
+    * The anonymous-quota refresh commands (``refreshdaily`` and
+      ``refreshmonthly``) now reset each quota and write their
+      refresh-log entry inside a single transaction, so an
+      interruption mid-run rolls back cleanly instead of leaving
+      quotas half-refilled. They also now reset ``SessionQuota``,
+      which was previously left untouched and so became a
+      permanent floor on the effective anonymous quota.
+    * Added a version API endpoint.
+
+* 2026.5.9
+    * ``annotate_vcf`` and ``annotate_tabular`` now run a
+      pre-flight locality check: when the pipeline uses non-local
+      genomic resources (http/https/s3, queried over the network
+      per variant) and the input is large, they warn (1001–5000
+      rows) or abort before doing any work (more than 5000 rows).
+      Local resources — file/memory schemes or anything behind a
+      caching protocol — never trip the guard, and
+      ``--allow-remote-resources`` disables it entirely.
+    * The GRR index table now supports cascading column resize.
+    * Fixed a GRR summary tooltip being truncated when a
+      biosample description contained a double quote.
+
 * 2026.5.8
     * Added a ``prepare_tabular`` CLI that sorts a (optionally
       gzip-compressed) tabular file by genomic coordinates and writes
