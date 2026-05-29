@@ -76,10 +76,25 @@ ruff check --fix .
 # Type checking (slow)
 mypy gain --exclude core/docs/ \
     --exclude core/gain/docs/
+
+# Pylint (CI runs this too — see below)
+pylint --rcfile=pylintrc gain
 ```
 
 Config: `ruff.toml` (line-length: 80, target: py310),
-`mypy.ini`.
+`mypy.ini`, `pylintrc`.
+
+**CI runs three Python linters, not two.** The `Jenkinsfile`
+lint stage runs **ruff + mypy + pylint** on each package
+(plus eslint + stylelint for `web_ui`), and any finding from
+any of them marks the build **UNSTABLE**. Running only
+`ruff` + `mypy` locally is *not* enough to predict the lint
+stage — always run `pylint --rcfile=pylintrc gain` before
+committing too. A common pylint-only catch ruff/mypy miss:
+`C0103` on a module-level `UPPER_CASE` constant that is
+*reassigned* (e.g. inside a `try`/`except`), which pylint then
+treats as a snake_case variable — assign such constants
+exactly once.
 
 ### Pre-commit Hook
 
