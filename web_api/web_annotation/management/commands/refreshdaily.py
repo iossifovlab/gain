@@ -1,11 +1,13 @@
 from typing import Any
 
 from django.core.management.base import BaseCommand
+from django.db import transaction
 from django.utils import timezone
 
 from web_annotation.models import (
     AnonymousUserQuota,
     DailyQuotaRefreshLog,
+    SessionQuota,
     UserQuota,
 )
 
@@ -33,13 +35,19 @@ class Command(BaseCommand):
             )
             return
 
-        for user_quota in UserQuota.objects.all():
-            user_quota.reset_daily()
-            user_quota.save()
+        with transaction.atomic():
+            for user_quota in UserQuota.objects.all():
+                user_quota.reset_daily()
+                user_quota.save()
 
-        for anonymous_quota in AnonymousUserQuota.objects.all():
-            anonymous_quota.reset_daily()
-            anonymous_quota.save()
+            for anonymous_quota in AnonymousUserQuota.objects.all():
+                anonymous_quota.reset_daily()
+                anonymous_quota.save()
 
-        DailyQuotaRefreshLog.objects.create()
+            for session_quota in SessionQuota.objects.all():
+                session_quota.reset_daily()
+                session_quota.save()
+
+            DailyQuotaRefreshLog.objects.create()
+
         self.stdout.write("Daily quota refresh complete.")
