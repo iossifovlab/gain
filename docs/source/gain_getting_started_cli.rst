@@ -41,7 +41,7 @@ This command installs GAIn and all of its dependencies. A simple test to confirm
 
 .. code-block:: bash
 
-    grr_browse --version []
+    grr_browse --version
 
 The result should look similar to this:
 
@@ -108,7 +108,7 @@ To annotate the file, run:
 
 .. code-block:: bash
     
-    annotate_tabular small_input.txt pipeline/hg38_clinical_annotation
+    annotate_tabular small_input.csv pipeline/hg38_clinical_annotation
 
 This command annotates ``small_input.csv`` using the predefined ``pipeline/hg38_clinical_annotation`` pipeline, which is hosted in the default GRR.
 
@@ -169,7 +169,7 @@ To annotate the input file with this custom pipeline, run:
 
 .. code-block:: bash
 
-    annotate_tabular small_input.csv custom_pipeline.yaml -o small_input_custom_annotated.csv
+    annotate_tabular small_input.csv custom_pipeline.yaml
 
 This command applies the local ``custom_pipeline.yaml`` file to the variants in ``small_input.csv``. To avoid overwriting the output from the previous section, we write the result to ``small_input_custom_annotated.csv``, whose content is shown below.
 
@@ -196,13 +196,10 @@ To enable caching, explicitly configure the GRR definition by adding a cache dir
 
 .. code-block:: yaml
 
-    id: "my grrss"
-    type: group
-    children:
-    - id: "default"
-      type: "url"
-      url: "https://grr.iossifovlab.com"
-      cache_dir: "<cache_path>/grr_default_cache"
+  - id: "default"
+    type: "url"
+    url: "https://grr.iossifovlab.com"
+    cache_dir: "<cache_path>/grr_default_cache"
 
 After this configuration, GAIn downloads each required resource to the specified cache directory before using it for annotation. Because genomic resources can be large, the cache directory should have sufficient disk space and write permission for the user.
 
