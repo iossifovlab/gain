@@ -19,6 +19,7 @@ from gain.annotation.annotatable import (
 )
 from gain.annotation.annotate_tabular import (
     _adjust_default_input_separator,
+    _count_tabular_rows,
     _CSVBatchSource,
     _CSVBatchWriter,
     _CSVHeader,
@@ -254,6 +255,26 @@ def test_renamed_columns(
     assert str(annotatable) == str(expected)
 
 
+def test_count_tabular_rows_skips_header(tmp_path: pathlib.Path) -> None:
+    in_file = tmp_path / "in.txt"
+    in_file.write_text("chrom\tpos\nchr1\t1\nchr1\t2\nchr1\t3\n")
+    assert _count_tabular_rows(str(in_file), 100) == 3
+
+
+def test_count_tabular_rows_caps_at_limit(tmp_path: pathlib.Path) -> None:
+    in_file = tmp_path / "in.txt"
+    rows = "".join(f"chr1\t{i}\n" for i in range(50))
+    in_file.write_text(f"chrom\tpos\n{rows}")
+    assert _count_tabular_rows(str(in_file), 10) == 10
+
+
+def test_count_tabular_rows_handles_gzip(tmp_path: pathlib.Path) -> None:
+    in_file = tmp_path / "in.txt.gz"
+    with gzip.open(in_file, "wt") as out_file:
+        out_file.write("chrom\tpos\nchr1\t1\nchr1\t2\n")
+    assert _count_tabular_rows(str(in_file), 100) == 2
+
+
 def test_renamed_columns_excludes() -> None:
     record = {
         "chromosome": "chr1",
@@ -461,6 +482,76 @@ def test_annotate_tabular_http_grr_contains_tbi_in_work_dir(
         "expected the remote tabix index to be contained in work_dir"
     assert os.getcwd() == cwd_before
     assert out_file.read_text().splitlines()[0].split("\t")[-1] == "score"
+
+
+@pytest.mark.grr_http
+def test_annotate_tabular_aborts_on_large_input_over_http_grr(
+    tmp_path: pathlib.Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    if not request.config.getoption("enable_http"):
+        pytest.skip("HTTP testing not enabled (use --enable-http-testing)")
+
+    repo_path = tmp_path / "grr_repo"
+    setup_directories(repo_path, {
+        "score_one": {
+            "genomic_resource.yaml": textwrap.dedent("""
+                type: position_score
+                table:
+                  filename: data.txt.gz
+                  format: tabix
+                  header_mode: none
+                  chrom:
+                    index: 0
+                  pos_begin:
+                    index: 1
+                  pos_end:
+                    index: 2
+                scores:
+                - id: score
+                  index: 3
+                  type: float
+            """),
+        },
+    })
+    setup_tabix(
+        repo_path / "score_one" / "data.txt.gz",
+        textwrap.dedent("""
+        chr1   23   23   0.1
+        chr1   24   24   0.2
+        """).strip(),
+        seq_col=0, start_col=1, end_col=2)
+
+    big_input = tmp_path / "big.txt"
+    rows = "".join(f"chr1\t{23 + i}\n" for i in range(5001))
+    big_input.write_text(f"chrom\tpos\n{rows}")
+
+    small_input = tmp_path / "small.txt"
+    small_input.write_text("chrom\tpos\nchr1\t23\nchr1\t24\n")
+
+    with build_http_test_protocol(repo_path) as http_proto:
+        annotation_file = tmp_path / "annotation.yaml"
+        annotation_file.write_text("- position_score: score_one\n")
+        grr_file = tmp_path / "grr.yaml"
+        grr_file.write_text(f"type: http\nurl: {http_proto.url}\n")
+
+        # 5001 rows trips the hard limit; the guard must fire before any
+        # annotation work is attempted against the remote resource.
+        with pytest.raises(ValueError, match=r"score_one \(http\)"):
+            cli([
+                str(big_input), str(annotation_file), "--grr", str(grr_file),
+                "-o", str(tmp_path / "out.txt"), "-w", str(tmp_path / "work"),
+                "-j", "1",
+            ])
+
+        # --allow-remote-resources skips the guard; a small input keeps the
+        # override leg from issuing thousands of network lookups.
+        cli([
+            str(small_input), str(annotation_file), "--grr", str(grr_file),
+            "-o", str(tmp_path / "out2.txt"), "-w", str(tmp_path / "work2"),
+            "-j", "1", "--allow-remote-resources",
+        ])
+        assert (tmp_path / "out2.txt").exists()
 
 
 def test_annotate_tabular_splittable_keeps_jobs(

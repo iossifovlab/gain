@@ -14,6 +14,7 @@ from gain.annotation.annotate_utils import (
 )
 from gain.annotation.annotate_vcf import (
     _annotate_vcf,
+    _count_vcf_records,
     _VCFBatchSource,
     _VCFSource,
     _VCFWriter,
@@ -29,7 +30,10 @@ from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
 from gain.genomic_resources.testing import (
+    build_http_test_protocol,
     setup_denovo,
+    setup_directories,
+    setup_tabix,
     setup_vcf,
 )
 from gain.task_graph.cli_tools import TaskGraphCli
@@ -61,6 +65,95 @@ def acgt_annotate_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
               name: score
         """))
     return acgt_grr(tmp_path)
+
+
+def test_count_vcf_records_counts_records(sample_vcf: pathlib.Path) -> None:
+    assert _count_vcf_records(str(sample_vcf), 100) == 3
+
+
+def test_count_vcf_records_caps_at_limit(sample_vcf: pathlib.Path) -> None:
+    assert _count_vcf_records(str(sample_vcf), 2) == 2
+
+
+def _write_vcf(path: pathlib.Path, n_records: int) -> None:
+    header = textwrap.dedent("""\
+        ##fileformat=VCFv4.2
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+        ##contig=<ID=chr1>
+        #CHROM POS ID REF ALT QUAL FILTER INFO FORMAT s1
+        """)
+    rows = "".join(f"chr1 {10 + i} . C T . . . GT 0/1\n" for i in range(
+        n_records))
+    setup_vcf(path, header + rows)
+
+
+@pytest.mark.grr_http
+def test_annotate_vcf_aborts_on_large_input_over_http_grr(
+    tmp_path: pathlib.Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    if not request.config.getoption("enable_http"):
+        pytest.skip("HTTP testing not enabled (use --enable-http-testing)")
+
+    repo_path = tmp_path / "grr_repo"
+    setup_directories(repo_path, {
+        "score_one": {
+            "genomic_resource.yaml": textwrap.dedent("""
+                type: position_score
+                table:
+                  filename: data.txt.gz
+                  format: tabix
+                  header_mode: none
+                  chrom:
+                    index: 0
+                  pos_begin:
+                    index: 1
+                  pos_end:
+                    index: 2
+                scores:
+                - id: score
+                  index: 3
+                  type: float
+            """),
+        },
+    })
+    setup_tabix(
+        repo_path / "score_one" / "data.txt.gz",
+        textwrap.dedent("""
+        chr1   10   10   0.1
+        chr1   11   11   0.2
+        """).strip(),
+        seq_col=0, start_col=1, end_col=2)
+
+    annotation_file = tmp_path / "annotation.yaml"
+    annotation_file.write_text("- position_score: score_one\n")
+
+    big_input = tmp_path / "big.vcf"
+    _write_vcf(big_input, 5001)  # trips the hard limit
+    small_input = tmp_path / "small.vcf"
+    _write_vcf(small_input, 2)
+
+    with build_http_test_protocol(repo_path) as http_proto:
+        grr_file = tmp_path / "grr.yaml"
+        grr_file.write_text(f"type: http\nurl: {http_proto.url}\n")
+
+        # 5001 records trip the hard limit; the guard must fire before any
+        # annotation work against the remote resource.
+        with pytest.raises(ValueError, match=r"score_one \(http\)"):
+            cli([
+                str(big_input), str(annotation_file), "--grr", str(grr_file),
+                "-o", str(tmp_path / "out.vcf"), "-w", str(tmp_path / "work"),
+                "-j", "1",
+            ])
+
+        # --allow-remote-resources skips the guard; a small input keeps the
+        # override leg from issuing thousands of network lookups.
+        cli([
+            str(small_input), str(annotation_file), "--grr", str(grr_file),
+            "-o", str(tmp_path / "out2.vcf"), "-w", str(tmp_path / "work2"),
+            "-j", "1", "--allow-remote-resources",
+        ])
+        assert (tmp_path / "out2.vcf").exists()
 
 
 @pytest.fixture

@@ -30,6 +30,7 @@ from gain.annotation.annotate_utils import (
     add_input_files_to_task_graph,
     build_cli_genomic_context,
     cache_pipeline_resources,
+    check_resource_locality,
     get_grr_from_context,
     get_pipeline_from_context,
     handle_default_args,
@@ -446,6 +447,17 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _count_vcf_records(input_path: str, limit: int) -> int:
+    """Count VCF records, short-circuiting at limit."""
+    count = 0
+    with VariantFile(input_path, "r") as vcf:
+        for _ in vcf.fetch():
+            count += 1
+            if count >= limit:
+                break
+    return count
+
+
 def _tabix_index(filepath: str) -> None:
     tabix_index(filepath, preset="vcf", force=True)
 
@@ -576,6 +588,12 @@ def cli(argv: list[str] | None = None) -> None:
         pipeline = get_pipeline_from_context(context)
         grr = get_grr_from_context(context)
         assert grr.definition is not None
+
+        check_resource_locality(
+            pipeline,
+            lambda limit: _count_vcf_records(args["input"], limit),
+            allow_remote=args["allow_remote_resources"],
+        )
 
         cache_pipeline_resources(grr, pipeline)
 
