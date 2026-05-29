@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import re
+from importlib.metadata import version
 
 import pytest
 from django.conf import LazySettings
@@ -489,3 +490,11 @@ def test_about_page(clients: dict[str, Client]) -> None:
         assert response.content.decode().find(
             "Genomic Annotation Infrastructure (GAIn) "
             "is an open-source platform") != -1, client_type
+
+
+def test_version(clients: dict[str, Client]) -> None:
+    for client_type, client in clients.items():
+        response = client.get("/api/version")
+        assert response.status_code == 200, client_type
+        assert response.json()["version"] == version(
+            "gain-core"), client_type
