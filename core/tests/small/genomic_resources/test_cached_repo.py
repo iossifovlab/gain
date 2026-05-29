@@ -731,6 +731,40 @@ def test_concurrent_resource_access(
 
 
 @pytest.mark.grr_full
+def test_cache_resources_continues_after_failure_and_raises(
+        cache_repository: CacheRepositoryBuilder,
+        mocker: MockerFixture) -> None:
+    # One resource that always fails must not abort the whole run: every
+    # other resource is still cached, and the run raises a summary naming the
+    # failure so CI goes red. See gain#43.
+    with cache_repository({
+            "good1": {GR_CONF_FILE_NAME: "", "data.txt": "a"},
+            "bad": {GR_CONF_FILE_NAME: "", "data.txt": "b"},
+            "good2": {GR_CONF_FILE_NAME: "", "data.txt": "c"},
+            }) as cache_repo:
+
+        real_refresh = CachingProtocol.refresh_cached_resource
+
+        def flaky_refresh(
+                self: CachingProtocol,
+                resource: Any) -> tuple[str, None]:
+            if resource.resource_id == "bad":
+                raise OSError("simulated permanent download failure")
+            return real_refresh(self, resource)
+
+        mocker.patch.object(
+            CachingProtocol, "refresh_cached_resource",
+            autospec=True, side_effect=flaky_refresh)
+
+        with pytest.raises(RuntimeError, match="bad"):
+            cache_resources(cache_repo, None, workers=1)
+
+        # The healthy resources were cached despite "bad" failing.
+        assert cache_repo.get_resource_cached_files("good1") == {"data.txt"}
+        assert cache_repo.get_resource_cached_files("good2") == {"data.txt"}
+
+
+@pytest.mark.grr_full
 def test_cache_resources_parallel_workers(
         cache_repository: CacheRepositoryBuilder) -> None:
     """Test cache_resources with parallel workers."""

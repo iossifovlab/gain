@@ -439,6 +439,22 @@ def test_build_manifest_should_not_update_existing_resource_state(
     assert not proto.save_resource_file_state.called  # type: ignore
 
 
+def test_build_filesystem_http_sets_relaxed_timeout() -> None:
+    # An HTTP GRR filesystem must be built with a relaxed aiohttp timeout so
+    # a long-but-progressing multi-GB download isn't killed by aiohttp's
+    # default 300s total cap; instead a *stalled* read (sock_read) or hung
+    # connect (sock_connect) becomes a retryable error. See gain#43.
+    from gain.genomic_resources.fsspec_protocol import _build_filesystem
+
+    fs = _build_filesystem(
+        "https://grr.example.com", base_url="https://grr.example.com")
+
+    timeout = fs.client_kwargs["timeout"]
+    assert timeout.total is None
+    assert timeout.sock_read == 120
+    assert timeout.sock_connect == 60
+
+
 def test_htslib_verbosity_is_lowered_at_module_import() -> None:
     # Importing gain.genomic_resources.fsspec_protocol must lower htslib's
     # verbosity to 1 (errors only), suppressing the benign
