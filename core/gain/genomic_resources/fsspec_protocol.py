@@ -1,6 +1,7 @@
 """Provides GRR protocols based on fsspec library."""
 from __future__ import annotations
 
+import asyncio
 import copy
 import datetime
 import gzip
@@ -9,6 +10,7 @@ import json
 import logging
 import operator
 import os
+import time
 from collections.abc import Generator
 from contextlib import AbstractContextManager
 from dataclasses import asdict
@@ -23,6 +25,7 @@ from urllib.parse import urlparse
 
 import apsw
 import fsspec
+import fsspec.exceptions
 import pyBigWig
 import pysam
 import yaml
@@ -57,6 +60,38 @@ from gain.utils.helpers import convert_size
 pysam.set_verbosity(1)
 
 logger = logging.getLogger(__name__)
+
+
+# Per-file download retry policy for copy_resource_file. A single stalled or
+# dropped read over a slow HTTP GRR link used to abort the whole cache run
+# (gain#43); instead we retry the file from scratch with exponential backoff.
+_COPY_MAX_ATTEMPTS = 4
+_COPY_BACKOFF_BASE = 5  # seconds; delays are 5s, 15s, 45s
+
+
+class ChecksumMismatchError(OSError):
+    """A completed download whose md5 disagrees with the manifest.
+
+    Almost always a truncated or corrupted transfer, so it is treated as a
+    retryable error by copy_resource_file rather than a hard failure.
+    """
+
+
+# Transient errors that warrant retrying a file download from scratch. A
+# stalled aiohttp read surfaces as fsspec's FSTimeoutError; ConnectionError
+# covers resets/refused connects; ChecksumMismatchError covers truncated
+# transfers. aiohttp.ClientError is appended when aiohttp is importable.
+_RETRYABLE_COPY_ERRORS: tuple[type[BaseException], ...] = (
+    fsspec.exceptions.FSTimeoutError,
+    asyncio.TimeoutError,
+    ConnectionError,
+    ChecksumMismatchError,
+)
+try:
+    import aiohttp as _aiohttp
+    _RETRYABLE_COPY_ERRORS = (*_RETRYABLE_COPY_ERRORS, _aiohttp.ClientError)
+except ImportError:
+    pass
 
 
 def _scan_for_resources(
@@ -646,7 +681,12 @@ class FsspecReadWriteProtocol(
             remote_resource: GenomicResource,
             dest_resource: GenomicResource,
             filename: str) -> ResourceFileState | None:
-        """Copy a resource file into repository."""
+        """Copy a resource file into repository.
+
+        A transient stall or drop mid-download (common when fetching a large
+        resource over a slow HTTP GRR link) is retried from scratch with
+        exponential backoff rather than aborting the file. See gain#43.
+        """
         assert dest_resource.resource_id == remote_resource.resource_id
         logger.debug(
             "copying resource file (%s: %s) from %s",
@@ -665,6 +705,39 @@ class FsspecReadWriteProtocol(
             self.filesystem.mkdir(
                 dest_parent, create_parents=True, exist_ok=True)
 
+        last_error: BaseException | None = None
+        for attempt in range(1, _COPY_MAX_ATTEMPTS + 1):
+            try:
+                return self._download_resource_file(
+                    remote_resource, dest_resource, filename,
+                    dest_filepath, manifest_entry.md5)
+            except _RETRYABLE_COPY_ERRORS as error:
+                last_error = error
+                if attempt >= _COPY_MAX_ATTEMPTS:
+                    break
+                delay = _COPY_BACKOFF_BASE * (3 ** (attempt - 1))
+                logger.warning(
+                    "transient failure downloading (%s: %s): %s; "
+                    "retrying in %ss (attempt %s/%s)",
+                    dest_resource.resource_id, filename, error,
+                    delay, attempt + 1, _COPY_MAX_ATTEMPTS)
+                time.sleep(delay)
+
+        assert last_error is not None
+        raise last_error
+
+    def _download_resource_file(
+            self,
+            remote_resource: GenomicResource,
+            dest_resource: GenomicResource,
+            filename: str,
+            dest_filepath: str,
+            expected_md5: str | None) -> ResourceFileState:
+        """Download a single resource file once and verify its checksum.
+
+        Opens a fresh remote handle and truncates the destination, so a
+        retried call recovers cleanly from a partially-written file.
+        """
         with remote_resource.open_raw_file(
                 filename, "rb",
                 uncompress=False) as infile, \
@@ -683,12 +756,12 @@ class FsspecReadWriteProtocol(
         if not self.filesystem.exists(dest_filepath):
             raise OSError(f"destination file not created {dest_filepath}")
 
-        if md5 != manifest_entry.md5:
-            raise OSError(
+        if md5 != expected_md5:
+            raise ChecksumMismatchError(
                 f"file copy is broken "
                 f"{dest_resource.resource_id} ({filename}); "
                 f"md5sum are different: "
-                f"{md5}!={manifest_entry.md5}")
+                f"{md5}!={expected_md5}")
 
         state = self.build_resource_file_state(
             dest_resource,
@@ -855,9 +928,20 @@ def _build_filesystem(
         from fsspec.implementations.local import LocalFileSystem
         return LocalFileSystem()
     if parsed_url.scheme in {"http", "https"}:
+        import aiohttp
         from fsspec.implementations.http import HTTPFileSystem
         base_url = kwargs.get("base_url")
-        return HTTPFileSystem(client_kwargs={"base_url": base_url})
+        # Relax aiohttp's default 300s total read timeout: a large GRR
+        # resource (e.g. the ~15GB genome-wide gnomAD file) legitimately
+        # downloads for far longer. total=None lifts the overall cap while
+        # sock_read/sock_connect still turn a genuinely stalled read or hung
+        # connect into a (retryable) error rather than killing the run. See
+        # gain#43.
+        return HTTPFileSystem(client_kwargs={
+            "base_url": base_url,
+            "timeout": aiohttp.ClientTimeout(
+                total=None, sock_read=120, sock_connect=60),
+        })
     if parsed_url.scheme == "s3":
         from s3fs.core import S3FileSystem
         endpoint_url = kwargs.get("endpoint_url")

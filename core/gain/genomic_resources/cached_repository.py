@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Generator, Iterable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import IO, Any, cast
 
 import apsw
@@ -325,7 +325,7 @@ def cache_resources(
     from gain.genomic_resources import get_resource_implementation_builder
 
     executor = ThreadPoolExecutor(max_workers=workers)
-    futures = []
+    futures: dict[Future, str] = {}
     if resource_ids is None:
         resources: list[GenomicResource] = \
             list(repository.get_all_resources())
@@ -346,18 +346,15 @@ def cache_resources(
             logger.info(
                 "unexpected resource type <%s> for resource %s; "
                 "updating resource", resource.get_type(), resource.resource_id)
-            futures.append(
-                executor.submit(
-                    cached_proto.refresh_cached_resource, resource,
-                ),
-            )
+            futures[executor.submit(
+                cached_proto.refresh_cached_resource, resource,
+            )] = resource.resource_id
             continue
-        futures.append(
-            executor.submit(
-                cached_proto.refresh_cached_resource_file,  # type: ignore
-                resource,
-                "genomic_resource.yaml",
-            ))
+        futures[executor.submit(
+            cached_proto.refresh_cached_resource_file,
+            resource,
+            "genomic_resource.yaml",
+        )] = f"{resource.resource_id}: genomic_resource.yaml"
         impl = impl_builder(resource)
 
         for res_file in impl.files:
@@ -365,22 +362,40 @@ def cache_resources(
                 "request to cache resource file: (%s, %s) from %s",
                 resource.resource_id, res_file,
                 cached_proto.remote_protocol.proto_id)
-            futures.append(
-                executor.submit(
-                    cached_proto.refresh_cached_resource_file,  # type: ignore
-                    resource,
-                    res_file,
-                ),
-            )
+            futures[executor.submit(
+                cached_proto.refresh_cached_resource_file,
+                resource,
+                res_file,
+            )] = f"{resource.resource_id}: {res_file}"
 
     total_files = len(futures)
     logger.info("caching %s files", total_files)
+    failures: list[str] = []
     for count, future in enumerate(as_completed(futures)):
         filename: str
 
-        resource_id, filename = future.result()  # type: ignore
+        label = futures[future]
+        try:
+            resource_id, filename = future.result()
+        except Exception as error:  # noqa: BLE001 - report, don't abort run
+            # A single file failing (e.g. a download that stalled past its
+            # retries) must not discard the progress of every other file in
+            # the run. Collect the failure and keep caching; we raise a
+            # summary at the end so the run still fails loudly. See gain#43.
+            failures.append(f"{label} ({error})")
+            # One concise line per failure; the full summary is raised at the
+            # end. A stack trace per failed file would swamp a large run.
+            logger.error(  # noqa: TRY400
+                "failed %s/%s (%s): %s", count, total_files, label, error)
+            continue
         logger.info(
             "finished %s/%s (%s: %s)", count, total_files,
             resource_id, filename)
 
     executor.shutdown()
+
+    if failures:
+        summary = "\n".join(f"  - {failure}" for failure in failures)
+        raise RuntimeError(
+            f"failed to cache {len(failures)}/{total_files} resource "
+            f"file(s):\n{summary}")
