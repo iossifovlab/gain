@@ -1,5 +1,7 @@
+import zoneinfo
 from typing import Any
 
+from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
@@ -23,8 +25,8 @@ class Command(BaseCommand):
         )
 
     def handle(self, *_args: Any, **options: Any) -> None:
-        now = timezone.now()
-        month_start = now.replace(
+        tz = zoneinfo.ZoneInfo(settings.QUOTA_RESET_TIMEZONE)
+        month_start = timezone.now().astimezone(tz).replace(
             day=1, hour=0, minute=0, second=0, microsecond=0)
         already_ran = MonthlyQuotaRefreshLog.objects.filter(
             executed_at__gte=month_start).exists()
