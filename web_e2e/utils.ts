@@ -1,7 +1,8 @@
 import { expect, Page } from '@playwright/test';
 
-export const mailhogUrl = 'http://mail:8025';
-// export const mailhogUrl = 'http://localhost:8025';
+export const backendUrl = process.env['CI'] === '1' ? 'http://backend:9001' : 'http://localhost:8000';
+export const mailpitUrl = process.env['CI'] === '1' ? 'http://mail:8025' : 'http://localhost:8025';
+
 
 export const inProcessBackgroundColor = 'rgb(211, 237, 255)';
 export const failedBackgroundColor = 'rgb(255, 237, 239)';
@@ -35,19 +36,24 @@ export async function registerUser(page: Page, email: string, password: string):
 }
 
 export async function getLinkInEmail(page: Page, email: string, subject: string): Promise<string> {
-  await page.goto(mailhogUrl, {waitUntil: 'load'});
+  const query = encodeURIComponent(`subject:"${subject}" to:${email}`);
 
-  await expect(async() => {
-    await page.locator('#search').pressSequentially(subject);
-    await page.keyboard.press('Enter');
-    await page.getByText(email).click();
-  }).toPass({intervals: [1000, 2000, 3000, 4000]});
+  let messageId = '';
+  await expect.poll(async() => {
+    const response = await page.request.get(`${mailpitUrl}/api/v1/search?query=${query}`);
+    const data = await response.json() as { messages: Array<{ ID: string }> };
+    messageId = data.messages?.[0]?.ID ?? '';
+    return messageId !== '';
+  }, { timeout: 10000, intervals: [1000, 2000, 3000, 4000] }).toBe(true);
 
-  const href = await page.locator('#preview-plain > a').getAttribute('href');
-  if (!href) {
+  const response = await page.request.get(`${mailpitUrl}/api/v1/message/${messageId}`);
+  const message = await response.json() as { Text: string };
+
+  const match = message.Text.match(/https?:\/\/\S+/);
+  if (!match) {
     throw new Error('Confirmation link not found in email.');
   }
-  return href;
+  return match[0];
 }
 
 export async function loginUser(page: Page, email: string, password: string): Promise<void> {
@@ -90,8 +96,6 @@ export type CurrentQuotaType =
   | 'monthly_variants'
   | 'daily_attributes'
   | 'monthly_attributes';
-
-export const backendUrl = process.env['CI'] === '1' ? 'http://backend:9001' : 'http://localhost:8000';
 
 export async function resetDailyQuota(page: Page): Promise<void> {
   const response = await page.request.get(`${backendUrl}/admin-panel/reset-daily-quota`);
