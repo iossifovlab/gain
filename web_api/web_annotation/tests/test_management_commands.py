@@ -4,6 +4,7 @@ import io
 import pathlib
 
 import pytest
+import pytest_mock
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
@@ -12,6 +13,7 @@ from web_annotation.models import (
     AnonymousUserQuota,
     DailyQuotaRefreshLog,
     MonthlyQuotaRefreshLog,
+    SessionQuota,
     User,
     UserQuota,
 )
@@ -29,6 +31,14 @@ def user_quota() -> UserQuota:
 @pytest.fixture
 def anonymous_quota() -> AnonymousUserQuota:
     quota = AnonymousUserQuota(ip="127.0.0.1")
+    quota.reset_daily()
+    quota.reset_monthly()
+    return quota
+
+
+@pytest.fixture
+def session_quota() -> SessionQuota:
+    quota = SessionQuota(session_id="test-session")
     quota.reset_daily()
     quota.reset_monthly()
     return quota
@@ -124,6 +134,23 @@ def test_refreshdaily_resets_anonymous_quota_daily_fields(
     )
 
 
+def test_refreshdaily_resets_session_quota_daily_fields(
+    session_quota: SessionQuota,
+) -> None:
+    session_quota.daily_jobs = 0
+    session_quota.daily_variants = 0
+    session_quota.save()
+
+    call_command("refreshdaily")
+
+    session_quota.refresh_from_db()
+    assert session_quota.daily_jobs == session_quota.get_daily_job_max()
+    assert (
+        session_quota.daily_variants
+        == session_quota.get_daily_variant_max()
+    )
+
+
 def test_refreshdaily_does_not_reset_monthly_fields(
     user_quota: UserQuota,
 ) -> None:
@@ -168,6 +195,26 @@ def test_refreshdaily_force_runs_even_if_already_ran(
     assert user_quota.daily_jobs == user_quota.get_daily_job_max()
 
 
+def test_refreshdaily_rolls_back_all_changes_on_failure(
+    user_quota: UserQuota,
+    anonymous_quota: AnonymousUserQuota,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """A failure partway through leaves no partial resets and no log row."""
+    user_quota.daily_jobs = 0
+    user_quota.save()
+    mocker.patch.object(
+        AnonymousUserQuota, "reset_daily",
+        side_effect=RuntimeError("boom"))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        call_command("refreshdaily")
+
+    user_quota.refresh_from_db()
+    assert user_quota.daily_jobs == 0  # rolled back, not refilled
+    assert DailyQuotaRefreshLog.objects.count() == 0
+
+
 # --- refreshmonthly command ---
 
 def test_refreshmonthly_resets_user_quota_monthly_fields(
@@ -197,6 +244,23 @@ def test_refreshmonthly_resets_anonymous_quota_monthly_fields(
     assert anonymous_quota.monthly_jobs == anonymous_quota.get_monthly_job_max()
     assert anonymous_quota.monthly_variants == \
         anonymous_quota.get_monthly_variant_max()
+
+
+def test_refreshmonthly_resets_session_quota_monthly_fields(
+    session_quota: SessionQuota,
+) -> None:
+    session_quota.monthly_jobs = 0
+    session_quota.monthly_variants = 0
+    session_quota.save()
+
+    call_command("refreshmonthly")
+
+    session_quota.refresh_from_db()
+    assert session_quota.monthly_jobs == session_quota.get_monthly_job_max()
+    assert (
+        session_quota.monthly_variants
+        == session_quota.get_monthly_variant_max()
+    )
 
 
 def test_refreshmonthly_does_not_reset_daily_fields(
@@ -241,6 +305,26 @@ def test_refreshmonthly_force_runs_even_if_already_ran(
 
     user_quota.refresh_from_db()
     assert user_quota.monthly_jobs == user_quota.get_monthly_job_max()
+
+
+def test_refreshmonthly_rolls_back_all_changes_on_failure(
+    user_quota: UserQuota,
+    anonymous_quota: AnonymousUserQuota,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """A failure partway through leaves no partial resets and no log row."""
+    user_quota.monthly_jobs = 0
+    user_quota.save()
+    mocker.patch.object(
+        AnonymousUserQuota, "reset_monthly",
+        side_effect=RuntimeError("boom"))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        call_command("refreshmonthly")
+
+    user_quota.refresh_from_db()
+    assert user_quota.monthly_jobs == 0  # rolled back, not refilled
+    assert MonthlyQuotaRefreshLog.objects.count() == 0
 
 
 # --- export_quotas command ---
