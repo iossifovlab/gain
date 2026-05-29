@@ -70,7 +70,7 @@ This shows that you have access to the IossifovLab GRR server and lists all the 
 .. code-block:: bash
 
     No GRR definition found, using the DEFAULT_DEFINITION
-    id: default
+    id: main-GRR
     type: http
     url: https://grr.iossifovlab.com
 
@@ -186,7 +186,7 @@ This approach is convenient for small tests and for developing custom pipelines.
 
 
 Caching resources for large annotation jobs
------------------------
+-------------------------------------------
 
 By default, GAIn can access genomic resources directly from a remote GRR. This works well for small examples, but large annotation jobs may require repeated access to many large resources over the network. To make these jobs faster and more reliable, GAIn supports local resource caching.
 
@@ -196,10 +196,10 @@ To enable caching, explicitly configure the GRR definition by adding a cache dir
 
 .. code-block:: yaml
 
-  - id: "default"
+    id: "main-GRR"
     type: "url"
     url: "https://grr.iossifovlab.com"
-    cache_dir: "<cache_path>/grr_default_cache"
+    cache_dir: "<path_to>/remote_grr_cache"
 
 After this configuration, GAIn downloads each required resource to the specified cache directory before using it for annotation. Because genomic resources can be large, the cache directory should have sufficient disk space and write permission for the user.
 
@@ -660,10 +660,11 @@ To use these resources, add GRR-ENCODE to the GRR definition file, ``~/.grr_defi
 
 .. code-block:: yaml
 
-    id: "development"
+    id: "remote_GRRs"
     type: group
+    cache_dir: "<path_to>/remote_grr_cache"
     children:
-    - id: "GRR"
+    - id: "main-GRR"
       type: "url"
       url: "https://grr.iossifovlab.com"
 
@@ -734,20 +735,25 @@ Then add the local GRR to the GRR definition file, ``~/.grr_definition.yaml``. F
 
 .. code-block:: yaml
 
-    id: "development"
     type: group
+    id: "my_GRRs"
     children:
-    - id: "GRR"
-      type: "url"
-      url: "https://grr.iossifovlab.com"
+    - type: group
+      id: "remote_GRRs"
+      cache_dir: "<path_to>/remote_grr_cache"
+      children:
+      - id: "main-GRR"
+        type: "url"
+        url: "https://grr.iossifovlab.com"
 
-    - id: "GRR-ENCODE"
-      type: "url"
-      url: "https://grr-encode.iossifovlab.com"
-
+      - id: "GRR-ENCODE"
+        type: "url"
+        url: "https://grr-encode.iossifovlab.com"
     - id: "My_First_GRR"
       type: "directory"
       directory: "<path>/My_First_GRR"
+
+
 
 
 With this configuration, GAIn can use the local resource in annotation pipelines, as well as the public resources in the main GRR and GRR-ENCODE. For example, the following custom pipeline combines resources from all three repositories: a gene-effect annotator from the main GRR, a transcription factor ChIP-seq track from GRR-ENCODE, and the local experimental score from ``My_First_GRR``.
