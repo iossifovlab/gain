@@ -329,13 +329,11 @@ class User(AbstractUser):
         return not len(jobs_made) >= cast(int, settings.QUOTAS["daily_jobs"])
 
     def _get_or_create_user_quota(self) -> UserQuota:
-        try:
-            return UserQuota.objects.get(user=self)
-        except UserQuota.DoesNotExist:
-            quota = UserQuota(user=self)
+        quota, created = UserQuota.objects.get_or_create(user=self)
+        if created:
             quota.reset_daily()
             quota.reset_monthly()
-            return quota
+        return quota
 
     def get_quota(self) -> QuotaSnapshot:
         """Get a snapshot of the current quota state for this user."""
@@ -427,22 +425,19 @@ class WebAnnotationAnonymousUser(BaseUser, AnonymousUser):
         return not len(jobs_made) >= cast(int, settings.QUOTAS["daily_jobs"])
 
     def _get_or_create_session_quota(self) -> SessionQuota:
-        try:
-            return SessionQuota.objects.get(session_id=self.session_id)
-        except SessionQuota.DoesNotExist:
-            quota = SessionQuota(session_id=self.session_id)
+        quota, created = SessionQuota.objects.get_or_create(
+            session_id=self.session_id)
+        if created:
             quota.reset_daily()
             quota.reset_monthly()
-            return quota
+        return quota
 
     def _get_or_create_ip_quota(self) -> AnonymousUserQuota:
-        try:
-            return AnonymousUserQuota.objects.get(ip=self.ip)
-        except AnonymousUserQuota.DoesNotExist:
-            quota = AnonymousUserQuota(ip=self.ip)
+        quota, created = AnonymousUserQuota.objects.get_or_create(ip=self.ip)
+        if created:
             quota.reset_daily()
             quota.reset_monthly()
-            return quota
+        return quota
 
     def get_quota(self) -> QuotaSnapshot:
         """Get the more restrictive of the session and IP quota snapshots."""

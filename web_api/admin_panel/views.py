@@ -30,13 +30,11 @@ _CURRENT_QUOTA_FIELDS = {
 
 
 def _get_or_create_user_quota(user: User) -> UserQuota:
-    try:
-        return UserQuota.objects.get(user=user)
-    except UserQuota.DoesNotExist:
-        quota = UserQuota(user=user)
+    quota, created = UserQuota.objects.get_or_create(user=user)
+    if created:
         quota.reset_daily()
         quota.reset_monthly()
-        return quota
+    return quota
 
 
 def _quota_snapshot_response(quota: Quota) -> Response:
@@ -45,23 +43,20 @@ def _quota_snapshot_response(quota: Quota) -> Response:
 
 
 def _get_or_create_session_quota(session_id: str) -> SessionQuota:
-    try:
-        return SessionQuota.objects.get(session_id=session_id)
-    except SessionQuota.DoesNotExist:
-        quota = SessionQuota(session_id=session_id)
+    quota, created = SessionQuota.objects.get_or_create(
+        session_id=session_id)
+    if created:
         quota.reset_daily()
         quota.reset_monthly()
-        return quota
+    return quota
 
 
 def _get_or_create_ip_quota(ip: str) -> AnonymousUserQuota:
-    try:
-        return AnonymousUserQuota.objects.get(ip=ip)
-    except AnonymousUserQuota.DoesNotExist:
-        quota = AnonymousUserQuota(ip=ip)
+    quota, created = AnonymousUserQuota.objects.get_or_create(ip=ip)
+    if created:
         quota.reset_daily()
         quota.reset_monthly()
-        return quota
+    return quota
 
 
 class AdminPanelView(APIView):
