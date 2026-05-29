@@ -2,6 +2,7 @@ import argparse
 import logging
 import os
 import urllib.parse
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,10 @@ from gain.annotation.annotation_genomic_context_cli import (
     get_context_pipeline,
 )
 from gain.annotation.annotation_pipeline import AnnotationPipeline
-from gain.genomic_resources.cached_repository import cache_resources
+from gain.genomic_resources.cached_repository import (
+    CachingProtocol,
+    cache_resources,
+)
 from gain.genomic_resources.genomic_context import (
     context_providers_add_argparser_arguments,
     context_providers_init,
@@ -126,6 +130,82 @@ def add_input_files_to_task_graph(args: dict, task_graph: TaskGraph) -> None:
         task_graph.input_files.append(args["reannotate"])
 
 
+LOCALITY_WARNING_THRESHOLD = 1000
+LOCALITY_ERROR_THRESHOLD = 5000
+LOCAL_RESOURCE_SCHEMES = frozenset({"file", "memory"})
+
+
+def find_nonlocal_resources(
+    pipeline: AnnotationPipeline,
+) -> list[tuple[str, str]]:
+    """Return ``(resource_id, scheme)`` for each non-local pipeline resource.
+
+    A resource is *local* when it is served by a caching protocol (its files
+    are mirrored to disk) or by an fsspec protocol with a ``file`` or
+    ``memory`` scheme. Everything else (``http``/``https``/``s3``) is
+    non-local and would be queried over the network per variant.
+    """
+    result: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for annotator in pipeline.annotators:
+        for resource in annotator.resources:
+            if resource.resource_id in seen:
+                continue
+            seen.add(resource.resource_id)
+            proto = resource.proto
+            if isinstance(proto, CachingProtocol):
+                continue
+            scheme = getattr(proto, "scheme", None)
+            if scheme in LOCAL_RESOURCE_SCHEMES:
+                continue
+            result.append((resource.resource_id, scheme or "unknown"))
+    return result
+
+
+def check_resource_locality(
+    pipeline: AnnotationPipeline,
+    count_rows: Callable[[int], int],
+    *,
+    allow_remote: bool = False,
+) -> None:
+    """Guard against annotating many variants over non-local resources.
+
+    ``count_rows(limit)`` returns the number of input rows, capped at
+    ``limit`` (short-circuiting so a huge input is never read in full).
+
+    Below ``LOCALITY_WARNING_THRESHOLD`` rows the guard is silent; between
+    the warning and error thresholds it logs a warning and proceeds; above
+    ``LOCALITY_ERROR_THRESHOLD`` it raises ``ValueError``. Passing
+    ``allow_remote`` disables the guard entirely.
+    """
+    if allow_remote:
+        return
+    nonlocal_resources = find_nonlocal_resources(pipeline)
+    if not nonlocal_resources:
+        return
+
+    count = count_rows(LOCALITY_ERROR_THRESHOLD + 1)
+    if count <= LOCALITY_WARNING_THRESHOLD:
+        return
+
+    listing = ", ".join(
+        f"{resource_id} ({scheme})"
+        for resource_id, scheme in nonlocal_resources
+    )
+    if count > LOCALITY_ERROR_THRESHOLD:
+        raise ValueError(
+            f"refusing to annotate more than {LOCALITY_ERROR_THRESHOLD} "
+            f"variants against non-local genomic resources: {listing}. "
+            f"Every variant would issue a network request, making the run "
+            f"extremely slow. Use a local/directory GRR, configure a caching "
+            f"GRR, or pass --allow-remote-resources to proceed anyway.")
+    logger.warning(
+        "annotating more than %s variants against non-local genomic "
+        "resources: %s; each variant issues a network request, which may be "
+        "slow. Consider caching these resources or using a local GRR.",
+        LOCALITY_WARNING_THRESHOLD, listing)
+
+
 def cache_pipeline_resources(
     grr: GenomicResourceRepo,
     pipeline: AnnotationPipeline,
@@ -227,6 +307,13 @@ def add_common_annotation_arguments(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=0,  # 0 = annotate iteratively, no batches
         help="Annotate in batches of",
+    )
+    parser.add_argument(
+        "--allow-remote-resources",
+        action="store_true",
+        default=False,
+        help="Skip the check that warns or aborts when annotating many "
+             "variants against non-local (http/https/s3) genomic resources.",
     )
 
     context_providers_add_argparser_arguments(parser)

@@ -24,6 +24,7 @@ from gain.annotation.annotate_utils import (
     add_input_files_to_task_graph,
     build_cli_genomic_context,
     cache_pipeline_resources,
+    check_resource_locality,
     get_grr_from_context,
     get_pipeline_from_context,
     handle_default_args,
@@ -488,6 +489,19 @@ def _read_header(filepath: str, separator: str = "\t") -> list[str]:
     return [c.strip() for c in header.split(separator)]
 
 
+def _count_tabular_rows(input_path: str, limit: int) -> int:
+    """Count data rows (excluding the header), short-circuiting at limit."""
+    opener = gzip.open if is_compressed_filename(input_path) else open
+    count = 0
+    with opener(input_path, "rt") as in_file:
+        in_file.readline()  # skip header
+        for _ in in_file:
+            count += 1
+            if count >= limit:
+                break
+    return count
+
+
 def _tabix_compress(filepath: str) -> None:
     """Produce a tabix-compressed version of the given variants file."""
 
@@ -718,6 +732,12 @@ def cli(argv: list[str] | None = None) -> None:
 
         grr = get_grr_from_context(context)
         assert grr.definition is not None
+
+        check_resource_locality(
+            pipeline,
+            lambda limit: _count_tabular_rows(args["input"], limit),
+            allow_remote=args["allow_remote_resources"],
+        )
 
         ref_genome = context.get_reference_genome()
         ref_genome_id = ref_genome.resource_id if ref_genome else None
