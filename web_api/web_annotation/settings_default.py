@@ -213,9 +213,10 @@ USE_TZ = True
 
 # Timezone whose calendar day/month boundary the quota-refresh commands
 # (refreshdaily / refreshmonthly) use for their "already ran today/this
-# month" guard. Defaults to UTC; set to the deployment's local zone (e.g.
-# "America/New_York") so the guard aligns with locally-scheduled timers.
-QUOTA_RESET_TIMEZONE = "UTC"
+# month" guard. Defaults to UTC; set GPFWA_QUOTA_RESET_TIMEZONE to the
+# deployment's local zone (e.g. "America/New_York") so the guard aligns
+# with locally-scheduled timers.
+QUOTA_RESET_TIMEZONE = os.environ.get("GPFWA_QUOTA_RESET_TIMEZONE", "UTC")
 
 
 # Static files (CSS, JavaScript, Images).
