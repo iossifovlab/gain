@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 """Comprehensive tests for annotation_pipeline module."""
+import pathlib
 from typing import Any
 from unittest.mock import Mock
 
@@ -686,20 +687,20 @@ def test_value_transform_decorator_invalid_transform() -> None:
         ValueTransformAnnotatorDecorator.decorate(annotator)
 
 
-def test_value_transform_decorator_annotate() -> None:
+def test_value_transform_decorator_annotate(tmp_path: pathlib.Path) -> None:
     """Test decorator applies transformation."""
 
     class TestAnnotator(AnnotatorBase):
         """Annotator for testing value transformation."""
 
-        def __init__(self) -> None:
+        def __init__(self, work_dir: pathlib.Path) -> None:
             info = AnnotatorInfo(
                 "test",
                 attributes=[
                     make_attr("doubled", value_transform="value * 2"),
                     make_attr("normal"),
                 ],
-                parameters={},
+                parameters={"work_dir": str(work_dir)},
             )
             super().__init__(None, info)
 
@@ -724,7 +725,7 @@ def test_value_transform_decorator_annotate() -> None:
         ) -> dict[str, Any]:
             return {"doubled": 5, "normal": 10}
 
-    annotator = TestAnnotator()
+    annotator = TestAnnotator(tmp_path)
     decorator = ValueTransformAnnotatorDecorator.decorate(annotator)
 
     result = decorator.annotate(Position("chr1", 1), {})

@@ -26,7 +26,6 @@ class DemoAnnotateGenomeAdapter(AnnotatorBase):
         info: AnnotatorInfo,
     ):
         super().__init__(pipeline, info)
-        assert self.work_dir is not None
         self.cache_repo = GenomicResourceCachedRepo(
             pipeline.repository, str(self.work_dir / "grr_cache"),
         )
@@ -90,7 +89,6 @@ class DemoAnnotateGenomeAdapter(AnnotatorBase):
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,
     ) -> list[dict[str, Any]]:
-        assert self.work_dir is not None
         if batch_work_dir is None:
             work_dir = self.work_dir
         else:
@@ -112,7 +110,10 @@ class DemoAnnotateGenomeAdapter(AnnotatorBase):
             subprocess.run(args, check=True)
             out_file.flush()
             self.read_output(out_file, contexts)
-        return contexts
+        return [
+            {attr.source: context[attr.source] for attr in self._attributes}
+            for context in contexts
+        ]
 
 
 def build_demo_external_genome_annotator_adapter(

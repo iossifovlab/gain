@@ -6,7 +6,7 @@ import select
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, TextIO, cast
+from typing import Any, TextIO
 
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
@@ -37,7 +37,6 @@ class DemoAnnotatorAdapter(DockerAnnotator):
         super().__init__(
             pipeline, info,
         )
-        self.work_dir: Path = cast(Path, info.parameters.get("work_dir"))
 
     def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         return {
@@ -109,7 +108,10 @@ class DemoAnnotatorAdapter(DockerAnnotator):
             )
         with (work_dir / "output.tsv").open("r") as out_file:
             self.read_output(out_file, contexts)
-        return contexts
+        return [
+            {attr.source: context[attr.source] for attr in self._attributes}
+            for context in contexts
+        ]
 
     def run(self, **kwargs: Any) -> None:
         args = [
@@ -182,7 +184,10 @@ class DemoAnnotatorStreamAdapter(DemoAnnotatorAdapter):
                         done = True
             proc.wait()
 
-        return contexts
+        return [
+            {attr.source: context[attr.source] for attr in self._attributes}
+            for context in contexts
+        ]
 
 
 def build_demo_external_annotator_adapter(

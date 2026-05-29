@@ -224,3 +224,33 @@ def test_mock_annotate(
     assert len(contexts[3]) == 86
     assert contexts[3]["worst_consequence"] == "stop_gained"
     assert contexts[3]["highest_impact"] == "HIGH"
+
+
+def test_mock_annotate_renamed_attribute(
+    vep_annotator: VEPCacheAnnotator,
+    mocker: MockerFixture,
+    vep_fixtures: Path,
+) -> None:
+    mocker.patch.object(vep_annotator, "run", return_value=None)
+    mocker.patch.object(vep_annotator, "prepare_input", return_value=None)
+    mocker.patch.object(
+        vep_annotator,
+        "open_files",
+        return_value=(
+            (vep_fixtures / "input.tsv").open("r"),
+            vep_fixtures / "output.tsv",
+        ),
+    )
+    annotatables: list[Annotatable | None] = [
+        VCFAllele("1", 10, "A", "C"),
+        VCFAllele("1", 11, "ACG", "A"),
+        VCFAllele("1", 15, "A", "CGT"),
+        VCFAllele("1", 20, "A", "ATGAC"),
+    ]
+    results = vep_annotator.batch_annotate(annotatables, [{}, {}, {}, {}])
+
+    assert "vep_gene" in results[0]
+    assert "SYMBOL" not in results[0]
+    assert results[0]["worst_consequence"] == "splice_acceptor_variant"
+    assert results[0]["highest_impact"] == "HIGH"
+    assert "CHD8" in results[0]["vep_gene"]

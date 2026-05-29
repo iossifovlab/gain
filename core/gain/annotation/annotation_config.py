@@ -155,8 +155,9 @@ class Attribute:
     source: str
     internal: bool | None = None
     aggregator: str | None = None
-    parameters: dict[str, Any] = field(
-        default_factory=dict, compare=False, hash=False)
+    parameters: ParamsUsageMonitor = field(
+        default_factory=lambda: ParamsUsageMonitor({}),
+        compare=False, hash=False)
     spec: AttributeSpec | None = field(
         default=None, compare=False, hash=False)
     _documentation: str | None = field(

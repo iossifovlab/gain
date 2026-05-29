@@ -53,6 +53,10 @@ Annotator to identify the effect of the variant on protein coding.
         self.used_attributes = [
             attr.source for attr in self._attributes
         ]
+        self._attr_effect_types: dict[str, str | None] = {
+            attr.source: attr.parameters.get("effect_type")
+            for attr in self._attributes
+        }
         self.genome = genome
         self.gene_models = gene_models
         self._promoter_len = info.parameters.get("promoter_len", 0)
@@ -284,7 +288,7 @@ Annotator to identify the effect of the variant on protein coding.
             "worst_effect_genes": ",".join(worst_effect_genes),
         }
         for attr in self.attributes:
-            effect_type = attr.parameters.get("effect_type")
+            effect_type = self._attr_effect_types.get(attr.source)
             if effect_type is not None:
                 genes = sorted(
                     AnnotationEffect.filter_genes(effects, effect_type))

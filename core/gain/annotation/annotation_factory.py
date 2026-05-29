@@ -189,6 +189,7 @@ def build_pipeline_annotator(
         annotator = InputAnnotableAnnotatorDecorator.decorate(annotator)
         annotator = ValueTransformAnnotatorDecorator.decorate(annotator)
         check_for_unused_parameters(annotator_config)
+        check_for_unused_attribute_parameters(annotator)
         check_for_repeated_attributes_in_annotator(annotator_config)
     except (ValueError, FileNotFoundError) as value_error:
         assert annotator_config is not None
@@ -302,3 +303,13 @@ def check_for_unused_parameters(info: AnnotatorInfo) -> None:
     if unused_annotator_parameters:
         raise ValueError("There are unused annotator parameters: "
                          f"{unused_annotator_parameters}")
+
+
+def check_for_unused_attribute_parameters(annotator: Annotator) -> None:
+    """Check each attribute's parameters for unused keys."""
+    for attr in annotator.attributes:
+        unused = attr.parameters.get_unused_keys()
+        if unused:
+            raise ValueError(
+                f"There are unused parameters for attribute"
+                f" '{attr.source}': {unused}")

@@ -41,3 +41,14 @@ def test_pipeline_annoing_identation_error() -> None:
               attributes:
                 - hi
             """, build_inmemory_test_repository({}))
+
+
+def test_unused_attribute_parameter_raises() -> None:
+    with pytest.raises(AnnotationConfigurationError,
+                       match="unused parameters for attribute"):
+        load_pipeline_from_yaml("""
+            - debug_annotator:
+                attributes:
+                - name: hi
+                  bogus_param: oops
+            """, build_inmemory_test_repository({}))

@@ -65,7 +65,6 @@ class SimpleEffectAnnotator(AnnotatorBase):
                 is_default=False,
                 attribute_type="gene_list",
             )
-            self._simple_effect_params[source_gl] = {"effect_type": effect}
             gene_lists[source_ge] = AttributeSpec(
                 source=source_ge, value_type="str",
                 description=(
@@ -73,7 +72,6 @@ class SimpleEffectAnnotator(AnnotatorBase):
                 internal_default=False,
                 is_default=False,
             )
-            self._simple_effect_params[source_ge] = {"effect_type": effect}
 
         return {
             "worst_effect": AttributeSpec(

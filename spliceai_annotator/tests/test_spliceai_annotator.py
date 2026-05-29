@@ -1,8 +1,12 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613,R0917
+import textwrap
+
 import pytest
 import pytest_mock
 from gain.annotation.annotatable import VCFAllele
+from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
+from gain.genomic_resources.repository import GenomicResourceRepo
 
 from spliceai_annotator.spliceai_annotator import SpliceAIAnnotator
 
@@ -278,3 +282,43 @@ def test_spliceai_padding(
 
     assert len(xref) == 21
     assert len(xalt) == xalt_len
+
+
+def test_spliceai_annotate_renamed_attribute(
+    spliceai_grr: GenomicResourceRepo,
+) -> None:
+    pipeline = load_pipeline_from_yaml(textwrap.dedent("""
+        - spliceai_annotator:
+            genome: hg19/genome_10
+            gene_models: hg19/gene_models_small
+            distance: 500
+            attributes:
+            - name: my_delta
+              source: delta_score
+    """), spliceai_grr)
+    with pipeline.open() as p:
+        result = p.annotate(VCFAllele("10", 94077, "A", "C"))
+    assert "my_delta" in result
+    assert "delta_score" not in result
+    assert result["my_delta"] == \
+        "C|TUBB8|0.15|0.27|0.00|0.05|89|-23|-267|193"
+
+
+def test_spliceai_batch_annotate_renamed_attribute(
+    spliceai_grr: GenomicResourceRepo,
+) -> None:
+    pipeline = load_pipeline_from_yaml(textwrap.dedent("""
+        - spliceai_annotator:
+            genome: hg19/genome_10
+            gene_models: hg19/gene_models_small
+            distance: 500
+            attributes:
+            - name: my_delta
+              source: delta_score
+    """), spliceai_grr)
+    with pipeline.open() as p:
+        results = p.batch_annotate([VCFAllele("10", 94077, "A", "C")])
+    assert "my_delta" in results[0]
+    assert "delta_score" not in results[0]
+    assert results[0]["my_delta"] == \
+        "C|TUBB8|0.15|0.27|0.00|0.05|89|-23|-267|193"

@@ -170,8 +170,9 @@ class Annotator(abc.ABC):
         return {resource.get_id() for resource in self._info.resources}
 
     @property
+    @abc.abstractmethod
     def attributes(self) -> list[Attribute]:
-        return []
+        """Return the list of attributes this annotator produces."""
 
     @property
     def used_context_attributes(self) -> tuple[str, ...]:

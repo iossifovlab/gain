@@ -13,6 +13,7 @@ from gain.annotation.annotation_config import (
     AnnotatorInfo,
     Attribute,
     AttributeConfig,
+    ParamsUsageMonitor,
 )
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
@@ -50,7 +51,11 @@ class AnnotatorBase(Annotator):
                         name=source,
                         source=source,
                         internal=None,
-                        parameters=defaults,
+                        aggregator=defaults.get("aggregator"),
+                        parameters={
+                            k: v for k, v in defaults.items()
+                            if k != "aggregator"
+                        },
                     ))
 
         self._attributes: list[Attribute] = []
@@ -68,10 +73,10 @@ class AnnotatorBase(Annotator):
             )
             defaults = self.get_attribute_defaults(spec)
             default_aggregator = defaults.get("aggregator")
-            parameters = {
+            parameters = ParamsUsageMonitor({
                 **{k: v for k, v in defaults.items() if k != "aggregator"},
                 **attr_config.parameters,
-            }
+            })
             aggregator = (
                 attr_config.aggregator
                 if attr_config.aggregator is not None
@@ -89,6 +94,10 @@ class AnnotatorBase(Annotator):
         self._aggregator_instances: list[Aggregator | None] = []
         for attr in self._attributes:
             if attr.aggregator is not None:
+                if attr.spec is not None and not attr.spec.supports_aggregation:
+                    raise ValueError(
+                        f"Attribute '{attr.source}' in annotator"
+                        f" {info.type} does not support aggregation.")
                 validate_aggregator(
                     attr.aggregator,
                     attr.spec.value_type if attr.spec else None,
@@ -99,7 +108,10 @@ class AnnotatorBase(Annotator):
                 self._aggregator_instances.append(None)
 
         work_dir = info.parameters.get("work_dir")
-        self.work_dir = Path(work_dir) if work_dir is not None else None
+        if work_dir is None:
+            raise ValueError(
+                f"Missing a 'work_dir' parameter in annotator {info}.")
+        self.work_dir: Path = Path(work_dir)
         super().__init__(pipeline, info)
 
     @property
@@ -113,8 +125,7 @@ class AnnotatorBase(Annotator):
 
     def open(self) -> Annotator:
         super().open()
-        if self.work_dir is not None:
-            os.makedirs(self.work_dir, exist_ok=True)
+        os.makedirs(self.work_dir, exist_ok=True)
         return self
 
     @abc.abstractmethod

@@ -320,7 +320,7 @@ models to predict splice site variant effects.
         return super().open()
 
     def _not_found(self) -> dict[str, Any]:
-        return {attr.name: None for attr in self._attributes}
+        return {attr.source: None for attr in self._attributes}
 
     @cached_property
     def _width(self) -> int:
@@ -548,7 +548,7 @@ models to predict splice site variant effects.
         if not results:
             return self._not_found()
         return {
-            attr.name: results[attr.source]
+            attr.source: results[attr.source]
             for attr in self._attributes
         }
 
