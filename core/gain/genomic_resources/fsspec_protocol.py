@@ -77,21 +77,25 @@ class ChecksumMismatchError(OSError):
     """
 
 
+# aiohttp.ClientError is folded into the retryable set when aiohttp is
+# importable (it always is when an HTTP GRR is used).
+try:
+    import aiohttp as _aiohttp
+    _aiohttp_errors: tuple[type[BaseException], ...] = (_aiohttp.ClientError,)
+except ImportError:
+    _aiohttp_errors = ()
+
 # Transient errors that warrant retrying a file download from scratch. A
 # stalled aiohttp read surfaces as fsspec's FSTimeoutError; ConnectionError
 # covers resets/refused connects; ChecksumMismatchError covers truncated
-# transfers. aiohttp.ClientError is appended when aiohttp is importable.
+# transfers.
 _RETRYABLE_COPY_ERRORS: tuple[type[BaseException], ...] = (
     fsspec.exceptions.FSTimeoutError,
     asyncio.TimeoutError,
     ConnectionError,
     ChecksumMismatchError,
+    *_aiohttp_errors,
 )
-try:
-    import aiohttp as _aiohttp
-    _RETRYABLE_COPY_ERRORS = (*_RETRYABLE_COPY_ERRORS, _aiohttp.ClientError)
-except ImportError:
-    pass
 
 
 def _scan_for_resources(
