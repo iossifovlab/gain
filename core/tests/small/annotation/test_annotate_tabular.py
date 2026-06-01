@@ -591,6 +591,59 @@ def test_annotate_tabular_splittable_keeps_jobs(
     assert process_graph.call_args.kwargs["jobs"] == 5
 
 
+@pytest.mark.parametrize("suffix", [".gz", ".bgz"])
+def test_annotate_tabular_csi_indexed_input_no_duplication(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+    suffix: str,
+) -> None:
+    """A compressed input indexed with .csi (not .tbi) must be annotated
+    exactly once per record across region splitting.
+
+    Regression for iossifovlab/gain#52: ``_CSVSource.__enter__`` and
+    ``_add_tasks_tabixed`` used to detect the tabix index with a ``.tbi``-only
+    check, while the splittability gate accepts ``.tbi`` or ``.csi``. A
+    ``.csi``-only input was therefore split into one region per contig but
+    opened whole-file, and every part emitted the entire file -> duplicated
+    (and unsortable) output. Parametrized over .gz/.bgz to also guard the
+    .bgz reading path.
+    """
+    in_content = textwrap.dedent("""
+        chrom   pos
+        chr1    23
+        chr2    33
+    """)
+    root_path = annotate_directory_fixture
+    out_file = tmp_path / "out.txt.gz"
+    work_dir = tmp_path / "work"
+
+    annotation_file = root_path / "annotation.yaml"
+    grr_file = root_path / "grr.yaml"
+
+    # setup_tabix always writes a .gz + .csi; rename to .bgz for that case
+    setup_tabix(
+        tmp_path / "in.txt.gz", in_content,
+        seq_col=0, start_col=1, end_col=1, line_skip=1, csi=True, force=True)
+    in_file = tmp_path / f"in.txt{suffix}"
+    if suffix != ".gz":
+        (tmp_path / "in.txt.gz").rename(in_file)
+        (tmp_path / "in.txt.gz.csi").rename(tmp_path / f"in.txt{suffix}.csi")
+
+    # only a .csi index exists, no .tbi -> exercises the gate/reader mismatch
+    assert (tmp_path / f"in.txt{suffix}.csi").exists()
+    assert not (tmp_path / f"in.txt{suffix}.tbi").exists()
+
+    cli([
+        str(a) for a in [
+            in_file, annotation_file, "-o", out_file,
+            "-w", work_dir, "--grr", grr_file, "-j", 1,
+        ]
+    ])
+
+    rows = list(pysam.TabixFile(str(out_file)).fetch())
+    assert len(rows) == 2
+
+
 def test_annotate_tabular_batch_mode(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
