@@ -133,9 +133,10 @@ class DemoAnnotatorStreamAdapter(DemoAnnotatorAdapter):
     def _do_batch_annotate(
         self,
         annotatables: Sequence[Annotatable | None],
-        contexts: list[dict[str, Any]],
+        contexts: list[dict[str, Any]],  # noqa: ARG002
         batch_work_dir: str | None = None,  # noqa: ARG002
     ) -> list[dict[str, Any]]:
+        results: list[int] = []
         with subprocess.Popen(
             ["annotate_length"],
             stdin=subprocess.PIPE,
@@ -152,7 +153,6 @@ class DemoAnnotatorStreamAdapter(DemoAnnotatorAdapter):
             poll.register(
                 proc.stdout, select.POLLIN | select.POLLPRI)  # type: ignore
             annotatable_idx = 0
-            read_idx = 0
             done = False
 
             while True:
@@ -170,23 +170,19 @@ class DemoAnnotatorStreamAdapter(DemoAnnotatorAdapter):
 
                     elif state & select.POLLIN or state & select.POLLPRI:
                         row = next(reader)
-                        contexts[read_idx]["annotatable_length"] = int(row[-1])
-                        read_idx += 1
-                        if read_idx == len(annotatables):
+                        results.append(int(row[-1]))
+                        if len(results) == len(annotatables):
                             poll.unregister(proc.stdout)  # type: ignore
                             done = True
                     elif state & select.POLLHUP:
-                        for row in reader:
-                            contexts[read_idx]["annotatable_length"] = \
-                                int(row[-1])
-                            read_idx += 1
+                        results.extend(int(row[-1]) for row in reader)
                         poll.unregister(proc.stdout)  # type: ignore
                         done = True
             proc.wait()
 
         return [
-            {attr.source: context[attr.source] for attr in self._attributes}
-            for context in contexts
+            {attr.source: value for attr in self._attributes}
+            for value in results
         ]
 
 
