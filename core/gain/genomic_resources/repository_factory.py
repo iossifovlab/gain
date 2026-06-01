@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_DEFINITION = {
-    "id": "default",
+    "id": "main-GRR",
     "type": "http",
     "url": "https://grr.iossifovlab.com",
 }
