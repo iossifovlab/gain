@@ -37,7 +37,7 @@ When **full report** is turned on, the page shows a more detailed view of the re
 
 
 Annotation jobs
-*****************
+***************
 
 The second annotation mode is **Annotation jobs**, which allows multiple annotatables 
 to be annotated at once. In this mode, users upload a file in tabular or VCF format 
@@ -90,9 +90,9 @@ and gene-level scores. The downloaded output for ``small_input.csv`` is shown be
 Custom annotation pipeline
 **************************
 
-The web interface can also be used with custom annotation pipelines. Users can build pipelines through the visual interface by selecting annotators and resources - this workflow is described in more detail in the `GAIn web interface <https://iossifovlab.com/gaindocs/web_interface.html>`_ section. Here, we demonstrate a simpler case: creating a new pipeline by entering an annotation pipeline definition into the annotation pipeline editor.
+The web interface can also be used with custom annotation pipelines. Users can build pipelines through the visual interface by selecting annotators and resources - this workflow is described in more detail in the `GAIn web interface <https://iossifovlab.com/gaindocs/web_interface.html>`_ section. Here, we demonstrate a simpler case: creating a new pipeline by entering an annotation pipeline into the annotation pipeline editor.
 
-To create a new pipeline, click the **New pipeline** button at the bottom of the annotation pipeline editor. This opens an empty editor where the pipeline definition can be entered.
+To create a new pipeline, click the **New pipeline** button at the bottom of the annotation pipeline editor. This opens an empty editor where the pipeline definition can be entered. 
 
 .. figure:: figures/GAInWeb8.png
 
