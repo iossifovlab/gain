@@ -318,11 +318,15 @@ def test_cli_cache_reports_progress_off_tty(
     tmp_path: pathlib.Path,
     grr_config_file: pathlib.Path,
     caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import logging
 
-    # pytest captures stdout/stderr, so isatty() is False: the default
-    # progress mode emits milestone log lines rather than a live bar.
+    # Force the non-tty branch of _make_cache_progress so the default
+    # progress mode emits milestone log lines rather than a live tqdm bar,
+    # regardless of how pytest captures (under -s / a real TTY,
+    # sys.stderr.isatty() is otherwise True and the bar bypasses logging).
+    monkeypatch.setattr("sys.stderr.isatty", lambda: False)
     caplog.set_level(logging.INFO, logger=CACHE_LOGGER)
 
     pipeline_yaml = tmp_path / "annotation.yaml"
