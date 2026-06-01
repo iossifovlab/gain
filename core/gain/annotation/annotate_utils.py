@@ -267,7 +267,8 @@ def add_common_annotation_arguments(parser: argparse.ArgumentParser) -> None:
     """Add common arguments to an annotation command line parser."""
     parser.add_argument(
         "input", default="-", nargs="?",
-        help="the input column file")
+        help="the input file; gzip/bgzip-compressed inputs (.gz/.bgz), "
+             "optionally tabix-indexed, are detected by extension")
     parser.add_argument(
         "--version", default=False,
         action="store_true", help="Show the GAIn version and exit")
@@ -281,7 +282,9 @@ def add_common_annotation_arguments(parser: argparse.ArgumentParser) -> None:
         default=None)
     parser.add_argument(
         "-o", "--output",
-        help="Filename of the output result",
+        help="Filename of the output result; a .gz/.bgz suffix produces a "
+             "compressed, tabix-indexed output. If the suffix is omitted, a "
+             "compressed input's suffix is mirrored onto the output.",
         default=None)
     parser.add_argument(
         "--reannotate", default=None,
