@@ -7,8 +7,8 @@ from typing import Any
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
-    Attribute,
     AnnotatorInfo,
+    Attribute,
 )
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
@@ -106,7 +106,7 @@ class GeneScoreAnnotator(AnnotatorBase):
 
         return specs
 
-    def _aggregator_value_type(self, attr: Attribute) -> str | None:
+    def _aggregator_value_type(self, attr: Attribute) -> str | None:  # noqa: ARG002
         return None
 
     def _apply_gene_aggregator(
