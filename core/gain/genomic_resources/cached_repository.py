@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from collections.abc import Generator, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import IO, Any, cast
 
 import apsw
 import pysam
+from tqdm import tqdm
 
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.repository import (
@@ -315,10 +317,94 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
         return cached_files
 
 
+class _CacheProgress:
+    """Report caching progress as files complete.
+
+    Three concrete behaviours share this interface so the caching loop
+    stays oblivious to the rendering mode:
+
+    - off (``progress=False``): nothing is shown; the loop still logs its
+      header, its DEBUG per-file lines, and the final failure summary.
+    - a live :class:`tqdm` bar when stderr is a terminal.
+    - throttled milestone log lines (every 10%) when stderr is not a
+      terminal, so a captured CI log stays readable and greppable.
+
+    Failures advance the counter like any other completed file and are
+    surfaced as a running ``failed=N`` tally.
+    """
+
+    def __init__(self, total: int) -> None:
+        self.total = total
+        self.done = 0
+        self.failed = 0
+
+    def update(self, *, failed: bool) -> None:
+        self.done += 1
+        if failed:
+            self.failed += 1
+
+    def report_failure(self, message: str) -> None:
+        logger.error(message)
+
+    def close(self) -> None:
+        pass
+
+
+class _MilestoneProgress(_CacheProgress):
+    """Log a progress line each time a 10% milestone is crossed."""
+
+    def __init__(self, total: int) -> None:
+        super().__init__(total)
+        self._last_bucket = -1
+
+    def update(self, *, failed: bool) -> None:
+        super().update(failed=failed)
+        pct = self.done * 100 // self.total if self.total else 100
+        bucket = pct // 10
+        if bucket == self._last_bucket and self.done != self.total:
+            return
+        self._last_bucket = bucket
+        failed_suffix = f", failed={self.failed}" if self.failed else ""
+        logger.info(
+            "caching progress: %s/%s files (%s%%)%s",
+            self.done, self.total, pct, failed_suffix)
+
+
+class _TqdmProgress(_CacheProgress):
+    """Drive a live tqdm bar, writing failures above it via tqdm.write."""
+
+    def __init__(self, total: int) -> None:
+        super().__init__(total)
+        self._bar = tqdm(
+            total=total, desc="caching", unit="file", leave=True)
+
+    def update(self, *, failed: bool) -> None:
+        super().update(failed=failed)
+        if self.failed:
+            self._bar.set_postfix(failed=self.failed, refresh=False)
+        self._bar.update(1)
+
+    def report_failure(self, message: str) -> None:
+        self._bar.write(message)
+
+    def close(self) -> None:
+        self._bar.close()
+
+
+def _make_cache_progress(total: int, *, progress: bool) -> _CacheProgress:
+    if not progress:
+        return _CacheProgress(total)
+    if sys.stderr.isatty():
+        return _TqdmProgress(total)
+    return _MilestoneProgress(total)
+
+
 def cache_resources(
     repository: GenomicResourceRepo,
     resource_ids: Iterable[str] | None,
     workers: int | None = None,
+    *,
+    progress: bool = True,
 ) -> None:
     """Cache resources from a list of remote resource IDs."""
     # pylint: disable=import-outside-toplevel
@@ -358,7 +444,7 @@ def cache_resources(
         impl = impl_builder(resource)
 
         for res_file in impl.files:
-            logger.info(
+            logger.debug(
                 "request to cache resource file: (%s, %s) from %s",
                 resource.resource_id, res_file,
                 cached_proto.remote_protocol.proto_id)
@@ -370,6 +456,7 @@ def cache_resources(
 
     total_files = len(futures)
     logger.info("caching %s files", total_files)
+    reporter = _make_cache_progress(total_files, progress=progress)
     failures: list[str] = []
     for count, future in enumerate(as_completed(futures)):
         filename: str
@@ -385,13 +472,16 @@ def cache_resources(
             failures.append(f"{label} ({error})")
             # One concise line per failure; the full summary is raised at the
             # end. A stack trace per failed file would swamp a large run.
-            logger.error(  # noqa: TRY400
-                "failed %s/%s (%s): %s", count, total_files, label, error)
+            reporter.report_failure(
+                f"failed {count}/{total_files} ({label}): {error}")
+            reporter.update(failed=True)
             continue
-        logger.info(
+        logger.debug(
             "finished %s/%s (%s: %s)", count, total_files,
             resource_id, filename)
+        reporter.update(failed=False)
 
+    reporter.close()
     executor.shutdown()
 
     if failures:

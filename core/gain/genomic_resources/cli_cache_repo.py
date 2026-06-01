@@ -57,6 +57,10 @@ def cli_cache_repo(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--jobs", "-j", type=int, default=4,
         help="Number of parallel workers fetching resources.")
+    parser.add_argument(
+        "--no-progress", dest="progress", action="store_false",
+        help="Disable the progress indication (live bar on a terminal, "
+             "milestone log lines otherwise).")
     context_providers_add_argparser_arguments(
         parser, skip_cli_annotation_context=True)
     VerbosityConfiguration.set_arguments(parser)
@@ -82,5 +86,6 @@ def cli_cache_repo(argv: list[str] | None = None) -> None:
         return
 
     start = time.time()
-    cache_pipeline_resources(grr, pipeline, workers=args.jobs)
+    cache_pipeline_resources(
+        grr, pipeline, workers=args.jobs, progress=args.progress)
     logger.info("cached pipeline resources in %.2f secs", time.time() - start)

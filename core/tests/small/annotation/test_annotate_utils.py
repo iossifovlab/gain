@@ -265,4 +265,5 @@ def test_cache_pipeline_resources_forwards_workers(
 
     cache_pipeline_resources(grr, pipeline, workers=7)
 
-    mocked_cache.assert_called_once_with(grr, set(), workers=7)
+    mocked_cache.assert_called_once_with(
+        grr, set(), workers=7, progress=True)
