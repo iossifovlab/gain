@@ -98,13 +98,13 @@ class _CSVSource(Source):
         self.header: list[str] = self._extract_header()
 
     def __enter__(self) -> _CSVSource:
-        path = Path(self.path)
-        filename = path.name
-        parent = path.parent
-        if (filename.endswith(".gz") and (parent / f"{filename}.tbi").exists()) or \
-           (filename.endswith(".bgz") and (parent / f"{filename}.tbi").exists()):
-            self.source_file = TabixFile(self.path)
-        elif filename.endswith(".gz") or filename.endswith(".bgz"):
+        index_filename = (
+            tabix_index_filename(self.path)
+            if is_compressed_filename(self.path) else None
+        )
+        if index_filename is not None:
+            self.source_file = TabixFile(self.path, index=index_filename)
+        elif is_compressed_filename(self.path):
             self.source_file = gzip.open(self.path, "rt")
             self.source_file.readline()  # Skip header line
         else:
@@ -564,7 +564,10 @@ def _add_tasks_tabixed(
     grr_definition: dict[str, Any],
     ref_genome_id: str | None,
 ) -> None:
-    with closing(TabixFile(args["input"])) as pysam_file:
+    with closing(
+        TabixFile(
+            args["input"], index=tabix_index_filename(args["input"])),
+    ) as pysam_file:
         regions = produce_regions(pysam_file, args["region_size"])
     file_paths = produce_partfile_paths(
         args["input"], regions, args["work_dir"])
