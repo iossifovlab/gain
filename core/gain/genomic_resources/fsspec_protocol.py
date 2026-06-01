@@ -19,6 +19,7 @@ from types import TracebackType
 from typing import (
     IO,
     Any,
+    NamedTuple,
     cast,
 )
 from urllib.parse import urlparse
@@ -60,6 +61,19 @@ from gain.utils.helpers import convert_size
 pysam.set_verbosity(1)
 
 logger = logging.getLogger(__name__)
+
+
+class FileCacheVerdict(NamedTuple):
+    """The lock-free classification of a single resource file.
+
+    ``needs_download`` is True when the local copy is missing or has drifted
+    from the remote manifest and must be (re)downloaded; ``size`` is the
+    manifest-recorded byte size of that pending download (0 when nothing
+    needs downloading). See gain#78.
+    """
+
+    needs_download: bool
+    size: int
 
 
 # Per-file download retry policy for copy_resource_file. A single stalled or
@@ -812,16 +826,28 @@ class FsspecReadWriteProtocol(
 
         return state
 
-    def update_resource_file(
+    def classify_resource_file(
             self, remote_resource: GenomicResource,
             dest_resource: GenomicResource,
-            filename: str) -> ResourceFileState | None:
-        """Update a resource file into repository if needed."""
+            filename: str) -> FileCacheVerdict:
+        """Decide whether a resource file needs (re)downloading.
+
+        This is the lock-free decision half of :meth:`update_resource_file`:
+        it performs the same checks and the same state-refresh side effect
+        (rebuild + save the ``.state`` on a missing state or a timestamp/size
+        drift, and delete a file no longer in the remote manifest), but it
+        never copies/downloads. The verdict's ``size`` is the manifest byte
+        size for files that will download (0 otherwise). See gain#78.
+        """
         assert dest_resource.resource_id == remote_resource.resource_id
 
+        remote_manifest = remote_resource.get_manifest()
+
         if not self.file_exists(dest_resource, filename):
-            return self.copy_resource_file(
-                remote_resource, dest_resource, filename)
+            size = (
+                remote_manifest[filename].size
+                if filename in remote_manifest else 0)
+            return FileCacheVerdict(needs_download=True, size=size)
 
         local_state = self.load_resource_file_state(dest_resource, filename)
         if local_state is None:
@@ -838,16 +864,30 @@ class FsspecReadWriteProtocol(
                     dest_resource, filename)
                 self.save_resource_file_state(dest_resource, local_state)
 
-        remote_manifest = remote_resource.get_manifest()
         if filename not in remote_manifest:
             self.delete_resource_file(dest_resource, filename)
-            return None
+            return FileCacheVerdict(needs_download=False, size=0)
         manifest_entry = remote_manifest[filename]
         if local_state.md5 != manifest_entry.md5:
+            return FileCacheVerdict(
+                needs_download=True, size=manifest_entry.size)
+
+        return FileCacheVerdict(needs_download=False, size=0)
+
+    def update_resource_file(
+            self, remote_resource: GenomicResource,
+            dest_resource: GenomicResource,
+            filename: str) -> ResourceFileState | None:
+        """Update a resource file into repository if needed."""
+        verdict = self.classify_resource_file(
+            remote_resource, dest_resource, filename)
+        if verdict.needs_download:
             return self.copy_resource_file(
                 remote_resource, dest_resource, filename)
-
-        return local_state
+        # No download needed: a file deleted because it left the remote
+        # manifest has no state to return (load returns None); an up-to-date
+        # file returns its current persisted state.
+        return self.load_resource_file_state(dest_resource, filename)
 
     def build_content_file(self) -> list[dict[str, Any]]:
         """Build the content of the repository (i.e '.CONTENTS.json' file)."""

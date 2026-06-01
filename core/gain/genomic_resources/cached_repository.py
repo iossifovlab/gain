@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from collections.abc import Generator, Iterable
+from collections.abc import Callable, Generator, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import IO, Any, cast
 
@@ -12,7 +12,10 @@ import apsw
 import pysam
 from tqdm import tqdm
 
-from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
+from gain.genomic_resources.fsspec_protocol import (
+    FileCacheVerdict,
+    FsspecReadWriteProtocol,
+)
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GenomicResource,
@@ -126,6 +129,51 @@ class CachingProtocol(ReadOnlyRepositoryProtocol):
                 self.local_protocol.update_resource_file(
                     remote_resource, resource, filename)
         return (resource.resource_id, None)
+
+    def classify_cached_resource_file(
+        self, resource: GenomicResource, filename: str,
+    ) -> FileCacheVerdict:
+        """Classify a resource file without taking any lock or downloading.
+
+        The lock-free decision half of :meth:`refresh_cached_resource_file`:
+        it resolves the remote resource and delegates to the local
+        protocol's :meth:`classify_resource_file`. See gain#78.
+        """
+        assert resource.proto == self
+
+        if filename.endswith(".lockfile"):
+            # Ignore lockfiles
+            return FileCacheVerdict(needs_download=False, size=0)
+
+        remote_resource = self.remote_protocol.get_resource(
+            resource.resource_id,
+            f"={resource.get_version_str()}")
+
+        return self.local_protocol.classify_resource_file(
+            remote_resource, resource, filename)
+
+    def download_cached_resource_file(
+        self, resource: GenomicResource, filename: str,
+        *,
+        on_bytes: Callable[[int], None] | None = None,
+    ) -> tuple[str, str]:
+        """Download a resource file into cache unconditionally.
+
+        Takes the per-file lock and copies the file regardless of its local
+        state -- the decision was already made by
+        :meth:`classify_cached_resource_file`. See gain#78.
+        """
+        assert resource.proto == self
+
+        remote_resource = self.remote_protocol.get_resource(
+            resource.resource_id,
+            f"={resource.get_version_str()}")
+
+        # Lock the resource file to avoid caching it simultaneously
+        with self.local_protocol.obtain_resource_file_lock(resource, filename):
+            self.local_protocol.copy_resource_file(
+                remote_resource, resource, filename, on_bytes=on_bytes)
+        return (resource.resource_id, filename)
 
     def get_resource_url(self, resource: GenomicResource) -> str:
         """Return url of the specified resources."""
@@ -425,6 +473,134 @@ def _make_cache_progress(total: int, *, progress: bool) -> _CacheProgress:
     return _MilestoneProgress(total)
 
 
+def _resolve_resources(
+    repository: GenomicResourceRepo,
+    resource_ids: Iterable[str] | None,
+) -> list[GenomicResource]:
+    """Resolve the remote resources to cache, either all or a given list."""
+    if resource_ids is None:
+        return list(repository.get_all_resources())
+    resources: list[GenomicResource] = []
+    for resource_id in resource_ids:
+        remote_res = repository.get_resource(resource_id)
+        assert remote_res is not None, resource_id
+        resources.append(remote_res)
+    return resources
+
+
+def _enumerate_resource_files(
+    resource: GenomicResource,
+) -> list[str]:
+    """Return the file set to consider for caching a single resource.
+
+    Mirrors the pre-refactor selection exactly: a resource of a known
+    implementation type contributes ``genomic_resource.yaml`` plus the
+    implementation's ``files``; a resource of an unknown type contributes
+    every manifest entry except ``.lockfile`` files (the coarse
+    ``refresh_cached_resource`` set). See gain#78.
+    """
+    # pylint: disable=import-outside-toplevel
+    from gain.genomic_resources import get_resource_implementation_builder
+
+    impl_builder = get_resource_implementation_builder(resource.get_type())
+    if impl_builder is None:
+        logger.info(
+            "unexpected resource type <%s> for resource %s; "
+            "updating resource", resource.get_type(), resource.resource_id)
+        return [
+            entry.name
+            for entry in resource.get_manifest()
+            if not entry.name.endswith(".lockfile")
+        ]
+
+    impl = impl_builder(resource)
+    return ["genomic_resource.yaml", *impl.files]
+
+
+def _build_cache_worklist(
+    cached_proto: CachingProtocol,
+    resource: GenomicResource,
+    filenames: Iterable[str],
+    workers: int | None = None,
+) -> tuple[list[tuple[GenomicResource, str, int]], int, int, list[str]]:
+    """Classify ``filenames`` of ``resource`` (lock-free) into a work-list.
+
+    Returns ``(worklist, total_bytes, already_cached, failures)`` where
+    ``worklist`` is the list of ``(resource, filename, size)`` entries that
+    need downloading, ``total_bytes`` is the summed manifest size of those
+    entries, ``already_cached`` counts the files that need no download, and
+    ``failures`` collects per-file classify errors (a classify failure must
+    not abort the whole run). Classification is lock-free, so it is fanned
+    out across a thread pool. See gain#43, gain#78.
+    """
+    filenames = list(filenames)
+    worklist: list[tuple[GenomicResource, str, int]] = []
+    total_bytes = 0
+    already_cached = 0
+    failures: list[str] = []
+
+    with ThreadPoolExecutor(max_workers=workers) as classify_executor:
+        future_to_name = {
+            classify_executor.submit(
+                cached_proto.classify_cached_resource_file,
+                resource, filename): filename
+            for filename in filenames
+        }
+        for future, filename in future_to_name.items():
+            try:
+                verdict = future.result()
+            except Exception as error:  # noqa: BLE001 - report, don't abort
+                # A classify failure (e.g. a corrupt .state, or a resource
+                # gone from the remote) must not discard the whole run; it is
+                # collected and surfaced in the end-of-run summary like a
+                # download failure. See gain#43.
+                failures.append(
+                    f"{resource.resource_id}: {filename} ({error})")
+                # One concise line per failure; a stack trace per failed file
+                # would swamp a large run (see the gain#43 rationale in the
+                # download loop), so logger.error not logger.exception.
+                logger.error(  # noqa: TRY400
+                    "failed to classify (%s: %s): %s",
+                    resource.resource_id, filename, error)
+                continue
+            if verdict.needs_download:
+                worklist.append((resource, filename, verdict.size))
+                total_bytes += verdict.size
+            else:
+                already_cached += 1
+
+    return worklist, total_bytes, already_cached, failures
+
+
+def _classify_resources(
+    resources: list[GenomicResource],
+    workers: int | None,
+) -> tuple[list[tuple[GenomicResource, str, int]], int, int, list[str]]:
+    """Phase A: classify every resource's files (lock-free) into a work-list.
+
+    Returns ``(worklist, total_bytes, already_cached, failures)``. A classify
+    failure for one file is collected (not raised) so the run continues and
+    surfaces it in the end-of-run summary, preserving the gain#43 contract
+    that one file failing must not discard the whole run. See gain#78.
+    """
+    worklist: list[tuple[GenomicResource, str, int]] = []
+    total_bytes = 0
+    already_cached = 0
+    failures: list[str] = []
+    for resource in resources:
+        if not isinstance(resource.proto, CachingProtocol):
+            continue
+        filenames = _enumerate_resource_files(resource)
+        res_worklist, res_bytes, res_cached, res_failures = \
+            _build_cache_worklist(
+                resource.proto, resource, filenames, workers)
+        worklist.extend(res_worklist)
+        total_bytes += res_bytes
+        already_cached += res_cached
+        failures.extend(res_failures)
+    return worklist, total_bytes, already_cached, failures
+
+
 def cache_resources(
     repository: GenomicResourceRepo,
     resource_ids: Iterable[str] | None,
@@ -433,61 +609,39 @@ def cache_resources(
     progress: bool = True,
 ) -> None:
     """Cache resources from a list of remote resource IDs."""
-    # pylint: disable=import-outside-toplevel
-    from gain.genomic_resources import get_resource_implementation_builder
+    resources = _resolve_resources(repository, resource_ids)
 
+    # Phase A: classify (lock-free) the same file set as before into an
+    # authoritative work-list of files that actually need downloading. A
+    # classify failure is collected, not raised, so the run still proceeds
+    # and surfaces it in the end-of-run summary (gain#43).
+    worklist, total_bytes, already_cached, classify_failures = \
+        _classify_resources(resources, workers)
+
+    logger.info(
+        "caching %s file(s), %s bytes to download; %s already cached",
+        len(worklist), total_bytes, already_cached)
+
+    # Phase B: download (with per-file locks) only the work-list entries.
     executor = ThreadPoolExecutor(max_workers=workers)
     futures: dict[Future, str] = {}
-    if resource_ids is None:
-        resources: list[GenomicResource] = \
-            list(repository.get_all_resources())
-    else:
-        resources = []
-        for resource_id in resource_ids:
-            remote_res = repository.get_resource(resource_id)
-            assert remote_res is not None, resource_id
-            resources.append(remote_res)
-
-    for resource in resources:
-        if not isinstance(resource.proto, CachingProtocol):
-            continue
-
-        cached_proto = resource.proto
-        impl_builder = get_resource_implementation_builder(resource.get_type())
-        if impl_builder is None:
-            logger.info(
-                "unexpected resource type <%s> for resource %s; "
-                "updating resource", resource.get_type(), resource.resource_id)
-            futures[executor.submit(
-                cached_proto.refresh_cached_resource, resource,
-            )] = resource.resource_id
-            continue
+    for resource, filename, _size in worklist:
+        cached_proto = cast(CachingProtocol, resource.proto)
+        logger.debug(
+            "request to cache resource file: (%s, %s) from %s",
+            resource.resource_id, filename,
+            cached_proto.remote_protocol.proto_id)
         futures[executor.submit(
-            cached_proto.refresh_cached_resource_file,
+            cached_proto.download_cached_resource_file,
             resource,
-            "genomic_resource.yaml",
-        )] = f"{resource.resource_id}: genomic_resource.yaml"
-        impl = impl_builder(resource)
-
-        for res_file in impl.files:
-            logger.debug(
-                "request to cache resource file: (%s, %s) from %s",
-                resource.resource_id, res_file,
-                cached_proto.remote_protocol.proto_id)
-            futures[executor.submit(
-                cached_proto.refresh_cached_resource_file,
-                resource,
-                res_file,
-            )] = f"{resource.resource_id}: {res_file}"
+            filename,
+        )] = f"{resource.resource_id}: {filename}"
 
     total_files = len(futures)
-    logger.info("caching %s files", total_files)
     reporter = _make_cache_progress(total_files, progress=progress)
-    failures: list[str] = []
+    failures: list[str] = list(classify_failures)
     try:
         for count, future in enumerate(as_completed(futures)):
-            filename: str
-
             label = futures[future]
             try:
                 resource_id, filename = future.result()
@@ -519,6 +673,10 @@ def cache_resources(
 
     if failures:
         summary = "\n".join(f"  - {failure}" for failure in failures)
+        # Files acted on that could fail: downloads attempted (total_files)
+        # plus files that failed classification before reaching the
+        # work-list. (Already-cached files cannot fail, so are excluded.)
+        attempted = total_files + len(classify_failures)
         raise RuntimeError(
-            f"failed to cache {len(failures)}/{total_files} resource "
+            f"failed to cache {len(failures)}/{attempted} resource "
             f"file(s):\n{summary}")

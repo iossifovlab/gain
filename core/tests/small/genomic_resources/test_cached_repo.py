@@ -744,18 +744,19 @@ def test_cache_resources_continues_after_failure_and_raises(
             "good2": {GR_CONF_FILE_NAME: "", "data.txt": "c"},
             }) as cache_repo:
 
-        real_refresh = CachingProtocol.refresh_cached_resource
+        real_download = CachingProtocol.download_cached_resource_file
 
-        def flaky_refresh(
+        def flaky_download(
                 self: CachingProtocol,
-                resource: Any) -> tuple[str, None]:
+                resource: Any, filename: str,
+                *, on_bytes: Any = None) -> tuple[str, str]:
             if resource.resource_id == "bad":
                 raise OSError("simulated permanent download failure")
-            return real_refresh(self, resource)
+            return real_download(self, resource, filename, on_bytes=on_bytes)
 
         mocker.patch.object(
-            CachingProtocol, "refresh_cached_resource",
-            autospec=True, side_effect=flaky_refresh)
+            CachingProtocol, "download_cached_resource_file",
+            autospec=True, side_effect=flaky_download)
 
         with pytest.raises(RuntimeError, match="bad"):
             cache_resources(cache_repo, None, workers=1)
@@ -781,18 +782,19 @@ def test_cache_resources_progress_reports_failures(
             "good2": {GR_CONF_FILE_NAME: "", "data.txt": "c"},
             }) as cache_repo:
 
-        real_refresh = CachingProtocol.refresh_cached_resource
+        real_download = CachingProtocol.download_cached_resource_file
 
-        def flaky_refresh(
+        def flaky_download(
                 self: CachingProtocol,
-                resource: Any) -> tuple[str, None]:
+                resource: Any, filename: str,
+                *, on_bytes: Any = None) -> tuple[str, str]:
             if resource.resource_id == "bad":
                 raise OSError("simulated permanent download failure")
-            return real_refresh(self, resource)
+            return real_download(self, resource, filename, on_bytes=on_bytes)
 
         mocker.patch.object(
-            CachingProtocol, "refresh_cached_resource",
-            autospec=True, side_effect=flaky_refresh)
+            CachingProtocol, "download_cached_resource_file",
+            autospec=True, side_effect=flaky_download)
 
         with pytest.raises(RuntimeError, match="bad"):
             cache_resources(cache_repo, None, workers=1)
@@ -803,6 +805,43 @@ def test_cache_resources_progress_reports_failures(
     ]
     assert progress_lines
     assert any("failed=1" in line for line in progress_lines)
+
+
+@pytest.mark.grr_full
+def test_cache_resources_continues_after_classify_failure_and_raises(
+        cache_repository: CacheRepositoryBuilder,
+        mocker: MockerFixture) -> None:
+    # A failure in the lock-free classify pre-pass must not abort the whole
+    # run: other resources are still classified and downloaded, and the run
+    # raises a summary naming the failure. Preserves the gain#43 "one file
+    # failing must not discard the run" contract across the two-phase
+    # refactor (gain#78).
+    with cache_repository({
+            "good1": {GR_CONF_FILE_NAME: "", "data.txt": "a"},
+            "bad": {GR_CONF_FILE_NAME: "", "data.txt": "b"},
+            "good2": {GR_CONF_FILE_NAME: "", "data.txt": "c"},
+            }) as cache_repo:
+
+        real_classify = CachingProtocol.classify_cached_resource_file
+
+        def flaky_classify(
+                self: CachingProtocol,
+                resource: Any, filename: str) -> Any:
+            if resource.resource_id == "bad":
+                raise OSError("simulated classify failure")
+            return real_classify(self, resource, filename)
+
+        mocker.patch.object(
+            CachingProtocol, "classify_cached_resource_file",
+            autospec=True, side_effect=flaky_classify)
+
+        with pytest.raises(RuntimeError, match="bad"):
+            cache_resources(cache_repo, None, workers=1)
+
+        # The healthy resources were still classified and cached despite
+        # "bad" failing classification.
+        assert cache_repo.get_resource_cached_files("good1") == {"data.txt"}
+        assert cache_repo.get_resource_cached_files("good2") == {"data.txt"}
 
 
 @pytest.mark.grr_full

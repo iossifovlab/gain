@@ -489,6 +489,166 @@ def test_milestone_progress_total_zero_skips_baseline(
     assert lines == []
 
 
+def _cached_files(cache_dir: pathlib.Path, resource: str) -> set[str]:
+    base = cache_dir / "cache_test" / resource
+    return {
+        str(p.relative_to(base))
+        for p in base.rglob("*")
+        if p.is_file() and not p.name.endswith(".lockfile")
+    }
+
+
+def test_cache_resources_header_reports_bytes_and_already_cached(
+    tmp_path: pathlib.Path,
+    grr_config_file: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Phase A must log a header line with the download count, byte total and
+    # already-cached count, before any download happens. See gain#78.
+    import logging
+    caplog.set_level(logging.INFO, logger=CACHE_LOGGER)
+
+    pipeline_yaml = tmp_path / "annotation.yaml"
+    pipeline_yaml.write_text(textwrap.dedent("""
+        - position_score: one
+    """))
+
+    cli_cache_repo([
+        "--grr", str(grr_config_file),
+        "-j", "1",
+        str(pipeline_yaml),
+    ])
+
+    header = [
+        rec.message for rec in caplog.records
+        if rec.name == CACHE_LOGGER and "to download" in rec.message
+    ]
+    assert header, "expected a header line reporting bytes to download"
+    assert "already cached" in header[0]
+
+
+def test_cache_resources_preserves_files_and_state(
+    tmp_path: pathlib.Path,
+    grr_config_file: pathlib.Path,
+) -> None:
+    # Behavior preservation: caching a resource yields the expected cached
+    # files, each verified fresh by re-classification. See gain#78.
+    from gain.genomic_resources.cached_repository import CachingProtocol
+
+    pipeline_yaml = tmp_path / "annotation.yaml"
+    pipeline_yaml.write_text(textwrap.dedent("""
+        - position_score: one
+    """))
+
+    cli_cache_repo([
+        "--grr", str(grr_config_file),
+        "-j", "1",
+        str(pipeline_yaml),
+    ])
+
+    cache_dir = tmp_path / "cache"
+    cached = _cached_files(cache_dir, "one")
+    # the data file and the config must be cached
+    assert "genomic_resource.yaml" in cached
+    assert "data.txt" in cached
+
+    # every cached payload file re-classifies as fresh (md5 verified)
+    repo = build_genomic_resource_repository(file_name=str(grr_config_file))
+    res = repo.get_resource("one")
+    proto = res.proto
+    assert isinstance(proto, CachingProtocol)
+    for filename in ("genomic_resource.yaml", "data.txt"):
+        verdict = proto.classify_cached_resource_file(res, filename)
+        assert verdict.needs_download is False, filename
+
+
+def test_cache_resources_rerun_downloads_nothing(
+    tmp_path: pathlib.Path,
+    grr_config_file: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Re-running cache on an already-cached GRR builds an empty work-list and
+    # the header reports everything already cached. See gain#78.
+    import logging
+
+    pipeline_yaml = tmp_path / "annotation.yaml"
+    pipeline_yaml.write_text(textwrap.dedent("""
+        - position_score: one
+    """))
+
+    cli_cache_repo([
+        "--grr", str(grr_config_file),
+        "-j", "1",
+        str(pipeline_yaml),
+    ])
+
+    # second run: nothing to download
+    caplog.clear()
+    caplog.set_level(logging.INFO, logger=CACHE_LOGGER)
+    cli_cache_repo([
+        "--grr", str(grr_config_file),
+        "-j", "1",
+        str(pipeline_yaml),
+    ])
+
+    header = [
+        rec.message for rec in caplog.records
+        if rec.name == CACHE_LOGGER and "to download" in rec.message
+    ]
+    assert header, "expected header on re-run"
+    # zero files to download on the second run
+    assert "0 file(s)" in header[0]
+
+
+def test_cache_resources_worklist_byte_total(
+    tmp_path: pathlib.Path,
+    grr_config_file: pathlib.Path,
+) -> None:
+    # cache_resources over a GRR with a mix of fresh and stale files must
+    # download exactly the stale ones, with bytes summed from the manifest.
+    from gain.genomic_resources.cached_repository import (
+        CachingProtocol,
+        _build_cache_worklist,
+    )
+
+    pipeline_yaml = tmp_path / "annotation.yaml"
+    pipeline_yaml.write_text(textwrap.dedent("""
+        - position_score: one
+    """))
+
+    # first cache everything for resource "one"
+    cli_cache_repo([
+        "--grr", str(grr_config_file),
+        "-j", "1",
+        str(pipeline_yaml),
+    ])
+
+    repo = build_genomic_resource_repository(file_name=str(grr_config_file))
+    res = repo.get_resource("one")
+    proto = res.proto
+    assert isinstance(proto, CachingProtocol)
+
+    # On a fully-cached resource, the work-list is empty and total bytes 0.
+    worklist, total_bytes, already_cached, failures = _build_cache_worklist(
+        proto, res, ["genomic_resource.yaml", "data.txt"], workers=1)
+    assert not worklist
+    assert total_bytes == 0
+    assert already_cached == 2
+    assert not failures
+
+    # Make data.txt stale: delete it so it must be re-downloaded.
+    proto.local_protocol.delete_resource_file(res, "data.txt")
+    expected_size = res.get_manifest()["data.txt"].size
+
+    worklist, total_bytes, already_cached, failures = _build_cache_worklist(
+        proto, res, ["genomic_resource.yaml", "data.txt"], workers=1)
+    assert [(r.resource_id, fn) for r, fn, _ in worklist] == \
+        [(res.resource_id, "data.txt")]
+    assert total_bytes == expected_size
+    assert already_cached == 1
+    assert not failures
+
+
 def test_cache_resources_closes_reporter_on_keyboard_interrupt(
     grr_config_file: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
