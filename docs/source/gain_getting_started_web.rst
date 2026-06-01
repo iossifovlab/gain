@@ -3,57 +3,38 @@ Getting started on the web
 ===============================
 
 The GAIn Web Annotation page (https://gain.iossifovlab.com/) 
-provides a simple and interactive interface for annotating genetic variants, positions, or regions, collectively referred to as annotatables, on 
-the web. The page is organized into two main areas. On the left, users can create, edit, and manage 
-annotation pipelines, either by selecting a saved pipeline or by building a new one. This pipeline editor 
-defines which resources and annotators are applied during annotation. On the right, users can 
-enter an annotatable, submit it for processing, and view the resulting annotations in 
-the same area. Together, these two panels allow users to configure an annotation workflow and 
-immediately apply it to annotatables of interest.
+provides a simple and interactive interface for annotating genetic variants, positions, or regions, collectively referred to as annotatables. The page is organized into two main areas. On the left, users can create, edit, and manage annotation pipelines, either by selecting a saved pipeline or by building a new one. This pipeline editor defines which resources and annotators are applied during annotation. On the right, users can enter an annotatable, submit it for processing, and view the resulting annotations. Together, these two panels allow users to configure an annotation workflow and immediately apply it to annotatables of interest.
 
 .. figure:: figures/GAInWeb1.png
+  :scale: 50 %
+
 
 
 Select annotation pipeline
-****************
+**************************
 
-To begin, open the Select pipeline menu, scroll through the available options, and choose 
-``pipeline/hg38_Clinical_annotation``. This pipeline is designed for annotatables provided in the ``hg38`` 
-assembly and annotates them with a broad set of clinically relevant attributes. In addition to effect prediction, 
-it incorporates information from resources such as dbSNP, gnomAD, 
-ClinVar, CADD, AlphaMissense, MPC, and gene-level constraint scores. After selecting it, users can review 
-the full annotation pipeline definition in the box on the left.
+To begin, open the Select pipeline menu, scroll through the available options, and choose ``pipeline/hg38_clinical_annotation``. This pipeline is designed for annotatables provided in the ``hg38`` assembly and annotates them with a broad set of clinically relevant attributes. In addition to effect prediction, it incorporates information from resources such as dbSNP, gnomAD, ClinVar, CADD, AlphaMissense, MPC, and gene-level constraint scores. After selecting it, users can review the full annotation pipeline definition in the annotation pipeline editor on the left.
 
 
 .. figure:: figures/GAInWeb2.png
+  :scale: 50 %
 
-Single annotatable
-****************
+Single annotation
+*****************
 
-The GAIn web interface has two annotation modes: **Single annotatable**, for interactively annotating one variant, 
-position, or region at a time, and **Annotation jobs**, for annotating files containing multiple annotatables. 
-We begin with the Single annotatable mode. 
-Next, either enter your own annotatable in ``hg38`` coordinates, or click the ``i`` button left of the entry field and 
-choose an example annotatable. 
-Example annotatables cover a wide range of syntax options for entering genomic positions, regions, or variants. 
-This automatically enters the example annotatable, runs the selected pipeline on it, and displays the resulting 
-annotations on the right side of the page. In this example, we choose a variant annotatable, 
-which is defined by chromosome, position, reference allele, and alternative allele.
+The GAIn web interface has two annotation modes: **Single annotation**, for interactively annotating one variant, position, or region at a time, and **Annotation jobs**, for annotating files containing multiple annotatables. This section demonstrates the use of Single annotation mode. Users can either enter their own annotatable in ``hg38`` coordinates, or click the ``i`` button to the left of the entry field and choose an example annotatable. Example annotatables cover a wide range of syntax options for entering genomic positions, regions, or variants. This automatically enters the example annotatable, runs the selected pipeline on it, and displays the resulting annotations on the right side of the page. In this example, we choose a variant annotatable, which is defined by chromosome, position, reference allele, and alternative allele.
 
-
-The annotation results can be viewed in two formats. In the **compact report** view, 
-only the annotation results are shown, making it easier to scan the output. This view is useful when a 
-concise summary is needed without additional details.
+The annotation results on the right panel can be viewed in two formats. In the **compact report** view, when full report is turned off, only the annotation results are shown, making it easier to scan the output. This view is useful when a concise summary is needed without additional details.
 
 .. figure:: figures/GAInWeb3.png
+  :scale: 50 %
 
-When **compact report** is turned off, the page shows a more detailed view of the results. 
-In this view, annotations that include score distributions are accompanied by plots showing 
-how the scores are distributed across the resource and where the queried annotatable falls within that distribution. 
-In the example shown here, three such distributions are displayed. The red line marks the score of the queried 
-annotatable, making it easy to see its position relative to the overall distribution.
+
+When **full report** is turned on, the page shows a more detailed view of the results. In this view, annotations that include score distributions are accompanied by plots showing how the scores are distributed across the resource and where the queried annotatable falls within that distribution. In the example shown here, two such distributions are displayed, with a red line marking where the queried annotatable falls in relation to the overall distribution.
 
 .. figure:: figures/GAInWeb4.png
+  :scale: 50 %
+
 
 Annotation jobs
 *****************
@@ -64,75 +45,94 @@ containing annotatables (variants, positions, or regions) with the required coor
 information. Click Annotation jobs on the right side of the page. 
 
 .. figure:: figures/GAInWeb5.png
+  :scale: 50 %
 
-The example below uses variant annotatables. 
-Prepare a tab-delimited file named ``variants.txt`` with the following content:
+
+Download the example input CSV file (:download:`small_input.csv <files/small_input.csv>`), whose content is shown below. 
 
 .. csv-table::
     :header-rows: 1
 
     chrom,pos,ref,alt
-    chr11,5227002,T,A
-    chr12,102840493,G,A
+    chr14,21415880,G,A
+    chr17,7674904,TCT,T
+    chr7,117587806,G,A
 
-After creating this file, drag and drop it into the upload area, or click Choose file and select ``variants.txt`` for annotation.
+The file contains three variant annotatables, each described by the columns ``chrom``, ``pos``, ``ref``, and ``alt``, which specify the chromosome, genomic position, reference allele, and alternate allele. Drag and drop the file into the upload area, or click Choose file and select ``small_input.csv`` for annotation.
 
 When the file is uploaded, GAIn automatically recognizes the ``chrom``, ``pos``, ``ref``, and ``alt`` columns because the file uses those exact column names. If the input file uses different column labels, users can manually specify which columns correspond to ``chrom``, ``pos``, ``ref``, and ``alt`` before creating the annotation job.
 
 .. figure:: figures/GAInWeb6.png
+  :scale: 50 %
+
 
 Once the annotation job has finished, GAIn shows its status as ``success``. 
 Users can then click the Download button next to the result to download a file containing 
 the annotation attributes produced for all annotatables in the input file. 
 
 .. figure:: figures/GAInWeb7.png
+  :scale: 50 %
 
 
 The downloaded file includes the original variant columns together with the annotations generated by 
 the selected pipeline, 
 such as effect predictions, population frequencies, clinical classifications, pathogenicity scores, 
-and gene-level scores. The downloaded output for ``variants.txt`` is shown below.
+and gene-level scores. The downloaded output for ``small_input.csv`` is shown below.
 
 .. csv-table::
     :header-rows: 1
 
-    chrom,pos,ref,alt,worst_effect_MANE_1.3,effect_details_MANE_1.3,gene_effects_MANE_1.3,dbSNP_RS,gnomad_v4_exome_ALL_af,gnomad_v4_genome_ALL_af,CLNSIG,CLNDN,cadd_raw,cadd_phred,am_pathogenicity,mpc,worst_effect,gene_effects,effect_details,pLI_rank_all,pLI_rank_min,LOEUF_rank_all,LOEUF_rank_min
-    chr11,5227002,T,A,missense,ENST00000335295.4:HBB:missense:7/147(Glu->Val),HBB:missense,334,0.0016,0.0127,Pathogenic,HBB-related_disorder|Beta-thalassemia_HBB/LCRB|Fetal_hemoglobin_quantitative_trait_locus_1|Erythrocytosis|_familial|_6|METHEMOGLOBINEMIA|_BETA_TYPE|beta_Thalassemia|Hb_SS_disease|Heinz_body_anemia|Malaria|_susceptibility_to|alpha_Thalassemia|Dominant_beta-thalassemia|Anemia|See_cases|Sickle_cell-hemoglobin_C_disease|Sickle_cell_disease_and_related_diseases|Malaria|_resistance_to|not_provided|Inborn_genetic_diseases|HEMOGLOBIN_S,1.89,18.9,0.223,0.0374,missense,HBB:missense|ENSG00000298932:non-coding-intron,ENST00000335295.4:HBB:missense:7/147(Glu->Val)|ENST00000485743.1:HBB:missense:7/111(Glu->Val)|ENST00000647020.1:HBB:missense:7/147(Glu->Val)|ENST00000759072.1:ENSG00000298932:non-coding-intron:None/None[None],"{'HBB': 16189.0}",1.62e+04,"{'HBB': 19184.0}",1.92e+04
-    chr12,102840493,G,A,missense,ENST00000553106.6:PAH:missense:408/452(Arg->Trp),PAH:missense,5030858,0.00137,0.000861,Pathogenic,PAH-related_disorder|See_cases|Phenylketonuria|Inborn_genetic_diseases|not_provided,4.22,27.9,0.918,0.245,missense,PAH:missense,ENST00000307000.7:PAH:missense:403/447(Arg->Trp)|ENST00000553106.6:PAH:missense:408/452(Arg->Trp),"{'PAH': 16912.0}",1.69e+04,"{'PAH': 15520.0}",1.55e+04
+    chrom,pos,ref,alt,worst_effect_MANE_1_3,effect_details_MANE_1_3,gene_effects_MANE_1_3,dbSNP_rs_number,gnomad_v4_exome_ALL_af,gnomad_v4_genome_ALL_af,clinical_significance,clinical_disease_name,CADD_raw_score,CADD_phred_score,AlphaMissense_pathogenicity,AlphaMissense_class,MPC_score,worst_effect_GENCODE_48,effect_details_GENCODE_48,gene_effects_GENCODE_48,pLI_rank_all,pLI_rank_min,LOEUF_rank_all,LOEUF_rank_min
+    chr14,21415880,G,A,nonsense,ENST00000646647.2:CHD8:nonsense:582/2581(Arg->End),CHD8:nonsense,863224857,,,Pathogenic/Likely_pathogenic,Intellectual_developmental_disorder_with_autism_and_macrocephaly|not_provided,8.9,39,,,,nonsense,ENST00000645929.1:CHD8:nonsense:303/2302(Arg->End)|ENST00000646647.2:CHD8:nonsense:582/2581(Arg->End)|ENST00000643469.1:CHD8:nonsense:582/2581(Arg->End)|ENST00000557364.6:CHD8:nonsense:582/2581(Arg->End)|ENST00000430710.8:CHD8:nonsense:303/2302(Arg->End),CHD8:nonsense,CHD8:45,45,CHD8:112.5,112.5
+    chr17,7674904,TCT,T,frame-shift,ENST00000269305.9:TP53:frame-shift:209/393,TP53:frame-shift,1057517840,6.84E-07,,Pathogenic,Li-Fraumeni_syndrome_1|Hereditary_cancer-predisposing_syndrome|Li-Fraumeni_syndrome|Ovarian_neoplasm|not_provided|TP53-related_disorder,,,,,,frame-shift,ENST00000420246.6:TP53:frame-shift:209/341|ENST00000455263.6:TP53:frame-shift:209/346|ENST00000610538.4:TP53:frame-shift:170/307|ENST00000622645.4:TP53:frame-shift:170/302|ENST00000620739.4:TP53:frame-shift:170/354|ENST00000714357.1:TP53:frame-shift:209/393|ENST00000510385.5:TP53:frame-shift:77/209|ENST00000610623.4:TP53:frame-shift:50/187|ENST00000504290.5:TP53:frame-shift:77/214|ENST00000618944.4:TP53:frame-shift:50/182|ENST00000504937.5:TP53:frame-shift:77/261|ENST00000619186.4:TP53:frame-shift:50/234|ENST00000445888.6:TP53:frame-shift:209/393|ENST00000604348.6:TP53:frame-shift:202/386|ENST00000619485.4:TP53:frame-shift:170/354|ENST00000269305.9:TP53:frame-shift:209/393|ENST00000714408.1:TP53:frame-shift:209/411|ENST00000714409.1:TP53:frame-shift:209/367|ENST00000413465.6:TP53:frame-shift:209/285|ENST00000576024.2:TP53:frame-shift:209/344|ENST00000714359.1:TP53:frame-shift:209/393|ENST00000714356.1:TP53:frame-shift:170/347|ENST00000359597.8:TP53:frame-shift:209/343|ENST00000610292.4:TP53:frame-shift:170/354,TP53:frame-shift,TP53:3122,3122,TP53:4446.5,4446.5
+    chr7,117587806,G,A,missense,ENST00000003084.11:CFTR:missense:551/1480(Gly->Asp),CFTR:missense,75527207,0.000404,0.000276,Pathogenic,Hereditary_pancreatitis|CFTR-related_disorder|Cystic_fibrosis|Congenital_bilateral_aplasia_of_vas_deferens_from_CFTR_mutation|ivacaftor_response_-_Efficacy|Bronchiectasis_with_or_without_elevated_sweat_chloride_1|not_provided,5.05,28.2,0.99,likely_pathogenic,0.015,missense,ENST00000003084.11:CFTR:missense:551/1480(Gly->Asp)|ENST00000699605.1:CFTR:missense:409/1338(Gly->Asp)|ENST00000649781.2:CFTR:missense:490/1419(Gly->Asp)|ENST00000699602.1:CFTR:missense:551/1478(Gly->Asp)|ENST00000649406.1:CFTR:missense:490/1187(Gly->Asp)|ENST00000648260.1:CFTR:intron:10/16[15019],CFTR:missense|CFTR:intron,CFTR:18190,18190,CFTR:13993.5,13993.5
 
-This concludes the Getting Started on the Web section, which demonstrated how to use a saved annotation pipeline in both the Single annotatable and Annotation jobs modes.
+Custom annotation pipeline
+**************************
 
+The web interface can also be used with custom annotation pipelines. Users can build pipelines through the visual interface by selecting annotators and resources - this workflow is described in more detail in the `GAIn web interface <https://iossifovlab.com/gaindocs/web_interface.html>`_ section. Here, we demonstrate a simpler case: creating a new pipeline by entering an annotation pipeline definition into the annotation pipeline editor.
 
-The `GAIn web Interface <https://iossifovlab.com/gaindocs/web_interface.html>`_ section below will describe the 
-web interface in more detail, 
-including custom annotation pipelines, registration, and additional features of the site.
+To create a new pipeline, click the **New pipeline** button at the bottom of the annotation pipeline editor. This opens an empty editor where the pipeline definition can be entered.
 
+.. figure:: figures/GAInWeb8.png
 
-Adding public GRRs
--------------------------
+The pipeline has an optional ``preamble`` section, which records metadata about the pipeline and specifies that the input variants use the ``hg38/genomes/GRCh38-hg38`` reference genome. The ``annotators`` section lists the annotation steps that GAIn will run from top to bottom. This pipeline first uses the ``MANE 1.5`` gene model to identify affected genes and predict the worst effect of each variant. It then adds a conservation score from ``phyloP7way``. Finally, it normalizes each allele and looks up selected ClinVar attributes: ``CLNSIG``, which describes clinical significance, and ``CLNDN``, which reports associated disease names.
 
-So far, the annotation examples have used resources from the main IossifovLab GRR. We also provide another public repository, `GRR-ENCODE <https://grr-encode.iossifovlab.com/>`_, which contains ENCODE-derived functional genomics tracks that can be used in annotation pipelines. GRR-ENCODE contains approximately 8,000 resources, including ATAC-seq, DNase-seq, histone ChIP-seq, and transcription factor ChIP-seq tracks. 
-
-To use these resources, add GRR-ENCODE to the GRR definition file, ``~/.grr_definition.yaml``. The configuration below connects GAIn to both the main GRR and GRR-ENCODE:
-
-.. code-block:: yaml
-
-    id: "development"
-    type: group
-    children:
-    - id: "GRR"
-      type: "url"
-      url: "https://grr.iossifovlab.com"
-
-    - id: "GRR-ENCODE"
-      type: "url"
-      url: "https://grr-encode.iossifovlab.com"
-
-With this configuration, GAIn can use resources from both repositories. For example, after adding GRR-ENCODE to the GRR definition file, a pipeline can use an ENCODE transcription factor ChIP-seq resource as a position score annotator:
+Copy and paste the following pipeline into the annotation pipeline editor:
 
 .. code-block:: yaml
+
+    preamble:
+      summary: Simple custom pipeline
+      input_reference_genome: hg38/genomes/GRCh38-hg38
+
+    annotators:
+    - effect_annotator:
+        gene_models: hg38/gene_models/MANE/1.5
+        attributes:
+        - worst_effect
+        - gene_list
 
     - position_score_annotator:
-        resource_id: TF_ChIP-seq/ENCSR000AHD
+        resource_id: hg38/scores/phyloP7way
 
-This makes ENCODE-derived regulatory tracks available through the same pipeline syntax used for other position score resources.
+    - normalize_allele_annotator
+
+    - allele_score_annotator:
+        resource_id: hg38/scores/ClinVar_20251019
+        input_annotatable: normalized_allele
+        attributes:
+        - CLNSIG
+        - CLNDN
+
+After pasting the pipeline, the editor should show the custom pipeline definition.
+
+.. figure:: figures/GAInWeb9.png
+
+To test the custom pipeline, choose an example annotatable in Single annotation mode or enter your own annotatable in ``hg38`` coordinates. When the annotatable is submitted, GAIn runs the custom pipeline and displays the resulting annotations in the right panel.
+
+.. figure:: figures/GAInWeb10.png
+
+
+
+This concludes the Getting Started on the Web section, which demonstrated how to use a saved annotation pipeline, run annotation jobs, and use a custom annotation pipeline in the web interface. The `GAIn web interface <https://iossifovlab.com/gaindocs/web_interface.html>`_ section describes the web interface in more detail, including registration and additional features of the site.

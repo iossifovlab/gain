@@ -87,7 +87,7 @@ This output contains several pieces of information. The first line shows that GA
 
 
 Quick annotation test
-------------------
+---------------------
 
 After installation, GAIn can immediately run a small annotation test using the default IossifovLab GRR. This is a useful way to confirm that the command-line tools are working and can access the public resources.
 
@@ -126,7 +126,7 @@ The output contains the original variant columns followed by the annotation attr
 
 
 Custom annotation pipelines
-----------------------
+---------------------------
 
 In the quick annotation test, we used a predefined pipeline from the default GRR. GAIn also allows users to define their own annotation pipelines as YAML files. A custom pipeline is useful when you want to select genomic resources from one or more GRRs that fit a specific project or research question.
 
@@ -159,7 +159,7 @@ Download the example custom annotation pipeline file (:download:`custom_pipeline
         - CLNSIG
         - CLNDN
 
-This pipeline has an optional preamble section, which records metadata about the pipeline and specifies that the input variants use the ``hg38/genomes/GRCh38-hg38`` reference genome. The annotators section lists the annotation steps that GAIn will run from top to bottom. This pipeline first uses the ``MANE 1.5`` gene model to identify affected genes and predict the worst effect of each variant. It then adds a conservation score from ``phyloP7way``. Finally, it normalizes each allele and looks up selected ``ClinVar`` attributes: ``CLNSIG``, which describes clinical significance, and ``CLNDN``, which reports associated disease names. To review the attributes produced by the custom pipeline, generate an HTML summary with:
+This pipeline, which was also used in the `Getting started on the web section <https://iossifovlab.com/gaindocs/gain_getting_started_web.html>`_, has an optional preamble section, which records metadata about the pipeline and specifies that the input variants use the ``hg38/genomes/GRCh38-hg38`` reference genome. The annotators section lists the annotation steps that GAIn will run from top to bottom. This pipeline first uses the ``MANE 1.5`` gene model to identify affected genes and predict the worst effect of each variant. It then adds a conservation score from ``phyloP7way``. Finally, it normalizes each allele and looks up selected ``ClinVar`` attributes: ``CLNSIG``, which describes clinical significance, and ``CLNDN``, which reports associated disease names. To review the attributes produced by the custom pipeline, generate an HTML summary with:
 
 .. code-block:: bash
 
@@ -254,7 +254,7 @@ For example, after downloading the example input file (:download:`SSC_WES_varian
 
 .. code-block:: bash
 
-    prepare_tabular 200k_variants.txt
+    prepare_tabular SSC_WES_variants.txt.gz
 
 When run successfully, this command produces two files: ``200k_variants.sorted.tsv.bgz``, which contains the sorted and compressed version of the input file, and ``200k_variants.sorted.tsv.bgz.tbi``, its associated tabix index. These two files enable parallelization and fast genomic-region access in GAIn.
 
@@ -263,13 +263,13 @@ Then run the annotation:
 
 .. code-block:: bash
 
-    annotate_tabular 200k_variants.sorted.tsv.bgz pipeline/hg38_clinical_annotation
+    annotate_tabular SSC_WES_variants.txt.bgz pipeline/hg38_clinical_annotation
 
 GAIn splits indexed inputs by chromosome. For very large input files, chromosome-level splitting may create tasks that are too large or uneven. The ``-r`` option can instead split the input into genomic regions of a specified size:
 
 .. code-block:: bash
 
-    annotate_tabular 200k_variants.sorted.tsv.bgz pipeline/hg38_clinical_annotation -r 30_000_000
+    annotate_tabular SSC_WES_variants.txt.bgz pipeline/hg38_clinical_annotation -r 30_000_000
 
 GAIn can also use a configured Dask cluster that creates workers on a larger compute system, such as SGE or SLURM. For example, if a Dask cluster named ``my_sge_cluster`` has been configured to create workers on an SGE cluster, the annotation can be run with:
 
@@ -279,87 +279,6 @@ GAIn can also use a configured Dask cluster that creates workers on a larger com
 
 This runs the annotation across up to 100 workers on the configured cluster. See the “Configuring parallelization”[] and “Configuring Dask clusters”[] sections for more details on region splitting, worker configuration, and cluster setup.
 
-
-
-
-
-Outline for the rest of the guide
----------------------------------
-
-* Annotation of small number of variants mostly for tests
-
-  * Without any set up, GAIn is ready to annotate small sets of variants using the command-line tools. This is useful for testing and for annotating small datasets, but it is not recommended for large annotation jobs because it does not take advantage of GAIn's parallelization and caching features. To test the annotation of a small number of variants, follow these steps.
-  * Download the small input CSV file :download:`Download the example input CSV <files/small_input.csv>`
-  * This small files contains three allele annotatable, indicated by the available columns: chrom, pos, ref, alt, that happen to be column names expected by GAIn default. See below for more information of how to configure columns in inputs.
-  * annotate_tabular small_input.csv pipeline/hg38_clinical_anotation
-  * This produces many attributes. See the pipelines summary page in the main GRR for description of the attributes produced by this pipeline.
-  
-* Annotation of small number of variants with a custom pipeline
-
-  * Download the small custom pipeline yaml file :download:`Download the example custom pipeline YAML <files/custom_pipeline.yaml>`
-  * annotate_tabular small_input.csv custom_pipeline.yaml
-  * NOTE: this works reasonable well only for small (less than 1000) number of variants. For larger number of variants, it will be unreasonably slow. Luckily, GAIn provides features to enable annotation of large number of variants, as described in the next sections.
-  * To get documentation for the custom pipeline:
-    annotate_doc custom_pipeline.yaml > doc.html
-
-* Cache resources to enable annotate of large number of variants
-
-  * By default, the annotation uses the resource from the web, but this is not practical for annotating large number of variants.
-    GAIn supports caching of resources, so that if a resouce is needed it is first downloaded in a local cache and the local copy is used for annotation.
-  * To enable caching, explicitly configure the grr definition by adding the following to the GRR definition file (e.g. ``~/.gain/grr_definitions.yaml``):
-
-    .. code-block:: yaml
-        id: default
-        type: http
-        url: https://grr.iossifovlab.com
-        cache_dir: </path/to/cache/dir>
-
-  * After this configuration, when GAIn needs a resrouce it will first downloaded to the specified cache directory. Unfortunately, resource are often large and downloading them takes time and space. The use should choose the cache directory carefully to ensure that it has enough space and that the user has permission to write to it. After the resource is downloaded, it will be used for annotation, and it will be available for future annotation jobs without needing to download it again.
-  * The resource size is particualry big problem for large annotation pipeline, like the ``pipeline/hg38_clinical_anotation``, that use many large resrouces.
-  * The total size of resources need by the ``pipeline/hg38_clinical_anotation`` is 120G, and it may take ~1 hour to download them all. But once they are downloaded, they can be used for annotation without needing to download them again, and all future annotations will be much faster.
-  * GAIn will automatically download the needed resources before annotation, but it provides a special too grr_chache_repo <pipeline> that can be use to pre-download resources before annotation. This is useful for large pipelines that use many large resources, because it allows the user to download all the needed resrouces in one step before annotation, and then run annotation without needing to wait for the resrouces to download during annotation.
-  * Custom pipeline are thus important, because they allow the user to specify exactly which resources are needed for their annotation needs and that may require much smaller size of the needes resrouces. For example, the simple_pipeline.yaml above needs resrouces of total size of ~8G.
-  * :download:`Download the example input CSV <files/medium_50k_input.csv>`
-  * annotate_tabular medium_50k_input.csv pipeline/hg38_clinical_anotation
-
-* Running large annotation jobs through parallelization
-
-  * Annotation is computationally intensive, especially when the input file is large and the annotation pipeline includes many steps.
-    But it works independently on each annotatable making the large tasks easy to speed up by parallelizing the processing across multiple CPU cores or nodes of a computation cluster.
-
-  * The user can organize such parallelization by splitting the input file into smaller chunks, running annotation on each chunk in parallel using whatever methods is available and easy, and then merging the results back together.
-    Doing this manually can be a bit of work, and to help that GAIn supports easy-to-use and flexible parallelization features.
-
-  * To be able to parallelize annotation jobs, GAIn requires that the input files are (1) sorted by genomic coordinates and (2) index with ``tabix``, a widely used bioinformatics tool for indexing genomic files that is installed automatically together with GAIn
-    ``tabix`` can index both file formats supported by GAIn: tabular and VCF files.
-    Sorting and tabix indexing of genomic files is a common practice in bioinformatics, and there are many tools available to do this.
-    For example, you can use ``bcftools`` to sort and index VCF files, and ``sort`` together with ``bgzip`` and ``tabix`` to sort and index tabular files.
-    See "Preparing annotation input files for parallelization" section in the documentation for more details and examples on how to do this.
-
-  * When GAIn detects an indexed input file, it automatically splits the annotation job into sub-tasks for each chromosome in the input.
-    These tasks are then executed in a DASK cluster of workers, in parallel.
-    The cluster can be configured but by default will use all the available cores of the host that the annotation command is run on.
-    The user can control how the input is split by tasks---the splitting by chromosome is not appropriate for really large inputs.
-    GAIn has the -r command-line parameter that provides a region size and the input is split by genomic regions of the specified size.
-    The user can also control the number of workers in the cluster, and thus the degree of parallelization, by using the ``-j`` command-line parameter.
-    See "Configuring parallelization" section in the documentation for more details and examples on how to do this.
-    Moreover, the user can configure a DASK cluster that creates works on a large computation cluster like SGE or SLURM that may in total provide much lurger number of cores that the current host.
-    See "Configuring DASK clusters" section in the documentation for more details and examples on how to do this.
-    The optimal number of workers depends on the size of the input file, the complexity of the annotation pipeline, and the available computational resources.
-  
-  * :download:`Download the example input CSV <files/large_200k_input.csv>`
-  * sort ... large_200K_input.csv | bgzip > large_200K_input.csv.gz
-  * tabix -s 1 -b 2 -e 2 large_200K_input.csv.gz
-  * annotate_tabular large_200K_input.csv pipeline/hg38_clinical_anotation
-  * annotate_tabular large_200K_input.csv pipeline/hg38_clinical_anotation -r 30_000_000
-  * If you have a DASK cluster named ``my_sge_cluster`` that creates workers on an SGE cluster, you can run the following command to use that cluster for annotation:
-    * annotate_tabular large_200K_input.csv pipeline/hg38_clinical_anotation -r 30_000_000 -N my_sge_cluster -j 100
-
-
-* Annotation of VCF
-* Annotation of positions and regions
-* Re-annotation
-* Add grr-encode
 
 
 
