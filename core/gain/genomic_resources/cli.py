@@ -324,16 +324,6 @@ def _configure_resource_info_subparser(
     )
 
 
-def _configure_build_fts_db_subparser(
-        subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "repo-build-fts", help="Build the FTS index for the whole GRR",
-    )
-    _add_repository_resource_parameters_group(parser)
-    _add_dvc_parameters_group(parser)
-    VerbosityConfiguration.set_arguments(parser)
-
-
 def collect_dvc_entries(
         proto: ReadWriteRepositoryProtocol,
         res: GenomicResource) -> dict[str, ManifestEntry]:
@@ -437,20 +427,8 @@ def _run_repo_manifest_command_internal(
 
 
 def _build_content_file(proto: FsspecReadWriteProtocol) -> None:
-    """Build CONTENTS.json and rebuild the FTS DB if content changed."""
-    try:
-        old_md5 = proto.md5_contents()
-    except Exception:  # noqa: BLE001
-        old_md5 = None
+    """Build CONTENTS.json."""
     proto.build_content_file()
-    if old_md5 != proto.md5_contents():
-        _create_contents_db(proto)
-
-
-def _run_build_fts_db_command(
-    proto: FsspecReadWriteProtocol,
-) -> None:
-    _create_contents_db(proto)
 
 
 def _create_contents_db(
@@ -737,6 +715,7 @@ def _run_repo_stats_command(
 
     assert isinstance(proto, FsspecReadWriteProtocol)
     _build_content_file(proto)
+    _create_contents_db(proto)
     return 0
 
 
@@ -827,8 +806,6 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
     _configure_resource_info_subparser(commands_parser)
     _configure_repo_repair_subparser(commands_parser)
     _configure_resource_repair_subparser(commands_parser)
-    _configure_build_fts_db_subparser(commands_parser)
-
     args = parser.parse_args(cli_args)
     VerbosityConfiguration.set(args)
 
@@ -928,10 +905,6 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
             status = 1
         logger.warning("inconsistent GRR <%s> state", repo_url)
         sys.exit(status)
-    elif command == "repo-build-fts":
-        assert isinstance(proto, FsspecReadWriteProtocol)
-        _run_build_fts_db_command(proto)
-        return
     else:
         logger.error(
             "Unknown command %s. The known commands are index, "
