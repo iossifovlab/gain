@@ -209,7 +209,7 @@ GAIn can automatically download required resources during annotation. For large 
 
 .. code-block:: bash
 
-    grr_cache_repo --pipeline pipeline/hg38_clinical_annotation
+    grr_cache_repo pipeline/hg38_clinical_annotation
 
 This command downloads the resources required by the pipeline in one step, so that the actual annotation job does not need to pause while resources are being retrieved.
 
@@ -217,7 +217,7 @@ Custom pipelines can also reduce the amount of data that must be cached. A broad
 
 .. code-block:: bash
 
-    grr_cache_repo --pipeline custom_pipeline.yaml
+    grr_cache_repo custom_pipeline.yaml
 
 After the necessary resources have been cached, users can run large annotation jobs without waiting for GAIn to download each resource during the annotation process. To test this workflow, download the example input file (:download:`50k_variants.txt <files/50k_variants.txt>`), which contains 50,000 variants.
 

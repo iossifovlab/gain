@@ -86,7 +86,7 @@ def test_cli_cache_pipeline_file(
     cli_cache_repo([
         "--grr", str(grr_yaml),
         "-j", "1",
-        "--pipeline", str(annotation_yaml),
+        str(annotation_yaml),
     ])
 
     for parts in [
@@ -112,7 +112,7 @@ def test_cli_cache_pipeline_grr_resource(
     cli_cache_repo([
         "--grr", str(grr_with_pipeline_yaml),
         "-j", "1",
-        "--pipeline", "pipelines/test_pipeline",
+        "pipelines/test_pipeline",
     ])
 
     for parts in [

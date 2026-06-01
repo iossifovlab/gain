@@ -1,9 +1,26 @@
-# pylint: disable=W0621,C0114,C0116,W0212,W0613
+# pylint: disable=W0621,C0114,C0116,W0212,W0613,C0415
+import argparse
 import pathlib
 import textwrap
+from typing import Any
 
 import pytest
+import pytest_mock
+from gain.annotation.annotation_factory import (
+    load_pipeline_from_file_or_resource,
+)
+from gain.genomic_resources import genomic_context as gc_mod
 from gain.genomic_resources.cli_cache_repo import cli_cache_repo
+from gain.genomic_resources.genomic_context_base import (
+    GC_ANNOTATION_PIPELINE_KEY,
+    GC_GRR_KEY,
+    GenomicContext,
+    GenomicContextProvider,
+    SimpleGenomicContext,
+)
+from gain.genomic_resources.repository_factory import (
+    build_genomic_resource_repository,
+)
 from gain.genomic_resources.testing import (
     setup_denovo,
     setup_directories,
@@ -75,6 +92,55 @@ def grr_config_file(
     return grr_yaml
 
 
+class _FakeInstanceContextProvider(GenomicContextProvider):
+    """Stand-in for the gpf ``GPFInstanceContextProvider``.
+
+    GPF is not importable from gain (strict layering), so this provider
+    reproduces the relevant behaviour: when ``-i/--instance`` points at a
+    grr config yaml it builds that GRR and exposes both the GRR and the
+    instance's annotation pipeline (the ``res_pipeline`` GRR resource).
+    Its priority is 2000, matching the real gpf provider (above
+    ``CLIAnnotationContextProvider`` at 800). Because providers init in
+    descending-priority order and each registers its context at the front
+    of the stack, the lower-priority CLIAnnotation context is registered
+    last and therefore *wins* the PriorityGenomicContext lookup -- this is
+    exactly the "positional wins" relation the real gpf provider has.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("FakeInstanceContextProvider", 2000)
+
+    def add_argparser_arguments(
+        self, parser: argparse.ArgumentParser, **kwargs: Any,
+    ) -> None:
+        parser.add_argument("-i", "--instance", default=None)
+
+    def init(self, **kwargs: Any) -> GenomicContext | None:
+        instance = kwargs.get("instance")
+        if not instance:
+            return None
+        grr = build_genomic_resource_repository(file_name=instance)
+        pipeline = load_pipeline_from_file_or_resource("res_pipeline", grr)
+        return SimpleGenomicContext(
+            {
+                GC_GRR_KEY: grr,
+                GC_ANNOTATION_PIPELINE_KEY: pipeline,
+            },
+            source="FakeInstanceContextProvider",
+        )
+
+
+@pytest.fixture
+def fake_instance_provider(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Register a fake gpf-instance provider alongside the real ones."""
+    providers = list(gc_mod._REGISTERED_CONTEXT_PROVIDERS)
+    providers.append(_FakeInstanceContextProvider())
+    mocker.patch.object(
+        gc_mod, "_REGISTERED_CONTEXT_PROVIDERS", providers)
+
+
 def test_cli_cache_pipeline_file(
     tmp_path: pathlib.Path,
     grr_config_file: pathlib.Path,
@@ -86,8 +152,8 @@ def test_cli_cache_pipeline_file(
 
     cli_cache_repo([
         "--grr", str(grr_config_file),
-        "--pipeline", str(pipeline_yaml),
         "-j", "1",
+        str(pipeline_yaml),
     ])
 
     cache_dir = tmp_path / "cache"
@@ -103,8 +169,8 @@ def test_cli_cache_pipeline_grr_resource(
 ) -> None:
     cli_cache_repo([
         "--grr", str(grr_config_file),
-        "--pipeline", "res_pipeline",
         "-j", "1",
+        "res_pipeline",
     ])
 
     cache_dir = tmp_path / "cache"
@@ -133,6 +199,118 @@ def test_cli_cache_no_pipeline(
                 "genomic_resource.yaml").exists()
 
 
+def test_cli_cache_pipeline_arg_removed(
+    grr_config_file: pathlib.Path,
+) -> None:
+    # --pipeline / -p no longer exists; argparse must reject them.
+    with pytest.raises(SystemExit):
+        cli_cache_repo([
+            "--grr", str(grr_config_file),
+            "--pipeline", "res_pipeline",
+        ])
+    with pytest.raises(SystemExit):
+        cli_cache_repo([
+            "--grr", str(grr_config_file),
+            "-p", "res_pipeline",
+        ])
+
+
+def test_cli_cache_positional_logs_source(
+    tmp_path: pathlib.Path,
+    grr_config_file: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+    caplog.set_level(logging.INFO, logger="grr_cache_repo")
+
+    cli_cache_repo([
+        "--grr", str(grr_config_file),
+        "-j", "1",
+        "res_pipeline",
+    ])
+
+    assert "caching pipeline from positional arg res_pipeline" in caplog.text
+
+
+def test_cli_cache_instance_pipeline_fallback(
+    tmp_path: pathlib.Path,
+    grr_config_file: pathlib.Path,
+    fake_instance_provider: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # No positional pipeline: falls back to the instance's pipeline.
+    import logging
+    caplog.set_level(logging.INFO, logger="grr_cache_repo")
+
+    cli_cache_repo([
+        "-i", str(grr_config_file),
+        "-j", "1",
+    ])
+
+    cache_dir = tmp_path / "cache"
+    assert (cache_dir / "cache_test" / "one" /
+            "genomic_resource.yaml").exists()
+    assert not (cache_dir / "cache_test" / "two" /
+                "genomic_resource.yaml").exists()
+    assert "caching pipeline from gpf instance / genomic context" \
+        in caplog.text
+
+
+def test_cli_cache_context_sentinel_resolves_to_instance(
+    tmp_path: pathlib.Path,
+    grr_config_file: pathlib.Path,
+    fake_instance_provider: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Explicit "context" sentinel positional resolves to the instance.
+    import logging
+    caplog.set_level(logging.INFO, logger="grr_cache_repo")
+
+    cli_cache_repo([
+        "-i", str(grr_config_file),
+        "-j", "1",
+        "context",
+    ])
+
+    cache_dir = tmp_path / "cache"
+    assert (cache_dir / "cache_test" / "one" /
+            "genomic_resource.yaml").exists()
+    assert "caching pipeline from gpf instance / genomic context" \
+        in caplog.text
+
+
+def test_cli_cache_positional_wins_over_instance(
+    tmp_path: pathlib.Path,
+    grr_config_file: pathlib.Path,
+    fake_instance_provider: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Both instance and positional present: positional wins, and the
+    # instance still supplies the GRR. The instance pipeline caches
+    # resource "one"; we point the positional at a pipeline caching "two"
+    # so we can tell which one was used.
+    import logging
+    caplog.set_level(logging.INFO, logger="grr_cache_repo")
+
+    pipeline_yaml = tmp_path / "positional.yaml"
+    pipeline_yaml.write_text(textwrap.dedent("""
+        - position_score: two
+    """))
+
+    cli_cache_repo([
+        "-i", str(grr_config_file),
+        "-j", "1",
+        str(pipeline_yaml),
+    ])
+
+    cache_dir = tmp_path / "cache"
+    assert (cache_dir / "cache_test" / "two" /
+            "genomic_resource.yaml").exists()
+    assert not (cache_dir / "cache_test" / "one" /
+                "genomic_resource.yaml").exists()
+    assert "caching pipeline from positional arg" in caplog.text
+
+
 CACHE_LOGGER = "gain.genomic_resources.cached_repository"
 
 
@@ -154,8 +332,8 @@ def test_cli_cache_reports_progress_off_tty(
 
     cli_cache_repo([
         "--grr", str(grr_config_file),
-        "--pipeline", str(pipeline_yaml),
         "-j", "1",
+        str(pipeline_yaml),
     ])
 
     progress_lines = [
@@ -181,9 +359,9 @@ def test_cli_cache_no_progress_suppresses_milestones(
 
     cli_cache_repo([
         "--grr", str(grr_config_file),
-        "--pipeline", str(pipeline_yaml),
         "-j", "1",
         "--no-progress",
+        str(pipeline_yaml),
     ])
 
     progress_lines = [
@@ -211,8 +389,8 @@ def test_cli_cache_per_file_lines_demoted_to_debug(
 
     cli_cache_repo([
         "--grr", str(grr_config_file),
-        "--pipeline", str(pipeline_yaml),
         "-j", "1",
+        str(pipeline_yaml),
     ])
 
     # The per-file "finished n/m" chatter is preserved for debugging, but
