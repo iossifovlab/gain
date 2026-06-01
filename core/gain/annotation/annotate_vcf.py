@@ -4,7 +4,6 @@ import argparse
 import itertools
 import logging
 import os
-import pathlib
 import sys
 import traceback
 from collections.abc import Iterable, Sequence
@@ -62,7 +61,11 @@ from gain.genomic_resources.repository_factory import (
 )
 from gain.task_graph.cli_tools import TaskGraphCli
 from gain.task_graph.graph import TaskGraph
-from gain.utils.fs_utils import is_compressed_filename, tabix_index_filename
+from gain.utils.fs_utils import (
+    is_compressed_filename,
+    strip_compression_suffix,
+    tabix_index_filename,
+)
 from gain.utils.processing_pipeline import Filter, PipelineProcessor, Source
 from gain.utils.regions import Region
 from gain.utils.verbosity_configuration import VerbosityConfiguration
@@ -462,8 +465,10 @@ def _tabix_index(filepath: str) -> None:
     tabix_index(filepath, preset="vcf", force=True)
 
 
-def _tabix_compress(filepath: str) -> None:
-    tabix_compress(filepath, f"{filepath}.gz", force=True)
+def _tabix_compress(filepath: str, output_path: str | None = None) -> None:
+    if output_path is None:
+        output_path = f"{filepath}.gz"
+    tabix_compress(filepath, output_path, force=True)
 
 
 def _add_tasks_plaintext(
@@ -473,25 +478,27 @@ def _add_tasks_plaintext(
     pipeline_config: RawPipelineConfig,
     grr_definition: dict[str, Any],
 ) -> None:
-    if is_compressed_filename(args["input"]):
+    if is_compressed_filename(output_path):
+        working_path = strip_compression_suffix(output_path)
         annotate_task = task_graph.create_task(
             "all_variants_annotate",
             _annotate_vcf,
             args=[
-                output_path,
+                working_path,
                 pipeline_config,
                 grr_definition,
                 None,
                 args,
             ],
             deps=[],
-            intermediate_output_files=[output_path],
+            intermediate_output_files=[working_path],
         )
         task_graph.create_task(
             "tabix_compress",
             _tabix_compress,
-            args=[output_path],
-            input_files=[output_path],
+            args=[working_path, output_path],
+            input_files=[working_path],
+            output_files=[output_path],
             deps=[annotate_task],
         )
     else:
@@ -517,6 +524,9 @@ def _add_tasks_tabixed(
     pipeline_config: RawPipelineConfig,
     grr_definition: dict[str, Any],
 ) -> None:
+    # output_path carries the final compression suffix (.gz/.bgz); annotate
+    # into the uncompressed working file, then compress to the final name.
+    working_path = strip_compression_suffix(output_path)
     with closing(TabixFile(args["input"])) as pysam_file:
         regions = produce_regions(pysam_file, args["region_size"])
     file_paths = produce_partfile_paths(
@@ -541,25 +551,25 @@ def _add_tasks_tabixed(
     concat_task = task_graph.create_task(
         "concat",
         _concat,
-        args=[file_paths, output_path, args["keep_parts"]],
+        args=[file_paths, working_path, args["keep_parts"]],
         input_files=file_paths,
-        intermediate_output_files=[output_path],
+        intermediate_output_files=[working_path],
         deps=annotation_tasks,
     )
     compress_task = task_graph.create_task(
         "tabix_compress",
         _tabix_compress,
-        args=[output_path],
-        input_files=[output_path],
-        output_files=[f"{output_path}.gz"],
+        args=[working_path, output_path],
+        input_files=[working_path],
+        output_files=[output_path],
         deps=[concat_task])
 
     task_graph.create_task(
         "tabix_index",
         _tabix_index,
-        args=[f"{output_path}.gz"],
-        input_files=[f"{output_path}.gz"],
-        output_files=[f"{output_path}.gz.tbi"],
+        args=[output_path],
+        input_files=[output_path],
+        output_files=[f"{output_path}.tbi"],
         deps=[compress_task])
 
 
@@ -684,7 +694,7 @@ def annotate_vcf(
     """Annotate a columns file using a processing pipeline."""
     temp_output_path = output_path
     if is_compressed_filename(output_path):
-        temp_output_path = str(pathlib.Path(output_path).with_suffix(""))
+        temp_output_path = strip_compression_suffix(output_path)
 
     _annotate_vcf_helper(
         input_path,
@@ -694,6 +704,9 @@ def annotate_vcf(
         region=region,
         attributes_to_delete=attributes_to_delete,
     )
-    if is_compressed_filename(input_path) or \
-            is_compressed_filename(output_path):
+    if is_compressed_filename(output_path):
+        # honor the explicit compression suffix (.gz/.bgz)
+        _tabix_compress(temp_output_path, output_path)
+    elif is_compressed_filename(input_path):
+        # uncompressed output name + compressed input: default to .gz
         _tabix_compress(temp_output_path)

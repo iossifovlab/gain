@@ -12,11 +12,36 @@ def test_build_output_path_explicit() -> None:
     ) == "some/directory/explicit_output_file.csv"
 
 
-def test_build_output_path_explicit_remove_gz() -> None:
+def test_build_output_path_explicit_preserves_gz() -> None:
     assert build_output_path(
         "some/directory/input_file.csv",
         "some/directory/explicit_output_file.csv.gz",
-    ) == "some/directory/explicit_output_file.csv"
+    ) == "some/directory/explicit_output_file.csv.gz"
+
+
+def test_build_output_path_explicit_preserves_bgz() -> None:
+    assert build_output_path(
+        "some/directory/input_file.csv",
+        "some/directory/explicit_output_file.csv.bgz",
+    ) == "some/directory/explicit_output_file.csv.bgz"
+
+
+def test_build_output_path_explicit_mirrors_input_suffix() -> None:
+    # output named without a compression suffix mirrors the input's
+    assert build_output_path(
+        "some/directory/input_file.csv.bgz",
+        "some/directory/explicit_output_file.csv",
+    ) == "some/directory/explicit_output_file.csv.bgz"
+    assert build_output_path(
+        "some/directory/input_file.csv.gz",
+        "some/directory/explicit_output_file.csv",
+    ) == "some/directory/explicit_output_file.csv.gz"
+
+
+def test_build_output_path_does_not_mangle_gz_names() -> None:
+    # regression: rstrip(".gz") used to eat trailing g/z/. characters
+    assert build_output_path("in.csv", "log.gz") == "log.gz"
+    assert build_output_path("in.csv", "catalog.gz") == "catalog.gz"
 
 
 def test_build_output_path_none_given_explicitly() -> None:
@@ -26,11 +51,18 @@ def test_build_output_path_none_given_explicitly() -> None:
     ) == "input_file_annotated.csv"
 
 
-def test_build_output_path_none_given_explicitly_remove_gz() -> None:
+def test_build_output_path_none_given_explicitly_mirrors_gz() -> None:
     assert build_output_path(
         "some/directory/input_file.csv.gz",
         None,
-    ) == "input_file_annotated.csv"
+    ) == "input_file_annotated.csv.gz"
+
+
+def test_build_output_path_none_given_explicitly_mirrors_bgz() -> None:
+    assert build_output_path(
+        "some/directory/input_file.csv.bgz",
+        None,
+    ) == "input_file_annotated.csv.bgz"
 
 
 def test_build_output_path_none_given_explicitly_no_extension() -> None:

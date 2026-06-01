@@ -28,6 +28,10 @@ from gain.genomic_resources.genomic_context_base import (
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.task_graph import TaskGraphCli
 from gain.task_graph.graph import TaskGraph
+from gain.utils.fs_utils import (
+    compression_suffix,
+    strip_compression_suffix,
+)
 from gain.utils.regions import (
     Region,
     get_chromosome_length_tabix,
@@ -229,9 +233,7 @@ def handle_default_args(args: dict[str, Any]) -> dict[str, Any]:
     args["output"] = output
 
     if args.get("work_dir") is None:
-        path = Path(args["output"])
-        if path.suffix == ".gz":
-            path = path.with_suffix("")
+        path = Path(strip_compression_suffix(args["output"]))
         path = path.with_suffix("")
         args["work_dir"] = str(f"{path}_work")
 
@@ -322,18 +324,28 @@ def add_common_annotation_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def build_output_path(raw_input_path: str, output_path: str | None) -> str:
-    """Build an output filepath for an annotation tool's output."""
+    """Build an output filepath for an annotation tool's output.
+
+    An explicit compression suffix (.gz/.bgz) on the output is preserved.
+    An output named without one inherits ("mirrors") the input's compression
+    suffix, so a .bgz input yields a .bgz output and a .gz input a .gz output.
+    """
+    input_suffix = compression_suffix(raw_input_path)
     if output_path:
-        return output_path.rstrip(".gz")
+        if compression_suffix(output_path) is not None:
+            return output_path
+        if input_suffix is not None:
+            return f"{output_path}{input_suffix}"
+        return output_path
     # no output filename given, produce from input filename
-    path = Path(raw_input_path.rstrip(".gz"))
+    path = Path(strip_compression_suffix(raw_input_path))
     # backup suffixes
     suffixes = path.suffixes
 
     path = Path(path.name)
     # append '_annotated' to filename stem
     path = path.with_stem(f"{path.stem}_annotated")
-    # restore suffixes and return
-    if not suffixes:
-        return str(path)
-    return str(path.with_suffix(suffixes[-1]))
+    # restore suffixes
+    base = str(path) if not suffixes else str(path.with_suffix(suffixes[-1]))
+    # mirror the input's compression suffix
+    return f"{base}{input_suffix}" if input_suffix else base
