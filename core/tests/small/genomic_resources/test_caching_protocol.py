@@ -259,6 +259,59 @@ def test_lockfiles_are_ignored(
 
 
 @pytest.mark.grr_full
+def test_classify_cached_resource_file_lockfile_ignored(
+        caching_proto: CachingProtocol) -> None:
+    """.lockfile classifies as no-download without touching the remote."""
+    res = caching_proto.get_resource("one")
+
+    verdict = caching_proto.classify_cached_resource_file(
+        res, "test.txt.gz.lockfile")
+    assert verdict.needs_download is False
+    assert verdict.size == 0
+
+
+@pytest.mark.grr_full
+def test_classify_cached_resource_file_uncached(
+        caching_proto: CachingProtocol) -> None:
+    """An uncached file classifies as needing download, no lock taken."""
+    res = caching_proto.get_resource("three")
+    local_proto = caching_proto.local_protocol
+    assert not local_proto.file_exists(res, "sub1/a.txt")
+
+    verdict = caching_proto.classify_cached_resource_file(res, "sub1/a.txt")
+    assert verdict.needs_download is True
+    assert verdict.size > 0
+    # classify must not download
+    assert not local_proto.file_exists(res, "sub1/a.txt")
+
+
+@pytest.mark.grr_full
+def test_download_cached_resource_file_copies_and_returns_tuple(
+        caching_proto: CachingProtocol) -> None:
+    """download_cached_resource_file unconditionally caches the file."""
+    res = caching_proto.get_resource("three")
+    local_proto = caching_proto.local_protocol
+    assert not local_proto.file_exists(res, "sub1/a.txt")
+
+    result = caching_proto.download_cached_resource_file(res, "sub1/a.txt")
+
+    assert result == (res.resource_id, "sub1/a.txt")
+    assert local_proto.file_exists(res, "sub1/a.txt")
+
+
+@pytest.mark.grr_full
+def test_classify_then_download_after_caching_is_fresh(
+        caching_proto: CachingProtocol) -> None:
+    """After a download, the same file classifies as fresh (no re-download)."""
+    res = caching_proto.get_resource("three")
+
+    caching_proto.download_cached_resource_file(res, "sub1/a.txt")
+
+    verdict = caching_proto.classify_cached_resource_file(res, "sub1/a.txt")
+    assert verdict.needs_download is False
+
+
+@pytest.mark.grr_full
 def test_public_url_override(
         content_fixture: dict[str, Any],
         tmp_path_factory: pytest.TempPathFactory) -> None:

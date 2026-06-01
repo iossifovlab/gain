@@ -299,6 +299,145 @@ def test_copy_resource_file_raises_after_retries_exhausted(
 
 
 @pytest.mark.grr_rw
+def test_classify_resource_file_when_file_missing(
+        content_fixture: dict[str, Any],
+        fsspec_proto: FsspecReadWriteProtocol) -> None:
+    # A file that is not present locally must be flagged for download, with
+    # the manifest's recorded size, and classify must take no lock / copy.
+
+    # Given
+    src_proto = build_inmemory_test_protocol(content_fixture)
+    proto = fsspec_proto
+
+    src_res = src_proto.get_resource("sub/two")
+    dst_res = proto.get_resource("sub/two")
+
+    proto.filesystem.delete(
+        proto.get_resource_file_url(dst_res, "genes.gtf"))
+    assert not proto.file_exists(dst_res, "genes.gtf")
+
+    expected_size = src_res.get_manifest()["genes.gtf"].size
+
+    # When
+    verdict = proto.classify_resource_file(src_res, dst_res, "genes.gtf")
+
+    # Then
+    assert verdict.needs_download is True
+    assert verdict.size == expected_size
+    # classify must not have downloaded the file
+    assert not proto.file_exists(dst_res, "genes.gtf")
+
+
+@pytest.mark.grr_rw
+def test_classify_resource_file_when_fresh(
+        content_fixture: dict[str, Any],
+        fsspec_proto: FsspecReadWriteProtocol) -> None:
+    # A file already cached with a matching md5 needs no download.
+
+    # Given
+    src_proto = build_inmemory_test_protocol(content_fixture)
+    proto = fsspec_proto
+
+    src_res = src_proto.get_resource("sub/two")
+    dst_res = proto.get_resource("sub/two")
+
+    assert proto.file_exists(dst_res, "genes.gtf")
+
+    # When
+    verdict = proto.classify_resource_file(src_res, dst_res, "genes.gtf")
+
+    # Then
+    assert verdict.needs_download is False
+
+
+@pytest.mark.grr_rw
+def test_classify_resource_file_when_md5_mismatch(
+        content_fixture: dict[str, Any],
+        fsspec_proto: FsspecReadWriteProtocol) -> None:
+    # A locally-present file whose content drifted from the manifest md5
+    # must be flagged for download with the manifest size.
+
+    # Given
+    src_proto = build_inmemory_test_protocol(content_fixture)
+    proto = fsspec_proto
+
+    src_res = src_proto.get_resource("sub/two")
+    dst_res = proto.get_resource("sub/two")
+
+    with proto.open_raw_file(dst_res, "genes.gtf", mode="wt") as outfile:
+        outfile.write("aaaa")
+    proto.save_manifest(dst_res, proto.build_manifest(dst_res))
+
+    expected_size = src_res.get_manifest()["genes.gtf"].size
+
+    # When
+    verdict = proto.classify_resource_file(src_res, dst_res, "genes.gtf")
+
+    # Then
+    assert verdict.needs_download is True
+    assert verdict.size == expected_size
+    # classify must not overwrite the local (drifted) file
+    with proto.open_raw_file(dst_res, "genes.gtf") as infile:
+        assert infile.read() == "aaaa"
+
+
+@pytest.mark.grr_rw
+def test_classify_resource_file_absent_from_manifest_deletes(
+        content_fixture: dict[str, Any],
+        fsspec_proto: FsspecReadWriteProtocol) -> None:
+    # A locally-cached file no longer present in the remote manifest must be
+    # deleted (as update_resource_file does) and flagged as no-download.
+
+    # Given
+    src_proto = build_inmemory_test_protocol(content_fixture)
+    proto = fsspec_proto
+
+    src_res = src_proto.get_resource("sub/two")
+    dst_res = proto.get_resource("sub/two")
+
+    with proto.open_raw_file(dst_res, "stale.txt", mode="wt") as outfile:
+        outfile.write("stale")
+    proto.save_manifest(dst_res, proto.build_manifest(dst_res))
+    assert proto.file_exists(dst_res, "stale.txt")
+
+    # When
+    verdict = proto.classify_resource_file(src_res, dst_res, "stale.txt")
+
+    # Then
+    assert verdict.needs_download is False
+    assert verdict.size == 0
+    assert not proto.file_exists(dst_res, "stale.txt")
+
+
+@pytest.mark.grr_rw
+def test_classify_resource_file_refreshes_state_on_drift(
+        content_fixture: dict[str, Any],
+        fsspec_proto: FsspecReadWriteProtocol) -> None:
+    # The state-refresh side effect of update_resource_file (rebuild + save
+    # the .state when timestamp/size drift) must be preserved by classify.
+
+    # Given
+    src_proto = build_inmemory_test_protocol(content_fixture)
+    proto = fsspec_proto
+
+    src_res = src_proto.get_resource("sub/two")
+    dst_res = proto.get_resource("sub/two")
+
+    state = proto.load_resource_file_state(dst_res, "genes.gtf")
+    assert state is not None
+    state.timestamp = 0
+    proto.save_resource_file_state(dst_res, state)
+
+    # When
+    proto.classify_resource_file(src_res, dst_res, "genes.gtf")
+
+    # Then: the persisted state has been rebuilt to the real timestamp
+    refreshed = proto.load_resource_file_state(dst_res, "genes.gtf")
+    assert refreshed is not None
+    assert refreshed.timestamp != 0
+
+
+@pytest.mark.grr_rw
 def test_do_not_update_resource_file_when_state_changed_but_file_not(
         content_fixture: dict[str, Any],
         fsspec_proto: FsspecReadWriteProtocol) -> None:
