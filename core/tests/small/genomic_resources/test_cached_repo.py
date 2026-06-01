@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import contextlib
+import logging
 import os
 import pathlib
 import threading
@@ -762,6 +763,46 @@ def test_cache_resources_continues_after_failure_and_raises(
         # The healthy resources were cached despite "bad" failing.
         assert cache_repo.get_resource_cached_files("good1") == {"data.txt"}
         assert cache_repo.get_resource_cached_files("good2") == {"data.txt"}
+
+
+@pytest.mark.grr_full
+def test_cache_resources_progress_reports_failures(
+        cache_repository: CacheRepositoryBuilder,
+        mocker: MockerFixture,
+        caplog: pytest.LogCaptureFixture) -> None:
+    # The milestone progress lines (used off a TTY) carry a running failed
+    # tally, so a captured CI log shows trouble accumulating without waiting
+    # for the end-of-run summary. See gain#59.
+    caplog.set_level(
+        logging.INFO, logger="gain.genomic_resources.cached_repository")
+    with cache_repository({
+            "good1": {GR_CONF_FILE_NAME: "", "data.txt": "a"},
+            "bad": {GR_CONF_FILE_NAME: "", "data.txt": "b"},
+            "good2": {GR_CONF_FILE_NAME: "", "data.txt": "c"},
+            }) as cache_repo:
+
+        real_refresh = CachingProtocol.refresh_cached_resource
+
+        def flaky_refresh(
+                self: CachingProtocol,
+                resource: Any) -> tuple[str, None]:
+            if resource.resource_id == "bad":
+                raise OSError("simulated permanent download failure")
+            return real_refresh(self, resource)
+
+        mocker.patch.object(
+            CachingProtocol, "refresh_cached_resource",
+            autospec=True, side_effect=flaky_refresh)
+
+        with pytest.raises(RuntimeError, match="bad"):
+            cache_resources(cache_repo, None, workers=1)
+
+    progress_lines = [
+        rec.message for rec in caplog.records
+        if "caching progress" in rec.message
+    ]
+    assert progress_lines
+    assert any("failed=1" in line for line in progress_lines)
 
 
 @pytest.mark.grr_full

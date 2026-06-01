@@ -42,6 +42,7 @@ dependencies = [
     "python-box>=7.1",
     "pyyaml>=6",
     "s3fs>=2026.2",
+    "tqdm>=4.66",
 ]
 dynamic = ["version"]
 
@@ -119,6 +120,7 @@ dev = [
     "types-docker",
     "types-psutil",
     "types-pyyaml",
+    "types-tqdm",
 ]
 
 [tool.hatch.version]

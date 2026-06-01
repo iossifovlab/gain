@@ -215,6 +215,7 @@ def cache_pipeline_resources(
     pipeline: AnnotationPipeline,
     *,
     workers: int | None = None,
+    progress: bool = True,
 ) -> None:
     """Cache resources that the given pipeline will use."""
     resource_ids: set[str] = {
@@ -222,7 +223,7 @@ def cache_pipeline_resources(
         for annotator in pipeline.annotators
         for res in annotator.resources
     }
-    cache_resources(grr, resource_ids, workers=workers)
+    cache_resources(grr, resource_ids, workers=workers, progress=progress)
 
 
 def handle_default_args(args: dict[str, Any]) -> dict[str, Any]:
