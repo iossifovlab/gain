@@ -487,3 +487,48 @@ def test_milestone_progress_total_zero_skips_baseline(
     ]
     # No misleading "0/0 (100%)" baseline when there is nothing to cache.
     assert lines == []
+
+
+def test_cache_resources_closes_reporter_on_keyboard_interrupt(
+    grr_config_file: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A KeyboardInterrupt (or any BaseException) escaping the as_completed
+    # loop must not skip reporter.close() -- otherwise a live tqdm bar is
+    # left dangling on the terminal. See gain#68.
+    from gain.genomic_resources import cached_repository
+
+    closed: dict[str, bool] = {"close": False}
+
+    class _SpyReporter:
+        def update(self, *, failed: bool) -> None:
+            pass
+
+        def report_failure(self, message: str) -> None:
+            pass
+
+        def close(self) -> None:
+            closed["close"] = True
+
+    monkeypatch.setattr(
+        cached_repository, "_make_cache_progress",
+        lambda _total, *, progress: _SpyReporter(),  # noqa: ARG005
+    )
+
+    # as_completed(futures) is evaluated inside cache_resources' try block,
+    # so raising on the call exercises the finally-cleanup path just like an
+    # interrupt mid-iteration would.
+    def _raising_as_completed(_futures: Any) -> Any:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        cached_repository, "as_completed", _raising_as_completed)
+
+    repository = build_genomic_resource_repository(
+        file_name=str(grr_config_file))
+
+    with pytest.raises(KeyboardInterrupt):
+        cached_repository.cache_resources(repository, ["one"], workers=1)
+
+    assert closed["close"], \
+        "reporter.close() must run even when the loop is interrupted"

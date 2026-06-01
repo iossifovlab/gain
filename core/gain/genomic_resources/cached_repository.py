@@ -478,31 +478,38 @@ def cache_resources(
     logger.info("caching %s files", total_files)
     reporter = _make_cache_progress(total_files, progress=progress)
     failures: list[str] = []
-    for count, future in enumerate(as_completed(futures)):
-        filename: str
+    try:
+        for count, future in enumerate(as_completed(futures)):
+            filename: str
 
-        label = futures[future]
-        try:
-            resource_id, filename = future.result()
-        except Exception as error:  # noqa: BLE001 - report, don't abort run
-            # A single file failing (e.g. a download that stalled past its
-            # retries) must not discard the progress of every other file in
-            # the run. Collect the failure and keep caching; we raise a
-            # summary at the end so the run still fails loudly. See gain#43.
-            failures.append(f"{label} ({error})")
-            # One concise line per failure; the full summary is raised at the
-            # end. A stack trace per failed file would swamp a large run.
-            reporter.report_failure(
-                f"failed {count}/{total_files} ({label}): {error}")
-            reporter.update(failed=True)
-            continue
-        logger.debug(
-            "finished %s/%s (%s: %s)", count, total_files,
-            resource_id, filename)
-        reporter.update(failed=False)
-
-    reporter.close()
-    executor.shutdown()
+            label = futures[future]
+            try:
+                resource_id, filename = future.result()
+            except Exception as error:  # noqa: BLE001 - report, don't abort
+                # A single file failing (e.g. a download that stalled past
+                # its retries) must not discard the progress of every other
+                # file in the run. Collect the failure and keep caching; we
+                # raise a summary at the end so the run still fails loudly.
+                # See gain#43.
+                failures.append(f"{label} ({error})")
+                # One concise line per failure; the full summary is raised at
+                # the end. A stack trace per failed file would swamp a large
+                # run.
+                reporter.report_failure(
+                    f"failed {count}/{total_files} ({label}): {error}")
+                reporter.update(failed=True)
+                continue
+            logger.debug(
+                "finished %s/%s (%s: %s)", count, total_files,
+                resource_id, filename)
+            reporter.update(failed=False)
+    finally:
+        # Cleanup must run on every exit path -- normal completion, an
+        # unexpected exception, or a KeyboardInterrupt escaping the loop --
+        # so a live tqdm bar is always finalized rather than left dangling.
+        # See gain#68.
+        reporter.close()
+        executor.shutdown()
 
     if failures:
         summary = "\n".join(f"  - {failure}" for failure in failures)
