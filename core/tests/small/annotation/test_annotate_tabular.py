@@ -644,6 +644,73 @@ def test_annotate_tabular_csi_indexed_input_no_duplication(
     assert len(rows) == 2
 
 
+@pytest.mark.parametrize("suffix", [".gz", ".bgz"])
+def test_annotate_tabular_plain_compressed_input(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+    suffix: str,
+) -> None:
+    """A plain (b)gzip input with no tabix index (non-splittable) is read
+    and annotated once per record.
+
+    Locks in .bgz reading parity with .gz on the plaintext path; .bgz input
+    support landed in 091f9faf3 without test coverage.
+    """
+    root_path = annotate_directory_fixture
+    raw = tmp_path / "in.txt"
+    raw.write_text("chrom\tpos\nchr1\t23\nchr2\t33\n")
+    in_file = tmp_path / f"in.txt{suffix}"
+    pysam.tabix_compress(str(raw), str(in_file), force=True)
+    raw.unlink()
+    # no index -> not splittable -> plaintext path
+    assert not (tmp_path / f"in.txt{suffix}.tbi").exists()
+
+    out_file = tmp_path / "out.txt.gz"
+    cli([
+        str(a) for a in [
+            in_file, root_path / "annotation.yaml",
+            "-o", out_file, "-w", tmp_path / "work",
+            "--grr", root_path / "grr.yaml", "-j", 1,
+        ]
+    ])
+
+    with gzip.open(out_file, "rt") as out:
+        lines = [ln for ln in out.read().splitlines() if ln.strip()]
+    assert "score" in lines[0]  # annotation column added
+    assert len(lines) == 3  # header + 2 data rows, each once
+
+
+def test_annotate_tabular_tbi_indexed_bgz_input(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A .bgz input with a .tbi index (splittable) is annotated once per
+    record. Companion to the .gz+.tbi coverage and #52's .bgz+.csi case.
+    """
+    root_path = annotate_directory_fixture
+    setup_tabix(
+        tmp_path / "in.txt.gz", textwrap.dedent("""
+            chrom   pos
+            chr1    23
+            chr2    33
+        """),
+        seq_col=0, start_col=1, end_col=1, line_skip=1, force=True)
+    in_file = tmp_path / "in.txt.bgz"
+    (tmp_path / "in.txt.gz").rename(in_file)
+    (tmp_path / "in.txt.gz.tbi").rename(tmp_path / "in.txt.bgz.tbi")
+
+    out_file = tmp_path / "out.txt.gz"
+    cli([
+        str(a) for a in [
+            in_file, root_path / "annotation.yaml",
+            "-o", out_file, "-w", tmp_path / "work",
+            "--grr", root_path / "grr.yaml", "-j", 1,
+        ]
+    ])
+
+    assert len(list(pysam.TabixFile(str(out_file)).fetch())) == 2
+
+
 def test_annotate_tabular_batch_mode(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
