@@ -1,6 +1,25 @@
 Release Notes
 =============
 
+* 2026.5.12
+    * ``annotate_tabular`` and ``annotate_vcf`` now treat ``.bgz`` as a
+      first-class compression extension on par with ``.gz``, for both
+      input and output. A ``.bgz`` input is read — and, when
+      tabix-indexed, split by genomic region — exactly like a ``.gz``
+      one, and an explicit ``.bgz`` output suffix is now preserved
+      (previously the output was always rewritten to ``.gz``). When the
+      output name omits a compression suffix, a compressed input's
+      suffix is mirrored onto it. This also fixes ``build_output_path``
+      mangling output names whose stem ended in ``g``/``z`` characters
+      (e.g. ``log.gz``), a side effect of the previous ``rstrip``-based
+      suffix handling.
+    * Fixed silent duplication of records when an ``annotate_tabular``
+      input was a compressed file carrying a ``.csi`` index rather than
+      a ``.tbi`` one. The splittability check accepted either index, but
+      the reader looked only for ``.tbi`` and otherwise opened the file
+      whole, so every genomic-region part re-read and re-emitted the
+      entire file.
+
 * 2026.5.10
     * ``grr_cache_repo`` no longer aborts a long HTTP download at
       htslib's 300 s read cap (which killed caching of large
