@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import threading
 from collections.abc import Callable, Generator, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import IO, Any, cast
@@ -365,25 +366,49 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
         return cached_files
 
 
-class _CacheProgress:
-    """Report caching progress as files complete.
+def _human_bytes(n: int) -> str:
+    """Render a byte count with a 1024 divisor, e.g. ``2.8 GB``/``712.0 MB``.
 
-    Three concrete behaviours share this interface so the caching loop
-    stays oblivious to the rendering mode:
+    Used for the header line and milestone byte figures so a captured log is
+    readable; tqdm renders its own human units for the live bar.
+    """
+    size = float(n)
+    for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
+        if size < 1024.0 or unit == "PB":
+            return f"{size:.1f} {unit}"
+        size /= 1024.0
+    return f"{size:.1f} PB"
+
+
+class _CacheProgress:
+    """Report caching progress against two metrics: bytes and files.
+
+    Bytes are the primary metric (the visible bar / milestone driver);
+    files are secondary context (a ``files=done/total`` tally). Concrete
+    behaviours share this interface so the caching loop stays oblivious to
+    the rendering mode:
 
     - off (``progress=False``): nothing is shown; the loop still logs its
       header, its DEBUG per-file lines, and the final failure summary.
-    - a live :class:`tqdm` bar when stderr is a terminal.
-    - throttled milestone log lines (a ``0%`` baseline, then each 10%
-      crossing, then ``100%``) when stderr is not a terminal, so a captured
-      CI log stays readable and greppable.
+    - a live :class:`tqdm` byte bar when stderr is a terminal.
+    - throttled milestone log lines on byte-percentage thresholds (a ``0%``
+      baseline, then each 10% crossing, then ``100%``) when stderr is not a
+      terminal, so a captured CI log stays readable and greppable.
 
-    Failures advance the counter like any other completed file and are
-    surfaced as a running ``failed=N`` tally.
+    When there are bytes to download (``byte_total > 0``) the bar/milestones
+    are byte-driven via :meth:`on_bytes`. When only zero-byte files need
+    downloading (``byte_total == 0`` but ``file_total > 0``) the reporter
+    falls back to a file-unit bar driven by :meth:`update` so there is still
+    motion. :meth:`on_bytes` may be called from multiple download threads;
+    :meth:`update` is called only from the single ``as_completed`` thread.
+
+    Failures advance the counter and are surfaced as a ``failed=N`` tally.
     """
 
-    def __init__(self, total: int) -> None:
-        self.total = total
+    def __init__(self, byte_total: int, file_total: int) -> None:
+        self.byte_total = byte_total
+        self.file_total = file_total
+        self.bytes_done = 0
         self.done = 0
         self.failed = 0
 
@@ -393,7 +418,7 @@ class _CacheProgress:
             self.failed += 1
 
     def on_bytes(self, n: int) -> None:
-        """Credit ``n`` downloaded bytes; a no-op at the file granularity.
+        """Credit ``n`` downloaded bytes (signed); a no-op in off mode.
 
         Subclasses that render a byte-level bar override this to advance it.
         """
@@ -408,55 +433,134 @@ class _CacheProgress:
 class _MilestoneProgress(_CacheProgress):
     """Log a progress line on the ``0% / every 10% / 100%`` schedule.
 
-    A genuine ``0%`` baseline line is emitted at construction, before any
-    file completes (matching spec #59's non-TTY acceptance criteria). After
-    that, one line is emitted on each 10% bucket crossing, and a final
-    ``100%`` line when the last file completes. The construction baseline
-    seeds ``_last_bucket = 0`` so the existing bucket-dedup suppresses a
-    duplicate ``0%`` line as the first files complete.
+    In byte mode (``byte_total > 0``) milestones fire on byte-percentage
+    crossings driven by :meth:`on_bytes`; :meth:`update` only bumps the file
+    figures shown on the next byte-milestone line. In the zero-byte fallback
+    (``byte_total == 0``, ``file_total > 0``) milestones are file-driven via
+    :meth:`update`, preserving the pre-gain#79 behaviour exactly.
 
-    When ``total == 0`` there is nothing to cache, so the baseline is
-    skipped rather than emitting a misleading ``0/0 (100%)`` line.
+    A genuine ``0%`` baseline line is emitted at construction (gain#67),
+    seeding ``_last_bucket = 0`` so the bucket-dedup suppresses a duplicate
+    ``0%`` line on the first crossing. When the driving total is 0 there is
+    nothing to cache, so the baseline is skipped rather than emitting a
+    misleading ``0/0 (100%)`` line.
+
+    ``on_bytes`` is called from multiple download threads, so the byte
+    accumulator, the bucket cursor and the logging are guarded by a lock.
     """
 
-    def __init__(self, total: int) -> None:
-        super().__init__(total)
-        if self.total:
+    def __init__(self, byte_total: int, file_total: int) -> None:
+        super().__init__(byte_total, file_total)
+        self._byte_mode = byte_total > 0
+        self._lock = threading.Lock()
+        driving_total = byte_total if self._byte_mode else file_total
+        if driving_total:
             self._last_bucket = 0
             self._log_progress()
         else:
             self._last_bucket = -1
 
+    def _pct(self) -> int:
+        if self._byte_mode:
+            if not self.byte_total:
+                return 100
+            return min(100, self.bytes_done * 100 // self.byte_total)
+        return self.done * 100 // self.file_total if self.file_total else 100
+
     def _log_progress(self) -> None:
-        pct = self.done * 100 // self.total if self.total else 100
         failed_suffix = f", failed={self.failed}" if self.failed else ""
-        logger.info(
-            "caching progress: %s/%s files (%s%%)%s",
-            self.done, self.total, pct, failed_suffix)
+        if self._byte_mode:
+            logger.info(
+                "caching progress: %s/%s (%s%%), %s/%s files%s",
+                _human_bytes(self.bytes_done), _human_bytes(self.byte_total),
+                self._pct(), self.done, self.file_total, failed_suffix)
+        else:
+            logger.info(
+                "caching progress: %s/%s files (%s%%)%s",
+                self.done, self.file_total, self._pct(), failed_suffix)
+
+    def on_bytes(self, n: int) -> None:
+        if not self._byte_mode:
+            return
+        with self._lock:
+            self.bytes_done += n
+            pct = self._pct()
+            bucket = pct // 10
+            # ``_last_bucket`` is a high-water mark: a rollback (negative
+            # delta from a retryable failure, slice 1) lowers ``bytes_done``
+            # but does NOT lower the cursor, so re-crossing an
+            # already-reported bucket logs no duplicate line. A line is
+            # emitted only on a forward crossing into a new bucket. Bucket 10
+            # occurs only at 100%, so this still logs the final line exactly
+            # once; once full, further positive deltas (e.g. a concurrent
+            # file's chunks after a terminal-failure top-up overshot the
+            # total) are deduped rather than re-logging 100%.
+            if bucket <= self._last_bucket:
+                return
+            self._last_bucket = bucket
+            self._log_progress()
 
     def update(self, *, failed: bool) -> None:
         super().update(failed=failed)
-        pct = self.done * 100 // self.total if self.total else 100
-        bucket = pct // 10
-        if bucket == self._last_bucket and self.done != self.total:
+        if self._byte_mode:
+            # File figures normally ride the next byte-milestone line. But a
+            # terminal failure tops up the bytes (reaching 100%) and is
+            # marked failed straight after -- there is no later byte line to
+            # carry the tally, so re-log the 100% line once the bar is full
+            # so the failed=N tally is visible. See gain#79 / gain#43.
+            if failed and self._pct() == 100:
+                with self._lock:
+                    self._log_progress()
+            return
+        bucket = self._pct() // 10
+        if bucket == self._last_bucket and self.done != self.file_total:
             return
         self._last_bucket = bucket
         self._log_progress()
 
 
 class _TqdmProgress(_CacheProgress):
-    """Drive a live tqdm bar, writing failures above it via tqdm.write."""
+    """Drive a live tqdm bar, writing failures above it via tqdm.write.
 
-    def __init__(self, total: int) -> None:
-        super().__init__(total)
-        self._bar = tqdm(
-            total=total, desc="caching", unit="file", leave=True)
+    In byte mode the bar counts bytes (human units + throughput + ETA),
+    advanced by :meth:`on_bytes`; :meth:`update` only refreshes the
+    ``files=done/total`` postfix. In the zero-byte fallback the bar counts
+    files, advanced by :meth:`update`. ``on_bytes`` runs on multiple
+    download threads, so bar mutations are guarded by a lock.
+    """
+
+    def __init__(self, byte_total: int, file_total: int) -> None:
+        super().__init__(byte_total, file_total)
+        self._byte_mode = byte_total > 0
+        self._lock = threading.Lock()
+        if self._byte_mode:
+            self._bar = tqdm(
+                total=byte_total, desc="caching", unit="B",
+                unit_scale=True, unit_divisor=1024, leave=True)
+        else:
+            self._bar = tqdm(
+                total=file_total, desc="caching", unit="file", leave=True)
+
+    def _postfix(self) -> None:
+        files = f"{self.done}/{self.file_total}"
+        if self.failed:
+            self._bar.set_postfix_str(
+                f"files={files}, failed={self.failed}", refresh=False)
+        else:
+            self._bar.set_postfix_str(f"files={files}", refresh=False)
+
+    def on_bytes(self, n: int) -> None:
+        if not self._byte_mode:
+            return
+        with self._lock:
+            self._bar.update(n)
 
     def update(self, *, failed: bool) -> None:
         super().update(failed=failed)
-        if self.failed:
-            self._bar.set_postfix(failed=self.failed, refresh=False)
-        self._bar.update(1)
+        with self._lock:
+            self._postfix()
+            if not self._byte_mode:
+                self._bar.update(1)
 
     def report_failure(self, message: str) -> None:
         self._bar.write(message)
@@ -465,12 +569,14 @@ class _TqdmProgress(_CacheProgress):
         self._bar.close()
 
 
-def _make_cache_progress(total: int, *, progress: bool) -> _CacheProgress:
+def _make_cache_progress(
+    byte_total: int, file_total: int, *, progress: bool,
+) -> _CacheProgress:
     if not progress:
-        return _CacheProgress(total)
+        return _CacheProgress(byte_total, file_total)
     if sys.stderr.isatty():
-        return _TqdmProgress(total)
-    return _MilestoneProgress(total)
+        return _TqdmProgress(byte_total, file_total)
+    return _MilestoneProgress(byte_total, file_total)
 
 
 def _resolve_resources(
@@ -619,13 +725,28 @@ def cache_resources(
         _classify_resources(resources, workers)
 
     logger.info(
-        "caching %s file(s), %s bytes to download; %s already cached",
-        len(worklist), total_bytes, already_cached)
+        "caching %s file(s), %s to download; %s already cached",
+        len(worklist), _human_bytes(total_bytes), already_cached)
+
+    # Nothing to download: the header already reported it; skip the executor,
+    # the reporter and the bar entirely (gain#67 nothing-to-do behaviour).
+    if not worklist:
+        if classify_failures:
+            summary = "\n".join(f"  - {f}" for f in classify_failures)
+            raise RuntimeError(
+                f"failed to cache {len(classify_failures)}/"
+                f"{len(classify_failures)} resource file(s):\n{summary}")
+        return
 
     # Phase B: download (with per-file locks) only the work-list entries.
     executor = ThreadPoolExecutor(max_workers=workers)
-    futures: dict[Future, str] = {}
-    for resource, filename, _size in worklist:
+    # Each future maps to its label and manifest size; the size feeds the
+    # terminal-failure byte top-up below.
+    futures: dict[Future, tuple[str, int]] = {}
+    total_files = len(worklist)
+    reporter = _make_cache_progress(
+        byte_total=total_bytes, file_total=total_files, progress=progress)
+    for resource, filename, size in worklist:
         cached_proto = cast(CachingProtocol, resource.proto)
         logger.debug(
             "request to cache resource file: (%s, %s) from %s",
@@ -635,14 +756,13 @@ def cache_resources(
             cached_proto.download_cached_resource_file,
             resource,
             filename,
-        )] = f"{resource.resource_id}: {filename}"
+            on_bytes=reporter.on_bytes,
+        )] = (f"{resource.resource_id}: {filename}", size)
 
-    total_files = len(futures)
-    reporter = _make_cache_progress(total_files, progress=progress)
     failures: list[str] = list(classify_failures)
     try:
         for count, future in enumerate(as_completed(futures)):
-            label = futures[future]
+            label, size = futures[future]
             try:
                 resource_id, filename = future.result()
             except Exception as error:  # noqa: BLE001 - report, don't abort
@@ -657,6 +777,11 @@ def cache_resources(
                 # run.
                 reporter.report_failure(
                     f"failed {count}/{total_files} ({label}): {error}")
+                # Slice 1 rolls a retryable terminal failure's bytes back to
+                # net ~0, so credit the file's full size to land the byte bar
+                # at 100%, then mark the failure so the tally shows. See
+                # gain#79 / gain#43. Must precede update(failed=True).
+                reporter.on_bytes(size)
                 reporter.update(failed=True)
                 continue
             logger.debug(

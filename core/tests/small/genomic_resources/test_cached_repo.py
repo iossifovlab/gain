@@ -771,9 +771,12 @@ def test_cache_resources_progress_reports_failures(
         cache_repository: CacheRepositoryBuilder,
         mocker: MockerFixture,
         caplog: pytest.LogCaptureFixture) -> None:
-    # The milestone progress lines (used off a TTY) carry a running failed
-    # tally, so a captured CI log shows trouble accumulating without waiting
-    # for the end-of-run summary. See gain#59.
+    # The byte-mode milestone progress lines (used off a TTY) carry a
+    # running failed tally, so a captured CI log shows trouble accumulating
+    # without waiting for the end-of-run summary. The tally is sampled at
+    # byte-percentage crossings, so the exact intermediate count is not
+    # asserted -- only that a failed=N tally surfaces and the final line
+    # reflects the total. See gain#59 / gain#79.
     caplog.set_level(
         logging.INFO, logger="gain.genomic_resources.cached_repository")
     with cache_repository({
@@ -804,7 +807,53 @@ def test_cache_resources_progress_reports_failures(
         if "caching progress" in rec.message
     ]
     assert progress_lines
-    assert any("failed=1" in line for line in progress_lines)
+    # A failed=N tally surfaces on a milestone line.
+    assert any("failed=" in line for line in progress_lines)
+    # "bad" contributes two failed files; the final line reflects the total.
+    assert "failed=2" in progress_lines[-1]
+
+
+@pytest.mark.grr_full
+def test_cache_resources_terminal_failure_byte_bar_reaches_100(
+        cache_repository: CacheRepositoryBuilder,
+        mocker: MockerFixture,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    # A download that always fails still drives the byte bar to 100% (via the
+    # terminal-failure top-up) and the run raises the summary with the failed
+    # tally. See gain#79 / gain#43.
+    monkeypatch.setattr("sys.stderr.isatty", lambda: False)
+    caplog.set_level(
+        logging.INFO, logger="gain.genomic_resources.cached_repository")
+    with cache_repository({
+            "bad": {GR_CONF_FILE_NAME: "", "data.txt": "payload-bytes"},
+            }) as cache_repo:
+
+        def always_fail(
+                self: CachingProtocol,
+                resource: Any, filename: str,
+                *, on_bytes: Any = None) -> tuple[str, str]:
+            # Mimic slice-1 rollback: credit then roll back this attempt's
+            # bytes, then hard-fail, so the top-up is what reaches 100%.
+            if on_bytes is not None:
+                on_bytes(5)
+                on_bytes(-5)
+            raise OSError("simulated permanent download failure")
+
+        mocker.patch.object(
+            CachingProtocol, "download_cached_resource_file",
+            autospec=True, side_effect=always_fail)
+
+        with pytest.raises(RuntimeError, match="failed to cache"):
+            cache_resources(cache_repo, None, workers=1)
+
+    progress_lines = [
+        rec.message for rec in caplog.records
+        if "caching progress" in rec.message
+    ]
+    assert progress_lines
+    assert any("(100%)" in line for line in progress_lines)
+    assert "failed=" in progress_lines[-1]
 
 
 @pytest.mark.grr_full
@@ -842,6 +891,34 @@ def test_cache_resources_continues_after_classify_failure_and_raises(
         # "bad" failing classification.
         assert cache_repo.get_resource_cached_files("good1") == {"data.txt"}
         assert cache_repo.get_resource_cached_files("good2") == {"data.txt"}
+
+
+@pytest.mark.grr_full
+def test_cache_resources_raises_when_all_classification_fails(
+        cache_repository: CacheRepositoryBuilder,
+        mocker: MockerFixture) -> None:
+    # When every file fails classification the work-list is empty and the
+    # download phase is skipped entirely -- but the run must still raise the
+    # classify-failure summary rather than silently returning. Covers the
+    # empty-work-list early-return raise branch. See gain#43 / gain#79.
+    with cache_repository({
+            "bad": {GR_CONF_FILE_NAME: "", "data.txt": "b"},
+            }) as cache_repo:
+
+        def always_fail(
+                _self: CachingProtocol,
+                _resource: Any, _filename: str) -> Any:
+            raise OSError("simulated classify failure")
+
+        mocker.patch.object(
+            CachingProtocol, "classify_cached_resource_file",
+            autospec=True, side_effect=always_fail)
+
+        with pytest.raises(RuntimeError, match="bad"):
+            cache_resources(cache_repo, None, workers=1)
+
+        # Nothing was cached -- every file failed classification.
+        assert cache_repo.get_resource_cached_files("bad") == set()
 
 
 @pytest.mark.grr_full
