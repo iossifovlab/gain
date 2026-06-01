@@ -11,7 +11,7 @@ import logging
 import operator
 import os
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import AbstractContextManager
 from dataclasses import asdict
 from threading import Lock
@@ -684,12 +684,21 @@ class FsspecReadWriteProtocol(
             self,
             remote_resource: GenomicResource,
             dest_resource: GenomicResource,
-            filename: str) -> ResourceFileState | None:
+            filename: str,
+            on_bytes: Callable[[int], None] | None = None,
+    ) -> ResourceFileState | None:
         """Copy a resource file into repository.
 
         A transient stall or drop mid-download (common when fetching a large
         resource over a slow HTTP GRR link) is retried from scratch with
         exponential backoff rather than aborting the file. See gain#43.
+
+        ``on_bytes``, when given, is called with the number of bytes written
+        for each chunk during the download (see gain#77). Because a retried
+        attempt re-downloads the whole file from scratch, the bytes credited
+        by a failed attempt are rolled back with a single compensating
+        negative call before the retry, so a caller-side byte counter never
+        double-counts.
         """
         assert dest_resource.resource_id == remote_resource.resource_id
         logger.debug(
@@ -709,14 +718,32 @@ class FsspecReadWriteProtocol(
             self.filesystem.mkdir(
                 dest_parent, create_parents=True, exist_ok=True)
 
+        # Bytes credited to on_bytes during the current attempt, so a
+        # retryable failure can roll them back before the next attempt.
+        attempt_bytes = 0
+
+        def tracking_on_bytes(n: int) -> None:
+            nonlocal attempt_bytes
+            attempt_bytes += n
+            assert on_bytes is not None
+            on_bytes(n)
+
+        wrapped_on_bytes = (
+            tracking_on_bytes if on_bytes is not None else None)
+
         last_error: BaseException | None = None
         for attempt in range(1, _COPY_MAX_ATTEMPTS + 1):
+            attempt_bytes = 0
             try:
                 return self._download_resource_file(
                     remote_resource, dest_resource, filename,
-                    dest_filepath, manifest_entry.md5)
+                    dest_filepath, manifest_entry.md5,
+                    on_bytes=wrapped_on_bytes)
             except _RETRYABLE_COPY_ERRORS as error:
                 last_error = error
+                if on_bytes is not None and attempt_bytes:
+                    # roll back the partially-credited bytes of this attempt
+                    on_bytes(-attempt_bytes)
                 if attempt >= _COPY_MAX_ATTEMPTS:
                     break
                 delay = _COPY_BACKOFF_BASE * (3 ** (attempt - 1))
@@ -736,11 +763,18 @@ class FsspecReadWriteProtocol(
             dest_resource: GenomicResource,
             filename: str,
             dest_filepath: str,
-            expected_md5: str | None) -> ResourceFileState:
+            expected_md5: str | None,
+            *,
+            on_bytes: Callable[[int], None] | None = None,
+    ) -> ResourceFileState:
         """Download a single resource file once and verify its checksum.
 
         Opens a fresh remote handle and truncates the destination, so a
         retried call recovers cleanly from a partially-written file.
+
+        ``on_bytes``, when given, is called with the length of each chunk
+        right after it is written, to drive a byte-level progress bar
+        (see gain#77).
         """
         with remote_resource.open_raw_file(
                 filename, "rb",
@@ -753,6 +787,8 @@ class FsspecReadWriteProtocol(
             md5_hash = hashlib.md5()  # noqa
             while chunk := infile.read(self.CHUNK_SIZE):
                 outfile.write(chunk)
+                if on_bytes is not None:
+                    on_bytes(len(chunk))
                 md5_hash.update(chunk)
 
         md5 = md5_hash.hexdigest()
