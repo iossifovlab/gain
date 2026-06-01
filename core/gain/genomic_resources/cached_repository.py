@@ -326,8 +326,9 @@ class _CacheProgress:
     - off (``progress=False``): nothing is shown; the loop still logs its
       header, its DEBUG per-file lines, and the final failure summary.
     - a live :class:`tqdm` bar when stderr is a terminal.
-    - throttled milestone log lines (every 10%) when stderr is not a
-      terminal, so a captured CI log stays readable and greppable.
+    - throttled milestone log lines (a ``0%`` baseline, then each 10%
+      crossing, then ``100%``) when stderr is not a terminal, so a captured
+      CI log stays readable and greppable.
 
     Failures advance the counter like any other completed file and are
     surfaced as a running ``failed=N`` tally.
@@ -351,11 +352,33 @@ class _CacheProgress:
 
 
 class _MilestoneProgress(_CacheProgress):
-    """Log a progress line each time a 10% milestone is crossed."""
+    """Log a progress line on the ``0% / every 10% / 100%`` schedule.
+
+    A genuine ``0%`` baseline line is emitted at construction, before any
+    file completes (matching spec #59's non-TTY acceptance criteria). After
+    that, one line is emitted on each 10% bucket crossing, and a final
+    ``100%`` line when the last file completes. The construction baseline
+    seeds ``_last_bucket = 0`` so the existing bucket-dedup suppresses a
+    duplicate ``0%`` line as the first files complete.
+
+    When ``total == 0`` there is nothing to cache, so the baseline is
+    skipped rather than emitting a misleading ``0/0 (100%)`` line.
+    """
 
     def __init__(self, total: int) -> None:
         super().__init__(total)
-        self._last_bucket = -1
+        if self.total:
+            self._last_bucket = 0
+            self._log_progress()
+        else:
+            self._last_bucket = -1
+
+    def _log_progress(self) -> None:
+        pct = self.done * 100 // self.total if self.total else 100
+        failed_suffix = f", failed={self.failed}" if self.failed else ""
+        logger.info(
+            "caching progress: %s/%s files (%s%%)%s",
+            self.done, self.total, pct, failed_suffix)
 
     def update(self, *, failed: bool) -> None:
         super().update(failed=failed)
@@ -364,10 +387,7 @@ class _MilestoneProgress(_CacheProgress):
         if bucket == self._last_bucket and self.done != self.total:
             return
         self._last_bucket = bucket
-        failed_suffix = f", failed={self.failed}" if self.failed else ""
-        logger.info(
-            "caching progress: %s/%s files (%s%%)%s",
-            self.done, self.total, pct, failed_suffix)
+        self._log_progress()
 
 
 class _TqdmProgress(_CacheProgress):
