@@ -440,6 +440,41 @@ def test_annotate_vcf_cli_preserves_bgz_output(
         assert len(list(vcf.fetch())) == 2
 
 
+def test_annotate_vcf_cli_removes_uncompressed_working_file(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A compressed output leaves no uncompressed working file (#61).
+
+    The task-graph framework does not auto-delete intermediate files, so
+    _tabix_compress must remove the uncompressed working file (out.vcf)
+    after producing out.vcf.bgz, mirroring annotate_tabular.
+    """
+    in_content = textwrap.dedent("""
+        ##fileformat=VCFv4.2
+        ##contig=<ID=chr1>
+        #CHROM POS ID REF ALT QUAL FILTER INFO
+        chr1   23  .  C   T   .    .      .
+        chr1   24  .  C   A   .    .      .
+    """)
+    root_path = annotate_directory_fixture
+    in_file = tmp_path / "in.vcf.gz"
+    out_file = tmp_path / "out.vcf.bgz"
+    annotation_file = root_path / "annotation.yaml"
+    grr_file = root_path / "grr.yaml"
+    setup_vcf(in_file, in_content)
+
+    cli([
+        str(a) for a in [
+            in_file, annotation_file, "--grr", grr_file,
+            "-o", out_file, "-w", tmp_path / "work", "-j", 1,
+        ]
+    ])
+
+    assert out_file.exists()
+    assert not (tmp_path / "out.vcf").exists()
+
+
 def test_batch(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,

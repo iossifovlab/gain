@@ -469,6 +469,8 @@ def _tabix_compress(filepath: str, output_path: str | None = None) -> None:
     if output_path is None:
         output_path = f"{filepath}.gz"
     tabix_compress(filepath, output_path, force=True)
+    if os.path.exists(filepath):
+        os.remove(filepath)
 
 
 def _add_tasks_plaintext(
