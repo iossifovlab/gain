@@ -2,6 +2,16 @@ Release Notes
 =============
 
 * 2026.5.12
+    * ``grr_cache_repo`` now takes the annotation pipeline as a
+      **positional argument** (``grr_cache_repo <pipeline>``) instead of
+      the ``--pipeline``/``-p`` flag, adopting the same
+      ``CLIAnnotationContextProvider`` mechanism as ``annotate_columns``
+      and ``annotate_vcf``. **Backward-incompatible:** scripts passing
+      ``--pipeline``/``-p`` must drop the flag. When a GPF instance is
+      also supplied (``-i``), an explicit positional pipeline still wins
+      and the instance pipeline is used only as a fallback; with no
+      pipeline from any source the command logs ``no pipeline supplied;
+      nothing to cache`` and exits cleanly.
     * ``annotate_tabular`` and ``annotate_vcf`` now treat ``.bgz`` as a
       first-class compression extension on par with ``.gz``, for both
       input and output. A ``.bgz`` input is read — and, when
