@@ -609,10 +609,14 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
     Attributes:
         proto_id: Unique identifier for this protocol instance
         url: Base URL or path to the repository root
-        CHUNK_SIZE: Default buffer size for file operations (32KB)
+        CHUNK_SIZE: Default read-buffer size for chunked file operations
+            (1 MiB). This is the application-level read size for the download
+            and md5 loops, not the network transfer unit -- fsspec does its
+            own block-level fetching/buffering underneath. Larger chunks cut
+            Python-loop and progress-callback overhead on multi-GB resources.
     """
 
-    CHUNK_SIZE = 32768
+    CHUNK_SIZE = 1024 * 1024
 
     def __init__(self, proto_id: str, url: str):
         self.proto_id = proto_id
