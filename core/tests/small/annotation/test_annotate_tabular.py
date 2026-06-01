@@ -18,6 +18,7 @@ from gain.annotation.annotatable import (
     VCFAllele,
 )
 from gain.annotation.annotate_tabular import (
+    _add_tasks_tabixed,
     _adjust_default_input_separator,
     _count_tabular_rows,
     _CSVBatchSource,
@@ -58,6 +59,7 @@ from gain.genomic_resources.testing import (
     setup_tabix,
 )
 from gain.task_graph.cli_tools import TaskGraphCli
+from gain.task_graph.graph import TaskGraph
 from gain.task_graph.logging import FsspecHandler
 from gain.utils.regions import Region as GenomicRegion
 
@@ -642,6 +644,27 @@ def test_annotate_tabular_csi_indexed_input_no_duplication(
 
     rows = list(pysam.TabixFile(str(out_file)).fetch())
     assert len(rows) == 2
+
+
+def test_add_tasks_tabixed_rejects_uncompressed_output_path() -> None:
+    """``_add_tasks_tabixed`` must reject an ``output_path`` with no
+    compression suffix.
+
+    Regression for iossifovlab/gain#62: without the suffix the derived
+    ``working_path`` equals ``output_path``, so the compress task would
+    ``tabix_compress(out, out, force=True)`` (and then ``os.remove`` the
+    output), truncating/deleting the file in place. Make the precondition
+    explicit so a future caller can't silently trigger data loss.
+    """
+    with pytest.raises(AssertionError, match="compression suffix"):
+        _add_tasks_tabixed(
+            args={},
+            task_graph=TaskGraph(),
+            output_path="out.txt",
+            pipeline_config=[],
+            grr_definition={},
+            ref_genome_id=None,
+        )
 
 
 @pytest.mark.parametrize("suffix", [".gz", ".bgz"])
