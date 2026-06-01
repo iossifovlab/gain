@@ -250,7 +250,7 @@ When GAIn detects an indexed input file, it splits the annotation job into small
 The degree of parallelization can be controlled with the ``-j`` option, which specifies the number of workers. The optimal value depends on the input size, pipeline complexity, available CPU cores, memory, and storage performance.
 
 
-For example, after downloading the example input file (:download:`200k_variants.txt <files/200k_variants.txt>`), which contains 200,000 variants, prepare it for parallel annotation by running:
+For example, after downloading the example input file (:download:`SSC_WES_variants.txt.gz <files/SSC_WES_variants.txt.gz>`), which contains 1,413,971 variants, prepare it for parallel annotation by running:
 
 .. code-block:: bash
 
