@@ -711,6 +711,65 @@ def test_annotate_tabular_tbi_indexed_bgz_input(
     assert len(list(pysam.TabixFile(str(out_file)).fetch())) == 2
 
 
+def test_annotate_tabular_cli_preserves_bgz_output(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> None:
+    """`-o out.bgz` produces a .bgz output, not .gz (regression for #54)."""
+    root_path = annotate_directory_fixture
+    in_file = tmp_path / "in.txt.gz"
+    out_file = tmp_path / "out.txt.bgz"
+    setup_tabix(
+        in_file, textwrap.dedent("""
+            chrom   pos
+            chr1    23
+            chr2    33
+        """),
+        seq_col=0, start_col=1, end_col=1, line_skip=1, force=True)
+
+    cli([
+        str(a) for a in [
+            in_file, root_path / "annotation.yaml",
+            "-o", out_file, "-w", tmp_path / "work",
+            "--grr", root_path / "grr.yaml", "-j", 1,
+        ]
+    ])
+
+    assert out_file.exists()
+    assert (tmp_path / "out.txt.bgz.tbi").exists()
+    assert not (tmp_path / "out.txt.gz").exists()
+    assert len(list(pysam.TabixFile(str(out_file)).fetch())) == 2
+
+
+def test_annotate_tabular_mirrors_bgz_input_to_output(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A .bgz input with a plainly-named output mirrors the .bgz suffix."""
+    root_path = annotate_directory_fixture
+    raw = tmp_path / "in.txt"
+    raw.write_text("chrom\tpos\nchr1\t23\nchr2\t33\n")
+    in_file = tmp_path / "in.txt.bgz"
+    pysam.tabix_compress(str(raw), str(in_file), force=True)
+    raw.unlink()
+
+    cli([
+        str(a) for a in [
+            in_file, root_path / "annotation.yaml",
+            "-o", tmp_path / "out.txt", "-w", tmp_path / "work",
+            "--grr", root_path / "grr.yaml", "-j", 1,
+        ]
+    ])
+
+    assert (tmp_path / "out.txt.bgz").exists()
+    assert not (tmp_path / "out.txt.gz").exists()
+    assert not (tmp_path / "out.txt").exists()
+    with gzip.open(tmp_path / "out.txt.bgz", "rt") as out:
+        lines = [ln for ln in out.read().splitlines() if ln.strip()]
+    assert "score" in lines[0]
+    assert len(lines) == 3
+
+
 def test_annotate_tabular_batch_mode(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
@@ -2183,6 +2242,36 @@ def test_annotate_tabular_function_basic(
 
     out_file_content = out_file.read_text()
     assert out_file_content == out_expected_content
+
+
+def test_annotate_tabular_function_preserves_bgz_output(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The library annotate_tabular() honors an explicit .bgz output."""
+    in_content = textwrap.dedent("""
+        chrom   pos
+        chr1    23
+        chr1    24
+    """)
+    root_path = annotate_directory_fixture
+    in_file = tmp_path / "in.txt"
+    out_file = tmp_path / "out.txt.bgz"
+    grr_file = root_path / "grr.yaml"
+
+    setup_denovo(in_file, in_content)
+    grr = build_genomic_resource_repository(file_name=str(grr_file))
+    pipeline = build_annotation_pipeline([{"position_score": "one"}], grr)
+    args = _build_annotate_tabular_args()
+
+    annotate_tabular(str(in_file), pipeline, str(out_file), args)
+
+    assert out_file.exists()
+    assert not (tmp_path / "out.txt.gz").exists()
+    with gzip.open(out_file, "rt") as out:
+        lines = [ln for ln in out.read().splitlines() if ln.strip()]
+    assert lines[0] == "chrom\tpos\tscore"
+    assert len(lines) == 3
 
 
 def test_annotate_tabular_function_with_batch_mode(

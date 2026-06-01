@@ -407,6 +407,39 @@ def test_annotate_vcf_splittable_keeps_jobs(
     assert process_graph.call_args.kwargs["jobs"] == 5
 
 
+def test_annotate_vcf_cli_preserves_bgz_output(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> None:
+    """`-o out.bgz` produces a .bgz VCF output, not .gz (regression for #54)."""
+    in_content = textwrap.dedent("""
+        ##fileformat=VCFv4.2
+        ##contig=<ID=chr1>
+        #CHROM POS ID REF ALT QUAL FILTER INFO
+        chr1   23  .  C   T   .    .      .
+        chr1   24  .  C   A   .    .      .
+    """)
+    root_path = annotate_directory_fixture
+    in_file = tmp_path / "in.vcf.gz"
+    out_file = tmp_path / "out.vcf.bgz"
+    annotation_file = root_path / "annotation.yaml"
+    grr_file = root_path / "grr.yaml"
+    setup_vcf(in_file, in_content)
+
+    cli([
+        str(a) for a in [
+            in_file, annotation_file, "--grr", grr_file,
+            "-o", out_file, "-w", tmp_path / "work", "-j", 1,
+        ]
+    ])
+
+    assert out_file.exists()
+    assert (tmp_path / "out.vcf.bgz.tbi").exists()
+    assert not (tmp_path / "out.vcf.gz").exists()
+    with pysam.VariantFile(str(out_file)) as vcf:
+        assert len(list(vcf.fetch())) == 2
+
+
 def test_batch(
     annotate_directory_fixture: pathlib.Path,
     tmp_path: pathlib.Path,
@@ -1162,6 +1195,36 @@ def test_annotate_vcf_function_basic(
     with pysam.VariantFile(str(out_file)) as vcf_file:
         result = [v.info["score"][0] for v in vcf_file.fetch()]
     assert result == ["0.1", "0.2"]
+
+
+def test_annotate_vcf_function_preserves_bgz_output(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The library annotate_vcf() honors an explicit .bgz output."""
+    in_content = textwrap.dedent("""
+        ##fileformat=VCFv4.2
+        ##contig=<ID=chr1>
+        #CHROM POS ID REF ALT QUAL FILTER INFO
+        chr1   23  .  C   T   .    .      .
+        chr1   24  .  C   A   .    .      .
+    """)
+    root_path = annotate_directory_fixture
+    in_file = tmp_path / "in.vcf"
+    out_file = tmp_path / "out.vcf.bgz"
+    grr_file = root_path / "grr.yaml"
+
+    setup_vcf(in_file, in_content)
+    grr = build_genomic_resource_repository(file_name=str(grr_file))
+    pipeline = build_annotation_pipeline([{"position_score": "one"}], grr)
+    args = _build_annotate_vcf_args()
+
+    annotate_vcf(str(in_file), pipeline, str(out_file), args)
+
+    assert out_file.exists()
+    assert not (tmp_path / "out.vcf.gz").exists()
+    with pysam.VariantFile(str(out_file)) as vcf_file:
+        assert len(list(vcf_file.fetch())) == 2
 
 
 def test_annotate_vcf_function_with_batch_mode(

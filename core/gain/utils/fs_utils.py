@@ -144,10 +144,26 @@ def glob(path: str) -> list[str]:
     return cast(list[str], fs.glob(relative_path))
 
 
+COMPRESSED_EXTENSIONS = (".gz", ".bgz")
+
+
 def is_compressed_filename(filename: str) -> bool:
     """Check if a file is compressed by its extension."""
-    compressed_extensions = [".gz", ".bgz"]
-    return any(filename.endswith(ext) for ext in compressed_extensions)
+    return filename.endswith(COMPRESSED_EXTENSIONS)
+
+
+def compression_suffix(filename: str) -> str | None:
+    """Return the compression suffix (.gz/.bgz) of a filename, or None."""
+    for ext in COMPRESSED_EXTENSIONS:
+        if filename.endswith(ext):
+            return ext
+    return None
+
+
+def strip_compression_suffix(filename: str) -> str:
+    """Return the filename without its compression suffix, if any."""
+    suffix = compression_suffix(filename)
+    return filename[:-len(suffix)] if suffix else filename
 
 
 def rm_file(path: str) -> None:

@@ -102,3 +102,35 @@ def test_copy_folder(
 
     assert (dest_path / "a" / "b.txt").read_text() == "b"
     assert (dest_path / "c" / "d.txt").read_text() == "d"
+
+
+@pytest.mark.parametrize("filename, expected", [
+    ("data.txt", None),
+    ("data.txt.gz", ".gz"),
+    ("data.txt.bgz", ".bgz"),
+    ("data.vcf.bgz", ".bgz"),
+    ("log.gz", ".gz"),
+    ("catalog.gz", ".gz"),
+])
+def test_compression_suffix(filename: str, expected: str | None) -> None:
+    assert fs_utils.compression_suffix(filename) == expected
+
+
+@pytest.mark.parametrize("filename, expected", [
+    ("data.txt", "data.txt"),
+    ("data.txt.gz", "data.txt"),
+    ("data.txt.bgz", "data.txt"),
+    ("log.gz", "log"),
+    ("catalog.gz", "catalog"),
+])
+def test_strip_compression_suffix(filename: str, expected: str) -> None:
+    assert fs_utils.strip_compression_suffix(filename) == expected
+
+
+@pytest.mark.parametrize("filename, expected", [
+    ("data.txt", False),
+    ("data.txt.gz", True),
+    ("data.txt.bgz", True),
+])
+def test_is_compressed_filename(filename: str, expected: bool) -> None:
+    assert fs_utils.is_compressed_filename(filename) is expected
