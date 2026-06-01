@@ -621,6 +621,7 @@ class AnnotationConfigParser:
             "allele_aggregator",
             "nucleotide_aggregator",
             "gene_list_aggregator",
+            "gene_aggregator",
         }
         aggregator = attribute_config.get("aggregator")
         for old_name in deprecated_aggregator_params:

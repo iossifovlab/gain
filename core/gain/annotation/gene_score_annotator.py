@@ -1,11 +1,13 @@
 """Module containing the gene score annotator."""
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
+    Attribute,
     AnnotatorInfo,
 )
 from gain.annotation.annotation_pipeline import (
@@ -16,6 +18,7 @@ from gain.annotation.annotation_pipeline import (
 from gain.annotation.annotator_base import AnnotatorBase
 from gain.gene_scores.gene_scores import build_gene_score_from_resource
 from gain.genomic_resources import GenomicResource
+from gain.genomic_resources.aggregators import build_aggregator
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +72,7 @@ class GeneScoreAnnotator(AnnotatorBase):
                 source=score_id,
                 value_type="object",
                 description=score_def.description,
-                supports_aggregation=False,
+                supports_aggregation=True,
             )
 
         default_annotation = self.score.config.get("default_annotation")
@@ -81,7 +84,7 @@ class GeneScoreAnnotator(AnnotatorBase):
                     description=specs[source].description,
                     is_default=False,
                     internal_default=specs[source].internal_default,
-                    supports_aggregation=False,
+                    supports_aggregation=True,
                     attribute_type=specs[source].attribute_type,
                 )
             for attr in default_annotation:
@@ -102,6 +105,44 @@ class GeneScoreAnnotator(AnnotatorBase):
                         default_attr.internal
 
         return specs
+
+    def _aggregator_value_type(self, attr: Attribute) -> str | None:
+        return None
+
+    def _apply_gene_aggregator(
+        self, attr: Attribute, value: Any,
+    ) -> Any:
+        if attr.aggregator is None or not isinstance(value, dict):
+            return value
+        return build_aggregator(attr.aggregator).aggregate(list(value.values()))
+
+    def annotate(
+        self,
+        annotatable: Annotatable | None,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        if annotatable is None:
+            return self._empty_result()
+        source_values = self._do_annotate(annotatable, context)
+        return {
+            attr.name: self._apply_gene_aggregator(
+                attr, source_values[attr.source])
+            for attr in self.attributes
+        }
+
+    def batch_annotate(
+        self,
+        annotatables: Sequence[Annotatable | None],
+        contexts: list[dict[str, Any]],
+        batch_work_dir: str | None = None,
+    ) -> list[dict[str, Any]]:
+        inner_output = self._do_batch_annotate(
+            annotatables, contexts, batch_work_dir=batch_work_dir)
+        return [{
+            attr.name: self._apply_gene_aggregator(
+                attr, result[attr.source])
+            for attr in self.attributes
+        } for result in inner_output]
 
     @property
     def used_context_attributes(self) -> tuple[str, ...]:

@@ -315,24 +315,28 @@ def test_default_annotation_attribute_descriptions(
     assert specs["score3"].is_default is False
 
 
-def test_gene_score_annotator_aggregation_raises(
+def test_gene_score_annotator_aggregation(
     scores_repo: GenomicResourceRepo,
     tmp_path: pathlib.Path,
 ) -> None:
     resource = scores_repo.get_resource("LGD_rank")
-    with pytest.raises(ValueError, match="does not support aggregation"):
-        GeneScoreAnnotator(
-            None,
-            AnnotatorInfo(
-                "gosho",
-                [AttributeConfig(
-                    "LGD_rank",
-                    "LGD_rank",
-                    internal=False,
-                    aggregator="max",
-                    parameters={})],
-                {"work_dir": str(tmp_path)},
-            ),
-            resource,
-            "gene_list",
-        )
+    annotator = GeneScoreAnnotator(
+        None,
+        AnnotatorInfo(
+            "gosho",
+            [AttributeConfig(
+                "LGD_rank",
+                "LGD_rank",
+                internal=False,
+                aggregator="max",
+                parameters={})],
+            {"work_dir": str(tmp_path)},
+        ),
+        resource,
+        "gene_list",
+    )
+    result = annotator.annotate(
+        _DUMMY_ANNOTATABLE,
+        {"gene_list": ["LRP1", "TRRAP"]},
+    )
+    assert result["LGD_rank"] == 3.0

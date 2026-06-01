@@ -100,7 +100,7 @@ class AnnotatorBase(Annotator):
                         f" {info.type} does not support aggregation.")
                 validate_aggregator(
                     attr.aggregator,
-                    attr.spec.value_type if attr.spec else None,
+                    self._aggregator_value_type(attr),
                 )
                 self._aggregator_instances.append(
                     build_aggregator(attr.aggregator))
@@ -117,6 +117,9 @@ class AnnotatorBase(Annotator):
     @property
     def attributes(self) -> list[Attribute]:
         return self._attributes
+
+    def _aggregator_value_type(self, attr: Attribute) -> str | None:
+        return attr.spec.value_type if attr.spec else None
 
     def get_attribute_defaults(
         self, spec: AttributeSpec,  # noqa: ARG002
