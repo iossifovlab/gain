@@ -22,7 +22,14 @@ Release Notes
       suffix is mirrored onto it. This also fixes ``build_output_path``
       mangling output names whose stem ended in ``g``/``z`` characters
       (e.g. ``log.gz``), a side effect of the previous ``rstrip``-based
-      suffix handling.
+      suffix handling. As a consequence, the default ``--work-dir`` name
+      derived from a ``.bgz`` output changed (e.g. ``out.vcf.bgz`` now
+      yields ``out_work`` rather than ``out.vcf_work``). A run that was
+      interrupted on an older version with a ``.bgz`` output and is
+      resumed after upgrading will not find its old ``.task-status``
+      directory and will restart from scratch — point ``--work-dir`` at
+      the previous ``<output-stem>.vcf_work`` path to continue from the
+      checkpoint. (``.gz`` outputs are unaffected.)
     * Fixed silent duplication of records when an ``annotate_tabular``
       input was a compressed file carrying a ``.csi`` index rather than
       a ``.tbi`` one. The splittability check accepted either index, but
