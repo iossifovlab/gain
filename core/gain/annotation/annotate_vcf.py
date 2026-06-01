@@ -528,6 +528,11 @@ def _add_tasks_tabixed(
 ) -> None:
     # output_path carries the final compression suffix (.gz/.bgz); annotate
     # into the uncompressed working file, then compress to the final name.
+    # Without a suffix, working_path would equal output_path and the compress
+    # task would tabix_compress(out, out, force=True), truncating it in place.
+    assert is_compressed_filename(output_path), (
+        f"_add_tasks_tabixed: output_path must carry a compression suffix, "
+        f"got {output_path!r}")
     working_path = strip_compression_suffix(output_path)
     with closing(TabixFile(args["input"])) as pysam_file:
         regions = produce_regions(pysam_file, args["region_size"])

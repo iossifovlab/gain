@@ -13,6 +13,7 @@ from gain.annotation.annotate_utils import (
     produce_partfile_paths,
 )
 from gain.annotation.annotate_vcf import (
+    _add_tasks_tabixed,
     _annotate_vcf,
     _count_vcf_records,
     _VCFBatchSource,
@@ -37,6 +38,7 @@ from gain.genomic_resources.testing import (
     setup_vcf,
 )
 from gain.task_graph.cli_tools import TaskGraphCli
+from gain.task_graph.graph import TaskGraph
 from gain.testing.acgt_import import acgt_grr
 from gain.utils.regions import Region
 
@@ -872,6 +874,26 @@ def test_produce_partfile_paths() -> None:
     assert produce_partfile_paths(
         "/home/user/src/input.vcf", regions, "work_dir/output",
     ) == expected_output
+
+
+def test_add_tasks_tabixed_rejects_uncompressed_output_path() -> None:
+    """``_add_tasks_tabixed`` must reject an ``output_path`` with no
+    compression suffix.
+
+    Regression for iossifovlab/gain#62: without the suffix the derived
+    ``working_path`` equals ``output_path``, so the compress task would
+    ``tabix_compress(out, out, force=True)`` and truncate the file in place.
+    Make the precondition explicit so a future caller can't silently
+    trigger data loss.
+    """
+    with pytest.raises(AssertionError, match="compression suffix"):
+        _add_tasks_tabixed(
+            args={},
+            task_graph=TaskGraph(),
+            output_path="out.vcf",
+            pipeline_config=[],
+            grr_definition={},
+        )
 
 
 def test_vcf_source_missing_alts(
