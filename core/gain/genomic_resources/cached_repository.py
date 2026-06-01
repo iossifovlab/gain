@@ -344,6 +344,12 @@ class _CacheProgress:
         if failed:
             self.failed += 1
 
+    def on_bytes(self, n: int) -> None:
+        """Credit ``n`` downloaded bytes; a no-op at the file granularity.
+
+        Subclasses that render a byte-level bar override this to advance it.
+        """
+
     def report_failure(self, message: str) -> None:
         logger.error(message)
 

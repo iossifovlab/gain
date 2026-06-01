@@ -160,6 +160,120 @@ def test_copy_resource_file_retries_transient_read_failure(
 
 
 @pytest.mark.grr_rw
+def test_copy_resource_file_on_bytes_deltas_sum_to_size(
+        content_fixture: dict[str, Any],
+        fsspec_proto: FsspecReadWriteProtocol) -> None:
+    # The optional on_bytes callback must be invoked once per written chunk,
+    # with the positive deltas summing to the file's byte size and no single
+    # delta exceeding CHUNK_SIZE. See gain#77 (slice 1).
+
+    # Given
+    src_proto = build_inmemory_test_protocol(content_fixture)
+    proto = fsspec_proto
+
+    src_res = src_proto.get_resource("sub/two")
+    dst_res = proto.get_resource("sub/two")
+
+    expected_size = src_res.get_manifest()["genes.gtf"].size
+
+    deltas: list[int] = []
+
+    # When
+    state = proto.copy_resource_file(
+        src_res, dst_res, "genes.gtf", on_bytes=deltas.append)
+
+    # Then
+    assert state is not None
+    assert deltas, "on_bytes was never called"
+    assert all(0 < d <= proto.CHUNK_SIZE for d in deltas)
+    assert sum(deltas) == expected_size
+
+
+class _PartialThenStallingFile:
+    """A remote handle that yields the real file once, then stalls.
+
+    It delegates the first ``read`` to a real file handle (so it returns the
+    actual file bytes, one or more chunks), then raises ``FSTimeoutError`` on
+    the next ``read`` — simulating a download that streams some bytes before
+    the connection stalls mid-transfer.
+    """
+
+    def __init__(self, real_handle: Any) -> None:
+        self._real = real_handle
+        self._served = False
+
+    def __enter__(self) -> "_PartialThenStallingFile":
+        self._real.__enter__()
+        return self
+
+    def __exit__(self, *args: object) -> bool:
+        self._real.__exit__(*args)
+        return False
+
+    def read(self, *args: object) -> bytes:
+        if self._served:
+            raise FSTimeoutError("simulated stall after partial read")
+        chunk = self._real.read(*args)
+        if chunk:
+            self._served = True
+            return chunk
+        return chunk
+
+
+@pytest.mark.grr_rw
+def test_copy_resource_file_on_bytes_rolls_back_on_retry(
+        content_fixture: dict[str, Any],
+        fsspec_proto: FsspecReadWriteProtocol,
+        mocker: MockerFixture) -> None:
+    # A retried download must not double-count bytes: the partial bytes
+    # credited on the failed attempt are rolled back with a compensating
+    # negative delta before the retry, so the net sum equals the file size
+    # exactly. See gain#77 (slice 1).
+
+    # Given
+    src_proto = build_inmemory_test_protocol(content_fixture)
+    proto = fsspec_proto
+
+    src_res = src_proto.get_resource("sub/two")
+    dst_res = proto.get_resource("sub/two")
+
+    expected_size = src_res.get_manifest()["genes.gtf"].size
+
+    real_open = src_res.open_raw_file
+    attempts = {"n": 0}
+
+    def flaky_open(filename: str, mode: str = "rt", **kwargs: Any) -> Any:
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            return _PartialThenStallingFile(
+                real_open(filename, mode, **kwargs))
+        return real_open(filename, mode, **kwargs)
+
+    mocker.patch.object(src_res, "open_raw_file", side_effect=flaky_open)
+    mocker.patch("gain.genomic_resources.fsspec_protocol.time.sleep")
+
+    deltas: list[int] = []
+
+    # When
+    state = proto.copy_resource_file(
+        src_res, dst_res, "genes.gtf", on_bytes=deltas.append)
+
+    # Then
+    assert attempts["n"] == 2
+    assert state is not None
+
+    positives = [d for d in deltas if d > 0]
+    negatives = [d for d in deltas if d < 0]
+
+    # partial bytes on attempt 1, full bytes on attempt 2
+    assert sum(positives) == expected_size * 2
+    # exactly one compensating rollback equal to the partial sum
+    assert negatives == [-expected_size]
+    # net credited bytes equals the file size
+    assert sum(deltas) == expected_size
+
+
+@pytest.mark.grr_rw
 def test_copy_resource_file_raises_after_retries_exhausted(
         content_fixture: dict[str, Any],
         fsspec_proto: FsspecReadWriteProtocol,
