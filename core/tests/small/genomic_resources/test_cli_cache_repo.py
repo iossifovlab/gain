@@ -413,13 +413,18 @@ def test_cli_cache_per_file_lines_demoted_to_debug(
 def _milestone_schedule(
     caplog: pytest.LogCaptureFixture, total: int,
 ) -> list[str]:
-    """Run a full _MilestoneProgress over ``total`` files; return its lines."""
+    """Run a full file-fallback _MilestoneProgress; return its lines.
+
+    ``byte_total=0`` with ``file_total>0`` selects the zero-byte fallback
+    (file-driven milestones), which must behave exactly as the pre-gain#79
+    file-based milestone schedule. See gain#79.
+    """
     import logging
 
     from gain.genomic_resources.cached_repository import _MilestoneProgress
 
     caplog.set_level(logging.INFO, logger=CACHE_LOGGER)
-    reporter = _MilestoneProgress(total)
+    reporter = _MilestoneProgress(0, total)
     for _ in range(total):
         reporter.update(failed=False)
     reporter.close()
@@ -437,7 +442,7 @@ def test_milestone_progress_emits_baseline_zero_at_construction(
     from gain.genomic_resources.cached_repository import _MilestoneProgress
 
     caplog.set_level(logging.INFO, logger=CACHE_LOGGER)
-    _MilestoneProgress(200)
+    _MilestoneProgress(0, 200)
 
     lines = [
         rec.message for rec in caplog.records
@@ -479,7 +484,7 @@ def test_milestone_progress_total_zero_skips_baseline(
     from gain.genomic_resources.cached_repository import _MilestoneProgress
 
     caplog.set_level(logging.INFO, logger=CACHE_LOGGER)
-    _MilestoneProgress(0)
+    _MilestoneProgress(0, 0)
 
     lines = [
         rec.message for rec in caplog.records
@@ -487,6 +492,183 @@ def test_milestone_progress_total_zero_skips_baseline(
     ]
     # No misleading "0/0 (100%)" baseline when there is nothing to cache.
     assert lines == []
+
+
+def test_milestone_progress_zero_byte_fallback_progresses_on_update(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # byte_total=0 but file_total>0 (only zero-byte files need downloading):
+    # fall back to file-driven milestones so there is still motion, instead
+    # of a frozen 0/0 byte bar. See gain#79.
+    import logging
+
+    from gain.genomic_resources.cached_repository import _MilestoneProgress
+
+    caplog.set_level(logging.INFO, logger=CACHE_LOGGER)
+    reporter = _MilestoneProgress(byte_total=0, file_total=2)
+    # on_bytes is a no-op in fallback mode; update drives the file bar.
+    reporter.on_bytes(0)
+    reporter.update(failed=False)
+    reporter.update(failed=False)
+    reporter.close()
+
+    lines = _byte_milestone_lines(caplog)
+    # File-unit lines, not byte lines.
+    assert all("files" in line and "B/" not in line for line in lines)
+    assert lines[0] == "caching progress: 0/2 files (0%)"
+    assert lines[-1] == "caching progress: 2/2 files (100%)"
+
+
+def _byte_milestone_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        rec.message for rec in caplog.records
+        if rec.name == CACHE_LOGGER and "caching progress" in rec.message
+    ]
+
+
+def test_milestone_progress_byte_mode_schedule_and_file_counts(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # In byte mode (byte_total > 0) milestones fire on byte-percentage
+    # thresholds driven by on_bytes, and each line carries the file count
+    # context updated by update(). See gain#79.
+    import logging
+
+    from gain.genomic_resources.cached_repository import _MilestoneProgress
+
+    caplog.set_level(logging.INFO, logger=CACHE_LOGGER)
+    reporter = _MilestoneProgress(byte_total=1000, file_total=4)
+
+    # 0% baseline emitted at construction.
+    assert _byte_milestone_lines(caplog) == [
+        "caching progress: 0.0 B/1000.0 B (0%), 0/4 files",
+    ]
+
+    # Drive bytes in 100-byte steps so every 10% bucket is crossed; complete
+    # one file at each quarter so the file context advances on later lines.
+    for step in range(1, 11):
+        reporter.on_bytes(100)
+        if step % 3 == 0:
+            reporter.update(failed=False)
+    reporter.update(failed=False)  # 4th file completes
+    reporter.close()
+
+    lines = _byte_milestone_lines(caplog)
+    pcts = [int(line.split("(")[1].split("%")[0]) for line in lines]
+    # 0% baseline, then each 10% crossing as bytes accumulate, then 100%.
+    assert pcts == [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+    # The final byte-milestone line carries the accumulated file context.
+    assert "files" in lines[-1]
+    assert "3/4 files" in lines[-1]
+
+
+def test_milestone_progress_byte_mode_rollback_no_double_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A retryable failure rolls bytes back (negative on_bytes); when the
+    # retry re-crosses the same 10% bucket no duplicate line is logged.
+    # See gain#79 / slice 1.
+    import logging
+
+    from gain.genomic_resources.cached_repository import _MilestoneProgress
+
+    caplog.set_level(logging.INFO, logger=CACHE_LOGGER)
+    reporter = _MilestoneProgress(byte_total=1000, file_total=1)
+
+    reporter.on_bytes(250)   # crosses into 20% bucket -> line at 25%
+    reporter.on_bytes(-250)  # rollback to 0%
+    reporter.on_bytes(250)   # re-cross 25% -- must NOT log again
+    reporter.on_bytes(750)   # 100%
+    reporter.close()
+
+    lines = _byte_milestone_lines(caplog)
+    pcts = [int(line.split("(")[1].split("%")[0]) for line in lines]
+    # 0% baseline, the first 25% crossing, and 100%; the re-cross is deduped.
+    assert pcts == [0, 25, 100]
+
+
+def test_milestone_progress_byte_mode_terminal_failure_topup_reaches_100(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A terminal failure credits the file's full size (after slice-1 rolled
+    # its bytes back to ~0), so the milestone bar still reaches 100% with a
+    # failed tally. pct is clamped at 100. See gain#79 / gain#43.
+    import logging
+
+    from gain.genomic_resources.cached_repository import _MilestoneProgress
+
+    caplog.set_level(logging.INFO, logger=CACHE_LOGGER)
+    reporter = _MilestoneProgress(byte_total=400, file_total=2)
+
+    reporter.on_bytes(200)            # first file ok -> 50%
+    reporter.update(failed=False)
+    # second file hard-fails: top-up its full size, then mark failed.
+    reporter.on_bytes(200)
+    reporter.update(failed=True)
+    reporter.close()
+
+    lines = _byte_milestone_lines(caplog)
+    pcts = [int(line.split("(")[1].split("%")[0]) for line in lines]
+    assert pcts[-1] == 100
+    assert all(p <= 100 for p in pcts)
+    assert "failed=1" in lines[-1]
+
+
+def test_milestone_progress_byte_mode_no_respam_after_full(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Once the byte total is reached (e.g. a terminal-failure top-up overshot
+    # it while other files are still streaming under workers>1), further
+    # positive on_bytes must NOT re-log the 100% line. The 100% line is
+    # emitted exactly once, on the first crossing. See gain#79.
+    import logging
+
+    from gain.genomic_resources.cached_repository import _MilestoneProgress
+
+    caplog.set_level(logging.INFO, logger=CACHE_LOGGER)
+    reporter = _MilestoneProgress(byte_total=100, file_total=2)
+
+    reporter.on_bytes(100)   # reaches 100% -> single 100% line
+    reporter.on_bytes(50)    # overshoot (e.g. concurrent chunk) -> no re-log
+    reporter.on_bytes(10)    # still overshooting -> no re-log
+    reporter.close()
+
+    lines = _byte_milestone_lines(caplog)
+    pcts = [int(line.split("(")[1].split("%")[0]) for line in lines]
+    # 0% baseline + exactly one 100% line; the overshoot deltas are deduped.
+    assert pcts == [0, 100]
+    assert sum(1 for p in pcts if p == 100) == 1
+
+
+def test_make_cache_progress_selects_reporter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # _make_cache_progress picks: off -> base; tty + bytes -> tqdm byte mode;
+    # non-tty + bytes -> milestone byte mode. See gain#79.
+    from gain.genomic_resources.cached_repository import (
+        _CacheProgress,
+        _make_cache_progress,
+        _MilestoneProgress,
+        _TqdmProgress,
+    )
+
+    # off: always the no-op base, regardless of tty / totals. Exact-type
+    # check (not isinstance) -- the subclasses derive from _CacheProgress.
+    off = _make_cache_progress(1000, 3, progress=False)
+    assert type(off) is _CacheProgress  # pylint: disable=unidiomatic-typecheck
+
+    # tty + byte_total>0 -> tqdm byte-mode bar.
+    monkeypatch.setattr("sys.stderr.isatty", lambda: True)
+    tty = _make_cache_progress(1000, 3, progress=True)
+    assert isinstance(tty, _TqdmProgress)
+    assert tty._byte_mode is True
+    tty.close()
+
+    # non-tty + byte_total>0 -> milestone byte mode.
+    monkeypatch.setattr("sys.stderr.isatty", lambda: False)
+    non_tty = _make_cache_progress(1000, 3, progress=True)
+    assert isinstance(non_tty, _MilestoneProgress)
+    assert non_tty._byte_mode is True
 
 
 def _cached_files(cache_dir: pathlib.Path, resource: str) -> set[str]:
@@ -525,6 +707,91 @@ def test_cache_resources_header_reports_bytes_and_already_cached(
     ]
     assert header, "expected a header line reporting bytes to download"
     assert "already cached" in header[0]
+
+
+def test_cli_cache_byte_milestones_and_human_header(
+    tmp_path: pathlib.Path,
+    grr_config_file: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # e2e: off a TTY, the header reports human bytes ("to download" +
+    # "already cached"), and byte-percentage milestone lines (0% .. 100%,
+    # carrying file counts) appear. See gain#79.
+    import logging
+
+    monkeypatch.setattr("sys.stderr.isatty", lambda: False)
+    caplog.set_level(logging.INFO, logger=CACHE_LOGGER)
+
+    pipeline_yaml = tmp_path / "annotation.yaml"
+    pipeline_yaml.write_text(textwrap.dedent("""
+        - position_score: one
+    """))
+
+    cli_cache_repo([
+        "--grr", str(grr_config_file),
+        "-j", "1",
+        str(pipeline_yaml),
+    ])
+
+    header = [
+        rec.message for rec in caplog.records
+        if rec.name == CACHE_LOGGER and "to download" in rec.message
+    ]
+    assert header, "expected a header line"
+    # Human-readable bytes in the header (a unit suffix before "to download").
+    assert "B to download" in header[0]
+    assert "already cached" in header[0]
+
+    progress = [
+        rec.message for rec in caplog.records
+        if rec.name == CACHE_LOGGER and "caching progress" in rec.message
+    ]
+    assert progress, "expected byte-milestone lines"
+    # Byte-mode lines carry a human byte figure and a file count.
+    assert all("files" in line for line in progress)
+    assert any("B/" in line for line in progress)
+    assert any("(0%)" in line for line in progress)
+    assert any("(100%)" in line for line in progress)
+
+
+def test_cli_cache_fully_cached_rerun_emits_no_progress(
+    tmp_path: pathlib.Path,
+    grr_config_file: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A fully-cached re-run logs the "0 file(s)" header and, thanks to the
+    # empty-worklist early return, emits NO milestone/bar lines. See gain#79.
+    import logging
+
+    monkeypatch.setattr("sys.stderr.isatty", lambda: False)
+
+    pipeline_yaml = tmp_path / "annotation.yaml"
+    pipeline_yaml.write_text(textwrap.dedent("""
+        - position_score: one
+    """))
+
+    cli_cache_repo([
+        "--grr", str(grr_config_file), "-j", "1", str(pipeline_yaml),
+    ])
+
+    caplog.clear()
+    caplog.set_level(logging.INFO, logger=CACHE_LOGGER)
+    cli_cache_repo([
+        "--grr", str(grr_config_file), "-j", "1", str(pipeline_yaml),
+    ])
+
+    header = [
+        rec.message for rec in caplog.records
+        if rec.name == CACHE_LOGGER and "to download" in rec.message
+    ]
+    assert header and "0 file(s)" in header[0]
+    progress = [
+        rec.message for rec in caplog.records
+        if rec.name == CACHE_LOGGER and "caching progress" in rec.message
+    ]
+    assert progress == [], "early return must emit no progress lines"
 
 
 def test_cache_resources_preserves_files_and_state(
@@ -664,6 +931,9 @@ def test_cache_resources_closes_reporter_on_keyboard_interrupt(
         def update(self, *, failed: bool) -> None:
             pass
 
+        def on_bytes(self, n: int) -> None:
+            pass
+
         def report_failure(self, message: str) -> None:
             pass
 
@@ -672,7 +942,7 @@ def test_cache_resources_closes_reporter_on_keyboard_interrupt(
 
     monkeypatch.setattr(
         cached_repository, "_make_cache_progress",
-        lambda _total, *, progress: _SpyReporter(),  # noqa: ARG005
+        lambda *_a, **_k: _SpyReporter(),
     )
 
     # as_completed(futures) is evaluated inside cache_resources' try block,
