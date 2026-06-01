@@ -345,6 +345,9 @@ def test_cli_cache_reports_progress_off_tty(
         if rec.name == CACHE_LOGGER and "caching progress" in rec.message
     ]
     assert progress_lines, "expected at least one milestone progress line"
+    # A genuine 0% baseline line is emitted before any file completes
+    # (spec #59: 0% / every 10% / 100%).
+    assert any("0/" in line and "(0%)" in line for line in progress_lines)
     assert any("100%" in line for line in progress_lines)
 
 
@@ -405,3 +408,82 @@ def test_cli_cache_per_file_lines_demoted_to_debug(
     ]
     assert per_file, "per-file lines should still be emitted at DEBUG"
     assert all(rec.levelno == logging.DEBUG for rec in per_file)
+
+
+def _milestone_schedule(
+    caplog: pytest.LogCaptureFixture, total: int,
+) -> list[str]:
+    """Run a full _MilestoneProgress over ``total`` files; return its lines."""
+    import logging
+
+    from gain.genomic_resources.cached_repository import _MilestoneProgress
+
+    caplog.set_level(logging.INFO, logger=CACHE_LOGGER)
+    reporter = _MilestoneProgress(total)
+    for _ in range(total):
+        reporter.update(failed=False)
+    reporter.close()
+    return [
+        rec.message for rec in caplog.records
+        if rec.name == CACHE_LOGGER and "caching progress" in rec.message
+    ]
+
+
+def test_milestone_progress_emits_baseline_zero_at_construction(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    from gain.genomic_resources.cached_repository import _MilestoneProgress
+
+    caplog.set_level(logging.INFO, logger=CACHE_LOGGER)
+    _MilestoneProgress(200)
+
+    lines = [
+        rec.message for rec in caplog.records
+        if rec.name == CACHE_LOGGER and "caching progress" in rec.message
+    ]
+    assert lines == ["caching progress: 0/200 files (0%)"]
+
+
+def test_milestone_progress_schedule_no_duplicate_zero(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    lines = _milestone_schedule(caplog, 200)
+
+    # Exactly one 0% baseline (at construction, before done==1).
+    zero_lines = [line for line in lines if "(0%)" in line]
+    assert zero_lines == ["caching progress: 0/200 files (0%)"]
+
+    # One line per 10% bucket crossing plus the final 100%.
+    pcts = [int(line.split("(")[1].split("%")[0]) for line in lines]
+    assert pcts == [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+
+
+def test_milestone_progress_single_file_has_baseline_and_final(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    lines = _milestone_schedule(caplog, 1)
+
+    assert lines == [
+        "caching progress: 0/1 files (0%)",
+        "caching progress: 1/1 files (100%)",
+    ]
+
+
+def test_milestone_progress_total_zero_skips_baseline(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    from gain.genomic_resources.cached_repository import _MilestoneProgress
+
+    caplog.set_level(logging.INFO, logger=CACHE_LOGGER)
+    _MilestoneProgress(0)
+
+    lines = [
+        rec.message for rec in caplog.records
+        if rec.name == CACHE_LOGGER and "caching progress" in rec.message
+    ]
+    # No misleading "0/0 (100%)" baseline when there is nothing to cache.
+    assert lines == []
