@@ -43,6 +43,19 @@ Resource-specific fields in genomic_resource.yaml for genome resources (**type**
     | **chrom_prefix** (string, optional): Prefix expected in contig names (e.g., chr). Default: no prefix.
     | **PARS** (subsection, optional): Pseudoautosomal regions for the assembly.
 
+The genome FASTA may be either a plain ``.fa`` file or a **bgzipped** FASTA
+(``.fa.gz`` or ``.bgz``). GAIn selects how to read it from the file extension,
+so no extra configuration is required. A bgzipped genome must be accompanied by
+**two** index files in the resource directory: a ``.fai`` FASTA index and a
+``.gzi`` bgzip block index. Both are produced together by ``samtools faidx``:
+
+.. code-block:: bash
+
+    samtools faidx GRCh38.p14.genome.fa.gz
+
+which writes ``GRCh38.p14.genome.fa.gz.fai`` and ``GRCh38.p14.genome.fa.gz.gzi``
+next to the FASTA. (A plain ``.fa`` genome needs only its ``.fai`` index.)
+
 Let's revisit the example genomic_resource.yaml from the `Getting started with GRR genome section <https://iossifovlab.com/gaindocs/gain_getting_started_grr.html#genome-grch38-p14>`_.
 Here, filename points to the downloaded FASTA file, contig names use the chr prefix, 
 and PARS defines the pseudoautosomal regions on chromosomes X and Y.
