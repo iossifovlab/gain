@@ -163,7 +163,7 @@ This pipeline has an optional preamble section, which records metadata about the
 
 .. note:: 
 
-    When you build your custom annotation pipelines you can use our YAML structure or use the pipeline authoring tool in GAIn web interface, which makes pipeline creating easy. 
+    When building custom annotation pipelines, users can either write the pipeline directly using GAIn's YAML structure or use the pipeline authoring tool in the GAIn web interface, which simplifies pipeline creation by guiding users through annotator and resource selection.
 
 To review the attributes produced by the custom pipeline, generate an HTML summary with:
 
@@ -198,16 +198,16 @@ By default, GAIn can access genomic resources directly from a remote GRR. This w
 
 When caching is enabled, GAIn downloads a required resource into a local cache directory the first time the resource is used. After that, GAIn uses the local copy for annotation and reuses it in future jobs without downloading it again.
 
-To enable caching, explicitly configure the GRR definition by adding a cache directory to the GRR definition file (i.e. ``~/.grr_definition.yaml``). For example:
+To enable caching, explicitly configure the GRR definition by adding a cache directory to the GRR definition file (i.e. ``~/.grr_definition.yaml``). So far, GAIn has been using the default GRR definition, which corresponds to the configuration shown by the first lines of ``grr_browse``. To enable caching, create a GRR definition file (``~/.grr_definition.yaml``), with the same default GRR configuration plus a ``cache_dir`` entry. For example: 
 
 .. code-block:: yaml
 
     id: "main-GRR"
     type: "url"
     url: "https://grr.iossifovlab.com"
-    cache_dir: "<path_to>/remote_grr_cache"
+    cache_dir: "/tmp/remote_grr_cache"
 
-After this configuration, GAIn downloads each required resource to the specified cache directory before using it for annotation. Because genomic resources can be large, the cache directory should have sufficient disk space and write permission for the user.
+After this configuration, GAIn downloads each required resource to the specified cache directory before using it for annotation. Because genomic resources can be large, the cache directory should have sufficient disk space and write permission for the user.If /tmp does not have enough available space, use another cache directory with sufficient storage. The approximate space requirements for the resources used in this guide are described below.
 
 This is especially important for large annotation pipelines. For example, a comprehensive clinical pipeline such as ``pipeline/hg38_clinical_annotation`` may require many large resources. These resources total approximately 120 GB and may take substantial time to download, depending on network speed and storage performance. Once cached, however, they can be reused directly from the local cache, making future annotation jobs much faster.
 
