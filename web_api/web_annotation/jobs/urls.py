@@ -5,7 +5,7 @@ from web_annotation.jobs import views
 urlpatterns = [
     path("api/jobs", views.JobList.as_view()),
     path("api/jobs/all", views.JobAll.as_view()),
-    path("api/jobs/annotate_columns", views.AnnotateTabular.as_view()),
+    path("api/jobs/annotate_tabular", views.AnnotateTabular.as_view()),
     path("api/jobs/annotate_vcf", views.AnnotateVCF.as_view()),
     path("api/jobs/<int:pk>/file/<str:file>", views.JobGetFile.as_view()),
     path("api/jobs/<int:pk>", views.JobDetail.as_view()),

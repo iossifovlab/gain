@@ -121,7 +121,7 @@ def test_annotate_vcf_job_details(user_client: Client) -> None:
 
 
 @pytest.mark.django_db
-def test_annotate_columns_job_details(user_client: Client) -> None:
+def test_annotate_tabular_job_details(user_client: Client) -> None:
     params = {
         "genome": "hg38/GRCh38-hg38/genome",
         "pipeline_id": "pipeline/test_pipeline",
@@ -136,7 +136,7 @@ def test_annotate_columns_job_details(user_client: Client) -> None:
         "separator": ",",
     }
 
-    annotate_response = user_client.post("/api/jobs/annotate_columns", params)
+    annotate_response = user_client.post("/api/jobs/annotate_tabular", params)
 
     create_job_result = annotate_response.json()
     assert create_job_result["job_id"] == "3"

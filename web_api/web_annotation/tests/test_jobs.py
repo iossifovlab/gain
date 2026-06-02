@@ -733,7 +733,7 @@ def test_validate_columns_with_partial_mapping(
         ),
     ],
 )
-def test_annotate_columns(
+def test_annotate_tabular(
     admin_client: Client,
     input_file: str,
     separator: str | None,
@@ -753,7 +753,7 @@ def test_annotate_columns(
     if "col_variant" in specification or "col_location" in specification:
         params["genome"] = "hg38/GRCh38-hg38/genome"
 
-    response = admin_client.post("/api/jobs/annotate_columns", params)
+    response = admin_client.post("/api/jobs/annotate_tabular", params)
 
     assert response is not None
     assert response.status_code == 200
@@ -775,7 +775,7 @@ def test_annotate_columns(
 
 
 @pytest.mark.django_db
-def test_annotate_columns_t4c8(
+def test_annotate_tabular_t4c8(
     admin_client: Client,
 ) -> None:
     file = textwrap.dedent("""
@@ -793,7 +793,7 @@ def test_annotate_columns_t4c8(
     }
     params["separator"] = ","
 
-    response = admin_client.post("/api/jobs/annotate_columns", params)
+    response = admin_client.post("/api/jobs/annotate_tabular", params)
 
     assert response is not None
     assert response.status_code == 200
@@ -816,7 +816,7 @@ def test_annotate_columns_t4c8(
 
 
 @pytest.mark.django_db
-def test_annotate_columns_anonymous_t4c8(
+def test_annotate_tabular_anonymous_t4c8(
     anonymous_client: Client,
 ) -> None:
     file = textwrap.dedent("""
@@ -834,7 +834,7 @@ def test_annotate_columns_anonymous_t4c8(
     }
     params["separator"] = ","
 
-    response = anonymous_client.post("/api/jobs/annotate_columns", params)
+    response = anonymous_client.post("/api/jobs/annotate_tabular", params)
 
     assert response is not None
     assert response.status_code == 200
@@ -855,7 +855,7 @@ def test_annotate_columns_anonymous_t4c8(
 
 
 @pytest.mark.django_db
-def test_annotate_columns_disk_size(
+def test_annotate_tabular_disk_size(
     user_client: Client, test_grr: GenomicResourceRepo,
 ) -> None:
     file = textwrap.dedent("""
@@ -873,7 +873,7 @@ def test_annotate_columns_disk_size(
     }
     params["separator"] = ","
 
-    response = user_client.post("/api/jobs/annotate_columns", params)
+    response = user_client.post("/api/jobs/annotate_tabular", params)
     assert response.status_code == 200
 
     job = Job.objects.last()
@@ -945,7 +945,7 @@ def test_annotate_vcf_records_quota_usage_on_success(
 
 
 @pytest.mark.django_db
-def test_annotate_columns_returns_403_when_quota_exceeded(
+def test_annotate_tabular_returns_403_when_quota_exceeded(
     user_client: Client,
     mocker: MockerFixture,
 ) -> None:
@@ -960,7 +960,7 @@ def test_annotate_columns_returns_403_when_quota_exceeded(
     """).strip()
 
     response = user_client.post(
-        "/api/jobs/annotate_columns",
+        "/api/jobs/annotate_tabular",
         {
             "pipeline_id": "pipeline/test_pipeline",
             "data": ContentFile(file, "test_input.csv"),
@@ -977,7 +977,7 @@ def test_annotate_columns_returns_403_when_quota_exceeded(
 
 
 @pytest.mark.django_db
-def test_annotate_columns_records_quota_usage_on_success(
+def test_annotate_tabular_records_quota_usage_on_success(
     user_client: Client,
     mocker: MockerFixture,
     test_grr: GenomicResourceRepo,
@@ -993,7 +993,7 @@ def test_annotate_columns_records_quota_usage_on_success(
     """).strip()
 
     response = user_client.post(
-        "/api/jobs/annotate_columns",
+        "/api/jobs/annotate_tabular",
         {
             "pipeline_id": "pipeline/test_pipeline",
             "data": ContentFile(file, "test_input.csv"),
@@ -1010,7 +1010,7 @@ def test_annotate_columns_records_quota_usage_on_success(
 
 
 @pytest.mark.django_db
-def test_annotate_columns_t4c8_gzipped(
+def test_annotate_tabular_t4c8_gzipped(
     admin_client: Client,
 ) -> None:
     file = gzip.compress(textwrap.dedent("""
@@ -1028,7 +1028,7 @@ def test_annotate_columns_t4c8_gzipped(
         "separator": ",",
     }
 
-    response = admin_client.post("/api/jobs/annotate_columns", params)
+    response = admin_client.post("/api/jobs/annotate_tabular", params)
 
     assert response is not None
     assert response.status_code == 200
@@ -1159,13 +1159,13 @@ def test_annotate_vcf_bgzip(
 
 
 @pytest.mark.django_db
-def test_annotate_columns_bad_request(admin_client: Client) -> None:
+def test_annotate_tabular_bad_request(admin_client: Client) -> None:
     input_file = textwrap.dedent("""
         chrom;pos;ref;alt
         chr1;1;C;A
     """).strip()
     response = admin_client.post(
-        "/api/jobs/annotate_columns",
+        "/api/jobs/annotate_tabular",
         {
             "pipeline_id": "pipeline/test_pipeline",
             "data": ContentFile(input_file),
@@ -1179,7 +1179,7 @@ def test_annotate_columns_bad_request(admin_client: Client) -> None:
 
 
 @pytest.mark.django_db
-def test_annotate_columns_bad_genome(admin_client: Client) -> None:
+def test_annotate_tabular_bad_genome(admin_client: Client) -> None:
     file = gzip.compress(textwrap.dedent("""
         chrom,pos,var
         chr1,9,del(3)
@@ -1195,7 +1195,7 @@ def test_annotate_columns_bad_genome(admin_client: Client) -> None:
         "separator": "\t",
     }
 
-    response = admin_client.post("/api/jobs/annotate_columns", params)
+    response = admin_client.post("/api/jobs/annotate_tabular", params)
 
     assert response.status_code == 404
     assert Job.objects.filter(
@@ -1736,7 +1736,7 @@ def test_annotate_vcf_variant_quota(
     assert response.status_code == 413
 
 
-def test_annotate_columns_variant_quota(
+def test_annotate_tabular_variant_quota(
     user_client: Client,
     settings: LazySettings,
 ) -> None:
@@ -1755,7 +1755,7 @@ def test_annotate_columns_variant_quota(
         "col_alt": "alt",
     }
 
-    response = user_client.post("/api/jobs/annotate_columns", params)
+    response = user_client.post("/api/jobs/annotate_tabular", params)
     assert response.status_code == 200
 
     settings.QUOTAS["variant_count"] = 48
@@ -1773,7 +1773,7 @@ def test_annotate_columns_variant_quota(
         "col_alt": "alt",
     }
 
-    response = user_client.post("/api/jobs/annotate_columns", params)
+    response = user_client.post("/api/jobs/annotate_tabular", params)
     assert response.status_code == 413
 
 
@@ -1849,7 +1849,7 @@ async def test_annotate_vcf_notifications(
 
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
-async def test_annotate_columns_notifications(
+async def test_annotate_tabular_notifications(
     user_client: Client, mocker: MockerFixture,
     test_grr: GenomicResourceRepo,
 ) -> None:
@@ -1884,7 +1884,7 @@ async def test_annotate_columns_notifications(
     }
 
     response = await sync_to_async(user_client.post)(
-        "/api/jobs/annotate_columns",
+        "/api/jobs/annotate_tabular",
         params,
     )
 
@@ -2001,7 +2001,7 @@ async def test_annotate_vcf_notifications_fail(
 
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
-async def test_annotate_columns_notifications_fail(
+async def test_annotate_tabular_notifications_fail(
     user_client: Client, mocker: MockerFixture,
     test_grr: GenomicResourceRepo,
 ) -> None:
@@ -2041,7 +2041,7 @@ async def test_annotate_columns_notifications_fail(
     }
 
     response = await sync_to_async(user_client.post)(
-        "/api/jobs/annotate_columns",
+        "/api/jobs/annotate_tabular",
         params,
     )
 
@@ -2400,7 +2400,7 @@ async def test_clean_up_anonymous_jobs(
     assert pipeline_response.status_code == 200
 
     annotate_response = await sync_to_async(anonymous_client.post)(
-        "/api/jobs/annotate_columns",
+        "/api/jobs/annotate_tabular",
         {
             "pipeline_id": pipeline_response.json()["id"],
             "data": ContentFile(
@@ -2568,7 +2568,7 @@ def test_annotate_vcf_unlimited_user_quota_not_deducted(
 
 
 @pytest.mark.django_db
-def test_annotate_columns_unlimited_user_bypasses_job_quota(
+def test_annotate_tabular_unlimited_user_bypasses_job_quota(
     user_client: Client,
     mocker: MockerFixture,
     test_grr: GenomicResourceRepo,
@@ -2587,7 +2587,7 @@ def test_annotate_columns_unlimited_user_bypasses_job_quota(
     """).strip()
 
     response = user_client.post(
-        "/api/jobs/annotate_columns",
+        "/api/jobs/annotate_tabular",
         {
             "pipeline_id": "pipeline/test_pipeline",
             "data": ContentFile(file, "test_input.csv"),
@@ -2604,7 +2604,7 @@ def test_annotate_columns_unlimited_user_bypasses_job_quota(
 
 
 @pytest.mark.django_db
-def test_annotate_columns_unlimited_user_quota_not_deducted(
+def test_annotate_tabular_unlimited_user_quota_not_deducted(
     user_client: Client,
     mocker: MockerFixture,
     test_grr: GenomicResourceRepo,
@@ -2624,7 +2624,7 @@ def test_annotate_columns_unlimited_user_quota_not_deducted(
     """).strip()
 
     response = user_client.post(
-        "/api/jobs/annotate_columns",
+        "/api/jobs/annotate_tabular",
         {
             "pipeline_id": "pipeline/test_pipeline",
             "data": ContentFile(file, "test_input.csv"),
@@ -2669,7 +2669,7 @@ def test_annotate_vcf_unlimited_user_bypasses_variant_limit(
     assert response.status_code == 200
 
 
-def test_annotate_columns_unlimited_user_bypasses_variant_limit(
+def test_annotate_tabular_unlimited_user_bypasses_variant_limit(
     user_client: Client,
     settings: LazySettings,
 ) -> None:
@@ -2684,7 +2684,7 @@ def test_annotate_columns_unlimited_user_bypasses_variant_limit(
     )
 
     response = user_client.post(
-        "/api/jobs/annotate_columns",
+        "/api/jobs/annotate_tabular",
         {
             "pipeline_id": "pipeline/test_pipeline",
             "data": ContentFile(file, "test_input.csv"),

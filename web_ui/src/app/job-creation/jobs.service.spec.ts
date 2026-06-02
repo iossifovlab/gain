@@ -97,7 +97,7 @@ describe('JobsService', () => {
 
     service.createNonVcfJob(mockInputFile, 'autism', 'hg38', '\t', mockColumns);
     const calls = httpPostSpy.mock.calls;
-    expect(calls[0][0]).toBe('//localhost:8000/api/jobs/annotate_columns');
+    expect(calls[0][0]).toBe('//localhost:8000/api/jobs/annotate_tabular');
     expect(calls[0][1]).toStrictEqual(formData);
     expect(calls[0][2]).toStrictEqual(options);
   });

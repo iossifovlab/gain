@@ -12,7 +12,7 @@ export class JobsService {
   private readonly jobsUrl = `${environment.apiPath}/jobs`;
   private readonly jobPreviewUrl = `${environment.apiPath}/jobs/preview`;
   private readonly getPipelinesUrl = `${environment.apiPath}/pipelines`;
-  private readonly annotateColumnsUrl = `${environment.apiPath}/jobs/annotate_columns`;
+  private readonly annotateTabularUrl = `${environment.apiPath}/jobs/annotate_tabular`;
   private readonly annotateVcfUrl = `${environment.apiPath}/jobs/annotate_vcf`;
 
   public constructor(private http: HttpClient) { }
@@ -87,7 +87,7 @@ export class JobsService {
     formData.append('col_variant', columns.get('variant') || '-');
     formData.append('col_location', columns.get('location') || '-');
     return this.http.post(
-      this.annotateColumnsUrl,
+      this.annotateTabularUrl,
       formData,
       options
     ).pipe(
