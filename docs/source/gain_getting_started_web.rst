@@ -5,8 +5,7 @@ Getting started on the web
 The GAIn Web Annotation page (https://gain.iossifovlab.com/) 
 provides a simple and interactive interface for annotating genetic variants, positions, or regions, collectively referred to as annotatables. The page is organized into two main areas. On the left, users can create, edit, and manage annotation pipelines, either by selecting a saved pipeline or by building a new one. This pipeline editor defines which resources and annotators are applied during annotation. On the right, users can enter an annotatable, submit it for processing, and view the resulting annotations. Together, these two panels allow users to configure an annotation workflow and immediately apply it to annotatables of interest.
 
-.. figure:: figures/GAInWeb1.png
-  :scale: 50 %
+.. figure:: figures/GAInWeb1b.png
 
 
 
@@ -16,7 +15,7 @@ Select annotation pipeline
 To begin, open the Select pipeline menu, scroll through the available options, and choose ``pipeline/hg38_clinical_annotation``. This pipeline is designed for annotatables provided in the ``hg38`` assembly and annotates them with a broad set of clinically relevant attributes. In addition to effect prediction, it incorporates information from resources such as dbSNP, gnomAD, ClinVar, CADD, AlphaMissense, MPC, and gene-level constraint scores. After selecting it, users can review the full annotation pipeline definition in the annotation pipeline editor on the left.
 
 
-.. figure:: figures/GAInWeb2.png
+.. figure:: figures/GAInWeb2b.png
   :scale: 50 %
 
 Single annotation
@@ -26,13 +25,13 @@ The GAIn web interface has two annotation modes: **Single annotation**, for inte
 
 The annotation results on the right panel can be viewed in two formats. In the **compact report** view, when full report is turned off, only the annotation results are shown, making it easier to scan the output. This view is useful when a concise summary is needed without additional details.
 
-.. figure:: figures/GAInWeb3.png
+.. figure:: figures/GAInWeb3b.png
   :scale: 50 %
 
 
 When **full report** is turned on, the page shows a more detailed view of the results. In this view, annotations that include score distributions are accompanied by plots showing how the scores are distributed across the resource and where the queried annotatable falls within that distribution. In the example shown here, two such distributions are displayed, with a red line marking where the queried annotatable falls in relation to the overall distribution.
 
-.. figure:: figures/GAInWeb4.png
+.. figure:: figures/GAInWeb4b.png
   :scale: 50 %
 
 
@@ -44,7 +43,7 @@ to be annotated at once. In this mode, users upload a file in tabular or VCF for
 containing annotatables (variants, positions, or regions) with the required coordinate 
 information. Click Annotation jobs on the right side of the page. 
 
-.. figure:: figures/GAInWeb5.png
+.. figure:: figures/GAInWeb5b.png
   :scale: 50 %
 
 
@@ -62,7 +61,7 @@ The file contains three variant annotatables, each described by the columns ``ch
 
 When the file is uploaded, GAIn automatically recognizes the ``chrom``, ``pos``, ``ref``, and ``alt`` columns because the file uses those exact column names. If the input file uses different column labels, users can manually specify which columns correspond to ``chrom``, ``pos``, ``ref``, and ``alt`` before creating the annotation job.
 
-.. figure:: figures/GAInWeb6.png
+.. figure:: figures/GAInWeb6b.png
   :scale: 50 %
 
 
@@ -70,7 +69,7 @@ Once the annotation job has finished, GAIn shows its status as ``success``.
 Users can then click the Download button next to the result to download a file containing 
 the annotation attributes produced for all annotatables in the input file. 
 
-.. figure:: figures/GAInWeb7.png
+.. figure:: figures/GAInWeb7b.png
   :scale: 50 %
 
 
