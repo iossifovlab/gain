@@ -1,0 +1,4 @@
+chrom,pos,ref,alt,worst_effect,phyloP7way,CLNSIG,CLNDN
+chr14,21415880,G,A,nonsense,0.917,Pathogenic/Likely_pathogenic,not_provided|Intellectual_developmental_disorder_with_autism_and_macrocephaly
+chr17,7674904,TCT,T,frame-shift,-0.12,Pathogenic,Hereditary_cancer-predisposing_syndrome|TP53-related_disorder|not_provided|Li-Fraumeni_syndrome_1|Ovarian_neoplasm|Li-Fraumeni_syndrome
+chr7,117587806,G,A,missense,0.917,Pathogenic,CFTR-related_disorder|Cystic_fibrosis|Congenital_bilateral_aplasia_of_vas_deferens_from_CFTR_mutation|not_provided|Hereditary_pancreatitis|Bronchiectasis_with_or_without_elevated_sweat_chloride_1|ivacaftor_response_-_Efficacy

@@ -90,49 +90,6 @@ and gene-level scores. The downloaded output for ``small_input.csv`` is shown be
 Custom annotation pipeline
 **************************
 
-The web interface can also be used with custom annotation pipelines. Users can build pipelines through the visual interface by selecting annotators and resources - this workflow is described in more detail in the `GAIn web interface <https://iossifovlab.com/gaindocs/web_interface.html>`_ section. Here, we demonstrate a simpler case: creating a new pipeline by entering an annotation pipeline into the annotation pipeline editor.
+[]
 
-To create a new pipeline, click the **New pipeline** button at the bottom of the annotation pipeline editor. This opens an empty editor where the pipeline definition can be entered. 
-
-.. figure:: figures/GAInWeb8.png
-
-The pipeline has an optional ``preamble`` section, which records metadata about the pipeline and specifies that the input variants use the ``hg38/genomes/GRCh38-hg38`` reference genome. The ``annotators`` section lists the annotation steps that GAIn will run from top to bottom. This pipeline first uses the ``MANE 1.5`` gene model to identify affected genes and predict the worst effect of each variant. It then adds a conservation score from ``phyloP7way``. Finally, it normalizes each allele and looks up selected ClinVar attributes: ``CLNSIG``, which describes clinical significance, and ``CLNDN``, which reports associated disease names.
-
-Copy and paste the following pipeline into the annotation pipeline editor:
-
-.. code-block:: yaml
-
-    preamble:
-      summary: Simple custom pipeline
-      input_reference_genome: hg38/genomes/GRCh38-hg38
-
-    annotators:
-    - effect_annotator:
-        gene_models: hg38/gene_models/MANE/1.5
-        attributes:
-        - worst_effect
-        - gene_list
-
-    - position_score_annotator:
-        resource_id: hg38/scores/phyloP7way
-
-    - normalize_allele_annotator
-
-    - allele_score_annotator:
-        resource_id: hg38/scores/ClinVar_20251019
-        input_annotatable: normalized_allele
-        attributes:
-        - CLNSIG
-        - CLNDN
-
-After pasting the pipeline, the editor should show the custom pipeline definition.
-
-.. figure:: figures/GAInWeb9.png
-
-To test the custom pipeline, choose an example annotatable in Single annotation mode or enter your own annotatable in ``hg38`` coordinates. When the annotatable is submitted, GAIn runs the custom pipeline and displays the resulting annotations in the right panel.
-
-.. figure:: figures/GAInWeb10.png
-
-
-
-This concludes the Getting Started on the Web section, which demonstrated how to use a saved annotation pipeline, run annotation jobs, and use a custom annotation pipeline in the web interface. The `GAIn web interface <https://iossifovlab.com/gaindocs/web_interface.html>`_ section describes the web interface in more detail, including registration and additional features of the site.
+This concludes the Getting Started on the Web section, which demonstrated how to use a saved annotation pipeline, run annotation jobs, and create a custom annotation pipeline in the web interface. The `GAIn web interface <https://iossifovlab.com/gaindocs/web_interface.html>`_ section describes the web interface in more detail, including registration and additional features of the site.

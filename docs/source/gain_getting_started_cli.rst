@@ -74,12 +74,12 @@ This shows that you have access to the IossifovLab GRR server and lists all the 
     type: http
     url: https://grr.iossifovlab.com
 
-    gene_score           0      139 11.12 MB     default gene_properties/gene_scores/GTEx_V11_RNAexpression
-    gene_score           0        9 11.84 MB     default gene_properties/gene_scores/Iossifov_Wigler_PNAS_2015
-    gene_score           0       19 2.27 MB      default gene_properties/gene_scores/LGD
-    gene_score           0        9 13.2 MB      default gene_properties/gene_scores/LOEUF
-    gene_score           0       10 1.48 MB      default gene_properties/gene_scores/RVIS
-    gene_score           0        9 202.88 KB    default gene_properties/gene_scores/SFARI_gene_score_2024_Q1
+    gene_score           0      139 11.12 MB     main-GRR gene_properties/gene_scores/GTEx_V11_RNAexpression
+    gene_score           0        9 11.84 MB     main-GRR gene_properties/gene_scores/Iossifov_Wigler_PNAS_2015
+    gene_score           0       19 2.27 MB      main-GRR gene_properties/gene_scores/LGD
+    gene_score           0        9 13.2 MB      main-GRR gene_properties/gene_scores/LOEUF
+    gene_score           0       10 1.48 MB      main-GRR gene_properties/gene_scores/RVIS
+    gene_score           0        9 202.88 KB    main-GRR gene_properties/gene_scores/SFARI_gene_score_2024_Q1
     ...
 
 
@@ -128,7 +128,7 @@ The output contains the original variant columns followed by the annotation attr
 Custom annotation pipelines
 ---------------------------
 
-In the quick annotation test, we used a predefined pipeline from the default GRR. GAIn also allows users to define their own annotation pipelines as YAML files. A custom pipeline is useful when you want to select genomic resources from one or more GRRs that fit a specific project or research question.
+In the quick annotation test, we used a predefined pipeline from the default GRR. GAIn also allows users to define their own annotation pipelines as YAML files. A custom pipeline is useful when you want to select genomic resources from one or more GRRs that fit a specific project or research question. 
 
 In this example, we will annotate the same three variants from ``small_input.csv``, but this time using a custom pipeline stored locally as ``custom_pipeline.yaml``.
 
@@ -159,7 +159,13 @@ Download the example custom annotation pipeline file (:download:`custom_pipeline
         - CLNSIG
         - CLNDN
 
-This pipeline, which was also used in the `Getting started on the web section <https://iossifovlab.com/gaindocs/gain_getting_started_web.html>`_, has an optional preamble section, which records metadata about the pipeline and specifies that the input variants use the ``hg38/genomes/GRCh38-hg38`` reference genome. The annotators section lists the annotation steps that GAIn will run from top to bottom. This pipeline first uses the ``MANE 1.5`` gene model to identify affected genes and predict the worst effect of each variant. It then adds a conservation score from ``phyloP7way``. Finally, it normalizes each allele and looks up selected ``ClinVar`` attributes: ``CLNSIG``, which describes clinical significance, and ``CLNDN``, which reports associated disease names. To review the attributes produced by the custom pipeline, generate an HTML summary with:
+This pipeline has an optional preamble section, which records metadata about the pipeline and specifies that the input variants use the ``hg38/genomes/GRCh38-hg38`` reference genome. The annotators section lists the annotation steps that GAIn will run from top to bottom. This pipeline first uses the ``MANE 1.5`` gene model to identify affected genes and predict the worst effect of each variant. It then adds a conservation score from ``phyloP7way``. Finally, it normalizes each allele and looks up selected ``ClinVar`` attributes: ``CLNSIG``, which describes clinical significance, and ``CLNDN``, which reports associated disease names. 
+
+.. note:: 
+
+    When you build your custom annotation pipelines you can use our YAML structure or use the pipeline authoring tool in GAIn web interface, which makes pipeline creating easy. 
+
+To review the attributes produced by the custom pipeline, generate an HTML summary with:
 
 .. code-block:: bash
 
@@ -256,26 +262,26 @@ For example, after downloading the example input file (:download:`SSC_WES_varian
 
     prepare_tabular SSC_WES_variants.txt.gz
 
-When run successfully, this command produces two files: ``200k_variants.sorted.tsv.bgz``, which contains the sorted and compressed version of the input file, and ``200k_variants.sorted.tsv.bgz.tbi``, its associated tabix index. These two files enable parallelization and fast genomic-region access in GAIn.
+When run successfully, this command produces two files: ``SSC_WES_variants.sorted.tsv.bgz``, which contains the sorted and compressed version of the input file, and ``SSC_WES_variants.sorted.tsv.bgz.tbi``, its associated tabix index. These two files enable parallelization and fast genomic-region access in GAIn.
 
 
 Then run the annotation:
 
 .. code-block:: bash
 
-    annotate_tabular SSC_WES_variants.txt.bgz pipeline/hg38_clinical_annotation
+    annotate_tabular SSC_WES_variants.sorted.tsv.bgz pipeline/hg38_clinical_annotation
 
 GAIn splits indexed inputs by chromosome. For very large input files, chromosome-level splitting may create tasks that are too large or uneven. The ``-r`` option can instead split the input into genomic regions of a specified size:
 
 .. code-block:: bash
 
-    annotate_tabular SSC_WES_variants.txt.bgz pipeline/hg38_clinical_annotation -r 30_000_000
+    annotate_tabular SSC_WES_variants.sorted.tsv.bgz pipeline/hg38_clinical_annotation -r 30_000_000
 
 GAIn can also use a configured Dask cluster that creates workers on a larger compute system, such as SGE or SLURM. For example, if a Dask cluster named ``my_sge_cluster`` has been configured to create workers on an SGE cluster, the annotation can be run with:
 
 .. code-block:: bash
 
-    annotate_tabular 200k_variants.sorted.tsv.bgz pipeline/hg38_clinical_annotation -r 30_000_000 -N my_sge_cluster -j 100
+    annotate_tabular SSC_WES_variants.sorted.tsv.bgz pipeline/hg38_clinical_annotation -r 30_000_000 -N my_sge_cluster -j 100
 
 This runs the annotation across up to 100 workers on the configured cluster. See the “Configuring parallelization”[] and “Configuring Dask clusters”[] sections for more details on region splitting, worker configuration, and cluster setup.
 
@@ -286,7 +292,7 @@ Annotating VCF input
 -----------------------------
 
 GAIn can also annotate variants stored in VCF files. The command is similar to ``annotate_tabular``, but the input and 
-output files are in VCF format. Here, the same variants are stored in a file called ``variants.vcf``. 
+output files are in VCF format. To annotate an example VCF file, download the example input file (:download:`small_input.vcf <files/small_input.vcf>`), whose content is shown below.
 
 .. code-block:: yaml
 
@@ -305,9 +311,9 @@ To annotate them, run:
 
 .. code-block:: bash
 
-    annotate_vcf variants.vcf annotation_pipeline.yaml
+    annotate_vcf small_input.vcf annotation_pipeline.yaml -o vcf_annotated.vcf
 
-This command produces an output file named ``variants_annotated.vcf``, which contains the same variants with 
+This command produces an output file named ``vcf_annotated.vcf``, which contains the same variants with 
 additional annotation fields in the ``INFO`` column.
 
 .. code-block:: yaml
