@@ -119,8 +119,8 @@ Score annotators attach values from score resources to each input annotatable
 and emit them as annotation attributes. In some cases, a single annotatable can match 
 multiple score records (for example due to overlapping intervals or multi-base events). 
 Aggregators define how these multiple values are combined into a single output value. 
-Available aggregators are ``mean``, ``median``, ``max``, ``min``, ``mode``, ``join`` (i.e., 
-``join(;)``), ``list``, ``dict``, and ``concatenate``.
+Available aggregators are ``mean``, ``median``, ``max``, ``min``, ``mode``, ``join`` (i.e.,
+``join(;)``), ``list``, and ``concatenate``.
 
 position_score_annotator
 ************************
@@ -139,11 +139,11 @@ This annotator looks up the value of the source attribute from the specified pos
         attributes:
         - source: <source_score_attribute>
 
-An annotatable may overlap multiple positions or intervals in 
-the underlying score resource (for example, an INDEL spans 
-multiple bases). In these cases, the annotator combines the 
-matched values using a single aggregation setting, ``position_aggregator``. 
-The example below uses a ``position_aggregator`` and also renames the output attribute to ``renamed_score_attribute``.
+An annotatable may overlap multiple positions or intervals in
+the underlying score resource (for example, an INDEL spans
+multiple bases). In these cases, the annotator combines the
+matched values using a single aggregation setting, ``aggregator``.
+The example below uses an ``aggregator`` and also renames the output attribute to ``renamed_score_attribute``.
 
 
 .. code:: yaml
@@ -153,7 +153,7 @@ The example below uses a ``position_aggregator`` and also renames the output att
         attributes:
         - source: <source_score_attribute>
           name: <renamed_score_attribute>
-          position_aggregator: <aggregator>
+          aggregator: <aggregator>
 
 
 allele_score_annotator
@@ -172,23 +172,22 @@ A minimal ``allele_score_annotator`` configuration is shown below:
         attributes:
         - source: <source_score_attribute>
 
-Unlike position scores, allele score lookups can involve two distinct kinds of “many-to-one” 
-situations: an annotatable may span multiple positions and it may also yield multiple allele-level matches. For this reason, ``allele_score_annotator`` supports two aggregation settings:
+The ``allele_score_annotator`` operates in one of two modes, selected by the ``mode`` parameter:
 
-  | **position_aggregator**: combines values across multiple positions spanned by the annotatable.
-  | **allele_aggregator**: combines values across multiple allele-level matches for the same annotatable.
+  | **allele** (default): performs an exact chrom/pos/ref/alt lookup. The annotatable must be a ``VCFAllele``; other types fall back to region mode.
+  | **region**: iterates all allele lines that overlap the annotatable's span and aggregates their scores. Works with any annotatable type (``VCFAllele``, ``Region``, CNV, etc.).
 
-A complete attribute entry with both aggregators is shown below:
+In ``region`` mode, the ``aggregator`` attribute parameter controls how multiple matched values are combined. If no ``aggregator`` is specified in the attribute configuration, the annotator uses the score's default ``allele_aggregator`` from the resource definition (which defaults to ``max`` for numeric scores and ``list`` for string scores).
 
 .. code:: yaml
 
     - allele_score_annotator:
         resource_id: <allele score resource ID>
+        mode: region
         attributes:
         - source: <source_score_attribute>
           name: <renamed_score_attribute>
-          position_aggregator: <aggregator>
-          allele_aggregator: <aggregator>
+          aggregator: <aggregator>
 
 
 gene_score_annotator
@@ -216,10 +215,10 @@ An example ``gene_score_annotator`` configuration is shown below:
         attributes:
         - source: <source_score_attribute>
           name: <renamed_score_attribute>
-          gene_aggregator: <aggregator>
+          aggregator: <aggregator>
 
 
-The ``gene_aggregator`` setting controls how gene score values are combined when an annotatable 
+The ``aggregator`` setting controls how gene score values are combined when an annotatable
 maps to multiple genes in the selected gene list.
 
 
@@ -277,9 +276,23 @@ The ``effect_annotator`` can emit the following attributes:
   | **<effect>_genes** (default: no): comma-separated list of genes with a specific effect type.
   | **<effect>_gene_list** (internal, default: no): list of genes with a specific effect type.
 
-The ``effect_annotator`` example below uses the `MANE 1.5 gene models <https://grr.iossifovlab.com/hg38/gene_models/MANE/1.5/index.html>`_ in the IossifovLab GRR. 
-Since this gene models resource already specifies its reference genome via its configuration labels, 
-the genome field is not required in the annotator configuration. 
+Gene list attributes (``gene_list``, ``worst_effect_gene_list``, and ``<effect>_gene_list``) support
+aggregation. By default they are emitted as Python lists; supply an ``aggregator`` to collapse them
+into a single string, for example:
+
+.. code:: yaml
+
+    - effect_annotator:
+        gene_models: <gene models resource ID>
+        attributes:
+        - gene_list
+        - source: gene_list
+          name: genes
+          aggregator: join(,)
+
+The ``effect_annotator`` example below uses the `MANE 1.5 gene models <https://grr.iossifovlab.com/hg38/gene_models/MANE/1.5/index.html>`_ in the IossifovLab GRR.
+Since this gene models resource already specifies its reference genome via its configuration labels,
+the genome field is not required in the annotator configuration.
 The example also renames ``worst_effect`` to ``MANE_1.5_worst_effect``.
 
 .. code:: yaml
@@ -316,9 +329,10 @@ A minimal ``simple_effect_annotator`` configuration is shown below:
     - simple_effect_annotator:
         gene_models: <gene models resource ID>
 
-The output fields follow the same general pattern as ``effect_annotator`` (for example, 
-a “worst” class plus affected gene lists), but the effect labels reflect this simplified, 
-location-focused scheme.
+The output fields follow the same general pattern as ``effect_annotator`` (for example,
+a “worst” class plus affected gene lists), but the effect labels reflect this simplified,
+location-focused scheme. Gene list attributes support aggregation via ``aggregator`` in
+the same way as ``effect_annotator``.
 
 
 Transforming annotators 
@@ -444,9 +458,9 @@ which reports the count of overlapping CNV events in the collection for each inp
         resource_id: <resource id>
 
 
-When you do specify attributes, the syntax is slightly different from score annotators: 
-you request fields using the ``attribute.<id>`` form, where ``<id>`` refers to an exposed attribute 
-in the CNV collection resource (for example, class, frequency, dataset label). In addition, you can use 
+When you do specify attributes, the syntax is slightly different from score annotators:
+you request fields using the ``attribute.<id>`` form, where ``<id>`` refers to an exposed attribute
+in the CNV collection resource (for example, class, frequency, dataset label). In addition, you can use
 ``cnv_filter:`` and request only results gated by specific values of an attribute.
 
 .. code:: yaml
@@ -458,6 +472,18 @@ in the CNV collection resource (for example, class, frequency, dataset label). I
         - attribute.<attribute1 id>
         - attribute.<attribute2 id>
 
+Score attributes (all attributes other than ``count``) can overlap multiple CNV records per
+annotatable. Each score attribute carries a resource-defined aggregator default and supports
+override via ``aggregator``:
+
+.. code:: yaml
+
+    - cnv_collection_annotator:
+        resource_id: <resource id>
+        attributes:
+        - source: attribute.<score attribute id>
+          aggregator: <aggregator>
+
 gene_set_annotator
 ^^^^^^^^^^^^^^^^^^^^^
 
@@ -467,8 +493,8 @@ gene set collection. Gene set resources group genes by shared functions, pathway
 operates on a gene list in the annotation context (provided via ``input_gene_list``) and emits membership 
 information as annotation attributes.
 
-The annotator can emit a membership attribute for each gene set in the collection and/or a 
-special attribute ``in_sets``, which is the list of gene set names that the annotatable's genes belong 
+The annotator can emit a membership attribute for each gene set in the collection and/or a
+special attribute ``in_sets``, which is the list of gene set names that the annotatable's genes belong
 to (based on the selected input gene list). A typical configuration is shown below:
 
 .. code:: yaml
@@ -479,6 +505,10 @@ to (based on the selected input gene list). A typical configuration is shown bel
         attributes:
         - <gene set name>
         - in_sets
+
+Individual gene set membership attributes (everything except ``in_sets``) default to
+``aggregator: list`` and support override via ``aggregator`` when the same gene set can be
+matched from multiple genes in the input gene list.
 
 
 spliceai_annotator
@@ -517,24 +547,27 @@ The configuration fields are:
   | **mask**: if set to true, masks scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss (default: false).
 
 
-The annotator produces the following attributes:
+The annotator produces the following attributes, along with their default aggregators for
+batch annotations that span multiple predictions:
 
-  | **gene**: gene symbol.
-  | **transcript_ids**: comma-separated list of transcript IDs.
-  | **DS_AG**: delta score for acceptor gain.
-  | **DS_AL**: delta score for acceptor loss.
-  | **DS_DG**: delta score for donor gain.
-  | **DS_DL**: delta score for donor loss.
-  | **DS_MAX**: maximum delta score.
-  | **DP_AG**: delta position for acceptor gain.
-  | **DP_AL**: delta position for acceptor loss.
-  | **DP_DG**: delta position for donor gain.
-  | **DP_DL**: delta position for donor loss.
-  | **ref_A_p**: reference acceptor probabilities.
-  | **ref_D_p**: reference donor probabilities.
-  | **alt_A_p**: alternative acceptor probabilities.
-  | **alt_D_p**: alternative donor probabilities.
-  | **delta_score**: compact SpliceAI annotation string with DS and DP values. Format: ``ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL``.
+  | **gene** (aggregator: ``join(,)``): gene symbol.
+  | **transcript_ids** (aggregator: ``join(,)``): comma-separated list of transcript IDs.
+  | **DS_AG** (aggregator: ``max``): delta score for acceptor gain.
+  | **DS_AL** (aggregator: ``max``): delta score for acceptor loss.
+  | **DS_DG** (aggregator: ``max``): delta score for donor gain.
+  | **DS_DL** (aggregator: ``max``): delta score for donor loss.
+  | **DS_MAX** (aggregator: ``max``): maximum delta score.
+  | **DP_AG** (aggregator: ``join(;)``): delta position for acceptor gain.
+  | **DP_AL** (aggregator: ``join(;)``): delta position for acceptor loss.
+  | **DP_DG** (aggregator: ``join(;)``): delta position for donor gain.
+  | **DP_DL** (aggregator: ``join(;)``): delta position for donor loss.
+  | **ref_A_p** (aggregator: ``join(;)``): reference acceptor probabilities.
+  | **ref_D_p** (aggregator: ``join(;)``): reference donor probabilities.
+  | **alt_A_p** (aggregator: ``join(;)``): alternative acceptor probabilities.
+  | **alt_D_p** (aggregator: ``join(;)``): alternative donor probabilities.
+  | **delta_score** (aggregator: ``join(;)``): compact SpliceAI annotation string with DS and DP values. Format: ``ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL``.
+
+Each attribute's aggregator can be overridden via the ``aggregator`` attribute parameter.
 
 
 
