@@ -121,6 +121,10 @@ class AttributeSpec:
     supports_aggregation: bool = True
     attribute_type: str = "attribute"
 
+    def __post_init__(self) -> None:
+        if self.attribute_type == "annotatable":
+            self.supports_aggregation = False
+
 
 class Annotator(abc.ABC):
     """Annotator provides a set of attrubutes for a given Annotatable."""
