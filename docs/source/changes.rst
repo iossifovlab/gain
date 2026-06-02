@@ -1,7 +1,30 @@
 Release Notes
 =============
 
-* 2026.5.12
+* 2026.6.0
+    * ``grr_cache_repo`` now shows live progress while caching instead
+      of a wall of per-file log lines. On a terminal it draws a
+      byte-based ``tqdm`` bar (human-readable units, throughput and ETA)
+      with a ``files=done/total`` and, when applicable, ``failed=N``
+      tally; off a terminal (e.g. a captured CI log) it instead emits
+      throttled milestone ``INFO`` lines at a 0% baseline, every 10%
+      crossing, and 100%. Per-file request/finished chatter is demoted
+      to ``DEBUG``. Caching first classifies the full work-list — logging
+      a ``caching N file(s), B bytes to download; M already cached``
+      header — and then downloads only the files that are missing or
+      stale, so a fully-cached re-run prints no bar. A failed download
+      still advances the bar to 100% (credited with the file's size and
+      counted in ``failed=N``) and is reported in the end-of-run
+      summary. The ``--no-progress`` flag turns the indicator off
+      entirely. ``tqdm`` is now a core runtime dependency.
+    * Raised the GRR caching protocol's application-level read-buffer
+      (``CHUNK_SIZE``) from 32 KiB to 1 MiB. This cuts the per-chunk
+      Python read/write/md5 and progress-callback overhead roughly 32×
+      on multi-gigabyte resources, with negligible extra memory and no
+      change to network behavior (fsspec still owns block-level
+      fetching); small files are unaffected.
+    * Revised the getting-started CLI and web tutorials, refreshed their
+      figures, and updated the example variant files.
     * ``grr_cache_repo`` now takes the annotation pipeline as a
       **positional argument** (``grr_cache_repo <pipeline>``) instead of
       the ``--pipeline``/``-p`` flag, adopting the same
