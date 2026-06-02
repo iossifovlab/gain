@@ -1,15 +1,19 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 
+import pathlib
 import textwrap
 
 import pytest
-from gain.annotation.annotation_pipeline import AnnotatorInfo, AttributeInfo
+from gain.annotation.annotatable import Region
+from gain.annotation.annotation_config import AnnotatorInfo, AttributeConfig
 from gain.annotation.gene_score_annotator import GeneScoreAnnotator
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GenomicResourceRepo,
 )
 from gain.genomic_resources.testing import build_inmemory_test_repository
+
+_DUMMY_ANNOTATABLE = Region("chr1", 1, 1)
 
 
 @pytest.fixture
@@ -70,92 +74,103 @@ def scores_repo() -> GenomicResourceRepo:
     })
 
 
-def test_gene_score_annotator(scores_repo: GenomicResourceRepo) -> None:
+def test_gene_score_annotator(
+    scores_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     resource = scores_repo.get_resource("LGD_rank")
     annotator = GeneScoreAnnotator(
         None,
         AnnotatorInfo(
             "gosho",
-            [AttributeInfo(
+            [AttributeConfig(
                 "LGD_rank",
                 "LGD_rank",
                 internal=False,
-                parameters={"gene_aggregator": "min"})],
-            {},
+                parameters={})],
+            {"work_dir": str(tmp_path)},
         ),
         resource,
         "gene_list",
     )
 
-    result = annotator.annotate(None, {"gene_list": ["LRP1", "TRRAP"]})
+    result = annotator.annotate(
+        _DUMMY_ANNOTATABLE, {"gene_list": ["LRP1", "TRRAP"]})
 
-    assert result == {"LGD_rank": 1}
+    assert result == {"LGD_rank": {"LRP1": 1, "TRRAP": 3}}
 
 
 def test_gene_score_annotator_int_attributes(
     scores_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     resource = scores_repo.get_resource("int_score")
     annotator = GeneScoreAnnotator(
         None,
         AnnotatorInfo(
             "gosho",
-            [AttributeInfo(
+            [AttributeConfig(
                 "int_score",
                 "int_score",
                 internal=False,
-                parameters={"gene_aggregator": "min"})],
-            {},
+                parameters={})],
+            {"work_dir": str(tmp_path)},
         ),
         resource,
         "gene_list",
     )
 
-    attribute_descs = annotator.get_all_attribute_descriptions()
+    attribute_specs = annotator.get_attribute_specs()
 
-    assert attribute_descs["int_score"].type == "int"
+    assert attribute_specs["int_score"].value_type == "object"
 
-    result = annotator.annotate(None, {"gene_list": ["G2"]})
+    result = annotator.annotate(_DUMMY_ANNOTATABLE, {"gene_list": ["G2"]})
 
-    assert result == {"int_score": 2}
+    assert result == {"int_score": {"G2": 2}}
 
 
 def test_gene_score_annotator_default_aggregator(
-        scores_repo: GenomicResourceRepo) -> None:
+    scores_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     resource = scores_repo.get_resource("LGD_rank")
-    annotator = GeneScoreAnnotator(None,
-                                   AnnotatorInfo("gosho", [], {}),
-                                   resource, "gene_list")
+    annotator = GeneScoreAnnotator(
+        None, AnnotatorInfo("gosho", [], {"work_dir": str(tmp_path)}),
+        resource, "gene_list")
 
-    result = annotator.annotate(None, {"gene_list": ["LRP1", "TRRAP"]})
+    result = annotator.annotate(
+        _DUMMY_ANNOTATABLE, {"gene_list": ["LRP1", "TRRAP"]})
 
     assert result == {"LGD_rank": {"LRP1": 1, "TRRAP": 3}}
 
 
 def test_gene_score_annotator_resources(
-        scores_repo: GenomicResourceRepo) -> None:
+    scores_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     resource = scores_repo.get_resource("LGD_rank")
-    annotator = GeneScoreAnnotator(None,
-                                   AnnotatorInfo("gosho", [], {}),
-                                   resource, "gene_list")
+    annotator = GeneScoreAnnotator(
+        None, AnnotatorInfo("gosho", [], {"work_dir": str(tmp_path)}),
+        resource, "gene_list")
 
     assert annotator.resource_ids == {"LGD_rank"}
 
 
 def test_gene_score_annotator_used_context_attributes(
     scores_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     resource = scores_repo.get_resource("LGD_rank")
     annotator = GeneScoreAnnotator(
         None,
         AnnotatorInfo(
             "gosho",
-            [AttributeInfo(
+            [AttributeConfig(
                 "LGD_rank",
                 "LGD_rank",
                 internal=False,
-                parameters={"gene_aggregator": "min"})],
-            {},
+                parameters={})],
+            {"work_dir": str(tmp_path)},
         ),
         resource,
         "gene_list",
@@ -173,7 +188,6 @@ def default_annotation_repo() -> GenomicResourceRepo:
                 default_annotation:
                   - source: score1
                   - source: score2
-                    gene_aggregator: min
                 scores:
                   - id: score1
                     desc: first score
@@ -209,10 +223,12 @@ def default_annotation_repo() -> GenomicResourceRepo:
 
 def test_default_annotation_limits_scores(
     default_annotation_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     resource = default_annotation_repo.get_resource("MultiScore")
     annotator = GeneScoreAnnotator(
-        None, AnnotatorInfo("gosho", [], {}), resource, "gene_list",
+        None, AnnotatorInfo("gosho", [], {"work_dir": str(tmp_path)}),
+        resource, "gene_list",
     )
     assert [a.name for a in annotator.attributes] == ["score1", "score2"]
     assert "score3" not in [a.name for a in annotator.attributes]
@@ -220,33 +236,36 @@ def test_default_annotation_limits_scores(
 
 def test_default_annotation_custom_aggregator(
     default_annotation_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     resource = default_annotation_repo.get_resource("MultiScore")
     annotator = GeneScoreAnnotator(
-        None, AnnotatorInfo("gosho", [], {}), resource, "gene_list",
+        None, AnnotatorInfo("gosho", [], {"work_dir": str(tmp_path)}),
+        resource, "gene_list",
     )
-    result = annotator.annotate(None, {"gene_list": ["G1", "G2"]})
+    result = annotator.annotate(_DUMMY_ANNOTATABLE, {"gene_list": ["G1", "G2"]})
     assert result["score1"] == {"G1": 1, "G2": 2}
-    assert result["score2"] == 10
+    assert result["score2"] == {"G1": 10, "G2": 20}
 
 
 def test_default_annotation_non_default_accessible_explicitly(
     default_annotation_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     resource = default_annotation_repo.get_resource("MultiScore")
     annotator = GeneScoreAnnotator(
         None,
         AnnotatorInfo(
             "gosho",
-            [AttributeInfo("score3", "score3", internal=False,
-                           parameters={"gene_aggregator": "max"})],
-            {},
+            [AttributeConfig("score3", "score3", internal=False,
+                       parameters={})],
+            {"work_dir": str(tmp_path)},
         ),
         resource,
         "gene_list",
     )
-    result = annotator.annotate(None, {"gene_list": ["G1", "G2"]})
-    assert result == {"score3": 200}
+    result = annotator.annotate(_DUMMY_ANNOTATABLE, {"gene_list": ["G1", "G2"]})
+    assert result == {"score3": {"G1": 100, "G2": 200}}
 
 
 def test_default_annotation_invalid_score_raises(
@@ -283,14 +302,41 @@ def test_default_annotation_invalid_score_raises(
 
 def test_default_annotation_attribute_descriptions(
     default_annotation_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     resource = default_annotation_repo.get_resource("MultiScore")
     annotator = GeneScoreAnnotator(
-        None, AnnotatorInfo("gosho", [], {}), resource, "gene_list",
+        None, AnnotatorInfo("gosho", [], {"work_dir": str(tmp_path)}),
+        resource, "gene_list",
     )
-    descs = annotator.get_all_attribute_descriptions()
-    assert descs["score1"].default is True
-    assert descs["score2"].default is True
-    assert descs["score3"].default is False
-    assert descs["score2"].params["gene_aggregator"] == "min"
-    assert descs["score1"].params["gene_aggregator"] == "dict"
+    specs = annotator.get_attribute_specs()
+    assert specs["score1"].is_default is True
+    assert specs["score2"].is_default is True
+    assert specs["score3"].is_default is False
+
+
+def test_gene_score_annotator_aggregation(
+    scores_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = scores_repo.get_resource("LGD_rank")
+    annotator = GeneScoreAnnotator(
+        None,
+        AnnotatorInfo(
+            "gosho",
+            [AttributeConfig(
+                "LGD_rank",
+                "LGD_rank",
+                internal=False,
+                aggregator="max",
+                parameters={})],
+            {"work_dir": str(tmp_path)},
+        ),
+        resource,
+        "gene_list",
+    )
+    result = annotator.annotate(
+        _DUMMY_ANNOTATABLE,
+        {"gene_list": ["LRP1", "TRRAP"]},
+    )
+    assert result["LGD_rank"] == 3.0

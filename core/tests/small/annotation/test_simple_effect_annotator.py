@@ -409,26 +409,6 @@ def test_gene_list_aggregator(
     assert atts["coding_genes"] == coding_genes
 
 
-def test_gene_list_aggregator_wrong_attribute(
-    grr2: GenomicResourceRepo,
-) -> None:
-    with pytest.raises(
-        AnnotationConfigurationError,
-        match=r"The A0 annotator configuration is incorrect"
-        r".*Attribute worst_effect_genes is not a gene list attribute",
-    ):
-        load_pipeline_from_yaml(
-            textwrap.dedent("""
-                - simple_effect_annotator:
-                    gene_models: gene_models
-                    attributes:
-                    - source: worst_effect_genes
-                      name: wrong_attribute
-                      gene_list_aggregator: join(|)
-                """),
-            grr2)
-
-
 def test_gene_list_aggregator_wrong_aggregator(
     grr2: GenomicResourceRepo,
 ) -> None:
@@ -445,5 +425,24 @@ def test_gene_list_aggregator_wrong_aggregator(
                     - source: worst_effect_gene_list
                       name: wrong_aggregator
                       gene_list_aggregator: true
+                """),
+            grr2)
+
+
+def test_gene_list_aggregator_wrong_attribute(
+    grr2: GenomicResourceRepo,
+) -> None:
+    with pytest.raises(
+        AnnotationConfigurationError,
+        match=r"does not support aggregation",
+    ):
+        load_pipeline_from_yaml(
+            textwrap.dedent("""
+                - simple_effect_annotator:
+                    gene_models: gene_models
+                    attributes:
+                    - source: worst_effect
+                      name: wrong_attribute
+                      aggregator: join(|)
                 """),
             grr2)

@@ -182,14 +182,14 @@ def build_pipeline_annotator(
     """Build an annotator for the pipeline."""
     try:
         params = annotator_config.parameters
-        if "work_dir" not in params:
-            params._data["work_dir"] = str(work_dir)  # noqa: SLF001
-        params._used_keys.add("work_dir")  # noqa: SLF001
+        if "work_dir" not in params.as_dict():
+            params.inject("work_dir", str(work_dir))
         builder = get_annotator_factory(annotator_config.type)
         annotator = builder(pipeline, annotator_config)
         annotator = InputAnnotableAnnotatorDecorator.decorate(annotator)
         annotator = ValueTransformAnnotatorDecorator.decorate(annotator)
         check_for_unused_parameters(annotator_config)
+        check_for_unused_attribute_parameters(annotator)
         check_for_repeated_attributes_in_annotator(annotator_config)
     except (ValueError, FileNotFoundError) as value_error:
         assert annotator_config is not None
@@ -304,8 +304,12 @@ def check_for_unused_parameters(info: AnnotatorInfo) -> None:
         raise ValueError("There are unused annotator parameters: "
                          f"{unused_annotator_parameters}")
 
-    for att in info.attributes:
-        unused_params = att.parameters.get_unused_keys()
-        if unused_params:
-            raise ValueError("There are unused annotator attribute "
-                             f"parameters: {','.join(sorted(unused_params))}")
+
+def check_for_unused_attribute_parameters(annotator: Annotator) -> None:
+    """Check each attribute's parameters for unused keys."""
+    for attr in annotator.attributes:
+        unused = attr.parameters.get_unused_keys()
+        if unused:
+            raise ValueError(
+                f"There are unused parameters for attribute"
+                f" '{attr.source}': {unused}")

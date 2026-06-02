@@ -6,7 +6,6 @@ from gain.genomic_resources.aggregators import (
     ConcatAggregator,
     CountAggregator,
     CounterAggregator,
-    DictAggregator,
     JoinAggregator,
     ListAggregator,
     MaxAggregator,
@@ -176,20 +175,6 @@ def test_list_aggregator() -> None:
         agg.add(val)
 
     assert agg.get_final() == values
-
-
-def test_dict_aggregator() -> None:
-    values = [("first", 1), ("second", 2), ("third", 3), ("fourth", 4)]
-    agg = DictAggregator()
-    for key, value in values:
-        agg.add(value, key=key)
-
-    assert agg.get_final() == {
-        "first": 1,
-        "second": 2,
-        "third": 3,
-        "fourth": 4,
-    }
 
 
 def test_bool_aggregator_with_values() -> None:

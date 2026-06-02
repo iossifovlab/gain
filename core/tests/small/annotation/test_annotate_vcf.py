@@ -22,7 +22,7 @@ from gain.annotation.annotate_vcf import (
     annotate_vcf,
     cli,
 )
-from gain.annotation.annotation_config import AttributeInfo
+from gain.annotation.annotation_config import Attribute
 from gain.annotation.annotation_factory import (
     build_annotation_pipeline,
 )
@@ -607,11 +607,12 @@ def test_vcf_multiple_chroms(
                       "0.3", "0.4",
                       "0.5", "0.6"]
     assert os.path.exists(out_file_tbi)
-    assert set(os.listdir(work_dir)) == {
-        ".task-log",     # default task logs dir
-        ".task-status",  # default task status dir
-        # part files must be cleaned up
-    }
+    leftover = set(os.listdir(work_dir)) - {".task-log", ".task-status"}
+    assert all(
+        os.path.isdir(os.path.join(work_dir, d))
+        and not os.listdir(os.path.join(work_dir, d))
+        for d in leftover
+    ), f"Unexpected non-empty entries in work_dir: {leftover}"
 
 
 def test_annotate_vcf_float_precision(
@@ -949,7 +950,7 @@ def test_writer_does_not_omit_literal_zeros_from_info(
     sample_vcf: pathlib.Path,
 ) -> None:
     attributes = [
-        AttributeInfo("score_1", "source_number",
+        Attribute("score_1", "source_number",
                       internal=False, parameters={}),
     ]
 
@@ -972,9 +973,9 @@ def test_writer_does_not_write_empty_values_into_info(
     sample_vcf: pathlib.Path,
 ) -> None:
     attributes = [
-        AttributeInfo("score_1", "source_string",
+        Attribute("score_1", "source_string",
                       internal=False, parameters={}),
-        AttributeInfo("score_2", "source_bool",
+        Attribute("score_2", "source_bool",
                       internal=False, parameters={}),
     ]
 
@@ -1089,14 +1090,21 @@ def test_vcf_keep_parts(
 
     assert os.path.exists(out_file)
     assert os.path.exists(out_file_tbi)
-    assert set(os.listdir(work_dir)) == {
-        ".task-log",     # default task logs dir
-        ".task-status",  # default task status dir
-        # part files must be kept
+    expected = {
+        ".task-log",
+        ".task-status",
         "in.vcf.gz_annotation_chr1_1_47",
         "in.vcf.gz_annotation_chr2_1_47",
         "in.vcf.gz_annotation_chr3_1_47",
     }
+    actual = set(os.listdir(work_dir))
+    annotator_dirs = actual - expected
+    assert all(
+        os.path.isdir(os.path.join(work_dir, d))
+        and not os.listdir(os.path.join(work_dir, d))
+        for d in annotator_dirs
+    ), f"Unexpected non-empty entries in work_dir: {annotator_dirs}"
+    assert expected.issubset(actual)
 
 
 def test_vcf_cross_region_boundary(

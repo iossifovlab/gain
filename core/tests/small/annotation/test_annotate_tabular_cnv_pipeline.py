@@ -191,7 +191,6 @@ def test_cnv_gene_score_annotation(
             input_gene_list: gene_list
             attributes:
             - source: gene_score1
-              gene_aggregator: max
         """),
     })
     cli_tabular([
@@ -206,7 +205,7 @@ def test_cnv_gene_score_annotation(
 
     df = pd.read_csv(root_path / "result.tsv", sep="\t")
     assert list(df.worst_effect.values) == ["CNV+", "CNV-"]
-    assert list(df.gene_score1.values) == [10.1, 20.2]
+    assert list(df.gene_score1.values) == ["g1:10.1", "g2:20.2"]
 
 
 @pytest.mark.parametrize(
@@ -271,7 +270,6 @@ def test_bad_cnv_gene_score_annotation(
             input_gene_list: gene_list
             attributes:
             - source: gene_score1
-              gene_aggregator: max
         """),
     })
 

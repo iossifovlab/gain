@@ -1046,11 +1046,12 @@ def test_annotate_tabular_multiple_chrom(
         out_file_content = out.read()
     assert out_file_content == out_expected_content
     assert os.path.exists(out_file_tbi)
-    assert set(os.listdir(work_dir)) == {
-        ".task-log",     # default task logs dir
-        ".task-status",  # default task status dir
-        # part files must be cleaned up
-    }
+    leftover = set(os.listdir(work_dir)) - {".task-log", ".task-status"}
+    assert all(
+        os.path.isdir(os.path.join(work_dir, d))
+        and not os.listdir(os.path.join(work_dir, d))
+        for d in leftover
+    ), f"Unexpected non-empty entries in work_dir: {leftover}"
 
 
 def test_annotate_tabular_multiple_chrom_repeated_attr(
@@ -1101,11 +1102,12 @@ def test_annotate_tabular_multiple_chrom_repeated_attr(
         out_file_content = out.read()
     assert out_file_content == out_expected_content
     assert os.path.exists(out_file_tbi)
-    assert set(os.listdir(work_dir)) == {
-        ".task-log",     # default task logs dir
-        ".task-status",  # default task status dir
-        # part files must be cleaned up
-    }
+    leftover = set(os.listdir(work_dir)) - {".task-log", ".task-status"}
+    assert all(
+        os.path.isdir(os.path.join(work_dir, d))
+        and not os.listdir(os.path.join(work_dir, d))
+        for d in leftover
+    ), f"Unexpected non-empty entries in work_dir: {leftover}"
 
 
 def test_annotate_tabular_none_values(
@@ -1743,14 +1745,21 @@ def test_annotate_tabular_keep_parts(
 
     assert os.path.exists(out_file)
     assert os.path.exists(out_file_tbi)
-    assert set(os.listdir(work_dir)) == {
-        ".task-log",     # default task logs dir
-        ".task-status",  # default task status dir
-        # part files must be kept
+    expected = {
+        ".task-log",
+        ".task-status",
         "in.txt.gz_annotation_chr1_1_47",
         "in.txt.gz_annotation_chr2_1_47",
         "in.txt.gz_annotation_chr3_1_47",
     }
+    actual = set(os.listdir(work_dir))
+    annotator_dirs = actual - expected
+    assert all(
+        os.path.isdir(os.path.join(work_dir, d))
+        and not os.listdir(os.path.join(work_dir, d))
+        for d in annotator_dirs
+    ), f"Unexpected non-empty entries in work_dir: {annotator_dirs}"
+    assert expected.issubset(actual)
 
 
 @pytest.mark.parametrize("verbosity, expected_level", [

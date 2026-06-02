@@ -16,8 +16,8 @@ from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
     AnnotatorInfo,
+    AttributeSpec,
 )
-from gain.annotation.annotator_base import AttributeDesc
 from gain.annotation.docker_annotator import DockerAnnotator
 from gain.annotation.utils import (
     find_annotator_gene_models,
@@ -298,9 +298,9 @@ class VEPCacheAnnotator(VEPAnnotatorBase):
 
         """)  # noqa
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         return {
-            k: AttributeDesc(source=k, type=v[0], description=v[1])
+            k: AttributeSpec(source=k, value_type=v[0], description=v[1])
             for k, v in full_attributes.items()
         }
 
@@ -310,6 +310,7 @@ class VEPCacheAnnotator(VEPAnnotatorBase):
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,
     ) -> list[dict[str, Any]]:
+        assert self.work_dir is not None
         if batch_work_dir is None:
             work_dir = self.work_dir
         else:
@@ -330,12 +331,15 @@ class VEPCacheAnnotator(VEPAnnotatorBase):
 
         with out_path.open("r") as out_file:
             self.read_output(
-                out_file, contexts, self.get_all_attribute_descriptions(),
+                out_file, contexts, self.get_attribute_specs(),
             )
 
         self.aggregate_attributes(contexts)
 
-        return contexts
+        return [
+            {attr.source: context[attr.source] for attr in self._attributes}
+            for context in contexts
+        ]
 
     def run(self, **kwargs: Any) -> None:
         args = [
@@ -370,6 +374,7 @@ class VEPEffectAnnotator(VEPAnnotatorBase):
         super().__init__(pipeline, info)
 
         assert pipeline is not None
+        assert self.work_dir is not None
 
         self.cache_repo = GenomicResourceCachedRepo(
             pipeline.repository, str(self.work_dir / "grr_cache"),
@@ -415,9 +420,9 @@ class VEPEffectAnnotator(VEPAnnotatorBase):
         """Find genome from info, resource label or genomic context."""
         return cast(GenomicResource, self.genome_resource)
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         return {
-            k: AttributeDesc(source=k, type=v[0], description=v[1])
+            k: AttributeSpec(source=k, value_type=v[0], description=v[1])
             for k, v in effect_attributes.items()
         }
 
@@ -431,6 +436,7 @@ class VEPEffectAnnotator(VEPAnnotatorBase):
         assert self.genome_resource is not None
         assert self.genome_filename is not None
         assert self.gtf_path_gz is not None
+        assert self.work_dir is not None
 
         self.genome_resource.get_file_url(self.genome_filename)
         self.genome_resource.get_file_url(f"{self.genome_filename}.fai")
@@ -462,12 +468,15 @@ class VEPEffectAnnotator(VEPAnnotatorBase):
 
         with out_path.open("r") as out_file:
             self.read_output(
-                out_file, contexts, self.get_all_attribute_descriptions(),
+                out_file, contexts, self.get_attribute_specs(),
             )
 
         self.aggregate_attributes(contexts)
 
-        return contexts
+        return [
+            {attr.source: context[attr.source] for attr in self._attributes}
+            for context in contexts
+        ]
 
     def run(self, **kwargs: Any) -> None:
         assert self.genome_resource is not None

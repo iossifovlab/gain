@@ -61,7 +61,9 @@ def test_vcf_info_annotator_all_attributes(
         ("D", "D", "str", "Score D"),
     ]
     observed_name_src_type_desc = \
-        [(at.name, at.source, at.value_type, at.description)
+        [(at.name, at.source,
+          at.spec.value_type if at.spec else None,
+          at.spec.description if at.spec else None)
          for at in pipeline.get_attributes()]
 
     assert observed_name_src_type_desc == expected_name_scr_type_desc
@@ -82,7 +84,7 @@ def test_vcf_info_config_annotation(
     assert len(pipeline.get_attributes()) == 1
     att = pipeline.get_attributes()[0]
 
-    assert (att.name, att.source, att.internal) == ("score1_c", "C", None)
+    assert (att.name, att.source, att.internal) == ("score1_c", "C", False)
 
 
 @pytest.mark.parametrize("vcf_allele,expected", [

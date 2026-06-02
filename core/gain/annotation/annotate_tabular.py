@@ -32,7 +32,6 @@ from gain.annotation.annotate_utils import (
     stringify,
 )
 from gain.annotation.annotation_config import (
-    AttributeInfo,
     RawAnnotatorsConfig,
     RawPipelineConfig,
 )
@@ -42,6 +41,7 @@ from gain.annotation.annotation_factory import (
 )
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
+    Attribute,
     ReannotationPipeline,
 )
 from gain.annotation.processing_pipeline import (
@@ -340,7 +340,7 @@ class _CSVHeader:
 
 def _build_new_header(
     input_header: list[str],
-    annotation_attributes: list[AttributeInfo],
+    annotation_attributes: list[Attribute],
     attributes_to_delete: Sequence[str],
 ) -> _CSVHeader:
     result = list(input_header)

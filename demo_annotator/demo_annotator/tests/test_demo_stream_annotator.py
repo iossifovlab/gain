@@ -3,6 +3,7 @@ import pathlib
 import textwrap
 
 import pytest
+from gain.annotation.annotatable import VCFAllele
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
@@ -97,3 +98,32 @@ def test_demo_annotator_initialization(
     annotators = pipeline.annotators
     assert len(annotators) == 1
     assert isinstance(annotators[0], DemoAnnotatorAdapter)
+
+
+def test_demo_stream_annotator_batch_annotate_default(
+    tmp_path: pathlib.Path,
+) -> None:
+    grr = build_genomic_resource_repository()
+    pipeline = load_pipeline_from_yaml(
+        "- external_demo_stream_annotator", grr, work_dir=tmp_path)
+    with pipeline.open() as p:
+        results = p.batch_annotate([VCFAllele("1", 10, "A", "C")])
+    assert "annotatable_length" in results[0]
+    assert isinstance(results[0]["annotatable_length"], int)
+
+
+def test_demo_stream_annotator_batch_annotate_renamed_attribute(
+    tmp_path: pathlib.Path,
+) -> None:
+    grr = build_genomic_resource_repository()
+    pipeline = load_pipeline_from_yaml(textwrap.dedent("""
+        - external_demo_stream_annotator:
+            attributes:
+            - name: my_length
+              source: annotatable_length
+    """), grr, work_dir=tmp_path)
+    with pipeline.open() as p:
+        results = p.batch_annotate([VCFAllele("1", 10, "A", "C")])
+    assert "my_length" in results[0]
+    assert "annotatable_length" not in results[0]
+    assert isinstance(results[0]["my_length"], int)

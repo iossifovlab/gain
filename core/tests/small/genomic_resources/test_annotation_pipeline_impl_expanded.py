@@ -1,4 +1,4 @@
-# pylint: disable=W0621,C0114,C0116,W0212,W0613
+# pylint: disable=W0621,C0114,C0116,W0212,W0613,C0415
 """Expanded tests for annotation_pipeline_impl module."""
 import pathlib
 from unittest.mock import patch

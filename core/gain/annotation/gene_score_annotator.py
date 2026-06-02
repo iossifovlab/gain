@@ -1,25 +1,24 @@
 """Module containing the gene score annotator."""
 
 import logging
-from typing import Any, cast
+from collections.abc import Sequence
+from typing import Any
 
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotatorInfo,
-    AttributeInfo,
+    Attribute,
 )
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
-    AttributeDesc,
+    AttributeSpec,
 )
+from gain.annotation.annotator_base import AnnotatorBase
 from gain.gene_scores.gene_scores import build_gene_score_from_resource
 from gain.genomic_resources import GenomicResource
-from gain.genomic_resources.aggregators import (
-    build_aggregator,
-    validate_aggregator,
-)
+from gain.genomic_resources.aggregators import build_aggregator
 
 logger = logging.getLogger(__name__)
 
@@ -43,157 +42,126 @@ def build_gene_score_annotator(pipeline: AnnotationPipeline,
     if input_gene_list_info is None:
         raise ValueError(f"The {input_gene_list} is not provided by the "
                          "pipeline.")
-    if input_gene_list_info.value_type != "object":
+    if input_gene_list_info.spec is None \
+            or input_gene_list_info.spec.value_type != "object":
         raise ValueError(f"The {input_gene_list} provided by the pipeline "
                          "is not of type object.")
     return GeneScoreAnnotator(pipeline, info,
                               gene_score_resource, input_gene_list)
 
 
-class GeneScoreAnnotator(Annotator):
+class GeneScoreAnnotator(AnnotatorBase):
     """Gene score annotator class."""
-
-    DEFAULT_AGGREGATOR_TYPE = "dict"
 
     def __init__(self, pipeline: AnnotationPipeline | None,
                  info: AnnotatorInfo,
-                 gene_score_resource: GenomicResource, input_gene_list: str):
+                 gene_score_resource: GenomicResource,
+                 input_gene_list: str):
 
         self.gene_score_resource = gene_score_resource
-        self.score = build_gene_score_from_resource(
-            self.gene_score_resource)
-
+        self.score = build_gene_score_from_resource(self.gene_score_resource)
+        self._resource_gene_aggregators: dict[str, str] = {}
         info.resources += [gene_score_resource]
-        if not info.attributes:
-            info.attributes = []
-            for attr_desc in self.get_all_attribute_descriptions().values():
-                if attr_desc.default:
-                    info.attributes.append(AttributeInfo(
-                        cast(str, attr_desc.name),
-                        attr_desc.source,
-                        internal=attr_desc.internal,
-                        parameters={},
-                        _type=attr_desc.type,
-                        description=attr_desc.description,
-                        default=attr_desc.default,
-                    ))
-
-        self.aggregators: list[str] = []
-
-        all_attributes = self.get_all_attribute_descriptions()
-
-        for attribute_config in info.attributes:
-            if attribute_config.source not in all_attributes:
-                raise ValueError(
-                    "The gene score annotator attribute "
-                    f"{attribute_config.source} is not "
-                    f"available in the {gene_score_resource.get_id()} "
-                    "gene score annotator!")
-            default_attribute = all_attributes[attribute_config.source]
-            attribute_config.value_type = default_attribute.type
-            attribute_config.description = default_attribute.description
-
-            aggregator_type = \
-                attribute_config.parameters.get("gene_aggregator")
-            if aggregator_type is None:
-                aggregator_type = default_attribute.params.get(
-                    "gene_aggregator")
-                assert aggregator_type is not None
-            else:
-                validate_aggregator(aggregator_type)
-
-            self.aggregators.append(aggregator_type)
-
-            aggregator_doc = f"**gene_aggregator**: {aggregator_type}"
-
-            if aggregator_type == "dict":
-                aggregator_doc = f"{aggregator_doc} [default]"
-                attribute_config.value_type = "object"
-
-            attribute_config._documentation = (  # noqa: SLF001
-                f"{attribute_config.documentation}\n\n"
-                f"{aggregator_doc}"
-            )
-
         self.input_gene_list = input_gene_list
         super().__init__(pipeline, info)
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
-        attributes = {}
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
+        specs: dict[str, AttributeSpec] = {}
         for score_id, score_def in self.score.score_definitions.items():
-            attributes[score_id] = AttributeDesc(
+            specs[score_id] = AttributeSpec(
                 source=score_id,
-                type=score_def.value_type,
+                value_type="object",
                 description=score_def.description,
-                params={"gene_aggregator": self.DEFAULT_AGGREGATOR_TYPE},
+                supports_aggregation=True,
             )
 
         default_annotation = self.score.config.get("default_annotation")
         if default_annotation is not None:
-            for desc in attributes.values():
-                desc.default = False
+            for source in list(specs):
+                specs[source] = AttributeSpec(
+                    source=specs[source].source,
+                    value_type="object",
+                    description=specs[source].description,
+                    is_default=False,
+                    internal_default=specs[source].internal_default,
+                    supports_aggregation=True,
+                    attribute_type=specs[source].attribute_type,
+                )
             for attr in default_annotation:
                 default_attr = \
                     AnnotationConfigParser.parse_raw_attribute_config(attr)
-                if default_attr.source not in attributes:
+                if default_attr.source not in specs:
                     raise ValueError(
                         f"Default annotation attribute "
                         f"'{default_attr.source}' is not defined in the "
                         f"{self.gene_score_resource.get_id()} gene score "
                         "resource!")
-                if default_attr.name:
-                    attributes[default_attr.source].name = default_attr.name
-                if default_attr.description:
-                    attributes[default_attr.source].description = \
-                        default_attr.description
-                params: dict[str, Any] = {
-                    "gene_aggregator": self.DEFAULT_AGGREGATOR_TYPE,
-                }
-                gene_agg = default_attr.parameters.get("gene_aggregator")
-                if gene_agg is not None:
-                    validate_aggregator(gene_agg)
-                    params["gene_aggregator"] = gene_agg
-                attributes[default_attr.source].params = params
-                attributes[default_attr.source].default = True
+                desc_override = default_attr.parameters.get("description")
+                if desc_override:
+                    specs[default_attr.source].description = desc_override
+                specs[default_attr.source].is_default = True
                 if default_attr.internal is not None:
-                    attributes[default_attr.source].internal = \
+                    specs[default_attr.source].internal_default = \
                         default_attr.internal
 
-        return attributes
+        return specs
+
+    def _aggregator_value_type(self, attr: Attribute) -> str | None:  # noqa: ARG002
+        return None
+
+    def _apply_gene_aggregator(
+        self, attr: Attribute, value: Any,
+    ) -> Any:
+        if attr.aggregator is None or not isinstance(value, dict):
+            return value
+        return build_aggregator(attr.aggregator).aggregate(list(value.values()))
+
+    def annotate(
+        self,
+        annotatable: Annotatable | None,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        if annotatable is None:
+            return {attr.name: None for attr in self.attributes}
+        source_values = self._do_annotate(annotatable, context)
+        return {
+            attr.name: self._apply_gene_aggregator(
+                attr, source_values[attr.source])
+            for attr in self.attributes
+        }
+
+    def batch_annotate(
+        self,
+        annotatables: Sequence[Annotatable | None],
+        contexts: list[dict[str, Any]],
+        batch_work_dir: str | None = None,
+    ) -> list[dict[str, Any]]:
+        inner_output = self._do_batch_annotate(
+            annotatables, contexts, batch_work_dir=batch_work_dir)
+        return [{
+            attr.name: self._apply_gene_aggregator(
+                attr, result[attr.source])
+            for attr in self.attributes
+        } for result in inner_output]
 
     @property
     def used_context_attributes(self) -> tuple[str, ...]:
         return (self.input_gene_list,)
 
-    def annotate(
+    def _do_annotate(
         self,
-        annotatable: Annotatable | None,  # noqa: ARG002
+        annotatable: Annotatable,  # noqa: ARG002
         context: dict[str, Any],
     ) -> dict[str, Any]:
         genes = context.get(self.input_gene_list)
         if genes is None:
             return self._empty_result()
-
-        attributes = {}
-        for attr, aggregator_type in zip(
-            self.attributes, self.aggregators, strict=True,
-        ):
-            attributes[attr.name] = self.aggregate_gene_values(
-                attr.source, genes, aggregator_type,
-            )
-        return attributes
-
-    def aggregate_gene_values(
-            self, score_id: str,
-            gene_symbols: list[str],
-            aggregator_type: str) -> Any:
-        """Aggregate gene score values."""
-        aggregator = build_aggregator(aggregator_type)
-
-        for symbol in gene_symbols:
-            aggregator.add(
-                self.score.get_gene_value(score_id, symbol),
-                key=symbol,
-            )
-
-        return aggregator.get_final()
+        return {
+            attr.source: {
+                sym: score
+                for sym in genes
+                if (score := self.score.get_gene_value(attr.source, sym))
+                is not None
+            }
+            for attr in self.attributes
+        }

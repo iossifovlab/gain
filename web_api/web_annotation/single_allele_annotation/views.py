@@ -7,7 +7,7 @@ from django.db.models import QuerySet
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.http import last_modified
-from gain.annotation.annotation_config import AttributeInfo
+from gain.annotation.annotation_config import Attribute
 from gain.annotation.annotation_pipeline import Annotator
 from gain.annotation.gene_score_annotator import GeneScoreAnnotator
 from gain.annotation.record_to_annotatable import build_annotatable_from_dict
@@ -115,7 +115,7 @@ class SingleAnnotation(AnnotationBaseView):
     def generate_annotator_help(
         self,
         annotator: Annotator,
-        attribute_info: AttributeInfo,
+        attribute_info: Attribute,
     ) -> str | None:
         """Generate annotator help for gene scores and genomic scores"""
         if not isinstance(
@@ -255,7 +255,7 @@ class SingleAnnotation(AnnotationBaseView):
 
     def _build_attribute_description(
             self, result: dict[str, Any], annotator: Annotator,
-            attribute_info: AttributeInfo,
+            attribute_info: Attribute,
     ) -> dict[str, Any]:
         resource = self.grr.get_resource(
                     next(iter(annotator.resource_ids)))

@@ -38,7 +38,7 @@ from gain.annotation.annotate_utils import (
     stringify,
 )
 from gain.annotation.annotation_config import (
-    AttributeInfo,
+    Attribute,
     RawAnnotatorsConfig,
     RawPipelineConfig,
 )
@@ -224,7 +224,7 @@ class _VCFWriter(Filter):
         self,
         path: str,
         header: VariantHeader,
-        annotation_attributes: Sequence[AttributeInfo],
+        annotation_attributes: Sequence[Attribute],
         attributes_to_delete: Sequence[str],
     ):
         self.path = path
@@ -237,7 +237,7 @@ class _VCFWriter(Filter):
     @staticmethod
     def _update_header(
         header: VariantHeader,
-        annotation_attributes: Sequence[AttributeInfo],
+        annotation_attributes: Sequence[Attribute],
         attributes_to_delete: Sequence[str],
     ) -> VariantHeader:
         """Update a variant file's header with annotation."""
@@ -256,7 +256,8 @@ class _VCFWriter(Filter):
         ]
 
         for attribute in attributes:
-            description = attribute.description
+            description = attribute.spec.description \
+                if attribute.spec else ""
             description = description.replace("\n", " ")
             description = description.replace('"', '\\"')
             header.info.add(attribute.name, "A", "String", description)
@@ -281,7 +282,7 @@ class _VCFWriter(Filter):
     def _update_variant(
         vcf_var: VariantRecord,
         allele_annotations: list[dict],
-        attributes: Sequence[AttributeInfo],
+        attributes: Sequence[Attribute],
         attributes_to_delete: Sequence[str],
     ) -> None:
         buffers: list[list] = [[] for _ in attributes]
@@ -345,7 +346,7 @@ class _VCFBatchWriter(Filter):
         self,
         path: str,
         header: VariantHeader,
-        annotation_attributes: Sequence[AttributeInfo],
+        annotation_attributes: Sequence[Attribute],
         attributes_to_delete: Sequence[str],
     ):
         self.writer = _VCFWriter(

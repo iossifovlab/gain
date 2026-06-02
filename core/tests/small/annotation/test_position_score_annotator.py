@@ -123,8 +123,9 @@ def test_position_score_annotator_all_attributes(
     attribute = annotator.attributes[0]
 
     assert attribute.name == "test100"
-    assert attribute.value_type == "float"
-    assert attribute.description == "test values"
+    assert attribute.spec is not None
+    assert attribute.spec.value_type == "float"
+    assert attribute.spec.description == "test values"
 
 
 def test_position_score_annotator_empty_default_annotation(
@@ -138,8 +139,8 @@ def test_position_score_annotator_empty_default_annotation(
 
     annotator = pipeline.annotators[0]
     assert len(annotator.attributes) == 0
-    attr_descs = annotator.get_all_attribute_descriptions().values()
-    assert all(attr_desc.default is False for attr_desc in attr_descs)
+    attr_descs = annotator.get_attribute_specs().values()
+    assert all(attr_desc.is_default is False for attr_desc in attr_descs)
 
 
 #  hg19
@@ -217,14 +218,17 @@ def test_position_annotator_info(
     assert len(pipeline_info) == 1
     annotator_info = pipeline_info[0]
     assert len(annotator_info.attributes) == 1
-    attribute_info = annotator_info.attributes[0]
 
     assert annotator_info.type == "position_score"
     assert annotator_info.parameters["resource_id"] == "position_score1"
 
+    assert annotator_info.attributes[0].name == "test100"
+    assert annotator_info.attributes[0].source == "test100way"
+
+    attribute_info = pipeline.annotators[0].attributes[0]
     assert attribute_info.name == "test100"
-    assert attribute_info.value_type == "float"
-    assert attribute_info.source == "test100way"
+    assert attribute_info.spec is not None
+    assert attribute_info.spec.value_type == "float"
 
     attributes2 = pipeline.get_attributes()
     assert len(attributes2) == 1
@@ -269,13 +273,15 @@ def test_position_annotator_schema_one_source_two_dest_schema(
 
     assert attributes[0].name == "test100"
     assert attributes[0].source == "test100way"
-    assert attributes[0].value_type == "float"
-    assert attributes[0].description == "test values"
+    assert attributes[0].spec is not None
+    assert attributes[0].spec.value_type == "float"
+    assert attributes[0].spec.description == "test values"
 
     assert attributes[1].name == "test100max"
     assert attributes[1].source == "test100way"
-    assert attributes[1].value_type == "float"
-    assert attributes[1].description == "test values"
+    assert attributes[1].spec is not None
+    assert attributes[1].spec.value_type == "float"
+    assert attributes[1].spec.description == "test values"
 
 
 def test_position_annotator_join_aggregation(
@@ -335,7 +341,7 @@ def test_position_score_annotator_attributes_with_aggr_fails(
         position_score_repo: GenomicResourceRepo) -> None:
     with pytest.raises(
         AnnotationConfigurationError,
-        match="nucleotide_aggregator",
+        match="aggregator",
     ):
         load_pipeline_from_yaml("""
             - position_score:

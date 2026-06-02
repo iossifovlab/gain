@@ -1,15 +1,18 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 """Comprehensive tests for annotation_pipeline module."""
+import pathlib
 from typing import Any
 from unittest.mock import Mock
 
 import pytest
 from gain.annotation.annotatable import Annotatable, Position
-from gain.annotation.annotation_config import AnnotatorInfo, AttributeInfo
+from gain.annotation.annotation_config import (
+    AnnotatorInfo,
+    AttributeConfig,
+)
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
-    Annotator,
-    AttributeDesc,
+    AttributeSpec,
     InputAnnotableAnnotatorDecorator,
     ReannotationPipeline,
     ValueTransformAnnotatorDecorator,
@@ -18,6 +21,7 @@ from gain.annotation.annotation_pipeline import (
     _get_dependencies_for,
     _get_rerun_annotators,
 )
+from gain.annotation.annotator_base import AnnotatorBase
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing import build_inmemory_test_repository
 
@@ -28,12 +32,12 @@ def make_attr(
     name: str, source: str | None = None, *,
     internal: bool | None = None,
     **kwargs: Any,
-) -> AttributeInfo:
-    """Helper to create AttributeInfo with defaults."""
+) -> AttributeConfig:
+    """Helper to create AttributeConfig with defaults."""
     if source is None:
         source = name
-    return AttributeInfo(
-        name, source, internal=internal,
+    return AttributeConfig(
+        name=name, source=source, internal=internal,
         parameters=kwargs or {})
 
 
@@ -102,7 +106,9 @@ def test_build_dependency_graph_with_dependencies(
 
     assert graph[info1] == []
     assert len(graph[info2]) == 1
-    assert graph[info2][0] == (info1, attr1)
+    dep_info, dep_attr = graph[info2][0]
+    assert dep_info == info1
+    assert dep_attr.name == attr1.name
 
 
 # Tests for _get_dependencies_for
@@ -141,7 +147,9 @@ def test_get_dependencies_for_with_deps(
     deps = _get_dependencies_for(annotator2, basic_pipeline)
 
     assert len(deps) == 1
-    assert deps[0] == (annotator1.get_info(), attr1)
+    dep_info, dep_attr = deps[0]
+    assert dep_info == annotator1.get_info()
+    assert dep_attr.name == attr1.name
 
 
 # Tests for _get_rerun_annotators
@@ -333,7 +341,9 @@ def test_annotator_attributes_property() -> None:
     attrs = [make_attr("attr1")]
     annotator = DummyAnnotator(attributes=attrs)
 
-    assert annotator.attributes == attrs
+    assert len(annotator.attributes) == 1
+    assert annotator.attributes[0].name == "attr1"
+    assert annotator.attributes[0].source == "attr1"
 
 
 def test_annotator_empty_result() -> None:
@@ -413,8 +423,8 @@ def test_pipeline_get_attributes(
     attrs = basic_pipeline.get_attributes()
 
     assert len(attrs) == 2
-    assert attr1 in attrs
-    assert attr2 in attrs
+    assert any(a.name == "attr1" for a in attrs)
+    assert any(a.name == "attr2" for a in attrs)
 
 
 def test_pipeline_get_attribute_info_found(
@@ -427,7 +437,9 @@ def test_pipeline_get_attribute_info_found(
 
     found_attr = basic_pipeline.get_attribute_info("test_attr")
 
-    assert found_attr == attr
+    assert found_attr is not None
+    assert found_attr.name == attr.name
+    assert found_attr.source == attr.source
 
 
 def test_pipeline_get_attribute_info_not_found(
@@ -675,48 +687,48 @@ def test_value_transform_decorator_invalid_transform() -> None:
         ValueTransformAnnotatorDecorator.decorate(annotator)
 
 
-def test_value_transform_decorator_annotate() -> None:
+def test_value_transform_decorator_annotate(tmp_path: pathlib.Path) -> None:
     """Test decorator applies transformation."""
 
-    class TestAnnotator(Annotator):
+    class TestAnnotator(AnnotatorBase):
         """Annotator for testing value transformation."""
 
-        def __init__(self) -> None:
+        def __init__(self, work_dir: pathlib.Path) -> None:
             info = AnnotatorInfo(
                 "test",
                 attributes=[
                     make_attr("doubled", value_transform="value * 2"),
                     make_attr("normal"),
                 ],
-                parameters={},
+                parameters={"work_dir": str(work_dir)},
             )
             super().__init__(None, info)
 
-        def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
+        def get_attribute_specs(self) -> dict[str, AttributeSpec]:
             return {
-                "doubled": AttributeDesc(
+                "doubled": AttributeSpec(
                     source="doubled",
-                    type="int",
+                    value_type="int",
                     description="Doubled value",
                 ),
-                "normal": AttributeDesc(
+                "normal": AttributeSpec(
                     source="normal",
-                    type="int",
+                    value_type="int",
                     description="Normal value",
                 ),
             }
 
-        def annotate(
+        def _do_annotate(
             self,
             annotatable: Annotatable | None,
             context: dict[str, Any],
         ) -> dict[str, Any]:
             return {"doubled": 5, "normal": 10}
 
-    annotator = TestAnnotator()
+    annotator = TestAnnotator(tmp_path)
     decorator = ValueTransformAnnotatorDecorator.decorate(annotator)
 
-    result = decorator.annotate(None, {})
+    result = decorator.annotate(Position("chr1", 1), {})
 
     assert result["doubled"] == 10  # 5 * 2
     assert result["normal"] == 10  # unchanged

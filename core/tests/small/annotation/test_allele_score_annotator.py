@@ -88,16 +88,18 @@ def test_allele_score_annotator_attributes(
     assert isinstance(annotator, AlleleScoreAnnotator)
     assert not annotator.is_open()
 
-    attributes = annotator.get_info().attributes
+    attributes = annotator.attributes
     assert len(attributes) == 2
     assert attributes[0].name == "variant_id"
     assert attributes[0].source == "ID"
-    assert attributes[0].value_type == "str"
-    assert attributes[0].description == "variant ID"
+    assert attributes[0].spec is not None
+    assert attributes[0].spec.value_type == "str"
+    assert attributes[0].spec.description == "variant ID"
     assert attributes[1].name == "allele_freq"
     assert attributes[1].source == "freq"
-    assert attributes[1].value_type == "float"
-    assert attributes[1].description == ""
+    assert attributes[1].spec is not None
+    assert attributes[1].spec.value_type == "float"
+    assert attributes[1].spec.description == ""
 
 
 @pytest.mark.parametrize("variant, expected", [
@@ -375,9 +377,9 @@ def test_allele_attribute_listed_with_default_false(
 ) -> None:
     annotator = annotation_pipeline.annotators[0]
     assert isinstance(annotator, AlleleScoreAnnotator)
-    attr_descs = annotator.get_all_attribute_descriptions()
+    attr_descs = annotator.get_attribute_specs()
     assert "allele" in attr_descs
-    assert attr_descs["allele"].default is False
+    assert attr_descs["allele"].is_default is False
     assert attr_descs["allele"].source == "allele"
 
 

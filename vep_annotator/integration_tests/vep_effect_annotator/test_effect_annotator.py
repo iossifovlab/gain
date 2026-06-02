@@ -42,7 +42,7 @@ def test_normal_run(tmp_path: Path) -> None:
     assert content == expected
 
 
-def test_effect_annotator_genome_from_models(tmp_path: Path):
+def test_effect_annotator_genome_from_models(tmp_path: Path) -> None:
     test_dir = Path(__file__).parent.resolve()
 
     grr = build_genomic_resource_repository()
@@ -65,7 +65,7 @@ def test_effect_annotator_genome_from_models(tmp_path: Path):
 
 def test_effect_annotator_genome_from_models_overrides_args(
     tmp_path: Path,
-):
+) -> None:
     test_dir = Path(__file__).parent.resolve()
 
     grr = build_genomic_resource_repository()
@@ -89,7 +89,7 @@ def test_effect_annotator_genome_from_models_overrides_args(
 
 def test_effect_annotator_genome_parameter_overrides_gene_models_label(
     tmp_path: Path,
-):
+) -> None:
     test_dir = Path(__file__).parent.resolve()
 
     grr = build_genomic_resource_repository()

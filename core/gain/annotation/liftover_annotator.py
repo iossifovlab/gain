@@ -24,10 +24,8 @@ from gain.genomic_resources.variant_utils import (
 from gain.utils.variant_utils import reverse_complement
 
 from .annotatable import Annotatable, CNVAllele, Position, Region, VCFAllele
-from .annotator_base import (
-    AnnotatorBase,
-    AttributeDesc,
-)
+from .annotation_pipeline import AttributeSpec
+from .annotator_base import AnnotatorBase
 
 logger = logging.getLogger(__name__)
 
@@ -113,14 +111,14 @@ Annotator to lift over a variant from one reference genome to another.
         self.chain.open()
         return super().open()
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         return {
-            "liftover_annotatable": AttributeDesc(
+            "liftover_annotatable": AttributeSpec(
                 source="liftover_annotatable",
-                type="annotatable",
+                value_type="annotatable",
                 description="The lifted over annotatable",
-                internal=True,
-                default=True,
+                internal_default=True,
+                is_default=True,
                 attribute_type="annotatable",
             ),
         }

@@ -3,9 +3,13 @@ from copy import deepcopy
 from typing import Any
 
 from gain.annotation.annotatable import Annotatable
-from gain.annotation.annotation_config import AnnotatorInfo, AttributeInfo
-from gain.annotation.annotation_pipeline import AnnotationPipeline, Annotator
-from gain.annotation.annotator_base import AnnotatorBase, AttributeDesc
+from gain.annotation.annotation_config import AnnotatorInfo
+from gain.annotation.annotation_pipeline import (
+    AnnotationPipeline,
+    Annotator,
+    AttributeSpec,
+)
+from gain.annotation.annotator_base import AnnotatorBase
 from gain.genomic_resources.utils import build_chrom_mapping
 
 
@@ -33,14 +37,6 @@ class ChromMappingAnnotator(AnnotatorBase):
             raise ValueError(
                 "ChromosomeAnnotator requires a valid chrom_mapping config")
 
-        if not info.attributes:
-            info.attributes = [
-                AttributeInfo(
-                    "renamed_chromosome",
-                    "renamed_chromosome",
-                    internal=True,
-                    parameters={})]
-
         info.documentation += textwrap.dedent(f"""
 
 Annotator that maps chromsomes from one naming convention to another.
@@ -51,12 +47,13 @@ Annotator that maps chromsomes from one naming convention to another.
 
         super().__init__(pipeline, info)
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         return {
-            "renamed_chromosome": AttributeDesc(
+            "renamed_chromosome": AttributeSpec(
                 source="renamed_chromosome",
-                type="annotatable",
+                value_type="annotatable",
                 description="Allele with renamed chromosome.",
+                internal_default=True,
                 attribute_type="annotatable",
             ),
         }
@@ -71,7 +68,7 @@ Annotator that maps chromsomes from one naming convention to another.
 
         new_chrom = self.chrom_mapping(new_annotatable.chrom)
         if new_chrom is None:
-            return {}
+            return {"renamed_chromosome": None}
         new_annotatable._chrom = new_chrom  # noqa: SLF001
         return {"renamed_chromosome": new_annotatable}
 

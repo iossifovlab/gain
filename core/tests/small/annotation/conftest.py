@@ -3,12 +3,17 @@
 import os
 import pathlib
 import textwrap
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
 from gain.annotation.annotatable import Annotatable
-from gain.annotation.annotation_config import AnnotatorInfo, AttributeInfo
-from gain.annotation.annotation_pipeline import Annotator, AttributeDesc
+from gain.annotation.annotation_config import (
+    AnnotatorInfo,
+    Attribute,
+    AttributeConfig,
+)
+from gain.annotation.annotation_pipeline import Annotator, AttributeSpec
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
@@ -25,21 +30,41 @@ class DummyAnnotator(Annotator):
 
     def __init__(
         self,
-        attributes: list[AttributeInfo] | None = None,
+        attributes: Sequence[AttributeConfig | Attribute] | None = None,
         dependencies: tuple[str, ...] = (),
     ) -> None:
         self.dependencies = dependencies
-
+        attr_inputs = attributes or []
+        attr_configs: list[AttributeConfig] = [
+            AttributeConfig(
+                name=a.name, source=a.source,
+                internal=a.internal, parameters=a.parameters,
+            )
+            for a in attr_inputs
+        ]
         info = AnnotatorInfo(
             "dummy_annotator",
             annotator_id="dummy",
-            attributes=attributes or [],
+            attributes=attr_configs,
             parameters={},
         )
         super().__init__(None, info)
+        self._dummy_attributes: list[Attribute] = [
+            Attribute(
+                name=a.name,
+                source=a.source,
+                internal=a.internal,
+                parameters=a.parameters,
+            )
+            for a in attr_inputs
+        ]
         self.index = 0
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
+    @property
+    def attributes(self) -> list[Attribute]:
+        return self._dummy_attributes
+
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         return {}
 
     @property

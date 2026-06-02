@@ -4,19 +4,25 @@ from __future__ import annotations
 import abc
 import os
 from collections.abc import Sequence
-from itertools import starmap
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
     AnnotatorInfo,
-    AttributeInfo,
+    Attribute,
+    AttributeConfig,
+    ParamsUsageMonitor,
 )
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
-    AttributeDesc,
+    AttributeSpec,
+)
+from gain.genomic_resources.aggregators import (
+    Aggregator,
+    build_aggregator,
+    validate_aggregator,
 )
 
 
@@ -27,60 +33,101 @@ class AnnotatorBase(Annotator):
         self, pipeline: AnnotationPipeline | None,
         info: AnnotatorInfo,
     ):
-        self.attribute_descriptions = {}
-        attribute_descriptions = self.get_all_attribute_descriptions()
-        for name, attr_desc in attribute_descriptions.items():
-
-            if isinstance(attr_desc, tuple):
-                self.attribute_descriptions[name] = AttributeDesc(
-                    source=name,
-                    type=attr_desc[0],
-                    description=attr_desc[1],
-                )
-            elif isinstance(attr_desc, AttributeDesc):
-                self.attribute_descriptions[name] = attr_desc
+        self.attribute_specs: dict[str, AttributeSpec] = {}
+        for source, spec in self.get_attribute_specs().items():
+            if isinstance(spec, AttributeSpec):
+                self.attribute_specs[source] = spec
             else:
                 raise TypeError(
-                    f"Invalid attribute description for source '{name}'"
+                    f"Invalid attribute spec for source '{source}'"
                     f" in annotator {info.type}")
-        if not info.attributes:
-            for attr_desc in self.attribute_descriptions.values():
-                if attr_desc.default:
-                    attr = AttributeInfo(
-                        name=cast(str, attr_desc.name),
-                        source=attr_desc.source,
-                        internal=attr_desc.internal,
-                        parameters={},
-                        _type=attr_desc.type,
-                        description=attr_desc.description,
-                        attribute_type=attr_desc.attribute_type,
-                        default=attr_desc.default,
-                    )
-                    info.attributes.append(attr)
 
-        for attribute_config in info.attributes:
-            if attribute_config.source not in self.attribute_descriptions:
+        if not info.attributes:
+            for source, spec in self.attribute_specs.items():
+                if spec.is_default:
+                    defaults = self.get_attribute_defaults(spec)
+                    info.attributes.append(AttributeConfig(
+                        name=source,
+                        source=source,
+                        internal=None,
+                        aggregator=defaults.get("aggregator"),
+                        parameters={
+                            k: v for k, v in defaults.items()
+                            if k != "aggregator"
+                        },
+                    ))
+
+        self._attributes: list[Attribute] = []
+        for attr_config in info.attributes:
+            if attr_config.source not in self.attribute_specs:
                 raise ValueError(
-                    f"The attribute source '{attribute_config.source}'"
+                    f"The attribute source '{attr_config.source}'"
                     " is not supported for the annotator"
                     f" {info.type}")
-            attr_desc = self.attribute_descriptions[attribute_config.source]
-            attribute_config.value_type = attr_desc.type
-            attribute_config.attribute_type = attr_desc.attribute_type
-            attribute_config.description = attr_desc.description
-            if attribute_config.internal is None:
-                attribute_config.internal = attr_desc.internal
+            spec = self.attribute_specs[attr_config.source]
+            internal = (
+                attr_config.internal
+                if attr_config.internal is not None
+                else spec.internal_default
+            )
+            defaults = self.get_attribute_defaults(spec)
+            default_aggregator = defaults.get("aggregator")
+            parameters = ParamsUsageMonitor({
+                **{k: v for k, v in defaults.items() if k != "aggregator"},
+                **attr_config.parameters,
+            })
+            aggregator = (
+                attr_config.aggregator
+                if attr_config.aggregator is not None
+                else default_aggregator
+            )
+            self._attributes.append(Attribute(
+                name=attr_config.name,
+                source=attr_config.source,
+                internal=internal,
+                aggregator=aggregator,
+                spec=spec,
+                parameters=parameters,
+            ))
 
-        if info.parameters.get("work_dir") is None:
+        self._aggregator_instances: list[Aggregator | None] = []
+        for attr in self._attributes:
+            if attr.aggregator is not None:
+                if attr.spec is not None and not attr.spec.supports_aggregation:
+                    raise ValueError(
+                        f"Attribute '{attr.source}' in annotator"
+                        f" {info.type} does not support aggregation.")
+                validate_aggregator(
+                    attr.aggregator,
+                    self._aggregator_value_type(attr),
+                )
+                self._aggregator_instances.append(
+                    build_aggregator(attr.aggregator))
+            else:
+                self._aggregator_instances.append(None)
+
+        work_dir = info.parameters.get("work_dir")
+        if work_dir is None:
             raise ValueError(
                 f"Missing a 'work_dir' parameter in annotator {info}.")
-        self.work_dir = Path(info.parameters["work_dir"])
+        self.work_dir: Path = Path(work_dir)
         super().__init__(pipeline, info)
+
+    @property
+    def attributes(self) -> list[Attribute]:
+        return self._attributes
+
+    def _aggregator_value_type(self, attr: Attribute) -> str | None:
+        return attr.spec.value_type if attr.spec else None
+
+    def get_attribute_defaults(
+        self, spec: AttributeSpec,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        return {}
 
     def open(self) -> Annotator:
         super().open()
-        if self.work_dir is not None:
-            os.makedirs(self.work_dir, exist_ok=True)
+        os.makedirs(self.work_dir, exist_ok=True)
         return self
 
     @abc.abstractmethod
@@ -89,19 +136,31 @@ class AnnotatorBase(Annotator):
         """Annotate the annotatable.
 
         Internal abstract method used for annotation. It should produce
-        all source attributes defined for annotator.
+        a source-keyed dict, one entry per configured attribute.
         """
+
+    def _apply_aggregators(
+        self, values: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = {}
+        for attr, aggregator in zip(
+            self._attributes, self._aggregator_instances, strict=True,
+        ):
+            value = values.get(attr.source)
+            if aggregator is not None and isinstance(value, list):
+                result[attr.name] = aggregator.aggregate(value)
+            else:
+                result[attr.name] = value
+        return result
 
     def annotate(
         self, annotatable: Annotatable | None, context: dict[str, Any],
     ) -> dict[str, Any]:
         if annotatable is None:
-            return self._empty_result()
-        source_values = self._do_annotate(annotatable, context)
-        return {
-            attribute_config.name: source_values[attribute_config.source]
-            for attribute_config in self._info.attributes
-        }
+            values = self._empty_result()
+        else:
+            values = self._do_annotate(annotatable, context)
+        return self._apply_aggregators(values)
 
     def _do_batch_annotate(
         self,
@@ -109,14 +168,12 @@ class AnnotatorBase(Annotator):
         contexts: list[dict[str, Any]],
         batch_work_dir: str | None = None,  # noqa: ARG002
     ) -> list[dict[str, Any]]:
-        """
-        Annotate a batch of annotatables.
-
-        Internal abstract method used for batch annotation.
-        """
-        return list(starmap(
-            self._do_annotate, zip(annotatables, contexts, strict=True),
-        ))
+        """Annotate a batch of annotatables."""
+        return [
+            self._empty_result() if annotatable is None
+            else self._do_annotate(annotatable, context)
+            for annotatable, context in zip(annotatables, contexts, strict=True)
+        ]
 
     def batch_annotate(
         self,
@@ -127,7 +184,4 @@ class AnnotatorBase(Annotator):
         inner_output = self._do_batch_annotate(
             annotatables, contexts, batch_work_dir=batch_work_dir,
         )
-        return [{
-            attr.name: result[attr.source]
-            for attr in self._info.attributes
-        } for result in inner_output]
+        return [self._apply_aggregators(result) for result in inner_output]

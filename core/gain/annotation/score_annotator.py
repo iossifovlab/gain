@@ -17,23 +17,19 @@ from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotationConfigurationError,
     AnnotatorInfo,
-    AttributeInfo,
+    Attribute,
+    AttributeConfig,
 )
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
+    AttributeSpec,
 )
-from gain.annotation.annotator_base import AttributeDesc
-from gain.genomic_resources.aggregators import (
-    build_aggregator,
-    validate_aggregator,
-)
+from gain.annotation.annotator_base import AnnotatorBase
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
-    AlleleScoreQuery,
     GenomicScore,
     PositionScore,
-    PositionScoreQuery,
     ScoreDef,
     ScoreLine,
 )
@@ -59,53 +55,59 @@ def get_genomic_resource(
     return resource
 
 
-class GenomicScoreAnnotatorBase(Annotator):
+class GenomicScoreAnnotatorBase(AnnotatorBase):
     """Genomic score base annotator."""
 
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo,
                  score: GenomicScore):
         self.score = score
+        self._resource_attr_params: dict[str, dict[str, Any]] = {}
+        info.resources.append(score.resource)
+
+        default_annotation = self.score.get_config().get("default_annotation")
+        if default_annotation is not None:
+            score_defs = self.score.score_definitions
+            parsed_defaults = [
+                AnnotationConfigParser.parse_raw_attribute_config(attr)
+                for attr in default_annotation
+            ]
+            for parsed in parsed_defaults:
+                if parsed.source not in score_defs:
+                    raise ValueError(
+                        f"Default annotation attribute '{parsed.source}' is "
+                        "not defined in the score resource!")
+                params = {
+                    k: v for k, v in parsed.parameters.items()
+                    if k != "description"
+                }
+                if parsed.aggregator is not None:
+                    params["aggregator"] = parsed.aggregator
+                if params:
+                    self._resource_attr_params[parsed.source] = params
+            if not info.attributes:
+                defaults_by_source = {p.source: p for p in parsed_defaults}
+                for source in score_defs:
+                    if source not in defaults_by_source:
+                        continue
+                    parsed = defaults_by_source[source]
+                    info.attributes.append(AttributeConfig(
+                        name=parsed.name or parsed.source,
+                        source=parsed.source,
+                        internal=parsed.internal,
+                        aggregator=parsed.aggregator,
+                    ))
+
         super().__init__(pipeline, info)
         self._region_length_cutoff = info.parameters.get(
             "region_length_cutoff", 500_000)
 
-        info.resources.append(score.resource)
-
-        if info.attributes:
-            for attribute_info in info.attributes:
-                if attribute_info.source not in self.score.score_definitions:
-                    continue
-                score_def = score.get_score_definition(attribute_info.source)
-                if score_def is None:
-                    message = (
-                        f"The score '{attribute_info.source}' is "
-                        f"unknown in '{score.resource.get_id()}' "
-                        "resource!")
-                    raise ValueError(message)
-                attribute_info.value_type = score_def.value_type
-                attribute_info.description = score_def.desc
-        else:
-            info.attributes = []
-            for attr_desc in self.get_all_attribute_descriptions().values():
-                if attr_desc.default:
-                    attr = AttributeInfo(
-                        name=cast(str, attr_desc.name),
-                        source=attr_desc.source,
-                        internal=attr_desc.internal,
-                        parameters={},
-                        _type=attr_desc.type,
-                        description=attr_desc.description,
-                        attribute_type=attr_desc.attribute_type,
-                        default=attr_desc.default,
-                    )
-                    info.attributes.append(attr)
-
         self.simple_score_queries: list[str] = [
-            attr.source for attr in info.attributes
+            attr.source for attr in self._attributes
             if attr.source in self.score.score_definitions]
 
     def open(self) -> Annotator:
         self.score.open()
+        super().open()
         return self
 
     def is_open(self) -> bool:
@@ -118,48 +120,27 @@ class GenomicScoreAnnotatorBase(Annotator):
         self.score.close()
         super().close()
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
-        attribute_defs = self.score.score_definitions
-        result = {}
-        for attr_source, attr_def in attribute_defs.items():
-            result[attr_source] = AttributeDesc(
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
+        has_default_annotation = \
+            self.score.get_config().get("default_annotation") is not None
+        return {
+            attr_source: AttributeSpec(
                 source=attr_def.score_id,
-                name=attr_def.score_id,
-                type=attr_def.value_type,
+                value_type=attr_def.value_type,
                 description=attr_def.desc,
-                default=True,
-                internal=False,
+                is_default=not has_default_annotation,
+                internal_default=False,
             )
+            for attr_source, attr_def in self.score.score_definitions.items()
+        }
 
-        default_annotation = self.score.get_config().get("default_annotation")
-        if default_annotation is not None:
-            for desc in result.values():
-                desc.default = False
-            for attr in default_annotation:
-                default_attr = \
-                    AnnotationConfigParser.parse_raw_attribute_config(attr)
-                if default_attr.source not in result:
-                    raise ValueError(
-                        f"Default annotation attribute '{attr}' is not "
-                        "defined in the score resource!")
-
-                result[default_attr.source].source = default_attr.source
-                if default_attr.name:
-                    result[default_attr.source].name = default_attr.name
-                if default_attr.description:
-                    result[default_attr.source].description = \
-                        default_attr.description
-                if len(default_attr.parameters) > 0:
-                    result[default_attr.source].params = cast(
-                        dict, default_attr.parameters)
-                result[default_attr.source].default = True
-                if default_attr.internal is not None:
-                    result[default_attr.source].internal = \
-                        default_attr.internal
-        return result
+    def get_attribute_defaults(
+        self, spec: AttributeSpec,
+    ) -> dict[str, Any]:
+        return dict(self._resource_attr_params.get(spec.source, {}))
 
     def _build_score_aggregator_documentation(
-        self, attribute_info: AttributeInfo,
+        self, attr: Attribute,
         aggregator: str,
         attribute_conf_agg: str | None,
     ) -> str:
@@ -184,7 +165,7 @@ class GenomicScoreAnnotatorBase(Annotator):
                 lambda sc: sc.allele_aggregator,
             }
         if attribute_conf_agg is None:
-            score_def = self.score.get_score_definition(attribute_info.source)
+            score_def = self.score.get_score_definition(attr.source)
             assert score_def is not None
             value = aggregators_score_def_att[aggregator](
                 cast(ScoreDef, score_def))
@@ -198,28 +179,27 @@ class GenomicScoreAnnotatorBase(Annotator):
         return f"**{aggregator}**: {value_str}"
 
     def add_score_aggregator_documentation(
-            self, attribute_info: AttributeInfo,
+            self, attr: Attribute,
             aggregator: str,
             attribute_conf_agg: str | None) -> None:
         """Collect score aggregator documentation."""
-        # pylint: disable=protected-access
         aggregator_doc = self._build_score_aggregator_documentation(
-            attribute_info, aggregator, attribute_conf_agg)
+            attr, aggregator, attribute_conf_agg)
 
-        attribute_info._documentation = (  # noqa: SLF001
-            f"{attribute_info.documentation}"
+        attr._documentation = (  # noqa: SLF001
+            f"{attr.documentation}"
             f"\n\n{aggregator_doc}")
 
     @abc.abstractmethod
     def build_score_aggregator_documentation(
-        self, attr_info: AttributeInfo,
+        self, attr: Attribute,
     ) -> list[str]:
         """Construct score aggregator documentation."""
 
-    def build_attribute_help(self, attr_info: AttributeInfo) -> str:
+    def build_attribute_help(self, attr: Attribute) -> str:
         """Build attribute help."""
-        hist_url = self.score.get_histogram_image_url(attr_info.source)
-        score_def = self.score.get_score_definition(attr_info.source)
+        hist_url = self.score.get_histogram_image_url(attr.source)
+        score_def = self.score.get_score_definition(attr.source)
         assert score_def is not None
 
         histogram = get_template("score_histogram.jinja").render(
@@ -227,18 +207,19 @@ class GenomicScoreAnnotatorBase(Annotator):
             score_def=score_def,
         )
 
+        assert attr.spec is not None
         data = {
-            "name": attr_info.name,
-            "description": attr_info.description,
+            "name": attr.name,
+            "description": attr.spec.description,
             "resource_id": self.score.resource_id,
             "resource_summary": self.score.resource.get_summary(),
             "resource_url":
             f"{self.score.resource.get_public_url()}/index.html",
             "resource_type": self.score.resource.get_type(),
             "histogram": histogram,
-            "source": attr_info.source,
+            "source": attr.source,
             "aggregators": self.build_score_aggregator_documentation(
-                attr_info,
+                attr,
             ),
             "annotator_type": self.get_info().type,
             "annotator_doc": self.get_info().documentation,
@@ -260,9 +241,10 @@ class PositionScoreAnnotator(GenomicScoreAnnotatorBase):
     The position_score resource provides a set of scores (see …) that the
     position_score_annotator uses as attributes to assign to the annotatable.
 
-    The position_score_annotator recognized one attribute level parameter
-    called position_aggregator that controls how the position scores are
+    The position_score_annotator recognizes one attribute level parameter
+    called aggregator that controls how the position scores are
     aggregated for annotatables that refer to a region of the reference genome.
+    The deprecated name position_aggregator is still accepted.
     """
 
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
@@ -271,7 +253,6 @@ class PositionScoreAnnotator(GenomicScoreAnnotatorBase):
         self.position_score = PositionScore(resource)
         super().__init__(pipeline, info, self.position_score)
 
-        self.position_score_queries = []
         info.documentation += textwrap.dedent(f"""
 
 Annotator to use with genomic scores depending on genomic position like
@@ -281,65 +262,73 @@ phastCons, phyloP, FitCons2, etc.
 
 """)  # noqa
 
-        for att_info in info.attributes:
-            pos_aggregator = att_info.parameters.get("position_aggregator")
-            if pos_aggregator:
-                validate_aggregator(pos_aggregator)
-            self.position_score_queries.append(
-                PositionScoreQuery(att_info.source, pos_aggregator))
-
+        for attr, attr_config in zip(
+            self._attributes, self.get_info().attributes, strict=True,
+        ):
             self.add_score_aggregator_documentation(
-                att_info, "position_aggregator", pos_aggregator)
+                attr, "position_aggregator", attr_config.aggregator)
+
+    def get_attribute_defaults(
+        self, spec: AttributeSpec,
+    ) -> dict[str, Any]:
+        defaults = super().get_attribute_defaults(spec)
+        if "aggregator" not in defaults:
+            score_def = self.position_score.get_score_definition(spec.source)
+            if score_def is not None and score_def.pos_aggregator is not None:
+                defaults["aggregator"] = score_def.pos_aggregator
+        return defaults
 
     def build_score_aggregator_documentation(
-        self, attr_info: AttributeInfo,
+        self, attr: Attribute,
     ) -> list[str]:
         """Collect score aggregator documentation."""
-        # pylint: disable=protected-access
-        pos_aggregator = attr_info.parameters.get("position_aggregator")
-
         doc = self._build_score_aggregator_documentation(
-            attr_info, "position_aggregator", pos_aggregator)
+            attr, "position_aggregator", attr.aggregator)
         return [doc]
 
-    def _fetch_substitution_scores(self, allele: VCFAllele) \
-            -> list[Any] | None:
-        return self.position_score.fetch_scores(
-            allele.chromosome, allele.position, self.simple_score_queries)
-
-    def _fetch_aggregated_scores(
-            self, chrom: str, pos_begin: int, pos_end: int) -> list[Any]:
-        scores_agg = self.position_score.fetch_scores_agg(
-            chrom, pos_begin, pos_end, self.position_score_queries,
+    def _fetch_raw_region_scores(
+        self, chrom: str, pos_begin: int, pos_end: int,
+        sources: list[str],
+    ) -> dict[str, list[Any]]:
+        raw: dict[str, list[Any]] = {source: [] for source in sources}
+        fetch = self.position_score.fetch_region_values(
+            chrom, pos_begin, pos_end, sources,
         )
-        return [sagg.get_final() for sagg in scores_agg]
+        for row_left, row_right, values in fetch:
+            if values is None:
+                continue
+            n = max(pos_begin, row_left), min(pos_end, row_right)
+            n_positions = n[1] - n[0] + 1
+            for i, source in enumerate(sources):
+                raw[source].extend([values[i]] * n_positions)
+        return raw
 
-    def annotate(
-        self, annotatable: Annotatable | None,
+    def _do_annotate(
+        self, annotatable: Annotatable,
         context: dict[str, Any],  # noqa: ARG002
     ) -> dict[str, Any]:
-
-        if annotatable is None:
-            return self._empty_result()
 
         if annotatable.chromosome not in self.score.get_all_chromosomes():
             return self._empty_result()
 
+        sources = list(dict.fromkeys(
+            attr.source for attr in self._attributes))
+
         if annotatable.type == Annotatable.Type.SUBSTITUTION:
             assert isinstance(annotatable, VCFAllele)
-            scores = self._fetch_substitution_scores(annotatable)
-        else:
-            if len(annotatable) > self._region_length_cutoff:
-                scores = None
-            else:
-                scores = self._fetch_aggregated_scores(
-                    annotatable.chrom, annotatable.pos, annotatable.pos_end)
-        if not scores:
-            return self._empty_result()
+            point_scores = self.position_score.fetch_scores(
+                annotatable.chromosome, annotatable.position, sources)
+            if not point_scores:
+                return self._empty_result()
+            return dict(zip(sources, point_scores, strict=True))
 
-        return dict(zip(
-                [att.name for att in self.attributes],
-                scores, strict=True))
+        if len(annotatable) > self._region_length_cutoff:
+            return self._empty_result()
+        raw = self._fetch_raw_region_scores(
+            annotatable.chrom, annotatable.pos, annotatable.pos_end, sources)
+        if not any(raw.values()):
+            return self._empty_result()
+        return raw
 
 
 def build_np_score_annotator(pipeline: AnnotationPipeline,
@@ -360,19 +349,20 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
 
     Operates in one of two modes, selected by the ``mode`` parameter:
 
-    - ``region`` (**default**): iterates all allele lines that overlap the
-      annotatable's span and aggregates their scores.  Works with any
-      ``Annotatable`` (``VCFAllele``, ``Region``, CNV, …).  An aggregator
-      must be defined for every score attribute, either in the attribute config
-      or as the score's ``allele_aggregator`` default in the resource YAML.
+    - ``allele`` (**default**): performs an exact chrom/pos/ref/alt lookup and
+      returns the single matching line's scores.  The annotatable must be a
+      ``VCFAllele``; other types receive an empty result.
 
-    - ``allele``: performs an exact chrom/pos/ref/alt lookup and returns the
-      single matching line's scores.  The annotatable must be a ``VCFAllele``;
-      other types receive an empty result.
+    - ``region``: iterates all allele lines that overlap the annotatable's span
+      and aggregates their scores.  Works with any ``Annotatable``
+      (``VCFAllele``, ``Region``, CNV, …).  An aggregator must be defined for
+      every score attribute, either in the attribute config or as the score's
+      ``allele_aggregator`` default in the resource YAML.
 
     Virtual ``allele`` attribute
     ----------------------------
-    All annotators expose a virtual attribute ``"allele"`` (``default=False``)
+    All annotators expose a virtual attribute ``"allele"``
+    (``is_default=False``)
     that is synthesised rather than read from the data file.
 
     - In ``allele`` mode: returns ``["chrom:pos:ref:alt"]`` for the matched
@@ -450,7 +440,6 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
         self.mode = mode
 
         super().__init__(pipeline, info, self.allele_score)
-        self.allele_score_queries = []
         info.documentation += textwrap.dedent(f"""
 
 Annotator to use with scores that depend on allele like
@@ -470,48 +459,19 @@ Non-``VCFAllele`` annotatables always use region aggregation.
 
         self.allele_attribute = None
         self.attrs_to_include = []
+        self.allele_score_sources: list[str] = []
 
-        for att_info in info.attributes:
-            if att_info.source == "allele":
-                self.attrs_to_include = att_info.parameters.get(
+        for attr in self._attributes:
+            if attr.source == "allele":
+                self.attrs_to_include = attr.parameters.get(
                     "include_attributes", [])
                 if isinstance(self.attrs_to_include, str):
                     self.attrs_to_include = [self.attrs_to_include]
-                self.allele_attribute = att_info
+                self.allele_attribute = attr
                 continue
-            pos_agg = att_info.parameters.get("position_aggregator")
-            if pos_agg is not None:
-                logger.warning(
-                    "attribute `position_aggregator` is no longer used "
-                    "in allele_score_annotator and will be ignored")
-            nuc_agg = att_info.parameters.get("nucleotide_aggregator")
-            allele_agg = att_info.parameters.get("allele_aggregator")
-            agg = att_info.parameters.get("aggregator")
-            if nuc_agg is not None:
-                if allele_agg is not None or agg is not None:
-                    raise AnnotationConfigurationError(
-                        "Cannot specify both `nucleotide_aggregator` and "
-                        "`aggregator` for the same attribute")
-                logger.warning(
-                    "attribute `nucleotide_aggregator` is deprecated, "
-                    "use `aggregator` instead")
-                agg = nuc_agg
-            elif allele_agg is not None:
-                if agg is not None:
-                    raise AnnotationConfigurationError(
-                        "Cannot specify both `allele_aggregator` and "
-                        "`aggregator` for the same attribute")
-                logger.warning(
-                    "attribute `allele_aggregator` is deprecated, "
-                    "use `aggregator` instead")
-                agg = allele_agg
-
-            if agg:
-                validate_aggregator(agg)
-            self.allele_score_queries.append(
-                AlleleScoreQuery(att_info.source, allele_aggregator=agg))
+            self.allele_score_sources.append(attr.source)
             self.add_score_aggregator_documentation(
-                att_info, "allele_aggregator", agg)
+                attr, "allele_aggregator", attr.aggregator)
 
     @classmethod
     def _build_allele_filter_func(
@@ -597,32 +557,35 @@ Non-``VCFAllele`` annotatables always use region aggregation.
 
         raise ValueError(f"Unsupported operator {operator.data}")
 
-    def get_all_attribute_descriptions(self) -> dict[str, AttributeDesc]:
-        """Return score attribute descriptions plus the virtual ``allele``."""
-        result = super().get_all_attribute_descriptions()
-        result["allele"] = AttributeDesc(
+    def get_attribute_defaults(
+        self, spec: AttributeSpec,
+    ) -> dict[str, Any]:
+        defaults = super().get_attribute_defaults(spec)
+        if "aggregator" not in defaults:
+            score_def = self.allele_score.get_score_definition(spec.source)
+            if score_def is not None \
+                    and score_def.allele_aggregator is not None:
+                defaults["aggregator"] = score_def.allele_aggregator
+        return defaults
+
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
+        """Return score attribute specs plus the virtual ``allele``."""
+        result = super().get_attribute_specs()
+        result["allele"] = AttributeSpec(
             source="allele",
-            name="allele",
-            type="list",
+            value_type="list",
             description="The allele in the format 'chr:pos:ref:alt'",
-            default=False,
-            internal=False,
+            is_default=False,
+            internal_default=False,
         )
         return result
 
     def build_score_aggregator_documentation(
-        self, attr_info: AttributeInfo,
+        self, attr: Attribute,
     ) -> list[str]:
         """Collect score aggregator documentation."""
-        nuc_agg = attr_info.parameters.get("nucleotide_aggregator")
-        allele_agg = attr_info.parameters.get("allele_aggregator")
-        agg = attr_info.parameters.get("aggregator")
-        if nuc_agg is not None:
-            agg = nuc_agg
-        elif allele_agg is not None:
-            agg = allele_agg
         allele_doc = self._build_score_aggregator_documentation(
-            attr_info, "allele_aggregator", agg,
+            attr, "allele_aggregator", attr.aggregator,
         )
         return [allele_doc]
 
@@ -660,22 +623,19 @@ Non-``VCFAllele`` annotatables always use region aggregation.
                 allele_str += f":{attrs_str}"
             scores[self.allele_attribute.source] = [allele_str]
 
-        return {attr.name: scores.get(attr.source) for attr in self.attributes}
+        return {
+            attr.source: scores.get(attr.source) for attr in self.attributes
+        }
 
     def _annotate_region(
         self, annotatable: Annotatable,
     ) -> dict[str, Any]:
-        """Aggregate scores for all allele lines overlapping the annotatable."""
-        score_aggs = {}
-        for q in self.allele_score_queries:
-            scr_def = self.allele_score.score_definitions[q.score]
-            agg_type = q.allele_aggregator or scr_def.allele_aggregator
-            if agg_type is None:
-                raise AnnotationConfigurationError(
-                    f"No aggregator defined for score '{q.score}' in "
-                    "region mode; set 'aggregator' on the attribute or "
-                    "'allele_aggregator' in the resource config")
-            score_aggs[q.score] = build_aggregator(agg_type)
+        """Collect raw score lists for all allele lines overlapping the region.
+
+        Aggregation is handled by AnnotatorBase._apply_aggregators.
+        """
+        raw: dict[str, list] = {
+            source: [] for source in self.allele_score_sources}
         alleles: set[str] = set()
         has_lines = False
 
@@ -686,8 +646,8 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             if self.allele_filter is not None and not self.allele_filter(line):
                 continue
 
-            for q in self.allele_score_queries:
-                score_aggs[q.score].add(line.get_score(q.score))
+            for source in self.allele_score_sources:
+                raw[source].append(line.get_score(source))
 
             if self.allele_attribute is not None:
                 allele_str = f"{line.chrom}:{line.pos_begin}"
@@ -703,17 +663,15 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         if not has_lines:
             return self._empty_result()
 
-        scores = {
-            q.score: score_aggs[q.score].get_final()
-            for q in self.allele_score_queries
+        result = {
+            attr.source: raw.get(attr.source) for attr in self.attributes
         }
         if self.allele_attribute is not None:
-            scores[self.allele_attribute.source] = list(alleles)
+            result[self.allele_attribute.source] = list(alleles)
+        return result
 
-        return {attr.name: scores.get(attr.source) for attr in self.attributes}
-
-    def annotate(
-        self, annotatable: Annotatable | None,
+    def _do_annotate(
+        self, annotatable: Annotatable,
         context: dict[str, Any],  # noqa: ARG002
     ) -> dict[str, Any]:
         """Dispatch annotation based on annotatable type and mode.
@@ -721,9 +679,6 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         For VCFAllele: mode selects between exact-match and region aggregation.
         For all other annotatables: always use region aggregation.
         """
-        if annotatable is None:
-            return self._empty_result()
-
         all_chroms = self.allele_score.get_all_chromosomes()
         if annotatable.chromosome not in all_chroms:
             return self._empty_result()
