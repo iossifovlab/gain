@@ -324,16 +324,6 @@ def _configure_resource_info_subparser(
     )
 
 
-def _configure_build_fts_db_subparser(
-        subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "repo-build-fts", help="Build the FTS index for the whole GRR",
-    )
-    _add_repository_resource_parameters_group(parser)
-    _add_dvc_parameters_group(parser)
-    VerbosityConfiguration.set_arguments(parser)
-
-
 def collect_dvc_entries(
         proto: ReadWriteRepositoryProtocol,
         res: GenomicResource) -> dict[str, ManifestEntry]:
@@ -437,20 +427,8 @@ def _run_repo_manifest_command_internal(
 
 
 def _build_content_file(proto: FsspecReadWriteProtocol) -> None:
-    """Build CONTENTS.json and rebuild the FTS DB if content changed."""
-    try:
-        old_md5 = proto.md5_contents()
-    except Exception:  # noqa: BLE001
-        old_md5 = None
+    """Build CONTENTS.json."""
     proto.build_content_file()
-    if old_md5 != proto.md5_contents():
-        _create_contents_db(proto)
-
-
-def _run_build_fts_db_command(
-    proto: FsspecReadWriteProtocol,
-) -> None:
-    _create_contents_db(proto)
 
 
 def _create_contents_db(
@@ -474,13 +452,12 @@ def _create_contents_db(
     for res in proto.get_all_resources():
         try:
             impl = build_resource_implementation(res)
+            index_infos.append(impl.collect_index_info())
         except Exception:  # noqa: BLE001
             logger.warning(
                 "Skipping FTS index for <%s>: could not build implementation",
                 res.resource_id,
             )
-            continue
-        index_infos.append(impl.collect_index_info())
 
     all_columns: dict[str, None] = {}
     for header, _ in index_infos:
@@ -611,18 +588,24 @@ def _store_stats_hash(
     resource: GenomicResource,
 ) -> bool:
 
-    impl = build_resource_implementation(resource)
-    stats_dir = ResourceStatistics.get_statistics_folder()
-    if stats_dir is None:
+    try:
+        impl = build_resource_implementation(resource)
+        stats_dir = ResourceStatistics.get_statistics_folder()
+        if stats_dir is None:
+            logger.warning(
+                "Couldn't store stats hash for %s; unable to get stats dir",
+                resource.resource_id)
+            return False
+        with proto.open_raw_file(
+            resource, f"{stats_dir}/stats_hash", mode="wb",
+        ) as outfile:
+            stats_hash = impl.calc_statistics_hash()
+            outfile.write(stats_hash)
+    except Exception:  # noqa: BLE001
         logger.warning(
-            "Couldn't store stats hash for %s; unable to get stats dir",
+            "Couldn't store stats hash for %s",
             resource.resource_id)
         return False
-    with proto.open_raw_file(
-        resource, f"{stats_dir}/stats_hash", mode="wb",
-    ) as outfile:
-        stats_hash = impl.calc_statistics_hash()
-        outfile.write(stats_hash)
     return True
 
 
@@ -702,19 +685,25 @@ def _run_repo_stats_command(
     status = 0
     stats_resources: list[GenomicResource] = []
     for res in resources:
-        impl = build_resource_implementation(res)
-        manifest_updated = updates_needed[res.resource_id]
-        needs_rebuild = manifest_updated or _stats_need_rebuild(proto, impl)
-        if dry_run:
-            if needs_rebuild:
-                logger.info(
-                    "Statistics of <%s> needs update", res.resource_id)
-                status += 1
-        elif force or needs_rebuild:
-            _collect_impl_stats_tasks(
-                graph, proto, impl, repo,
-                region_size=region_size)
-            stats_resources.append(res)
+        try:
+            impl = build_resource_implementation(res)
+            manifest_updated = updates_needed[res.resource_id]
+            needs_rebuild = manifest_updated or _stats_need_rebuild(proto, impl)
+            if dry_run:
+                if needs_rebuild:
+                    logger.info(
+                        "Statistics of <%s> needs update", res.resource_id)
+                    status += 1
+            elif force or needs_rebuild:
+                _collect_impl_stats_tasks(
+                    graph, proto, impl, repo,
+                    region_size=region_size)
+                stats_resources.append(res)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Skipping stats for <%s>: could not build implementation",
+                res.resource_id,
+            )
 
     if dry_run:
         return status
@@ -722,6 +711,7 @@ def _run_repo_stats_command(
     if len(graph.tasks) > 0:
         modified_kwargs = copy.copy(kwargs)
         modified_kwargs["command"] = "run"
+        modified_kwargs["keep_going"] = True
         if modified_kwargs.get("task_log_dir") is None:
             repo_url = proto.get_url()
             modified_kwargs["task_log_dir"] = \
@@ -737,6 +727,7 @@ def _run_repo_stats_command(
 
     assert isinstance(proto, FsspecReadWriteProtocol)
     _build_content_file(proto)
+    _create_contents_db(proto)
     return 0
 
 
@@ -827,8 +818,6 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
     _configure_resource_info_subparser(commands_parser)
     _configure_repo_repair_subparser(commands_parser)
     _configure_resource_repair_subparser(commands_parser)
-    _configure_build_fts_db_subparser(commands_parser)
-
     args = parser.parse_args(cli_args)
     VerbosityConfiguration.set(args)
 
@@ -928,10 +917,6 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
             status = 1
         logger.warning("inconsistent GRR <%s> state", repo_url)
         sys.exit(status)
-    elif command == "repo-build-fts":
-        assert isinstance(proto, FsspecReadWriteProtocol)
-        _run_build_fts_db_command(proto)
-        return
     else:
         logger.error(
             "Unknown command %s. The known commands are index, "

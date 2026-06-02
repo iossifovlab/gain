@@ -981,12 +981,20 @@ class FsspecReadWriteProtocol(
                 else:
                     outfile.write(about_html_content)
 
+        sqlite3_hash = ""
+        gz_path = os.path.join(self.url, GR_SQLITE_META_FILE_NAME)
+        if self.filesystem.exists(gz_path):
+            with self.filesystem.open(gz_path, "rb") as gz_file:
+                gz_bytes: bytes = cast(bytes, gz_file.read())
+            sqlite3_hash = hashlib.md5(gz_bytes).hexdigest()  # noqa: S324
+
         content_filepath = os.path.join(self.url, GR_INDEX_FILE_NAME)
         with self.filesystem.open(
                 content_filepath, "wt", encoding="utf8") as outfile:
             outfile.write(get_template(repository_template).render(
                 data=result,
                 has_about=has_about,
+                sqlite3_hash=sqlite3_hash,
             ))
 
         return result

@@ -233,8 +233,7 @@ def search_grr_fixture(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
             },
         },
     )
-    cli_manage(["repo-manifest", "-R", str(tmp_path)])
-    cli_manage(["repo-build-fts", "-R", str(tmp_path)])
+    cli_manage(["repo-stats", "-R", str(tmp_path)])
     proto = build_filesystem_test_protocol(tmp_path, repair=False)
     return GenomicResourceProtocolRepo(proto)
 
