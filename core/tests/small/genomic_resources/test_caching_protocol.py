@@ -92,13 +92,9 @@ def bgz_genome_caching_proto(
             remote_proto, build_filesystem_test_protocol(cache_root))
 
     elif grr_scheme == "s3":
-        # pysam.FastaFile needs local index files — it os.path.exists-checks
-        # filepath_index/filepath_index_compressed (libcfaidx) and cannot use
-        # signed remote URLs. A bgzipped genome therefore cannot be served from
-        # an s3-backed cache today. In production the GRR cache is always a
-        # local filesystem (cache_dir -> file://), so this is an edge config;
-        # supporting it is tracked in #94.
-        pytest.skip("bgzipped genomes on an s3-backed cache: see #94")
+        with build_s3_test_protocol(
+                tmp_path_factory.mktemp("bgz_genome_s3_cache")) as cache_proto:
+            yield CachingProtocol(remote_proto, cache_proto)
 
     else:
         raise ValueError(f"Unsupported caching scheme: {grr_scheme}")
