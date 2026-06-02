@@ -7,7 +7,7 @@ annotators:
     gene_models: hg38/gene_models/MANE/1.5
     attributes:
     - worst_effect
-    - gene_list
+    - genes
 
 - position_score_annotator:
     resource_id: hg38/scores/phyloP7way

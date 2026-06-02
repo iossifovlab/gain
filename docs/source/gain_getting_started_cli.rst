@@ -96,12 +96,8 @@ In this example, we annotate a small tab-separated text file containing three va
 Download the example input CSV file (:download:`small_input.csv<files/small_input.csv>`), whose content is shown below. The file contains three variant annotatables, each described by the columns ``chrom``, ``pos``, ``ref``, and ``alt``, which specify the chromosome, genomic position, reference allele, and alternate allele:
 
 .. csv-table::
+    :file: files/small_input.csv
     :header-rows: 1
-
-    chrom,pos,ref,alt
-    chr14,21415880,G,A
-    chr17,7674904,TCT,T
-    chr7,117587806,G,A
 
 
 To annotate the file, run:
@@ -112,15 +108,12 @@ To annotate the file, run:
 
 This command annotates ``small_input.csv`` using the predefined ``pipeline/hg38_clinical_annotation`` pipeline, which is hosted in the default GRR.
 
-GAIn writes the annotated output to a new file whose name is derived from the input file. For example, the command above produces ``small_input_annotated.csv``, with the following content:
+GAIn writes the annotated output to a new file whose name is derived from the input file. For example, the command above produces (:download:`small_input_annotated.csv<files/small_input_annotated.csv>`), with the following content:
 
 .. csv-table::
+    :file: files/small_input_annotated.csv
     :header-rows: 1
 
-    chrom,pos,ref,alt,worst_effect_MANE_1_3,effect_details_MANE_1_3,gene_effects_MANE_1_3,dbSNP_rs_number,gnomad_v4_exome_ALL_af,gnomad_v4_genome_ALL_af,clinical_significance,clinical_disease_name,CADD_raw_score,CADD_phred_score,AlphaMissense_pathogenicity,AlphaMissense_class,MPC_score,worst_effect_GENCODE_48,effect_details_GENCODE_48,gene_effects_GENCODE_48,pLI_rank_all,pLI_rank_min,LOEUF_rank_all,LOEUF_rank_min
-    chr14,21415880,G,A,nonsense,"ENST00000646647.2:CHD8:nonsense:582/2581(Arg->End)",CHD8:nonsense,863224857,,,Pathogenic/Likely_pathogenic,Intellectual_developmental_disorder_with_autism_and_macrocephaly|not_provided,8.9,39,,,,nonsense,"ENST00000645929.1:CHD8:nonsense:303/2302(Arg->End)|ENST00000646647.2:CHD8:nonsense:582/2581(Arg->End)|ENST00000643469.1:CHD8:nonsense:582/2581(Arg->End)|ENST00000557364.6:CHD8:nonsense:582/2581(Arg->End)|ENST00000430710.8:CHD8:nonsense:303/2302(Arg->End)",CHD8:nonsense,CHD8:45,45,CHD8:112.5,112.5
-    chr17,7674904,TCT,T,frame-shift,ENST00000269305.9:TP53:frame-shift:209/393,TP53:frame-shift,1057517840,6.84e-07,,Pathogenic,Li-Fraumeni_syndrome_1|Hereditary_cancer-predisposing_syndrome|Li-Fraumeni_syndrome|Ovarian_neoplasm|not_provided|TP53-related_disorder,,,,,,frame-shift,"ENST00000420246.6:TP53:frame-shift:209/341|ENST00000455263.6:TP53:frame-shift:209/346|ENST00000610538.4:TP53:frame-shift:170/307|ENST00000622645.4:TP53:frame-shift:170/302|ENST00000620739.4:TP53:frame-shift:170/354|ENST00000714357.1:TP53:frame-shift:209/393|ENST00000510385.5:TP53:frame-shift:77/209|ENST00000610623.4:TP53:frame-shift:50/187|ENST00000504290.5:TP53:frame-shift:77/214|ENST00000618944.4:TP53:frame-shift:50/182|ENST00000504937.5:TP53:frame-shift:77/261|ENST00000619186.4:TP53:frame-shift:50/234|ENST00000445888.6:TP53:frame-shift:209/393|ENST00000604348.6:TP53:frame-shift:202/386|ENST00000619485.4:TP53:frame-shift:170/354|ENST00000269305.9:TP53:frame-shift:209/393|ENST00000714408.1:TP53:frame-shift:209/411|ENST00000714409.1:TP53:frame-shift:209/367|ENST00000413465.6:TP53:frame-shift:209/285|ENST00000576024.2:TP53:frame-shift:209/344|ENST00000714359.1:TP53:frame-shift:209/393|ENST00000714356.1:TP53:frame-shift:170/347|ENST00000359597.8:TP53:frame-shift:209/343|ENST00000610292.4:TP53:frame-shift:170/354",TP53:frame-shift,TP53:3122,3122,TP53:4446.5,4446.5
-    chr7,117587806,G,A,missense,"ENST00000003084.11:CFTR:missense:551/1480(Gly->Asp)",CFTR:missense,75527207,0.000404,0.000276,Pathogenic,Hereditary_pancreatitis|CFTR-related_disorder|Cystic_fibrosis|Congenital_bilateral_aplasia_of_vas_deferens_from_CFTR_mutation|ivacaftor_response_-_Efficacy|Bronchiectasis_with_or_without_elevated_sweat_chloride_1|not_provided,5.05,28.2,0.99,likely_pathogenic,0.015,missense,"ENST00000003084.11:CFTR:missense:551/1480(Gly->Asp)|ENST00000699605.1:CFTR:missense:409/1338(Gly->Asp)|ENST00000649781.2:CFTR:missense:490/1419(Gly->Asp)|ENST00000699602.1:CFTR:missense:551/1478(Gly->Asp)|ENST00000649406.1:CFTR:missense:490/1187(Gly->Asp)|ENST00000648260.1:CFTR:intron:10/16[15019]",CFTR:missense|CFTR:intron,CFTR:18190,18190,CFTR:13993.5,13993.5
 
 The output contains the original variant columns followed by the annotation attributes produced by ``pipeline/hg38_clinical_annotation``. See the `pipeline summary page <https://grr.iossifovlab.com/pipeline/hg38_clinical_annotation/index.html>`_ in the main GRR for a description of the attributes produced by this pipeline.
 
@@ -134,30 +127,10 @@ In this example, we will annotate the same three variants from ``small_input.csv
 
 Download the example custom annotation pipeline file (:download:`custom_pipeline.yaml <files/custom_pipeline.yaml>`), whose content is shown below. 
 
-.. code-block:: yaml
 
-    preamble:
-    summary: Simple custom pipeline
-    input_reference_genome: hg38/genomes/GRCh38-hg38
+.. literalinclude:: files/custom_pipeline.yaml
+    :language: yaml
 
-    annotators:
-    - effect_annotator:
-        gene_models: hg38/gene_models/MANE/1.5
-        attributes:
-        - worst_effect
-        - gene_list
-
-    - position_score_annotator:
-        resource_id: hg38/scores/phyloP7way
-
-    - normalize_allele_annotator
-
-    - allele_score_annotator:
-        resource_id: hg38/scores/ClinVar_20251019
-        input_annotatable: normalized_allele
-        attributes:
-        - CLNSIG
-        - CLNDN
 
 This pipeline has an optional preamble section, which records metadata about the pipeline and specifies that the input variants use the ``hg38/genomes/GRCh38-hg38`` reference genome. The annotators section lists the annotation steps that GAIn will run from top to bottom. This pipeline first uses the ``MANE 1.5`` gene model to identify affected genes and predict the worst effect of each variant. It then adds a conservation score from ``phyloP7way``. Finally, it normalizes each allele and looks up selected ``ClinVar`` attributes: ``CLNSIG``, which describes clinical significance, and ``CLNDN``, which reports associated disease names. 
 
@@ -165,27 +138,25 @@ This pipeline has an optional preamble section, which records metadata about the
 
     When building custom annotation pipelines, users can either write the pipeline directly using GAIn's YAML structure or use the pipeline authoring tool in the GAIn web interface, which simplifies pipeline creation by guiding users through annotator and resource selection.
 
-To review the attributes produced by the custom pipeline, generate an HTML summary with:
+To review the attributes produced by the custom pipeline, run the following command. The generated HTML summary can be viewed here: `doc.html <_static/doc.html>`_.
 
 .. code-block:: bash
 
     annotate_doc custom_pipeline.yaml > doc.html
 
+
+
 To annotate the input file with this custom pipeline, run:
 
 .. code-block:: bash
 
-    annotate_tabular small_input.csv custom_pipeline.yaml
+    annotate_tabular small_input.csv custom_pipeline.yaml -o small_input_custom_annotated.csv
 
-This command applies the local ``custom_pipeline.yaml`` file to the variants in ``small_input.csv``. To avoid overwriting the output from the previous section, we write the result to ``small_input_custom_annotated.csv``, whose content is shown below.
+This command applies the local ``custom_pipeline.yaml`` file to the variants in ``small_input.csv``. To avoid overwriting the output from the previous section, we write the result to (:download:`small_input_custom_annotated.csv <files/small_input_custom_annotated.csv>`), whose content is shown below.
 
 .. csv-table::
+    :file: files/small_input_custom_annotated.csv
     :header-rows: 1
-
-    chrom,pos,ref,alt,worst_effect,phyloP7way,CLNSIG,CLNDN
-    chr14,21415880,G,A,nonsense,0.917,Pathogenic/Likely_pathogenic,not_provided|Intellectual_developmental_disorder_with_autism_and_macrocephaly
-    chr17,7674904,TCT,T,frame-shift,-0.12,Pathogenic,Hereditary_cancer-predisposing_syndrome|TP53-related_disorder|not_provided|Li-Fraumeni_syndrome_1|Ovarian_neoplasm|Li-Fraumeni_syndrome
-    chr7,117587806,G,A,missense,0.917,Pathogenic,CFTR-related_disorder|Cystic_fibrosis|Congenital_bilateral_aplasia_of_vas_deferens_from_CFTR_mutation|not_provided|Hereditary_pancreatitis|Bronchiectasis_with_or_without_elevated_sweat_chloride_1|ivacaftor_response_-_Efficacy
 
 
 This approach is convenient for small tests and for developing custom pipelines. However, when annotation uses resources directly from the public GRR, it is practical only for small inputs. For larger inputs, input files should be sorted by genomic coordinates for more efficient processing. Users can also configure local resource caching and parallel execution, as described in the next sections.
@@ -205,11 +176,11 @@ So far, GAIn has been using the default GRR definition, which corresponds to the
     id: "main-GRR"
     type: "url"
     url: "https://grr.iossifovlab.com"
-    cache_dir: "/tmp/remote_grr_cache"
+    cache_dir: "<path_to_cache>/remote_grr_cache"
 
-After this configuration, GAIn downloads each required resource to the specified cache directory before using it for annotation. Because genomic resources can be large, the cache directory should have sufficient disk space and write permission for the user.If /tmp does not have enough available space, use another cache directory with sufficient storage. The approximate space requirements for the resources used in this guide are described below.
+After this configuration, GAIn downloads each required resource to the specified cache directory before using it for annotation. Because genomic resources can be large, the cache directory should have sufficient disk space and write permission for the user. If <path_to_cache> does not have enough available space, use another cache directory with sufficient storage. The approximate space requirements for the resources used in this guide are described below.
 
-This is especially important for large annotation pipelines. For example, a comprehensive clinical pipeline such as ``pipeline/hg38_clinical_annotation`` may require many large resources. These resources total approximately 120 GB and may take substantial time to download, depending on network speed and storage performance. Once cached, however, they can be reused directly from the local cache, making future annotation jobs much faster.
+This is especially important for large annotation pipelines. For example, a comprehensive clinical pipeline such as ``pipeline/hg38_clinical_annotation`` may require many large resources. These resources total approximately 40 GB and may take substantial time to download, depending on network speed and storage performance. Once cached, however, they can be reused directly from the local cache, making future annotation jobs much faster.
 
 GAIn can automatically download required resources during annotation. For large pipelines, however, it is often better to pre-download them before starting the annotation job. GAIn provides a dedicated tool for this purpose:
 
@@ -219,30 +190,45 @@ GAIn can automatically download required resources during annotation. For large 
 
 This command downloads the resources required by the pipeline in one step, so that the actual annotation job does not need to pause while resources are being retrieved.
 
-Custom pipelines can also reduce the amount of data that must be cached. A broad clinical pipeline may require more than 100 GB of resources, whereas a focused custom pipeline may require only the resources needed for a specific analysis. For example, the custom pipeline shown above requires approximately 9 GB of resources. Custom pipelines therefore help control annotation content while reducing storage requirements and setup time. You can cache the resources for the custom pipeline used above with:
+Custom pipelines can also reduce the amount of data that must be cached. A broad clinical pipeline may require more than 40 GB of resources, whereas a focused custom pipeline may require only the resources needed for a specific analysis. For example, the custom pipeline shown above requires approximately 8 GB of resources. Custom pipelines therefore help control annotation content while reducing storage requirements and setup time. You can cache the resources for the custom pipeline used above with:
 
 .. code-block:: bash
 
     grr_cache_repo custom_pipeline.yaml
 
-After the necessary resources have been cached, users can run large annotation jobs without waiting for GAIn to download each resource during the annotation process. To test this workflow, download the example input file (:download:`50k_variants.txt <files/50k_variants.txt>`), which contains 50,000 variants.
+After the necessary resources have been cached, users can run large annotation jobs without waiting for GAIn to download each resource during the annotation process. To test this workflow, download the example input file (:download:`50k_variants.tsv.gz <files/50k_variants.tsv.gz>`), which contains 50,000 variants.
 
 
 Depending on which pipeline you cached above, you can now run the annotation normally:
 
 .. code-block:: bash
 
-    annotate_tabular 50k_variants.txt pipeline/hg38_clinical_annotation
+    annotate_tabular 50k_variants.tsv.gz pipeline/hg38_clinical_annotation
 
 or
 
 .. code-block:: bash
 
-    annotate_tabular 50k_variants.txt custom_pipeline.yaml
+    annotate_tabular 50k_variants.tsv.gz custom_pipeline.yaml
 
-Without caching, annotating a file of this size through remote resource access can take a very long time. With the required resources already cached, GAIn uses the local copies for annotation, making the same large-scale job much faster and less dependent on network performance.
+Without caching, annotating a file of this size through remote resource access can take a very long time. With the required resources already cached, GAIn uses the local copies for annotation, making the same large-scale job much faster and less dependent on network performance. For example, annotating 50,000 variants with pipeline/hg38_clinical_annotation takes approximately 4 minutes on a local computer.
 
+GAIn works more efficiently on input files sorted by genomic coordinates. The original 50k_variants.tsv.gz file is not sorted. To sort it by chromosome and position while preserving the header, run:
 
+.. code-block:: bash
+
+    (
+    gzip -dc 50k_variants.tsv.gz | head -n 1
+    gzip -dc 50k_variants.tsv.gz | tail -n +2 | LC_ALL=C sort -t $'\t' -k1,1V -k2,2n
+    ) | bgzip > 50k_variants.sorted.tsv.bgz
+
+You can also download the sorted file here:  (:download:`50k_variants.sorted.tsv.gz <files/50k_variants.sorted.tsv.gz>`). Then rerun the annotation on the sorted file:
+
+.. code-block:: bash
+
+    annotate_tabular 50k_variants.tsv.sorted.gz custom_pipeline.yaml
+
+In this example, sorting reduces the runtime from approximately 4 minutes to approximately 3 minutes.
 
 Parallelizing large annotation jobs
 -----------------------------------
@@ -256,32 +242,31 @@ When GAIn detects an indexed input file, it splits the annotation job into small
 The degree of parallelization can be controlled with the ``-j`` option, which specifies the number of workers. The optimal value depends on the input size, pipeline complexity, available CPU cores, memory, and storage performance.
 
 
-For example, after downloading the example input file (:download:`SSC_WES_variants.txt.gz <files/SSC_WES_variants.txt.gz>`), which contains 1,413,971 variants, prepare it for parallel annotation by running:
+For example, after downloading the example input file (:download:`1million_variants.tsv.gz <files/1million_variants.tsv.gz>`), which contains 1 million variants detected by WES from the SSC project, prepare it for parallel annotation by running:
 
 .. code-block:: bash
 
-    prepare_tabular SSC_WES_variants.txt.gz
+    prepare_tabular 1million_variants.tsv.gz
 
-When run successfully, this command produces two files: ``SSC_WES_variants.sorted.tsv.bgz``, which contains the sorted and compressed version of the input file, and ``SSC_WES_variants.sorted.tsv.bgz.tbi``, its associated tabix index. These two files enable parallelization and fast genomic-region access in GAIn.
+When run successfully, this command produces two files: ``1million_variants.sorted.tsv.bgz``, which contains the sorted and compressed version of the input file, and ``1million_variants.sorted.tsv.bgz.tbi``, its associated tabix index. These two files enable parallelization and fast genomic-region access in GAIn.
 
-
-Then run the annotation:
-
-.. code-block:: bash
-
-    annotate_tabular SSC_WES_variants.sorted.tsv.bgz pipeline/hg38_clinical_annotation
-
-GAIn splits indexed inputs by chromosome. For very large input files, chromosome-level splitting may create tasks that are too large or uneven. The ``-r`` option can instead split the input into genomic regions of a specified size:
+The following command uses parallelization, and with the required resources already cached, it can complete very quickly. In this example, annotating the sorted one-million-variant file with the custom pipeline took approximately 1 minute.
 
 .. code-block:: bash
 
-    annotate_tabular SSC_WES_variants.sorted.tsv.bgz pipeline/hg38_clinical_annotation -r 30_000_000
+    annotate_tabular 1million_variants.sorted.tsv.bgz custom_pipeline.yaml
+
+GAIn splits indexed inputs by chromosome. For very large input files, chromosome-level splitting may create tasks that are too large or uneven. The ``-r`` option can instead split the input into genomic regions of a specified size. In this example, using the ``-r`` option reduced the annotation time to approximately 45 seconds.
+
+.. code-block:: bash
+
+    annotate_tabular 1million_variants.sorted.tsv.bgz custom_pipeline.yaml -r 30_000_000
 
 GAIn can also use a configured Dask cluster that creates workers on a larger compute system, such as SGE or SLURM. For example, if a Dask cluster named ``my_sge_cluster`` has been configured to create workers on an SGE cluster, the annotation can be run with:
 
 .. code-block:: bash
 
-    annotate_tabular SSC_WES_variants.sorted.tsv.bgz pipeline/hg38_clinical_annotation -r 30_000_000 -N my_sge_cluster -j 100
+    annotate_tabular 1million_variants.sorted.tsv.bgz custom_pipeline.yaml -r 30_000_000 -N my_sge_cluster -j 100
 
 This runs the annotation across up to 100 workers on the configured cluster. See the “Configuring parallelization”[] and “Configuring Dask clusters”[] sections for more details on region splitting, worker configuration, and cluster setup.
 
@@ -294,46 +279,21 @@ Annotating VCF input
 GAIn can also annotate variants stored in VCF files. The command is similar to ``annotate_tabular``, but the input and 
 output files are in VCF format. To annotate an example VCF file, download the example input file (:download:`small_input.vcf <files/small_input.vcf>`), whose content is shown below.
 
-.. code-block:: yaml
-
-    ##fileformat=VCFv4.1
-    ##reference=GRCh38-hg38
-    ##contig=<ID=chr7>
-    ##contig=<ID=chr14>
-    ##contig=<ID=chr17>
-    #CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
-    chr14	21415880	.	G	A	.	.	.
-    chr17	7674904	.	TCT	T	.	.	.
-    chr7	117587806	.	G	A	.	.	.
+.. literalinclude:: files/small_input.vcf
+    :language: text
 
 
 To annotate them, run:
 
 .. code-block:: bash
 
-    annotate_vcf small_input.vcf annotation_pipeline.yaml -o vcf_annotated.vcf
+    annotate_vcf small_input.vcf custom_pipeline.yaml -o vcf_annotated.vcf
 
-This command produces an output file named ``vcf_annotated.vcf``, which contains the same variants with 
+This command produces an output file named :download:`vcf_annotated.vcf <files/vcf_annotated.vcf>`, which contains the same variants with 
 additional annotation fields in the ``INFO`` column.
 
-.. code-block:: yaml
-
-    ##fileformat=VCFv4.1
-    ##FILTER=<ID=PASS,Description="All filters passed">
-    ##reference=GRCh38-hg38
-    ##contig=<ID=chr7>
-    ##contig=<ID=chr14>
-    ##contig=<ID=chr17>
-    ##pipeline_annotation_tool=GPF variant annotation.
-    ##INFO=<ID=worst_effect,Number=A,Type=String,Description="Worst effect accross all transcripts.">
-    ##INFO=<ID=genes,Number=A,Type=String,Description="Comma separated list of all affected genes.">
-    ##INFO=<ID=phylop7way,Number=A,Type=String,Description="The score is a number that reflects the conservation at a position.">
-    ##INFO=<ID=CLNSIG,Number=A,Type=String,Description="Aggregate germline classification for this single variant; multiple values are separated by a vertical bar">
-    ##INFO=<ID=CLNDN,Number=A,Type=String,Description="ClinVar's preferred disease name for the concept specified by disease identifiers in CLNDISDB">
-    #CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
-    chr14	21415880	.	G	A	.	.	worst_effect=nonsense;genes=CHD8;phylop7way=0.917;CLNSIG=Pathogenic/Likely_pathogenic;CLNDN=Intellectual_developmental_disorder_with_autism_and_macrocephaly|not_provided
-    chr17	7674904	.	TCT	T	.	.	worst_effect=frame-shift;genes=TP53;phylop7way=-0.12;CLNSIG=Pathogenic;CLNDN=Li-Fraumeni_syndrome_1|Hereditary_cancer-predisposing_syndrome|Li-Fraumeni_syndrome|Ovarian_neoplasm|not_provided|TP53-related_disorder
-    chr7	117587806	.	G	A	.	.	worst_effect=missense;genes=CFTR;phylop7way=0.917;CLNSIG=Pathogenic;CLNDN=Hereditary_pancreatitis|CFTR-related_disorder|Cystic_fibrosis|Congenital_bilateral_aplasia_of_vas_deferens_from_CFTR_mutation|ivacaftor_response_-_Efficacy|Bronchiectasis_with_or_without_elevated_sweat_chloride_1|not_provided
+.. literalinclude:: files/vcf_annotated.vcf
+    :language: text
 
 
 Annotating positions and regions
@@ -367,7 +327,7 @@ classes. Save the following text as ``annotation_pipeline2.yaml``.
 .. code-block:: yaml
 
     - simple_effect_annotator:
-        gene_models: hg38/gene_models/MANE/1.4
+        gene_models: hg38/gene_models/MANE/1.5
 
 
 Then run the following command to annotate the positions:

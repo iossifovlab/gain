@@ -1,0 +1,594 @@
+<html>
+  <head>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100;0,300;0,400;0,500;0,700;0,900;1,100;1,300;1,400;1,500;1,700;1,900&display=swap" rel="stylesheet">
+
+    <style>
+      p {
+        margin: 8px;
+      }
+
+      body {
+        width: 70%;
+        margin: auto;
+      }
+
+      .preamble-header,
+      .annotator-list-header,
+      .pipeline-header {
+        margin-top: 40px;
+        margin-bottom: 20px;
+      }
+
+      .preamble-header,
+      .annotator-list-header {
+        font-size: 30px;
+      }
+
+      .pipeline-header {
+        font-size: 36px;
+      }
+
+      .annotator-doc {
+        display: flex;
+        flex-direction: row;
+        border: 1px solid rgb(218,218,218);
+      }
+
+      .annotator-line {
+        font-size: 18px;
+        vertical-align: top;
+        width: 40%;
+        position: -webkit-sticky;
+        align-self: flex-start;
+        word-break: break-word;
+      }
+
+      .sticky-line {
+        position: sticky;
+        top: 0px;
+      }
+
+      .annotator {
+        background-color: #d0deec;
+        padding: 10px 8px;
+      }
+
+      .annotator-title {
+        font-size: 24px;
+        font-weight: 600;
+      }
+
+      .attribute-list {
+        width: 60%;
+        border-right: 1px solid rgb(218,218,218);
+      }
+      
+      .attribute {
+        padding: 0 0 20px;
+        border-bottom: 1px solid rgb(218,218,218);
+      }
+
+      .attribute:last-child {
+        border-bottom: none;
+      }
+
+      .attribute-name {
+        font-size: 22px;
+        font-weight: 600;
+        padding: 10px 8px;
+        word-break: break-word;
+      }
+
+      .resource-id {
+        font-size: 18px;
+        margin: 8px;
+      }
+
+      .attribute-type {
+        font-size: 18px;
+        padding: 10px 8px;
+      }
+
+      .attribute-description {
+        font-size: 18px;
+        margin-right: 20px;
+      }
+
+      .attribute-info {
+        font-size: 24px;
+        align-self: center;
+        display: flex;
+        flex-direction: row;
+        justify-content: space-between;
+        background-color: #ecf1f6;
+        margin-bottom: 12px;
+      }
+
+      .attribute-internal {
+        background-color: #f7efe4;
+      }
+
+      .attribute-source, .pipeline_path {
+        color: rgb(145,145,145);
+        margin: 8px;
+      }
+
+      .pipeline_path {
+        float: right;
+        font-size: 18px;
+      }
+
+      .no-description {
+        font-style: italic;
+        color: #9c9c9c;
+        padding: 10px 8px;
+      }
+
+      .resource-info {
+        font-style: italic;
+        padding: 10px 0 0 0;
+      }
+
+      .resource {
+        padding: 10px 8px;
+      }
+
+      summary {
+        padding-top: 10px; 
+      }
+
+      img {
+        height: auto; 
+        width: auto; 
+        max-width: 95%; 
+        max-height: 95%;
+      }
+
+            *, *::before, *::after {
+        box-sizing: border-box;
+        font-family: "Roboto", system-ui, -apple-system, sans-serif;
+      }
+
+      body {
+        color: #252e34;
+      }
+      
+      h1, h2, h3, h4, h5, h6 {
+        color: #5b778c;
+      }
+
+      h2 {
+        margin-top: 50px;
+        margin-bottom: 10px;
+      }
+
+      h3,h4 {
+        margin-top:0.5em;
+        margin-bottom:0.5em;
+      }
+
+      table {
+        border-collapse: collapse;
+        width: 100%
+      }
+
+      th {
+        background: #ecf1f6;
+      }
+
+      td,
+      th {
+        border: 1px solid #cfd8df;
+        padding: 5px 10px;
+        overflow-wrap: break-word;
+      }
+
+      tr {
+        height: 38px;
+      }
+
+      ul {
+        list-style-type: '-  ';
+        padding-left: 15px;
+        margin: 0;
+      }
+
+      a {
+        text-decoration: none;
+        color: #24699E;
+      }
+
+      a:hover {
+        color: #4C93C9;
+      }
+
+      .nowrap {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      #page-header {
+        display: flex;
+        align-items: center;
+        padding: 14px clamp(20px, 10%, 64px);
+        border-bottom: 1px solid #e4edf2;
+      }
+
+      #page-header a {
+        color: #24699E;
+        font-weight: 500;
+        text-decoration: none;
+        transition: color 0.15s ease-out;
+        font-size: 18px;
+      }
+
+      #page-header a:hover {
+        color: #4C93C9;
+      }
+
+      .histogram {
+        margin-bottom: 16px;
+      }
+
+      .histogram-thumbnail {
+        max-width: 200px;
+        cursor: pointer;
+      }
+
+      .text-muted {
+        color: #919191;
+      }
+
+      .scrollable-table-container {
+        max-height: 500px;
+        overflow-y: auto;
+        margin-bottom: 16px;
+      }
+
+      .scrollable-table-container thead {
+        position: sticky;
+        top: 0;
+        background-color: white;
+      }
+
+      .scrollable-table-container table {
+        border-collapse: separate;
+        border-spacing: 0;
+      }
+      .scrollable-table-container th {
+        border: 0;
+        border-top: 1px solid #cfd8df;
+        border-bottom: 1px solid #cfd8df;
+        border-right: 1px solid #cfd8df;
+      }
+      .scrollable-table-container td {
+        border: 0;
+        border-bottom: 1px solid #cfd8df;
+        border-right: 1px solid #cfd8df;
+      }
+      .scrollable-table-container th:first-child,
+      .scrollable-table-container td:first-child {
+        border-left: 1px solid #cfd8df;
+      }
+      #chromosomes-table thead tr:nth-of-type(2) th {
+        border-top: none;
+      }
+    </style>
+  </head>
+
+  <body>
+    <h1 class="pipeline-header">Pipeline Documentation</h1>
+    
+      <h2 class="preamble-header">preamble</h2>
+      <table style="width: 100%">
+      
+        <tr>
+          <th>Summary</th>
+          <td>Simple custom pipeline</td>
+        </tr>
+      
+      
+      
+        <tr>
+          <th>Input reference genome</th>
+          <td>
+            <a href="https://grr.iossifovlab.com/hg38/genomes/GRCh38-hg38/index.html">
+              hg38/genomes/GRCh38-hg38
+            </a>
+          </td>
+        </tr>
+      
+      
+      </table>
+    
+
+    
+    <div class="pipeline_path">
+      Pipeline path: custom_pipeline.yaml
+    </div>
+    
+
+    <h2 class="annotator-list-header">Annotators</h2>
+    
+      <div class="annotator-doc">
+        <div class="attribute-list">
+          
+            <div class="attribute">
+              <div class="attribute-info ">
+                <div class="attribute-name">
+                  worst_effect
+                </div>
+                <div class="attribute-type">Type:  </div>
+              </div>
+              <div class="attribute-description">
+                <p>Worst effect across all transcripts.</p>
+
+                
+                <div class="attribute-source">source: worst_effect</div>
+              </div>
+            </div>
+          
+            <div class="attribute">
+              <div class="attribute-info attribute-internal">
+                <div class="attribute-name">
+                  gene_list
+                </div>
+                <div class="attribute-type">Type:  (Internal)</div>
+              </div>
+              <div class="attribute-description">
+                <p>List of all genes</p>
+
+                
+                <div class="attribute-source">source: gene_list</div>
+              </div>
+            </div>
+          
+        </div>
+
+        <div class="annotator-line sticky-line">
+          <div class="annotator">
+            <div class="annotator-title">Annotator type: effect_annotator</div>
+          </div>
+
+          
+            <div class="annotator-description">
+              <p>Annotator to identify the effect of the variant on protein coding.</p>
+
+<p><a href="https://iossifovlab.com/gaindocs/annotation_infrastructure.html#effect-annotator" target="_blank">More info</a></p>
+
+            </div>
+          
+
+          
+            <div class="resource">
+              <div><b>Resource</b></div>
+              <div class="resource-info">Id: <a href="https://grr.iossifovlab.com/hg38/genomes/GRCh38-hg38/index.html">
+                      hg38/genomes/GRCh38-hg38</a></div>
+              <div class="resource-info">Type: genome</div>
+              
+                <div class="resource-info">Summary:</div>
+                <div>
+                  HG38 reference genome
+
+                </div>
+              
+            </div>
+          
+            <div class="resource">
+              <div><b>Resource</b></div>
+              <div class="resource-info">Id: <a href="https://grr.iossifovlab.com/hg38/gene_models/MANE/1.5/index.html">
+                      hg38/gene_models/MANE/1.5</a></div>
+              <div class="resource-info">Type: gene_models</div>
+              
+                <div class="resource-info">Summary:</div>
+                <div>
+                  MANE gene model version 1.5
+
+                </div>
+              
+            </div>
+          
+        </div>
+      </div>
+    
+      <div class="annotator-doc">
+        <div class="attribute-list">
+          
+            <div class="attribute">
+              <div class="attribute-info ">
+                <div class="attribute-name">
+                  phyloP7way
+                </div>
+                <div class="attribute-type">Type:  </div>
+              </div>
+              <div class="attribute-description">
+                <p>The score is a number that reflects the conservation at a position.</p>
+
+<p><strong>position_aggregator</strong>: <code>mean</code> [default]</p>
+
+                
+                  <img src="https://grr.iossifovlab.com/hg38/scores/phyloP7way/statistics/histogram_phyloP7way.png" alt="HISTOGRAM">
+                
+                <div class="attribute-source">source: phyloP7way</div>
+              </div>
+            </div>
+          
+        </div>
+
+        <div class="annotator-line ">
+          <div class="annotator">
+            <div class="annotator-title">Annotator type: position_score_annotator</div>
+          </div>
+
+          
+            <div class="annotator-description">
+              <p>Annotator to use with genomic scores depending on genomic position like
+phastCons, phyloP, FitCons2, etc.</p>
+
+<p><a href="https://iossifovlab.com/gaindocs/annotation_infrastructure.html#position-score-annotator" target="_blank">More info</a></p>
+
+            </div>
+          
+
+          
+            <div class="resource">
+              <div><b>Resource</b></div>
+              <div class="resource-info">Id: <a href="https://grr.iossifovlab.com/hg38/scores/phyloP7way/index.html">
+                      hg38/scores/phyloP7way</a></div>
+              <div class="resource-info">Type: position_score</div>
+              
+                <div class="resource-info">Summary:</div>
+                <div>
+                  Conservation score based on the multiple alignment of 7 species
+
+                </div>
+              
+            </div>
+          
+        </div>
+      </div>
+    
+      <div class="annotator-doc">
+        <div class="attribute-list">
+          
+            <div class="attribute">
+              <div class="attribute-info attribute-internal">
+                <div class="attribute-name">
+                  normalized_allele
+                </div>
+                <div class="attribute-type">Type:  (Internal)</div>
+              </div>
+              <div class="attribute-description">
+                <p>Normalized allele.</p>
+
+                
+                <div class="attribute-source">source: normalized_allele</div>
+              </div>
+            </div>
+          
+        </div>
+
+        <div class="annotator-line ">
+          <div class="annotator">
+            <div class="annotator-title">Annotator type: normalize_allele_annotator</div>
+          </div>
+
+          
+            <div class="no-description">
+              No description
+            </div>
+          
+
+          
+            <div class="resource">
+              <div><b>Resource</b></div>
+              <div class="resource-info">Id: <a href="https://grr.iossifovlab.com/hg38/genomes/GRCh38-hg38/index.html">
+                      hg38/genomes/GRCh38-hg38</a></div>
+              <div class="resource-info">Type: genome</div>
+              
+                <div class="resource-info">Summary:</div>
+                <div>
+                  HG38 reference genome
+
+                </div>
+              
+            </div>
+          
+        </div>
+      </div>
+    
+      <div class="annotator-doc">
+        <div class="attribute-list">
+          
+            <div class="attribute">
+              <div class="attribute-info ">
+                <div class="attribute-name">
+                  CLNSIG
+                </div>
+                <div class="attribute-type">Type:  </div>
+              </div>
+              <div class="attribute-description">
+                <p>Aggregate germline classification for this single variant; multiple values are separated by a vertical bar</p>
+
+<p><strong>allele_aggregator</strong>: list</p>
+
+                
+                  <img src="https://grr.iossifovlab.com/hg38/scores/ClinVar_20251019/statistics/histogram_CLNSIG.png" alt="HISTOGRAM">
+                
+                <div class="attribute-source">source: CLNSIG</div>
+              </div>
+            </div>
+          
+            <div class="attribute">
+              <div class="attribute-info ">
+                <div class="attribute-name">
+                  CLNDN
+                </div>
+                <div class="attribute-type">Type:  </div>
+              </div>
+              <div class="attribute-description">
+                <p>ClinVar's preferred disease name for the concept specified by disease identifiers in CLNDISDB</p>
+
+<p><strong>allele_aggregator</strong>: list</p>
+
+                
+                  <img src="https://grr.iossifovlab.com/hg38/scores/ClinVar_20251019/statistics/histogram_CLNDN.png" alt="HISTOGRAM">
+                
+                <div class="attribute-source">source: CLNDN</div>
+              </div>
+            </div>
+          
+        </div>
+
+        <div class="annotator-line sticky-line">
+          <div class="annotator">
+            <div class="annotator-title">Annotator type: allele_score_annotator</div>
+          </div>
+
+          
+            <div class="annotator-description">
+              <p>Annotator to use with scores that depend on allele like
+variant frequencies, etc.</p>
+
+<p><strong>Mode</strong> (<code>mode</code> parameter, applies to <code>VCFAllele</code> inputs only):</p>
+
+<ul>
+<li><code>allele</code> (default): exact chrom/pos/ref/alt match.</li>
+<li><code>region</code>: aggregates scores for all allele lines overlapping the
+annotatable's span.</li>
+</ul>
+
+<p>Non-<code>VCFAllele</code> annotatables always use region aggregation.</p>
+
+<p><a href="https://iossifovlab.com/gaindocs/annotation_infrastructure.html#allele-score-annotator" target="_blank">More info</a></p>
+
+<ul>
+<li><strong>input_annotatable</strong>: <code>normalized_allele</code></li>
+</ul>
+
+            </div>
+          
+
+          
+            <div class="resource">
+              <div><b>Resource</b></div>
+              <div class="resource-info">Id: <a href="https://grr.iossifovlab.com/hg38/scores/ClinVar_20251019/index.html">
+                      hg38/scores/ClinVar_20251019</a></div>
+              <div class="resource-info">Type: allele_score</div>
+              
+                <div class="resource-info">Summary:</div>
+                <div>
+                  Measure used to assess the clinical significance of genetic variants
+
+                </div>
+              
+            </div>
+          
+        </div>
+      </div>
+    
+  </body>
+<html>
