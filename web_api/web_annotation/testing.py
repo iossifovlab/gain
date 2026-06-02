@@ -115,9 +115,39 @@ class CustomWebsocketCommunicator(ApplicationCommunicator):
         ), f"JSON data is not a text frame, it is {type(payload)}"
         return cast(dict, json.loads(payload))
 
+    async def receive_notifications(
+        self, count: int, timeout: int = 1,
+    ) -> list[dict]:
+        """Drain ``count`` JSON notification frames, in arrival order."""
+        return [await self.receive_json_from(timeout) for _ in range(count)]
+
     async def disconnect(self, code: int = 1000, timeout: int = 1) -> None:
         """
         Closes the socket
         """
         await self.send_input({"type": "websocket.disconnect", "code": code})
         await self.wait(timeout)
+
+
+def assert_notification_streams(
+    messages: list[dict],
+    *,
+    pipeline_status: list[dict] | None = None,
+    job_status: list[dict] | None = None,
+) -> None:
+    """Assert per-type notification ordering, ignoring cross-stream order.
+
+    The annotation backend emits ``pipeline_status`` notifications from the
+    pipeline-loading worker thread and ``job_status`` notifications from the
+    request / job-executor threads. The two streams have no happens-before
+    relationship, so their interleaving on the websocket is racy (see
+    iossifovlab/gain#96). Order *within* each stream is deterministic, so we
+    partition by ``type`` and assert each stream independently.
+    """
+    by_type: dict[str, list[dict]] = {}
+    for message in messages:
+        by_type.setdefault(message["type"], []).append(message)
+    if pipeline_status is not None:
+        assert by_type.get("pipeline_status", []) == pipeline_status
+    if job_status is not None:
+        assert by_type.get("job_status", []) == job_status
