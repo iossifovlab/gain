@@ -3,9 +3,11 @@
 import os
 import pathlib
 import textwrap
+from typing import Any
 
 import pytest
 from gain.genomic_resources.fsspec_protocol import build_local_resource
+from gain.genomic_resources.implementations import reference_genome_impl
 from gain.genomic_resources.implementations.reference_genome_impl import (
     ReferenceGenomeImplementation,
 )
@@ -201,7 +203,7 @@ def test_bgz_fetch_unknown_chromosome_yields_nothing(
         bgz_genome_fixture: pathlib.Path) -> None:
     res = build_filesystem_test_resource(bgz_genome_fixture)
     with build_reference_genome_from_resource(res).open() as ref:
-        assert list(ref.fetch("nonexistent", 1, 10)) == []
+        assert not list(ref.fetch("nonexistent", 1, 10))
 
 
 def test_bgz_missing_gzi_raises_actionable_error(
@@ -285,6 +287,63 @@ def test_chromosome_statistic_basic(genome_fixture: pathlib.Path) -> None:
         "statistics",
         "pesho_statistic.yaml",
     ))
+
+
+_SOFT_MASKED_GENOME = textwrap.dedent("""
+    >pesho
+    NNACCCaaaC
+    GGGCCTTCCN
+    NNNA
+    >gosho
+    NNAACCGGTT
+    TTGGCCAANN
+""")
+
+
+def _setup_plain_and_bgz_resources(
+        tmp_path: pathlib.Path, content: str,
+) -> tuple[Any, Any]:
+    setup_genome(tmp_path / "plain" / "chr.fa", content)
+    setup_genome_bgz(tmp_path / "bgz" / "chr.fa.gz", content)
+    return (
+        build_filesystem_test_resource(tmp_path / "plain"),
+        build_filesystem_test_resource(tmp_path / "bgz"),
+    )
+
+
+def test_bgz_chromosome_statistic_parity(tmp_path: pathlib.Path) -> None:
+    plain_res, bgz_res = _setup_plain_and_bgz_resources(
+        tmp_path, _SOFT_MASKED_GENOME)
+
+    for chrom in ("pesho", "gosho"):
+        plain = ReferenceGenomeImplementation._do_chrom_statistic(
+            plain_res, chrom, 1, None)
+        bgz = ReferenceGenomeImplementation._do_chrom_statistic(
+            bgz_res, chrom, 1, None)
+        assert bgz.length == plain.length
+        assert bgz.nucleotide_counts == plain.nucleotide_counts
+        assert bgz.nucleotide_pair_counts == plain.nucleotide_pair_counts
+
+
+def test_bgz_chromosome_statistic_chunked(
+        tmp_path: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    plain_res, bgz_res = _setup_plain_and_bgz_resources(
+        tmp_path, _SOFT_MASKED_GENOME)
+
+    # force the whole-chromosome stats fetch to span many tiny windows so the
+    # chunk-boundary handling in the bgz path is actually exercised
+    monkeypatch.setattr(
+        reference_genome_impl,
+        "CHROMOSOME_STATISTIC_FETCH_BUFFER_SIZE", 3)
+
+    for chrom in ("pesho", "gosho"):
+        plain = ReferenceGenomeImplementation._do_chrom_statistic(
+            plain_res, chrom, 1, None)
+        bgz = ReferenceGenomeImplementation._do_chrom_statistic(
+            bgz_res, chrom, 1, None)
+        assert bgz.nucleotide_counts == plain.nucleotide_counts
+        assert bgz.nucleotide_pair_counts == plain.nucleotide_pair_counts
 
 
 def test_reference_genome_fetch(genome_fixture: pathlib.Path) -> None:
