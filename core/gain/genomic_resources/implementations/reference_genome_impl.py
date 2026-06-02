@@ -23,6 +23,14 @@ from gain.task_graph.graph import TaskDesc, TaskGraph
 
 logger = logging.getLogger(__name__)
 
+# Window size (in bp) for the whole-chromosome sequence fetch that drives
+# nucleotide statistics. The default fetch buffer (512 bp) is tuned for the
+# plain-FASTA seek reader; for a bgzipped genome it would turn a single
+# chromosome into hundreds of thousands of tiny pysam reads, so the stats
+# pass uses a much larger window — bounding memory to ~1 MB per read while
+# keeping the number of pysam calls per chromosome small.
+CHROMOSOME_STATISTIC_FETCH_BUFFER_SIZE = 1_000_000
+
 
 class GenomeStatisticsMixin:
     """Mixin for reference genome statistics access."""
@@ -434,7 +442,9 @@ class ReferenceGenomeImplementation(
                 prev: str | None = None
             else:
                 prev = impl.get_sequence(chrom, start - 1, start)
-            for nuc in impl.fetch(chrom, start, end):
+            for nuc in impl.fetch(
+                    chrom, start, end,
+                    buffer_size=CHROMOSOME_STATISTIC_FETCH_BUFFER_SIZE):
                 statistic.add_value((prev, nuc))
                 prev = nuc
 
