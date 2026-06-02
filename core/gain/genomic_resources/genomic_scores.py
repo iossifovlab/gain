@@ -5,6 +5,7 @@ import abc
 import copy
 import enum
 import logging
+import warnings
 from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass
 from functools import lru_cache
@@ -214,9 +215,19 @@ class PositionScoreQuery:
 
 @dataclass
 class AlleleScoreQuery:
+    """Deprecated. Use annotator-level aggregators instead."""
+
     score: str
     position_aggregator: str | None = None
     allele_aggregator: str | None = None
+
+    def __post_init__(self) -> None:
+        warnings.warn(
+            "AlleleScoreQuery is deprecated and will be removed in a future "
+            "version. Use annotator-level aggregators instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
 
 @dataclass
@@ -1401,7 +1412,13 @@ class AlleleScore(GenomicScore):
     def build_scores_agg(
         self, score_queries: list[AlleleScoreQuery],
     ) -> dict[str, AlleleScoreAggr]:
-        """Build allele score aggregators for the specified queries."""
+        """Deprecated. Use annotator-level aggregators instead."""
+        warnings.warn(
+            "build_scores_agg is deprecated and will be removed in a future "
+            "version. Use annotator-level aggregators instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         score_aggs = {}
         for squery in score_queries:
             scr_def = self.score_definitions[squery.score]
@@ -1427,7 +1444,13 @@ class AlleleScore(GenomicScore):
             self, chrom: str, pos_begin: int, pos_end: int,
             scores: list[AlleleScoreQuery] | None = None,
     ) -> list[Aggregator]:
-        """Fetch score values in a region and aggregates them."""
+        """Deprecated. Use annotator-level aggregators instead."""
+        warnings.warn(
+            "fetch_scores_agg is deprecated and will be removed in a future "
+            "version. Use annotator-level aggregators instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         # pylint: disable=too-many-locals
         if chrom not in self.get_all_chromosomes():
             raise ValueError(

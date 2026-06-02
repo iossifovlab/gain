@@ -26,10 +26,8 @@ from gain.annotation.annotation_pipeline import (
     AttributeSpec,
 )
 from gain.annotation.annotator_base import AnnotatorBase
-from gain.genomic_resources.aggregators import build_aggregator
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
-    AlleleScoreQuery,
     GenomicScore,
     PositionScore,
     ScoreDef,
@@ -442,7 +440,6 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
         self.mode = mode
 
         super().__init__(pipeline, info, self.allele_score)
-        self.allele_score_queries = []
         info.documentation += textwrap.dedent(f"""
 
 Annotator to use with scores that depend on allele like
@@ -462,6 +459,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
 
         self.allele_attribute = None
         self.attrs_to_include = []
+        self.allele_score_sources: list[str] = []
 
         for attr in self._attributes:
             if attr.source == "allele":
@@ -471,9 +469,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
                     self.attrs_to_include = [self.attrs_to_include]
                 self.allele_attribute = attr
                 continue
-            self.allele_score_queries.append(
-                AlleleScoreQuery(
-                    attr.source, allele_aggregator=attr.aggregator))
+            self.allele_score_sources.append(attr.source)
             self.add_score_aggregator_documentation(
                 attr, "allele_aggregator", attr.aggregator)
 
@@ -561,6 +557,17 @@ Non-``VCFAllele`` annotatables always use region aggregation.
 
         raise ValueError(f"Unsupported operator {operator.data}")
 
+    def get_attribute_defaults(
+        self, spec: AttributeSpec,
+    ) -> dict[str, Any]:
+        defaults = super().get_attribute_defaults(spec)
+        if "aggregator" not in defaults:
+            score_def = self.allele_score.get_score_definition(spec.source)
+            if score_def is not None \
+                    and score_def.allele_aggregator is not None:
+                defaults["aggregator"] = score_def.allele_aggregator
+        return defaults
+
     def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         """Return score attribute specs plus the virtual ``allele``."""
         result = super().get_attribute_specs()
@@ -623,17 +630,12 @@ Non-``VCFAllele`` annotatables always use region aggregation.
     def _annotate_region(
         self, annotatable: Annotatable,
     ) -> dict[str, Any]:
-        """Aggregate scores for all allele lines overlapping the annotatable."""
-        score_aggs = {}
-        for q in self.allele_score_queries:
-            scr_def = self.allele_score.score_definitions[q.score]
-            agg_type = q.allele_aggregator or scr_def.allele_aggregator
-            if agg_type is None:
-                raise AnnotationConfigurationError(
-                    f"No aggregator defined for score '{q.score}' in "
-                    "region mode; set 'aggregator' on the attribute or "
-                    "'allele_aggregator' in the resource config")
-            score_aggs[q.score] = build_aggregator(agg_type)
+        """Collect raw score lists for all allele lines overlapping the region.
+
+        Aggregation is handled by AnnotatorBase._apply_aggregators.
+        """
+        raw: dict[str, list] = {
+            source: [] for source in self.allele_score_sources}
         alleles: set[str] = set()
         has_lines = False
 
@@ -644,8 +646,8 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             if self.allele_filter is not None and not self.allele_filter(line):
                 continue
 
-            for q in self.allele_score_queries:
-                score_aggs[q.score].add(line.get_score(q.score))
+            for source in self.allele_score_sources:
+                raw[source].append(line.get_score(source))
 
             if self.allele_attribute is not None:
                 allele_str = f"{line.chrom}:{line.pos_begin}"
@@ -661,16 +663,12 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         if not has_lines:
             return self._empty_result()
 
-        scores = {
-            q.score: score_aggs[q.score].get_final()
-            for q in self.allele_score_queries
+        result = {
+            attr.source: raw.get(attr.source) for attr in self.attributes
         }
         if self.allele_attribute is not None:
-            scores[self.allele_attribute.source] = list(alleles)
-
-        return {
-            attr.source: scores.get(attr.source) for attr in self.attributes
-        }
+            result[self.allele_attribute.source] = list(alleles)
+        return result
 
     def _do_annotate(
         self, annotatable: Annotatable,
