@@ -24,6 +24,7 @@ from gain.genomic_resources.testing import (
     build_inmemory_test_repository,
     setup_directories,
     setup_genome,
+    setup_genome_bgz,
 )
 from gain.utils.regions import Region
 
@@ -126,6 +127,108 @@ def test_local_genomic_sequence(genome_fixture: pathlib.Path) -> None:
 
         assert ref.get_chrom_length("gosho") == 20
         assert ref.get_sequence("gosho", 11, 20) == "TTGGCCAANN"
+
+
+@pytest.fixture
+def bgz_genome_fixture(tmp_path: pathlib.Path) -> pathlib.Path:
+    root_path = tmp_path / "bgz_genome"
+    setup_directories(root_path, {
+        "genomic_resource.yaml": "{type: genome, filename: chr.fa.gz}",
+    })
+    setup_genome_bgz(root_path / "chr.fa.gz", textwrap.dedent("""
+            >pesho
+            NNACCCAAAC
+            GGGCCTTCCN
+            NNNA
+            >gosho
+            NNAACCGGTT
+            TTGGCCAANN
+    """))
+    return root_path
+
+
+def test_bgz_sequence_resource_file(bgz_genome_fixture: pathlib.Path) -> None:
+    res = build_filesystem_test_resource(bgz_genome_fixture)
+    reference_genome = build_reference_genome_from_resource(res)
+    with reference_genome.open() as ref:
+        assert ref.get_chrom_length("pesho") == 24
+        assert ref.get_sequence("pesho", 1, 12) == "NNACCCAAACGG"
+
+
+def test_bgz_matches_plain_fa(tmp_path: pathlib.Path) -> None:
+    content = textwrap.dedent("""
+        >pesho
+        NNACCCaaaC
+        GGGCCTTCCN
+        NNNA
+        >gosho
+        NNAACCGGTT
+        TTGGCCAANN
+    """)
+    plain = setup_genome(tmp_path / "plain" / "chr.fa", content)
+    bgz = setup_genome_bgz(tmp_path / "bgz" / "chr.fa.gz", content)
+    regions = [
+        ("pesho", 1, 12),
+        ("pesho", 5, 10),   # spans the lowercase 'aaa' -> must upper-case
+        ("pesho", 20, 24),  # end of chromosome
+        ("gosho", 1, 20),   # whole chromosome
+        ("gosho", 11, 20),
+    ]
+    for chrom, start, stop in regions:
+        assert bgz.get_sequence(chrom, start, stop) \
+            == plain.get_sequence(chrom, start, stop), (chrom, start, stop)
+
+
+def test_bgz_fetch_small_buffer(bgz_genome_fixture: pathlib.Path) -> None:
+    res = build_filesystem_test_resource(bgz_genome_fixture)
+    with build_reference_genome_from_resource(res).open() as ref:
+        full = ref.get_sequence("pesho", 1, 24)
+        # the whole chromosome fetched in tiny 3bp windows must reassemble
+        chunked = "".join(ref.fetch("pesho", 1, 24, buffer_size=3))
+        assert chunked == full
+        assert len(chunked) == 24
+
+
+def test_bgz_fetch_to_end_of_chromosome(
+        bgz_genome_fixture: pathlib.Path) -> None:
+    res = build_filesystem_test_resource(bgz_genome_fixture)
+    with build_reference_genome_from_resource(res).open() as ref:
+        # stop=None means "to the end of the chromosome"
+        assert "".join(ref.fetch("gosho", 11, None)) == "TTGGCCAANN"
+
+
+def test_bgz_fetch_unknown_chromosome_yields_nothing(
+        bgz_genome_fixture: pathlib.Path) -> None:
+    res = build_filesystem_test_resource(bgz_genome_fixture)
+    with build_reference_genome_from_resource(res).open() as ref:
+        assert list(ref.fetch("nonexistent", 1, 10)) == []
+
+
+def test_bgz_missing_gzi_raises_actionable_error(
+        bgz_genome_fixture: pathlib.Path) -> None:
+    (bgz_genome_fixture / "chr.fa.gz.gzi").unlink()
+    res = build_filesystem_test_resource(bgz_genome_fixture)
+    reference_genome = build_reference_genome_from_resource(res)
+    with pytest.raises(ValueError, match=r"\.gzi"):
+        reference_genome.open()
+
+
+def test_bgz_on_inmemory_protocol_raises() -> None:
+    repo = build_inmemory_test_repository({
+        "bgz_genome": {
+            GR_CONF_FILE_NAME: """
+                type: genome
+                filename: chr.fa.gz
+            """,
+            "chr.fa.gz": "ignored",
+            "chr.fa.gz.fai": "pesho\t24\t8\t10\t11",
+            "chr.fa.gz.gzi": "ignored",
+        },
+    })
+    res = repo.get_resource("bgz_genome")
+    reference_genome = build_reference_genome_from_resource(res)
+    with pytest.raises(OSError, match="not supported"):
+        reference_genome.open()
 
 
 def test_chromosome_statistic_basic(genome_fixture: pathlib.Path) -> None:

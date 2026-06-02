@@ -576,6 +576,14 @@ class GenomicResource:
         """Open a vcf file and returns a pysam.VariantFile."""
         return self.proto.open_vcf_file(self, filename, index_filename)
 
+    def open_fasta_file(
+            self, filename: str,
+            index_filename: str | None = None,
+            compressed_index_filename: str | None = None) -> pysam.FastaFile:
+        """Open a bgzipped fasta file and return a pysam.FastaFile."""
+        return self.proto.open_fasta_file(
+            self, filename, index_filename, compressed_index_filename)
+
     def open_bigwig_file(self, filename: str) -> Any:
         """Open a bigwig file and return it."""
         return self.proto.open_bigwig_file(self, filename)
@@ -814,6 +822,18 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
         Not all repositories support this method. Repositories that do
         no support this method raise and exception.
         """
+
+    def open_fasta_file(
+            self, resource: GenomicResource, filename: str,
+            index_filename: str | None = None,
+            compressed_index_filename: str | None = None) -> pysam.FastaFile:
+        """Open a bgzipped fasta file in a resource and return a FastaFile.
+
+        Not all repositories support this method. Repositories that do
+        not support this method raise an exception.
+        """
+        raise NotImplementedError(
+            f"open_fasta_file not supported by {type(self).__name__}")
 
     @abc.abstractmethod
     def open_repository_sqlite3_metadata_db(self) -> apsw.Connection:

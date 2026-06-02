@@ -257,6 +257,40 @@ def setup_genome(out_path: pathlib.Path, content: str) -> ReferenceGenome:
     return build_reference_genome_from_file(str(out_path)).open()
 
 
+def setup_genome_bgz(out_path: pathlib.Path, content: str) -> ReferenceGenome:
+    """Set up a bgzipped reference genome using the content.
+
+    Writes a BGZF-compressed FASTA at ``out_path`` (expected to end in
+    ``.fa.gz``/``.fa.bgz``) together with its ``.fai`` and ``.gzi`` indexes.
+    """
+    if not out_path.name.endswith((".fa.gz", ".fa.bgz")):
+        raise ValueError(
+            "bgzipped genome output file is expected to have a "
+            "'.fa.gz' or '.fa.bgz' suffix")
+
+    plain_path = out_path.parent / out_path.name.rsplit(".", 1)[0]
+    setup_directories(plain_path, convert_to_tab_separated(content))
+
+    # pylint: disable=no-member
+    pysam.tabix_compress(str(plain_path), str(out_path), force=True)
+    plain_path.unlink()
+    # faidx on a bgzipped FASTA emits both the .fai and the .gzi index.
+    pysam.faidx(str(out_path))
+
+    setup_directories(out_path.parent, {
+        "genomic_resource.yaml": textwrap.dedent(f"""
+            type: genome
+
+            filename: {out_path.name}
+        """),
+    })
+    # pylint: disable=import-outside-toplevel
+    from gain.genomic_resources.reference_genome import (
+        build_reference_genome_from_file,
+    )
+    return build_reference_genome_from_file(str(out_path)).open()
+
+
 def setup_gene_models(
         out_path: pathlib.Path,
         content: str,

@@ -443,6 +443,38 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         return pysam.VariantFile(  # pylint: disable=no-member
             file_url, index_filename=index_url)
 
+    def open_fasta_file(
+            self, resource: GenomicResource,
+            filename: str,
+            index_filename: str | None = None,
+            compressed_index_filename: str | None = None) -> pysam.FastaFile:
+
+        if self.scheme not in {"file", "s3", "http", "https"}:
+            raise OSError(
+                f"fasta files are not supported on schema {self.scheme}")
+
+        file_url = self._get_file_url(resource, filename)
+
+        if index_filename is None:
+            index_filename = f"{filename}.fai"
+        index_url = self._get_file_url(resource, index_filename)
+
+        if compressed_index_filename is None:
+            compressed_index_filename = f"{filename}.gzi"
+        if not self.file_exists(resource, compressed_index_filename):
+            raise ValueError(
+                f"bgzip index '{compressed_index_filename}' is required to "
+                f"read bgzipped genome '{filename}' in resource "
+                f"'{resource.resource_id}'; generate the .fai and .gzi "
+                f"indexes with 'samtools faidx {filename}'")
+        compressed_index_url = self._get_file_url(
+            resource, compressed_index_filename)
+
+        return pysam.FastaFile(  # pylint: disable=no-member
+            file_url,
+            filepath_index=index_url,
+            filepath_index_compressed=compressed_index_url)
+
     def open_bigwig_file(
         self, resource: GenomicResource, filename: str,
     ) -> Any:
