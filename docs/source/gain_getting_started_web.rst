@@ -43,7 +43,7 @@ to be annotated at once. In this mode, users upload a file in tabular or VCF for
 containing annotatables (variants, positions, or regions) with the required coordinate 
 information. Click Annotation jobs on the right side of the page. 
 
-.. figure:: figures/GAInWeb5b.png
+.. figure:: figures/GAInWeb5.png
   :scale: 50 %
 
 
@@ -61,7 +61,7 @@ The file contains three variant annotatables, each described by the columns ``ch
 
 When the file is uploaded, GAIn automatically recognizes the ``chrom``, ``pos``, ``ref``, and ``alt`` columns because the file uses those exact column names. If the input file uses different column labels, users can manually specify which columns correspond to ``chrom``, ``pos``, ``ref``, and ``alt`` before creating the annotation job.
 
-.. figure:: figures/GAInWeb6b.png
+.. figure:: figures/GAInWeb6.png
   :scale: 50 %
 
 
