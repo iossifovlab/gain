@@ -4,7 +4,6 @@ from __future__ import annotations
 import abc
 import os
 from collections.abc import Sequence
-from itertools import starmap
 from pathlib import Path
 from typing import Any
 
@@ -137,7 +136,7 @@ class AnnotatorBase(Annotator):
         """Annotate the annotatable.
 
         Internal abstract method used for annotation. It should produce
-        all name-keyed attributes defined for this annotator instance.
+        a source-keyed dict, one entry per configured attribute.
         """
 
     def _apply_aggregators(
@@ -170,9 +169,11 @@ class AnnotatorBase(Annotator):
         batch_work_dir: str | None = None,  # noqa: ARG002
     ) -> list[dict[str, Any]]:
         """Annotate a batch of annotatables."""
-        return list(starmap(
-            self._do_annotate, zip(annotatables, contexts, strict=True),
-        ))
+        return [
+            self._empty_result() if annotatable is None
+            else self._do_annotate(annotatable, context)
+            for annotatable, context in zip(annotatables, contexts, strict=True)
+        ]
 
     def batch_annotate(
         self,

@@ -427,3 +427,22 @@ def test_gene_list_aggregator_wrong_aggregator(
                       gene_list_aggregator: true
                 """),
             grr2)
+
+
+def test_gene_list_aggregator_wrong_attribute(
+    grr2: GenomicResourceRepo,
+) -> None:
+    with pytest.raises(
+        AnnotationConfigurationError,
+        match=r"does not support aggregation",
+    ):
+        load_pipeline_from_yaml(
+            textwrap.dedent("""
+                - simple_effect_annotator:
+                    gene_models: gene_models
+                    attributes:
+                    - source: worst_effect
+                      name: wrong_attribute
+                      aggregator: join(|)
+                """),
+            grr2)

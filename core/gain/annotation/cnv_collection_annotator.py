@@ -208,7 +208,7 @@ class CnvCollectionAnnotator(AnnotatorBase):
 
     def open(self) -> Annotator:
         self.cnv_collection.open()
-        Annotator.open(self)
+        super().open()
         return self
 
     def close(self) -> None:

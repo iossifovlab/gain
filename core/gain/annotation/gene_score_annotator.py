@@ -122,7 +122,7 @@ class GeneScoreAnnotator(AnnotatorBase):
         context: dict[str, Any],
     ) -> dict[str, Any]:
         if annotatable is None:
-            return self._empty_result()
+            return {attr.name: None for attr in self.attributes}
         source_values = self._do_annotate(annotatable, context)
         return {
             attr.name: self._apply_gene_aggregator(

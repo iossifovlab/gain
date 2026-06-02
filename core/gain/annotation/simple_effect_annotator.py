@@ -53,7 +53,6 @@ class SimpleEffectAnnotator(AnnotatorBase):
         ]
 
     def get_attribute_specs(self) -> dict[str, AttributeSpec]:
-        self._simple_effect_params: dict[str, dict[str, Any]] = {}
         gene_lists: dict[str, AttributeSpec] = {}
         for effect in SimpleEffectAnnotator.effect_types()[:-1]:
             source_gl = f"{effect}_gene_list"
@@ -71,6 +70,7 @@ class SimpleEffectAnnotator(AnnotatorBase):
                     f"comma separated list of genes with {effect} effect."),
                 internal_default=False,
                 is_default=False,
+                supports_aggregation=False,
             )
 
         return {
@@ -79,12 +79,14 @@ class SimpleEffectAnnotator(AnnotatorBase):
                 description="The worst effect.",
                 internal_default=False,
                 is_default=True,
+                supports_aggregation=False,
             ),
             "worst_effect_genes": AttributeSpec(
                 source="worst_effect_genes", value_type="str",
                 description="comma separated list of genes with worst effect.",
                 internal_default=False,
                 is_default=True,
+                supports_aggregation=False,
             ),
             "worst_effect_gene_list": AttributeSpec(
                 source="worst_effect_gene_list", value_type="object",
@@ -105,26 +107,29 @@ class SimpleEffectAnnotator(AnnotatorBase):
                 description="Comma separated list of all affected genes.",
                 internal_default=False,
                 is_default=False,
+                supports_aggregation=False,
             ),
             "gene_effects": AttributeSpec(
                 source="gene_effects", value_type="str",
                 description="list of gene:effect pairs.",
                 internal_default=False,
                 is_default=False,
+                supports_aggregation=False,
             ),
             "effect_details": AttributeSpec(
                 source="effect_details", value_type="str",
                 description="list of transcript:gene:effect tuples.",
                 internal_default=False,
                 is_default=False,
+                supports_aggregation=False,
             ),
             **gene_lists,
         }
 
     def get_attribute_defaults(
-        self, spec: AttributeSpec,
+        self, spec: AttributeSpec,  # noqa: ARG002
     ) -> dict[str, Any]:
-        return dict(self._simple_effect_params.get(spec.source, {}))
+        return {}
 
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
 

@@ -93,6 +93,7 @@ Annotator to identify the effect of the variant on protein coding.
                 description=f"Comma separated list of {group} genes",
                 internal_default=False,
                 is_default=False,
+                supports_aggregation=False,
             )
             self._effect_params[source_ge] = {"effect_type": group}
         effect_gene_lists["LGD_gene_list"] = AttributeSpec(
@@ -112,13 +113,15 @@ Annotator to identify the effect of the variant on protein coding.
                 value_type="str",
                 description="Worst effect across all transcripts.",
                 is_default=True,
-                internal_default=False),
+                internal_default=False,
+                supports_aggregation=False),
             "worst_effect_genes": AttributeSpec(
                 source="worst_effect_genes",
                 value_type="str",
                 description="comma separated list of genes with worst effect.",
                 internal_default=False,
-                is_default=True),
+                is_default=True,
+                supports_aggregation=False),
             "worst_effect_gene_list": AttributeSpec(
                 source="worst_effect_gene_list",
                 value_type="object",
@@ -133,7 +136,8 @@ Annotator to identify the effect of the variant on protein coding.
                     "`<gene_1>:<effect_1>|...` A gene can be repeated."
                 ),
                 internal_default=False,
-                is_default=True),
+                is_default=True,
+                supports_aggregation=False),
             "effect_details": AttributeSpec(
                 source="effect_details",
                 value_type="str",
@@ -143,7 +147,8 @@ Annotator to identify the effect of the variant on protein coding.
                     "<gene 1>:<effect 1>:<details 1>|...`"
                 ),
                 internal_default=False,
-                is_default=True),
+                is_default=True,
+                supports_aggregation=False),
             "allele_effects": AttributeSpec(
                 source="allele_effects",
                 value_type="object",
@@ -151,7 +156,8 @@ Annotator to identify the effect of the variant on protein coding.
                 "details of the effects for each "
                 "affected transcript."),
                 internal_default=True,
-                is_default=False),
+                is_default=False,
+                supports_aggregation=False),
             "gene_list": AttributeSpec(
                 source="gene_list",
                 value_type="object",
@@ -164,7 +170,8 @@ Annotator to identify the effect of the variant on protein coding.
                 value_type="str",
                 description="Comma separated list of all affected genes.",
                 internal_default=False,
-                is_default=False),
+                is_default=False,
+                supports_aggregation=False),
             **effect_gene_lists,
             **effect_genes,
         }

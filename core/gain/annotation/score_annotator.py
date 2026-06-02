@@ -109,7 +109,7 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
 
     def open(self) -> Annotator:
         self.score.open()
-        Annotator.open(self)
+        super().open()
         return self
 
     def is_open(self) -> bool:
@@ -243,9 +243,10 @@ class PositionScoreAnnotator(GenomicScoreAnnotatorBase):
     The position_score resource provides a set of scores (see …) that the
     position_score_annotator uses as attributes to assign to the annotatable.
 
-    The position_score_annotator recognized one attribute level parameter
-    called position_aggregator that controls how the position scores are
+    The position_score_annotator recognizes one attribute level parameter
+    called aggregator that controls how the position scores are
     aggregated for annotatables that refer to a region of the reference genome.
+    The deprecated name position_aggregator is still accepted.
     """
 
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
@@ -350,19 +351,20 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
 
     Operates in one of two modes, selected by the ``mode`` parameter:
 
-    - ``region`` (**default**): iterates all allele lines that overlap the
-      annotatable's span and aggregates their scores.  Works with any
-      ``Annotatable`` (``VCFAllele``, ``Region``, CNV, …).  An aggregator
-      must be defined for every score attribute, either in the attribute config
-      or as the score's ``allele_aggregator`` default in the resource YAML.
+    - ``allele`` (**default**): performs an exact chrom/pos/ref/alt lookup and
+      returns the single matching line's scores.  The annotatable must be a
+      ``VCFAllele``; other types receive an empty result.
 
-    - ``allele``: performs an exact chrom/pos/ref/alt lookup and returns the
-      single matching line's scores.  The annotatable must be a ``VCFAllele``;
-      other types receive an empty result.
+    - ``region``: iterates all allele lines that overlap the annotatable's span
+      and aggregates their scores.  Works with any ``Annotatable``
+      (``VCFAllele``, ``Region``, CNV, …).  An aggregator must be defined for
+      every score attribute, either in the attribute config or as the score's
+      ``allele_aggregator`` default in the resource YAML.
 
     Virtual ``allele`` attribute
     ----------------------------
-    All annotators expose a virtual attribute ``"allele"`` (``default=False``)
+    All annotators expose a virtual attribute ``"allele"``
+    (``is_default=False``)
     that is synthesised rather than read from the data file.
 
     - In ``allele`` mode: returns ``["chrom:pos:ref:alt"]`` for the matched
