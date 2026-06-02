@@ -220,6 +220,21 @@ class CachingProtocol(ReadOnlyRepositoryProtocol):
         return self.local_protocol.open_vcf_file(
             resource, filename, index_filename)
 
+    def open_fasta_file(
+            self, resource: GenomicResource, filename: str,
+            index_filename: str | None = None,
+            compressed_index_filename: str | None = None) -> pysam.FastaFile:
+        self.refresh_cached_resource_file(resource, filename)
+        if index_filename is None:
+            index_filename = f"{filename}.fai"
+        self.refresh_cached_resource_file(resource, index_filename)
+        if compressed_index_filename is None:
+            compressed_index_filename = f"{filename}.gzi"
+        self.refresh_cached_resource_file(resource, compressed_index_filename)
+
+        return self.local_protocol.open_fasta_file(
+            resource, filename, index_filename, compressed_index_filename)
+
     def open_bigwig_file(
             self, resource: GenomicResource, filename: str) -> Any:
         self.refresh_cached_resource_file(resource, filename)

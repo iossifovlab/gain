@@ -6,12 +6,16 @@ from typing import Any
 import pytest
 import pytest_mock
 from gain.genomic_resources.cached_repository import CachingProtocol
+from gain.genomic_resources.reference_genome import (
+    build_reference_genome_from_resource,
+)
 from gain.genomic_resources.testing import (
     FsspecReadWriteProtocol,
     build_filesystem_test_protocol,
     build_inmemory_test_protocol,
     build_s3_test_protocol,
     setup_directories,
+    setup_genome_bgz,
     setup_tabix,
 )
 
@@ -54,6 +58,50 @@ def remote_proto_fixture(
         """,
         seq_col=0, start_col=1, end_col=2)
     return build_filesystem_test_protocol(root_path)
+
+
+@pytest.fixture
+def bgz_genome_caching_proto(
+    tmp_path_factory: pytest.TempPathFactory,
+    grr_scheme: str,
+    mocker: pytest_mock.MockerFixture,
+) -> Generator[CachingProtocol, None, None]:
+
+    mocker.patch.dict(os.environ, {
+        "AWS_SECRET_ACCESS_KEY": "minioadmin",
+        "AWS_ACCESS_KEY_ID": "minioadmin",
+    })
+
+    remote_root = tmp_path_factory.mktemp("bgz_genome_remote")
+    setup_genome_bgz(
+        remote_root / "bgz_genome" / "chr.fa.gz",
+        """
+            >pesho
+            NNACCCAAAC
+            GGGCCTTCCN
+            NNNA
+            >gosho
+            NNAACCGGTT
+            TTGGCCAANN
+        """)
+    remote_proto = build_filesystem_test_protocol(remote_root)
+
+    if grr_scheme == "file":
+        cache_root = tmp_path_factory.mktemp("bgz_genome_file_cache")
+        yield CachingProtocol(
+            remote_proto, build_filesystem_test_protocol(cache_root))
+
+    elif grr_scheme == "s3":
+        # pysam.FastaFile needs local index files — it os.path.exists-checks
+        # filepath_index/filepath_index_compressed (libcfaidx) and cannot use
+        # signed remote URLs. A bgzipped genome therefore cannot be served from
+        # an s3-backed cache today. In production the GRR cache is always a
+        # local filesystem (cache_dir -> file://), so this is an edge config;
+        # supporting it is tracked in #94.
+        pytest.skip("bgzipped genomes on an s3-backed cache: see #94")
+
+    else:
+        raise ValueError(f"Unsupported caching scheme: {grr_scheme}")
 
 
 @pytest.fixture
@@ -179,6 +227,38 @@ def test_open_tabix_file_caches_both_files(
     # Both files should be cached
     assert local_proto.file_exists(res, "test.txt.gz")
     assert local_proto.file_exists(res, "test.txt.gz.tbi")
+
+
+@pytest.mark.grr_full
+def test_open_fasta_file_caches_all_three(
+        bgz_genome_caching_proto: CachingProtocol) -> None:
+    """Opening a bgzipped genome caches the data, .fai and .gzi files."""
+    caching_proto = bgz_genome_caching_proto
+    res = caching_proto.get_resource("bgz_genome")
+
+    local_proto = caching_proto.local_protocol
+    assert not local_proto.file_exists(res, "chr.fa.gz")
+    assert not local_proto.file_exists(res, "chr.fa.gz.fai")
+    assert not local_proto.file_exists(res, "chr.fa.gz.gzi")
+
+    with caching_proto.open_fasta_file(res, "chr.fa.gz") as fasta:
+        assert fasta.fetch("pesho", 0, 12) == "NNACCCAAACGG"
+
+    # all three files (data + both indexes) must be cached locally
+    assert local_proto.file_exists(res, "chr.fa.gz")
+    assert local_proto.file_exists(res, "chr.fa.gz.fai")
+    assert local_proto.file_exists(res, "chr.fa.gz.gzi")
+
+
+@pytest.mark.grr_full
+def test_reference_genome_over_cached_protocol(
+        bgz_genome_caching_proto: CachingProtocol) -> None:
+    """A bgzipped genome reads correctly through the caching protocol."""
+    res = bgz_genome_caching_proto.get_resource("bgz_genome")
+    with build_reference_genome_from_resource(res).open() as genome:
+        assert genome.get_chrom_length("pesho") == 24
+        assert genome.get_sequence("pesho", 1, 12) == "NNACCCAAACGG"
+        assert genome.get_sequence("gosho", 11, 20) == "TTGGCCAANN"
 
 
 @pytest.mark.grr_full
