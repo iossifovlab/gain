@@ -10,6 +10,8 @@ import json
 import logging
 import operator
 import os
+import pathlib
+import tempfile
 import time
 from collections.abc import Callable, Generator
 from contextlib import AbstractContextManager
@@ -453,12 +455,8 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
             raise OSError(
                 f"fasta files are not supported on schema {self.scheme}")
 
-        file_url = self._get_file_url(resource, filename)
-
         if index_filename is None:
             index_filename = f"{filename}.fai"
-        index_url = self._get_file_url(resource, index_filename)
-
         if compressed_index_filename is None:
             compressed_index_filename = f"{filename}.gzi"
         if not self.file_exists(resource, compressed_index_filename):
@@ -467,13 +465,42 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
                 f"read bgzipped genome '{filename}' in resource "
                 f"'{resource.resource_id}'; generate the .fai and .gzi "
                 f"indexes with 'samtools faidx {filename}'")
-        compressed_index_url = self._get_file_url(
-            resource, compressed_index_filename)
 
-        return pysam.FastaFile(  # pylint: disable=no-member
-            file_url,
-            filepath_index=index_url,
-            filepath_index_compressed=compressed_index_url)
+        file_url = self._get_file_url(resource, filename)
+
+        if self.scheme == "file":
+            return pysam.FastaFile(  # pylint: disable=no-member
+                file_url,
+                filepath_index=self._get_file_url(resource, index_filename),
+                filepath_index_compressed=self._get_file_url(
+                    resource, compressed_index_filename))
+
+        # Remote scheme: pysam.FastaFile requires the index arguments to be
+        # local paths (it os.path.exists-checks them), but htslib can range-
+        # read the data file remotely. Copy the small .fai/.gzi indexes to a
+        # temporary local directory and open against those; htslib loads both
+        # indexes into memory at open, so the temp files can be removed
+        # immediately afterwards. The multi-GB data file stays remote.
+        with tempfile.TemporaryDirectory(prefix="gain-fasta-idx-") as tmpdir:
+            local_index = self._copy_resource_file_to_local(
+                resource, index_filename, tmpdir)
+            local_compressed_index = self._copy_resource_file_to_local(
+                resource, compressed_index_filename, tmpdir)
+            return pysam.FastaFile(  # pylint: disable=no-member
+                file_url,
+                filepath_index=local_index,
+                filepath_index_compressed=local_compressed_index)
+
+    def _copy_resource_file_to_local(
+            self, resource: GenomicResource,
+            filename: str, dest_dir: str) -> str:
+        """Copy a (small) resource file into dest_dir; return the local path."""
+        dest = os.path.join(dest_dir, os.path.basename(filename))
+        with self.open_raw_file(
+                resource, filename, "rb", uncompress=False) as src:
+            data = src.read()
+        pathlib.Path(dest).write_bytes(data)
+        return dest
 
     def open_bigwig_file(
         self, resource: GenomicResource, filename: str,
