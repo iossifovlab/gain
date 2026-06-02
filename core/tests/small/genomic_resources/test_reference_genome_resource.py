@@ -3,9 +3,11 @@
 import os
 import pathlib
 import textwrap
+from collections.abc import Generator
 from typing import Any
 
 import pytest
+import pytest_mock
 from gain.genomic_resources.fsspec_protocol import build_local_resource
 from gain.genomic_resources.implementations import reference_genome_impl
 from gain.genomic_resources.implementations.reference_genome_impl import (
@@ -24,6 +26,7 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_resource,
     build_http_test_protocol,
     build_inmemory_test_repository,
+    build_s3_test_protocol,
     setup_directories,
     setup_genome,
     setup_genome_bgz,
@@ -231,6 +234,38 @@ def test_bgz_on_inmemory_protocol_raises() -> None:
     reference_genome = build_reference_genome_from_resource(res)
     with pytest.raises(OSError, match="not supported"):
         reference_genome.open()
+
+
+@pytest.fixture
+def bgz_remote_genome(
+    tmp_path: pathlib.Path,
+    grr_scheme: str,
+    mocker: pytest_mock.MockerFixture,
+) -> Generator[Any, None, None]:
+    mocker.patch.dict(os.environ, {
+        "AWS_SECRET_ACCESS_KEY": "minioadmin",
+        "AWS_ACCESS_KEY_ID": "minioadmin",
+    })
+    root = tmp_path / "bgz_genome"
+    setup_genome_bgz(root / "chr.fa.gz", _SOFT_MASKED_GENOME)
+
+    if grr_scheme == "http":
+        with build_http_test_protocol(root) as proto:
+            yield proto.get_resource("")
+    elif grr_scheme == "s3":
+        with build_s3_test_protocol(root) as proto:
+            yield proto.get_resource("")
+    else:  # file
+        yield build_filesystem_test_resource(root)
+
+
+# grr_tabix parametrizes over file/s3/http (pysam cannot read inmemory)
+@pytest.mark.grr_tabix
+def test_bgz_genome_over_remote_protocol(bgz_remote_genome: Any) -> None:
+    with build_reference_genome_from_resource(bgz_remote_genome).open() as ref:
+        assert ref.get_chrom_length("pesho") == 24
+        assert ref.get_sequence("pesho", 1, 12) == "NNACCCAAACGG"
+        assert ref.get_sequence("gosho", 11, 20) == "TTGGCCAANN"
 
 
 def test_chromosome_statistic_basic(genome_fixture: pathlib.Path) -> None:
