@@ -89,6 +89,43 @@ and gene-level scores. The downloaded output for ``small_input.csv`` is shown be
 Custom annotation pipeline
 **************************
 
-[]
+The web interface can also be used to create custom annotation pipelines. Users can build pipelines by selecting resources and configuring how they should be used in annotation. This workflow is described in more detail in the `GAIn web interface <https://iossifovlab.com/gaindocs/web_interface.html>`_ section. Here, we demonstrate a simple example in which a user creates a new pipeline by selecting two resources: the ``MANE 1.5`` gene models and the ``phyloP7way`` conservation score.
 
-This concludes the Getting Started on the Web section, which demonstrated how to use a saved annotation pipeline, run annotation jobs, and create a custom annotation pipeline in the web interface. The `GAIn web interface <https://iossifovlab.com/gaindocs/web_interface.html>`_ section describes the web interface in more detail, including registration and additional features of the site.
+To create a new pipeline, click the **New pipeline** button at the bottom of the annotation pipeline editor. This opens an empty pipeline editor. Next, click the **New resource** button to open the resource selection dialog, where resources can be added to the pipeline.
+
+.. figure:: figures/GAInWeb8.png
+
+When the resource selection dialog opens, it lists resources available to the web interface from the connected public genomic resource repositories. By default, this includes approximately 8000 resources from the main IossifovLab GRR and GRR-ENCODE.
+
+.. figure:: figures/GAInWeb9.png
+    :scale: 50 %
+
+For this example, we first add a gene models resource. Gene models describe the locations and structures of genes and transcripts, allowing GAIn to determine which genes are affected by a variant and what type of effect the variant has. Use the search box to search for MANE, scroll through the matching results, find ``MANE 1.5``, and select the checkbox next to it. This adds the ``MANE 1.5`` gene models resource to the pipeline with its default annotation attributes, including the predicted worst effect, affected genes, and effect details.
+
+.. figure:: figures/GAInWeb10.png
+    :scale: 50 %
+
+When the resource is selected, GAIn automatically adds the corresponding lines to the annotation pipeline editor. The editor now contains the pipeline configuration needed to use the ``MANE 1.5`` gene models resource.
+
+.. figure:: figures/GAInWeb11.png
+    :scale: 50 %
+
+
+After adding the gene models resource, add a position score resource to the same pipeline. Position score resources assign numeric values to genomic positions. In this example, we add ``phyloP7way``, a conservation score that reports evolutionary conservation at each queried position.
+
+Click **New resource** again and search for ``phyloP7way`` in the resource selection dialog. Select the checkbox next to the phyloP7way resource to add it to the pipeline.
+
+.. figure:: figures/GAInWeb12.png
+    :scale: 50 %
+
+After the resource is selected, GAIn automatically adds the corresponding lines to the annotation pipeline editor. Because ``phyloP7way`` provides a single score, GAIn adds that score as the default annotation attribute for this resource. The custom pipeline now includes both the ``MANE 1.5`` gene models resource and the ``phyloP7way`` position score resource.
+
+.. figure:: figures/GAInWeb13.png
+    :scale: 50 %
+
+To test the custom pipeline, choose one of the example annotatables or enter an annotatable in ``hg38`` coordinates. GAIn runs the custom pipeline and displays the results immediately in the right panel. The example below shows the compact report produced by the custom pipeline.
+
+.. figure:: figures/GAInWeb14.png
+    :scale: 50 %
+
+This concludes the Getting Started on the Web section, which demonstrated how to use a saved annotation pipeline, run annotation jobs, and create a simple custom annotation pipeline in the web interface. The `GAIn web interface <https://iossifovlab.com/gaindocs/web_interface.html>`_ section describes the web interface in more detail, including registration and additional features of the site.
