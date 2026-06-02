@@ -34,7 +34,19 @@ def build_effect_annotator(pipeline: AnnotationPipeline,
 class EffectAnnotatorAdapter(AnnotatorBase):
     """Adapts effect annotator to be used in annotation infrastructure."""
 
+    @staticmethod
+    def _build_source_effect_types() -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for group in [
+                *EffectTypesMixin.EFFECT_GROUPS,
+                *EffectTypesMixin.EFFECT_TYPES]:
+            result[f"{group}_gene_list"] = {"effect_type": group}
+            result[f"{group}_genes"] = {"effect_type": group}
+        result["LGD_gene_list"] = {"effect_type": "LGDs"}
+        return result
+
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
+        self._source_effect_types = self._build_source_effect_types()
         gene_models = find_annotator_gene_models(
             info, pipeline.repository)
         genome = find_annotator_reference_genome(
@@ -70,7 +82,6 @@ Annotator to identify the effect of the variant on protein coding.
         )
 
     def get_attribute_specs(self) -> dict[str, AttributeSpec]:
-        self._effect_params: dict[str, dict[str, Any]] = {}
         effect_gene_lists: dict[str, AttributeSpec] = {}
         effect_genes: dict[str, AttributeSpec] = {}
         for group in [
@@ -86,7 +97,6 @@ Annotator to identify the effect of the variant on protein coding.
                 is_default=False,
                 attribute_type="gene_list",
             )
-            self._effect_params[source_gl] = {"effect_type": group}
             effect_genes[source_ge] = AttributeSpec(
                 source=source_ge,
                 value_type="str",
@@ -95,7 +105,6 @@ Annotator to identify the effect of the variant on protein coding.
                 is_default=False,
                 supports_aggregation=False,
             )
-            self._effect_params[source_ge] = {"effect_type": group}
         effect_gene_lists["LGD_gene_list"] = AttributeSpec(
             source="LGD_gene_list",
             value_type="object",
@@ -106,7 +115,6 @@ Annotator to identify the effect of the variant on protein coding.
             is_default=False,
             attribute_type="gene_list",
         )
-        self._effect_params["LGD_gene_list"] = {"effect_type": "LGDs"}
         return {
             "worst_effect": AttributeSpec(
                 source="worst_effect",
@@ -179,7 +187,7 @@ Annotator to identify the effect of the variant on protein coding.
     def get_attribute_defaults(
         self, spec: AttributeSpec,
     ) -> dict[str, Any]:
-        return dict(self._effect_params.get(spec.source, {}))
+        return dict(self._source_effect_types.get(spec.source, {}))
 
     def close(self) -> None:
         self.genome.close()
