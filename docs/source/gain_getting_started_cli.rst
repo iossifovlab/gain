@@ -198,7 +198,7 @@ By default, GAIn can access genomic resources directly from a remote GRR. This w
 
 When caching is enabled, GAIn downloads a required resource into a local cache directory the first time the resource is used. After that, GAIn uses the local copy for annotation and reuses it in future jobs without downloading it again.
 
-To enable caching, explicitly configure the GRR definition by adding a cache directory to the GRR definition file (i.e. ``~/.grr_definition.yaml``). So far, GAIn has been using the default GRR definition, which corresponds to the configuration shown by the first lines of ``grr_browse``. To enable caching, create a GRR definition file (``~/.grr_definition.yaml``), with the same default GRR configuration plus a ``cache_dir`` entry. For example: 
+So far, GAIn has been using the default GRR definition, which corresponds to the configuration shown by the first lines of ``grr_browse``. To enable caching, create a GRR definition file (``~/.grr_definition.yaml``), with the same default GRR configuration plus a ``cache_dir`` entry. For example: 
 
 .. code-block:: yaml
 
