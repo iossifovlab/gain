@@ -1,6 +1,78 @@
 Release Notes
 =============
 
+* 2026.6.2
+    * When the output file is not given explicitly, ``annotate_tabular``
+      and ``annotate_vcf`` now derive the default output name by
+      inserting a ``.annotated`` marker before the suffix instead of
+      ``_annotated`` (e.g. ``variants.vcf.gz`` now yields
+      ``variants.annotated.vcf.gz`` rather than
+      ``variants_annotated.vcf.gz``). An explicit ``-o``/``--output``
+      name is used verbatim and is unaffected.
+    * ``annotate_tabular`` and ``annotate_vcf`` now delete the working
+      directory they created once the annotation finishes successfully,
+      instead of leaving the intermediate parts and task-status files
+      behind. Removal happens only for a directory the tool itself
+      created (a pre-existing ``--work-dir`` is preserved), only on a
+      clean ``run`` (a failed or partial run keeps the directory so it
+      can be resumed), and never when the output is written inside the
+      working directory. The new ``--keep-work-dir`` flag opts out and
+      keeps the directory in all cases; ``--keep-parts`` continues to do
+      so as well. As part of this, ``annotate_vcf`` now closes its
+      annotation pipeline at the end of a run, matching
+      ``annotate_tabular`` (previously it leaked the pipeline's open
+      resources).
+    * Added an ``annotate_doc`` pipeline-documentation endpoint to the
+      annotation web API: it renders a standalone HTML description of a
+      saved pipeline — its annotators, resources and score histograms —
+      and serves it as a downloadable ``<pipeline_id>.html`` attachment.
+    * Fixed several edge cases in the ``allele_score`` annotator's filter
+      grammar: negative numeric literals are now accepted, and
+      identifiers that start with a digit are tokenized correctly rather
+      than being misread as malformed numbers.
+    * Web UI: the application version is now shown on the About page;
+      list-valued attributes now render correctly in the single-variant
+      annotation view (previously they were dropped); and filled-in note
+      labels are rendered more prominently.
+
+* 2026.6.1
+    * Reference genomes may now be supplied as bgzipped FASTA in
+      ``pysam.FastaFile`` format, not only as a plain uncompressed
+      ``.fa``. A genome resource whose ``filename`` ends in ``.gz`` or
+      ``.bgz`` is opened through ``pysam.FastaFile`` for random access;
+      it must be accompanied by a ``.fai`` faidx index and a ``.gzi``
+      bgzip index (both produced by ``samtools faidx`` on a
+      ``bgzip``-compressed FASTA), and an optional ``index_file`` config
+      field can point at a non-default ``.fai`` path. Bgzipped genomes
+      work whether the repository is local, cached, or accessed directly
+      over HTTP/S3, including on an S3-backed cache; the ``.fai`` and
+      ``.gzi`` indexes are cached on first open, and genome-wide
+      statistics fetch in 1 MiB windows to keep remote reads efficient.
+      This is documented in the Genomes section of the GRR guide.
+    * ``annotate_columns`` was renamed to ``annotate_tabular`` to better
+      reflect that it annotates arbitrary tab-/whitespace-delimited
+      tabular files. ``annotate_columns`` remains as a deprecated alias,
+      so existing scripts keep working.
+    * Reworked the annotator class hierarchy so that all built-in
+      annotators inherit a common ``AnnotatorBase`` and share a single
+      attribute-handling and aggregation implementation. Along with the
+      refactor this fixes several attribute bugs: the chromosome-mapping,
+      liftover and normalize-allele annotators now write to their
+      configured output attribute names (renaming an output in the
+      pipeline config now takes effect), the gene-set annotator emits its
+      attribute under the correct name, gene-score annotators support
+      aggregation again, and ``annotatable``-typed attributes no longer
+      attempt (meaningless) aggregation.
+    * The GRR static index now embeds a content hash of the full-text
+      search SQLite database, so a browser re-fetches the search index
+      after the repository's contents change instead of serving a stale
+      cached copy.
+    * Resource index links in the generated GRR pages are now relative,
+      so a mirrored or relocated repository's links resolve correctly.
+    * Pinned ``pysam`` to 0.24.0 (and unpinned htslib/samtools/bcftools
+      in the conda environment), and declared ``tqdm`` as a runtime
+      dependency of the ``gain-core`` conda recipe.
+
 * 2026.6.0
     * ``grr_cache_repo`` now shows live progress while caching instead
       of a wall of per-file log lines. On a terminal it draws a
