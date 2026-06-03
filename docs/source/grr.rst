@@ -213,8 +213,36 @@ metadata such as chromosome naming conventions and pseudoautosomal regions.
 Resource-specific fields in ``genomic_resource.yaml`` for genome resources (**type**: genome) are:
 
     | **filename** (string): Path to the genome FASTA file, relative to the resource directory.
+    | **index_file** (string, optional): Path to the FASTA ``.fai`` index, relative to the resource directory. Default: ``<filename>.fai``.
     | **chrom_prefix** (string, optional): Prefix expected in contig names (e.g., chr). Default: no prefix.
     | **PARS** (subsection, optional): Pseudoautosomal regions for the assembly.
+
+The genome FASTA may be either a plain ``.fa`` file or a **bgzipped** FASTA
+(``.fa.gz`` or ``.bgz``). GAIn selects how to read the sequence from the file
+extension — a bgzipped genome is read with random access via ``pysam.FastaFile``
+— so no extra configuration is required. A plain ``.fa`` genome needs only its
+``.fai`` index; a bgzipped genome must be accompanied by **two** index files in
+the resource directory: a ``.fai`` FASTA index and a ``.gzi`` bgzip block index.
+Both are produced together by ``samtools faidx``:
+
+.. code-block:: bash
+
+    samtools faidx GRCh38.p14.genome.fa.gz
+
+which writes ``GRCh38.p14.genome.fa.gz.fai`` and ``GRCh38.p14.genome.fa.gz.gzi``
+next to the FASTA.
+
+A bgzipped genome is configured exactly like a plain one — only the ``filename``
+extension differs:
+
+.. code-block:: yaml
+
+    type: genome
+    filename: GRCh38.p14.genome.fa.gz
+    chrom_prefix: "chr"
+
+    meta:
+      summary: Nucleotide sequence of the GRCh38.p14 genome assembly (bgzipped)
 
 Let's revisit the example ``genomic_resource.yaml`` from the `Getting started with GRR genome section <https://iossifovlab.com/gaindocs/gain_getting_started_grr.html#genome-grch38-p14>`_.
 As before, filename points to the downloaded FASTA file and contig names use the ``chr`` prefix. We now also include
