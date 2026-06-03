@@ -1039,6 +1039,8 @@ def test_annotate_tabular_multiple_chrom(
         str(a) for a in [
             in_file_gz, annotation_file, "-w", work_dir, "--grr", grr_file,
             "-o", out_file, "-j", 1,
+            # keep the work dir so the leftover-parts assertion can inspect it
+            "--keep-work-dir",
         ]
     ])
 
@@ -1094,6 +1096,8 @@ def test_annotate_tabular_multiple_chrom_repeated_attr(
         str(a) for a in [
             in_file_gz, annotation_file, "-w", work_dir, "--grr", grr_file,
             "-o", out_file, "-j", 1,
+            # keep the work dir so the leftover-parts assertion can inspect it
+            "--keep-work-dir",
             "--allow-repeated-attributes",
         ]
     ])
@@ -1739,6 +1743,8 @@ def test_annotate_tabular_keep_parts(
         str(a) for a in [
             in_file_gz, annotation_file, "-w", work_dir, "--grr", grr_file,
             "-o", out_file, "-j", 1,
+            # keep the work dir so the leftover-parts assertion can inspect it
+            "--keep-work-dir",
             "--keep-parts",
         ]
     ])

@@ -12,6 +12,7 @@ from gain.annotation.annotate_utils import (
     check_resource_locality,
     find_nonlocal_resources,
     handle_default_args,
+    maybe_remove_work_dir,
 )
 from gain.genomic_resources.cached_repository import CachingProtocol
 
@@ -290,3 +291,166 @@ def test_cache_pipeline_resources_forwards_workers(
 
     mocked_cache.assert_called_once_with(
         grr, set(), workers=7, progress=True)
+
+
+def _work_dir_args(work_dir: pathlib.Path, output: pathlib.Path, **over):
+    args = {
+        "work_dir": str(work_dir),
+        "work_dir_created": True,
+        "output": str(output),
+        "command": "run",
+        "keep_parts": False,
+        "keep_work_dir": False,
+    }
+    args.update(over)
+    return args
+
+
+def test_maybe_remove_work_dir_removes_created_dir_on_success(
+    tmp_path: pathlib.Path,
+) -> None:
+    work = tmp_path / "out_work"
+    (work / ".task-status").mkdir(parents=True)
+    args = _work_dir_args(work, tmp_path / "out.vcf")
+
+    maybe_remove_work_dir(args, result=True)
+
+    assert not work.exists()
+
+
+def test_maybe_remove_work_dir_keeps_preexisting_dir(
+    tmp_path: pathlib.Path,
+) -> None:
+    work = tmp_path / "preexisting_work"
+    work.mkdir()
+    args = _work_dir_args(work, tmp_path / "out.vcf", work_dir_created=False)
+
+    maybe_remove_work_dir(args, result=True)
+
+    assert work.exists()
+
+
+def test_maybe_remove_work_dir_keeps_dir_when_run_failed(
+    tmp_path: pathlib.Path,
+) -> None:
+    work = tmp_path / "failed_work"
+    work.mkdir()
+    args = _work_dir_args(work, tmp_path / "out.vcf")
+
+    maybe_remove_work_dir(args, result=False)
+
+    assert work.exists()
+
+
+@pytest.mark.parametrize("command", ["list", "status"])
+def test_maybe_remove_work_dir_keeps_dir_for_status_commands(
+    tmp_path: pathlib.Path, command: str,
+) -> None:
+    work = tmp_path / "status_work"
+    work.mkdir()
+    args = _work_dir_args(work, tmp_path / "out.vcf", command=command)
+
+    maybe_remove_work_dir(args, result=True)
+
+    assert work.exists()
+
+
+@pytest.mark.parametrize("flag", ["keep_parts", "keep_work_dir"])
+def test_maybe_remove_work_dir_keeps_dir_when_opted_out(
+    tmp_path: pathlib.Path, flag: str,
+) -> None:
+    work = tmp_path / "optout_work"
+    work.mkdir()
+    args = _work_dir_args(work, tmp_path / "out.vcf", **{flag: True})
+
+    maybe_remove_work_dir(args, result=True)
+
+    assert work.exists()
+
+
+def test_maybe_remove_work_dir_skips_when_output_inside(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    work = tmp_path / "out_work"
+    work.mkdir()
+    output_inside = work / "out.vcf"
+    args = _work_dir_args(work, output_inside)
+
+    with caplog.at_level("WARNING"):
+        maybe_remove_work_dir(args, result=True)
+
+    assert work.exists()
+    assert len(caplog.records) == 1
+    assert "working directory" in caplog.records[0].getMessage()
+
+
+def test_maybe_remove_work_dir_rmtree_error_warns_not_raises(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    work = tmp_path / "locked_work"
+    work.mkdir()
+    args = _work_dir_args(work, tmp_path / "out.vcf")
+    mocker.patch(
+        "gain.annotation.annotate_utils.shutil.rmtree",
+        side_effect=OSError("device busy"))
+
+    with caplog.at_level("WARNING"):
+        maybe_remove_work_dir(args, result=True)  # must not raise
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert "device busy" in warnings[0].getMessage()
+
+
+def test_maybe_remove_work_dir_logs_info_on_success(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    work = tmp_path / "out_work"
+    work.mkdir()
+    args = _work_dir_args(work, tmp_path / "out.vcf")
+
+    with caplog.at_level("INFO"):
+        maybe_remove_work_dir(args, result=True)
+
+    infos = [r for r in caplog.records if r.levelname == "INFO"]
+    assert len(infos) == 1
+    assert "removed working directory" in infos[0].getMessage()
+
+
+def test_handle_default_args_marks_work_dir_created(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "in.vcf").write_text("x")
+
+    result = handle_default_args({"input": "in.vcf", "output": None})
+
+    assert result["work_dir_created"] is True
+    assert os.path.isdir(result["work_dir"])
+
+
+def test_handle_default_args_marks_work_dir_not_created_when_preexisting(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "in.vcf").write_text("x")
+    (tmp_path / "in.annotated_work").mkdir()
+
+    result = handle_default_args({"input": "in.vcf", "output": None})
+
+    assert result["work_dir_created"] is False
+
+
+@pytest.mark.parametrize(
+    "argv,expected",
+    [
+        (["input.txt"], False),
+        (["input.txt", "--keep-work-dir"], True),
+    ],
+)
+def test_keep_work_dir_flag(argv: list[str], *, expected: bool) -> None:
+    parser = argparse.ArgumentParser()
+    add_common_annotation_arguments(parser)
+    args = vars(parser.parse_args(argv))
+    assert args["keep_work_dir"] is expected

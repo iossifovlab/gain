@@ -1,6 +1,7 @@
 import argparse
 import logging
 import os
+import shutil
 import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
@@ -238,7 +239,8 @@ def handle_default_args(args: dict[str, Any]) -> dict[str, Any]:
         path = path.with_suffix("")
         args["work_dir"] = str(f"{path}_work")
 
-    if not os.path.exists(args["work_dir"]):
+    args["work_dir_created"] = not os.path.exists(args["work_dir"])
+    if args["work_dir_created"]:
         os.mkdir(args["work_dir"])
 
     if args.get("task_status_dir") is None:
@@ -262,6 +264,47 @@ def handle_default_args(args: dict[str, Any]) -> dict[str, Any]:
         args["pipeline"] = os.path.abspath(pipeline)
 
     return args
+
+
+def maybe_remove_work_dir(args: dict[str, Any], *, result: bool) -> None:
+    """Remove the working directory after a clean run, if the tool made it.
+
+    The directory is removed only when every condition holds:
+
+    - the tool created it (it did not pre-exist; see ``work_dir_created``),
+    - the command actually ran annotation (not ``list``/``status``),
+    - the run succeeded (``result`` is ``True`` -- a ``--keep-going`` run that
+      finished with task errors returns ``False`` and is preserved),
+    - neither ``--keep-parts`` nor ``--keep-work-dir`` was requested,
+    - the output file does not live inside the working directory.
+
+    Removal is best-effort: a failure to remove logs a warning and is not
+    fatal, since the annotation has already succeeded.
+    """
+    if not args.get("work_dir_created"):
+        return
+    if args.get("command") not in (None, "run"):
+        return
+    if not result:
+        return
+    if args.get("keep_parts") or args.get("keep_work_dir"):
+        return
+
+    work_dir = Path(os.path.abspath(args["work_dir"]))
+    output = Path(os.path.abspath(args["output"]))
+    if output.is_relative_to(work_dir):
+        logger.warning(
+            "output %s is inside the working directory %s; not removing it",
+            output, work_dir)
+        return
+
+    try:
+        shutil.rmtree(work_dir)
+    except OSError as err:
+        logger.warning(
+            "could not remove working directory %s: %s", work_dir, err)
+        return
+    logger.info("removed working directory %s", work_dir)
 
 
 def add_common_annotation_arguments(parser: argparse.ArgumentParser) -> None:
@@ -307,6 +350,13 @@ def add_common_annotation_arguments(parser: argparse.ArgumentParser) -> None:
         help="Remove intermediate files after annotatio.",
         dest="keep_parts",
         action="store_false",
+    )
+    parser.add_argument(
+        "--keep-work-dir",
+        help="Keep the working directory after a successful annotation "
+             "(by default a working directory the tool created is removed).",
+        action="store_true",
+        default=False,
     )
     parser.add_argument(
         "--batch-size",
