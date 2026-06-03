@@ -5,12 +5,16 @@ from typing import ClassVar
 
 from django.conf import settings
 from django.core.files.uploadedfile import UploadedFile
-from django.http import QueryDict
+from django.http import HttpResponse, QueryDict
+from markdown2 import markdown
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotationConfigurationError,
 )
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
+from gain.genomic_resources.genomic_scores import GenomicScore
+from gain.genomic_resources.repository import GenomicResource
+from gain.templates import get_template
 from rest_framework import views
 from rest_framework.request import MultiValueDict
 from rest_framework.views import Request, Response
@@ -292,6 +296,46 @@ class ListPipelines(AnnotationBaseView):
             pipelines,
             status=views.status.HTTP_200_OK,
         )
+
+
+class PipelineDoc(AnnotationBaseView):
+    """View for downloading the annotate_doc HTML for a pipeline."""
+
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
+
+    def get(self, request: Request) -> Response | HttpResponse:
+        """Return an HTML doc for the given pipeline as a download."""
+        pipeline_id = request.query_params.get("pipeline_id")
+        if not pipeline_id:
+            return Response(
+                {"reason": "pipeline_id not provided."},
+                status=views.status.HTTP_400_BAD_REQUEST,
+            )
+
+        pipeline = self.get_pipeline(pipeline_id, request.user)
+
+        def make_resource_url(resource: GenomicResource) -> str:
+            return resource.get_url()
+
+        def make_histogram_url(
+            score: GenomicScore, score_id: str,
+        ) -> str | None:
+            return score.get_histogram_image_url(score_id)
+
+        template = get_template("annotate_doc_pipeline_template.jinja")
+        html_doc = template.render(
+            pipeline=pipeline,
+            pipeline_path=None,
+            markdown=markdown,
+            res_url=make_resource_url,
+            hist_url=make_histogram_url,
+        )
+
+        response = HttpResponse(html_doc, content_type="text/html")
+        response["Content-Disposition"] = (
+            f'attachment; filename="{pipeline_id}.html"'
+        )
+        return response
 
 
 class PipelineValidation(AnnotationBaseView):
