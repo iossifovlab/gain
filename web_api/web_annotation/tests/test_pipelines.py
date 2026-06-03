@@ -3,6 +3,7 @@ import textwrap
 
 import pytest
 import pytest_mock
+from django.conf import settings
 from django.core.files.base import ContentFile
 from django.test import Client
 from gain.genomic_resources.repository import GenomicResourceRepo
@@ -41,6 +42,41 @@ def test_pipeline_doc_missing_pipeline_id(
 ) -> None:
     response = user_client.get("/api/pipelines/doc")
     assert response.status_code == 400
+
+@pytest.mark.django_db
+def test_list_pipelines_default_pipeline_first(
+    user_client: Client,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    mocker.patch.object(settings, "DEFAULT_PIPELINE", "pipeline/test_pipeline")
+    response = user_client.get("/api/pipelines")
+    assert response.status_code == 200
+    pipelines = response.json()
+    assert len(pipelines) > 0
+    assert pipelines[0]["name"] == "pipeline/test_pipeline"
+
+
+@pytest.mark.django_db
+def test_list_pipelines_default_pipeline_none_preserves_order(
+    user_client: Client,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    mocker.patch.object(settings, "DEFAULT_PIPELINE", None)
+    response = user_client.get("/api/pipelines")
+    assert response.status_code == 200
+    pipelines = response.json()
+    names = [p["name"] for p in pipelines]
+    assert names == sorted(names)
+
+
+@pytest.mark.django_db
+def test_list_pipelines_default_pipeline_not_found_errors(
+    user_client: Client,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    mocker.patch.object(settings, "DEFAULT_PIPELINE", "pipeline/nonexistent")
+    response = user_client.get("/api/pipelines")
+    assert response.status_code == 500
 
 
 @pytest.mark.django_db

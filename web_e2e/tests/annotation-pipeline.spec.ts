@@ -214,7 +214,7 @@ test.describe('Pipeline tests', () => {
 
     await page.getByRole('button', { name: 'Delete' }).click();
     await page.locator('#confirm-delete').click();
-    await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/T2T_clinical_annotation');
+    await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/hg38_clinical_annotation');
   });
 
   test('should make copy of public pipeline by clicking \'save as\'', async({ page }) => {
@@ -290,7 +290,7 @@ test.describe('Pipeline tests', () => {
   });
 
   test('should not be able to delete and save public pipeline', async({ page }) => {
-    await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/T2T_clinical_annotation');
+    await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/hg38_clinical_annotation');
     await expect(page.getByRole('button', { name: 'Delete' })).not.toBeVisible();
     await expect(page.getByRole('button', { name: 'Save', exact: true })).not.toBeVisible();
   });
