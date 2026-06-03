@@ -6,7 +6,6 @@ from typing import ClassVar
 from django.conf import settings
 from django.core.files.uploadedfile import UploadedFile
 from django.http import HttpResponse, QueryDict
-from markdown2 import markdown
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotationConfigurationError,
@@ -15,6 +14,7 @@ from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.genomic_scores import GenomicScore
 from gain.genomic_resources.repository import GenomicResource
 from gain.templates import get_template
+from markdown2 import markdown
 from rest_framework import views
 from rest_framework.request import MultiValueDict
 from rest_framework.views import Request, Response
