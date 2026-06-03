@@ -227,8 +227,9 @@ Key conftest patterns:
 **core CLIs:**
 - `grr_manage` — genomic resource repository management
 - `grr_browse` — GRR browser
-- `annotate_columns` / `annotate_vcf` / `annotate_doc`
-  — annotation tools
+- `annotate_tabular` / `annotate_vcf` / `annotate_doc`
+  — annotation tools (`annotate_columns` is a deprecated
+  alias of `annotate_tabular`)
 - `annotate_variant_effects` /
   `annotate_variant_effects_vcf` — effect annotation
 
