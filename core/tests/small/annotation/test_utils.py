@@ -48,42 +48,42 @@ def test_build_output_path_none_given_explicitly() -> None:
     assert build_output_path(
         "some/directory/input_file.csv",
         None,
-    ) == "input_file_annotated.csv"
+    ) == "input_file.annotated.csv"
 
 
 def test_build_output_path_none_given_explicitly_mirrors_gz() -> None:
     assert build_output_path(
         "some/directory/input_file.csv.gz",
         None,
-    ) == "input_file_annotated.csv.gz"
+    ) == "input_file.annotated.csv.gz"
 
 
 def test_build_output_path_none_given_explicitly_mirrors_bgz() -> None:
     assert build_output_path(
         "some/directory/input_file.csv.bgz",
         None,
-    ) == "input_file_annotated.csv.bgz"
+    ) == "input_file.annotated.csv.bgz"
 
 
 def test_build_output_path_none_given_explicitly_no_extension() -> None:
     assert build_output_path(
         "some/directory/input_file",
         None,
-    ) == "input_file_annotated"
+    ) == "input_file.annotated"
 
 
 def test_build_output_path_none_given_explicitly_multiple_extensions() -> None:
     assert build_output_path(
         "some/directory/input_file.txt.csv",
         None,
-    ) == "input_file.txt_annotated.csv"
+    ) == "input_file.txt.annotated.csv"
 
 
 def test_build_output_path_none_given_explicitly_hidden_file() -> None:
     assert build_output_path(
         "some/directory/.input_file.csv",
         None,
-    ) == ".input_file_annotated.csv"
+    ) == ".input_file.annotated.csv"
 
 
 def test_stringify_string_notvcf() -> None:

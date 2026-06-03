@@ -153,18 +153,21 @@ def test_allow_remote_resources_flag(
 @pytest.mark.parametrize(
     "input_path,output_path,expected_output,expected_work_dir",
     [
-        ("input.vcf", None, "input_annotated.vcf", "input_annotated_work"),
+        ("input.vcf", None, "input.annotated.vcf", "input.annotated_work"),
+        # no input extension: the appended '.annotated' is the only suffix, so
+        # work-dir derivation (with_suffix("")) strips it back off -> input_work
+        ("input", None, "input.annotated", "input_work"),
         ("/mnt/data/Tools/data/QUAD/UR1.annot.filtered.txt.gz",
          None,
-         "UR1.annot.filtered_annotated.txt.gz",
-         "UR1.annot.filtered_annotated_work"),
+         "UR1.annot.filtered.annotated.txt.gz",
+         "UR1.annot.filtered.annotated_work"),
         ("/mnt/data/Tools/data/QUAD/UR1.annot.filtered.txt.bgz",
          None,
-         "UR1.annot.filtered_annotated.txt.bgz",
-         "UR1.annot.filtered_annotated_work"),
+         "UR1.annot.filtered.annotated.txt.bgz",
+         "UR1.annot.filtered.annotated_work"),
         ("input.vcf", "output.vcf", "output.vcf", "output_work"),
         ("input_data/input.vcf", None,
-         "input_annotated.vcf", "input_annotated_work"),
+         "input.annotated.vcf", "input.annotated_work"),
         ("input_data/input.vcf", "output.vcf",
          "output.vcf", "output_work"),
     ],
@@ -183,6 +186,22 @@ def test_handle_default_args_work_dir(
     result = handle_default_args(args)
     assert result["output"] == os.path.abspath(expected_output)
     assert result["work_dir"] == os.path.abspath(expected_work_dir)
+
+
+def test_handle_default_args_explicit_work_dir_is_honored(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # an explicit work_dir is used verbatim; it is not derived from the
+    # (now '.annotated') output name
+    mocker.patch("os.path.exists", return_value=True)
+    args = {
+        "input": "input.vcf",
+        "output": None,
+        "work_dir": "my_custom_work",
+    }
+    result = handle_default_args(args)
+    assert result["output"] == os.path.abspath("input.annotated.vcf")
+    assert result["work_dir"] == os.path.abspath("my_custom_work")
 
 
 def test_handle_default_args_absolutizes_extended_paths(
