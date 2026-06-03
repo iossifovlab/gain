@@ -343,13 +343,13 @@ test.describe('Single annotation annotatable formats and report features', () =>
     await page.getByRole('button', { name: 'Go', exact: true }).click();
     await page.waitForSelector('#report', { timeout: 120000 });
 
-    await expect(page.locator('.compact-value-result').nth(1)).toHaveText('MTHFR:missense');
-    await expect(page.locator('.compact-value-result').nth(2)).toHaveText(
+    await expect(page.locator('.compact-value-result').nth(0)).toHaveText('MTHFR:missense');
+    await expect(page.locator('.compact-value-result').nth(1)).toHaveText(
       'ENST00000376590.9:MTHFR:missense:222/656(Ala->Val)'
     );
     await page.locator('.switch').click();
+    await expect(page.locator('.attribute-container').nth(0).locator('app-effect-table')).toBeVisible();
     await expect(page.locator('.attribute-container').nth(1).locator('app-effect-table')).toBeVisible();
-    await expect(page.locator('.attribute-container').nth(2).locator('app-effect-table')).toBeVisible();
   });
 
   test('should render histogram in report body in full report mode', async({ page }) => {
@@ -524,6 +524,134 @@ test.describe('Single annotation rate limit tests - logged in user', () => {
   });
 });
 
+test.describe('Single annotation value type rendering', () => {
+  test.beforeEach(async({ page }) => {
+    await page.goto('/', {waitUntil: 'load'});
+    const email = utils.getRandomString() + '@email.com';
+    const password = 'aaabbb';
+    await utils.registerUser(page, email, password);
+    await utils.loginUser(page, email, password);
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  });
+
+  test('should render str value as inline scalar in compact and full report', async({ page }) => {
+    await strTypePipeline(page);
+    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
+    await page.getByRole('button', { name: 'Go', exact: true }).click();
+    await page.waitForSelector('#report', { timeout: 120000 });
+
+    await expect(page.locator('.compact-value-result').first()).toHaveText('missense');
+
+    await page.locator('.switch').click();
+    await expect(page.locator('.value-result').first()).toHaveText('missense');
+    await expect(page.locator('.value-grid-container')).not.toBeVisible();
+  });
+
+  test('should render float value as formatted scalar in compact and full report', async({ page }) => {
+    await floatTypePipeline(page);
+    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
+    await page.getByRole('button', { name: 'Go', exact: true }).click();
+    await page.waitForSelector('#report', { timeout: 120000 });
+
+    await expect(page.locator('.compact-value-result').first()).toHaveText('0.323');
+
+    await page.locator('.switch').click();
+    await expect(page.locator('.value-result').first()).toHaveText('0.323');
+    await expect(page.locator('.value-grid-container')).not.toBeVisible();
+  });
+
+  test('should render annotatable value as its string form in compact and full report', async({ page }) => {
+    await annotatableTypePipeline(page);
+    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
+    await page.getByRole('button', { name: 'Go', exact: true }).click();
+    await page.waitForSelector('#report', { timeout: 120000 });
+
+    await expect(page.locator('.compact-value-result').first()).toHaveText('chr1:11796321 G>A');
+
+    await page.locator('.switch').click();
+    await expect(page.locator('.value-result').first()).toHaveText('chr1:11796321 G>A');
+    await expect(page.locator('.value-grid-container')).not.toBeVisible();
+  });
+
+  test('should render gene list object array value as single-column grid in full report', async({ page }) => {
+    await effectAnnotatorPipeline(page);
+    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
+    await page.getByRole('button', { name: 'Go', exact: true }).click();
+    await page.waitForSelector('#report', { timeout: 120000 });
+
+    await expect(page.locator('.compact-value-result').nth(2)).toHaveText('MTHFR');
+
+    await page.locator('.switch').click();
+    const valueGrid = page.locator('.attribute-result').nth(2).locator('.value-grid-container');
+    await expect(valueGrid).toBeVisible();
+    await expect(valueGrid.locator('.value-grid-header')).toHaveCount(1);
+    await expect(valueGrid.locator('.value-grid-header').first()).toContainText('Value');
+    await expect(valueGrid.locator('.value-grid-cell').first()).toHaveText('MTHFR');
+  });
+
+  test('should render gene effect object map value as two-column grid in full report', async({ page }) => {
+    await effectAnnotatorPipeline(page);
+    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
+    await page.getByRole('button', { name: 'Go', exact: true }).click();
+    await page.waitForSelector('#report', { timeout: 120000 });
+
+    await expect(page.locator('.compact-value-result').nth(0)).toHaveText('MTHFR:missense');
+
+    await page.locator('.switch').click();
+    const valueGrid = page.locator('.attribute-result').nth(0).locator('.grid-container');
+    await expect(valueGrid).toBeVisible();
+    await expect(valueGrid.locator('.grid-header')).toHaveCount(2);
+    await expect(valueGrid.locator('.grid-header').first()).toContainText('Gene');
+    await expect(valueGrid.locator('.grid-header').nth(1)).toContainText('Effect');
+    await expect(valueGrid.locator('.grid-cell').first()).toHaveText('MTHFR');
+    await expect(valueGrid.locator('.grid-cell').nth(1)).toHaveText('missense');
+  });
+
+  test('should render effect details object map value as four-column grid in full report', async({ page }) => {
+    await effectAnnotatorPipeline(page);
+
+    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
+    await page.getByRole('button', { name: 'Go', exact: true }).click();
+    await page.waitForSelector('#report', { timeout: 120000 });
+
+    await expect(page.locator('.compact-value-result').nth(1))
+      .toHaveText('ENST00000376590.9:MTHFR:missense:222/656(Ala->Val)');
+
+    await page.locator('.switch').click();
+    const valueGrid = page.locator('.attribute-result').nth(1).locator('.grid-container');
+    await expect(valueGrid).toBeVisible();
+    await expect(valueGrid.locator('.grid-header')).toHaveCount(4);
+    await expect(valueGrid.locator('.grid-header').first()).toContainText('Gene');
+    await expect(valueGrid.locator('.grid-header').nth(1)).toContainText('Transcript');
+    await expect(valueGrid.locator('.grid-header').nth(2)).toContainText('Effect');
+    await expect(valueGrid.locator('.grid-header').nth(3)).toContainText('Details');
+    await expect(valueGrid.locator('.grid-cell').first()).toHaveText('MTHFR');
+    await expect(valueGrid.locator('.grid-cell').nth(1)).toHaveText('ENST00000376590.9');
+    await expect(valueGrid.locator('.grid-cell').nth(2)).toHaveText('missense');
+    await expect(valueGrid.locator('.grid-cell').nth(3)).toHaveText('222/656(Ala->Val)');
+  });
+
+  test('should render object map value as two-column grid in full report', async({ page }) => {
+    await objectTypePipeline(page);
+
+    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
+    await page.getByRole('button', { name: 'Go', exact: true }).click();
+    await page.waitForSelector('#report', { timeout: 120000 });
+
+    await expect(page.locator('.compact-value-result').nth(1))
+      .toHaveText('MTHFR:2');
+
+    await page.locator('.switch').click();
+    const valueGrid = page.locator('.attribute-result').nth(1).locator('.value-grid-container');
+    await expect(valueGrid).toBeVisible();
+    await expect(valueGrid.locator('.value-grid-header')).toHaveCount(2);
+    await expect(valueGrid.locator('.value-grid-header').first()).toContainText('Key');
+    await expect(valueGrid.locator('.value-grid-header').nth(1)).toContainText('Value');
+    await expect(valueGrid.locator('.value-grid-cell').first()).toHaveText('MTHFR');
+    await expect(valueGrid.locator('.value-grid-cell').nth(1)).toHaveText('2');
+  });
+});
+
 async function effectAnnotatorPipeline(page: Page): Promise<void> {
   await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
   await expect(page.locator('#pipelines-input')).toBeEmpty();
@@ -539,9 +667,6 @@ async function effectAnnotatorPipeline(page: Page): Promise<void> {
     '    gene_models: hg38/gene_models/MANE/1.4\n' +
     '    genome: hg38/genomes/GRCh38.p14\n' +
     '    attributes:\n' +
-    '    - name: worst_effect\n' +
-    '      source: worst_effect\n' +
-    '      internal: false\n' +
     '    - name: gene_effects\n' +
     '      source: gene_effects\n' +
     '      internal: false\n' +
@@ -550,7 +675,7 @@ async function effectAnnotatorPipeline(page: Page): Promise<void> {
     '      internal: false\n' +
     '    - name: gene_list\n' +
     '      source: gene_list\n' +
-    '      internal: true\n'
+    '      internal: false\n'
   );
 
   await saveResponse;
@@ -591,5 +716,86 @@ async function customDefaultPipeline(page: Page): Promise<void> {
 
   await saveResponse;
 
+  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+}
+
+async function strTypePipeline(page: Page): Promise<void> {
+  await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+  const saveResponse = page.waitForResponse(
+    resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
+  );
+  await utils.typeInPipelineEditor(
+    page,
+    '- effect_annotator:\n' +
+    '    gene_models: hg38/gene_models/GENCODE/48/basic/ALL\n' +
+    '    genome: hg38/genomes/GRCh38.p13\n' +
+    '    attributes:\n' +
+    '    - name: worst_effect\n' +
+    '      source: worst_effect\n' +
+    '      internal: false\n'
+  );
+  await saveResponse;
+  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+}
+
+async function floatTypePipeline(page: Page): Promise<void> {
+  await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+  const saveResponse = page.waitForResponse(
+    resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
+  );
+  await utils.typeInPipelineEditor(
+    page,
+    '- normalize_allele_annotator:\n' +
+    '    genome: hg38/genomes/GRCh38-hg38\n' +
+    '\n' +
+    '- allele_score:\n' +
+    '    resource_id: hg38/variant_frequencies/gnomAD_4.1.0/exomes/ALL\n' +
+    '    input_annotatable: normalized_allele\n'
+  );
+  await saveResponse;
+  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+}
+
+async function annotatableTypePipeline(page: Page): Promise<void> {
+  await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+  const saveResponse = page.waitForResponse(
+    resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
+  );
+  await utils.typeInPipelineEditor(
+    page,
+    '- normalize_allele_annotator:\n' +
+    '    genome: hg38/genomes/GRCh38-hg38\n' +
+    '    attributes:\n' +
+    '    - name: normalized_allele\n' +
+    '      source: normalized_allele\n' +
+    '      internal: false\n'
+  );
+  await saveResponse;
+  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+}
+
+
+async function objectTypePipeline(page: Page): Promise<void> {
+  await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+  const saveResponse = page.waitForResponse(
+    resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
+  );
+  await utils.typeInPipelineEditor(
+    page,
+    '- effect_annotator:\n' +
+    '   gene_models: hg38/gene_models/GENCODE/48/basic/PRI\n' +
+    '   genome: hg38/genomes/GRCh38.p14\n' +
+    '   attributes:\n' +
+    '   - worst_effect\n' +
+    '   - name: gene_list \n' +
+    '     internal: true\n' +
+    '- gene_score_annotator:\n' +
+    '   resource_id: gene_properties/gene_scores/SFARI_gene_score_2024_Q1\n' +
+    '   input_gene_list: gene_list\n' +
+    '   attributes:\n' +
+    '   - name: SFARI_gene_score\n' +
+    '     source: SFARI Gene Score\n'
+  );
+  await saveResponse;
   await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
 }

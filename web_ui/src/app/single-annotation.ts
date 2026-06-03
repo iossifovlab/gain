@@ -105,7 +105,7 @@ export class Result {
   ) {}
 
   public static fromJson(
-    json: { histogram: string, value: number | string | boolean | string[] },
+    json: { histogram: string, value: number | string | boolean | string[] | object },
     type: string
   ): Result {
     if (!json) {
@@ -114,24 +114,37 @@ export class Result {
 
     let resultValue: string | number | Map<string, string | number> | string[] = null;
 
-    const types = ['int', 'float', 'str'];
-    if (types.includes(type)) {
+    if (['int', 'float'].includes(type)) {
       resultValue = json['value'] as number;
     }
 
-    if (type === 'annotatable') {
-      resultValue = json['value'].toString();
+    if (type === 'str') {
+      resultValue = json['value'] as string;
     }
 
-    if (type === 'bool') {
+    if (type === 'annotatable') {
+      if (Array.isArray(json['value'])) {
+        resultValue = json['value'] as string[];
+      } else if (json['value'] !== null && typeof json['value'] === 'object') {
+        resultValue = new Map<string, string | number>(Object.entries(json['value']));
+      } else {
+        resultValue = json['value'] as string;
+      }
+    }
+
+    if (type === 'bool' && json['value'] !== null) {
       resultValue = (json['value'] as boolean).toString();
     }
 
-    if (type === 'object' && typeof json['value'] === 'object') {
-      resultValue = new Map<string, string | number>(Object.entries(json['value']));
+    if (type === 'object') {
+      if (Array.isArray(json['value'])) {
+        resultValue = json['value'] as string[];
+      } else if (json['value'] !== null && typeof json['value'] === 'object') {
+        resultValue = new Map<string, string | number>(Object.entries(json['value']));
+      }
     }
 
-    if (type === 'object' && Array.isArray(json['value'])) {
+    if (type === 'list' && Array.isArray(json['value'])) {
       resultValue = json['value'];
     }
 

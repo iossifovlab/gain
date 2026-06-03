@@ -38,6 +38,53 @@ describe('Result', () => {
     const result = Result.fromJson({ value: arr, histogram: null }, 'object');
     expect(result.value).toStrictEqual(['missense', 'synonymous']);
   });
+
+  it('should convert map value to Map object for object type', () => {
+    const jsonValue = { MTHFR: 'missense', ABC: 'nonsense' };
+    const result = Result.fromJson({ value: jsonValue, histogram: null }, 'object');
+    expect(result.value).toStrictEqual(new Map<string, string>([['MTHFR', 'missense'], ['ABC', 'nonsense']]));
+  });
+
+  it('should store value of type list', () => {
+    const arr = ['chr14:21391397:C:T:6.57e-06', 'chr14:21451170:A:G:6.57e-06'];
+    const result = Result.fromJson({ value: arr, histogram: null }, 'list');
+    expect(result.value).toStrictEqual(['chr14:21391397:C:T:6.57e-06', 'chr14:21451170:A:G:6.57e-06']);
+  });
+
+  it('should convert value of type boolean to string', () => {
+    const result = Result.fromJson({ value: true, histogram: null }, 'bool');
+    expect(result.value).toBe('true');
+  });
+
+  it('should return null value for bool type when value is null', () => {
+    const result = Result.fromJson({ value: null, histogram: null }, 'bool');
+    expect(result.value).toBeNull();
+  });
+
+  it('should convert annotatable dict value to Map', () => {
+    const result = Result.fromJson({ value: { chrom: 'chr1', pos: 100 }, histogram: null }, 'annotatable');
+    expect(result.value).toStrictEqual(new Map<string, string | number>([['chrom', 'chr1'], ['pos', 100]]));
+  });
+
+  it('should store array as-is for annotatable type with array value', () => {
+    const result = Result.fromJson({ value: ['a', 'b'], histogram: null }, 'annotatable');
+    expect(result.value).toStrictEqual(['a', 'b']);
+  });
+
+  it('should convert value of type int to number', () => {
+    const result = Result.fromJson({ value: 42, histogram: null }, 'int');
+    expect(result.value).toBe(42);
+  });
+
+  it('should convert value of type float to number', () => {
+    const result = Result.fromJson({ value: 42.5, histogram: null }, 'float');
+    expect(result.value).toBe(42.5);
+  });
+
+  it('should store string value', () => {
+    const result = Result.fromJson({ value: 'unknown', histogram: null }, 'str');
+    expect(result.value).toBe('unknown');
+  });
 });
 
 describe('NumberHistogram', () => {
