@@ -288,6 +288,7 @@ class ListPipelines(AnnotationBaseView):
         ]
 
     def get(self, request: Request) -> Response:
+        """List all available annotation pipelines."""
         pipelines = self._get_grr_pipelines()
         if request.user and request.user.is_authenticated:
             pipelines = pipelines + self._get_user_pipelines(request.user)

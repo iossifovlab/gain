@@ -341,4 +341,4 @@ PIPELINES_CACHE_SIZE = 256
 
 ANNOTATION_TASK_TIMEOUT = 60 * 60 * 2  # 2 hours
 
-DEFAULT_PIPELINE = "pipeline/hg38_clinical_annotation"
+DEFAULT_PIPELINE: str | None = "pipeline/hg38_clinical_annotation"

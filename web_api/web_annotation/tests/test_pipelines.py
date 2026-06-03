@@ -43,6 +43,7 @@ def test_pipeline_doc_missing_pipeline_id(
     response = user_client.get("/api/pipelines/doc")
     assert response.status_code == 400
 
+
 @pytest.mark.django_db
 def test_list_pipelines_default_pipeline_first(
     user_client: Client,
