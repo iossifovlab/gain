@@ -189,6 +189,51 @@ In ``region`` mode, the ``aggregator`` attribute parameter controls how multiple
           name: <renamed_score_attribute>
           aggregator: <aggregator>
 
+**allele_filter**
+
+The optional ``allele_filter`` parameter restricts which allele lines are considered before aggregation. Lines that do not satisfy the expression are skipped entirely, as if they were absent from the resource.
+
+The filter expression supports the operators ``>``, ``<``, ``==``, ``and``, and ``or``. Operands are either score column names (resolved per line) or numeric literals (integers, decimals, and negative values are all supported). Score column names that begin with a digit (for example, ``1000G``) are also valid.
+
+.. code:: yaml
+
+    - allele_score_annotator:
+        resource_id: <allele score resource ID>
+        allele_filter: AF > 0.0000001
+        attributes:
+        - source: <source_score_attribute>
+
+    - allele_score_annotator:
+        resource_id: <allele score resource ID>
+        allele_filter: AF > 0 and AF < 0.01
+        attributes:
+        - source: <source_score_attribute>
+
+**allele attribute**
+
+In addition to score columns, ``source: allele`` is a virtual attribute that returns the matched allele keys as a list of ``chrom:pos:ref:alt`` strings. It is only meaningful in ``region`` mode (or for ``VCFAllele`` inputs with ``mode: region``), where multiple alleles can be matched.
+
+.. code:: yaml
+
+    - allele_score_annotator:
+        resource_id: <allele score resource ID>
+        mode: region
+        attributes:
+        - source: allele
+
+The optional ``include_attributes`` parameter appends one or more score values to each allele key. The included attributes are joined with ``,`` and the resulting string is appended to the allele key with a ``:`` separator, producing entries of the form ``chrom:pos:ref:alt:attr1,attr2``. This is useful for returning both the allele identity and its associated scores in a single field.
+
+.. code:: yaml
+
+    - allele_score_annotator:
+        resource_id: <allele score resource ID>
+        mode: region
+        attributes:
+        - source: allele
+          include_attributes:
+          - AF
+          - AC
+
 
 gene_score_annotator
 ************************

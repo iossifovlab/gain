@@ -406,9 +406,9 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
 
         in: "in"
 
-        word: /[a-zA-Z0-9!@#$%^&*()_+]+/
+        word: /[0-9]*[a-zA-Z_!@#$%^&*()_+][a-zA-Z0-9!@#$%^&*()_+]*/
 
-        number: /[0-9\\.]+/
+        number: /-?[0-9]+\\.?[0-9]*/
 
         %ignore " "
     """)

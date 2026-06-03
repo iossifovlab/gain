@@ -488,6 +488,18 @@ def test_allele_score_exact_match_allele_filtered(
         "freq < 0.03 or freq > 1.0",
         {"1:10:A:G", "1:16:C:CG"},
     ),
+    # integer literal: bare 0 must parse as number, not variable
+    (
+        "freq > 0",
+        {"1:10:A:G", "1:10:A:C", "1:10:A:T", "1:16:CA:G",
+         "1:16:C:T", "1:16:C:A", "1:16:C:CA", "1:16:C:CG"},
+    ),
+    # negative literal
+    (
+        "freq > -1",
+        {"1:10:A:G", "1:10:A:C", "1:10:A:T", "1:16:CA:G",
+         "1:16:C:T", "1:16:C:A", "1:16:C:CA", "1:16:C:CG"},
+    ),
 ])
 def test_allele_score_region_allele_filter(
     allele_score_repository: GenomicResourceRepo,
@@ -507,6 +519,55 @@ def test_allele_score_region_allele_filter(
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 10, 16))
     assert set(result["allele"]) == expected_alleles
+
+
+def test_allele_score_filter_digit_prefixed_score_name(
+    tmp_path: pathlib.Path,
+) -> None:
+    setup_directories(
+        tmp_path / "grr", {
+            "allele_score": {
+                GR_CONF_FILE_NAME: """
+                    type: allele_score
+                    allele_score_mode: alleles
+                    table:
+                        filename: data.txt
+                        reference:
+                          name: reference
+                        alternative:
+                          name: alternative
+                    scores:
+                        - id: 1000G
+                          type: float
+                          desc: ""
+                          name: 1000G
+                """,
+                "data.txt": convert_to_tab_separated("""
+                    chrom  pos_begin  reference  alternative  1000G
+                    1      10         A          G            0.01
+                    1      10         A          C            0.05
+                    1      10         A          T            0.10
+                """),
+            },
+        })
+    repo = build_genomic_resource_repository({
+        "id": "allele_score_local",
+        "type": "directory",
+        "directory": str(tmp_path / "grr"),
+    })
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent("""
+            - allele_score:
+                resource_id: allele_score
+                allele_filter: "1000G > 0.03"
+                attributes:
+                - source: allele
+        """),
+        repo,
+    )
+    with pipeline.open() as work_pipeline:
+        result = work_pipeline.annotate(Region("1", 10, 10))
+    assert set(result["allele"]) == {"1:10:A:C", "1:10:A:T"}
 
 
 def test_allele_score_region_allele_with_include_attributes(
