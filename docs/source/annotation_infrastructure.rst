@@ -834,7 +834,7 @@ The minimal invocation is the input table and the pipeline YAML:
 
     annotate_tabular input.tsv annotation.yaml
 
-By default, the output is written next to the input as ``input_annotated.tsv``. To choose a different output filename, use -o / --output:
+By default, the output is written next to the input as ``input.annotated.tsv``. To choose a different output filename, use -o / --output:
 
 .. code:: bash
 
@@ -884,7 +884,7 @@ The minimal invocation is the input VCF and the pipeline YAML:
 
     annotate_vcf input.vcf.gz annotation.yaml
 
-By default, the output is written next to the input as input_annotated.vcf.gz. 
+By default, the output is written next to the input as input.annotated.vcf.gz. 
 To choose a different output filename, use ``-o`` or ``--output``:
 
 .. code:: bash
@@ -993,7 +993,7 @@ To run this annotation pipeline, enter the following command, which annotates ``
 
     annotate_tabular variants.txt annotation_pipeline_1.yaml
 
-After the run is complete, there will be a new file called ``variants_annotated.txt``, which includes 
+After the run is complete, there will be a new file called ``variants.annotated.txt``, which includes 
 two additional columns showing the genes affected by each variant and the corresponding worst effect.
 
 

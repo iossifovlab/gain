@@ -1088,7 +1088,7 @@ Run the following command to annotate your variants using this pipeline.
     annotate_tabular variants.txt annotation_pipeline_local.yaml
 
 
-This will create a ``variants_annotated.txt`` file with the following content:
+This will create a ``variants.annotated.txt`` file with the following content:
 
 .. csv-table::
     :header-rows: 1

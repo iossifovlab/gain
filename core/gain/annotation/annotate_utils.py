@@ -347,8 +347,8 @@ def build_output_path(raw_input_path: str, output_path: str | None) -> str:
     suffixes = path.suffixes
 
     path = Path(path.name)
-    # append '_annotated' to filename stem
-    path = path.with_stem(f"{path.stem}_annotated")
+    # append '.annotated' to filename stem
+    path = path.with_stem(f"{path.stem}.annotated")
     # restore suffixes
     base = str(path) if not suffixes else str(path.with_suffix(suffixes[-1]))
     # mirror the input's compression suffix

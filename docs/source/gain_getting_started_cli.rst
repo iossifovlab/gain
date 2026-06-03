@@ -108,10 +108,10 @@ To annotate the file, run:
 
 This command annotates ``small_input.csv`` using the predefined ``pipeline/hg38_clinical_annotation`` pipeline, which is hosted in the default GRR.
 
-GAIn writes the annotated output to a new file whose name is derived from the input file. For example, the command above produces (:download:`small_input_annotated.csv<files/small_input_annotated.csv>`), with the following content:
+GAIn writes the annotated output to a new file whose name is derived from the input file. For example, the command above produces (:download:`small_input.annotated.csv<files/small_input.annotated.csv>`), with the following content:
 
 .. csv-table::
-    :file: files/small_input_annotated.csv
+    :file: files/small_input.annotated.csv
     :header-rows: 1
 
 
@@ -150,12 +150,12 @@ To annotate the input file with this custom pipeline, run:
 
 .. code-block:: bash
 
-    annotate_tabular small_input.csv custom_pipeline.yaml -o small_input_custom_annotated.csv
+    annotate_tabular small_input.csv custom_pipeline.yaml -o small_input_custom.annotated.csv
 
-This command applies the local ``custom_pipeline.yaml`` file to the variants in ``small_input.csv``. To avoid overwriting the output from the previous section, we write the result to (:download:`small_input_custom_annotated.csv <files/small_input_custom_annotated.csv>`), whose content is shown below.
+This command applies the local ``custom_pipeline.yaml`` file to the variants in ``small_input.csv``. To avoid overwriting the output from the previous section, we write the result to (:download:`small_input_custom.annotated.csv <files/small_input_custom.annotated.csv>`), whose content is shown below.
 
 .. csv-table::
-    :file: files/small_input_custom_annotated.csv
+    :file: files/small_input_custom.annotated.csv
     :header-rows: 1
 
 
@@ -287,12 +287,12 @@ To annotate them, run:
 
 .. code-block:: bash
 
-    annotate_vcf small_input.vcf custom_pipeline.yaml -o vcf_annotated.vcf
+    annotate_vcf small_input.vcf custom_pipeline.yaml -o vcf.annotated.vcf
 
-This command produces an output file named :download:`vcf_annotated.vcf <files/vcf_annotated.vcf>`, which contains the same variants with 
+This command produces an output file named :download:`vcf.annotated.vcf <files/vcf.annotated.vcf>`, which contains the same variants with 
 additional annotation fields in the ``INFO`` column.
 
-.. literalinclude:: files/vcf_annotated.vcf
+.. literalinclude:: files/vcf.annotated.vcf
     :language: text
 
 
@@ -336,7 +336,7 @@ Then run the following command to annotate the positions:
 
     annotate_tabular positions.txt annotation_pipeline2.yaml
 
-This produces ``positions_annotated.txt`` which contains:
+This produces ``positions.annotated.txt`` which contains:
 
 .. csv-table::
     :header-rows: 1
@@ -370,7 +370,7 @@ Then run the command again:
 
     annotate_tabular positions.txt annotation_pipeline2.yaml
 
-This produces ``positions_annotated.txt`` which contains: 
+This produces ``positions.annotated.txt`` which contains: 
 
 .. csv-table::
     :header-rows: 1
@@ -424,7 +424,7 @@ Then run the following command to annotate the regions:
 
     annotate_tabular regions.txt annotation_pipeline2.yaml
 
-This produces ``regions_annotated.txt`` which contains:
+This produces ``regions.annotated.txt`` which contains:
 
 .. csv-table::
     :header-rows: 1
@@ -669,7 +669,7 @@ To annotate the original example input with this pipeline, run:
 
 .. code-block:: bash
 
-    annotate_tabular small_input.csv multiple_grr_pipeline.yaml -o small_input_multiple_grr_annotated.csv
+    annotate_tabular small_input.csv multiple_grr_pipeline.yaml -o small_input_multiple_grr.annotated.csv
 
 The output contains the effect annotations, the ENCODE-derived position score, and the local experimental score. The local score column comes from ``experimental_scores.tsv``:
 
