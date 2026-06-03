@@ -58,8 +58,9 @@
 
 /* Eyebrow label */
 .note-label {
-  font-size: 0.69rem;
-  color: #85a2b9;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #5b778c;
   letter-spacing: 0.01em;
   line-height: 1.5;
   overflow-wrap: break-word;
@@ -67,8 +68,10 @@
 }
 
 .note-label.empty {
+  font-size: 0.69rem;
+  font-weight: 400;
   font-style: italic;
-  color: #85a2b9;
+  color: #92adc3;
 }
 
 /* Allele link */
