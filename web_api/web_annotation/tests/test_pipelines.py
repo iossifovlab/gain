@@ -12,6 +12,38 @@ from web_annotation.pipeline_cache import LRUPipelineCache
 
 
 @pytest.mark.django_db
+def test_pipeline_doc_returns_html_download(
+    user_client: Client,
+) -> None:
+    response = user_client.get(
+        "/api/pipelines/doc?pipeline_id=pipeline/test_pipeline")
+    assert response.status_code == 200
+    assert response["Content-Type"].startswith("text/html")
+    assert "attachment" in response["Content-Disposition"]
+    assert "pipeline/test_pipeline.html" in response["Content-Disposition"]
+    assert len(response.content) > 0
+
+
+@pytest.mark.django_db
+def test_pipeline_doc_does_not_expose_pipeline_path(
+    user_client: Client,
+) -> None:
+    response = user_client.get(
+        "/api/pipelines/doc?pipeline_id=pipeline/test_pipeline")
+    assert response.status_code == 200
+    content = response.content.decode()
+    assert "Pipeline path:" not in content
+
+
+@pytest.mark.django_db
+def test_pipeline_doc_missing_pipeline_id(
+    user_client: Client,
+) -> None:
+    response = user_client.get("/api/pipelines/doc")
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
 def test_create_pipeline_stores_in_cache(
     test_grr: GenomicResourceRepo,
     user_client: Client,
