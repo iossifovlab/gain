@@ -292,6 +292,21 @@ class ListPipelines(AnnotationBaseView):
         if request.user and request.user.is_authenticated:
             pipelines = pipelines + self._get_user_pipelines(request.user)
 
+        default_pipeline_id = settings.DEFAULT_PIPELINE
+        if default_pipeline_id is not None:
+            default_index = next(
+                (i for i, p in enumerate(pipelines)
+                 if p["name"] == default_pipeline_id),
+                None,
+            )
+            if default_index is None:
+                return Response(
+                    {"reason": f"DEFAULT_PIPELINE '{default_pipeline_id}' "
+                     "not found in available pipelines."},
+                    status=views.status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            pipelines.insert(0, pipelines.pop(default_index))
+
         return Response(
             pipelines,
             status=views.status.HTTP_200_OK,
