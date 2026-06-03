@@ -475,6 +475,8 @@ def test_annotate_tabular_http_grr_contains_tbi_in_work_dir(
             str(a) for a in [
                 in_file, annotation_file, "--grr", grr_file,
                 "-o", out_file, "-w", work_dir, "-j", 1,
+                # keep the work dir so the downloaded .tbi can be inspected
+                "--keep-work-dir",
             ]
         ])
 
