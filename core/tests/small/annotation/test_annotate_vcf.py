@@ -596,6 +596,8 @@ def test_vcf_multiple_chroms(
             "-o", out_file,
             "-w", work_dir,
             "-j", 1,
+            # keep the work dir so the leftover-parts assertion can inspect it
+            "--keep-work-dir",
         ]
     ])
 

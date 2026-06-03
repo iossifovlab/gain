@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import itertools
 import logging
 import os
@@ -33,6 +34,7 @@ from gain.annotation.annotate_utils import (
     get_grr_from_context,
     get_pipeline_from_context,
     handle_default_args,
+    maybe_remove_work_dir,
     produce_partfile_paths,
     produce_regions,
     stringify,
@@ -642,7 +644,11 @@ def cli(argv: list[str] | None = None) -> None:
             )
 
         add_input_files_to_task_graph(args, task_graph)
-        TaskGraphCli.process_graph(task_graph, **args)
+        result = TaskGraphCli.process_graph(task_graph, **args)
+
+    pipeline.close()
+    gc.collect()
+    maybe_remove_work_dir(args, result=result)
 
 
 def _annotate_vcf_helper(

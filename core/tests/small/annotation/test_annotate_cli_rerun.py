@@ -38,6 +38,9 @@ def test_annotate_tabular_rerun(
             "--grr", grr_file,
             "--region-size", 5,
             "-j", 1,
+            # keep the tool-created work dir so the second run resumes from
+            # its task-status cache instead of starting fresh
+            "--keep-work-dir",
         ]
     ])
 
@@ -53,6 +56,9 @@ def test_annotate_tabular_rerun(
             "--grr", grr_file,
             "--region-size", 5,
             "-j", 1,
+            # keep the tool-created work dir so the second run resumes from
+            # its task-status cache instead of starting fresh
+            "--keep-work-dir",
         ]
     ])
     assert out_file.exists()
@@ -91,6 +97,9 @@ def test_annotate_vcf_rerun(
             "--grr", grr_file,
             "--region-size", 5,
             "-j", 1,
+            # keep the tool-created work dir so the second run resumes from
+            # its task-status cache instead of starting fresh
+            "--keep-work-dir",
         ]
     ])
 
@@ -106,6 +115,9 @@ def test_annotate_vcf_rerun(
             "--grr", grr_file,
             "--region-size", 5,
             "-j", 1,
+            # keep the tool-created work dir so the second run resumes from
+            # its task-status cache instead of starting fresh
+            "--keep-work-dir",
         ]
     ])
     assert out_file.exists()
