@@ -11,11 +11,15 @@ import { MarkdownModule } from 'ngx-markdown';
 })
 export class AboutPageComponent implements OnInit {
   public content: string;
+  public version: string;
   public constructor(private aboutPageService: AboutPageService) {}
 
   public ngOnInit(): void {
     this.aboutPageService.getContent().pipe(take(1)).subscribe(content => {
       this.content = content;
+    });
+    this.aboutPageService.getVersion().pipe(take(1)).subscribe(({version}) => {
+      this.version = version;
     });
   }
 }

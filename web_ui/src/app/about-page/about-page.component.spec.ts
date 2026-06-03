@@ -10,6 +10,9 @@ class MockAboutPageService {
   public getContent():Observable<string> {
     return of('# Mock content');
   }
+  public getVersion():Observable<{version: string}> {
+    return of({version: '1.0.0'});
+  }
 }
 
 
@@ -39,5 +42,9 @@ describe('AboutPageComponent', () => {
 
   it('should get page content', () => {
     expect(component.content).toBe('# Mock content');
+  });
+
+  it('should get version', () => {
+    expect(component.version).toBe('1.0.0');
   });
 });

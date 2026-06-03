@@ -31,4 +31,14 @@ describe('AboutPageService', () => {
     const res = await lastValueFrom(getResponse.pipe(take(1)));
     expect(res).toBe('# About page content');
   });
+
+  it('should get version', async() => {
+    const httpGetSpy = jest.spyOn(HttpClient.prototype, 'get');
+    httpGetSpy.mockReturnValue(of({version: '1.0.0'}));
+    const getResponse = service.getVersion();
+
+    expect(httpGetSpy).toHaveBeenCalledWith('//localhost:8000/api/version');
+    const res = await lastValueFrom(getResponse.pipe(take(1)));
+    expect(res).toEqual({version: '1.0.0'});
+  });
 });

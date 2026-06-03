@@ -66,3 +66,27 @@
 :host::ng-deep ul {
   list-style-type: "-  ";
 }
+
+#version {
+  display: flex;
+  align-items: baseline;
+  justify-content: end;
+  gap: 8px;
+  margin-top: 35px;
+  margin-bottom: 0;
+  border-top: 1px solid #cfd8df;
+}
+
+.version-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #5b778c;
+}
+
+.version-number {
+  font-size: 14px;
+  color: #5b778c;
+  letter-spacing: 0.03em;
+}
