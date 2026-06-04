@@ -331,3 +331,87 @@ test.describe('Single annotation report state reset on authentication change', (
     await expect(page.locator('.attribute-container .attribute-description').first()).not.toBeVisible();
   });
 });
+
+test.describe('Pipeline list updates on authentication change', () => {
+  const USER_PIPELINE_NAME = 'auth-change-test-pipeline';
+
+  async function getPipelineOptions(page: Page): Promise<string[]> {
+    await page.locator('.dropdown-icon').click();
+    await page.waitForSelector('mat-option', { state: 'visible', timeout: 10000 });
+    const options = await page.getByRole('option').allTextContents();
+    await page.keyboard.press('Escape');
+    return options;
+  }
+
+  test('only default pipelines are visible after logout', async({ page }) => {
+    const email = utils.getRandomString() + '@email.com';
+    const password = 'aaabbb';
+    await utils.registerUser(page, email, password);
+    await utils.loginUser(page, email, password);
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await createAndSaveUserPipeline(page, USER_PIPELINE_NAME);
+
+    // User pipeline is present before logout.
+    const optionsBefore = await getPipelineOptions(page);
+    expect(optionsBefore.some(o => o.includes(USER_PIPELINE_NAME))).toBe(true);
+
+    // Logout triggers window.location.reload().
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'load' }),
+      page.locator('#logout-button').click(),
+    ]);
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+
+    const optionsAfter = await getPipelineOptions(page);
+    expect(optionsAfter.some(o => o.includes(USER_PIPELINE_NAME))).toBe(false);
+    expect(optionsAfter.some(o => o.includes('pipeline/'))).toBe(true);
+  });
+
+  test('user pipelines appear after in-app login when anonymous pipelines were cached', async({ page }) => {
+    const email = utils.getRandomString() + '@email.com';
+    const password = 'aaabbb';
+
+    // Create the user pipeline while logged in via full-page login.
+    await utils.registerUser(page, email, password);
+    await utils.loginUser(page, email, password);
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await createAndSaveUserPipeline(page, USER_PIPELINE_NAME);
+
+    // Logout (full page reload) — now anonymous.
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'load' }),
+      page.locator('#logout-button').click(),
+    ]);
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+
+    // Populate the state with anonymous (default-only) pipelines by navigating
+    // between tabs. Both directions load getPipelines() and cache the result.
+    await page.getByRole('link', { name: 'Annotation Jobs' }).click();
+    await page.waitForSelector('app-annotation-jobs-wrapper', { timeout: 30000 });
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await page.getByRole('link', { name: 'Single Annotation' }).click();
+    await page.waitForSelector('app-single-annotation-wrapper', { timeout: 30000 });
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+
+    // Login via the in-app button — this is a client-side router.navigate(['/login']),
+    // so the AnnotationPipelineStateService singleton is preserved with the stale
+    // anonymous pipeline cache. Without the fix this would cause getPipelines() to
+    // skip the fetch and show only the cached default pipelines after login.
+    await page.locator('#login-button').click();
+    await page.locator('#email').pressSequentially(email);
+    await page.locator('#password').pressSequentially(password);
+    await page.locator('#login-container').getByRole('button', { name: 'Login' }).click();
+    await page.waitForSelector('app-single-annotation-wrapper', { timeout: 120000 });
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+
+    // Navigate to Annotation Jobs — triggers getPipelines() with isUserLoggedIn=true
+    // against a state where loadedWhileLoggedIn=false, so a fresh fetch must fire.
+    await page.getByRole('link', { name: 'Annotation Jobs' }).click();
+    await page.waitForSelector('app-annotation-jobs-wrapper', { timeout: 30000 });
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+
+    const options = await getPipelineOptions(page);
+    expect(options.some(o => o.includes(USER_PIPELINE_NAME))).toBe(true);
+    expect(options.some(o => o.includes('pipeline/'))).toBe(true);
+  });
+});

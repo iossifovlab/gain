@@ -504,6 +504,70 @@ describe('AnnotationPipelineComponent', () => {
     expect(component.selectedPipeline.name).toBe('name3');
   });
 
+  it('should request pipelines when user has logged in', () => {
+    pipelineStateService.pipelines.set([
+      new Pipeline(
+        'pipeline/hg38_clinical_annotation',
+        'pipeline/hg38_clinical_annotation',
+        // eslint-disable-next-line @stylistic/max-len
+        'preamble:\n   input_reference_genome: hg38/genomes/GRCh38-hg38\n   summary: Clinical Annotation Pipeline \n   description: This is a pipeline to annotate with Clinical resources  \n\nannotators:\n\n- effect_annotator:\n    gene_models: hg38/gene_models/MANE/1.3 \n    genome: hg38/genomes/GRCh38.p13\n    attributes:\n    - name: worst_effect_MANE_1_3\n      source: worst_effect \n    - name: effect_details_MANE_1_3\n      source: effect_details \n    - name: gene_effects_MANE_1_3\n      source: gene_effects \n      \n- normalize_allele_annotator:\n    genome: hg38/genomes/GRCh38-hg38\n\n- allele_score_annotator:\n    resource_id: hg38/scores/dbSNP\n    input_annotatable: normalized_allele\n    attributes:\n    - name: dbSNP_rs_number\n      source: RS    \n    \n- allele_score_annotator:\n    resource_id: hg38/variant_frequencies/gnomAD_4.1.0/exomes/ALL\n    input_annotatable: normalized_allele\n\n- allele_score_annotator:\n    resource_id: hg38/variant_frequencies/gnomAD_4.1.0/genomes/ALL\n    input_annotatable: normalized_allele\n\n- allele_score_annotator:\n    resource_id: hg38/scores/ClinVar_20240730\n    input_annotatable: normalized_allele\n    attributes:\n    - name: clinical_significance\n      source: CLNSIG    \n    - name: clinical_disease_name\n      source: CLNDN \n\n- allele_score_annotator: \n    resource_id: hg38/scores/CADD_v1.7\n    attributes:\n    - name: CADD_raw_score\n      source: cadd_raw    \n    - name: CADD_phred_score\n      source: cadd_phred \n\n- allele_score_annotator: \n    resource_id: hg38/scores/AlphaMissense\n    attributes:\n    - name: AlphaMissense_pathogenicity\n      source: am_pathogenicity\n    - name: AlphaMissense_class\n      source: am_class \n\n- liftover_annotator:\n    chain: liftover/hg38_to_hg19\n    source_genome: hg38/genomes/GRCh38-hg38\n    target_genome: hg19/genomes/GATK_ResourceBundle_5777_b37_phiX174\n    attributes:\n    - source: liftover_annotatable\n      name: hg19_annotatable\n      internal: true\n\n- allele_score_annotator:\n    resource_id: hg19/scores/MPC\n    input_annotatable: hg19_annotatable\n    attributes:\n    - name: MPC_score\n      source: MPC\n\n- effect_annotator:\n    gene_models: hg38/gene_models/GENCODE/48/basic/ALL\n    genome: hg38/genomes/GRCh38.p13\n    attributes:\n    - name: worst_effect_GENCODE_48\n      source: worst_effect \n    - name: effect_details_GENCODE_48\n      source: effect_details \n    - name: gene_effects_GENCODE_48\n      source: gene_effects \n    - name: gene_list \n      internal: true\n          \n- gene_score_annotator:\n    resource_id: gene_properties/gene_scores/pLI\n    input_gene_list: gene_list\n    attributes:\n    - name: pLI_rank_all\n      source: pLI_rank\n    - name: pLI_rank_min\n      source: pLI_rank\n      gene_aggregator: min \n      \n- gene_score_annotator:\n    resource_id: gene_properties/gene_scores/LOEUF\n    input_gene_list: gene_list\n    attributes:\n    - name: LOEUF_rank_all\n      source: LOEUF_rank\n    - name: LOEUF_rank_min\n      source: LOEUF_rank\n      gene_aggregator: min ',
+        'default',
+        'loaded'
+      ),
+      new Pipeline(
+        '1946',
+        'cadd',
+        // eslint-disable-next-line @stylistic/max-len
+        '\n- allele_score_annotator:\n    resource_id: hg38/scores/CADD_v1.7\n    attributes:\n    - name: cadd_raw\n      source: cadd_raw\n      internal: null\n    - name: cadd_phred\n      source: cadd_phred\n      internal: null\n',
+        'user',
+        'unloaded'
+      ),
+    ]);
+    pipelineStateService.loadedWhileLoggedIn.set(false);
+
+    const getPipelinesSpy = jest.spyOn(jobsServiceMock, 'getAnnotationPipelines');
+    component.ngOnInit();
+
+    expect(getPipelinesSpy).toHaveBeenCalledWith();
+  });
+
+  it('should not request pipelines when user has not changed', () => {
+    pipelineStateService.pipelines.set([
+      new Pipeline(
+        'pipeline/hg38_clinical_annotation',
+        'pipeline/hg38_clinical_annotation',
+        // eslint-disable-next-line @stylistic/max-len
+        'preamble:\n   input_reference_genome: hg38/genomes/GRCh38-hg38\n   summary: Clinical Annotation Pipeline \n   description: This is a pipeline to annotate with Clinical resources  \n\nannotators:\n\n- effect_annotator:\n    gene_models: hg38/gene_models/MANE/1.3 \n    genome: hg38/genomes/GRCh38.p13\n    attributes:\n    - name: worst_effect_MANE_1_3\n      source: worst_effect \n    - name: effect_details_MANE_1_3\n      source: effect_details \n    - name: gene_effects_MANE_1_3\n      source: gene_effects \n      \n- normalize_allele_annotator:\n    genome: hg38/genomes/GRCh38-hg38\n\n- allele_score_annotator:\n    resource_id: hg38/scores/dbSNP\n    input_annotatable: normalized_allele\n    attributes:\n    - name: dbSNP_rs_number\n      source: RS    \n    \n- allele_score_annotator:\n    resource_id: hg38/variant_frequencies/gnomAD_4.1.0/exomes/ALL\n    input_annotatable: normalized_allele\n\n- allele_score_annotator:\n    resource_id: hg38/variant_frequencies/gnomAD_4.1.0/genomes/ALL\n    input_annotatable: normalized_allele\n\n- allele_score_annotator:\n    resource_id: hg38/scores/ClinVar_20240730\n    input_annotatable: normalized_allele\n    attributes:\n    - name: clinical_significance\n      source: CLNSIG    \n    - name: clinical_disease_name\n      source: CLNDN \n\n- allele_score_annotator: \n    resource_id: hg38/scores/CADD_v1.7\n    attributes:\n    - name: CADD_raw_score\n      source: cadd_raw    \n    - name: CADD_phred_score\n      source: cadd_phred \n\n- allele_score_annotator: \n    resource_id: hg38/scores/AlphaMissense\n    attributes:\n    - name: AlphaMissense_pathogenicity\n      source: am_pathogenicity\n    - name: AlphaMissense_class\n      source: am_class \n\n- liftover_annotator:\n    chain: liftover/hg38_to_hg19\n    source_genome: hg38/genomes/GRCh38-hg38\n    target_genome: hg19/genomes/GATK_ResourceBundle_5777_b37_phiX174\n    attributes:\n    - source: liftover_annotatable\n      name: hg19_annotatable\n      internal: true\n\n- allele_score_annotator:\n    resource_id: hg19/scores/MPC\n    input_annotatable: hg19_annotatable\n    attributes:\n    - name: MPC_score\n      source: MPC\n\n- effect_annotator:\n    gene_models: hg38/gene_models/GENCODE/48/basic/ALL\n    genome: hg38/genomes/GRCh38.p13\n    attributes:\n    - name: worst_effect_GENCODE_48\n      source: worst_effect \n    - name: effect_details_GENCODE_48\n      source: effect_details \n    - name: gene_effects_GENCODE_48\n      source: gene_effects \n    - name: gene_list \n      internal: true\n          \n- gene_score_annotator:\n    resource_id: gene_properties/gene_scores/pLI\n    input_gene_list: gene_list\n    attributes:\n    - name: pLI_rank_all\n      source: pLI_rank\n    - name: pLI_rank_min\n      source: pLI_rank\n      gene_aggregator: min \n      \n- gene_score_annotator:\n    resource_id: gene_properties/gene_scores/LOEUF\n    input_gene_list: gene_list\n    attributes:\n    - name: LOEUF_rank_all\n      source: LOEUF_rank\n    - name: LOEUF_rank_min\n      source: LOEUF_rank\n      gene_aggregator: min ',
+        'default',
+        'loaded'
+      ),
+      new Pipeline(
+        '1946',
+        'cadd',
+        // eslint-disable-next-line @stylistic/max-len
+        '\n- allele_score_annotator:\n    resource_id: hg38/scores/CADD_v1.7\n    attributes:\n    - name: cadd_raw\n      source: cadd_raw\n      internal: null\n    - name: cadd_phred\n      source: cadd_phred\n      internal: null\n',
+        'user',
+        'unloaded'
+      ),
+    ]);
+    pipelineStateService.loadedWhileLoggedIn.set(false);
+
+    userServiceMock.userData.next({
+      email: 'email', loggedIn: false, isAdmin: false,
+      limitations: { dailyJobs: 5, filesize: '64M', todayJobsCount: 4, variantCount: 1000, diskSpace: '1000' }
+    });
+
+    const getPipelinesSpy = jest.spyOn(jobsServiceMock, 'getAnnotationPipelines');
+    component.ngOnInit();
+    expect(getPipelinesSpy).not.toHaveBeenCalledWith();
+
+    // Reset for subsequent tests.
+    userServiceMock.userData.next({
+      email: 'email', loggedIn: true, isAdmin: false,
+      limitations: { dailyJobs: 5, filesize: '64M', todayJobsCount: 4, variantCount: 1000, diskSpace: '1000' }
+    });
+  });
+
   it('initial-load preserves user-typed text that arrives during a slow GET /api/pipelines (tb-l7c)', () => {
     // Regression test for tb-l7c (CI gain-web-e2e #158). When the user
     // navigates mid-flight before the first getPipelines GET returns,
@@ -523,7 +587,7 @@ describe('AnnotationPipelineComponent', () => {
     jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
       .mockReturnValueOnce(initialPipelines.asObservable());
 
-    component['getPipelines']();
+    component.ngOnInit();
 
     // The GET is in flight. The user clicks "draft New pipeline" then
     // types yaml — currentPipelineText now reflects the typed text.
@@ -551,7 +615,7 @@ describe('AnnotationPipelineComponent', () => {
     component.selectedPipeline = null;
     component.currentPipelineText = '';
 
-    component['getPipelines']();
+    component.ngOnInit();
 
     expect(component.currentPipelineText).toBe('content1');
     expect(component.selectedPipeline.id).toBe('id1');

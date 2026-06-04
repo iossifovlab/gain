@@ -14,4 +14,5 @@ export class AnnotationPipelineStateService {
   public readonly isConfigValid = signal<boolean>(false);
   public readonly editorWidth = signal<number>(null);
   public readonly hideComponents = signal<boolean>(false);
+  public readonly loadedWhileLoggedIn = signal<boolean>(false);
 }

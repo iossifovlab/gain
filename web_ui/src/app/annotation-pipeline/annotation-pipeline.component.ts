@@ -194,7 +194,11 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   }
 
   private getPipelines(defaultPipelineId: string = ''): void {
-    if (this.pipelineStateService.pipelines().length && !defaultPipelineId) {
+    if (
+      this.pipelineStateService.loadedWhileLoggedIn() === this.isUserLoggedIn &&
+      !defaultPipelineId &&
+      this.pipelineStateService.pipelines().length
+    ) {
       this.pipelines = this.pipelineStateService.pipelines();
       this.filteredPipelines = this.pipelines;
       this.pipelinesLoaded = true;
@@ -208,6 +212,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
         this.pipelines = pipelines;
         this.filteredPipelines = this.pipelines;
         this.pipelineStateService.pipelines.set(pipelines);
+        this.pipelineStateService.loadedWhileLoggedIn.set(this.isUserLoggedIn);
         this.pipelinesLoaded = true;
         if (defaultPipelineId) {
           // Post-saveAs path. onPipelineClick would reset
