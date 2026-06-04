@@ -27,5 +27,4 @@ QUOTAS = {
     "daily_jobs": 2000,
     "filesize": "64M",
     "disk_space": "2048M",
-    "variant_count": 50_000,
 }

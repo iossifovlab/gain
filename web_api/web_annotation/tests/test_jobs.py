@@ -2283,7 +2283,6 @@ async def test_clean_up_anonymous_jobs(
         ".views.AnnotateVCF.lru_cache",
         new=cache,
     )
-    settings.QUOTAS["variant_count"] = 50
     session = await anonymous_client.asession()
     assert session.session_key is not None
     user = WebAnnotationAnonymousUser(session.session_key, ip="test")
@@ -2555,62 +2554,3 @@ def test_annotate_tabular_unlimited_user_quota_not_deducted(
 
     assert response.status_code == 200
     quota_job_complete_mock.assert_not_called()
-
-
-def test_annotate_vcf_unlimited_user_bypasses_variant_limit(
-    user_client: Client,
-    settings: LazySettings,
-) -> None:
-    user = User.objects.get(email="user@example.com")
-    user.is_unlimited = True
-    user.save()
-
-    settings.QUOTAS["variant_count"] = 5
-
-    vcf = textwrap.dedent("""
-        ##fileformat=VCFv4.1
-        ##contig=<ID=chr1>
-        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
-    """).strip() + "\n" + "\n".join(
-        f"chr1\t{i}\t.\tA\tT\t.\t.\t." for i in range(1, 10)
-    )
-
-    response = user_client.post(
-        "/api/jobs/annotate_vcf",
-        {
-            "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(vcf, "test_input.vcf"),
-        },
-    )
-
-    assert response.status_code == 200
-
-
-def test_annotate_tabular_unlimited_user_bypasses_variant_limit(
-    user_client: Client,
-    settings: LazySettings,
-) -> None:
-    user = User.objects.get(email="user@example.com")
-    user.is_unlimited = True
-    user.save()
-
-    settings.QUOTAS["variant_count"] = 5
-
-    file = "chrom,pos,ref,alt\n" + "\n".join(
-        f"chr1,{i},A,T" for i in range(1, 10)
-    )
-
-    response = user_client.post(
-        "/api/jobs/annotate_tabular",
-        {
-            "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(file, "test_input.csv"),
-            "col_chrom": "chrom",
-            "col_pos": "pos",
-            "col_ref": "ref",
-            "col_alt": "alt",
-            "separator": ",",
-        },
-    )
-
-    assert response.status_code == 200

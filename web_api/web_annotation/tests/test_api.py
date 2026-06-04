@@ -411,7 +411,6 @@ def test_filesize_limit_user(
     settings.QUOTAS = {
         "filesize": 1,
         "daily_jobs": settings.QUOTAS["daily_jobs"],
-        "variant_count": settings.QUOTAS["variant_count"],
     }
 
     mocker.patch(
@@ -444,7 +443,6 @@ def test_filesize_limit_admin(
 ) -> None:
     settings.QUOTAS = {
         "filesize": 1,
-        "variant_count": settings.QUOTAS["variant_count"],
     }
 
     mocker.patch(
@@ -456,75 +454,6 @@ def test_filesize_limit_admin(
         ##contig=<ID=chr1>
         #CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
         chr1	1	.	C	A	.	.	.
-    """).strip("\n")
-
-    response = admin_client.post(
-        "/api/jobs/annotate_vcf",
-        {
-            "genome": "hg38/GRCh38-hg38/genome",
-            "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(vcf),
-        },
-    )
-    assert response.status_code == 200
-
-
-@pytest.mark.django_db
-def test_variant_limit_user(
-    user_client: Client,
-    mocker: MockerFixture,
-    settings: LazySettings,
-) -> None:
-    settings.QUOTAS = {
-        "variant_count": 1,
-        "daily_jobs": settings.QUOTAS["daily_jobs"],
-        "filesize": settings.QUOTAS["filesize"],
-        "disk_space": "2048M",
-    }
-
-    mocker.patch(
-        "web_annotation.jobs.views.run_vcf_job",
-    )
-
-    vcf = textwrap.dedent("""
-        ##fileformat=VCFv4.1
-        ##contig=<ID=chr1>
-        #CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
-        chr1	1	.	C	A	.	.	.
-        chr1	2	.	C	A	.	.	.
-    """).strip("\n")
-
-    response = user_client.post(
-        "/api/jobs/annotate_vcf",
-        {
-            "genome": "hg38/GRCh38-hg38/genome",
-            "pipeline_id": "pipeline/test_pipeline",
-            "data": ContentFile(vcf),
-        },
-    )
-    assert response.status_code == 413
-
-
-@pytest.mark.django_db
-def test_variant_limit_admin(
-    admin_client: Client,
-    mocker: MockerFixture,
-    settings: LazySettings,
-) -> None:
-    settings.QUOTAS = {
-        "variant_count": 1,
-    }
-
-    mocker.patch(
-        "web_annotation.jobs.views.run_vcf_job",
-    )
-
-    vcf = textwrap.dedent("""
-        ##fileformat=VCFv4.1
-        ##contig=<ID=chr1>
-        #CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
-        chr1	1	.	C	A	.	.	.
-        chr1	2	.	C	A	.	.	.
     """).strip("\n")
 
     response = admin_client.post(

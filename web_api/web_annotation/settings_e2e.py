@@ -13,7 +13,6 @@ QUOTAS = {
     "daily_jobs": 2,
     "filesize": "64M",
     "disk_space": "2048M",
-    "variant_count": 1000,
 }
 
 RESOURCES_BASE_URL = "http://grr.seqpipe.org/"

@@ -82,12 +82,6 @@ class UserInfo(views.APIView):
             return None
         return cast(str, settings.QUOTAS["filesize"])
 
-    def get_user_variant_limit(self, user: User | None = None) -> int | None:
-        """Return the variant count limit for a user."""
-        if user is not None and user.is_superuser:
-            return None
-        return cast(int, settings.QUOTAS["variant_count"])
-
     def get_today_jobs_count(self, user: User) -> int:
         """Return the number of jobs a user created today."""
         today = timezone.now().replace(
@@ -106,7 +100,6 @@ class UserInfo(views.APIView):
             "limitations": {
                 "dailyJobs": self.get_user_daily_limit(user),
                 "filesize": self.get_user_filesize_limit(user),
-                "variantCount": self.get_user_variant_limit(user),
                 "todayJobsCount": self.get_today_jobs_count(user),
                 "diskSpace": (
                     f"{bytes_to_readable(calculate_used_disk_space(user))}"

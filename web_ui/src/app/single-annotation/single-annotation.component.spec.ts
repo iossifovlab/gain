@@ -33,7 +33,6 @@ const mockUser: UserData = {
     dailyJobs: 10,
     filesize: '10MB',
     todayJobsCount: 10,
-    variantCount: 20,
     diskSpace: '100'
   }
 };

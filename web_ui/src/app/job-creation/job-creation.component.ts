@@ -35,7 +35,6 @@ export class JobCreationComponent implements OnInit {
       dailyJobs: number;
       filesize: string;
       todayJobsCount: number;
-      variantCount: number;
       diskSpace: string;
   } = null;
 

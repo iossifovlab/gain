@@ -37,7 +37,6 @@ QUOTAS = {
     "daily_jobs": 20,
     "filesize": "64M",
     "disk_space": "2048M",
-    "variant_count": 50000,
 }
 
 QUERY_QUOTAS = {
