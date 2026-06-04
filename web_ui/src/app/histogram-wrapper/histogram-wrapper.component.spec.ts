@@ -124,4 +124,13 @@ describe('HistogramWrapperComponent', () => {
     const arr = ['alpha', 'beta', 'gamma'];
     expect(component.getValuesAsString(arr)).toBe(arr);
   });
+
+  it('should return number array as-is from getValuesAsNumber', () => {
+    const arr = [1.2, 3.4, 5.6];
+    expect(component.getValuesAsNumber(arr)).toBe(arr);
+  });
+
+  it('should stringify number array from getValuesAsString', () => {
+    expect(component.getValuesAsString([1, 2, 3])).toStrictEqual(['1,2,3']);
+  });
 });

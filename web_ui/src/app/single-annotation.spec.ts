@@ -45,10 +45,16 @@ describe('Result', () => {
     expect(result.value).toStrictEqual(new Map<string, string>([['MTHFR', 'missense'], ['ABC', 'nonsense']]));
   });
 
-  it('should store value of type list', () => {
+  it('should store string array value of type list', () => {
     const arr = ['chr14:21391397:C:T:6.57e-06', 'chr14:21451170:A:G:6.57e-06'];
     const result = Result.fromJson({ value: arr, histogram: null }, 'list');
     expect(result.value).toStrictEqual(['chr14:21391397:C:T:6.57e-06', 'chr14:21451170:A:G:6.57e-06']);
+  });
+
+  it('should store number array value of type list', () => {
+    const arr = [1.2, 3.4, 5.6];
+    const result = Result.fromJson({ value: arr, histogram: null }, 'list');
+    expect(result.value).toStrictEqual([1.2, 3.4, 5.6]);
   });
 
   it('should convert value of type boolean to string', () => {

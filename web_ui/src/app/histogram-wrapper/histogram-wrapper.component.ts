@@ -1,6 +1,6 @@
 import { Component, Input, OnInit } from '@angular/core';
 import { SingleAnnotationService } from '../single-annotation.service';
-import { CategoricalHistogram, NumberHistogram } from '../single-annotation';
+import { CategoricalHistogram, NumberHistogram, ValueType } from '../single-annotation';
 import { NumberHistogramComponent } from '../number-histogram/number-histogram.component';
 import { CategoricalHistogramComponent } from '../categorical-histogram/categorical-histogram.component';
 import { CommonModule } from '@angular/common';
@@ -12,7 +12,7 @@ import { CommonModule } from '@angular/common';
 })
 export class HistogramWrapperComponent implements OnInit {
   @Input() public histogramUrl: string;
-  @Input() public value: string | number | Map<string, string | number> | string[];
+  @Input() public value: ValueType;
   public histogram: CategoricalHistogram | NumberHistogram = null;
 
   public constructor(private singleAnnotationService: SingleAnnotationService) { }
@@ -25,7 +25,11 @@ export class HistogramWrapperComponent implements OnInit {
     }
   }
 
-  public getValuesAsNumber(value: string | number | Map<string, string | number> | string[]): number[] {
+  public getValuesAsNumber(value: ValueType): number[] {
+    if (Array.isArray(value) && value.every(v => typeof v === 'number')) {
+      return value;
+    }
+
     if (typeof value === 'number') {
       return [value];
     }
@@ -39,7 +43,7 @@ export class HistogramWrapperComponent implements OnInit {
     return [parsed];
   }
 
-  public getValuesAsString(value: string | number | Map<string, string | number> | string[]): string[] {
+  public getValuesAsString(value: ValueType): string[] {
     if (!value) {
       return [];
     }
@@ -51,7 +55,7 @@ export class HistogramWrapperComponent implements OnInit {
       return [...value.values()].map(v => String(v));
     }
 
-    if (Array.isArray(value)) {
+    if (Array.isArray(value) && value.every(v => typeof v === 'string')) {
       return value;
     }
 

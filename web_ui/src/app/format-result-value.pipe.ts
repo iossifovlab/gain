@@ -1,10 +1,11 @@
 import { Pipe, PipeTransform } from '@angular/core';
+import { ValueType } from './single-annotation';
 
 @Pipe({
   name: 'formatResultValue'
 })
 export class FormatResultValuePipe implements PipeTransform {
-  public transform(value: string | number | Map<string, string | number> | string[], numberOfDigits?: number): string {
+  public transform(value: ValueType, numberOfDigits?: number): string {
     const values: string[] = [];
     if (value instanceof Map) {
       value.forEach((v, k) => {

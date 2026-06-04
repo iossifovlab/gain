@@ -1,4 +1,3 @@
-
 export class Annotatable {
   public constructor(
     public chromosome: string,
@@ -98,9 +97,11 @@ export class AnnotatorDetails {
   }
 }
 
+export type ValueType = string | number | Map<string, string | number> | string[] | number[];
+
 export class Result {
   public constructor(
-    public value: string | number | Map<string, string | number> | string[],
+    public value: ValueType,
     public histogramLink: string,
   ) {}
 
@@ -112,7 +113,7 @@ export class Result {
       return undefined;
     }
 
-    let resultValue: string | number | Map<string, string | number> | string[] = null;
+    let resultValue: ValueType = null;
 
     if (['int', 'float'].includes(type)) {
       resultValue = json['value'] as number;
