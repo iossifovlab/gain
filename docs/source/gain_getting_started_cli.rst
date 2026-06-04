@@ -178,7 +178,7 @@ So far, GAIn has been using the default GRR definition, which corresponds to the
     url: "https://grr.iossifovlab.com"
     cache_dir: "<path_to_cache>/remote_grr_cache"
 
-After this configuration, GAIn downloads each required resource to the specified cache directory before using it for annotation. Because genomic resources can be large, the cache directory should have sufficient disk space and write permission for the user. If <path_to_cache> does not have enough available space, use another cache directory with sufficient storage. The approximate space requirements for the resources used in this guide are described below.
+After this configuration, GAIn downloads each required resource to the specified cache directory before using it for annotation. Because genomic resources can be large, the cache directory should have sufficient disk space and write permission for the user. If ``<path_to_cache>`` does not have enough available space, use another cache directory with sufficient storage. The approximate space requirements for the resources used in this guide are described below.
 
 This is especially important for large annotation pipelines. For example, a comprehensive clinical pipeline such as ``pipeline/hg38_clinical_annotation`` may require many large resources. These resources total approximately 40 GB and may take substantial time to download, depending on network speed and storage performance. Once cached, however, they can be reused directly from the local cache, making future annotation jobs much faster.
 
@@ -211,24 +211,8 @@ or
 
     annotate_tabular 50k_variants.tsv.gz custom_pipeline.yaml
 
-Without caching, annotating a file of this size through remote resource access can take a very long time. With the required resources already cached, GAIn uses the local copies for annotation, making the same large-scale job much faster and less dependent on network performance. For example, annotating 50,000 variants with pipeline/hg38_clinical_annotation takes approximately 4 minutes on a local computer.
+Without caching, annotating a file of this size through remote resource access can take a very long time. With the required resources already cached, GAIn uses the local copies for annotation, making the same large-scale job much faster and less dependent on network performance. For example, in our test on a recent Mac laptop using cached resources, annotating 50,000 variants with pipeline/hg38_clinical_annotation took approximately 4 minutes.
 
-GAIn works more efficiently on input files sorted by genomic coordinates. The original 50k_variants.tsv.gz file is not sorted. To sort it by chromosome and position while preserving the header, run:
-
-.. code-block:: bash
-
-    (
-    gzip -dc 50k_variants.tsv.gz | head -n 1
-    gzip -dc 50k_variants.tsv.gz | tail -n +2 | LC_ALL=C sort -t $'\t' -k1,1V -k2,2n
-    ) | bgzip > 50k_variants.sorted.tsv.bgz
-
-You can also download the sorted file here:  (:download:`50k_variants.sorted.tsv.gz <files/50k_variants.sorted.tsv.gz>`). Then rerun the annotation on the sorted file:
-
-.. code-block:: bash
-
-    annotate_tabular 50k_variants.tsv.sorted.gz custom_pipeline.yaml
-
-In this example, sorting reduces the runtime from approximately 4 minutes to approximately 3 minutes.
 
 Parallelizing large annotation jobs
 -----------------------------------
