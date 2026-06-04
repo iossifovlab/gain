@@ -83,7 +83,6 @@ describe('UsersService', () => {
         dailyJobs: 5,
         filesize: '30M',
         todayJobsCount: 4,
-        variantCount: 100,
         diskSpace: ''
       }
     };
@@ -187,7 +186,6 @@ describe('UsersService', () => {
         dailyJobs: 5,
         filesize: '30M',
         todayJobsCount: 0,
-        variantCount: 100,
         diskSpace: ''
       }
     };

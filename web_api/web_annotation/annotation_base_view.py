@@ -142,11 +142,6 @@ class AnnotationBaseView(views.APIView):
             return path
         return Path(path)
 
-    @property
-    def max_variants(self) -> int:
-        """Return max variants allowed per job."""
-        return cast(int, settings.QUOTAS["variant_count"])
-
     @staticmethod
     def _convert_size(filesize: str | int) -> int:
         """Convert a human readable filesize string to bytes."""

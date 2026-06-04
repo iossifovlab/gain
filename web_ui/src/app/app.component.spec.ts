@@ -61,7 +61,6 @@ describe('AppComponent', () => {
         dailyJobs: 100,
         filesize: '1GB',
         todayJobsCount: 5,
-        variantCount: 1000,
         diskSpace: '10GB'
       }
     };
@@ -81,7 +80,6 @@ describe('AppComponent', () => {
         dailyJobs: 100,
         filesize: '1GB',
         todayJobsCount: 5,
-        variantCount: 1000,
         diskSpace: '10GB'
       }
     };

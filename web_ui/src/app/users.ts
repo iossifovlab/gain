@@ -6,7 +6,6 @@ export interface UserData {
     dailyJobs: number;
     filesize: string;
     todayJobsCount: number;
-    variantCount: number;
     diskSpace: string;
   }
 }

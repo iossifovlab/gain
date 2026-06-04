@@ -3,7 +3,6 @@ import re
 from importlib.metadata import version
 
 import pytest
-from django.conf import LazySettings
 from django.core import mail
 from django.test import Client
 
@@ -424,8 +423,7 @@ def test_activation_of_account_through_reset_password(
 
 
 @pytest.mark.django_db
-def test_get_user_info(user_client: Client, settings: LazySettings) -> None:
-    settings.QUOTAS["variant_count"] = 1000
+def test_get_user_info(user_client: Client) -> None:
     response = user_client.get("/api/user_info")
     assert response.status_code == 200
     assert response.json() == {
@@ -434,7 +432,6 @@ def test_get_user_info(user_client: Client, settings: LazySettings) -> None:
         "limitations": {
             "dailyJobs": 5,
             "filesize": "64M",
-            "variantCount": 1000,
             "todayJobsCount": 1,
             "diskSpace": "10.0 MB / 2.0 GB",
         },
@@ -453,7 +450,6 @@ def test_get_user_info_unauthorized(anonymous_client: Client) -> None:
             "diskSpace": "0.1 KB / 2.0 GB",
             "filesize": "64M",
             "todayJobsCount": 0,
-            "variantCount": 1000,
         },
     }
 
