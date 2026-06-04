@@ -1,5 +1,5 @@
 preamble:
-  summary: Simple custom pipeline
+  summary: Custom pipeline using public and local resources
   input_reference_genome: hg38/genomes/GRCh38-hg38
 
 annotators:
@@ -18,6 +18,6 @@ annotators:
     - CLNSIG
     - CLNDN
 
-- position_score_annotator: ATAC-seq_ENCSR814RGG
+- position_score_annotator: ATAC-seq/ENCSR814RGG
 
 - position_score_annotator: my_score

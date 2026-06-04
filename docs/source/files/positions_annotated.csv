@@ -1,0 +1,3 @@
+chrom,pos,worst_effect,worst_effect_genes,phyloP7way,cadd_raw
+chr7,117587806,coding,CFTR,0.917,5.05
+chr7,115587806,intergenic,,0.158,0.533

@@ -1,0 +1,10 @@
+- simple_effect_annotator:
+    gene_models: hg38/gene_models/MANE/1.5
+
+- position_score_annotator:
+    resource_id: hg38/scores/phyloP7way
+
+- allele_score_annotator:
+    resource_id: hg38/scores/CADD_v1.7
+    attributes:
+    - cadd_raw

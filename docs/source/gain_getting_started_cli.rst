@@ -308,44 +308,32 @@ Although positions and regions do not contain allele information, and therefore 
 variant-based annotation, GAIn can still take these inputs and annotate them with many relevant resources using 
 the ``annotate_tabular`` tool.
 
-Position inputs require only two columns: chromosome and position. Save the following tab-delimited text in a 
-file called ``positions.txt``.
+Position inputs require only two columns: chromosome and position. Download :download:`positions.csv <files/positions.csv>`, whose content is shown below: 
 
 .. csv-table::
+    :file: files/positions.csv
     :header-rows: 1
 
-    chrom,pos
-    chr7,117587806
-    chr7,115587806
+Because position inputs do not include reference and alternate alleles, GAIn cannot infer the effect of a specific allelic change on a gene product. However, GAIn provides a dedicated ``simple_effect_annotator`` that can infer the broad genomic context of a position, such as whether it is intergenic, genic, or coding. GAIn can also use other resource types with position inputs and, when needed, aggregate their values to produce a position-level annotation. For example, position score resources map directly to genomic positions and can be applied without modification, while allele score resources can be used by aggregating across the possible allelic changes at that site. In the example below, we use a single pipeline that combines these annotation types. Download annotation pipeline :download:`position_pipeline.yaml <files/position_pipeline.yaml>`, whose content is shown below:
 
-Because position inputs do not include reference and alternate alleles, GAIn cannot infer the effect of a 
-specific allelic change on a gene product. However, it can still determine whether a position falls within a gene and, 
-if so, what broad part of the gene it overlaps. To do this, use ``simple_effect_annotator``, which classifies loci into 
-broad categories such as intergenic and genic, and further subdivides genic loci into coding and several noncoding 
-classes. Save the following text as ``annotation_pipeline2.yaml``.
-
-.. code-block:: yaml
-
-    - simple_effect_annotator:
-        gene_models: hg38/gene_models/MANE/1.5
+.. literalinclude:: files/position_pipeline.yaml
+    :language: yaml
 
 
-Then run the following command to annotate the positions:
+This pipeline combines three annotators. The ``simple_effect_annotator`` uses the ``MANE 1.5`` gene models resource to classify each position by genomic context, such as coding or intergenic, and to report overlapping genes when applicable. The ``position_score_annotator`` adds the ``phyloP7way`` conservation score directly at each genomic position. The ``allele_score_annotator`` uses ``CADD v1.7`` to summarize the possible allelic changes at each position and reports the default aggregate (max[]) ``cadd_raw score``. Run the following command to annotate the positions:
 
 .. code-block:: bash
 
-    annotate_tabular positions.txt annotation_pipeline2.yaml
+    annotate_tabular positions.csv position_pipeline.yaml
 
-This produces ``positions.annotated.txt`` which contains:
+This produces :download:`positions.annotated.csv <files/positions.annotated.csv>` which contains:
 
 .. csv-table::
+    :file: files/positions_annotated.csv
     :header-rows: 1
 
-    chrom,pos,worst_effect,worst_effect_genes
-    chr7,117587806,coding,CFTR
-    chr7,115587806,intergenic
+This shows that the first position falls within a coding part of CFTR, whereas the second position is intergenic. The coding position also has a higher phyloP7way conservation score and a higher aggregate cadd_raw score than the intergenic position, consistent with stronger evolutionary constraint and predicted functional relevance at this site.
 
-This shows that the first position falls within a coding part of CFTR, whereas the second position is intergenic.
 
 Position score resources can be applied directly to genomic positions, so ``position_score_annotator`` works on this 
 input without modification. GAIn can also use allele score resources with position inputs. In that case, because 
@@ -385,14 +373,11 @@ deleteriousness of allelic changes, and for position inputs GAIn reports an aggr
 alleles at that site. Here, the first position has a higher aggregate ``cadd_raw`` score than the second.
 
 Region inputs require three columns: chromosome, beginning position, and end position. 
-Save the following tab-delimited text in a file called ``regions.txt``.
+Download the example file :download:`regions.csv <files/regions.csv>`, whose content is shown below:
 
 .. csv-table::
+    :file: files/regions.csv
     :header-rows: 1
-
-    chrom,pos_beg,pos_end
-    chr1,1,100000
-    chr1,11796321,11800000
 
 As with position inputs, region inputs do not include reference and alternate alleles, 
 so GAIn cannot infer the effect of a specific allelic change on a gene product. However, many of the same 
@@ -401,138 +386,34 @@ genomic resource types can still be applied to region inputs. Region inputs can 
 reports broad functional categories when applicable. Position score resources can be used on region 
 inputs by aggregating values across the positions spanned by each interval. Allele score resources can also be used, 
 but in that case GAIn must aggregate both across the positions in the region and across the possible allelic 
-changes at each position. 
+changes at each position []. 
 
-To illustrate this, reuse ``annotation_pipeline2.yaml``, shown below as a reminder.
+To illustrate this, reuse ``position_pipeline.yaml``, shown below as a reminder.
 
-.. code-block:: yaml
-
-    - simple_effect_annotator:
-        gene_models: hg38/gene_models/MANE/1.4
-
-    - position_score_annotator:
-        resource_id: hg38/scores/phyloP7way
-
-    - allele_score_annotator:
-        resource_id: hg38/scores/CADD_v1.6
-        attributes:
-        - cadd_raw
+.. literalinclude:: files/position_pipeline.yaml
+    :language: yaml
 
 Then run the following command to annotate the regions:
 
 .. code-block:: bash
 
-    annotate_tabular regions.txt annotation_pipeline2.yaml
+    annotate_tabular regions.csv position_pipeline.yaml
 
 This produces ``regions.annotated.txt`` which contains:
 
 .. csv-table::
+    :file: files/regions_annotated.csv
     :header-rows: 1
-
-    chrom,pos_beg,pos_end,worst_effect,worst_effect_genes,phylop7way,cadd_raw
-    chr1,1,100000,coding,OR4F5,0.0599,0.43
-    chr1,11796321,11800000,coding,MTHFR,0.0348,0.269
 
 This output shows how GAIn summarizes the functional context of each region. Depending on the interval, 
 a region may be classified as intergenic, coding, or another category, and overlapping genes are reported 
-when applicable.
+when applicable. [] aggregation
 
 
 
 
 
 
-
-
-When the annotation input file is large, GAIn can run split the large 
-annotation the annotation in parallel
-by splitting the workload across multiple CPU cores to speed up processing.
-
-
-Reannotation
-------------
-
-When iterating on an analysis, you often want to run a new annotation pipeline on a dataset that has 
-already been annotated. If the new pipeline shares any steps with the old one (for example, the same effect 
-annotator or the same score lookup), recomputing those attributes can be wasteful—especially for large annotation jobs.
-
-GAIn supports reannotation, which allows it to reuse attributes that were already computed by a 
-previous pipeline run, and only compute what is new. To see an example for reannotation, create the 
-following annotation pipeline and save it as ``pipeline_A.yaml``:
-
-.. code-block:: yaml
-
-    - effect_annotator:
-        gene_models: hg38/gene_models/MANE/1.3
-        attributes:
-        - genes
-        - worst_effect
-
-    - position_score_annotator:
-        resource_id: hg38/scores/phyloP7way
-
-Run the pipeline on your input variants:
-
-.. code-block:: bash
-
-    annotate_tabular variants.txt pipeline_A.yaml -o variants_A.txt
-
-This produces ``variants_A.txt``, which includes the requested attributes:
-
-.. csv-table::
-    :header-rows: 1
-
-    chrom,pos,ref,alt,genes,worst_effect,phyloP7way
-    chr14,21415880,G,A,CHD8,nonsense,0.917
-    chr17,7674904,TCT,T,TP53,frame-shift,-0.12
-    chr7,117587806,G,A,CFTR,missense,0.917
-
-Now suppose you want to annotate the same variants with a modified pipeline saved as ``pipeline_B.yaml``. 
-In this example, Pipeline B is the same as Pipeline A, but adds two additional position-score annotators.
-
-.. code-block:: yaml
-
-    - effect_annotator:
-        gene_models: hg38/gene_models/MANE/1.3
-        attributes:
-        - genes
-        - worst_effect
-
-    - position_score_annotator:
-        resource_id: hg38/scores/phyloP7way
-
-    - position_score_annotator:
-        resource_id: hg38/scores/phyloP30way
-
-    - position_score_annotator:
-        resource_id: hg38/scores/phyloP100way
-
-
-You could run Pipeline B directly on ``variants_A.txt``, but that would recompute genes, worst_effect, 
-and phyloP7way even though they are already present. Instead, use ``--reannotate`` and pass the old pipeline 
-that produced the existing annotations:
-
-.. code-block:: bash
-
-    annotate_tabular variants_A.txt pipeline_B.yaml --reannotate pipeline_A.yaml -o variants_B.txt
-
-
-When you run the command above, ``variants_A.txt`` is used as the input table 
-(the output produced by Pipeline A), and ``pipeline_B.yaml`` is the updated 
-pipeline you want to apply. The key part is ``--reannotate pipeline_A.yaml``: 
-it tells GAIn which pipeline originally generated the annotation columns already present 
-in ``variants_A.txt``, so GAIn can recognize any overlapping work and reuse those precomputed 
-attributes instead of recalculating them. The result is written to ``variants_B.txt``, which 
-contains the attributes requested by Pipeline B, with any shared attributes carried forward 
-from the earlier run.
-
-.. csv-table::
-    :header-rows: 1
-
-    chrom,pos,ref,alt,genes,worst_effect,phyloP7way,phyloP30way,phyloP100way
-    chr14,21415880,G,A,CHD8,nonsense,0.917,1.18,1.25
-    chr17,7674904,TCT,T,TP53,frame-shift,-0.12,-0.076,-1.14
-    chr7,117587806,G,A,CFTR,missense,0.917,1.18,8.82
 
 
 
@@ -562,7 +443,7 @@ With this configuration, GAIn can use resources from both repositories. For exam
 .. code-block:: yaml
 
     - position_score_annotator:
-        resource_id: ATAC-seq_ENCSR814RGG
+        resource_id: ATAC-seq/ENCSR814RGG
 
 This makes ENCODE-derived regulatory tracks available through the same pipeline syntax used for other position score resources.
 
@@ -645,24 +526,9 @@ With this configuration, GAIn can use the local resource in annotation pipelines
 
 Download the example pipeline (:download:`multiple_grr_pipeline.yaml <files/multiple_grr_pipeline.yaml>`) which uses multiple GRRs: 
 
-.. code-block:: yaml
+.. literalinclude:: files/multiple_grr_pipeline.yaml
+    :language: yaml
 
-    preamble:
-      summary: Pipeline using public and local GRRs
-      input_reference_genome: hg38/genomes/GRCh38-hg38
-
-    annotators:
-    - effect_annotator:
-        gene_models: hg38/gene_models/MANE/1.5
-        attributes:
-        - worst_effect
-        - gene_list
-
-    - position_score_annotator:
-        resource_id: ATAC-seq_ENCSR814RGG
-
-    - position_score_annotator:
-        resource_id: my_score
 
 
 To annotate the original example input with this pipeline, run:
@@ -674,9 +540,79 @@ To annotate the original example input with this pipeline, run:
 The output contains the effect annotations, the ENCODE-derived position score, and the local experimental score. The local score column comes from ``experimental_scores.tsv``:
 
 .. csv-table::
+    :file: files/small_input_multiple_grr_annotated.csv
     :header-rows: 1
 
-    chrom,pos,ref,alt,worst_effect,genes,ATAC-seq_ENCSR814RGG,my_score
-    chr14,21415880,G,A,nonsense,CHD8,,0.82
-    chr17,7674904,TCT,T,frame-shift,TP53,2.18,0.15
-    chr7,117587806,G,A,missense,CFTR,,0.94
+
+Reannotation
+------------
+
+When iterating on an analysis, you often want to run a new annotation pipeline on a dataset that has 
+already been annotated. If the new pipeline shares any steps with the old one (for example, the same effect 
+annotator or the same score lookup), recomputing those attributes can be wasteful—especially for large annotation jobs.
+
+GAIn supports reannotation, which allows it to reuse attributes that were already computed by a 
+previous pipeline run, and only compute what is new. To illustrate, we will reuse the annotation pipeline (:download:`custom_pipeline.yaml <files/custom_pipeline.yaml>`), whose content is shown below as a reminder. This pipeline produces five annotation attributes: ``worst_effect`` and ``genes`` from effect annotator using MANE 1.5 gene models, phyloP7way from a position score resource, and CLNSIG and CLNDN from ClinVar. Together, these attributes summarize the predicted gene effect, conservation score, clinical significance, and associated disease names for each variant.
+
+.. literalinclude:: files/custom_pipeline.yaml
+    :language: yaml
+
+To illustrate the runtime of this pipeline, we run it on the 1 million-variant input we used earlier (:download:`1million_variants.tsv.gz <files/1million_variants.tsv.gz>`) and record the elapsed time. 
+
+.. code-block:: bash
+
+    time annotate_tabular 1million_variants.sorted.tsv.bgz custom_pipeline.yaml
+
+This takes approximately 1 minute and produces ``1million_variants.sorted_annotated.tsv.bgz``, which includes the requested attributes.
+
+[][][]
+
+
+
+
+Now suppose you want to annotate the same variants with a modified pipeline saved as ``custom_pipelineB.yaml``. 
+In this example, Pipeline B is the same as Pipeline A, but adds two additional position-score annotators.
+
+.. code-block:: yaml
+
+    - effect_annotator:
+        gene_models: hg38/gene_models/MANE/1.3
+        attributes:
+        - genes
+        - worst_effect
+
+    - position_score_annotator:
+        resource_id: hg38/scores/phyloP7way
+
+    - position_score_annotator:
+        resource_id: hg38/scores/phyloP30way
+
+    - position_score_annotator:
+        resource_id: hg38/scores/phyloP100way
+
+
+You could run Pipeline B directly on ``variants_A.txt``, but that would recompute genes, worst_effect, 
+and phyloP7way even though they are already present. Instead, use ``--reannotate`` and pass the old pipeline 
+that produced the existing annotations:
+
+.. code-block:: bash
+
+    annotate_tabular variants_A.txt pipeline_B.yaml --reannotate pipeline_A.yaml -o variants_B.txt
+
+
+When you run the command above, ``variants_A.txt`` is used as the input table 
+(the output produced by Pipeline A), and ``pipeline_B.yaml`` is the updated 
+pipeline you want to apply. The key part is ``--reannotate pipeline_A.yaml``: 
+it tells GAIn which pipeline originally generated the annotation columns already present 
+in ``variants_A.txt``, so GAIn can recognize any overlapping work and reuse those precomputed 
+attributes instead of recalculating them. The result is written to ``variants_B.txt``, which 
+contains the attributes requested by Pipeline B, with any shared attributes carried forward 
+from the earlier run.
+
+.. csv-table::
+    :header-rows: 1
+
+    chrom,pos,ref,alt,genes,worst_effect,phyloP7way,phyloP30way,phyloP100way
+    chr14,21415880,G,A,CHD8,nonsense,0.917,1.18,1.25
+    chr17,7674904,TCT,T,TP53,frame-shift,-0.12,-0.076,-1.14
+    chr7,117587806,G,A,CFTR,missense,0.917,1.18,8.82
