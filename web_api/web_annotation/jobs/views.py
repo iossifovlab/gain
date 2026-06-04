@@ -1,5 +1,4 @@
 """Module with views for job operations."""
-import gzip
 import logging
 import time
 from pathlib import Path
@@ -20,7 +19,6 @@ from rest_framework.views import Request, Response
 
 from web_annotation.annotate_helpers import (
     extract_head,
-    is_compressed_filename,
     tabular_file_preview,
 )
 from web_annotation.annotation_base_view import (
@@ -184,19 +182,6 @@ class AnnotateVCF(AnnotationBaseView):
 
     parser_classes: ClassVar = [MultiPartParser]
 
-    def _validate_vcf(
-        self,
-        file_path: str,
-        user: User,
-    ) -> bool:
-        """Check if a variants file does not exceed the variants limit."""
-        limit = (
-            None
-            if user.is_superuser or getattr(user, "is_unlimited", False)
-            else self.max_variants
-        )
-        return validate_vcf(file_path, limit)
-
     def post(self, request: Request) -> Response:
         """Run VCF annotation job."""
         job_or_response = self._create_job(request, "vcf")
@@ -207,10 +192,7 @@ class AnnotateVCF(AnnotationBaseView):
         work_folder_name = request.user.identifier
 
         try:
-            if not self._validate_vcf(
-                job.input_path,
-                request.user,
-            ):
+            if not validate_vcf(job.input_path):
                 self._cleanup(job_name, work_folder_name)
                 return Response(
                     status=views.status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
@@ -318,26 +300,6 @@ class AnnotateTabular(AnnotationBaseView):
 
         return True
 
-    def check_variants_limit(self, filepath: Path, user: User) -> bool:
-        """Check if a variants file does not exceed the variants limit."""
-        if user.is_superuser or getattr(user, "is_unlimited", False):
-            return True
-
-        opener = (
-            gzip.open(filepath, "rt")  # noqa: SIM115
-            if is_compressed_filename(str(filepath))
-            else filepath.open("rt")
-        )
-        with opener as file:
-            for i, _ in enumerate(file, start=-1):
-                if i >= self.max_variants:
-                    logger.debug(
-                        "User %s exceeded max variants limit: %d",
-                        user.identifier, self.max_variants,
-                    )
-                    return False
-            return True
-
     def post(self, request: Request) -> Response:
         """Run column annotation job."""
 
@@ -355,12 +317,6 @@ class AnnotateTabular(AnnotationBaseView):
             return Response(
                 {"reason": "Invalid column specification!"},
                 status=views.status.HTTP_400_BAD_REQUEST)
-
-        if self.check_variants_limit(
-                Path(job.input_path), request.user) is False:
-            job.delete()
-            return Response(
-                status=views.status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
 
         sep = request.data.get("separator")
 
