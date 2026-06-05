@@ -4,13 +4,6 @@ import textwrap
 from pathlib import Path
 
 import pytest
-from gain.annotation.annotation_config import AnnotationConfigParser
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME
-from gain.genomic_resources.testing import (
-    build_filesystem_test_repository,
-    convert_to_tab_separated,
-    setup_directories,
-)
 from gain.annotation.annotatable import (
     Annotatable,
     CNVAllele,
@@ -18,9 +11,18 @@ from gain.annotation.annotatable import (
     Region,
     VCFAllele,
 )
-from gain.annotation.annotation_config import AnnotatorInfo
+from gain.annotation.annotation_config import (
+    AnnotationConfigParser,
+    AnnotatorInfo,
+)
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.chrom_mapping_annotator import ChromMappingAnnotator
+from gain.genomic_resources.repository import GR_CONF_FILE_NAME
+from gain.genomic_resources.testing import (
+    build_filesystem_test_repository,
+    convert_to_tab_separated,
+    setup_directories,
+)
 
 
 def test_chromosome_annotator_creation(tmp_path: Path) -> None:
