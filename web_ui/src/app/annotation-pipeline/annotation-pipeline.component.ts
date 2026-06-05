@@ -76,6 +76,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   public pipelinesLoaded = false;
   public editorInstance: Monaco.editor.IStandaloneCodeEditor;
   public editorWidth: number;
+  public downloadDocLink: string;
 
   public constructor(
     private jobsService: JobsService,
@@ -255,6 +256,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     this.configError = '';
     this.pipelineStateService.isConfigValid.set(true);
     this.selectedPipeline = pipeline;
+    this.updateDownloadLink();
     this.pipelineStateService.selectedPipelineId.set(pipeline.id);
     this.dropdownControl.setValue(pipeline.name);
     this.displayUnsavedPipelineIndication();
@@ -271,6 +273,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
 
     if (pipeline) {
       this.selectedPipeline = pipeline;
+      this.updateDownloadLink();
       const name = this.isPipelineChanged() ? `${pipeline.name} *` : pipeline.name;
       this.dropdownControl.setValue(name);
       this.getPipelineInfo();
@@ -337,6 +340,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   private unselectPublicPipeline(): void {
     if (this.selectedPipeline && this.selectedPipeline.type === 'default' && this.isPipelineChanged()) {
       this.selectedPipeline = null;
+      this.updateDownloadLink();
       this.pipelineStateService.selectedPipelineId.set('');
       this.dropdownControl.setValue('');
     }
@@ -350,12 +354,12 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     this.pipelineStateService.isConfigValid.set(true);
     this.selectedPipeline = pipeline;
     this.pipelineStateService.selectedPipelineId.set(pipeline.id);
-
     this.currentPipelineText = pipeline.content;
     this.pipelineStateService.currentPipelineText.set(pipeline.content);
 
     this.dropdownControl.setValue(this.selectedPipeline.name);
     this.clearTemporaryPipeline();
+    this.updateDownloadLink();
     this.disableActions = false;
 
     this.getPipelineInfo();
@@ -478,6 +482,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     this.pipelineInfo = null;
     this.pipelineStateService.pipelineInfo.set(null);
     this.selectedPipeline = null;
+    this.updateDownloadLink();
     this.pipelineStateService.selectedPipelineId.set('');
     this.currentPipelineText = '';
     this.pipelineStateService.currentPipelineText.set('');
@@ -530,6 +535,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
         if (this.currentTemporaryPipelineId === '') {
           this.currentTemporaryPipelineId = pipelineId;
           this.pipelineStateService.currentTemporaryPipelineId.set(pipelineId);
+          this.updateDownloadLink();
         }
       })
     );
@@ -635,5 +641,12 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
       this.resizeObserver.disconnect();
     }
     this.socketNotificationSubscription.unsubscribe();
+  }
+
+  private updateDownloadLink(): void {
+    const id = this.currentTemporaryPipelineId || this.selectedPipeline?.id;
+    this.downloadDocLink = id
+      ? this.annotationPipelineService.getDownloadAnnotateDocumentationUrl(id)
+      : '';
   }
 }

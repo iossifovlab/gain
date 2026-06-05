@@ -107,6 +107,11 @@ class AnnotationPipelineServiceMock {
   public savePipeline(id: string, name: string, config: string): Observable<string> {
     return of('id1');
   }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  public getDownloadAnnotateDocumentationUrl(id: string): string {
+    return `//localhost:8000/api/pipelines/doc?pipeline_id=${id}`;
+  }
 }
 
 

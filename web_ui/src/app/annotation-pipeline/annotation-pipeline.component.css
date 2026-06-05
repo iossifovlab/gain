@@ -126,11 +126,16 @@
 #new-pipeline-button,
 #save-as-button,
 #save-button,
-#delete-button {
+#delete-button,
+#download-pipeline-documentation {
   background-color: transparent;
   border: none;
   color: #435869;
   font-size: 15px;
+}
+
+#download-pipeline-documentation {
+  text-decoration: none;
 }
 
 .add-annotator-icon,
@@ -153,7 +158,8 @@
 #new-pipeline-button:hover,
 #save-as-button:hover,
 #save-button:hover,
-#delete-button:hover {
+#delete-button:hover,
+#download-pipeline-documentation:hover {
   cursor: pointer;
   color: #85a2b9;
 }

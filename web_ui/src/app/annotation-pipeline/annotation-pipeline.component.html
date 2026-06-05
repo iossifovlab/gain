@@ -146,6 +146,11 @@
       [disabled]="!isPipelineChanged() || configError || disableActions"
       ><span class="material-symbols-outlined save-icon">save</span>Save</button
     >
+    @if(downloadDocLink) {
+    <a id="download-pipeline-documentation" [href]="downloadDocLink" download
+      ><span class="material-symbols-outlined download-icon">download</span>Documentation</a
+    >
+    }
     <span cdkOverlayOrigin #pipelineDelete="cdkOverlayOrigin">
       <button
         *ngIf="isUserLoggedIn && selectedPipeline && selectedPipeline.type === 'user'"

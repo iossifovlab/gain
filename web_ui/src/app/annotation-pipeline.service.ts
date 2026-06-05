@@ -10,6 +10,7 @@ import { PipelineInfo } from './annotation-pipeline';
 export class AnnotationPipelineService {
   private readonly pipelineUrl = `${environment.apiPath}/pipelines/user`;
   private readonly getPipelineStatus = `${environment.apiPath}/editor/pipeline_status`;
+  private readonly annotateDocumentationUrl = `${environment.apiPath}/pipelines/doc`;
 
   public constructor(private http: HttpClient) { }
 
@@ -65,5 +66,9 @@ export class AnnotationPipelineService {
     ).pipe(
       map(response => PipelineInfo.fromJson(response))
     );
+  }
+
+  public getDownloadAnnotateDocumentationUrl(id: string): string {
+    return `${this.annotateDocumentationUrl}?pipeline_id=${id}`;
   }
 }

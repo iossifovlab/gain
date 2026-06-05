@@ -102,6 +102,11 @@ class AnnotationPipelineServiceMock {
   public getPipelineInfo(id: string): Observable<PipelineInfo> {
     return of(new PipelineInfo(20, 4, ['hg19_annotatable'], ['gene_list']));
   }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  public getDownloadAnnotateDocumentationUrl(id: string): string {
+    return `//localhost:8000/api/pipelines/doc?pipeline_id=${id}`;
+  }
 }
 
 class SocketNotificationsServiceMock {
@@ -553,7 +558,7 @@ describe('AnnotationPipelineComponent', () => {
 
     userServiceMock.userData.next({
       email: 'email', loggedIn: false, isAdmin: false,
-      limitations: { dailyJobs: 5, filesize: '64M', todayJobsCount: 4, variantCount: 1000, diskSpace: '1000' }
+      limitations: { dailyJobs: 5, filesize: '64M', todayJobsCount: 4, diskSpace: '1000' }
     });
 
     const getPipelinesSpy = jest.spyOn(jobsServiceMock, 'getAnnotationPipelines');
@@ -563,7 +568,7 @@ describe('AnnotationPipelineComponent', () => {
     // Reset for subsequent tests.
     userServiceMock.userData.next({
       email: 'email', loggedIn: true, isAdmin: false,
-      limitations: { dailyJobs: 5, filesize: '64M', todayJobsCount: 4, variantCount: 1000, diskSpace: '1000' }
+      limitations: { dailyJobs: 5, filesize: '64M', todayJobsCount: 4, diskSpace: '1000' }
     });
   });
 
@@ -1113,5 +1118,69 @@ describe('AnnotationPipelineComponent', () => {
       public unobserve(): void {}
       public disconnect(): void {}
     };
+  });
+
+  it('should set download link when pipeline is selected via onPipelineClick', () => {
+    component.onPipelineClick(mockPipelines[0]);
+    expect(component.downloadDocLink).toBe('//localhost:8000/api/pipelines/doc?pipeline_id=id1');
+  });
+
+  it('should update download link when selected pipeline changes', () => {
+    component.onPipelineClick(mockPipelines[0]);
+    expect(component.downloadDocLink).toBe('//localhost:8000/api/pipelines/doc?pipeline_id=id1');
+
+    component.onPipelineClick(mockPipelines[2]);
+    expect(component.downloadDocLink).toBe('//localhost:8000/api/pipelines/doc?pipeline_id=id3');
+  });
+
+  it('should clear download link when pipeline is cleared', () => {
+    component.onPipelineClick(mockPipelines[0]);
+    expect(component.downloadDocLink).toBe('//localhost:8000/api/pipelines/doc?pipeline_id=id1');
+
+    component.doClear();
+    expect(component.downloadDocLink).toBe('');
+  });
+
+  it('should use temporary pipeline id in download link after autosave', () => {
+    jest.spyOn(annotationPipelineServiceMock, 'savePipeline').mockReturnValueOnce(of('temp-999'));
+    component.currentTemporaryPipelineId = '';
+    component.selectedPipeline = null;
+    component.currentPipelineText = 'some yaml';
+
+    component.autoSave().subscribe();
+
+    expect(component.downloadDocLink).toBe('//localhost:8000/api/pipelines/doc?pipeline_id=temp-999');
+  });
+
+  it('should not update download link on subsequent autosaves once temp id is set', () => {
+    jest.spyOn(annotationPipelineServiceMock, 'savePipeline').mockReturnValue(of('temp-999'));
+    component.currentTemporaryPipelineId = 'temp-999';
+    component.currentPipelineText = 'some yaml';
+
+    const spy = jest.spyOn(annotationPipelineServiceMock, 'getDownloadAnnotateDocumentationUrl');
+    component.autoSave().subscribe();
+
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('should prefer temporary pipeline id over selected pipeline in download link', () => {
+    component.selectedPipeline = mockPipelines[0];
+    component.currentTemporaryPipelineId = 'temp-42';
+    component['updateDownloadLink']();
+    expect(component.downloadDocLink).toBe('//localhost:8000/api/pipelines/doc?pipeline_id=temp-42');
+  });
+
+  it('should fall back to selected pipeline id in download link when no temp id', () => {
+    component.selectedPipeline = mockPipelines[1];
+    component.currentTemporaryPipelineId = '';
+    component['updateDownloadLink']();
+    expect(component.downloadDocLink).toBe('//localhost:8000/api/pipelines/doc?pipeline_id=id2');
+  });
+
+  it('should set empty download link when no pipeline and no temp id', () => {
+    component.selectedPipeline = null;
+    component.currentTemporaryPipelineId = '';
+    component['updateDownloadLink']();
+    expect(component.downloadDocLink).toBe('');
   });
 });
