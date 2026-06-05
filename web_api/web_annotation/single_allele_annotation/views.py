@@ -257,15 +257,15 @@ class SingleAnnotation(AnnotationBaseView):
             self, result: dict[str, Any], annotator: Annotator,
             attribute_info: Attribute,
     ) -> dict[str, Any]:
-        resource = self.grr.get_resource(
-                    next(iter(annotator.resource_ids)))
-        if has_histogram(resource, attribute_info.source):
-            histogram_path = (
-                        f"histograms/{resource.resource_id}"
-                        f"?score_id={attribute_info.source}"
-                    )
-        else:
-            histogram_path = None
+        histogram_path = None
+        if annotator.resource_ids:
+            resource = self.grr.get_resource(
+                next(iter(annotator.resource_ids)))
+            if has_histogram(resource, attribute_info.source):
+                histogram_path = (
+                    f"histograms/{resource.resource_id}"
+                    f"?score_id={attribute_info.source}"
+                )
         value = result[attribute_info.name]
 
         annotator_help = self.generate_annotator_help(
