@@ -146,7 +146,7 @@
       [disabled]="!isPipelineChanged() || configError || disableActions"
       ><span class="material-symbols-outlined save-icon">save</span>Save</button
     >
-    @if(downloadDocLink) {
+    @if(downloadDocLink && isUserLoggedIn) {
     <a id="download-pipeline-documentation" [href]="downloadDocLink" download
       ><span class="material-symbols-outlined download-icon">download</span>Documentation</a
     >

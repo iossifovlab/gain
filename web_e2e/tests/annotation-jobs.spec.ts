@@ -241,7 +241,7 @@ test.describe('Jobs table tests', () => {
     await waitForJobStatus(page, utils.successBackgroundColor);
 
     const downloadPromise = page.waitForEvent('download');
-    await page.locator('.download-icon').nth(0).click();
+    await page.locator('app-jobs-table .download-icon').nth(0).click();
     const downloadedFile = await downloadPromise;
 
     const fixtureData = scanCSV(await downloadedFile.path(), {truncateRaggedLines: true});
