@@ -146,6 +146,13 @@ class AttributeConfig:
     def __hash__(self) -> int:
         return hash((self.name, self.source, self.internal, self.aggregator))
 
+    def as_dict(self) -> dict[str, Any]:
+        """Serialize to a config dict, omitting fields that are unset."""
+        d: dict[str, Any] = {"name": self.name, "source": self.source}
+        if self.internal is not None:
+            d["internal"] = self.internal
+        return d
+
 
 @dataclass(eq=True)
 class Attribute:
@@ -224,14 +231,7 @@ class AnnotatorInfo:
         """Convert annotator info to a configuration dictionary."""
         result = {
             **self.parameters.as_dict(),
-            "attributes": [
-                {
-                    "name": attr.name,
-                    "source": attr.source,
-                    "internal": attr.internal,
-                }
-                for attr in self.attributes
-            ],
+            "attributes": [attr.as_dict() for attr in self.attributes],
         }
         return {
             self.type: result,

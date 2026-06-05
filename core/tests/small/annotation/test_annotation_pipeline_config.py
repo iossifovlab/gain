@@ -581,8 +581,8 @@ def test_annotator_info_to_dict() -> None:
             "resource_id": "resource",
             "param_1": "val1",
             "attributes": [
-                {"name": "attribute_1", "source": "att1", "internal": None},
-                {"name": "attribute_2", "source": "att2", "internal": None},
+                {"name": "attribute_1", "source": "att1"},
+                {"name": "attribute_2", "source": "att2"},
             ],
         },
     }

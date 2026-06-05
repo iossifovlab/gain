@@ -1086,6 +1086,33 @@ def test_single_annotation_t4c8(admin_client: Client) -> None:
     }
 
 
+def test_single_annotation_chrom_mapping_internal_false(
+    user_client: Client,
+) -> None:
+    pipeline_config = textwrap.dedent("""
+        - chrom_mapping:
+            add_prefix: chr
+            attributes:
+            - source: renamed_chromosome
+              internal: false
+    """)
+    user_client.post("/api/pipelines/user", {
+        "config": ContentFile(pipeline_config),
+        "name": "chrom_mapping_test",
+    })
+    response = user_client.post(
+        "/api/single_allele/annotate",
+        {
+            "pipeline_id": "1",
+            "annotatable": {
+                "chrom": "3", "pos_beg": 28500584, "pos_end": 28500584,
+            },
+        },
+        content_type="application/json",
+    )
+    assert response.status_code == 200
+
+
 def test_single_annotation_save_query_in_history(admin_client: Client) -> None:
     response = admin_client.post(
         "/api/single_allele/annotate",
