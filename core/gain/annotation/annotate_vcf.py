@@ -391,7 +391,8 @@ def _annotate_vcf(
 
     pipeline_previous = None
     if args["reannotate"]:
-        pipeline_previous = load_pipeline_from_file_or_resource(args["reannotate"], grr)
+        pipeline_previous = load_pipeline_from_file_or_resource(
+            args["reannotate"], grr)
 
     pipeline = build_annotation_pipeline(
         pipeline_config, grr,

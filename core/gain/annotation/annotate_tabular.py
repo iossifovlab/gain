@@ -423,7 +423,8 @@ def _annotate_csv(
 
     pipeline_previous = None
     if args["reannotate"]:
-        pipeline_previous = load_pipeline_from_file_or_resource(args["reannotate"], grr)
+        pipeline_previous = load_pipeline_from_file_or_resource(
+            args["reannotate"], grr)
 
     ref_genome = None
     if reference_genome_resource_id is not None:
