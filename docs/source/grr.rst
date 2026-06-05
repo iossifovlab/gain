@@ -609,7 +609,8 @@ Gene scores
 Gene scores are gene-level annotations, such as constraint metrics, expression summaries, or intolerance scores.
 ``genomic_resource.yaml`` files for gene score resources are similar to position score resources,
 except that the resource type is set to ``gene_score`` and there is no ``table`` section. The underlying data file
-is a table whose gene identifier column must be named ``gene``.
+is a table with a gene identifier column and one or more score columns. By default the gene identifier column
+must be named ``gene``; if the file uses a different column name, set ``gene_column`` to that name.
 
 
 In the example ``genomic_resource.yaml`` file below, data file ``gene_scores.tsv`` contains a required column named ``gene``,
@@ -625,6 +626,8 @@ Histogram configuration options are covered `here <https://iossifovlab.com/gaind
     type: gene_score
 
     filename: gene_scores.tsv
+
+    gene_column: gene  # optional; defaults to "gene"
 
     scores:
     - id: intolerance_score
