@@ -1,6 +1,46 @@
 Release Notes
 =============
 
+* 2026.6.3
+    * The annotation web API now supports a configurable default
+      pipeline via the ``DEFAULT_PIPELINE`` setting (shipping as
+      ``pipeline/hg38_clinical_annotation``). The pipeline-list
+      endpoint moves the default to the front of the list so the UI
+      pre-selects it; if the configured id is not among the available
+      pipelines the endpoint fails fast with a 500 and an explanatory
+      ``reason``. Setting ``DEFAULT_PIPELINE`` to ``None`` disables the
+      behavior.
+    * ``annotate_tabular`` and ``annotate_vcf`` now accept a GRR
+      resource id (not only a filesystem path) as the ``--reannotate``
+      argument, mirroring how ``--pipeline`` already works. A
+      ``--reannotate`` value that is not an existing file is now treated
+      as a sentinel (e.g. a GRR pipeline resource) rather than being
+      absolutized or added to the task graph as an input file.
+    * Removed the per-file variant limit. The annotation web API no
+      longer caps the number of variants in an uploaded file, and the
+      associated setting, its server-side enforcement, and the
+      frontend display of the limit were all removed.
+    * Web UI: building on the ``annotate_doc`` endpoint added in
+      2026.6.2, saved pipelines now expose a download link to their
+      generated HTML documentation.
+    * Fixed the single-variant annotation API failing when the
+      pipeline contained an annotator with no GRR resources (for
+      example a ``chrom_mapping`` annotator with a non-internal output
+      attribute): the histogram lookup is now skipped when the
+      annotator has no resource ids instead of raising.
+    * Fixed annotation-config serialization emitting ``internal: null``
+      for attributes whose ``internal`` flag is unset; the field is now
+      omitted when unset, so saved and re-loaded pipeline configs
+      round-trip cleanly.
+    * Web UI: job notifications now arrive in a guaranteed order; number
+      histograms can show multiple red value markers; and the available
+      pipelines are refetched when the login state changes (sign-in or
+      sign-out), so user-private pipelines appear and disappear
+      correctly.
+    * Revised the getting-started CLI tutorial — added a reannotation
+      walk-through, a larger SSC example, and custom-pipeline examples —
+      and documented the ``gene_column`` resource in the GRR guide.
+
 * 2026.6.2
     * When the output file is not given explicitly, ``annotate_tabular``
       and ``annotate_vcf`` now derive the default output name by
