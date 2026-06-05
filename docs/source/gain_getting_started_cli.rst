@@ -408,19 +408,19 @@ This makes ENCODE-derived regulatory tracks available through the same pipeline 
 Adding local GRRs
 -----------------
 
-In addition to connecting GAIn to public GRRs, users can create local GRRs containing their own resources. These resources may come from downloaded public data, processed datasets, or experimental results generated in a specific project.
+Suppose you are using the public GRRs for variant annotation, but your analysis also requires a gene-level score that is not available in the main GRR or GRR-ENCODE. For example, you may want to annotate variants with the Collins rCNV 2022 dosage sensitivity scores, including pHaplo and pTriplo, which estimate gene-level sensitivity to deletion and duplication, respectively. In this situation, you can download the external dataset, define it as a local GAIn resource, and use it together with the public GRRs in the same annotation workflow.
 
-As a minimal example resource, download the experimental score file (:download:`experimental_scores.tsv <files/experimental_scores.tsv>`) which contains five scores measured at five genomic positions:suppose we have an experimental score measured at five genomic positions. Three of these positions correspond to the variants used in "`Quick Annotation Test <file:///Users/muratcokol/Desktop/gain/docs/build/html/gain_getting_started_cli.html#quick-annotation-test>`_".
+Download the Collins rCNV dosage sensitivity score table, uncompress it, and inspect the first few lines:
 
-.. csv-table::
-    :header-rows: 1
+.. code-block:: bash
 
-    chrom,pos,experimental_scores
-    chr14,21415880,0.82
-    chr17,7674904,0.15
-    chr7,117587806,0.94
-    chr1,11800000,0.31
-    chr3,50000000,0.67
+    curl -L -O https://zenodo.org/record/6347673/files/Collins_rCNV_2022.dosage_sensitivity_scores.tsv.gz
+    gunzip Collins_rCNV_2022.dosage_sensitivity_scores.tsv.gz
+    head -n 5 Collins_rCNV_2022.dosage_sensitivity_scores.tsv
+
+The first command downloads the compressed table. The second command uncompresses it, replacing the .tsv.gz file with Collins_rCNV_2022.dosage_sensitivity_scores.tsv. The final command displays the first five lines so that we can inspect the available columns before adding the resource file to a local GRR.
+
+[][][]
 
 To make this file available as a GAIn resource, place it in a folder together with a :download:`genomic_resource.yaml <files/genomic_resource.yaml>` file:
 
