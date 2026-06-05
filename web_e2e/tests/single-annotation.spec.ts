@@ -799,3 +799,127 @@ async function objectTypePipeline(page: Page): Promise<void> {
   await saveResponse;
   await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
 }
+
+
+async function clinvarListPipeline(page: Page): Promise<void> {
+  await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+  const saveResponse = page.waitForResponse(
+    resp => resp.url().includes('api/pipelines/user'), { timeout: 30000 }
+  );
+  await utils.typeInPipelineEditor(
+    page,
+    '- normalize_allele_annotator:\n' +
+    '    genome: hg38/genomes/GRCh38-hg38\n' +
+    '\n' +
+    '- allele_score:\n' +
+    '    resource_id: hg38/scores/ClinVar_20240730\n' +
+    '    input_annotatable: normalized_allele\n' +
+    '    mode: region\n' +
+    '    attributes:\n' +
+    '    - name: clnsig_list\n' +
+    '      source: CLNSIG\n' +
+    '      aggregator: list\n'
+  );
+  await saveResponse;
+  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+}
+
+async function caddListPipeline(page: Page): Promise<void> {
+  await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+  const saveResponse = page.waitForResponse(
+    resp => resp.url().includes('api/pipelines/user'), { timeout: 30000 }
+  );
+  await utils.typeInPipelineEditor(
+    page,
+    'preamble:\n' +
+    '   input_reference_genome: hg38/genomes/GRCh38-hg38\n' +
+    'annotators:\n' +
+    '- allele_score:\n' +
+    '    resource_id: hg38/scores/CADD_v1.7\n' +
+    '    mode: region\n' +
+    '    attributes:\n' +
+    '    - name: cadd_raw_list\n' +
+    '      source: cadd_raw\n' +
+    '      aggregator: list\n'
+  );
+  await saveResponse;
+  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+}
+
+test.describe('Histogram red markers', () => {
+  test.beforeEach(async({ page }) => {
+    await page.goto('/', { waitUntil: 'load' });
+    const email = utils.getRandomString() + '@email.com';
+    const password = 'aaabbb';
+    await utils.registerUser(page, email, password);
+    await utils.loginUser(page, email, password);
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  });
+
+  test('single value shows one red marker with percentage label', async({ page }) => {
+    await customDefaultPipeline(page);
+    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
+    await page.getByRole('button', { name: 'Go', exact: true }).click();
+    await page.waitForSelector('#report', { timeout: 120000 });
+    await page.locator('.switch').click();
+
+    const container = page.locator('.attribute-container').filter({
+      has: page.locator('.attribute-header', { hasText: 'gnomad_v4_exome_ALL_af' })
+    });
+    await expect(container.locator('app-number-histogram')).toBeVisible();
+    await expect(container.locator('.single-score-marker')).toHaveCount(1);
+    await expect(container.locator('.percentage-text')).toBeVisible();
+  });
+
+  test('array value shows one red marker per value without percentage label', async({ page }) => {
+    await caddListPipeline(page);
+    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 11797000');
+    await page.getByRole('button', { name: 'Go', exact: true }).click();
+    await page.waitForSelector('#report', { timeout: 120000 });
+    await page.locator('.switch').click();
+
+    const container = page.locator('.attribute-container').filter({
+      has: page.locator('.attribute-header', { hasText: 'cadd_raw_list' })
+    });
+    await expect(container.locator('app-number-histogram')).toBeVisible();
+
+    const cellCount = await container.locator('.value-grid-cell').count();
+    const markerCount = await container.locator('.single-score-marker').count();
+    expect(cellCount).toBeGreaterThan(1);
+    expect(markerCount).toBe(cellCount);
+    await expect(container.locator('.percentage-text')).not.toBeVisible();
+  });
+
+  test('single string value shows one red marker in categorical histogram', async({ page }) => {
+    await customDefaultPipeline(page);
+    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
+    await page.getByRole('button', { name: 'Go', exact: true }).click();
+    await page.waitForSelector('#report', { timeout: 120000 });
+    await page.locator('.switch').click();
+
+    const container = page.locator('.attribute-container').filter({
+      has: page.locator('.attribute-header', { hasText: 'CLNSIG' })
+    });
+    await expect(container.locator('app-categorical-histogram')).toBeVisible();
+    await expect(container.locator('.value-result')).toBeVisible();
+    await expect(container.locator('.single-score-marker')).toHaveCount(1);
+  });
+
+  test('array of strings shows one red marker per value in categorical histogram', async({ page }) => {
+    await clinvarListPipeline(page);
+    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796000 11800000');
+    await page.getByRole('button', { name: 'Go', exact: true }).click();
+    await page.waitForSelector('#report', { timeout: 120000 });
+    await page.locator('.switch').click();
+
+    const container = page.locator('.attribute-container').filter({
+      has: page.locator('.attribute-header', { hasText: 'clnsig_list' })
+    });
+    await expect(container.locator('app-categorical-histogram')).toBeVisible();
+
+    const cellCount = await container.locator('.value-grid-cell').count();
+    const markerCount = await container.locator('.single-score-marker').count();
+    expect(cellCount).toBeGreaterThan(1);
+    expect(markerCount).toBe(cellCount);
+  });
+});
