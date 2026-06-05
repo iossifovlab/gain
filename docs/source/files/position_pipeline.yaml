@@ -5,6 +5,6 @@
     resource_id: hg38/scores/phyloP7way
 
 - allele_score_annotator:
-    resource_id: hg38/scores/CADD_v1.7
+    resource_id: hg38/scores/AlphaMissense
     attributes:
-    - cadd_raw
+    - am_pathogenicity

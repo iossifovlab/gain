@@ -162,8 +162,8 @@ This command applies the local ``custom_pipeline.yaml`` file to the variants in 
 This approach is convenient for small tests and for developing custom pipelines. However, when annotation uses resources directly from the public GRR, it is practical only for small inputs. For larger inputs, input files should be sorted by genomic coordinates for more efficient processing. Users can also configure local resource caching and parallel execution, as described in the next sections.
 
 
-Caching resources for large annotation jobs
--------------------------------------------
+Caching resources
+-----------------
 
 By default, GAIn can access genomic resources directly from a remote GRR. This works well for small examples, but large annotation jobs may require repeated access to many large resources over the network. To make these jobs faster and more reliable, GAIn supports local resource caching.
 
@@ -211,7 +211,7 @@ or
 
     annotate_tabular 50k_variants.tsv.gz custom_pipeline.yaml
 
-Without caching, annotating a file of this size through remote resource access can take a very long time. With the required resources already cached, GAIn uses the local copies for annotation, making the same large-scale job much faster and less dependent on network performance. For example, in our test on a recent Mac laptop using cached resources, annotating 50,000 variants with pipeline/hg38_clinical_annotation took approximately 4 minutes.
+Without caching, annotating a file of this size through remote resource access can take a very long time. With the required resources already cached, GAIn uses the local copies for annotation, making the same large-scale job much faster and less dependent on network performance. For example, in our test on a recent Mac laptop using cached resources, annotating 50,000 variants with ``pipeline/hg38_clinical_annotation`` took approximately 4 minutes.
 
 
 Parallelizing large annotation jobs
@@ -226,31 +226,39 @@ When GAIn detects an indexed input file, it splits the annotation job into small
 The degree of parallelization can be controlled with the ``-j`` option, which specifies the number of workers. The optimal value depends on the input size, pipeline complexity, available CPU cores, memory, and storage performance.
 
 
-For example, after downloading the example input file (:download:`1million_variants.tsv.gz <files/1million_variants.tsv.gz>`), which contains 1 million variants detected by WES from the SSC project, prepare it for parallel annotation by running:
+For example, download the example input file (:download:`SSC_WES_variants_select.tsv.gz <files/SSC_WES_variants_select.tsv.gz>`), which contains all 1,413,298  variants on canonical chromosomes detected by WES in the SSC project. You can annotate this large variant collection with the ``pipeline/hg38_clinical_annotation`` pipeline by running the following command. However, even with cached resources, this annotation took approximately 30 minutes in our test:
+
 
 .. code-block:: bash
 
-    prepare_tabular 1million_variants.tsv.gz
+    annotate_tabular SSC_WES_variants_select.tsv.gz pipeline/hg38_clinical_annotation
 
-When run successfully, this command produces two files: ``1million_variants.sorted.tsv.bgz``, which contains the sorted and compressed version of the input file, and ``1million_variants.sorted.tsv.bgz.tbi``, its associated tabix index. These two files enable parallelization and fast genomic-region access in GAIn.
 
-The following command uses parallelization, and with the required resources already cached, it can complete very quickly. In this example, annotating the sorted one-million-variant file with the custom pipeline took approximately 1 minute.
-
-.. code-block:: bash
-
-    annotate_tabular 1million_variants.sorted.tsv.bgz custom_pipeline.yaml
-
-GAIn splits indexed inputs by chromosome. For very large input files, chromosome-level splitting may create tasks that are too large or uneven. The ``-r`` option can instead split the input into genomic regions of a specified size. In this example, using the ``-r`` option reduced the annotation time to approximately 45 seconds.
+To take advantage of parallel computation, first prepare the input file for indexed genomic access:
 
 .. code-block:: bash
 
-    annotate_tabular 1million_variants.sorted.tsv.bgz custom_pipeline.yaml -r 30_000_000
+    prepare_tabular SSC_WES_variants_select.tsv.gz
+
+When run successfully, this command produces two files: ``SSC_WES_variants_select.sorted.tsv.bgz``, which contains the sorted and compressed version of the input file, and ``SSC_WES_variants_select.sorted.tsv.bgz.tbi``, its associated tabix index. These two files enable parallelization and fast genomic-region access in GAIn.
+
+The following command uses parallelization, and with the required resources already cached, annotating the sorted file with ``hg38_clinical_annotation`` took approximately 8 minutes in our test.
+
+.. code-block:: bash
+
+    annotate_tabular SSC_WES_variants_select.sorted.tsv.bgz pipeline/hg38_clinical_annotation
+
+GAIn splits indexed inputs by chromosome. For very large input files, chromosome-level splitting may create tasks that are too large or uneven. The ``-r`` option can instead split the input into genomic regions of a specified size. In our test, using the ``-r`` option reduced the annotation time to approximately 5 [] minutes.
+
+.. code-block:: bash
+
+    annotate_tabular SSC_WES_variants_select.sorted.tsv.bgz pipeline/hg38_clinical_annotation -r 30_000_000
 
 GAIn can also use a configured Dask cluster that creates workers on a larger compute system, such as SGE or SLURM. For example, if a Dask cluster named ``my_sge_cluster`` has been configured to create workers on an SGE cluster, the annotation can be run with:
 
 .. code-block:: bash
 
-    annotate_tabular 1million_variants.sorted.tsv.bgz custom_pipeline.yaml -r 30_000_000 -N my_sge_cluster -j 100
+    annotate_tabular SSC_WES_variants_select.sorted.tsv.bgz pipeline/hg38_clinical_annotation -r 30_000_000 -N my_sge_cluster -j 100
 
 This runs the annotation across up to 100 workers on the configured cluster. See the “Configuring parallelization”[] and “Configuring Dask clusters”[] sections for more details on region splitting, worker configuration, and cluster setup.
 
@@ -304,7 +312,7 @@ Because position inputs do not include reference and alternate alleles, GAIn can
     :language: yaml
 
 
-This pipeline combines three annotators. The ``simple_effect_annotator`` uses the ``MANE 1.5`` gene models resource to classify each position by genomic context, such as coding or intergenic, and to report overlapping genes when applicable. The ``position_score_annotator`` adds the ``phyloP7way`` conservation score directly at each genomic position. The ``allele_score_annotator`` uses ``CADD v1.7`` to summarize the possible allelic changes at each position and reports the default aggregate (max[]) ``cadd_raw score``. Run the following command to annotate the positions:
+This pipeline combines three annotators. The ``simple_effect_annotator`` uses the ``MANE 1.5`` gene models resource to classify each position by genomic context, such as coding or intergenic, and to report overlapping genes when applicable. The ``position_score_annotator`` adds the ``phyloP7way`` conservation score directly at each genomic position. The ``allele_score_annotator`` uses ``AlphaMissense`` to aggregate ``am_pathogenicity`` scores across the possible allelic changes at each position, reporting the mean value by default. Run the following command to annotate the positions:
 
 .. code-block:: bash
 
@@ -313,48 +321,12 @@ This pipeline combines three annotators. The ``simple_effect_annotator`` uses th
 This produces :download:`positions.annotated.csv <files/positions.annotated.csv>` which contains:
 
 .. csv-table::
-    :file: files/positions_annotated.csv
+    :file: files/positions.annotated.csv
     :header-rows: 1
 
-This shows that the first position falls within a coding part of CFTR, whereas the second position is intergenic. The coding position also has a higher phyloP7way conservation score and a higher aggregate cadd_raw score than the intergenic position, consistent with stronger evolutionary constraint and predicted functional relevance at this site.
+This output shows that the first position falls within a coding part of CFTR, whereas the second position is intergenic. The coding position has a higher ``phyloP7way`` conservation score and receives an aggregate ``am_pathogenicity`` score, while no ``am_pathogenicity`` value is reported for the intergenic position.
 
 
-Position score resources can be applied directly to genomic positions, so ``position_score_annotator`` works on this 
-input without modification. GAIn can also use allele score resources with position inputs. In that case, because 
-the input specifies only the genomic position and not a particular allele, GAIn reports an aggregate value across 
-possible allelic changes at that site.
-
-To extend the example, add the following annotators to ``annotation_pipeline2.yaml``.
-
-.. code-block:: yaml
-
-    - position_score_annotator:
-        resource_id: hg38/scores/phyloP7way
-
-    - allele_score_annotator:
-        resource_id: hg38/scores/CADD_v1.6
-        attributes:
-        - cadd_raw
-
-Then run the command again:
-
-.. code-block:: bash
-
-    annotate_tabular positions.txt annotation_pipeline2.yaml
-
-This produces ``positions.annotated.txt`` which contains: 
-
-.. csv-table::
-    :header-rows: 1
-
-    chrom,pos,worst_effect,worst_effect_genes,phylop7way,cadd_raw
-    chr7,117587806,coding,CFTR,0.917,3.98
-    chr7,115587806,intergenic,,0.158,0.472
-
-phyloP7way measures evolutionary conservation at a genomic position. In this example, 
-the coding position has a higher conservation score than the intergenic position. CADD estimates the 
-deleteriousness of allelic changes, and for position inputs GAIn reports an aggregate value for the possible 
-alleles at that site. Here, the first position has a higher aggregate ``cadd_raw`` score than the second.
 
 Region inputs require three columns: chromosome, beginning position, and end position. 
 Download the example file :download:`regions.csv <files/regions.csv>`, whose content is shown below:
@@ -412,7 +384,7 @@ To use these resources, add GRR-ENCODE to the GRR definition file, ``~/.grr_defi
 
     id: "remote_GRRs"
     type: group
-    cache_dir: "<path_to>/remote_grr_cache"
+    cache_dir: "<path_to_cache>/remote_grr_cache"
     children:
     - id: "main-GRR"
       type: "url"
@@ -490,7 +462,7 @@ Then add the local GRR to the GRR definition file, ``~/.grr_definition.yaml``. F
     children:
     - type: group
       id: "remote_GRRs"
-      cache_dir: "<path_to>/remote_grr_cache"
+      cache_dir: "<path_to_cache>/remote_grr_cache"
       children:
       - id: "main-GRR"
         type: "url"
