@@ -214,3 +214,39 @@ def test_counter_aggregator() -> None:
         "b": 2,
         "c": 1,
     }
+
+
+def test_counter_aggregator_with_none_values() -> None:
+    values = ["a", None, "b", "a", None, "b", "a"]
+    agg = CounterAggregator()
+    for val in values:
+        agg.add(val)
+
+    assert agg.get_final() == {"a": 3, "b": 2}
+
+
+def test_counter_aggregator_empty() -> None:
+    agg = CounterAggregator()
+    assert agg.get_final() == {}
+
+
+def test_counter_aggregator_aggregate_method_string_values() -> None:
+    agg = CounterAggregator()
+    result = agg.aggregate(["pathogenic", "benign", "pathogenic", "vus"])
+    assert result == {"pathogenic": 2, "benign": 1, "vus": 1}
+
+
+def test_counter_aggregator_aggregate_method_with_none() -> None:
+    agg = CounterAggregator()
+    result = agg.aggregate(["x", None, "x", "y", None])
+    assert result == {"x": 2, "y": 1}
+
+
+def test_counter_aggregator_aggregate_method_empty_list() -> None:
+    agg = CounterAggregator()
+    assert agg.aggregate([]) == {}
+
+
+def test_counter_aggregator_aggregate_method_none_input() -> None:
+    agg = CounterAggregator()
+    assert agg.aggregate(None) == {}

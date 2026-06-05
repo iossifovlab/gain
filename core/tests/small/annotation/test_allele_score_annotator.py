@@ -718,3 +718,58 @@ chr1   20  .  A   T   .    .      label=other
 
     assert result_one == result_two
     assert set(result_one["label"]) == {"dinucleotide", "snv"}
+
+
+def test_allele_score_value_count_aggregator_on_string_attribute(
+    tmp_path: pathlib.Path,
+) -> None:
+    setup_directories(
+        tmp_path / "grr", {
+            "allele_score": {
+                GR_CONF_FILE_NAME: """
+                    type: allele_score
+                    allele_score_mode: alleles
+                    table:
+                        filename: data.txt
+                        reference:
+                          name: reference
+                        alternative:
+                          name: alternative
+                    scores:
+                        - id: classification
+                          type: str
+                          desc: "variant classification"
+                          name: classification
+                """,
+                "data.txt": convert_to_tab_separated("""
+                    chrom  pos_begin  reference  alternative  classification
+                    1      10         A          G            pathogenic
+                    1      10         A          C            benign
+                    1      10         A          T            pathogenic
+                    1      20         C          T            benign
+                    1      20         C          A            vus
+                    1      20         C          G            benign
+                """),
+            },
+        })
+    repo = build_genomic_resource_repository({
+        "id": "allele_score_local",
+        "type": "directory",
+        "directory": str(tmp_path / "grr"),
+    })
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent("""
+            - allele_score:
+                resource_id: allele_score
+                attributes:
+                - source: classification
+                  aggregator: value_count
+        """),
+        repo,
+    )
+    with pipeline.open() as work_pipeline:
+        result_pos10 = work_pipeline.annotate(Region("1", 10, 10))
+        result_pos20 = work_pipeline.annotate(Region("1", 20, 20))
+
+    assert result_pos10["classification"] == {"pathogenic": 2, "benign": 1}
+    assert result_pos20["classification"] == {"benign": 2, "vus": 1}
