@@ -79,6 +79,27 @@ def reannotation_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
                     """,
                     "test.chain": "blabla",
                 },
+                "reannotation_old_pipeline": {
+                    "genomic_resource.yaml": textwrap.dedent("""
+                        type: annotation_pipeline
+                        filename: pipeline.yaml
+                    """),
+                    "pipeline.yaml": textwrap.dedent("""
+                        preamble:
+                          input_reference_genome: foobar_genome
+                        annotators:
+                          - position_score: one
+                          - effect_annotator:
+                              genome: foobar_genome
+                              gene_models: foobar_genes
+                          - gene_score_annotator:
+                              resource_id: gene_score1
+                              input_gene_list: gene_list
+                          - gene_score_annotator:
+                              resource_id: gene_score2
+                              input_gene_list: gene_list
+                    """),
+                },
                 "one": {
                     "genomic_resource.yaml": textwrap.dedent("""
                         type: position_score
@@ -381,6 +402,44 @@ gene_list=g1;gene_score1=10.1;gene_score2=20.2 GT     0/1 0/0 0/0
     assert info_keys == {  # pylint: disable=no-member
         "score", "worst_effect", "gene_list", "gene_score1",
     }
+
+
+def test_annotate_tabular_reannotation_with_resource_id(
+    tmp_path: pathlib.Path,
+    reannotation_grr: GenomicResourceRepo,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    in_content = (
+        "chrom\tpos\tscore\tworst_effect\teffect_details\tgene_effects\tgene_score1\tgene_score2\n"
+        "chr1\t23\t0.1\tbla\tbla\tbla\tbla\tbla\n"
+    )
+    in_file = tmp_path / "in.txt"
+    out_file = tmp_path / "out.txt"
+    annotation_file_new = tmp_path / "reannotation_new.yaml"
+    grr_file = tmp_path / "grr.yaml"
+    work_dir = tmp_path / "work"
+
+    setup_denovo(in_file, in_content)
+
+    spy = mocker.spy(gain.annotation.annotate_tabular, "ReannotationPipeline")
+
+    cli_tabular([
+        str(a) for a in [
+            in_file, annotation_file_new,
+            "-o", out_file,
+            "-w", work_dir,
+            "--grr", grr_file,
+            "--reannotate", "reannotation_old_pipeline",
+            "-j", 1,
+        ]
+    ])
+
+    with open(out_file, "rt", encoding="utf8") as f:
+        out_file_header = f.readline().strip().split("\t")
+    assert spy.call_count == 1
+    assert out_file_header == [
+        "chrom", "pos", "score", "worst_effect", "gene_score1",
+    ]
 
 
 def test_annotate_vcf_reannotation_batch(

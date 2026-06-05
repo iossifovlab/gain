@@ -131,7 +131,7 @@ def add_input_files_to_task_graph(args: dict, task_graph: TaskGraph) -> None:
         task_graph.input_files.append(args["input"])
     if "pipeline" in args:
         task_graph.input_files.append(args["pipeline"])
-    if args.get("reannotate"):
+    if args.get("reannotate") and os.path.exists(args["reannotate"]):
         task_graph.input_files.append(args["reannotate"])
 
 
@@ -252,16 +252,17 @@ def handle_default_args(args: dict[str, Any]) -> dict[str, Any]:
 
     for key in ("input", "output", "work_dir",
                 "task_status_dir", "task_log_dir",
-                "reannotate", "dask_cluster_config_file",
+                "dask_cluster_config_file",
                 "grr_filename", "grr_directory"):
         if args.get(key):
             args[key] = os.path.abspath(args[key])
 
-    # The pipeline argument may be a sentinel ("context"/"gpf_instance")
-    # rather than a file; only absolutize it when it is an actual file.
-    pipeline = args.get("pipeline")
-    if pipeline and os.path.exists(pipeline):
-        args["pipeline"] = os.path.abspath(pipeline)
+    # pipeline and reannotate may be sentinels (e.g. GRR resource ids)
+    # rather than file paths; only absolutize when an actual file exists.
+    for key in ("pipeline", "reannotate"):
+        value = args.get(key)
+        if value and os.path.exists(value):
+            args[key] = os.path.abspath(value)
 
     return args
 

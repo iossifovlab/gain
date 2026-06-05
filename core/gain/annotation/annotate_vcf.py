@@ -46,7 +46,7 @@ from gain.annotation.annotation_config import (
 )
 from gain.annotation.annotation_factory import (
     build_annotation_pipeline,
-    load_pipeline_from_file,
+    load_pipeline_from_file_or_resource,
 )
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
@@ -391,7 +391,8 @@ def _annotate_vcf(
 
     pipeline_previous = None
     if args["reannotate"]:
-        pipeline_previous = load_pipeline_from_file(args["reannotate"], grr)
+        pipeline_previous = load_pipeline_from_file_or_resource(
+            args["reannotate"], grr)
 
     pipeline = build_annotation_pipeline(
         pipeline_config, grr,
