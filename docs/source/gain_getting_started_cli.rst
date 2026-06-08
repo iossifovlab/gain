@@ -211,7 +211,7 @@ or
 
     annotate_tabular 50k_variants.tsv.gz custom_pipeline.yaml
 
-Without caching, annotating a file of this size through remote resource access can take a very long time. With the required resources already cached, GAIn uses the local copies for annotation, making the same large-scale job much faster and less dependent on network performance. For example, in our test on a recent Mac laptop using cached resources, annotating 50,000 variants with ``pipeline/hg38_clinical_annotation`` took approximately 4 minutes.
+Without caching, annotating a file of this size through remote resource access can take a very long time. With the required resources already cached, GAIn uses the local copies for annotation, making the same large-scale job much faster and less dependent on network performance. For example, in our test on a recent Mac laptop using cached resources, annotating 50,000 variants with ``pipeline/hg38_clinical_annotation`` took approximately 4 minutes. The input file used in this test was pre-sorted by chromosome and position, which allows GAIn to access genomic resources more efficiently. Unsorted input files can be annotated, but they will run significantly more slowly.
 
 
 Parallelizing large annotation jobs
@@ -226,12 +226,12 @@ When GAIn detects an indexed input file, it splits the annotation job into small
 The degree of parallelization can be controlled with the ``-j`` option, which specifies the number of workers. The optimal value depends on the input size, pipeline complexity, available CPU cores, memory, and storage performance.
 
 
-For example, download the example input file (:download:`SSC_WES_variants_select.tsv.gz <files/SSC_WES_variants_select.tsv.gz>`), which contains all 1,413,298  variants on canonical chromosomes detected by WES in the SSC project. You can annotate this large variant collection with the ``pipeline/hg38_clinical_annotation`` pipeline by running the following command. However, even with cached resources, this annotation took approximately 30 minutes in our test:
+For example, download the example input file (:download:`SSC_WES_variants_select.tsv.gz <files/SSC_WES_variants_select.tsv.gz>`), which contains all 1,413,298  variants on canonical chromosomes detected by WES in the SSC project. You can annotate this large variant collection with the ``pipeline/hg38_clinical_annotation`` pipeline by running the following command. However, even with cached resources, this annotation took approximately 17 minutes in our test:
 
 
 .. code-block:: bash
 
-    annotate_tabular SSC_WES_variants_select.tsv.gz pipeline/hg38_clinical_annotation
+    annotate_tabular SSC_WES_variants_select.tsv.gz custom_pipeline.yaml
 
 
 To take advantage of parallel computation, first prepare the input file for indexed genomic access:
@@ -242,17 +242,17 @@ To take advantage of parallel computation, first prepare the input file for inde
 
 When run successfully, this command produces two files: ``SSC_WES_variants_select.sorted.tsv.bgz``, which contains the sorted and compressed version of the input file, and ``SSC_WES_variants_select.sorted.tsv.bgz.tbi``, its associated tabix index. These two files enable parallelization and fast genomic-region access in GAIn.
 
-The following command uses parallelization, and with the required resources already cached, annotating the sorted file with ``hg38_clinical_annotation`` took approximately 8 minutes in our test.
+The following command uses parallelization, and with the required resources already cached, annotating the sorted file with ``custom_pipeline.yaml`` took approximately 1 minutes and 15 seconds in our test.
 
 .. code-block:: bash
 
-    annotate_tabular SSC_WES_variants_select.sorted.tsv.bgz pipeline/hg38_clinical_annotation
+    annotate_tabular SSC_WES_variants_select.sorted.tsv.bgz custom_pipeline.yaml
 
-GAIn splits indexed inputs by chromosome. For very large input files, chromosome-level splitting may create tasks that are too large or uneven. The ``-r`` option can instead split the input into genomic regions of a specified size. In our test, using the ``-r`` option reduced the annotation time to approximately 5 [] minutes.
+By default, GAIn splits indexed inputs by chromosome. For human genomes, this creates up to 24 chromosome-level tasks, which is already enough to use all available cores on our local test machine with 10 CPU cores. Therefore, splitting the input further with the -r option provides only a modest additional benefit on this computer. However, on larger compute systems or clusters with many more cores, chromosome-level splitting may not create enough tasks to fully use the available parallelism. In those cases, the -r option can split the input into smaller genomic regions and improve scaling. In our test, using the ``-r`` option reduced the annotation time to approximately 1 minute.
 
 .. code-block:: bash
 
-    annotate_tabular SSC_WES_variants_select.sorted.tsv.bgz pipeline/hg38_clinical_annotation -r 30_000_000
+    annotate_tabular SSC_WES_variants_select.sorted.tsv.bgz custom_pipeline.yaml -r 30_000_000
 
 GAIn can also use a configured Dask cluster that creates workers on a larger compute system, such as SGE or SLURM. For example, if a Dask cluster named ``my_sge_cluster`` has been configured to create workers on an SGE cluster, the annotation can be run with:
 
@@ -330,11 +330,8 @@ The ``position_score_annotator`` adds ``phyloP7way`` conservation scores and req
 
     annotate_tabular positions.csv position_pipeline.yaml
 
-This produces :download:`positions.annotated.csv <files/positions.annotated.csv>` which contains:
+This produces :download:`positions.annotated.csv <files/positions.annotated.csv>` which contains []:
 
-.. csv-table::
-    :file: files/positions.annotated.csv
-    :header-rows: 1
 
 This output shows that the first position falls within a coding part of CFTR, whereas the second position is intergenic. The coding position has a higher ``phyloP7way`` conservation score and receives an aggregate ``am_pathogenicity`` score, while no ``am_pathogenicity`` value is reported for the intergenic position.
 
@@ -352,9 +349,7 @@ so GAIn cannot infer the effect of a specific allelic change on a gene product. 
 genomic resource types can still be applied to region inputs. Region inputs can also be evaluated with 
 ``simple_effect_annotator``, which summarizes whether a region overlaps genic or intergenic sequence and 
 reports broad functional categories when applicable. Position score resources can be used on region 
-inputs by aggregating values across the positions spanned by each interval. Allele score resources can also be used, 
-but in that case GAIn must aggregate both across the positions in the region and across the possible allelic 
-changes at each position []. 
+inputs by aggregating values across the positions spanned by each interval. Allele score resources can also be used, but in that case GAIn must aggregate both across the positions in the region and across the possible allelic changes at each position. 
 
 To illustrate this, reuse ``position_pipeline.yaml``, shown below as a reminder.
 
@@ -367,11 +362,7 @@ Then run the following command to annotate the regions:
 
     annotate_tabular regions.csv position_pipeline.yaml
 
-This produces ``regions.annotated.csv`` which contains:
-
-.. csv-table::
-    :file: files/regions.annotated.csv
-    :header-rows: 1
+This produces :download:`regions.annotated.csv <files/regions.annotated.csv>` which contains []:
 
 This output shows how the same pipeline summarizes annotations over genomic intervals. The ``simple_effect_annotator`` reports the broad genomic context of each region and any overlapping genes. For ``phyloP7way``, the ``max`` and ``mean`` columns summarize conservation scores across the positions spanned by each region, while the ``list`` column reports the individual position-level values. For ``AlphaMissense``, GAIn aggregates across both the positions in the region and the possible allelic changes at those positions, producing summary ``am_pathogenicity`` values and listing the contributing alleles when available.
 
