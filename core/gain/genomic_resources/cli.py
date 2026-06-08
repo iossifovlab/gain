@@ -458,7 +458,10 @@ def _create_contents_db(
             if row and row[0] == current_md5:
                 return
         except Exception:  # noqa: BLE001
-            pass
+            logger.debug(
+                "Could not read existing contents db; rebuilding",
+                exc_info=True,
+            )
 
     if os.path.exists(sqlite_filepath):
         os.remove(sqlite_filepath)
