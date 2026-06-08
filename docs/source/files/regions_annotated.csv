@@ -1,3 +1,0 @@
-chrom,pos_beg,pos_end,worst_effect,worst_effect_genes,phyloP7way,cadd_raw
-chr1,1,100000,coding,OR4F5,0.0599,7.95
-chr1,11796321,11800000,coding,MTHFR,0.0348,9.48

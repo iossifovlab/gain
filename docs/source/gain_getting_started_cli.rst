@@ -262,7 +262,10 @@ GAIn can also use a configured Dask cluster that creates workers on a larger com
 
 This runs the annotation across up to 100 workers on the configured cluster. See the “Configuring parallelization”[] and “Configuring Dask clusters”[] sections for more details on region splitting, worker configuration, and cluster setup.
 
-
+chr3,1682142,G,A
+chr4,39869140,T,A
+chr1,8185860,C,T
+chr2,39117277,C,G
 
 
 Annotating VCF input
@@ -306,7 +309,7 @@ regulatory intervals detected by ATAC-seq and ChIP-seq. For researchers working 
 it is often valuable to interpret them using the same kinds of genomic resources used in variant annotation. 
 Although positions and regions do not contain allele information, and therefore cannot support every type of 
 variant-based annotation, GAIn can still take these inputs and annotate them with many relevant resources using 
-the ``annotate_tabular`` tool.
+the ``annotate_tabular`` tool, aggregating scores when needed.
 
 Position inputs require only two columns: chromosome and position. Download :download:`positions.csv <files/positions.csv>`, whose content is shown below: 
 
@@ -320,7 +323,8 @@ Because position inputs do not include reference and alternate alleles, GAIn can
     :language: yaml
 
 
-This pipeline combines three annotators. The ``simple_effect_annotator`` uses the ``MANE 1.5`` gene models resource to classify each position by genomic context, such as coding or intergenic, and to report overlapping genes when applicable. The ``position_score_annotator`` adds the ``phyloP7way`` conservation score directly at each genomic position. The ``allele_score_annotator`` uses ``AlphaMissense`` to aggregate ``am_pathogenicity`` scores across the possible allelic changes at each position, reporting the mean value by default. Run the following command to annotate the positions:
+This pipeline combines three annotators. The ``simple_effect_annotator`` uses the ``MANE 1.5`` gene models resource to classify each position by genomic context, such as coding or intergenic, and to report overlapping genes when applicable. 
+The ``position_score_annotator`` adds ``phyloP7way`` conservation scores and requests three aggregations: ``max``, ``mean``, and ``list``. The ``max`` and ``mean`` aggregators report the maximum and average score, while list reports the individual scores before aggregation. For single-position inputs, these aggregators have no effect because there is only one genomic position, but they become useful for region inputs, where scores must be summarized across many positions. The ``allele_score_annotator`` uses ``AlphaMissense`` to summarize possible allelic changes at each position. Here, ``max`` and ``mean`` report the maximum and mean ``am_pathogenicity`` values across possible alleles, while the allele source reports the observed alleles together with their ``am_pathogenicity`` values. Run the following command to annotate the positions:
 
 .. code-block:: bash
 
@@ -363,21 +367,13 @@ Then run the following command to annotate the regions:
 
     annotate_tabular regions.csv position_pipeline.yaml
 
-This produces ``regions.annotated.txt`` which contains:
+This produces ``regions.annotated.csv`` which contains:
 
 .. csv-table::
-    :file: files/regions_annotated.csv
+    :file: files/regions.annotated.csv
     :header-rows: 1
 
-This output shows how GAIn summarizes the functional context of each region. Depending on the interval, 
-a region may be classified as intergenic, coding, or another category, and overlapping genes are reported 
-when applicable. [] aggregation
-
-
-
-
-
-
+This output shows how the same pipeline summarizes annotations over genomic intervals. The ``simple_effect_annotator`` reports the broad genomic context of each region and any overlapping genes. For ``phyloP7way``, the ``max`` and ``mean`` columns summarize conservation scores across the positions spanned by each region, while the ``list`` column reports the individual position-level values. For ``AlphaMissense``, GAIn aggregates across both the positions in the region and the possible allelic changes at those positions, producing summary ``am_pathogenicity`` values and listing the contributing alleles when available.
 
 
 

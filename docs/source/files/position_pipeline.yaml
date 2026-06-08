@@ -3,8 +3,27 @@
 
 - position_score_annotator:
     resource_id: hg38/scores/phyloP7way
+    attributes:
+    - name: phyloP7way_max
+      source: phyloP7way
+      aggregator: max
+    - name: phyloP7way_mean
+      source: phyloP7way
+      aggregator: mean
+    - name: phyloP7way_all
+      source: phyloP7way
+      aggregator: list
+
 
 - allele_score_annotator:
     resource_id: hg38/scores/AlphaMissense
     attributes:
-    - am_pathogenicity
+    - name: am_pathogenicity_max
+      source: am_pathogenicity
+      aggregator: max
+    - name: am_pathogenicity_mean
+      source: am_pathogenicity
+      aggregator: mean
+    - source: allele
+      include_attributes:
+      - am_pathogenicity
