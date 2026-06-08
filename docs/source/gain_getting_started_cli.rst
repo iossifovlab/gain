@@ -138,7 +138,7 @@ This pipeline has an optional preamble section, which records metadata about the
 
     When building custom annotation pipelines, users can either write the pipeline directly using GAIn's YAML structure or use the pipeline authoring tool in the GAIn web interface, which simplifies pipeline creation by guiding users through annotator and resource selection.
 
-To review the attributes produced by the custom pipeline, run the following command. The generated HTML summary can be viewed here: `doc.html <_static/doc.html>`_.
+To review the attributes produced by the custom pipeline, run the following command. 
 
 .. code-block:: bash
 
@@ -146,7 +146,7 @@ To review the attributes produced by the custom pipeline, run the following comm
 
 
 
-To annotate the input file with this custom pipeline, run:
+You can open the generated HTML summary in your local folder of view it here: `doc.html <doc.html>`_. To annotate the input file with this custom pipeline, run:
 
 .. code-block:: bash
 
@@ -287,6 +287,14 @@ additional annotation fields in the ``INFO`` column.
 .. literalinclude:: files/vcf.annotated.vcf
     :language: text
 
+VCF files can also be prepared for parallel annotation. To do this, first install ``bcftools`` and then sort, compress, and index the VCF file:
+
+.. code-block:: bash
+
+    mamba install -c conda-forge -c bioconda bcftools
+    bcftools sort small_input.vcf -o small_input.sorted.vcf.bgz -Oz -Wtbi
+
+This creates a sorted, bgzip-compressed VCF file, ``small_input.sorted.vcf.bgz``, together with its tabix index, ``small_input.sorted.vcf.bgz.tbi``. GAIn can use this indexed VCF file for parallel annotation in the same way as indexed tabular inputs.
 
 Annotating positions and regions
 -----------------------------------
