@@ -418,9 +418,7 @@ Download the Collins rCNV dosage sensitivity score table, uncompress it, and ins
     gunzip Collins_rCNV_2022.dosage_sensitivity_scores.tsv.gz
     head -n 5 Collins_rCNV_2022.dosage_sensitivity_scores.tsv
 
-The first command downloads the compressed table. The second command uncompresses it, replacing the .tsv.gz file with Collins_rCNV_2022.dosage_sensitivity_scores.tsv. The final command displays the first five lines so that we can inspect the available columns before adding the resource file to a local GRR.
-
-[][][]
+The first command downloads the compressed table. The second command uncompresses it, replacing the ``.tsv.gz`` file with ``Collins_rCNV_2022.dosage_sensitivity_scores.tsv``. The final command displays the first five lines so that we can inspect the available columns before adding the resource file to a local GRR.
 
 To make this file available as a GAIn resource, place it in a folder together with a :download:`genomic_resource.yaml <files/genomic_resource.yaml>` file:
 
@@ -428,23 +426,13 @@ To make this file available as a GAIn resource, place it in a folder together wi
 
     My_First_GRR/
     └── my_score/
-        ├── experimental_scores.tsv
+        ├── Collins_rCNV_2022.dosage_sensitivity_scores.tsv
         └── genomic_resource.yaml
 
 The ``genomic_resource.yaml`` file describes the resource to GAIn:
 
-.. code-block:: yaml
-
-    type: position_score
-
-    table:
-    filename: experimental_scores.tsv
-    header_mode: file
-
-    scores:
-    - id: my_score
-        type: float
-        name: experimental_scores
+.. literalinclude:: files/genomic_resource.yaml
+    :language: yaml
 
 After creating this folder structure, initialize ``My_First_GRR`` as a local GRR:
 
@@ -473,12 +461,11 @@ Then add the local GRR to the GRR definition file, ``~/.grr_definition.yaml``. F
         url: "https://grr-encode.iossifovlab.com"
     - id: "My_First_GRR"
       type: "directory"
-      directory: "<path>/My_First_GRR"
+      directory: "<path_to_My_First_GRR>/My_First_GRR"
 
 
 
-
-With this configuration, GAIn can use the local resource in annotation pipelines, as well as the public resources in the main GRR and GRR-ENCODE. For example, the following custom pipeline combines resources from all three repositories: a gene-effect annotator from the main GRR, a transcription factor ChIP-seq track from GRR-ENCODE, and the local experimental score from ``My_First_GRR``.
+With this configuration, GAIn can use the local resource in annotation pipelines, as well as the public resources in the main GRR and GRR-ENCODE. For example, the following custom pipeline combines resources from all three repositories: a gene-effect annotator from the main GRR, an ATAC-seq track from GRR-ENCODE, and the pHaplo score from ``My_First_GRR``.
 
 Download the example pipeline (:download:`multiple_grr_pipeline.yaml <files/multiple_grr_pipeline.yaml>`) which uses multiple GRRs: 
 
@@ -493,10 +480,10 @@ To annotate the original example input with this pipeline, run:
 
     annotate_tabular small_input.csv multiple_grr_pipeline.yaml -o small_input_multiple_grr.annotated.csv
 
-The output contains the effect annotations, the ENCODE-derived position score, and the local experimental score. The local score column comes from ``experimental_scores.tsv``:
+The output contains the effect annotations, the ENCODE-derived position score, and the pHaplo score from the local GRR:
 
 .. csv-table::
-    :file: files/small_input_multiple_grr_annotated.csv
+    :file: files/small_input_multiple_grr.annotated.csv
     :header-rows: 1
 
 

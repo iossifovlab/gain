@@ -20,4 +20,9 @@ annotators:
 
 - position_score_annotator: ATAC-seq/ENCSR814RGG
 
-- position_score_annotator: my_score
+- gene_score_annotator:
+    resource_id: my_score
+    input_gene_list: gene_list
+    attributes:
+    - name: pHaplo
+      source: pHaplo

@@ -1,18 +1,13 @@
-type: position_score
+type: gene_score
 
-table:
-  filename: experimental_scores.tsv
-  header_mode: file
-  zero_based: True
-
-  # chrom:
-  #   index: 0
-  # pos_begin:
-  #   index: 1
-  # pos_end:
-  #   index: 1
-
+filename: Collins_rCNV_2022.dosage_sensitivity_scores.tsv
+gene_column: "#gene"
 scores:
-  - id: my_score
-    type: float
-    name: experimental_scores
+  - id: pHaplo
+    desc: "Haplosensitivity probability"
+    histogram:
+      type: number
+  - id: pTriplo
+    desc: "Triplosensitivity probability"
+    histogram:
+      type: number
