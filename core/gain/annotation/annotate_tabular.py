@@ -18,6 +18,7 @@ from typing import Any, TextIO, cast
 from pysam import TabixFile, tabix_compress, tabix_index
 
 from gain import __version__
+from gain.annotation import annotation_pipeline as _annotation_pipeline
 from gain.annotation.annotate_utils import (
     add_common_annotation_arguments,
     add_input_files_to_task_graph,
@@ -340,18 +341,33 @@ class _CSVHeader:
     annotation_header: list[str]
 
 
+def _is_reannotation(pipeline: AnnotationPipeline) -> bool:
+    # Use the canonical class (not the module-level re-export, which tests
+    # replace with a mocker.spy) so the check survives spying.
+    return isinstance(pipeline, _annotation_pipeline.ReannotationPipeline)
+
+
 def _build_new_header(
     input_header: list[str],
     annotation_attributes: list[Attribute],
     attributes_to_delete: Sequence[str],
+    *,
+    reannotation: bool = False,
 ) -> _CSVHeader:
-    result = list(input_header)
-    for attr_name in attributes_to_delete:
-        if attr_name in result:
-            result.remove(attr_name)
     annotation_header = [
         attr.name for attr in annotation_attributes if not attr.internal
     ]
+    drop = set(attributes_to_delete)
+    if reannotation:
+        # On a reannotation run every new-pipeline attribute is re-emitted in
+        # the annotation section -- including COPIED (reused) attributes whose
+        # value is carried through the annotation context from the source row
+        # (#111). Drop the matching input column so the attribute appears
+        # exactly once instead of being duplicated. A plain annotation run,
+        # by contrast, preserves a same-named input column and appends the
+        # freshly-computed one (the "append columns" behaviour).
+        drop |= set(annotation_header)
+    result = [col for col in input_header if col not in drop]
     return _CSVHeader(
         result,
         annotation_header,
@@ -374,7 +390,8 @@ def _build_sequential(
     )
     filters: list[Filter] = []
     new_header = _build_new_header(
-        source.header, pipeline.get_attributes(), attributes_to_delete)
+        source.header, pipeline.get_attributes(), attributes_to_delete,
+        reannotation=_is_reannotation(pipeline))
     filters.extend([
         DeleteAttributesFromAWSFilter(attributes_to_delete),
         AnnotationPipelineAnnotatablesFilter(pipeline),
@@ -400,7 +417,8 @@ def _build_batched(
     )
     filters: list[Filter] = []
     new_header = _build_new_header(
-        source.header, pipeline.get_attributes(), attributes_to_delete)
+        source.header, pipeline.get_attributes(), attributes_to_delete,
+        reannotation=_is_reannotation(pipeline))
     filters.extend([
         DeleteAttributesFromAWSBatchFilter(attributes_to_delete),
         AnnotationPipelineAnnotatablesBatchFilter(pipeline),
@@ -879,7 +897,8 @@ def _annotate_tabular_helper(
             args["input_separator"],
         )
         new_header = _build_new_header(
-            source.header, pipeline.get_attributes(), attributes_to_delete)
+            source.header, pipeline.get_attributes(), attributes_to_delete,
+            reannotation=_is_reannotation(pipeline))
         filters.extend([
             DeleteAttributesFromAWSFilter(attributes_to_delete),
             AnnotationPipelineAnnotatablesFilter(pipeline),
@@ -894,7 +913,8 @@ def _annotate_tabular_helper(
             args["batch_size"],
         )
         new_header = _build_new_header(
-            source.header, pipeline.get_attributes(), attributes_to_delete)
+            source.header, pipeline.get_attributes(), attributes_to_delete,
+            reannotation=_is_reannotation(pipeline))
         filters.extend([
             DeleteAttributesFromAWSBatchFilter(attributes_to_delete),
             AnnotationPipelineAnnotatablesBatchFilter(pipeline),

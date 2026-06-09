@@ -126,6 +126,24 @@ def reannotation_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
                         bar    18         1.2
                     """),
                 },
+                "two": {
+                    "genomic_resource.yaml": textwrap.dedent("""
+                        type: position_score
+                        table:
+                            filename: data.txt
+                        scores:
+                        - id: score_two
+                          type: float
+                          name: s2
+                    """),
+                    "data.txt": convert_to_tab_separated("""
+                        chrom  pos_begin  s2
+                        foo    4          0.5
+                        foo    18         0.6
+                        bar    4          1.5
+                        bar    18         1.6
+                    """),
+                },
                 "gene_score1": {
                     "genomic_resource.yaml": textwrap.dedent("""
                         type: gene_score
@@ -182,6 +200,19 @@ def reannotation_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
                       resource_id: gene_score2
                       input_gene_list: gene_list
             """),
+            "reuse_old.yaml": textwrap.dedent("""
+                preamble:
+                  input_reference_genome: foobar_genome
+                annotators:
+                  - position_score: one
+            """),
+            "reuse_new.yaml": textwrap.dedent("""
+                preamble:
+                  input_reference_genome: foobar_genome
+                annotators:
+                  - position_score: one
+                  - position_score: two
+            """),
             "reannotation_old_internal.yaml": textwrap.dedent("""
                 preamble:
                   input_reference_genome: foobar_genome
@@ -228,9 +259,11 @@ def test_annotate_tabular_reannotation(
     reannotation_grr: GenomicResourceRepo,
     mocker: pytest_mock.MockerFixture,
 ) -> None:
+    # Asserts output header/structure only; the reuse-vs-recompute VALUE
+    # guard lives in test_annotate_tabular_reannotation_reuses_unchanged.
     assert reannotation_grr is not None
     in_content = (
-        "chrom\tpos\tscore\tworst_effect\teffect_details\tgene_effects\tgene_score1\tgene_score2\n"  
+        "chrom\tpos\tscore\tworst_effect\teffect_details\tgene_effects\tgene_score1\tgene_score2\n"
         "chr1\t23\t0.1\tbla\tbla\tbla\tbla\tbla\n"
     )
     out_expected_header = [
@@ -468,6 +501,13 @@ def test_annotate_tabular_reannotation_prints_plan(
     assert "ADDED" in captured.err
     assert "COMPUTED" in captured.err
     assert "DELETED" in captured.err
+    # reuse really triggers through the CLI now (#111): the unchanged
+    # position_score annotator's `score` attribute lands in COPIED, not just
+    # an empty bucket label.
+    copied_line = next(
+        line for line in captured.err.splitlines() if "COPIED" in line)
+    assert "score" in copied_line
+    assert "COPIED   (0):" not in captured.err
     # the output file is still produced and unaffected by the plan print
     assert out_file.exists()
 
@@ -700,6 +740,12 @@ gene_list=g1;gene_score1=10.1;gene_score2=20.2 GT     0/1 0/0 0/0
     assert "ADDED" in captured.err
     assert "COMPUTED" in captured.err
     assert "DELETED" in captured.err
+    # reuse really triggers through the CLI now (#111): the unchanged
+    # position_score annotator's `score` attribute lands in COPIED.
+    copied_line = next(
+        line for line in captured.err.splitlines() if "COPIED" in line)
+    assert "score" in copied_line
+    assert "COPIED   (0):" not in captured.err
     # the output VCF is still produced
     assert out_file.exists()
 
@@ -822,6 +868,12 @@ gene_list=g1;gene_score1=10.1;gene_score2=20.2 GT     0/1 0/0 0/0
     assert "ADDED" in captured.err
     assert "COMPUTED" in captured.err
     assert "DELETED" in captured.err
+    # reuse really triggers through the CLI now (#111): the unchanged
+    # position_score annotator's `score` attribute lands in COPIED.
+    copied_line = next(
+        line for line in captured.err.splitlines() if "COPIED" in line)
+    assert "score" in copied_line
+    assert "COPIED   (0):" not in captured.err
     # the output file is still produced and unaffected by the plan print
     assert out_file.exists()
 
@@ -920,3 +972,114 @@ def test_annotate_vcf_dry_run_plain(
     assert "Annotation plan:" in captured.err
     assert "ADDED" in captured.err
     assert not out_file.exists()
+
+
+def test_annotate_tabular_reannotation_reuses_unchanged(
+    tmp_path: pathlib.Path,
+    reannotation_grr: GenomicResourceRepo,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Reuse-proof (#111): the old pipeline has only position_score `one`
+    # (column `score`); the new pipeline ADDS position_score `two` (column
+    # `score_two`). `one` is UNCHANGED, so its column must be COPIED from the
+    # input verbatim -- including the SENTINEL `9.9` that differs from the
+    # value the annotator would compute fresh (0.1 at foo:4). The added `two`
+    # annotator must compute its value fresh (0.5). Run through the real CLI
+    # so the per-run work_dir injection path is exercised.
+    assert reannotation_grr is not None
+    in_content = (
+        "chrom\tpos\tscore\n"
+        "foo\t4\t9.9\n"
+    )
+    in_file = tmp_path / "in.txt"
+    out_file = tmp_path / "out.txt"
+    annotation_file_old = tmp_path / "reuse_old.yaml"
+    annotation_file_new = tmp_path / "reuse_new.yaml"
+    grr_file = tmp_path / "grr.yaml"
+    work_dir = tmp_path / "work"
+
+    setup_denovo(in_file, in_content)
+
+    cli_tabular([
+        str(a) for a in [
+            in_file, annotation_file_new,
+            "-o", out_file,
+            "-w", work_dir,
+            "--grr", grr_file,
+            "--reannotate", annotation_file_old,
+            "-j", 1,
+        ]
+    ])
+
+    with open(out_file, "rt", encoding="utf8") as f:
+        header = f.readline().strip().split("\t")
+        row = f.readline().strip().split("\t")
+
+    assert header == ["chrom", "pos", "score", "score_two"]
+    # unchanged annotator's column reused (sentinel kept, NOT recomputed)
+    assert row[header.index("score")] == "9.9"
+    # the newly-added annotator's column is freshly computed
+    assert row[header.index("score_two")] == "0.5"
+
+    # the COPIED bucket of the printed plan names the reused attribute
+    captured = capsys.readouterr()
+    copied_line = next(
+        line for line in captured.err.splitlines() if "COPIED" in line)
+    assert "score" in copied_line
+
+
+def test_annotate_vcf_reannotation_reuses_unchanged(
+    tmp_path: pathlib.Path,
+    reannotation_grr: GenomicResourceRepo,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Reuse-proof for annotate_vcf (#111): `score` (from unchanged
+    # position_score `one`) carries the SENTINEL 9.9 from the input INFO and
+    # must be reused verbatim, while the added `score_two` is computed fresh.
+    assert reannotation_grr is not None
+    in_content = textwrap.dedent("""
+        ##fileformat=VCFv4.2
+        ##INFO=<ID=score,Number=A,Type=Float,Description="">
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+        ##contig=<ID=foo>
+        #CHROM POS ID REF ALT QUAL FILTER INFO      FORMAT m1  d1  c1
+        foo    4   .  C   T   .    .      score=9.9 GT     0/1 0/0 0/0
+    """)
+
+    in_file = tmp_path / "in.vcf"
+    out_file = tmp_path / "out.vcf"
+    annotation_file_old = tmp_path / "reuse_old.yaml"
+    annotation_file_new = tmp_path / "reuse_new.yaml"
+    grr_file = tmp_path / "grr.yaml"
+    work_dir = tmp_path / "work"
+
+    setup_vcf(in_file, in_content)
+
+    cli_vcf([
+        str(a) for a in [
+            in_file,
+            annotation_file_new,
+            "-o", out_file,
+            "-w", work_dir,
+            "--grr", grr_file,
+            "--reannotate", annotation_file_old,
+            "-j", 1,
+        ]
+    ])
+
+    out_vcf = pysam.VariantFile(str(out_file))
+    info_keys = set(out_vcf.header.info.keys())
+    assert info_keys == {"score", "score_two"}  # pylint: disable=no-member
+
+    record = next(out_vcf)
+    # `score` is a pre-existing Float INFO field reused verbatim (sentinel
+    # kept, NOT recomputed -- fresh would be 0.1)
+    assert record.info["score"][0] == pytest.approx(9.9)
+    # `score_two` is freshly added (String INFO) and computed (0.5 at foo:4)
+    assert record.info["score_two"][0] == "0.5"
+
+    # the COPIED bucket of the printed plan names the reused attribute
+    captured = capsys.readouterr()
+    copied_line = next(
+        line for line in captured.err.splitlines() if "COPIED" in line)
+    assert "score" in copied_line

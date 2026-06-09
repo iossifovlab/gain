@@ -1,9 +1,13 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 
 
+import textwrap
+from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
 from gain.annotation.annotation_config import Attribute
+from gain.annotation.annotation_factory import build_annotation_pipeline
 from gain.annotation.annotation_pipeline import (
     FULL_REANNOTATION_REASON,
     AnnotationPipeline,
@@ -13,6 +17,11 @@ from gain.annotation.annotation_pipeline import (
     _get_deleted_attributes,
     _get_rerun_annotators,
     format_annotation_plan,
+)
+from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.testing import (
+    build_inmemory_test_repository,
+    convert_to_tab_separated,
 )
 
 from tests.small.annotation.conftest import DummyAnnotator
@@ -650,3 +659,80 @@ def test_format_annotation_plan_plain_pipeline() -> None:
     assert text.startswith("Annotation plan:")
     assert "vs" not in text.splitlines()[0]
     assert "ADDED    (2): attr_1, attr_2 (internal)" in text
+
+
+# ---------------------------------------------------------------------------
+# work_dir must NOT participate in AnnotatorInfo identity (#111)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def position_score_grr() -> GenomicResourceRepo:
+    return build_inmemory_test_repository({
+        "one": {
+            "genomic_resource.yaml": textwrap.dedent("""
+                type: position_score
+                table:
+                    filename: data.txt
+                scores:
+                - id: score
+                  type: float
+                  name: s1
+            """),
+            "data.txt": convert_to_tab_separated("""
+                chrom  pos_begin  s1
+                foo    4          0.1
+            """),
+        },
+    })
+
+
+_POSITION_SCORE_CONFIG = [{"position_score": "one"}]
+
+
+def test_work_dir_does_not_affect_annotator_info_identity(
+    position_score_grr: GenomicResourceRepo,
+    tmp_path: Path,
+) -> None:
+    # Two pipelines built from the SAME config but with DIFFERENT work_dirs
+    # (as the CLI injects per-run) must produce equal annotator infos AND
+    # equal hashes -- work_dir is a runtime artifact, not part of identity.
+    pipeline_a = build_annotation_pipeline(
+        _POSITION_SCORE_CONFIG, position_score_grr,
+        work_dir=tmp_path / "work_a")
+    pipeline_b = build_annotation_pipeline(
+        _POSITION_SCORE_CONFIG, position_score_grr,
+        work_dir=tmp_path / "work_b")
+
+    info_a = pipeline_a.annotators[0].get_info()
+    info_b = pipeline_b.annotators[0].get_info()
+
+    # the injected work_dir really does differ
+    assert info_a.parameters["work_dir"] != info_b.parameters["work_dir"]
+
+    assert info_a == info_b
+    assert hash(info_a) == hash(info_b)
+
+
+def test_reannotation_identical_configs_diff_work_dir_reuses_all(
+    position_score_grr: GenomicResourceRepo,
+    tmp_path: Path,
+) -> None:
+    # A ReannotationPipeline over two identical configs that differ only in
+    # work_dir (the real CLI situation) must reuse everything: no new
+    # annotators, no reruns, and the single attribute lands in COPIED.
+    pipeline_new = build_annotation_pipeline(
+        _POSITION_SCORE_CONFIG, position_score_grr,
+        work_dir=tmp_path / "work_new")
+    pipeline_previous = build_annotation_pipeline(
+        _POSITION_SCORE_CONFIG, position_score_grr,
+        work_dir=tmp_path / "work_previous")
+
+    reann = ReannotationPipeline(pipeline_new, pipeline_previous)
+
+    assert reann.infos_new == set()
+    assert reann.infos_rerun == set()
+    assert reann.annotators == []
+    assert _plan_names(reann.plan.copied) == ["score"]
+    assert not reann.plan.added
+    assert not reann.plan.computed
