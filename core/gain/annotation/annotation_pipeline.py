@@ -346,20 +346,27 @@ class ReannotationPipeline(AnnotationPipeline):
 
         self.annotators: list[Annotator] = []
 
-        infos_current = pipeline_new.get_info()
-        infos_previous = pipeline_previous.get_info()
+        if full_reannotation:
+            # Recompute everything, reuse nothing: every new-pipeline
+            # annotator must run, otherwise its attribute is marked
+            # deleted (see ``_get_deleted_attributes``) but never
+            # recomputed, leaving a stale/not-recomputed value (#108).
+            self.annotators = list(pipeline_new.annotators)
+        else:
+            infos_current = pipeline_new.get_info()
+            infos_previous = pipeline_previous.get_info()
 
-        infos_new: set[AnnotatorInfo] = {
-            i for i in infos_current
-            if i not in infos_previous
-        }
+            infos_new: set[AnnotatorInfo] = {
+                i for i in infos_current
+                if i not in infos_previous
+            }
 
-        infos_rerun = _get_rerun_annotators(pipeline_new, infos_new)
+            infos_rerun = _get_rerun_annotators(pipeline_new, infos_new)
 
-        for annotator in pipeline_new.annotators:
-            info = annotator.get_info()
-            if info in infos_new or info in infos_rerun:
-                self.annotators.append(annotator)
+            for annotator in pipeline_new.annotators:
+                info = annotator.get_info()
+                if info in infos_new or info in infos_rerun:
+                    self.annotators.append(annotator)
 
         self.deleted_attributes = _get_deleted_attributes(
             pipeline_new, pipeline_previous,
