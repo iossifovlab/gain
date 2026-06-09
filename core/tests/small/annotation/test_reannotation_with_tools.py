@@ -261,7 +261,8 @@ def test_annotate_tabular_reannotation(
 
     with open(out_file, "rt", encoding="utf8") as _:
         out_file_header = "".join(_.readline()).strip().split("\t")
-    assert spy.call_count == 1
+    # built twice: once for the printed plan, once for the actual annotation
+    assert spy.call_count == 2
     assert out_file_header == out_expected_header
 
 
@@ -302,7 +303,8 @@ def test_annotate_tabular_reannotation_internal(
     ])
     with open(out_file, "rt", encoding="utf8") as _:
         out_file_header = "".join(_.readline()).strip().split("\t")
-    assert spy.call_count == 1
+    # built twice: once for the printed plan, once for the actual annotation
+    assert spy.call_count == 2
     assert out_file_header == out_expected_header
 
 
@@ -349,7 +351,8 @@ def test_annotate_tabular_reannotation_batched(
     with open(out_path, "rt", encoding="utf8") as out_file:
         out_file_header = "".join(out_file.readline()).strip().split("\t")
         lines = out_file.readlines()
-    assert spy.call_count == 1
+    # built twice: once for the printed plan, once for the actual annotation
+    assert spy.call_count == 2
     assert out_file_header == out_expected_header
     assert len(lines) == 4
 
@@ -424,6 +427,124 @@ def test_annotate_tabular_full_reannotation_identical_pipeline(
     # from the input value (9.9)
     score_idx = out_file_header.index("score")
     assert data_line[score_idx] == "0.1"
+
+
+def test_annotate_tabular_reannotation_prints_plan(
+    tmp_path: pathlib.Path,
+    reannotation_grr: GenomicResourceRepo,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The reannotation plan must always be printed to stderr on a
+    # reannotation run (visible at default verbosity).
+    assert reannotation_grr is not None
+    in_content = (
+        "chrom\tpos\tscore\tworst_effect\teffect_details\tgene_effects"
+        "\tgene_score1\tgene_score2\n"
+        "chr1\t23\t0.1\tbla\tbla\tbla\tbla\tbla\n"
+    )
+    in_file = tmp_path / "in.txt"
+    out_file = tmp_path / "out.txt"
+    annotation_file_old = tmp_path / "reannotation_old.yaml"
+    annotation_file_new = tmp_path / "reannotation_new.yaml"
+    grr_file = tmp_path / "grr.yaml"
+    work_dir = tmp_path / "work"
+
+    setup_denovo(in_file, in_content)
+
+    cli_tabular([
+        str(a) for a in [
+            in_file, annotation_file_new,
+            "-o", out_file,
+            "-w", work_dir,
+            "--grr", grr_file,
+            "--reannotate", annotation_file_old,
+            "-j", 1,
+        ]
+    ])
+
+    captured = capsys.readouterr()
+    assert "Reannotation plan" in captured.err
+    assert "COPIED" in captured.err
+    assert "ADDED" in captured.err
+    assert "COMPUTED" in captured.err
+    assert "DELETED" in captured.err
+    # the output file is still produced and unaffected by the plan print
+    assert out_file.exists()
+
+
+def test_annotate_tabular_dry_run(
+    tmp_path: pathlib.Path,
+    reannotation_grr: GenomicResourceRepo,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # --dry-run prints the plan and exits without writing output.
+    assert reannotation_grr is not None
+    in_content = (
+        "chrom\tpos\tscore\tworst_effect\teffect_details\tgene_effects"
+        "\tgene_score1\tgene_score2\n"
+        "chr1\t23\t0.1\tbla\tbla\tbla\tbla\tbla\n"
+    )
+    in_file = tmp_path / "in.txt"
+    out_file = tmp_path / "out.txt"
+    annotation_file_old = tmp_path / "reannotation_old.yaml"
+    annotation_file_new = tmp_path / "reannotation_new.yaml"
+    grr_file = tmp_path / "grr.yaml"
+    work_dir = tmp_path / "work"
+
+    setup_denovo(in_file, in_content)
+
+    cli_tabular([
+        str(a) for a in [
+            in_file, annotation_file_new,
+            "-o", out_file,
+            "-w", work_dir,
+            "--grr", grr_file,
+            "--reannotate", annotation_file_old,
+            "--dry-run",
+            "-j", 1,
+        ]
+    ])
+
+    captured = capsys.readouterr()
+    assert "Reannotation plan" in captured.err
+    # no output written
+    assert not out_file.exists()
+
+
+def test_annotate_tabular_dry_run_plain(
+    tmp_path: pathlib.Path,
+    reannotation_grr: GenomicResourceRepo,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # --dry-run without --reannotate prints the plain all-ADDED plan and exits.
+    assert reannotation_grr is not None
+    in_content = (
+        "chrom\tpos\n"
+        "foo\t4\n"
+    )
+    in_file = tmp_path / "in.txt"
+    out_file = tmp_path / "out.txt"
+    annotation_file_new = tmp_path / "reannotation_new.yaml"
+    grr_file = tmp_path / "grr.yaml"
+    work_dir = tmp_path / "work"
+
+    setup_denovo(in_file, in_content)
+
+    cli_tabular([
+        str(a) for a in [
+            in_file, annotation_file_new,
+            "-o", out_file,
+            "-w", work_dir,
+            "--grr", grr_file,
+            "-n",
+            "-j", 1,
+        ]
+    ])
+
+    captured = capsys.readouterr()
+    assert "Annotation plan:" in captured.err
+    assert "ADDED" in captured.err
+    assert not out_file.exists()
 
 
 def test_annotate_vcf_reannotation(
@@ -516,7 +637,8 @@ def test_annotate_tabular_reannotation_with_resource_id(
 
     with open(out_file, "rt", encoding="utf8") as f:
         out_file_header = f.readline().strip().split("\t")
-    assert spy.call_count == 1
+    # built twice: once for the printed plan, once for the actual annotation
+    assert spy.call_count == 2
     assert out_file_header == [
         "chrom", "pos", "score", "worst_effect", "gene_score1",
     ]
