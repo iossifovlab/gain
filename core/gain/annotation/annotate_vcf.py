@@ -51,6 +51,7 @@ from gain.annotation.annotation_factory import (
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     ReannotationPipeline,
+    print_annotation_plan,
 )
 from gain.annotation.processing_pipeline import (
     Annotation,
@@ -450,6 +451,13 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         description="Annotate VCF",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    parser.add_argument(
+        "-n", "--dry-run",
+        help="Print the annotation/reannotation plan and exit without "
+             "writing any output.",
+        action="store_true",
+        default=False,
+    )
     add_common_annotation_arguments(parser)
     return parser
 
@@ -584,6 +592,35 @@ def _add_tasks_tabixed(
         deps=[compress_task])
 
 
+def _print_annotation_plan(
+    args: dict[str, Any],
+    pipeline: AnnotationPipeline,
+    grr: Any,
+) -> None:
+    """Print the (re)annotation plan to stderr.
+
+    With ``--reannotate`` the previous pipeline is loaded and a
+    :class:`ReannotationPipeline` plan is rendered; otherwise the plain
+    all-ADDED annotation plan is rendered. Printed with ``print`` (not a
+    logger) so it is visible at the default WARNING log level.
+    """
+    if args.get("reannotate"):
+        pipeline_previous = load_pipeline_from_file_or_resource(
+            args["reannotate"], grr)
+        try:
+            reannotation = ReannotationPipeline(
+                pipeline, pipeline_previous,
+                full_reannotation=args["full_reannotation"])
+            reannotation.print_plan(reference=args["reannotate"])
+        finally:
+            # The ReannotationPipeline wrapper shares the live new-pipeline
+            # annotators, so close only the previous pipeline here, not the
+            # wrapper.
+            pipeline_previous.close()
+    else:
+        print_annotation_plan(pipeline)
+
+
 def cli(argv: list[str] | None = None) -> None:
     """Entry point for running the VCF annotation tool."""
     if not argv:
@@ -617,6 +654,14 @@ def cli(argv: list[str] | None = None) -> None:
         )
 
         cache_pipeline_resources(grr, pipeline)
+
+        if args.get("reannotate") or args.get("dry_run"):
+            _print_annotation_plan(args, pipeline, grr)
+
+        if args.get("dry_run"):
+            pipeline.close()
+            maybe_remove_work_dir(args, result=True)
+            return
 
         output_path = args["output"]
         region_size = args["region_size"]
