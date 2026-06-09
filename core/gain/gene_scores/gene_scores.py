@@ -73,14 +73,16 @@ class GeneScore(
         self.filename = self.config["filename"]
 
         compression = False
-        if self.filename.endswith(".gz"):
+        data_filename = self.filename
+        if data_filename.endswith(".gz"):
             compression = True
+            data_filename = data_filename[:-len(".gz")]
 
         with resource.open_raw_file(
                 self.filename, compression=compression) as file:
             sep = self.config.get("separator", None)
             if sep is None:
-                sep = "\t" if self.filename.endswith(".tsv") else ","
+                sep = "\t" if data_filename.endswith(".tsv") else ","
             self.df = pd.read_csv(file, sep=sep)
 
         gene_column = self.config.get("gene_column", "gene")
