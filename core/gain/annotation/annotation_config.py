@@ -23,6 +23,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Framework-injected runtime parameters that must NOT affect annotator
+# identity. ``work_dir`` is injected per-run by ``build_pipeline_annotator``
+# (an index-encoded, output-relative path), so it differs between the
+# previously-applied pipeline and the freshly-built one even when the
+# annotators are otherwise identical. Excluding it from equality/hash lets
+# reannotation recognise unchanged annotators and reuse their values
+# instead of recomputing everything (#111).
+NON_IDENTITY_PARAMS = frozenset({"work_dir"})
+
+
 class RawPreamble(TypedDict):
     summary: str
     description: str
@@ -188,7 +198,7 @@ class Attribute:
         return self._documentation
 
 
-@dataclass(init=False)
+@dataclass(init=False, eq=False)
 class AnnotatorInfo:
     """Defines annotator configuration."""
 
@@ -214,17 +224,41 @@ class AnnotatorInfo:
         else:
             self.resources = resources
 
-    annotator_id: str = field(compare=False, hash=None)
+    annotator_id: str
     type: str
     attributes: list[AttributeConfig]
     parameters: ParamsUsageMonitor
     documentation: str = ""
     resources: list[GenomicResource] = field(default_factory=list)
 
+    def _identity_params(self) -> tuple[tuple[str, Any], ...]:
+        """Parameters that participate in identity, sorted, work_dir excluded.
+
+        ``NON_IDENTITY_PARAMS`` (e.g. the framework-injected ``work_dir``) are
+        dropped so old/new annotator infos compare equal for reannotation
+        reuse (#111).
+        """
+        return tuple(sorted(
+            (k, v)
+            for k, v in self.parameters.as_dict().items()
+            if k not in NON_IDENTITY_PARAMS
+        ))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, AnnotatorInfo):
+            return NotImplemented
+        return (
+            self.type == other.type
+            and self.attributes == other.attributes
+            and self.documentation == other.documentation
+            and self.resources == other.resources
+            and self._identity_params() == other._identity_params()
+        )
+
     def __hash__(self) -> int:
         attrs_hash = "".join(str(hash(attr)) for attr in self.attributes)
         resources_hash = "".join(str(hash(res)) for res in self.resources)
-        params_hash = hash(str(self.parameters))
+        params_hash = hash(self._identity_params())
         return hash(f"{self.type}{attrs_hash}{resources_hash}{params_hash}")
 
     def to_dict(self) -> dict[str, Any]:
