@@ -599,7 +599,8 @@ gene_list=g1;gene_score1=10.1;gene_score2=20.2 GT     0/1 0/0 0/0
 
     info_keys = set(out_vcf.header.info.keys())
 
-    assert spy.call_count == 1
+    # built twice: once for the printed plan, once for the actual annotation
+    assert spy.call_count == 2
     assert info_keys == {  # pylint: disable=no-member
         "score", "worst_effect", "gene_list", "gene_score1",
     }
@@ -642,6 +643,65 @@ def test_annotate_tabular_reannotation_with_resource_id(
     assert out_file_header == [
         "chrom", "pos", "score", "worst_effect", "gene_score1",
     ]
+
+
+def test_annotate_vcf_reannotation_with_resource_id(
+    tmp_path: pathlib.Path,
+    reannotation_grr: GenomicResourceRepo,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Passing a GRR resource id (not a filesystem path) as --reannotate
+    # must work for annotate_vcf too: the reannotation plan is printed to
+    # stderr (header + the four bucket labels) and the VCF output is still
+    # written. Parity with the annotate_tabular resource-id test above.
+    assert reannotation_grr is not None
+    in_content = textwrap.dedent("""
+        ##fileformat=VCFv4.2
+        ##INFO=<ID=score,Number=A,Type=Float,Description="">
+        ##INFO=<ID=worst_effect,Number=A,Type=String,Description="">
+        ##INFO=<ID=effect_details,Number=A,Type=String,Description="">
+        ##INFO=<ID=gene_effects,Number=A,Type=String,Description="">
+        ##INFO=<ID=gene_list,Number=A,Type=String,Description="">
+        ##INFO=<ID=gene_score1,Number=A,Type=String,Description="">
+        ##INFO=<ID=gene_score2,Number=A,Type=String,Description="">
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+        ##contig=<ID=foo>
+        #CHROM POS ID REF ALT QUAL FILTER \
+INFO                                                  \
+                                               FORMAT m1  d1  c1
+        foo    12  .  C   T   .    .      \
+score=0.1;worst_effect=splice-site;effect_details=bla;gene_effects=bla;\
+gene_list=g1;gene_score1=10.1;gene_score2=20.2 GT     0/1 0/0 0/0
+    """)
+
+    in_file = tmp_path / "in.vcf"
+    out_file = tmp_path / "out.vcf"
+    annotation_file_new = tmp_path / "reannotation_new.yaml"
+    grr_file = tmp_path / "grr.yaml"
+    work_dir = tmp_path / "work"
+
+    setup_vcf(in_file, in_content)
+
+    cli_vcf([
+        str(a) for a in [
+            in_file,
+            annotation_file_new,
+            "-o", out_file,
+            "-w", work_dir,
+            "--grr", grr_file,
+            "--reannotate", "reannotation_old_pipeline",
+            "-j", 1,
+        ]
+    ])
+
+    captured = capsys.readouterr()
+    assert "Reannotation plan" in captured.err
+    assert "COPIED" in captured.err
+    assert "ADDED" in captured.err
+    assert "COMPUTED" in captured.err
+    assert "DELETED" in captured.err
+    # the output VCF is still produced
+    assert out_file.exists()
 
 
 def test_annotate_vcf_reannotation_batch(
@@ -700,7 +760,163 @@ def test_annotate_vcf_reannotation_batch(
 
     info_keys = set(out_vcf.header.info.keys())
 
-    assert spy.call_count == 1
+    # built twice: once for the printed plan, once for the actual annotation
+    assert spy.call_count == 2
     assert info_keys == {  # pylint: disable=no-member
         "score", "worst_effect", "gene_list", "gene_score1",
     }
+
+
+def test_annotate_vcf_reannotation_prints_plan(
+    tmp_path: pathlib.Path,
+    reannotation_grr: GenomicResourceRepo,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The reannotation plan must always be printed to stderr on a
+    # reannotation run (visible at default verbosity), and the output
+    # VCF must still be produced.
+    assert reannotation_grr is not None
+    in_content = textwrap.dedent("""
+        ##fileformat=VCFv4.2
+        ##INFO=<ID=score,Number=A,Type=Float,Description="">
+        ##INFO=<ID=worst_effect,Number=A,Type=String,Description="">
+        ##INFO=<ID=effect_details,Number=A,Type=String,Description="">
+        ##INFO=<ID=gene_effects,Number=A,Type=String,Description="">
+        ##INFO=<ID=gene_list,Number=A,Type=String,Description="">
+        ##INFO=<ID=gene_score1,Number=A,Type=String,Description="">
+        ##INFO=<ID=gene_score2,Number=A,Type=String,Description="">
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+        ##contig=<ID=foo>
+        #CHROM POS ID REF ALT QUAL FILTER \
+INFO                                                  \
+                                               FORMAT m1  d1  c1
+        foo    12  .  C   T   .    .      \
+score=0.1;worst_effect=splice-site;effect_details=bla;gene_effects=bla;\
+gene_list=g1;gene_score1=10.1;gene_score2=20.2 GT     0/1 0/0 0/0
+    """)
+
+    in_file = tmp_path / "in.vcf"
+    out_file = tmp_path / "out.vcf"
+    annotation_file_old = tmp_path / "reannotation_old.yaml"
+    annotation_file_new = tmp_path / "reannotation_new.yaml"
+    grr_file = tmp_path / "grr.yaml"
+    work_dir = tmp_path / "work"
+
+    setup_vcf(in_file, in_content)
+
+    cli_vcf([
+        str(a) for a in [
+            in_file,
+            annotation_file_new,
+            "-o", out_file,
+            "-w", work_dir,
+            "--grr", grr_file,
+            "--reannotate", annotation_file_old,
+            "-j", 1,
+        ]
+    ])
+
+    captured = capsys.readouterr()
+    assert "Reannotation plan" in captured.err
+    assert "COPIED" in captured.err
+    assert "ADDED" in captured.err
+    assert "COMPUTED" in captured.err
+    assert "DELETED" in captured.err
+    # the output file is still produced and unaffected by the plan print
+    assert out_file.exists()
+
+
+def test_annotate_vcf_dry_run(
+    tmp_path: pathlib.Path,
+    reannotation_grr: GenomicResourceRepo,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # --dry-run prints the plan and exits without writing output.
+    assert reannotation_grr is not None
+    in_content = textwrap.dedent("""
+        ##fileformat=VCFv4.2
+        ##INFO=<ID=score,Number=A,Type=Float,Description="">
+        ##INFO=<ID=worst_effect,Number=A,Type=String,Description="">
+        ##INFO=<ID=effect_details,Number=A,Type=String,Description="">
+        ##INFO=<ID=gene_effects,Number=A,Type=String,Description="">
+        ##INFO=<ID=gene_list,Number=A,Type=String,Description="">
+        ##INFO=<ID=gene_score1,Number=A,Type=String,Description="">
+        ##INFO=<ID=gene_score2,Number=A,Type=String,Description="">
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+        ##contig=<ID=foo>
+        #CHROM POS ID REF ALT QUAL FILTER \
+INFO                                                  \
+                                               FORMAT m1  d1  c1
+        foo    12  .  C   T   .    .      \
+score=0.1;worst_effect=splice-site;effect_details=bla;gene_effects=bla;\
+gene_list=g1;gene_score1=10.1;gene_score2=20.2 GT     0/1 0/0 0/0
+    """)
+
+    in_file = tmp_path / "in.vcf"
+    out_file = tmp_path / "out.vcf"
+    annotation_file_old = tmp_path / "reannotation_old.yaml"
+    annotation_file_new = tmp_path / "reannotation_new.yaml"
+    grr_file = tmp_path / "grr.yaml"
+    work_dir = tmp_path / "work"
+
+    setup_vcf(in_file, in_content)
+
+    cli_vcf([
+        str(a) for a in [
+            in_file,
+            annotation_file_new,
+            "-o", out_file,
+            "-w", work_dir,
+            "--grr", grr_file,
+            "--reannotate", annotation_file_old,
+            "--dry-run",
+            "-j", 1,
+        ]
+    ])
+
+    captured = capsys.readouterr()
+    assert "Reannotation plan" in captured.err
+    # no output written
+    assert not out_file.exists()
+
+
+def test_annotate_vcf_dry_run_plain(
+    tmp_path: pathlib.Path,
+    reannotation_grr: GenomicResourceRepo,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # --dry-run without --reannotate prints the plain all-ADDED plan and exits.
+    assert reannotation_grr is not None
+    in_content = textwrap.dedent("""
+        ##fileformat=VCFv4.2
+        ##INFO=<ID=score,Number=A,Type=Float,Description="">
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+        ##contig=<ID=foo>
+        #CHROM POS ID REF ALT QUAL FILTER INFO FORMAT m1  d1  c1
+        foo    12  .  C   T   .    .      .    GT     0/1 0/0 0/0
+    """)
+
+    in_file = tmp_path / "in.vcf"
+    out_file = tmp_path / "out.vcf"
+    annotation_file_new = tmp_path / "reannotation_new.yaml"
+    grr_file = tmp_path / "grr.yaml"
+    work_dir = tmp_path / "work"
+
+    setup_vcf(in_file, in_content)
+
+    cli_vcf([
+        str(a) for a in [
+            in_file,
+            annotation_file_new,
+            "-o", out_file,
+            "-w", work_dir,
+            "--grr", grr_file,
+            "-n",
+            "-j", 1,
+        ]
+    ])
+
+    captured = capsys.readouterr()
+    assert "Annotation plan:" in captured.err
+    assert "ADDED" in captured.err
+    assert not out_file.exists()
