@@ -1,6 +1,8 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import gzip
 import json
 import logging
+import pathlib
 import textwrap
 
 import numpy as np
@@ -24,8 +26,47 @@ from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GenomicResourceRepo,
 )
-from gain.genomic_resources.testing import build_inmemory_test_repository
+from gain.genomic_resources.testing import (
+    build_filesystem_test_repository,
+    build_inmemory_test_repository,
+    setup_directories,
+)
 from gain.task_graph.graph import TaskDesc
+
+
+def test_gene_score_reads_gzipped_tsv(tmp_path: pathlib.Path) -> None:
+    # A gzipped TSV gene score (filename ending in .tsv.gz) must be parsed
+    # tab-separated; the .gz suffix must not defeat separator detection and
+    # collapse every column into one (which raised KeyError on the score id).
+    tsv = (
+        "gene\tpHaplo\tpTriplo\n"
+        "G1\t0.1\t0.9\n"
+        "G2\t0.2\t0.8\n"
+        "G3\t0.3\t0.7\n"
+    )
+    setup_directories(tmp_path, {
+        "GzScore": {
+            GR_CONF_FILE_NAME: textwrap.dedent("""
+                type: gene_score
+                filename: scores.tsv.gz
+                scores:
+                - id: pHaplo
+                  desc: haploinsufficiency
+                  histogram:
+                    type: number
+                    number_of_bins: 3
+                    x_log_scale: false
+                    y_log_scale: false
+            """),
+            "scores.tsv.gz": gzip.compress(tsv.encode()),
+        },
+    })
+    repo = build_filesystem_test_repository(tmp_path)
+    gene_score = build_gene_score_from_resource(repo.get_resource("GzScore"))
+
+    assert gene_score.get_all_scores() == ["pHaplo"]
+    assert gene_score.get_min("pHaplo") == 0.1
+    assert gene_score.get_max("pHaplo") == 0.3
 
 
 @pytest.fixture
