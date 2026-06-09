@@ -44,6 +44,7 @@ from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Attribute,
     ReannotationPipeline,
+    print_annotation_plan,
 )
 from gain.annotation.processing_pipeline import (
     Annotation,
@@ -696,6 +697,13 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-separator", "--out-sep", default=None,
         help="The column separator in the output")
+    parser.add_argument(
+        "-n", "--dry-run",
+        help="Print the annotation/reannotation plan and exit without "
+             "writing any output.",
+        action="store_true",
+        default=False,
+    )
 
     add_common_annotation_arguments(parser)
 
@@ -722,6 +730,35 @@ def _adjust_default_output_separator(args: dict[str, Any]) -> dict[str, Any]:
     if args["output_separator"] is None:
         args["output_separator"] = args["input_separator"]
     return args
+
+
+def _print_annotation_plan(
+    args: dict[str, Any],
+    pipeline: AnnotationPipeline,
+    grr: Any,
+) -> None:
+    """Print the (re)annotation plan to stderr.
+
+    With ``--reannotate`` the previous pipeline is loaded and a
+    :class:`ReannotationPipeline` plan is rendered; otherwise the plain
+    all-ADDED annotation plan is rendered. Printed with ``print`` (not a
+    logger) so it is visible at the default WARNING log level.
+    """
+    if args.get("reannotate"):
+        pipeline_previous = load_pipeline_from_file_or_resource(
+            args["reannotate"], grr)
+        try:
+            reannotation = ReannotationPipeline(
+                pipeline, pipeline_previous,
+                full_reannotation=args["full_reannotation"])
+            reannotation.print_plan(reference=args["reannotate"])
+        finally:
+            # The ReannotationPipeline wrapper shares the live new-pipeline
+            # annotators, so close only the previous pipeline here, not the
+            # wrapper.
+            pipeline_previous.close()
+    else:
+        print_annotation_plan(pipeline)
 
 
 def cli(argv: list[str] | None = None) -> None:
@@ -762,6 +799,16 @@ def cli(argv: list[str] | None = None) -> None:
         ref_genome_id = ref_genome.resource_id if ref_genome else None
 
         cache_pipeline_resources(grr, pipeline)
+
+        if args.get("reannotate") or args.get("dry_run"):
+            _print_annotation_plan(args, pipeline, grr)
+
+        if args.get("dry_run"):
+            pipeline.close()
+            if ref_genome is not None:
+                ref_genome.close()
+            maybe_remove_work_dir(args, result=True)
+            return
 
         args["columns_args"] = {
             f"col_{col}": args[f"col_{col}"]

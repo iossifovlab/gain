@@ -5,11 +5,12 @@ from __future__ import annotations
 import abc
 import itertools
 import logging
+import sys
 import traceback
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import TracebackType
-from typing import Any
+from typing import IO, Any
 
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
@@ -60,12 +61,20 @@ def _get_dependencies_for(
     return result
 
 
-def _get_rerun_annotators(
+def _get_rerun_annotators_with_triggers(
     pipeline: AnnotationPipeline,
     annotators_new: Iterable[AnnotatorInfo],
-) -> set[AnnotatorInfo]:
-    """Get all annotators that must be re-run for reannotation."""
-    result: set[AnnotatorInfo] = set()
+) -> dict[AnnotatorInfo, tuple[AnnotatorInfo, Attribute]]:
+    """Map each rerun annotator to the new annotator that triggered it.
+
+    An annotator is forced to rerun either because it consumes a new
+    upstream attribute, or because it produces an internal attribute that a
+    new (or rerun) downstream annotator depends on. The value is the *new*
+    annotator at the root of the trigger together with the specific
+    attribute that the dependent actually consumed.
+    """
+    annotators_new = list(annotators_new)
+    result: dict[AnnotatorInfo, tuple[AnnotatorInfo, Attribute]] = {}
 
     dependency_graph = _build_dependency_graph(pipeline)
 
@@ -73,14 +82,23 @@ def _get_rerun_annotators(
         if dependent in annotators_new:
             for dependency, dep_attr in dependencies:
                 if dep_attr.internal:
-                    result.add(dependency)
+                    result.setdefault(dependency, (dependent, dep_attr))
         else:
-            for dependency, _ in dependencies:
+            for dependency, dep_attr in dependencies:
                 if dependency in annotators_new:
-                    result.add(dependent)
+                    result.setdefault(dependent, (dependency, dep_attr))
                     break
 
     return result
+
+
+def _get_rerun_annotators(
+    pipeline: AnnotationPipeline,
+    annotators_new: Iterable[AnnotatorInfo],
+) -> set[AnnotatorInfo]:
+    """Get all annotators that must be re-run for reannotation."""
+    return set(
+        _get_rerun_annotators_with_triggers(pipeline, annotators_new))
 
 
 def _get_deleted_attributes(
@@ -107,6 +125,110 @@ def _get_deleted_attributes(
                 if not attr.internal
             )
     return result
+
+
+FULL_REANNOTATION_REASON = "forced by --full-reannotation"
+
+
+@dataclass
+class PlanEntry:
+    """A single attribute entry in a reannotation/annotation plan."""
+
+    name: str
+    internal: bool
+    annotator_id: str
+    reason: str | None = None
+
+
+@dataclass
+class ReannotationPlan:
+    """Structured description of how a reannotation reuses/recomputes data.
+
+    Each bucket is a list of :class:`PlanEntry`:
+
+    - ``copied``: attributes reused unchanged from the input;
+    - ``added``: attributes of annotators new to the pipeline;
+    - ``computed``: attributes of unchanged annotators forced to recompute
+      (``reason`` records the triggering dependency);
+    - ``deleted``: attributes present in the previous pipeline but no longer
+      produced.
+    """
+
+    copied: list[PlanEntry] = field(default_factory=list)
+    added: list[PlanEntry] = field(default_factory=list)
+    computed: list[PlanEntry] = field(default_factory=list)
+    deleted: list[PlanEntry] = field(default_factory=list)
+
+
+def _attr_label(entry: PlanEntry) -> str:
+    return f"{entry.name} (internal)" if entry.internal else entry.name
+
+
+def _format_plan_line(
+    label: str, entries: list[PlanEntry], *, with_reason: bool = False,
+) -> str:
+    names = ", ".join(_attr_label(entry) for entry in entries)
+    suffix = ""
+    if entries:
+        annotator_ids = {entry.annotator_id for entry in entries}
+        if with_reason and len(annotator_ids) == 1:
+            annotator_id = next(iter(annotator_ids))
+            reason = entries[0].reason
+            inner = annotator_id
+            if reason:
+                inner = f"{annotator_id} <- {reason}" \
+                    if "depends on" in (reason or "") else \
+                    f"{annotator_id} {reason}"
+            suffix = f"   [{inner}]"
+        elif with_reason:
+            suffix = "   " + " ".join(
+                f"[{entry.annotator_id}"
+                + (f" {entry.reason}]" if entry.reason else "]")
+                for entry in entries
+            )
+    count = len(entries)
+    body = f": {names}" if names else ":"
+    return f"  {label:<8} ({count}){body}{suffix}"
+
+
+def _render_plan(
+    plan: ReannotationPlan,
+    header: str,
+) -> str:
+    lines = [
+        header,
+        _format_plan_line("COPIED", plan.copied),
+        _format_plan_line("ADDED", plan.added, with_reason=True),
+        _format_plan_line("COMPUTED", plan.computed, with_reason=True),
+        _format_plan_line("DELETED", plan.deleted),
+    ]
+    return "\n".join(lines)
+
+
+def format_annotation_plan(
+    pipeline: AnnotationPipeline,
+) -> str:
+    """Render a plain annotation pipeline as an all-ADDED plan."""
+    plan = ReannotationPlan(
+        added=[
+            PlanEntry(
+                name=attr.name,
+                internal=bool(attr.internal),
+                annotator_id=annotator.get_info().annotator_id,
+            )
+            for annotator in pipeline.annotators
+            for attr in annotator.attributes
+        ],
+    )
+    return _render_plan(plan, "Annotation plan:")
+
+
+def print_annotation_plan(
+    pipeline: AnnotationPipeline,
+    file: IO[str] | None = None,
+) -> None:
+    """Print a plain annotation pipeline plan."""
+    print(format_annotation_plan(pipeline), file=file or sys.stderr)
 
 
 @dataclass
@@ -343,8 +465,15 @@ class ReannotationPipeline(AnnotationPipeline):
         super().__init__(pipeline_new.repository)
 
         self.pipeline_new = pipeline_new
+        self.pipeline_previous = pipeline_previous
+        self.full_reannotation = full_reannotation
 
         self.annotators: list[Annotator] = []
+
+        self.infos_new: set[AnnotatorInfo] = set()
+        self.infos_rerun: set[AnnotatorInfo] = set()
+        self.rerun_triggers: \
+            dict[AnnotatorInfo, tuple[AnnotatorInfo, Attribute]] = {}
 
         if full_reannotation:
             # Recompute everything, reuse nothing: every new-pipeline
@@ -356,24 +485,96 @@ class ReannotationPipeline(AnnotationPipeline):
             infos_current = pipeline_new.get_info()
             infos_previous = pipeline_previous.get_info()
 
-            infos_new: set[AnnotatorInfo] = {
+            self.infos_new = {
                 i for i in infos_current
                 if i not in infos_previous
             }
 
-            infos_rerun = _get_rerun_annotators(pipeline_new, infos_new)
+            self.rerun_triggers = _get_rerun_annotators_with_triggers(
+                pipeline_new, self.infos_new)
+            self.infos_rerun = set(self.rerun_triggers)
 
             for annotator in pipeline_new.annotators:
                 info = annotator.get_info()
-                if info in infos_new or info in infos_rerun:
+                if info in self.infos_new or info in self.infos_rerun:
                     self.annotators.append(annotator)
 
         self.deleted_attributes = _get_deleted_attributes(
             pipeline_new, pipeline_previous,
             full_reannotation=full_reannotation)
 
+        self.plan = self._build_plan()
+
     def get_attributes(self) -> list[Attribute]:
         return self.pipeline_new.get_attributes()
+
+    @staticmethod
+    def _trigger_description(consumed: Attribute) -> str:
+        """Human-readable name of the attribute that forced a rerun.
+
+        Names the specific new attribute the dependent actually consumed.
+        """
+        return f"depends on new {consumed.name}"
+
+    def _build_plan(self) -> ReannotationPlan:
+        plan = ReannotationPlan()
+
+        # DELETED: derive the producing annotator from the previous pipeline.
+        # Internal attributes appear here only under full reannotation; the
+        # incremental path filters them out. This asymmetry is intentional
+        # and mirrors ``_get_deleted_attributes``.
+        deleted_set = set(self.deleted_attributes)
+        for annotator in self.pipeline_previous.annotators:
+            annotator_id = annotator.get_info().annotator_id
+            for attr in annotator.attributes:
+                if attr.name in deleted_set:
+                    plan.deleted.append(PlanEntry(
+                        name=attr.name,
+                        internal=bool(attr.internal),
+                        annotator_id=annotator_id,
+                    ))
+
+        for annotator in self.pipeline_new.annotators:
+            info = annotator.get_info()
+            annotator_id = info.annotator_id
+            for attr in annotator.attributes:
+                name = attr.name
+                internal = bool(attr.internal)
+                if self.full_reannotation:
+                    plan.computed.append(PlanEntry(
+                        name, internal, annotator_id,
+                        reason=FULL_REANNOTATION_REASON))
+                elif info in self.infos_new:
+                    plan.added.append(PlanEntry(
+                        name, internal, annotator_id))
+                elif info in self.infos_rerun:
+                    _, consumed = self.rerun_triggers[info]
+                    plan.computed.append(PlanEntry(
+                        name, internal, annotator_id,
+                        reason=self._trigger_description(consumed)))
+                else:
+                    plan.copied.append(PlanEntry(
+                        name, internal, annotator_id))
+
+        return plan
+
+    def format_plan(self, reference: str | None = None) -> str:
+        """Render the reannotation plan as human-readable text."""
+        prefix = "Reannotation plan"
+        if self.full_reannotation:
+            prefix += " [full reannotation]"
+        if reference is not None:
+            prefix += f" (vs {reference})"
+        header = f"{prefix}:"
+        return _render_plan(self.plan, header)
+
+    def print_plan(
+        self,
+        reference: str | None = None,
+        file: IO[str] | None = None,
+    ) -> None:
+        """Print the reannotation plan."""
+        print(self.format_plan(reference), file=file or sys.stderr)
 
 
 class AnnotatorDecorator(Annotator):
