@@ -5,8 +5,16 @@ import textwrap
 
 import pysam
 import pytest
-from gain.annotation.annotate_tabular import cli as cli_tabular
+from gain.annotation.annotate_tabular import (
+    _annotate_tabular_helper,
+    cli as cli_tabular,
+)
 from gain.annotation.annotate_vcf import cli as cli_vcf
+from gain.annotation.annotation_factory import load_pipeline_from_yaml
+from gain.annotation.annotation_pipeline import ReannotationPipeline
+from gain.genomic_resources.reference_genome import (
+    build_reference_genome_from_resource_id,
+)
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
@@ -344,6 +352,78 @@ def test_annotate_tabular_reannotation_batched(
     assert spy.call_count == 1
     assert out_file_header == out_expected_header
     assert len(lines) == 4
+
+
+def test_annotate_tabular_full_reannotation_identical_pipeline(
+    tmp_path: pathlib.Path,
+    reannotation_grr: GenomicResourceRepo,
+) -> None:
+    # Regression for #108: with --full-reannotation over a previously
+    # annotated input where the old and new pipelines are IDENTICAL, every
+    # output column must be present AND recomputed (none dropped).
+    #
+    # The two pipelines are built from the same config with the same
+    # work_dir, so their annotator infos compare equal -- the worst case
+    # in which no annotator is "new" or "rerun". Under the bug, that left
+    # ReannotationPipeline.annotators empty while every prior attribute was
+    # marked deleted, so the output ended up with no annotation columns.
+    in_content = (
+        "chrom\tpos\tscore\tworst_effect\tworst_effect_genes\tgene_effects"
+        "\teffect_details\tgene_score1\tgene_score2\n"
+        "foo\t4\t9.9\tbla\tbla\tbla\tbla\t9.9\t9.9\n"
+    )
+    out_expected_header = [
+        "chrom", "pos", "score", "worst_effect", "worst_effect_genes",
+        "gene_effects", "effect_details", "gene_score1", "gene_score2",
+    ]
+    in_file = tmp_path / "in.txt"
+    out_file = tmp_path / "out.txt"
+    work_dir = tmp_path / "work"
+
+    setup_denovo(in_file, in_content)
+
+    config = (tmp_path / "reannotation_old.yaml").read_text()
+
+    # Built directly (not via cli()) with a shared work_dir on purpose: the
+    # real CLI injects a differing per-run work_dir into each pipeline, so
+    # old/new annotator infos never compare equal and the equal-infos worst
+    # case can't be reproduced through CLI arg parsing.
+    pipeline_new = load_pipeline_from_yaml(
+        config, reannotation_grr, work_dir=work_dir)
+    pipeline_previous = load_pipeline_from_yaml(
+        config, reannotation_grr, work_dir=work_dir)
+    assert pipeline_new.get_info() == pipeline_previous.get_info()
+
+    reannotation_pipeline = ReannotationPipeline(
+        pipeline_new, pipeline_previous, full_reannotation=True)
+
+    ref_genome = build_reference_genome_from_resource_id(
+        "foobar_genome", reannotation_grr).open()
+
+    args = {
+        "columns_args": {},
+        "input_separator": "\t",
+        "output_separator": "\t",
+    }
+    _annotate_tabular_helper(
+        input_path=str(in_file),
+        pipeline=reannotation_pipeline,
+        output_path=str(out_file),
+        args=args,
+        reference_genome=ref_genome,
+        attributes_to_delete=reannotation_pipeline.deleted_attributes,
+    )
+
+    with open(out_file, "rt", encoding="utf8") as f:
+        out_file_header = f.readline().strip().split("\t")
+        data_line = f.readline().strip().split("\t")
+
+    # no output column dropped
+    assert out_file_header == out_expected_header
+    # the score column was recomputed from the GRR (0.1), not carried over
+    # from the input value (9.9)
+    score_idx = out_file_header.index("score")
+    assert data_line[score_idx] == "0.1"
 
 
 def test_annotate_vcf_reannotation(

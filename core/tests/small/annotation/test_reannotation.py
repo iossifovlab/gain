@@ -329,6 +329,30 @@ def test_get_deleted_attributes_full_reannotation() -> None:
     ) == ["attr_1", "attr_2"]
 
 
+def test_full_reannotation_includes_all_new_annotators() -> None:
+    # full reannotation must recompute every annotator of the new pipeline,
+    # even ones unchanged between old and new (the regression in #108)
+    attribute_1 = \
+        Attribute("attr_1", "attr_1", internal=False, parameters={})
+    dummy_annotator_1 = DummyAnnotator([attribute_1])
+
+    attribute_2 = \
+        Attribute("attr_2", "attr_2", internal=False, parameters={})
+    dummy_annotator_2 = DummyAnnotator([attribute_2])
+
+    old_pipeline = _make_pipeline_with(
+        [dummy_annotator_1, dummy_annotator_2])
+    new_pipeline = _make_pipeline_with(
+        [dummy_annotator_1, dummy_annotator_2])
+
+    pipeline = ReannotationPipeline(
+        new_pipeline, old_pipeline, full_reannotation=True)
+
+    # every annotator of the new pipeline must be present, even though
+    # the old and new pipelines are identical (worst case)
+    assert pipeline.annotators == new_pipeline.annotators
+
+
 def test_adjust_for_reannotation() -> None:
     attribute_1 = \
         Attribute("attr_1", "attr_1", internal=False, parameters={})
