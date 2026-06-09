@@ -7,7 +7,6 @@ from typing import Any, ClassVar
 
 from gain.gene_scores.gene_scores import (
     GeneScore,
-    GeneScoresDb,
     build_gene_score_from_resource,
 )
 from gain.genomic_resources import GenomicResource
@@ -96,13 +95,9 @@ class GeneScoreImplementation(
                 mode="wt",
             ) as outfile:
                 outfile.write(histogram.serialize())
-            scores_db = GeneScoresDb([gene_score])
-            score_desc = scores_db.get_score_desc(score_id)
-            small_values_desc = None
-            large_values_desc = None
-            if score_desc is not None:
-                small_values_desc = score_desc.small_values_desc
-                large_values_desc = score_desc.large_values_desc
+            score_def = gene_score.score_definitions[score_id]
+            small_values_desc = score_def.small_values_desc
+            large_values_desc = score_def.large_values_desc
             plot_histogram(
                 resource,
                 gene_score.get_histogram_image_filename(score_id),
