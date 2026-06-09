@@ -196,7 +196,7 @@ Custom pipelines can also reduce the amount of data that must be cached. A broad
 
     grr_cache_repo custom_pipeline.yaml
 
-After the necessary resources have been cached, users can run large annotation jobs without waiting for GAIn to download each resource during the annotation process. To test this workflow, download the example input file (:download:`50k_variants.tsv.gz <files/50k_variants.tsv.gz>`), which contains 50,000 variants.
+After the necessary resources have been cached, users can run large annotation jobs without waiting for GAIn to download each resource during the annotation process. To test this workflow, download the example input file (:download:`50k_variants.tsv.gz <files/50k_variants.tsv.gz>`), which contains 50,000 variants randomly selected from approximately 1.4 million variants observed by whole-exome sequencing in the SSC project.
 
 
 Depending on which pipeline you cached above, you can now run the annotation normally:
@@ -261,11 +261,6 @@ GAIn can also use a configured Dask cluster that creates workers on a larger com
     annotate_tabular SSC_WES_variants_select.sorted.tsv.bgz pipeline/hg38_clinical_annotation -r 30_000_000 -N my_sge_cluster -j 100
 
 This runs the annotation across up to 100 workers on the configured cluster. See the “Configuring parallelization”[] and “Configuring Dask clusters”[] sections for more details on region splitting, worker configuration, and cluster setup.
-
-chr3,1682142,G,A
-chr4,39869140,T,A
-chr1,8185860,C,T
-chr2,39117277,C,G
 
 
 Annotating VCF input
@@ -413,9 +408,18 @@ Download the Collins rCNV dosage sensitivity score table, uncompress it, and ins
     gunzip Collins_rCNV_2022.dosage_sensitivity_scores.tsv.gz
     head -n 5 Collins_rCNV_2022.dosage_sensitivity_scores.tsv
 
-The first command downloads the compressed table. The second command uncompresses it, replacing the ``.tsv.gz`` file with ``Collins_rCNV_2022.dosage_sensitivity_scores.tsv``. The final command displays the first five lines so that we can inspect the available columns before adding the resource file to a local GRR.
+The first command downloads the compressed table. The second command uncompresses it, replacing the ``.tsv.gz`` file with ``Collins_rCNV_2022.dosage_sensitivity_scores.tsv``. The final command displays the first five lines (shown below) so that we can inspect the available columns before adding the resource file to a local GRR.
 
-To make this file available as a GAIn resource, place it in a folder together with a :download:`genomic_resource.yaml <files/genomic_resource.yaml>` file:
+.. csv-table::
+    :header-rows: 1
+
+    #gene,pHaplo,pTriplo
+    CACNA1C,0.99898184581082,1
+    ZNF462,1,0.987995995573708
+    CHD8,0.991649600531021,0.999999986508108
+    GRIN2B,0.996808517025246,0.999999958700358
+
+The file contains a gene column with the header #gene and two gene scores, pHaplo and pTriplo, for each gene. To make this file available as a GAIn resource, place it in a folder together with a :download:`genomic_resource.yaml <files/genomic_resource.yaml>` file:
 
 .. code-block:: text
 
