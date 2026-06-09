@@ -12,7 +12,11 @@ from gain.genomic_resources.histogram import (
     CategoricalHistogram,
     NumberHistogram,
 )
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME, GenomicResource
+from gain.genomic_resources.repository import (
+    GR_CONF_FILE_NAME,
+    GR_SQLITE_META_FILE_NAME,
+    GenomicResource,
+)
 from gain.genomic_resources.resource_implementation import (
     GenomicResourceImplementation,
     ResourceStatistics,
@@ -561,3 +565,49 @@ def test_stats_categorical(tmp_path: pathlib.Path) -> None:
     assert stat_hist.display_values["value1"] == 2
     assert stat_hist.display_values["value2"] == 2
     assert stat_hist.display_values["value3"] == 1
+
+
+def test_contents_db_not_rebuilt_when_contents_unchanged(
+    tmp_path: pathlib.Path, register_test_implementation: None,
+) -> None:
+    setup_directories(tmp_path, {
+        "one": {
+            GR_CONF_FILE_NAME: "type: test_resource\n",
+        },
+    })
+    build_filesystem_test_repository(tmp_path)
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    db_path = tmp_path / GR_SQLITE_META_FILE_NAME
+    assert db_path.exists()
+    first_bytes = db_path.read_bytes()
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert db_path.read_bytes() == first_bytes
+
+
+def test_contents_db_rebuilt_when_contents_change(
+    tmp_path: pathlib.Path, register_test_implementation: None,
+) -> None:
+    setup_directories(tmp_path, {
+        "one": {
+            GR_CONF_FILE_NAME: "type: test_resource\n",
+        },
+    })
+    build_filesystem_test_repository(tmp_path)
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    db_path = tmp_path / GR_SQLITE_META_FILE_NAME
+    first_bytes = db_path.read_bytes()
+
+    setup_directories(tmp_path, {
+        "two": {
+            GR_CONF_FILE_NAME: "type: test_resource\n",
+        },
+    })
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert db_path.read_bytes() != first_bytes

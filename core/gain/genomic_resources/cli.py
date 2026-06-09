@@ -443,6 +443,26 @@ def _create_contents_db(
     sqlite_filepath = os.path.join(proto.root_path, ".CONTENTS.sqlite3")
     gzip_sqlite_filepath = os.path.join(
         proto.root_path, GR_SQLITE_META_FILE_NAME)
+
+    current_md5 = proto.md5_contents()
+    if os.path.exists(gzip_sqlite_filepath):
+        try:
+            raw = gzip.decompress(
+                pathlib.Path(gzip_sqlite_filepath).read_bytes())
+            conn = apsw.Connection(":memory:")
+            conn.deserialize("main", raw)
+            row = conn.execute(
+                "SELECT value FROM contents_metadata "
+                "WHERE key = 'contents_md5'",
+            ).fetchone()
+            if row and row[0] == current_md5:
+                return
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "Could not read existing contents db; rebuilding",
+                exc_info=True,
+            )
+
     if os.path.exists(sqlite_filepath):
         os.remove(sqlite_filepath)
     if os.path.exists(gzip_sqlite_filepath):
@@ -471,7 +491,7 @@ def _create_contents_db(
         )
         conn.execute(
             "INSERT INTO contents_metadata (key, value) VALUES (?, ?)",
-            ("contents_md5", proto.md5_contents()),
+            ("contents_md5", current_md5),
         )
 
         if columns:
