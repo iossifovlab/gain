@@ -28,6 +28,7 @@ from gain.genomic_resources.testing import (
 )
 import pytest_mock
 import gain.annotation.annotate_tabular
+import gain.annotation.annotate_utils
 import gain.annotation.annotate_vcf
 from gain.testing.foobar_import import foobar_genes, foobar_genome
 
@@ -278,7 +279,7 @@ def test_annotate_tabular_reannotation(
 
     setup_denovo(in_file, in_content)
 
-    spy = mocker.spy(gain.annotation.annotate_tabular,
+    spy = mocker.spy(gain.annotation.annotate_utils,
                      "ReannotationPipeline")
 
     cli_tabular([
@@ -321,7 +322,7 @@ def test_annotate_tabular_reannotation_internal(
 
     setup_denovo(in_file, in_content)
 
-    spy = mocker.spy(gain.annotation.annotate_tabular,
+    spy = mocker.spy(gain.annotation.annotate_utils,
                      "ReannotationPipeline")
 
     cli_tabular([
@@ -366,7 +367,7 @@ def test_annotate_tabular_reannotation_batched(
 
     setup_denovo(in_file, in_content)
 
-    spy = mocker.spy(gain.annotation.annotate_tabular,
+    spy = mocker.spy(gain.annotation.annotate_utils,
                      "ReannotationPipeline")
 
     cli_tabular([
@@ -621,7 +622,7 @@ gene_list=g1;gene_score1=10.1;gene_score2=20.2 GT     0/1 0/0 0/0
 
     setup_vcf(in_file, in_content)
 
-    spy = mocker.spy(gain.annotation.annotate_vcf,
+    spy = mocker.spy(gain.annotation.annotate_utils,
                      "ReannotationPipeline")
 
     cli_vcf([
@@ -663,7 +664,7 @@ def test_annotate_tabular_reannotation_with_resource_id(
 
     setup_denovo(in_file, in_content)
 
-    spy = mocker.spy(gain.annotation.annotate_tabular, "ReannotationPipeline")
+    spy = mocker.spy(gain.annotation.annotate_utils, "ReannotationPipeline")
 
     cli_tabular([
         str(a) for a in [
@@ -787,7 +788,7 @@ def test_annotate_vcf_reannotation_batch(
 
     setup_vcf(in_file, in_content)
 
-    spy = mocker.spy(gain.annotation.annotate_vcf,
+    spy = mocker.spy(gain.annotation.annotate_utils,
                      "ReannotationPipeline")
 
     cli_vcf([

@@ -31,10 +31,12 @@ from gain.annotation.annotate_utils import (
     build_cli_genomic_context,
     cache_pipeline_resources,
     check_resource_locality,
+    emit_annotation_plan,
     get_grr_from_context,
     get_pipeline_from_context,
     handle_default_args,
     maybe_remove_work_dir,
+    maybe_wrap_reannotation,
     produce_partfile_paths,
     produce_regions,
     stringify,
@@ -46,12 +48,10 @@ from gain.annotation.annotation_config import (
 )
 from gain.annotation.annotation_factory import (
     build_annotation_pipeline,
-    load_pipeline_from_file_or_resource,
 )
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     ReannotationPipeline,
-    print_annotation_plan,
 )
 from gain.annotation.processing_pipeline import (
     Annotation,
@@ -390,24 +390,16 @@ def _annotate_vcf(
     build_cli_genomic_context(args)
     grr = build_genomic_resource_repository(definition=grr_definition)
 
-    pipeline_previous = None
-    if args["reannotate"]:
-        pipeline_previous = load_pipeline_from_file_or_resource(
-            args["reannotate"], grr)
-
     pipeline = build_annotation_pipeline(
         pipeline_config, grr,
         allow_repeated_attributes=args["allow_repeated_attributes"],
         work_dir=Path(args["work_dir"]),
     )
 
-    attributes_to_delete = []
-
-    if pipeline_previous:
-        pipeline = ReannotationPipeline(
-            pipeline, pipeline_previous,
-            full_reannotation=args["full_reannotation"])
-        attributes_to_delete = pipeline.deleted_attributes
+    pipeline = maybe_wrap_reannotation(pipeline, args, grr)
+    attributes_to_delete = (
+        pipeline.deleted_attributes
+        if isinstance(pipeline, ReannotationPipeline) else [])
 
     _annotate_vcf_helper(
         args["input"],
@@ -592,35 +584,6 @@ def _add_tasks_tabixed(
         deps=[compress_task])
 
 
-def _print_annotation_plan(
-    args: dict[str, Any],
-    pipeline: AnnotationPipeline,
-    grr: Any,
-) -> None:
-    """Print the (re)annotation plan to stderr.
-
-    With ``--reannotate`` the previous pipeline is loaded and a
-    :class:`ReannotationPipeline` plan is rendered; otherwise the plain
-    all-ADDED annotation plan is rendered. Printed with ``print`` (not a
-    logger) so it is visible at the default WARNING log level.
-    """
-    if args.get("reannotate"):
-        pipeline_previous = load_pipeline_from_file_or_resource(
-            args["reannotate"], grr)
-        try:
-            reannotation = ReannotationPipeline(
-                pipeline, pipeline_previous,
-                full_reannotation=args["full_reannotation"])
-            reannotation.print_plan(reference=args["reannotate"])
-        finally:
-            # The ReannotationPipeline wrapper shares the live new-pipeline
-            # annotators, so close only the previous pipeline here, not the
-            # wrapper.
-            pipeline_previous.close()
-    else:
-        print_annotation_plan(pipeline)
-
-
 def cli(argv: list[str] | None = None) -> None:
     """Entry point for running the VCF annotation tool."""
     if not argv:
@@ -656,7 +619,7 @@ def cli(argv: list[str] | None = None) -> None:
         cache_pipeline_resources(grr, pipeline)
 
         if args.get("reannotate") or args.get("dry_run"):
-            _print_annotation_plan(args, pipeline, grr)
+            emit_annotation_plan(args, pipeline, grr)
 
         if args.get("dry_run"):
             pipeline.close()
