@@ -273,6 +273,54 @@ def test_create_statistics_build_tasks_multiple_scores() -> None:
     assert len(tasks) == 1
 
 
+def test_build_histograms_no_spurious_load_errors(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Building histograms from scratch (no pre-existing statistics files)
+    # must not attempt to load not-yet-written histogram files. Such a load
+    # logs a spurious "unable to load histogram file" ERROR with a traceback.
+    import logging
+    setup_directories(tmp_path, {
+        "MultiScore": {
+            GR_CONF_FILE_NAME: textwrap.dedent("""
+                type: gene_score
+                filename: scores.csv
+                scores:
+                - id: alpha
+                  desc: first score
+                  histogram:
+                    type: number
+                    number_of_bins: 3
+                    x_log_scale: false
+                    y_log_scale: false
+                - id: beta
+                  desc: second score
+                  histogram:
+                    type: number
+                    number_of_bins: 3
+                    x_log_scale: false
+                    y_log_scale: false
+            """),
+            "scores.csv": textwrap.dedent("""
+                gene,alpha,beta
+                G1,1,10
+                G2,2,20
+                G3,3,30
+            """),
+        },
+    })
+    repo = build_filesystem_test_repository(tmp_path)
+    res = repo.get_resource("MultiScore")
+
+    with caplog.at_level(
+        logging.ERROR, logger="gain.genomic_resources.histogram",
+    ):
+        GeneScoreImplementation._build_histograms(res)
+
+    assert "unable to load histogram file" not in caplog.text
+
+
 # _calc_histogram tests (number and categorical)
 
 def test_calc_histogram_number(inmemory_repo: GenomicResourceRepo) -> None:
