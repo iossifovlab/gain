@@ -5,15 +5,22 @@ import shutil
 import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 from pysam import TabixFile
 
+from gain.annotation.annotation_factory import (
+    load_pipeline_from_file_or_resource,
+)
 from gain.annotation.annotation_genomic_context_cli import (
     get_context_pipeline,
 )
-from gain.annotation.annotation_pipeline import AnnotationPipeline
+from gain.annotation.annotation_pipeline import (
+    AnnotationPipeline,
+    ReannotationPipeline,
+    print_annotation_plan,
+)
 from gain.genomic_resources.cached_repository import (
     CachingProtocol,
     cache_resources,
@@ -225,6 +232,57 @@ def cache_pipeline_resources(
         for res in annotator.resources
     }
     cache_resources(grr, resource_ids, workers=workers, progress=progress)
+
+
+def maybe_wrap_reannotation(
+    pipeline: AnnotationPipeline,
+    args: dict[str, Any],
+    grr: GenomicResourceRepo,
+) -> AnnotationPipeline:
+    """Wrap ``pipeline`` in a :class:`ReannotationPipeline` if reannotating.
+
+    When ``--reannotate`` is not given the pipeline is returned unchanged.
+    Otherwise the previous pipeline is loaded, the new pipeline is wrapped in a
+    :class:`ReannotationPipeline`, and the previous pipeline is closed -- the
+    wrapper reuses the live new-pipeline annotators and never touches the
+    previous pipeline after construction.
+    """
+    if not args.get("reannotate"):
+        return pipeline
+    pipeline_previous = load_pipeline_from_file_or_resource(
+        args["reannotate"], grr)
+    try:
+        return ReannotationPipeline(
+            pipeline, pipeline_previous,
+            full_reannotation=args["full_reannotation"])
+    finally:
+        # The ReannotationPipeline wrapper shares the live new-pipeline
+        # annotators, so close only the previous pipeline here, not the
+        # wrapper.
+        pipeline_previous.close()
+
+
+def emit_annotation_plan(
+    args: dict[str, Any],
+    pipeline: AnnotationPipeline,
+    grr: GenomicResourceRepo,
+) -> None:
+    """Print the (re)annotation plan to stderr.
+
+    With ``--reannotate`` the previous pipeline is loaded and a
+    :class:`ReannotationPipeline` plan is rendered; otherwise the plain
+    all-ADDED annotation plan is rendered. Printed with ``print`` (not a
+    logger) so it is visible at the default WARNING log level.
+    """
+    if args.get("reannotate"):
+        # When ``reannotate`` is set, ``maybe_wrap_reannotation`` always
+        # returns a ``ReannotationPipeline``.
+        reannotation = cast(
+            "ReannotationPipeline",
+            maybe_wrap_reannotation(pipeline, args, grr))
+        reannotation.print_plan(reference=args["reannotate"])
+    else:
+        print_annotation_plan(pipeline)
 
 
 def handle_default_args(args: dict[str, Any]) -> dict[str, Any]:
