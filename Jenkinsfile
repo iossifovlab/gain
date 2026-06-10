@@ -521,6 +521,56 @@ pipeline {
                     }
                 }
 
+                stage('Core conda (docs-only)') {
+                    when { environment name: 'DOCS_ONLY', value: 'true' }
+                    // Invariant companion to 'Core wheel (docs-only)':
+                    // every green iossifovlab/gain/master build must also
+                    // carry dist/conda/gain-core-*.conda. gpf-docs-e2e
+                    // (iossifovlab/gpf#916) copyArtifacts the gain-core
+                    // conda from gain/master's lastSuccessful build; a
+                    // docs-only commit skips 'Conda builder image' +
+                    // 'Conda packages', so without this the build is a
+                    // conda-less green and breaks gpf-docs-e2e until a
+                    // non-docs gain build supersedes it (iossifovlab/gain#116).
+                    // Build just gain-core (mirrors the docs-only wheel's
+                    // scope); the wheel built above supplies VCS_VERSION.
+                    // The conda-builder image build is a near-instant cache
+                    // hit shared with the non-docs 'Conda builder image'
+                    // stage; re-issued here so the stage is self-contained.
+                    steps {
+                        sh '''
+                            docker build -f conda-builder/Dockerfile \
+                                -t gain-conda-builder-ci:${BUILD_NUMBER} conda-builder
+                            # Derive the hatch-vcs PEP 440 version from the
+                            # gain-core wheel built by 'Core wheel (docs-only)'
+                            # so the conda version matches it (same recipe as
+                            # the 'Conda packages' stage).
+                            VCS_VERSION=$(ls dist/core/*.whl | head -1 \
+                                | sed 's#.*gain_core-##' \
+                                | sed 's#-py3-none-any.whl$##')
+                            echo "VCS_VERSION=$VCS_VERSION"
+                            mkdir -p dist/conda conda/core
+                            # Run as the Jenkins user (not the image's default
+                            # mambauser) so rattler-build's 0600 output is
+                            # host-readable; HOME=/tmp because /home/mambauser
+                            # is not writable by an arbitrary UID. Mirrors the
+                            # 'Conda packages' stage.
+                            DOCKER_USER="$(id -u):$(id -g)"
+                            docker run --rm \
+                                --user "$DOCKER_USER" \
+                                -e HOME=/tmp \
+                                -v $PWD:/workspace \
+                                -w /workspace \
+                                -e VCS_VERSION="$VCS_VERSION" \
+                                gain-conda-builder-ci:${BUILD_NUMBER} \
+                                rattler-build build \
+                                    --recipe core/conda-recipe/recipe.yaml \
+                                    --output-dir conda/core
+                            cp conda/core/noarch/*.conda dist/conda/
+                        '''
+                    }
+                }
+
                 stage('Build docs') {
                     when { changeset 'docs/**' }
                     // Migrated from iossifovlab/gpf_documentation
