@@ -15,6 +15,10 @@ from gain.annotation.annotation_factory import (
     get_annotator_factory,
     get_available_annotator_types,
 )
+from gain.genomic_resources.aggregators import (
+    AGGREGATOR_CLASS_DICT,
+    NUMERIC_ONLY_AGGREGATORS,
+)
 from rest_framework.views import Request, Response, status
 
 from web_annotation.annotation_base_view import AnnotationBaseView
@@ -332,6 +336,9 @@ class AnnotatorAttributes(EditorView):
         annotator_info = annotator.get_info()
         annotator_type = annotator_info.type
         all_specs = annotator.get_attribute_specs()
+        attributes_by_source = {
+            attr.source: attr for attr in annotator.attributes
+        }
         if search_term is None:
             attribute_items: Any = list(all_specs.items())
         else:
@@ -354,15 +361,12 @@ class AnnotatorAttributes(EditorView):
         )
         attributes_result = []
         used_attributes = set()
-        for name, spec in page_attributes:
-            used_attributes.add(name)
+        for source, spec in page_attributes:
+            used_attributes.add(source)
+            attr = attributes_by_source.get(source)
             attributes_result.append({
-                "name": name,
-                "source": spec.source,
-                "type": spec.value_type,
-                "description": spec.description,
-                "default": spec.is_default,
-                "internal": spec.internal_default,
+                "name": attr.name if attr else source,
+                **spec.as_dict(),
             })
 
         return Response(
@@ -592,3 +596,113 @@ class PipelineStatus(EditorView):
         }
 
         return Response(status_info, status=status.HTTP_200_OK)
+
+
+class Aggregators(EditorView):
+    """View listing all available aggregator types and their metadata."""
+
+    def get(self, _request: Request) -> Response:
+        """GET method to retrieve all aggregator types."""
+        result = []
+        for aggregator_type, aggregator_class in AGGREGATOR_CLASS_DICT.items():
+            entry: dict[str, Any] = {
+                "aggregator_type": aggregator_type,
+                "parametrized": aggregator_class.parametrized,
+            }
+            if aggregator_class.default_parameter is not None:
+                entry["default_parameter"] = aggregator_class.default_parameter
+            result.append(entry)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class AnnotatorAggregators(EditorView):
+    """View for computing valid aggregators per attribute source."""
+
+    authentication_classes: ClassVar = [WebAnnotationAuthentication]
+
+    def post(self, request: Request) -> Response:
+        """POST method to get valid aggregators per attribute source."""
+        assert isinstance(request.data, dict)
+        data = dict(request.data)
+
+        if "annotator_type" not in data:
+            return Response(
+                {"error": "annotator_type is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if "pipeline_id" not in data:
+            return Response(
+                {"error": "pipeline_id is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        annotator_type = data.pop("annotator_type")
+        pipeline_id = data.pop("pipeline_id")
+        attribute_sources = data.pop("attribute_sources", [])
+
+        if not isinstance(annotator_type, str):
+            return Response(
+                {"error": "annotator_type must be a string"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not isinstance(pipeline_id, str):
+            return Response(
+                {"error": "pipeline_id must be a string"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not isinstance(attribute_sources, list):
+            return Response(
+                {"error": "attribute_sources must be a list"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        pipeline = self.get_pipeline(pipeline_id, request.user)
+        data["work_dir"] = "/tmp"  # noqa: S108
+
+        annotator_config = AnnotatorInfo(annotator_type, [], data)
+
+        if annotator_type not in get_available_annotator_types():
+            return Response(
+                {"error": f"Unknown annotator_type: {annotator_type}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        factory = get_annotator_factory(annotator_type)
+        try:
+            annotator = factory(pipeline, annotator_config)
+        except AnnotationConfigurationError as e:
+            return Response(
+                {"error": f"Invalid annotator configuration: {e!s}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        all_specs = annotator.get_attribute_specs()
+        attributes_by_source = {
+            attr.source: attr for attr in annotator.attributes
+        }
+
+        result = {}
+        for source in attribute_sources:
+            if not isinstance(source, str):
+                continue
+            spec = all_specs.get(source)
+            if spec is None or not spec.supports_aggregation:
+                result[source] = {
+                    "aggregators": None, "default_aggregator": None}
+                continue
+
+            valid_aggregators = [
+                agg_type for agg_type in AGGREGATOR_CLASS_DICT
+                if agg_type not in NUMERIC_ONLY_AGGREGATORS
+                or spec.value_type in {"int", "float"}
+            ]
+
+            attr = attributes_by_source.get(source)
+            default_aggregator = attr.aggregator if attr else None
+
+            result[source] = {
+                "aggregators": valid_aggregators,
+                "default_aggregator": default_aggregator,
+            }
+
+        return Response(result, status=status.HTTP_200_OK)

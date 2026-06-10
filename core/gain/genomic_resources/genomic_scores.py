@@ -46,7 +46,7 @@ from gain.genomic_resources.resource_implementation import (
     get_base_resource_schema,
 )
 
-from .aggregators import AGGREGATOR_SCHEMA, Aggregator, build_aggregator
+from .aggregators import AGGREGATOR_SCHEMA, Aggregator
 
 logger = logging.getLogger(__name__)
 
@@ -1056,7 +1056,7 @@ class PositionScore(GenomicScore):
                 assert aggregator_type is not None
                 score_aggs.append(PositionScoreAggr(
                     score,
-                    build_aggregator(aggregator_type),
+                    Aggregator.build(aggregator_type),
                 ))
                 continue
 
@@ -1070,7 +1070,7 @@ class PositionScore(GenomicScore):
             score_aggs.append(
                 PositionScoreAggr(
                     score.score,
-                    build_aggregator(aggregator_type)),
+                    Aggregator.build(aggregator_type)),
             )
         return score_aggs
 
@@ -1428,14 +1428,14 @@ class AlleleScore(GenomicScore):
             else:
                 assert scr_def.pos_aggregator is not None
                 aggregator_type = scr_def.pos_aggregator
-            position_aggregator = build_aggregator(aggregator_type)
+            position_aggregator = Aggregator.build(aggregator_type)
 
             if squery.allele_aggregator is not None:
                 aggregator_type = squery.allele_aggregator
             else:
                 assert scr_def.allele_aggregator is not None
                 aggregator_type = scr_def.allele_aggregator
-            allele_aggregator = build_aggregator(aggregator_type)
+            allele_aggregator = Aggregator.build(aggregator_type)
             score_aggs[squery.score] = AlleleScoreAggr(
                 squery.score, position_aggregator, allele_aggregator)
         return score_aggs

@@ -21,7 +21,6 @@ from gain.annotation.annotation_pipeline import (
 )
 from gain.genomic_resources.aggregators import (
     Aggregator,
-    build_aggregator,
     validate_aggregator,
 )
 
@@ -102,7 +101,7 @@ class AnnotatorBase(Annotator):
                     self._aggregator_value_type(attr),
                 )
                 self._aggregator_instances.append(
-                    build_aggregator(attr.aggregator))
+                    Aggregator.build(attr.aggregator))
             else:
                 self._aggregator_instances.append(None)
 
