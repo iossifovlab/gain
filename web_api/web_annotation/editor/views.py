@@ -610,7 +610,8 @@ class Aggregators(EditorView):
                 "parametrized": aggregator_class.parametrized,
             }
             if aggregator_class.default_parameter is not None:
-                entry["default_parameter"] = aggregator_class.default_parameter
+                entry["default_parameter_value"] = (
+                    aggregator_class.default_parameter)
             result.append(entry)
         return Response(result, status=status.HTTP_200_OK)
 

@@ -588,11 +588,11 @@ def test_aggregators(
 
     assert "min" in by_type
     assert by_type["min"]["parametrized"] is False
-    assert "default_parameter" not in by_type["min"]
+    assert "default_parameter_value" not in by_type["min"]
 
     assert "join" in by_type
     assert by_type["join"]["parametrized"] is True
-    assert by_type["join"]["default_parameter"] == ","
+    assert by_type["join"]["default_parameter_value"] == ","
 
 
 @pytest.mark.parametrize("current_client", ["admin", "user", "anonymous"])
@@ -664,7 +664,7 @@ def test_annotator_creation_workflow_with_aggregator(
     # Step 3: Build YAML with aggregator as dict definition
     aggregator_dict = {
         "aggregator_type": join_agg["aggregator_type"],
-        "parameters": [join_agg["default_parameter"]],
+        "parameters": [join_agg["default_parameter_value"]],
     }
     response = client.post("/api/editor/annotator_yaml", data={
         "pipeline_id": "pipeline/test_pipeline",
