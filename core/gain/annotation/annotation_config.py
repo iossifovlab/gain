@@ -104,7 +104,11 @@ class ParamsUsageMonitor(Mapping):
         self._used_keys: set[str] = set()
 
     def __hash__(self) -> int:
-        return hash(tuple(sorted(self._data.items())))
+        # ``repr`` of a stable serialization keeps the hash tolerant of
+        # unhashable parameter values (e.g. dict/list params such as the
+        # chrom_mapping annotator's inline ``mapping``); equality is still
+        # structural via ``__eq__`` (#114).
+        return hash(repr(sorted(self._data.items())))
 
     def __getitem__(self, key: str) -> Any:
         self._used_keys.add(key)
@@ -258,7 +262,7 @@ class AnnotatorInfo:
     def __hash__(self) -> int:
         attrs_hash = "".join(str(hash(attr)) for attr in self.attributes)
         resources_hash = "".join(str(hash(res)) for res in self.resources)
-        params_hash = hash(self._identity_params())
+        params_hash = hash(repr(self._identity_params()))
         return hash(f"{self.type}{attrs_hash}{resources_hash}{params_hash}")
 
     def to_dict(self) -> dict[str, Any]:

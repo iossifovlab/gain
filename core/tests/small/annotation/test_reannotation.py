@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from gain.annotation.annotation_config import Attribute
+from gain.annotation.annotation_config import AnnotatorInfo, Attribute
 from gain.annotation.annotation_factory import build_annotation_pipeline
 from gain.annotation.annotation_pipeline import (
     FULL_REANNOTATION_REASON,
@@ -736,3 +736,56 @@ def test_reannotation_identical_configs_diff_work_dir_reuses_all(
     assert _plan_names(reann.plan.copied) == ["score"]
     assert not reann.plan.added
     assert not reann.plan.computed
+
+
+# An AnnotatorInfo whose parameters carry a non-scalar (dict/list) value -- the
+# canonical case being the built-in chrom_mapping annotator's inline `mapping:`
+# dict -- must remain hashable, so reannotation (which hashes every
+# AnnotatorInfo) does not crash (#114).
+def test_annotator_info_with_dict_param_is_hashable() -> None:
+    info = AnnotatorInfo(
+        "chrom_mapping", [],
+        {"mapping": {"1": "chr1", "2": "chr2"}},
+        annotator_id="cm",
+    )
+    # hashing must not raise TypeError: unhashable type: 'dict'
+    assert isinstance(hash(info), int)
+
+
+def test_annotator_info_dict_param_equal_infos_have_equal_hashes() -> None:
+    # two infos that differ only in the non-identity work_dir param must be
+    # equal AND hash-equal, even with an unhashable dict-valued parameter.
+    info_a = AnnotatorInfo(
+        "chrom_mapping", [],
+        {"mapping": {"1": "chr1", "2": "chr2"}, "work_dir": "/run/a"},
+        annotator_id="cm",
+    )
+    info_b = AnnotatorInfo(
+        "chrom_mapping", [],
+        {"mapping": {"1": "chr1", "2": "chr2"}, "work_dir": "/run/b"},
+        annotator_id="cm",
+    )
+    assert info_a == info_b
+    assert hash(info_a) == hash(info_b)
+
+
+def test_reannotation_set_logic_over_dict_valued_param_does_not_raise() -> None:
+    # The reannotation set comprehension (`{i for i in current
+    # if i not in previous}`) and `_build_dependency_graph` both hash every
+    # AnnotatorInfo. A pipeline containing an annotator with an inline dict
+    # parameter (chrom_mapping `mapping:`) must not crash them (#114).
+    annotator = DummyAnnotator()
+    annotator.get_info().parameters.inject(
+        "mapping", {"1": "chr1", "2": "chr2"})
+
+    pipeline = _make_pipeline_with([annotator])
+
+    infos_current = pipeline.get_info()
+    infos_previous: set[AnnotatorInfo] = set()
+    # the set comprehension used in ReannotationPipeline.__init__
+    assert {
+        i for i in infos_current if i not in infos_previous
+    } == set(infos_current)
+    # the dict-keyed dependency graph used in _build_dependency_graph
+    graph = _build_dependency_graph(pipeline)
+    assert annotator.get_info() in graph
