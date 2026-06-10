@@ -789,3 +789,28 @@ def test_reannotation_set_logic_over_dict_valued_param_does_not_raise() -> None:
     # the dict-keyed dependency graph used in _build_dependency_graph
     graph = _build_dependency_graph(pipeline)
     assert annotator.get_info() in graph
+
+
+def test_annotator_info_dict_param_key_order_consistent_hash_eq() -> None:
+    # Two infos identical except for the key order of a nested-dict parameter
+    # must be `==`-equal (dict equality is order-insensitive) AND hash-equal,
+    # so reannotation set/dict membership keeps recognising them as the same
+    # annotator. The `repr()`-based hash reflected insertion order and broke
+    # this; the order-normalized `json.dumps(..., sort_keys=True)` hash fixes
+    # it (#114).
+    info_a = AnnotatorInfo(
+        "chrom_mapping", [],
+        {"mapping": {"1": "chr1", "2": "chr2"}},
+        annotator_id="cm",
+    )
+    info_b = AnnotatorInfo(
+        "chrom_mapping", [],
+        {"mapping": {"2": "chr2", "1": "chr1"}},
+        annotator_id="cm",
+    )
+    assert info_a == info_b
+    assert hash(info_a) == hash(info_b)
+    # membership/set form: b must not be seen as a new annotator
+    previous = {info_a}
+    assert info_b in previous
+    assert {i for i in [info_b] if i not in previous} == set()

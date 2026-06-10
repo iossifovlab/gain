@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import fnmatch
+import json
 import logging
 import textwrap
 from collections.abc import Callable, Iterator, Mapping
@@ -104,11 +105,13 @@ class ParamsUsageMonitor(Mapping):
         self._used_keys: set[str] = set()
 
     def __hash__(self) -> int:
-        # ``repr`` of a stable serialization keeps the hash tolerant of
+        # An order-normalized JSON serialization keeps the hash tolerant of
         # unhashable parameter values (e.g. dict/list params such as the
-        # chrom_mapping annotator's inline ``mapping``); equality is still
-        # structural via ``__eq__`` (#114).
-        return hash(repr(sorted(self._data.items())))
+        # chrom_mapping annotator's inline ``mapping``) while staying
+        # consistent with the order-insensitive structural ``__eq__``:
+        # ``sort_keys=True`` recursively sorts nested dict keys and
+        # ``default=str`` guards non-JSON values (#114).
+        return hash(json.dumps(self._data, sort_keys=True, default=str))
 
     def __getitem__(self, key: str) -> Any:
         self._used_keys.add(key)
@@ -262,7 +265,15 @@ class AnnotatorInfo:
     def __hash__(self) -> int:
         attrs_hash = "".join(str(hash(attr)) for attr in self.attributes)
         resources_hash = "".join(str(hash(res)) for res in self.resources)
-        params_hash = hash(repr(self._identity_params()))
+        # Order-normalized JSON keeps the parameter hash consistent with the
+        # order-insensitive ``__eq__`` (which compares ``_identity_params()``):
+        # ``sort_keys=True`` recursively sorts nested dict keys so two infos
+        # that are ``==``-equal but differ in nested-dict key order still hash
+        # equal; ``default=str`` guards non-JSON values (#114).
+        params_hash = hash(json.dumps(
+            {k: v for k, v in self.parameters.as_dict().items()
+             if k not in NON_IDENTITY_PARAMS},
+            sort_keys=True, default=str))
         return hash(f"{self.type}{attrs_hash}{resources_hash}{params_hash}")
 
     def to_dict(self) -> dict[str, Any]:
