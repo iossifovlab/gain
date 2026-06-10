@@ -306,11 +306,12 @@ Although positions and regions do not contain allele information, and therefore 
 variant-based annotation, GAIn can still take these inputs and annotate them with many relevant resources using 
 the ``annotate_tabular`` tool, aggregating scores when needed.
 
-Position inputs require only two columns: chromosome and position. Download :download:`positions.csv <files/positions.csv>`, whose content is shown below: 
+Position inputs require only two columns: chromosome and position. Download :download:`positions.tsv <files/positions.tsv>`, whose content is shown below: 
 
 .. csv-table::
-    :file: files/positions.csv
+    :file: files/positions.tsv
     :header-rows: 1
+    :delim: tab
 
 Because position inputs do not include reference and alternate alleles, GAIn cannot infer the effect of a specific allelic change on a gene product. However, GAIn provides a dedicated ``simple_effect_annotator`` that can infer the broad genomic context of a position, such as whether it is intergenic, genic, or coding. GAIn can also use other resource types with position inputs and, when needed, aggregate their values to produce a position-level annotation. For example, position score resources map directly to genomic positions and can be applied without modification, while allele score resources can be used by aggregating across the possible allelic changes at that site. In the example below, we use a single pipeline that combines these annotation types. Download annotation pipeline :download:`position_pipeline.yaml <files/position_pipeline.yaml>`, whose content is shown below:
 
@@ -325,26 +326,27 @@ The ``position_score_annotator`` adds ``phyloP7way`` conservation scores and req
 
     annotate_tabular positions.csv position_pipeline.yaml
 
-This produces :download:`positions.annotated.csv <files/positions.annotated.csv>` which contains []:
+This produces :download:`positions.annotated.tsv <files/positions.annotated.tsv>` which contains:
 
+.. csv-table::
+    :file: files/positions.annotated.tsv
+    :header-rows: 1
+    :delim: tab
 
 This output shows that the first position falls within a coding part of CFTR, whereas the second position is intergenic. The coding position has a higher ``phyloP7way`` conservation score and receives an aggregate ``am_pathogenicity`` score, while no ``am_pathogenicity`` value is reported for the intergenic position.
 
 
 
 Region inputs require three columns: chromosome, beginning position, and end position. 
-Download the example file :download:`regions.csv <files/regions.csv>`, whose content is shown below:
+Download the example file :download:`regions.tsv <files/regions.tsv>`, whose content is shown below:
 
 .. csv-table::
-    :file: files/regions.csv
+    :file: files/regions.tsv
     :header-rows: 1
+    :delim: tab
 
-As with position inputs, region inputs do not include reference and alternate alleles, 
-so GAIn cannot infer the effect of a specific allelic change on a gene product. However, many of the same 
-genomic resource types can still be applied to region inputs. Region inputs can also be evaluated with 
-``simple_effect_annotator``, which summarizes whether a region overlaps genic or intergenic sequence and 
-reports broad functional categories when applicable. Position score resources can be used on region 
-inputs by aggregating values across the positions spanned by each interval. Allele score resources can also be used, but in that case GAIn must aggregate both across the positions in the region and across the possible allelic changes at each position. 
+
+As with position inputs, region inputs do not include reference and alternate alleles, so GAIn cannot infer the effect of a specific allelic change on a gene product. However, many of the same genomic resource types can still be applied to region inputs. Region inputs can also be evaluated with ``simple_effect_annotator``, which summarizes whether a region overlaps genic or intergenic sequence and reports broad functional categories when applicable. Position score resources can be used on region inputs by aggregating values across the positions spanned by each interval. Allele score resources can also be used, but in that case GAIn must aggregate both across the positions in the region and across the possible allelic changes at each position. 
 
 To illustrate this, reuse ``position_pipeline.yaml``, shown below as a reminder.
 
@@ -355,9 +357,10 @@ Then run the following command to annotate the regions:
 
 .. code-block:: bash
 
-    annotate_tabular regions.csv position_pipeline.yaml
+    annotate_tabular regions.tsv position_pipeline.yaml
 
-This produces :download:`regions.annotated.csv <files/regions.annotated.csv>` which contains []:
+This produces :download:`regions.annotated.tsv <files/regions.annotated.tsv>` which is too large to display here [].
+
 
 This output shows how the same pipeline summarizes annotations over genomic intervals. The ``simple_effect_annotator`` reports the broad genomic context of each region and any overlapping genes. For ``phyloP7way``, the ``max`` and ``mean`` columns summarize conservation scores across the positions spanned by each region, while the ``list`` column reports the individual position-level values. For ``AlphaMissense``, GAIn aggregates across both the positions in the region and the possible allelic changes at those positions, producing summary ``am_pathogenicity`` values and listing the contributing alleles when available.
 
@@ -495,7 +498,7 @@ already been annotated. If the new pipeline shares any steps with the old one (f
 GAIn supports reannotation, which allows it to reuse attributes that were already computed by a previous pipeline run and only compute what is new. To illustrate this, we will use the clinical annotation pipeline, ``pipeline/hg38_clinical_annotation``. The full contents of this pipeline, including the attributes it produces, can be viewed here: `hg38 clinical annotation pipeline <https://grr.iossifovlab.com/pipeline/hg38_clinical_annotation/index.html>`_. This pipeline annotates hg38 variants with commonly used clinical resources, including gene effects, conservation scores, allele frequencies, clinical significance, and gene-level constraint scores.
 
 
-To illustrate the runtime of this pipeline, we run it on the larger SSC whole-exome sequencing input used earlier and record the elapsed time. This file contains approximately 1.4 million variants and has been sorted and indexed for parallel annotation (:download:`SSC_WES_variants_select.sorted.tsv.gz <files/SSC_WES_variants_select.sorted.tsv.gz>`).
+To illustrate the runtime of this pipeline, we run it on the larger SSC whole-exome sequencing input used earlier and record the elapsed time. This file contains approximately 1.4 million variants and has been sorted and indexed for parallel annotation (:download:`SSC_WES_variants_select.sorted.tsv.bgz <files/SSC_WES_variants_select.sorted.tsv.bgz>`).
 
 .. code-block:: bash
 
