@@ -1,6 +1,62 @@
 Release Notes
 =============
 
+* 2026.6.5
+    * ``annotate_tabular`` and ``annotate_vcf`` now print a
+      reannotation plan. A reannotation run emits an always-on stderr
+      summary classifying each output attribute as ``COPIED`` (reused
+      unchanged), ``ADDED``, ``COMPUTED`` (recomputed) or ``DELETED``,
+      and the new ``--dry-run``/``-n`` flag prints the plan and exits
+      without annotating. The shared "load previous pipeline + wrap in
+      a ``ReannotationPipeline``" construction and the plan-printing
+      helper were factored into a single implementation used by both
+      CLIs.
+    * Reannotation reuse now works through the CLI. The
+      framework-injected ``work_dir`` is excluded from
+      ``AnnotatorInfo`` identity, so an unchanged annotator's old and
+      new infos compare equal and its result is copied instead of
+      silently recomputed. As part of this, ``annotate_tabular`` no
+      longer emits a reused (``COPIED``) attribute twice — the
+      leftover input column is dropped on reannotation runs only;
+      plain append-columns behavior is unchanged.
+    * Fixed ``--full-reannotation`` leaving stale values: every
+      annotator of the new pipeline is now forced to recompute, so no
+      output column is deleted-but-not-recomputed.
+    * Fixed a reannotation crash (``TypeError: unhashable type``) when
+      a pipeline contained an annotator with a dict- or list-valued
+      parameter — the canonical trigger being the built-in
+      ``chrom_mapping`` annotator's inline ``mapping``. ``AnnotatorInfo``
+      and ``ParamsUsageMonitor`` hashing is now order-normalized and
+      consistent with their order-insensitive equality.
+    * Fixed gzipped gene-score files: a ``.tsv.gz`` score file was read
+      with a comma separator (so the whole row became one column),
+      which raised ``KeyError`` on the score id during ``grr_manage``
+      repo-repair. The ``.gz`` suffix is now stripped before the
+      ``.tsv`` extension check.
+    * Building gene-score histograms no longer rebuilds a
+      ``GeneScoresDb`` per score. The small/large value descriptions
+      are read directly from the score definition, removing both the
+      O(n²) rebuild and the spurious "unable to load histogram file"
+      error and traceback emitted on a first-time stats build (e.g.
+      ``grr_manage`` repo-repair) for scores whose histograms had not
+      been written yet.
+    * Added a GRR definition-files page to the documentation describing
+      the structure and use of ``.grr_definition.yaml`` files, and
+      made further edits to the getting-started CLI tutorial.
+
+* 2026.6.4
+    * ``grr_manage`` no longer rebuilds the full-text search SQLite
+      index when the repository contents are unchanged: before
+      regenerating it, the existing ``.CONTENTS.sqlite3.gz`` is opened
+      and its stored ``contents_md5`` compared against the current
+      contents hash, and the rebuild is skipped on a match. This
+      complements the content-hash embedding added in 2026.6.1.
+    * Revised the getting-started CLI tutorial — added a local-GRR
+      walk-through and VCF parallelization and region-annotation
+      sections, and shrank and refreshed the example variant files
+      (the 50k and SSC inputs). The obsolete standalone GRR
+      YAML/repository reference pages were removed.
+
 * 2026.6.3
     * The annotation web API now supports a configurable default
       pipeline via the ``DEFAULT_PIPELINE`` setting (shipping as
