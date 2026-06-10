@@ -217,7 +217,7 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         url = args[1] if len(args) > 1 else kwargs["url"]
         key = (proto_id, url)
         if key in _FSSPEC_PROTOCOLS:
-            logger.warning(
+            logger.debug(
                 "protocol with id %s and url %s already exists, "
                 "returning the existing instance",
                 proto_id, url)
