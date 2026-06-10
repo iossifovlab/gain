@@ -403,15 +403,12 @@ Adding local GRRs
 
 Suppose you are using the public GRRs for variant annotation, but your analysis also requires a gene-level score that is not available in the main GRR or GRR-ENCODE. For example, you may want to annotate variants with the Collins rCNV 2022 dosage sensitivity scores, including pHaplo and pTriplo, which estimate gene-level sensitivity to deletion and duplication, respectively. In this situation, you can download the external dataset, define it as a local GAIn resource, and use it together with the public GRRs in the same annotation workflow.
 
-Download the Collins rCNV dosage sensitivity score table, uncompress it, and inspect the first few lines:
+Download the Collins rCNV dosage sensitivity score table, and inspect the first few lines (shown below) to see the available columns before adding the resource file to a local GRR.:
 
 .. code-block:: bash
 
     curl -L -O https://zenodo.org/record/6347673/files/Collins_rCNV_2022.dosage_sensitivity_scores.tsv.gz
-    gunzip Collins_rCNV_2022.dosage_sensitivity_scores.tsv.gz
-    head -n 5 Collins_rCNV_2022.dosage_sensitivity_scores.tsv
-
-The first command downloads the compressed table. The second command uncompresses it, replacing the ``.tsv.gz`` file with ``Collins_rCNV_2022.dosage_sensitivity_scores.tsv``. The final command displays the first five lines (shown below) so that we can inspect the available columns before adding the resource file to a local GRR.
+    gzip -dc Collins_rCNV_2022.dosage_sensitivity_scores.tsv.gz | head -n 5
 
 .. csv-table::
     :header-rows: 1
@@ -428,7 +425,7 @@ The file contains a gene column with the header #gene and two gene scores, pHapl
 
     My_First_GRR/
     └── my_score/
-        ├── Collins_rCNV_2022.dosage_sensitivity_scores.tsv
+        ├── Collins_rCNV_2022.dosage_sensitivity_scores.tsv.gz
         └── genomic_resource.yaml
 
 The ``genomic_resource.yaml`` file describes the resource to GAIn:
