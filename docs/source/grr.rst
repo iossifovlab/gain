@@ -1,22 +1,36 @@
 Genomic resources and repositories
-==============================
+==================================
 
-A Genomic Resource Repository (GRR) is a collection of genomic resources (e.g.,
-genomes, gene models, scores, and gene sets) stored either locally (on disk) or
-remotely (over the network). GAIn uses GRRs as the backing store for resources
-during annotation and analysis.
+A Genomic Resource Repository (GRR) is a collection of genomic resources (e.g., genomes, gene models, scores, and gene sets) stored either locally (on disk) or remotely (over the network). GAIn uses GRRs as the backing store for resources during annotation and analysis.
 
 Repository discovery
 --------------------
-By default, GAIn looks for a configuration file named ``.grr_definition.yaml``
-in your home directory to determine which GRRs are available. If the file is
-not present, GAIn defaults to using the public IossifovLab GRR.
 
-To configure which GRRs GAIn uses by default, create a file named ``.grr_definition.yaml``
-in your home directory. The example below reproduces the default behavior by
-pointing GAIn to the public `IossifovLab GRR <https://grr.iossifovlab.com/>`_ (a remote repository accessed via URL):
+A GRR configuration file, also called a GRR definition file, is a small YAML file that tells GAIn which Genomic Resource Repositories (GRRs) to use and in what order to search them. It does not contain genomic data itself. Instead, it points to the repositories where resources live, such as local directories or remote URLs, and can also describe how those repositories should be combined and cached.
 
-.. code:: yaml
+GAIn command-line tools determine which GRR definition to use by checking several sources in order. A GRR definition passed directly with the ``-g`` or ``--grr`` command-line option has the highest priority and applies only to that command:
+
+.. code-block:: bash
+
+    grr_browse -g /path/to/my_grr_definition.yaml
+    annotate_tabular -g /path/to/my_grr_definition.yaml input.tsv pipeline.yaml
+
+Some tools also support ``--grr-directory``, which is a shortcut for using a single local directory as a GRR without writing a separate configuration file:
+
+.. code-block:: bash
+
+    grr_browse --grr-directory /path/to/my_grr
+
+If no command-line GRR is provided, GAIn next checks the ``GRR_DEFINITION_FILE`` environment variable, followed by the default ``~/.grr_definition.yaml`` file in the user's home directory. 
+
+.. code-block:: bash
+
+    export GRR_DEFINITION_FILE=/path/to/my_grr_definition.yaml
+    grr_browse
+
+If none of these are available, GAIn falls back to the public IossifovLab GRR. To configure which GRRs GAIn uses by default, create a file named ``.grr_definition.yaml`` in your home directory. The example below points GAIn to the public `IossifovLab GRR <https://grr.iossifovlab.com/>`_ (a remote repository accessed via URL):
+
+.. code-block:: yaml
 
     id: development
     type: group
@@ -25,9 +39,9 @@ pointing GAIn to the public `IossifovLab GRR <https://grr.iossifovlab.com/>`_ (a
       type: url
       url: https://grr.iossifovlab.com
 
-If you replace ``.grr_definition.yaml`` with the next example, GAIn will resolve resources from your local directory-based
-GRR (created in “`Getting Started in GRR <https://iossifovlab.com/gaindocs/gain_getting_started_grr.html>`_”).
-This overrides the default behavior, so the public IossifovLab GRR will no longer be used unless you add it explicitly.
+
+If ``.grr_definition.yaml`` contains the next example, GAIn will resolve resources from your local directory-based GRR, such as one created in “`Getting Started in GRR <https://iossifovlab.com/gaindocs/gain_getting_started_grr.html>`_”. This overrides the default behavior, so the public IossifovLab GRR will no longer be used unless you add it explicitly.
+
 
 .. code:: yaml
 
@@ -38,8 +52,7 @@ This overrides the default behavior, so the public IossifovLab GRR will no longe
       type: directory
       directory: [path to my_grr]/my_grr
 
-The configuration below defines two GRRs and searches them in order. When GAIn resolves a resource ID, it
-first queries the GRR with id GRR (the public IossifovLab GRR). If the resource is not found there, GAIn then queries the GRR with id ``grr_local``.
+The configuration below defines two GRRs and searches them in order. When GAIn resolves a resource ID, it first queries the GRR with id ``GRR``. If the resource is not found there, GAIn then queries the GRR with id ``grr_local``.
 
 .. code:: yaml
 
@@ -60,32 +73,45 @@ first queries the GRR with id GRR (the public IossifovLab GRR). If the resource 
 Repository configuration
 ------------------------
 
-A repository configuration is a YAML mapping with a required id and type,
-plus additional fields depending on the repository type.
+A repository configuration is a YAML mapping that describes a single repository. Every repository has a required ``id`` and ``type``, plus additional fields depending on the repository type. A repository can be a concrete repository, such as a local directory or remote URL, or a ``group`` that combines several child repositories.
 
 Common fields
+^^^^^^^^^^^^^
 
     | **id** (string, required): Identifier for the repository.
-    | **type** (string, required): directory, http, url, embedded, or group.
+    | **type** (string, required): directory, http, url, s3, embedded, or group.
+    | **cache_dir** (string, optional): Directory used to cache downloaded resources locally. May be added to any repository type, including a ``group``.
 
-Type-specific fields
+Repository types
+^^^^^^^^^^^^^^^^
 
-    | **type**: directory (local filesystem)
-    | **directory**: (string, required) Path to a local directory containing resources.
+**directory** — a local repository on disk: A GRR stored in a local directory. The aliases ``dir`` and ``file`` are accepted as synonyms of ``directory``.
 
-    | **type**: http (remote HTTP)
+    | **directory** (string, required): Absolute path to a local directory containing the resources. A relative path is rejected.
+
+**url** — a remote repository: The general-purpose remote repository type. The scheme of the URL selects
+the protocol; ``http``, ``https``, and ``s3`` are supported.
+
     | **url** (string, required): Base URL of the remote repository.
-    | **cache_dir** (string, optional): Directory used to cache downloaded resources.
 
-    | **type**: url (remote object store, e.g., S3-style URL)
-    | **url** (string, required): URL of the remote repository.
-    | **cache_dir** (string, optional): Directory used to cache downloaded resources.
+**http** — a remote HTTP(S) repository: Like ``url`` but restricted to ``http`` and ``https`` URLs.
 
-    | **type**: embedded (in-memory definition)
-    | **content** (mapping, required): Nested dictionary that describes files and directories. Directory values are nested mappings. File values are file contents.
+    | **url** (string, required): Base URL of the remote repository.
 
-    | **type**: group (a collection of repositories)
-    | **children** (list, required): List of repository configurations. When resolving a resource ID, repositories are searched in the order they appear in children.
+**s3** — a remote S3 repository: Like ``url`` but restricted to ``s3`` URLs.
+
+    | **url** (string, required): ``s3://`` URL of the remote repository.
+
+**embedded** — an in-memory repository: A repository whose resources are defined inline in the configuration. This
+is used mainly for testing and small examples. The alias ``memory`` is accepted as a synonym of ``embedded``.
+
+    | **content** (mapping, required): Nested dictionary describing files and directories. Directory values are nested mappings; file values are file contents.
+
+**group** — a collection of repositories: Combines several repositories and searches them in the order they appear in ``children``. When a resource ID is requested, the group queries each child in turn and returns the first match. Groups can be nested.
+
+    | **children** (list, required): A list of repository configurations. Each child can be a concrete repository or another ``group``.
+
+Within a ``group``, the first repository that contains the requested resource wins. Order ``children`` accordingly: list a local directory before a remote repository if local resources should take precedence, or after it if the remote repository should be authoritative.
 
 
 Repository caching
@@ -101,9 +127,53 @@ downloads it into ``cache_dir``. After that, GAIn reuses the cached copy, which 
 typically much faster and avoids repeated network transfers. This is especially useful for
 resources you access frequently (for example, common reference genomes, gene models, or widely used scores).
 
+``cache_dir`` can be attached to any repository, including a ``group``. When
+attached to a ``group``, it caches resources served through that group, which
+provides a convenient way to use a single cache in front of several repositories.
+
 The tradeoff is disk usage: cached resources can occupy substantial space,
 so choose a ``cache_dir`` location with enough capacity (and keep in mind that
 the cache may grow over time as you use more resources).
+
+
+Complete GRR definition example
+-------------------------------
+
+The configuration below combines several features described above. It defines a
+top-level ``group`` with two children: a nested group of remote repositories
+that share a cache directory, followed by a local directory-based GRR.
+
+In this example, GAIn searches ``main-GRR`` first, then ``GRR-ENCODE``, and
+finally ``My_First_GRR``. The first repository that contains the requested
+resource is used.
+
+.. code-block:: yaml
+
+    type: group
+    id: my_GRRs
+    children:
+    - type: group
+      id: remote_GRRs
+      cache_dir: <path_to_cache>/remote_grr_cache
+      children:
+      - id: main-GRR
+        type: url
+        url: https://grr.iossifovlab.com
+
+      - id: GRR-ENCODE
+        type: url
+        url: https://grr-encode.iossifovlab.com
+
+    - id: My_First_GRR
+      type: directory
+      directory: <path_to_My_First_GRR>/My_First_GRR
+
+To use this configuration, save it as ``~/.grr_definition.yaml``, point
+``GRR_DEFINITION_FILE`` to it, or pass it explicitly with ``-g``:
+
+.. code-block:: bash
+
+    grr_browse -g my_grr_definition.yaml
 
 
 Repository management
@@ -255,10 +325,10 @@ As before, filename points to the downloaded FASTA file and contig names use the
     chrom_prefix: "chr"
 
     PARS:
-    "X":
+      "X":
         - "chrX:10000-2781479"
         - "chrX:155701382-156030895"
-    "Y":
+      "Y":
         - "chrY:10000-2781479"
         - "chrY:56887902-57217415"
 
@@ -267,7 +337,7 @@ As before, filename points to the downloaded FASTA file and contig names use the
 
 
 Gene models
-^^^^^^^^
+^^^^^^^^^^^
 
 For gene model resources, the ``genomic_resource.yaml`` file has a minimal resource-specific
 section with only filename and format.
@@ -291,7 +361,7 @@ the gene model file is a GTF, so we set ``format: gtf``.
       summary: MANE gene model version 1.4
 
 Liftover chains
-^^^^^^^^
+^^^^^^^^^^^^^^^
 
 For liftover chain resources, the ``genomic_resource.yaml`` file has a minimal resource-specific section with only filename.
 
@@ -307,7 +377,7 @@ Resource-specific fields (**type**: liftover_chain):
 
 
 Annotation pipelines
-^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^
 
 For annotation pipeline resources, the ``genomic_resource.yaml`` file has a minimal resource-specific section with only filename.
 
@@ -324,7 +394,7 @@ Resource-specific fields (**type**: annotation_pipeline):
 
 
 Position scores
-^^^^^^^^
+^^^^^^^^^^^^^^^
 
 Position score resources (**type**: position_score) use a ``genomic_resource.yaml`` file with three resource-specific sections:
 ``table``, ``scores``, and (optionally) ``default_annotation``.
@@ -334,7 +404,7 @@ Position score resources (**type**: position_score) use a ``genomic_resource.yam
 
 The ``table`` section specifies the data file (**filename**), its **format**, and how GAIn should interpret the columns.
 
-Currently supported formats are ``tabix``, ``vcf_info``, ``tsv``, ``csv``, and ``bw``. Auto-detection of the format works for the following:
+Currently supported formats are ``tabix``, ``vcf_info``, ``tsv``, ``csv``, and ``bw``.
 
 The header_mode setting controls how column names (the header) are determined:
     | **file**: Extract the header from the file (default).
@@ -391,7 +461,6 @@ Three options are available under chrom_mapping:
 
     | **add_prefix**: Takes a string value and adds it as a prefix.
     | **del_prefix**: Takes a string value and removes it from the start of each chromosome name.
-    | **zero_based**: Controls the coordinate convention used when reading the score. Set to true for BED-style coordinates (0-based, half-open). Leave it as the default (false) to use GAIn's internal format (1-based, closed intervals).
     | **filename**: Takes a filepath (relative to the genomic resource directory).
     The file must contain two whitespace-delimited columns.
     The first line must be a header with the column names ``chrom`` and ``file_chrom``.
@@ -474,12 +543,12 @@ If the resource includes multiple scores, add additional entries under scores wi
         y_log_scale: True
 
 
-**default_annotation**
-"""""""""""""""
+default_annotation
+""""""""""""""""""
 
 Annotation pipelines can choose which scores from a resource to use. If a pipeline does not explicitly specify scores for this resource,
 GAIn falls back to the resource's ``default_annotation`` list. If ``default_annotation`` is not provided, all scores in the resource are
-used by default. An example is shown below ***:
+used by default. An example is shown below:
 
 .. code-block:: yaml
 
@@ -532,7 +601,7 @@ The optional ``meta`` field is omitted for conciseness.
 
 
 Allele scores
-^^^^^^^^
+^^^^^^^^^^^^^
 
 `genomic_resource.yaml` files for allele score resources are almost exactly the same
 as for position score resources, with three differences:
@@ -584,7 +653,7 @@ Annotation consists of reporting overlapping CNVs and the selected associated fi
 
 The example below shows a valid ``genomic_resource.yaml`` for a CNV collection resource (``my_CNVcollection.txt``),
 which uses ``chrom``, ``pos_begin`` and ``pos_end`` as column names for chromosome, beginning
-position and end position, respectively. It and also has a column called ``deletion_duplication``
+position and end position, respectively. It also has a column called ``deletion_duplication``
 which describes the event type recorded.
 
 .. code-block:: yaml
@@ -653,7 +722,7 @@ Histogram configuration options are covered `here <https://iossifovlab.com/gaind
       summary: Gene score resource
 
 Gene set collections
-^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^
 
 A ``gene_set_collection`` defines relationships between genes and gene sets.
 These relationships can be provided either directly as gene sets (``gmt`` format) or
@@ -786,7 +855,7 @@ per bin.
 
 A number histogram configuration supports two options.
 
-  | **number_of_bins**: number of bins used to partition the score values (default: []).
+  | **number_of_bins**: number of bins used to partition the score values (default: 100).
   | **view_range**: the visible range on the x-axis using min and max values, which is useful for bounded scores (for example, 0-1) or for focusing on the region of interest without being dominated by extreme outliers. Default is showing all values.
 
 The example below shows a number histogram configuration with an explicit bin count and visible range.
@@ -813,7 +882,7 @@ A categorical histogram configuration supports five options.
 
   | **displayed_values_count**: the number of unique values that will be displayed in the histogram (default: 20). The remaining values are grouped into the Other category.
   | **displayed_values_percent**: the percentage of total mass of unique values that will be displayed. The remaining values are grouped into the Other category. Only one of displayed_values_count and displayed_values_percent can be set.
-  | **label_rotation**: rotation angle for x-axis category labels in degrees (default: []).
+  | **label_rotation**: rotation angle for x-axis category labels in degrees (default: 0).
   | **value_order**: the order in which the unique values are displayed in the histogram.
   | **plot_function**: optional custom plotting function used instead of the default categorical histogram rendering. This is useful when the default plot and the available options are not sufficient, for example to reorder, filter, or relabel categories. The value should be provided as <python module>:<python function>, where the Python module path is relative to the resource directory. When plot_function is set, GAIn uses the custom function to render the histogram and ignores built-in categorical histogram options such as displayed_values_count, displayed_values_percent, and label_rotation.
 
@@ -843,7 +912,7 @@ the function ``my_own_plot`` in the resource directory. The custom function must
 (outfile) so it can be embedded in the HTML summary output. A simple example that sorts categories by their counts, keeps the top 20,
 and renders a basic bar chart (with optional log-scaled ``y-axis``) to the provided output stream is:
 
-.. code-block:: yaml
+.. code-block:: python
 
   from typing import IO
   from dae.genomic_resources.histogram import CategoricalHistogram
@@ -886,7 +955,7 @@ in configuration just like manually defined scores.
 
 Create the following file and save it as ``example.vcf``, which contains a single ``INFO`` field A:
 
-.. code:: bash
+.. code-block:: bash
 
     ##fileformat=VCFv4.1
     ##INFO=<ID=A,Number=1,Type=Integer,Description="Score A">
@@ -896,7 +965,7 @@ Create the following file and save it as ``example.vcf``, which contains a singl
 
 Create the following ``genomic_resource.yaml`` for this score which omits an explicit scores section.
 
-.. code:: yaml
+.. code-block:: yaml
 
     type: position_score
 
@@ -910,7 +979,7 @@ field in the vcf file.
 
 The configuration above is equivalent to spelling out the generated score definition explicitly:
 
-.. code:: yaml
+.. code-block:: yaml
 
     type: position_score
 
@@ -928,7 +997,7 @@ The configuration above is equivalent to spelling out the generated score defini
 Some fields cannot be automatically generated. To customize a generated definition, add a ``scores:`` entry with the same
 id and include only the fields you want to change or extend (for example, overriding type or adding a histogram block):
 
-.. code:: yaml
+.. code-block:: yaml
 
     scores:
     - id: A
@@ -987,26 +1056,26 @@ common file layouts.
 
 For a VCF-format score (-p vcf: use the VCF preset):
 
-.. code:: bash
+.. code-block:: bash
 
     $ tabix -p vcf score.vcf.gz
 
 For a 1-based TSV score with a single position column (-s: chrom column, -b: pos column, -e: same as -b):
 
-.. code:: bash
+.. code-block:: bash
 
     $ tabix -s 1 -b 2 -e 2 score.tsv.gz
 
 
 For a 1-based TSV score with start and stop position columns (-s: chrom, -b: start, -e: end):
 
-.. code:: bash
+.. code-block:: bash
 
     $ tabix -s 1 -b 2 -e 3 score.tsv.gz
 
 
 For a 0-based TSV score with start and stop position columns (-0: 0-based coordinates, plus -s/-b/-e as above):
 
-.. code:: bash
+.. code-block:: bash
 
     $ tabix -0 -s 1 -b 2 -e 3 score.tsv.gz
