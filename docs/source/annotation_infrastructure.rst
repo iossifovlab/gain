@@ -118,9 +118,15 @@ Score annotators
 Score annotators attach values from score resources to each input annotatable 
 and emit them as annotation attributes. In some cases, a single annotatable can match 
 multiple score records (for example due to overlapping intervals or multi-base events). 
-Aggregators define how these multiple values are combined into a single output value. 
-Available aggregators are ``mean``, ``median``, ``max``, ``min``, ``mode``, ``join`` (i.e.,
-``join(;)``), ``list``, and ``concatenate``.
+Aggregators define how these multiple values are combined into a single output value.
+The available aggregators are:
+
+- ``mean``, ``median``, ``max``, ``min`` — numeric only (``int`` or ``float``).
+- ``mode``, ``count``, ``concatenate``, ``join(separator)``, ``list``, ``bool``, ``value_count`` — applicable to any value type.
+
+``join`` accepts a separator parameter, e.g. ``join(,)`` or ``join(;)``.
+The ``aggregator`` field accepts either the string form (``join(,)``) or a dict
+(``{aggregator_type: join, parameters: [","]}``), both are equivalent.
 
 position_score_annotator
 ************************
@@ -143,6 +149,9 @@ An annotatable may overlap multiple positions or intervals in
 the underlying score resource (for example, an INDEL spans
 multiple bases). In these cases, the annotator combines the
 matched values using a single aggregation setting, ``aggregator``.
+If no ``aggregator`` is specified in the attribute configuration, the annotator uses the
+score's default aggregator from the resource definition (which defaults to ``mean`` for
+numeric scores and ``list`` for string scores).
 The example below uses an ``aggregator`` and also renames the output attribute to ``renamed_score_attribute``.
 
 
@@ -264,7 +273,8 @@ An example ``gene_score_annotator`` configuration is shown below:
 
 
 The ``aggregator`` setting controls how gene score values are combined when an annotatable
-maps to multiple genes in the selected gene list.
+maps to multiple genes in the selected gene list. If no ``aggregator`` is specified, values
+from multiple genes are returned as a list.
 
 
 

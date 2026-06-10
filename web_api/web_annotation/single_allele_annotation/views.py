@@ -278,12 +278,17 @@ class SingleAnnotation(AnnotationBaseView):
             and not isinstance(value, (dict, list))
         ):
             value = str(value)
+        assert attribute_info.spec is not None
+        aggregator = attribute_info.aggregator
         return {
             "name": attribute_info.name,
             "description": attribute_info.description,
             "help": annotator_help,
             "source": attribute_info.source,
             "type": attribute_info.value_type,
+            "attribute_type": attribute_info.spec.attribute_type,
+            "supports_aggregation": attribute_info.spec.supports_aggregation,
+            "aggregator": str(aggregator) if aggregator is not None else None,
             "result": {
                 "value": value,
                 "histogram": histogram_path,
