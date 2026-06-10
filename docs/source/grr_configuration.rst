@@ -12,7 +12,7 @@ describes how to combine and cache them.
 This page documents the structure of the configuration file, how the CLI tools
 locate it, the available repository types, and resource caching. For an
 introduction to GRRs and the resources they hold, see
-`Genomic resources and repositories <https://iossifovlab.com/gaindocs/grr.html>`_.
+:doc:`Genomic resources and repositories <grr>`.
 
 
 How the CLI tools find the configuration
