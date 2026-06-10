@@ -18,7 +18,7 @@ from gain.annotation.annotation_pipeline import (
 from gain.annotation.annotator_base import AnnotatorBase
 from gain.gene_scores.gene_scores import build_gene_score_from_resource
 from gain.genomic_resources import GenomicResource
-from gain.genomic_resources.aggregators import build_aggregator
+from gain.genomic_resources.aggregators import Aggregator
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ class GeneScoreAnnotator(AnnotatorBase):
     ) -> Any:
         if attr.aggregator is None or not isinstance(value, dict):
             return value
-        return build_aggregator(attr.aggregator).aggregate(list(value.values()))
+        return Aggregator.build(attr.aggregator).aggregate(list(value.values()))
 
     def annotate(
         self,

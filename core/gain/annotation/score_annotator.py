@@ -26,6 +26,7 @@ from gain.annotation.annotation_pipeline import (
     AttributeSpec,
 )
 from gain.annotation.annotator_base import AnnotatorBase
+from gain.genomic_resources.aggregators import AggregatorSource
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     GenomicScore,
@@ -142,7 +143,7 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
     def _build_score_aggregator_documentation(
         self, attr: Attribute,
         aggregator: str,
-        attribute_conf_agg: str | None,
+        attribute_conf_agg: AggregatorSource | None,
     ) -> str:
         """Collect score aggregator documentation."""
         default_aggregators = {
@@ -175,13 +176,13 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
                 value = default_aggregators[aggregator][score_def.value_type]
                 value_str = f"`{value}` [type default]"
         else:
-            value_str = attribute_conf_agg
+            value_str = str(attribute_conf_agg)
         return f"**{aggregator}**: {value_str}"
 
     def add_score_aggregator_documentation(
             self, attr: Attribute,
             aggregator: str,
-            attribute_conf_agg: str | None) -> None:
+            attribute_conf_agg: AggregatorSource | None) -> None:
         """Collect score aggregator documentation."""
         aggregator_doc = self._build_score_aggregator_documentation(
             attr, aggregator, attribute_conf_agg)

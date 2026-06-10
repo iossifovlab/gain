@@ -7,7 +7,8 @@ import math
 import re
 from collections import Counter
 from collections.abc import Callable, Generator, Iterable
-from typing import Any, cast
+from dataclasses import dataclass, field
+from typing import Any, ClassVar, cast
 
 
 class Aggregator(abc.ABC):
@@ -16,6 +17,9 @@ class Aggregator(abc.ABC):
     def __init__(self) -> None:
         self.total_count = 0
         self.used_count = 0
+
+    parametrized: ClassVar[bool] = False
+    default_parameter: ClassVar[str | None] = None
 
     def __call__(self) -> Any:
         return self.get_final()
@@ -62,6 +66,20 @@ class Aggregator(abc.ABC):
 
     def __eq__(self, obj: object) -> bool:
         return cast(bool, self.get_final() == obj)
+
+    @staticmethod
+    def build(source: AggregatorSource) -> Aggregator:
+        """Build an aggregator from a definition, string, or dict."""
+        if isinstance(source, AggregatorDefinition):
+            definition = source
+        elif isinstance(source, str):
+            definition = AggregatorDefinition.from_string(source)
+        else:
+            definition = AggregatorDefinition.from_dict(source)
+        aggregator_class = get_aggregator_class(definition.aggregator_type)
+        if definition.parameters:
+            return aggregator_class(*definition.parameters)
+        return aggregator_class()
 
 
 class MaxAggregator(Aggregator):
@@ -248,6 +266,9 @@ class ModeAggregator(Aggregator):
 class JoinAggregator(Aggregator):
     """Aggregator that joins all passed values using a separator."""
 
+    parametrized: ClassVar[bool] = True
+    default_parameter: ClassVar[str | None] = ","
+
     def __init__(self, separator: str):
         super().__init__()
         self.values: list[Any] = []
@@ -374,54 +395,72 @@ def get_aggregator_class(aggregator: str) -> Callable[[], Aggregator]:
     return AGGREGATOR_CLASS_DICT[aggregator]
 
 
-def create_aggregator_definition(aggregator_type: str) -> dict[str, Any]:
-    """Parse an aggregator definition string."""
-    join_regex = r"^(join)\((.+)\)"
-    join_match = re.match(join_regex, aggregator_type)
-    if join_match is not None:
-        separator = join_match.groups()[1]
-        return {
-            "name": "join",
-            "args": [separator],
-        }
-    return {
-        "name": aggregator_type,
-    }
+@dataclass
+class AggregatorDefinition:
+    """Parsed representation of an aggregator type string."""
+    aggregator_type: str
+    parameters: list[Any] = field(default_factory=list)
+
+    @classmethod
+    def from_string(cls, raw: str) -> AggregatorDefinition:
+        """Parse an aggregator definition from a string.
+
+        Format: ``name`` or ``name(parameter)``.
+        """
+        match = re.match(r"^(\w+)(?:\(([^)]*)\))?$", raw)
+        if match is None:
+            raise ValueError(f"Invalid aggregator definition: {raw!r}")
+        name, parameter = match.group(1), match.group(2)
+        if parameter is None:
+            return cls(aggregator_type=name)
+        return cls(aggregator_type=name, parameters=[parameter])
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AggregatorDefinition:
+        """Construct an aggregator definition from a dictionary."""
+        return cls(
+            aggregator_type=data["aggregator_type"],
+            parameters=list(data.get("parameters", [])),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serialize to a dictionary."""
+        d: dict[str, Any] = {"aggregator_type": self.aggregator_type}
+        if self.parameters:
+            d["parameters"] = self.parameters
+        return d
+
+    def __str__(self) -> str:
+        if self.parameters:
+            return f"{self.aggregator_type}({self.parameters[0]})"
+        return self.aggregator_type
 
 
-def create_aggregator(aggregator_def: dict[str, Any]) -> Aggregator:
-    """Create an aggregator by aggregator definition."""
-    aggregator_name = aggregator_def["name"]
-    aggregator_class = get_aggregator_class(aggregator_name)
-    if "args" in aggregator_def:
-        return aggregator_class(*aggregator_def["args"])
-
-    return aggregator_class()
-
-
-def build_aggregator(aggregator_type: str) -> Aggregator:
-    """Build an aggregator from an aggregator type string."""
-    aggregator_def = create_aggregator_definition(aggregator_type)
-    return create_aggregator(aggregator_def)
+AggregatorSource = AggregatorDefinition | str | dict[str, Any]
 
 
 NUMERIC_ONLY_AGGREGATORS = {"max", "min", "mean", "median"}
 
 
 def validate_aggregator(
-    aggregator_type: str, value_type: str | None = None,
+    aggregator: AggregatorSource, value_type: str | None = None,
 ) -> None:
     """Raise ValueError for invalid aggregator or value type combinations."""
     try:
-        build_aggregator(aggregator_type)
+        Aggregator.build(aggregator)
     except Exception as ex:
         raise ValueError(
-            f"Incorrect aggregator '{aggregator_type}'", ex) from ex
+            f"Incorrect aggregator '{aggregator}'", ex) from ex
     if value_type is not None:
-        agg_name = create_aggregator_definition(aggregator_type)["name"]
-        if agg_name in NUMERIC_ONLY_AGGREGATORS \
+        if isinstance(aggregator, AggregatorDefinition):
+            definition = aggregator
+        elif isinstance(aggregator, str):
+            definition = AggregatorDefinition.from_string(aggregator)
+        else:
+            definition = AggregatorDefinition.from_dict(aggregator)
+        if definition.aggregator_type in NUMERIC_ONLY_AGGREGATORS \
                 and value_type not in {"int", "float"}:
             raise ValueError(
-                f"Aggregator '{aggregator_type}' requires a numeric value "
+                f"Aggregator '{aggregator}' requires a numeric value "
                 f"type (int or float), but attribute has type '{value_type}'",
             )

@@ -19,4 +19,9 @@ urlpatterns = [
         views.ResourceAnnotators.as_view(),
     ),
     re_path(r"api/editor/pipeline_status/?", views.PipelineStatus.as_view()),
+    re_path(r"api/editor/aggregators/?", views.Aggregators.as_view()),
+    re_path(
+        r"api/editor/annotator_aggregators/?",
+        views.AnnotatorAggregators.as_view(),
+    ),
 ]

@@ -110,6 +110,8 @@ def test_annotator_attributes_position_score(
             "description": "test position score",
             "default": True,
             "internal": False,
+            "attribute_type": "attribute",
+            "supports_aggregation": True,
         }],
     }
 
@@ -141,6 +143,8 @@ def test_annotator_attributes_cnv_collection(
         ),
         "default": True,
         "internal": False,
+        "attribute_type": "attribute",
+        "supports_aggregation": True,
     }
 
 
@@ -567,3 +571,123 @@ def test_pipeline_attributes_t4c8(
         "gene_list",
         "t4c8_score",
     ]
+
+
+@pytest.mark.parametrize("current_client", ["admin", "user", "anonymous"])
+def test_aggregators(
+    current_client: str, clients: dict[str, Client],
+) -> None:
+    client = clients[current_client]
+    response = client.get("/api/editor/aggregators")
+
+    assert response.status_code == 200
+    aggregators = response.json()
+    assert isinstance(aggregators, list)
+
+    by_type = {a["aggregator_type"]: a for a in aggregators}
+
+    assert "min" in by_type
+    assert by_type["min"]["parametrized"] is False
+    assert "default_parameter_value" not in by_type["min"]
+
+    assert "join" in by_type
+    assert by_type["join"]["parametrized"] is True
+    assert by_type["join"]["default_parameter_value"] == ","
+
+
+@pytest.mark.parametrize("current_client", ["admin", "user", "anonymous"])
+def test_annotator_aggregators_numeric_source(
+    current_client: str, clients: dict[str, Client],
+) -> None:
+    client = clients[current_client]
+    response = client.post("/api/editor/annotator_aggregators", data={
+        "annotator_type": "position_score_annotator",
+        "resource_id": "scores/pos1",
+        "pipeline_id": "pipeline/test_pipeline",
+        "attribute_sources": ["pos1"],
+    }, content_type="application/json")
+
+    assert response.status_code == 200
+    result = response.json()
+    assert "pos1" in result
+
+    pos1 = result["pos1"]
+    assert set(pos1["aggregators"]) == {
+        "max", "min", "mean", "median",
+        "count", "concatenate", "mode", "join", "list", "bool", "value_count",
+    }
+    assert pos1["default_aggregator"] == "mean"
+
+
+@pytest.mark.parametrize("current_client", ["admin", "user", "anonymous"])
+def test_annotator_aggregators_non_aggregatable_source(
+    current_client: str, clients: dict[str, Client],
+) -> None:
+    client = clients[current_client]
+    response = client.post("/api/editor/annotator_aggregators", data={
+        "annotator_type": "effect_annotator",
+        "genome": "t4c8/t4c8_genome",
+        "gene_models": "t4c8/t4c8_genes",
+        "pipeline_id": "pipeline/test_pipeline",
+        "attribute_sources": ["gene_effects"],
+    }, content_type="application/json")
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["gene_effects"]["aggregators"] is None
+    assert result["gene_effects"]["default_aggregator"] is None
+
+
+@pytest.mark.parametrize("current_client", ["admin", "user", "anonymous"])
+def test_annotator_creation_workflow_with_aggregator(
+    current_client: str, clients: dict[str, Client],
+) -> None:
+    client = clients[current_client]
+
+    # Step 1: Get available aggregators
+    response = client.get("/api/editor/aggregators")
+    assert response.status_code == 200
+    aggregators = {a["aggregator_type"]: a for a in response.json()}
+    assert "join" in aggregators
+    join_agg = aggregators["join"]
+
+    # Step 2: Get valid aggregators for pos1
+    response = client.post("/api/editor/annotator_aggregators", data={
+        "annotator_type": "position_score_annotator",
+        "resource_id": "scores/pos1",
+        "pipeline_id": "pipeline/test_pipeline",
+        "attribute_sources": ["pos1"],
+    }, content_type="application/json")
+    assert response.status_code == 200
+    assert "join" in response.json()["pos1"]["aggregators"]
+
+    # Step 3: Build YAML with aggregator as dict definition
+    aggregator_dict = {
+        "aggregator_type": join_agg["aggregator_type"],
+        "parameters": [join_agg["default_parameter_value"]],
+    }
+    response = client.post("/api/editor/annotator_yaml", data={
+        "pipeline_id": "pipeline/test_pipeline",
+        "annotator_type": "position_score_annotator",
+        "resource_id": "scores/pos1",
+        "attributes": [{
+            "name": "pos1",
+            "source": "pos1",
+            "internal": False,
+            "aggregator": aggregator_dict,
+        }],
+    }, content_type="application/json")
+
+    assert response.status_code == 200
+    output = yaml.safe_load(response.json())
+    assert output == [{
+        "position_score_annotator": {
+            "resource_id": "scores/pos1",
+            "attributes": [{
+                "name": "pos1",
+                "source": "pos1",
+                "internal": False,
+                "aggregator": "join(,)",
+            }],
+        },
+    }]

@@ -13,6 +13,10 @@ from typing import TYPE_CHECKING, Any, TypedDict
 import yaml
 from lark import Lark, Token, Tree
 
+from gain.genomic_resources.aggregators import (
+    AggregatorDefinition,
+    AggregatorSource,
+)
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
@@ -156,18 +160,27 @@ class AttributeConfig:
     name: str
     source: str
     internal: bool | None = None
-    aggregator: str | None = None
+    aggregator: AggregatorSource | None = None
     parameters: dict[str, Any] = field(
         default_factory=dict, compare=False, hash=False)
 
     def __hash__(self) -> int:
-        return hash((self.name, self.source, self.internal, self.aggregator))
+        return hash(
+            (self.name, self.source, self.internal, str(self.aggregator)))
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize to a config dict, omitting fields that are unset."""
         d: dict[str, Any] = {"name": self.name, "source": self.source}
         if self.internal is not None:
             d["internal"] = self.internal
+        if self.aggregator is not None:
+            if isinstance(self.aggregator, str):
+                d["aggregator"] = self.aggregator
+            elif isinstance(self.aggregator, AggregatorDefinition):
+                d["aggregator"] = str(self.aggregator)
+            else:
+                d["aggregator"] = str(
+                    AggregatorDefinition.from_dict(self.aggregator))
         return d
 
 
@@ -178,7 +191,7 @@ class Attribute:
     name: str
     source: str
     internal: bool | None = None
-    aggregator: str | None = None
+    aggregator: AggregatorSource | None = None
     parameters: ParamsUsageMonitor = field(
         default_factory=lambda: ParamsUsageMonitor({}),
         compare=False, hash=False)
@@ -188,7 +201,8 @@ class Attribute:
         default=None, compare=False, hash=False)
 
     def __hash__(self) -> int:
-        return hash((self.name, self.source, self.internal, self.aggregator))
+        return hash(
+            (self.name, self.source, self.internal, str(self.aggregator)))
 
     @property
     def value_type(self) -> str:

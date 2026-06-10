@@ -247,6 +247,18 @@ class AttributeSpec:
         if self.attribute_type == "annotatable":
             self.supports_aggregation = False
 
+    def as_dict(self) -> dict[str, Any]:
+        """Serialize to a response dict."""
+        return {
+            "source": self.source,
+            "type": self.value_type,
+            "description": self.description,
+            "default": self.is_default,
+            "internal": self.internal_default,
+            "attribute_type": self.attribute_type,
+            "supports_aggregation": self.supports_aggregation,
+        }
+
 
 class Annotator(abc.ABC):
     """Annotator provides a set of attrubutes for a given Annotatable."""
