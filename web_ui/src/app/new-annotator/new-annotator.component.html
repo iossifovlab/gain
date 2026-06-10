@@ -363,9 +363,85 @@
             <div class="error-message">{{ errorMessage }}</div>
             }
             <button mat-button matStepperPrevious class="back-button" (click)="clearErrorMessage()">Back</button>
-            @if(areAttributesValid) {
-            <button matButton (click)="onFinish()" class="finish-button">Finish</button>
+            <button
+              mat-button
+              [disabled]="!areAttributesValid"
+              (click)="requestAttributeAggregators()"
+              class="next-button"
+              >Next</button
+            >
+            <button matButton [disabled]="!areAttributesValid" (click)="onFinish()" class="finish-button"
+              >Finish</button
+            >
+          </div>
+        </div>
+      </ng-template>
+    </mat-step>
+
+    <mat-step label="Configure aggregation" [stepControl]="attributeStep" [optional]="true">
+      <ng-template matStepContent>
+        <div class="summary-content">
+          @if (data.isResourceWorkflow) {
+          <div class="resource-type-display-text">{{ 'resource type\n' + getResourceById().type }}</div>
+          <div class="resource-type-display-text" [title]="resourceStep.get('resourceId').value">
+            {{ 'resource id\n' + resourceStep.get('resourceId').value }}</div
+          >
+          }
+          <div class="annotator-display-text" [title]="annotatorStep.get('annotator').value">
+            <div>annotator</div>
+            <a [href]="annotatorConfig.annotatorUrl" target="_blank">{{ annotatorStep.get('annotator').value }}</a></div
+          >
+          @for (entry of configurationStep.value | keyvalue; track entry.key) { @if (!data.isResourceWorkflow ||
+          entry.value && resourceStep.get('resourceId').value !== entry.value) {
+          <div class="resources-display-text">{{ entry.key + '\n' + entry.value }}</div>
+          } }
+        </div>
+
+        <div class="left-content">
+          <div class="aggregators-content-wrapper">
+            @if(selectedAttributes.length) {
+            <div class="grid-container-aggregators" id="attributes-aggregators-list">
+              <div class="grid-header-aggregators" title="Attribute">Attribute</div>
+              <div class="grid-header-aggregators" title="Type">Type</div>
+              <div class="grid-header-aggregators" title="Aggregator">Aggregator</div>
+              <div class="grid-header-aggregators" title="Parameters">Parameters</div>
+              @for (row of annotatorAttributes; track row.name) {
+              <ng-container>
+                <span class="attribute grid-cell-aggregators" [title]="row.name">
+                  {{ row.name }} / {{ row.source }}
+                </span>
+                <span class="attribute-type grid-cell-aggregators" [title]="row.type">{{ row.type }}</span>
+                <span class="aggregator grid-cell-aggregators">
+                  <mat-select
+                    [attr.id]="'aggregators-dropdown-' + row.name"
+                    [disabled]="!row.aggregators.length"
+                    [placeholder]="!row.aggregators.length ? 'Not aggregatable' : 'Select aggregator'"
+                    [value]="row.defaultAggregator"
+                    (selectionChange)="onSelectAggregator(row.source, $event.value)">
+                    @for (aggregator of row.aggregators; track aggregator) {
+                    <mat-option class="aggregator-option" [value]="aggregator" [title]="aggregator">
+                      {{ aggregator }}{{ aggregator === row.defaultAggregator ? ' (default)' : '' }}
+                    </mat-option>
+                    }
+                  </mat-select>
+                </span>
+                <span class="aggregator-parameters grid-cell-aggregators">
+                  @if (row.parameterValue !== null) {
+                  <input
+                    class="parameter-input"
+                    type="text"
+                    [value]="row.parameterValue"
+                    (input)="row.parameterValue = $event.target.value" />
+                  } @else { - }
+                </span>
+              </ng-container>
+              }
+            </div>
             }
+          </div>
+          <div class="modal-footer">
+            <button mat-button matStepperPrevious class="back-button" (click)="clearErrorMessage()">Back</button>
+            <button matButton (click)="onFinish()" class="finish-button">Finish</button>
           </div>
         </div>
       </ng-template>

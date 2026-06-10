@@ -4,7 +4,7 @@ import { NewAnnotatorComponent } from './new-annotator.component';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
-import { Observable, of, throwError } from 'rxjs';
+import { map, Observable, of, throwError } from 'rxjs';
 import { PipelineEditorService } from '../pipeline-editor.service';
 import {
   AnnotatorConfig,
@@ -14,7 +14,10 @@ import {
   ResourceAnnotator,
   ResourceAnnotatorConfigs,
   Resource,
-  ResourcePage
+  ResourcePage,
+  AggregatorConfig,
+  AttributeAggregatorsResponse,
+  AttributeAggregatorState
 } from './annotator';
 import { FormBuilder, FormControl } from '@angular/forms';
 
@@ -180,6 +183,41 @@ class PipelineEditorServiceMock {
       '3\'UTR_gene_list'
     ]);
   }
+
+  public getAggregators(): Observable<AggregatorConfig[]> {
+    return of<AggregatorConfig[]>([
+      { aggregatorType: 'min', parametrized: false },
+      { aggregatorType: 'max', parametrized: false },
+      { aggregatorType: 'join', parametrized: true, defaultParameterValue: ',' }
+    ]);
+  }
+
+  /* eslint-disable @typescript-eslint/no-unused-vars, camelcase */
+  public getAttributesAggregators(
+    annotatorType: string,
+    pipelineId: string,
+    resources: object,
+    selectedAttributeSources: string[]
+  ): Observable<AttributeAggregatorState[]> {
+    const mock: AttributeAggregatorsResponse = {
+      pLI: { aggregators: ['min', 'max', 'join'], default_aggregator: 'min' },
+      pLI_rank: { aggregators: ['min', 'max', 'join'], default_aggregator: 'min' },
+      pLI_rank_null: null
+    };
+
+    return of(mock).pipe(
+      map((configs) =>
+        Object.entries(configs).map(([source, config]) => ({
+          source: source,
+          aggregators: config?.aggregators ?? [],
+          defaultAggregator: config?.default_aggregator ?? null,
+          selectedAggregator: config?.default_aggregator ?? null,
+          parameterValue: null,
+        }))
+      )
+    );
+  }
+  /* eslint-enable */
 }
 class MatDialogRefMock {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -391,7 +429,16 @@ describe('NewAnnotatorComponent', () => {
     component.annotatorStep.setControl('annotator', new FormControl('gene_set_annotator'));
     const getAnnotatorYmlSpy = jest.spyOn(pipelineEditorServiceMock, 'getAnnotatorYml');
     const closeModalSpy = jest.spyOn(mockMatDialogRef, 'close');
-    component.selectedAttributes = [attributesMock[0]];
+    component.annotatorAttributes = [{
+      source: 'mpc',
+      name: 'mpc',
+      type: 'string',
+      internal: false,
+      aggregators: ['min', 'max'],
+      defaultAggregator: 'min',
+      selectedAggregator: 'min',
+      parameterValue: null,
+    }];
 
     component.onFinish();
     expect(getAnnotatorYmlSpy).toHaveBeenCalledWith(
@@ -399,7 +446,7 @@ describe('NewAnnotatorComponent', () => {
       'gene_set_annotator',
       // eslint-disable-next-line camelcase
       { resource_id: 'gene_properties/gene_scores/RVIS' },
-      [new AttributeData('mpc', 'string', 'mpc', false, true, 'Missense badness, PolyPhen-2, and Constraint.')]
+      component.annotatorAttributes,
     );
 
     expect(closeModalSpy).toHaveBeenCalledWith('\n' + ymlResponse);
@@ -826,6 +873,78 @@ describe('NewAnnotatorComponent', () => {
     component.isAttributeLoading = true;
     component['loadMoreAttributes']();
     expect(component.isAttributeLoading).toBe(false);
+  });
+
+  it('should build annotator attributes from aggregator response', () => {
+    component.annotatorStep.setControl('annotator', new FormControl('gene_set_annotator'));
+    component.attributePage = attributePageMock;
+    component.selectedAttributes = [attributesMock[0], attributesMock[1]];
+
+    component.requestAttributeAggregators();
+
+    expect(component.annotatorAttributes).toHaveLength(3); // mock returns pLI, pLI_rank, pLI_rank_null
+    const aggregatable = component.annotatorAttributes.find(a => a.source === 'pLI');
+    expect(aggregatable.aggregators).toStrictEqual(['min', 'max', 'join']);
+    expect(aggregatable.defaultAggregator).toBe('min');
+    expect(aggregatable.selectedAggregator).toBe('min');
+    const nonAggregatable = component.annotatorAttributes.find(a => a.source === 'pLI_rank_null');
+    expect(nonAggregatable.aggregators).toStrictEqual([]);
+    expect(nonAggregatable.defaultAggregator).toBeNull();
+  });
+
+  it('should preserve existing aggregator selection when rebuilding annotator attributes', () => {
+    component.annotatorStep.setControl('annotator', new FormControl('gene_set_annotator'));
+    component.attributePage = attributePageMock;
+    component.selectedAttributes = [attributesMock[0]];
+    component.requestAttributeAggregators();
+
+    component.annotatorAttributes[0].selectedAggregator = 'max';
+
+    component.requestAttributeAggregators();
+
+    expect(component.annotatorAttributes[0].selectedAggregator).toBe('max');
+  });
+
+  it('should set selectedAggregator and clear parameterValue for non-parametrized aggregator', () => {
+    component.annotatorAttributes = [{
+      source: 'mpc',
+      name: 'mpc',
+      type: 'string',
+      internal: false,
+      aggregators: ['min', 'max', 'join'],
+      defaultAggregator: 'min',
+      selectedAggregator: 'join',
+      parameterValue: ': ',
+    }];
+
+    component.onSelectAggregator('mpc', 'max');
+
+    expect(component.annotatorAttributes[0].selectedAggregator).toBe('max');
+    expect(component.annotatorAttributes[0].parameterValue).toBeNull();
+  });
+
+  it('should set selectedAggregator and initialize parameterValue for parametrized aggregator', () => {
+    component.annotatorAttributes = [{
+      source: 'mpc',
+      name: 'mpc',
+      type: 'string',
+      internal: false,
+      aggregators: ['min', 'max', 'join'],
+      defaultAggregator: 'min',
+      selectedAggregator: 'min',
+      parameterValue: null,
+    }];
+
+    component.onSelectAggregator('mpc', 'join');
+
+    expect(component.annotatorAttributes[0].selectedAggregator).toBe('join');
+    expect(component.annotatorAttributes[0].parameterValue).toBe(',');
+  });
+
+  it('should do nothing when onSelectAggregator is called with unknown source', () => {
+    component.annotatorAttributes = [];
+    component.onSelectAggregator('nonexistent', 'min');
+    expect(component.annotatorAttributes).toHaveLength(0);
   });
 });
 
