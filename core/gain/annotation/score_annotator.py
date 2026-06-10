@@ -176,7 +176,7 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
                 value = default_aggregators[aggregator][score_def.value_type]
                 value_str = f"`{value}` [type default]"
         else:
-            value_str = attribute_conf_agg
+            value_str = str(attribute_conf_agg)
         return f"**{aggregator}**: {value_str}"
 
     def add_score_aggregator_documentation(

@@ -682,7 +682,7 @@ class AnnotatorAggregators(EditorView):
             attr.source: attr for attr in annotator.attributes
         }
 
-        result = {}
+        result: dict[str, Any] = {}
         for source in attribute_sources:
             if not isinstance(source, str):
                 continue
