@@ -83,7 +83,7 @@ This shows that you have access to the IossifovLab GRR server and lists all the 
     ...
 
 
-This output contains several pieces of information. The first line shows that GAIn is using the default GRR definition, which points to the IossifovLab GRR server. The next three lines show the default configuration. This section is useful for confirming that GAIn is connected to the expected GRR server. In this example, the GRR server is ``https://grr.iossifovlab.com`` and the resource namespace is ``default``. The following lines list the resources available on that server, including their type, size, and resource ID. For example, ``default/gene_properties/gene_scores/GTEx_V11_RNAexpression`` is the resource ID for the GTEx V11 RNA expression gene score resource. Resource IDs are used to refer to resources in annotation pipelines.
+This output contains several pieces of information. The first line shows that GAIn is using the default GRR definition, which points to the IossifovLab GRR server. The next three lines show the default configuration. This section is useful for confirming that GAIn is connected to the expected GRR server. In this example, the GRR server is ``https://grr.iossifovlab.com``. The following lines list the resources available on that server, including their type, size, and resource ID. For example, ``gene_properties/gene_scores/GTEx_V11_RNAexpression`` is the resource ID for the GTEx V11 RNA expression gene score resource. Resource IDs are used to refer to resources in annotation pipelines.
 
 
 Quick annotation test
@@ -91,9 +91,9 @@ Quick annotation test
 
 After installation, GAIn can immediately run a small annotation test using the default IossifovLab GRR. This is a useful way to confirm that the command-line tools are working and can access the public resources.
 
-In this example, we annotate a small tab-separated text file containing three variants. The test uses resources directly from the public GRR, so it is convenient for checking the setup but not intended for large annotation jobs.
+In this example, we annotate a small comma-separated text file containing three variants. The test uses resources directly from the public GRR, so it is convenient for checking the setup but not intended for large annotation jobs.
 
-Download the example input CSV file (:download:`small_input.csv<files/small_input.csv>`), whose content is shown below. The file contains three variant annotatables, each described by the columns ``chrom``, ``pos``, ``ref``, and ``alt``, which specify the chromosome, genomic position, reference allele, and alternate allele:
+Download the example input CSV file (:download:`small_input.csv <files/small_input.csv>`), whose content is shown below. The file contains three variant annotatables, each described by the columns ``chrom``, ``pos``, ``ref``, and ``alt``, which specify the chromosome, genomic position, reference allele, and alternate allele:
 
 .. csv-table::
     :file: files/small_input.csv
@@ -108,7 +108,7 @@ To annotate the file, run:
 
 This command annotates ``small_input.csv`` using the predefined ``pipeline/hg38_clinical_annotation`` pipeline, which is hosted in the default GRR.
 
-GAIn writes the annotated output to a new file whose name is derived from the input file. For example, the command above produces (:download:`small_input.annotated.csv<files/small_input.annotated.csv>`), with the following content:
+GAIn writes the annotated output to a new file whose name is derived from the input file. For example, the command above produces (:download:`small_input.annotated.csv <files/small_input.annotated.csv>`), with the following content:
 
 .. csv-table::
     :file: files/small_input.annotated.csv
@@ -146,7 +146,7 @@ To review the attributes produced by the custom pipeline, run the following comm
 
 
 
-You can open the generated HTML summary in your local folder of view it here: `doc.html <doc.html>`_. To annotate the input file with this custom pipeline, run:
+You can open the generated HTML summary (doc.html) in your local folder. To annotate the input file with this custom pipeline, run:
 
 .. code-block:: bash
 
@@ -231,7 +231,7 @@ For example, download the example input file (:download:`SSC_WES_variants_select
 
 .. code-block:: bash
 
-    annotate_tabular SSC_WES_variants_select.tsv.gz custom_pipeline.yaml
+    annotate_tabular SSC_WES_variants_select.tsv.gz pipeline/hg38_clinical_annotation
 
 
 To take advantage of parallel computation, first prepare the input file for indexed genomic access:
@@ -242,17 +242,17 @@ To take advantage of parallel computation, first prepare the input file for inde
 
 When run successfully, this command produces two files: ``SSC_WES_variants_select.sorted.tsv.bgz``, which contains the sorted and compressed version of the input file, and ``SSC_WES_variants_select.sorted.tsv.bgz.tbi``, its associated tabix index. These two files enable parallelization and fast genomic-region access in GAIn.
 
-The following command uses parallelization, and with the required resources already cached, annotating the sorted file with ``custom_pipeline.yaml`` took approximately 1 minutes and 15 seconds in our test.
+The following command uses parallelization, and with the required resources already cached, annotating the sorted file with ``pipeline/hg38_clinical_annotation`` took approximately 1 minute and 15 seconds in our test.
 
 .. code-block:: bash
 
-    annotate_tabular SSC_WES_variants_select.sorted.tsv.bgz custom_pipeline.yaml
+    annotate_tabular SSC_WES_variants_select.sorted.tsv.bgz pipeline/hg38_clinical_annotation
 
-By default, GAIn splits indexed inputs by chromosome. For human genomes, this creates up to 24 chromosome-level tasks, which is already enough to use all available cores on our local test machine with 10 CPU cores. Therefore, splitting the input further with the -r option provides only a modest additional benefit on this computer. However, on larger compute systems or clusters with many more cores, chromosome-level splitting may not create enough tasks to fully use the available parallelism. In those cases, the -r option can split the input into smaller genomic regions and improve scaling. In our test, using the ``-r`` option reduced the annotation time to approximately 1 minute.
+By default, GAIn splits indexed inputs by chromosome. For human genomes, this creates up to 24 chromosome-level tasks, which is already enough to use all available cores on our local test machine with 10 CPU cores. Therefore, splitting the input further with the ``-r`` option provides only a modest additional benefit on this computer. However, on larger compute systems or clusters with many more cores, chromosome-level splitting may not create enough tasks to fully use the available parallelism. In those cases, the ``-r`` option can split the input into smaller genomic regions and improve scaling. In our test, using the ``-r`` option reduced the annotation time to approximately 1 minute.
 
 .. code-block:: bash
 
-    annotate_tabular SSC_WES_variants_select.sorted.tsv.bgz custom_pipeline.yaml -r 30_000_000
+    annotate_tabular SSC_WES_variants_select.sorted.tsv.bgz pipeline/hg38_clinical_annotation -r 30_000_000
 
 GAIn can also use a configured Dask cluster that creates workers on a larger compute system, such as SGE or SLURM. For example, if a Dask cluster named ``my_sge_cluster`` has been configured to create workers on an SGE cluster, the annotation can be run with:
 
@@ -320,11 +320,11 @@ Because position inputs do not include reference and alternate alleles, GAIn can
 
 
 This pipeline combines three annotators. The ``simple_effect_annotator`` uses the ``MANE 1.5`` gene models resource to classify each position by genomic context, such as coding or intergenic, and to report overlapping genes when applicable. 
-The ``position_score_annotator`` adds ``phyloP7way`` conservation scores and requests three aggregations: ``max``, ``mean``, and ``list``. The ``max`` and ``mean`` aggregators report the maximum and average score, while list reports the individual scores before aggregation. For single-position inputs, these aggregators have no effect because there is only one genomic position, but they become useful for region inputs, where scores must be summarized across many positions. The ``allele_score_annotator`` uses ``AlphaMissense`` to summarize possible allelic changes at each position. Here, ``max`` and ``mean`` report the maximum and mean ``am_pathogenicity`` values across possible alleles, while the allele source reports the observed alleles together with their ``am_pathogenicity`` values. Run the following command to annotate the positions:
+The ``position_score_annotator`` adds ``phyloP7way`` conservation scores and requests three aggregations: ``max``, ``mean``, and ``list``. The ``max`` and ``mean`` aggregators report the maximum and average score, while ``list`` reports the individual scores before aggregation. For single-position inputs, these aggregators have no effect because there is only one genomic position, but they become useful for region inputs, where scores must be summarized across many positions. The ``allele_score_annotator`` uses ``AlphaMissense`` to summarize possible allelic changes at each position. Here, ``max`` and ``mean`` report the maximum and mean ``am_pathogenicity`` values across possible alleles, while the allele source reports the observed alleles together with their ``am_pathogenicity`` values. Run the following command to annotate the positions:
 
 .. code-block:: bash
 
-    annotate_tabular positions.csv position_pipeline.yaml
+    annotate_tabular positions.tsv position_pipeline.yaml
 
 This produces :download:`positions.annotated.tsv <files/positions.annotated.tsv>` which contains:
 
@@ -359,7 +359,7 @@ Then run the following command to annotate the regions:
 
     annotate_tabular regions.tsv position_pipeline.yaml
 
-This produces :download:`regions.annotated.tsv <files/regions.annotated.tsv>` which is too large to display here [].
+This produces :download:`regions.annotated.tsv <files/regions.annotated.tsv>` which is too large to display in full here.
 
 
 This output shows how the same pipeline summarizes annotations over genomic intervals. The ``simple_effect_annotator`` reports the broad genomic context of each region and any overlapping genes. For ``phyloP7way``, the ``max`` and ``mean`` columns summarize conservation scores across the positions spanned by each region, while the ``list`` column reports the individual position-level values. For ``AlphaMissense``, GAIn aggregates across both the positions in the region and the possible allelic changes at those positions, producing summary ``am_pathogenicity`` values and listing the contributing alleles when available.
@@ -403,7 +403,7 @@ Adding local GRRs
 
 Suppose you are using the public GRRs for variant annotation, but your analysis also requires a gene-level score that is not available in the main GRR or GRR-ENCODE. For example, you may want to annotate variants with the Collins rCNV 2022 dosage sensitivity scores, including pHaplo and pTriplo, which estimate gene-level sensitivity to deletion and duplication, respectively. In this situation, you can download the external dataset, define it as a local GAIn resource, and use it together with the public GRRs in the same annotation workflow.
 
-Download the Collins rCNV dosage sensitivity score table, and inspect the first few lines (shown below) to see the available columns before adding the resource file to a local GRR.:
+Download the Collins rCNV dosage sensitivity score table and inspect the first few lines, shown below, to see the available columns before adding the resource file to a local GRR:
 
 .. code-block:: bash
 
@@ -419,7 +419,7 @@ Download the Collins rCNV dosage sensitivity score table, and inspect the first 
     CHD8,0.991649600531021,0.999999986508108
     GRIN2B,0.996808517025246,0.999999958700358
 
-The file contains a gene column with the header #gene and two gene scores, pHaplo and pTriplo, for each gene. To make this file available as a GAIn resource, place it in a folder together with a :download:`genomic_resource.yaml <files/genomic_resource.yaml>` file:
+The file contains a gene column with the header ``#gene`` and two gene scores, ``pHaplo`` and ``pTriplo``, for each gene. To make this file available as a GAIn resource, place it in a folder together with a :download:`genomic_resource.yaml <files/genomic_resource.yaml>` file:
 
 .. code-block:: text
 
@@ -464,7 +464,7 @@ Then add the local GRR to the GRR definition file, ``~/.grr_definition.yaml``. F
 
 
 
-With this configuration, GAIn can use the local resource in annotation pipelines, as well as the public resources in the main GRR and GRR-ENCODE. For example, the following custom pipeline combines resources from all three repositories: a gene-effect annotator from the main GRR, an ATAC-seq track from GRR-ENCODE, and the pHaplo score from ``My_First_GRR``.
+With this configuration, GAIn can use the local resource in annotation pipelines, as well as the public resources in the main GRR and GRR-ENCODE. For example, the following custom pipeline combines resources from all three repositories: a gene-effect annotator from the main GRR, an ATAC-seq track from GRR-ENCODE, and the ``pHaplo`` score from ``My_First_GRR``.
 
 Download the example pipeline (:download:`multiple_grr_pipeline.yaml <files/multiple_grr_pipeline.yaml>`) which uses multiple GRRs: 
 
@@ -479,7 +479,7 @@ To annotate the original example input with this pipeline, run:
 
     annotate_tabular small_input.csv multiple_grr_pipeline.yaml -o small_input_multiple_grr.annotated.csv
 
-The output contains the effect annotations, the ENCODE-derived position score, and the pHaplo score from the local GRR:
+The output contains the effect annotations, the ENCODE-derived position score, and the ``pHaplo`` score from the local GRR:
 
 .. csv-table::
     :file: files/small_input_multiple_grr.annotated.csv
@@ -492,7 +492,7 @@ Reannotation
 When iterating on an analysis, you often want to run a new annotation pipeline on a dataset that has 
 already been annotated. If the new pipeline shares any steps with the old one (for example, the same effect annotator or the same score lookup), recomputing those attributes can be wasteful—especially for large annotation jobs.
 
-GAIn supports reannotation, which allows it to reuse attributes that were already computed by a previous pipeline run and only compute what is new. To illustrate this, we will use the clinical annotation pipeline, ``pipeline/hg38_clinical_annotation``. The full contents of this pipeline, including the attributes it produces, can be viewed here: `hg38 clinical annotation pipeline <https://grr.iossifovlab.com/pipeline/hg38_clinical_annotation/index.html>`_. This pipeline annotates hg38 variants with commonly used clinical resources, including gene effects, conservation scores, allele frequencies, clinical significance, and gene-level constraint scores.
+GAIn supports reannotation, which allows it to reuse attributes that were already computed by a previous pipeline run and only compute what is new. To illustrate this, we will use the clinical annotation pipeline, ``pipeline/hg38_clinical_annotation``. The full contents of this pipeline, including the attributes it produces, can be viewed here: `hg38 clinical annotation pipeline <https://grr.iossifovlab.com/pipeline/hg38_clinical_annotation/index.html>`_. This pipeline annotates ``hg38`` variants with commonly used clinical resources, including gene effects, conservation scores, allele frequencies, clinical significance, and gene-level constraint scores.
 
 
 To illustrate the runtime of this pipeline, we run it on the larger SSC whole-exome sequencing input used earlier and record the elapsed time. This file contains approximately 1.4 million variants and has been sorted and indexed for parallel annotation (:download:`SSC_WES_variants_select.sorted.tsv.bgz <files/SSC_WES_variants_select.sorted.tsv.bgz>`).
