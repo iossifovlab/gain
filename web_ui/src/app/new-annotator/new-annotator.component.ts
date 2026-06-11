@@ -201,6 +201,10 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
 
   public ngOnDestroy(): void {
     this.observer?.disconnect();
+    this.attributesSubscription?.unsubscribe();
+    this.resourceSearchSubscription?.unsubscribe();
+    this.searchSubject?.complete();
+
     this.removeAttributePanelScrollHandler();
   }
 
@@ -497,11 +501,22 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
   public onFinish(): void {
     const filtered = this.getPopulatedResourceValues();
 
+    const attributes = this.annotatorAttributes.length > 0
+      ? this.annotatorAttributes
+      : this.selectedAttributes.map(attr => ({
+        ...attr,
+        aggregators: [],
+        defaultAggregator: null,
+        selectedAggregator: null,
+        parameterValue: null,
+      } as AnnotatorAttribute));
+
+
     this.editorService.getAnnotatorYml(
       this.data.pipelineId,
       this.annotatorStep.value.annotator,
       filtered,
-      this.annotatorAttributes,
+      attributes,
     ).pipe(take(1)).subscribe({
       next: res => {
         this.dialogRef.close('\n' + res);
