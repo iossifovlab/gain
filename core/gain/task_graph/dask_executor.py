@@ -271,7 +271,9 @@ class DaskExecutor(TaskGraphExecutorBase):
     def close(self) -> None:
         """Close the Dask executor."""
         logger.info("closing Dask executor")
-        self._dask_client.retire_workers(close_workers=True)
+        # shutdown() tears down workers and scheduler gracefully. Retiring /
+        # closing workers first races the scheduler teardown and floods the
+        # log with heartbeat failures and "Connection ... closed" lines (#125).
         self._dask_client.shutdown()
         self._dask_client.close()
         logger.info("Dask executor closed")
