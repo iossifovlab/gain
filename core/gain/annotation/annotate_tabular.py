@@ -109,7 +109,8 @@ class _CSVSource(Source):
             if is_compressed_filename(self.path) else None
         )
         if index_filename is not None:
-            self.source_file = TabixFile(self.path, index=index_filename)
+            self.source_file = TabixFile(
+                self.path, index=index_filename, encoding="utf-8")
         elif is_compressed_filename(self.path):
             self.source_file = gzip.open(self.path, "rt")
             self.source_file.readline()  # Skip header line

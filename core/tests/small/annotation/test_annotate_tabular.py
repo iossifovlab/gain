@@ -1453,6 +1453,31 @@ def test_csv_source_tabixed_fetch_without_region(
         )
 
 
+def test_csv_source_tabixed_fetch_non_ascii_values(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A tabix-indexed input with non-ASCII (UTF-8) column values is read
+    without crashing.
+
+    Regression for iossifovlab/gain#120: ``_CSVSource.__enter__`` opened the
+    tabix input without an encoding, so pysam defaulted to ASCII decoding and
+    raised ``UnicodeDecodeError`` on the first non-ASCII byte -- e.g. a ClinVar
+    ``clinical_disease_name`` like ``Roussy-Lévy_syndrome``. gain itself writes
+    such files as UTF-8 (plain ``open``), so reannotating its own output broke.
+    """
+    csv_path = tmp_path / "data.csv.gz"
+    setup_tabix(csv_path, """
+        #chrom  pos   disease
+        chr1   23    Roussy-Lévy_syndrome
+        chr1   24    Charcot-Marie-Tooth_disease
+    """, seq_col=0, start_col=1, end_col=1)
+
+    with _CSVSource(str(csv_path), None, {}, "\t") as source:
+        result = list(source.fetch())
+        assert len(result) == 2
+        assert result[0].source["disease"] == "Roussy-Lévy_syndrome"
+
+
 def test_csv_writer_bad_input(tmp_path: pathlib.Path) -> None:
     out_path = str(tmp_path / "data.csv")
     header = _CSVHeader(
