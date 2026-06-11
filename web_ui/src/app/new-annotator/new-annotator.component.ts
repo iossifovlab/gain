@@ -28,7 +28,9 @@ import {
   AnnotatorConfigResource,
   ResourceAnnotatorConfigs,
   ResourcePage,
-  Resource
+  Resource,
+  AnnotatorAttribute,
+  AggregatorConfig
 } from './annotator';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
 import { MatSelect } from '@angular/material/select';
@@ -81,6 +83,8 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('stepper', { static: true }) public stepper: MatStepper;
   public existingAttributeNames: Set<string> = new Set();
   public attributesSubscription = new Subscription();
+  public aggregators: AggregatorConfig[] = [];
+  public annotatorAttributes: AnnotatorAttribute[] = [];
   public errorMessage = '';
   public editAttributeNameView = false;
   public searchError = '';
@@ -151,6 +155,10 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
     } else {
       this.requestAnnotators();
     }
+
+    this.editorService.getAggregators().pipe(take(1)).subscribe(res => {
+      this.aggregators = res;
+    });
   }
 
   public ngAfterViewInit(): void {
@@ -193,6 +201,10 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
 
   public ngOnDestroy(): void {
     this.observer?.disconnect();
+    this.attributesSubscription?.unsubscribe();
+    this.resourceSearchSubscription?.unsubscribe();
+    this.searchSubject?.complete();
+
     this.removeAttributePanelScrollHandler();
   }
 
@@ -489,11 +501,22 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
   public onFinish(): void {
     const filtered = this.getPopulatedResourceValues();
 
+    const attributes = this.annotatorAttributes.length > 0
+      ? this.annotatorAttributes
+      : this.selectedAttributes.map(attr => ({
+        ...attr,
+        aggregators: [],
+        defaultAggregator: null,
+        selectedAggregator: null,
+        parameterValue: null,
+      } as AnnotatorAttribute));
+
+
     this.editorService.getAnnotatorYml(
       this.data.pipelineId,
       this.annotatorStep.value.annotator,
       filtered,
-      this.selectedAttributes
+      attributes,
     ).pipe(take(1)).subscribe({
       next: res => {
         this.dialogRef.close('\n' + res);
@@ -633,5 +656,37 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
         this.attributePage.page = totalPages - 1;
         this.selectedAttributes = cloneDeep(allAttributes);
       });
+  }
+
+  public requestAttributeAggregators(): void {
+    this.editorService.getAttributesAggregators(
+      this.annotatorStep.value.annotator,
+      this.data.pipelineId,
+      this.getPopulatedResourceValues(),
+      this.selectedAttributes.map(a => a.source)
+    ).pipe(take(1)).subscribe(res => {
+      this.annotatorAttributes = this.selectedAttributes.map(selected => ({
+        ...selected,
+        aggregators: res.find(r => r.source === selected.source).aggregators ?? [],
+        defaultAggregator: res.find(r => r.source === selected.source).defaultAggregator ?? null,
+        selectedAggregator: res.find(r => r.source === selected.source).selectedAggregator ?? null,
+        parameterValue: res.find(r => r.source === selected.source).parameterValue ?? null
+      } as AnnotatorAttribute));
+      this.stepper.next();
+    });
+  }
+
+  public onSelectAggregator(name: string, aggregatorType: string): void {
+    const row = this.annotatorAttributes.find(r => r.name === name);
+    if (!row) {
+      return;
+    }
+    row.selectedAggregator = aggregatorType;
+    const config = this.aggregators.find(a => a.aggregatorType === aggregatorType);
+    if (config?.parametrized) {
+      row.parameterValue = config.defaultParameterValue ?? null;
+    } else {
+      row.parameterValue = null;
+    }
   }
 }

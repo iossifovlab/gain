@@ -3,11 +3,15 @@ import { environment } from '../../environments/environment';
 import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { catchError, forkJoin, map, Observable, of, switchMap, tap, throwError } from 'rxjs';
 import {
+  AggregatorConfig,
   AnnotatorConfig,
-  AttributeData,
+  AttributeAggregatorState,
+  AttributeAggregatorsResponse,
+  AnnotatorAttribute,
   AttributePage,
   ResourceAnnotatorConfigs,
-  ResourcePage
+  ResourcePage,
+  AggregatorsResponse
 } from './new-annotator/annotator';
 
 @Injectable({
@@ -22,6 +26,8 @@ export class PipelineEditorService {
   private getPipelineAttributesUrl = `${environment.apiPath}/editor/pipeline_attributes`;
   private getResourceTypesUrl = `${environment.apiPath}/resources/types`;
   private getResourceAnnotatorsUrl = `${environment.apiPath}/editor/resource_annotators`;
+  private getAggregatorsUrl = `${environment.apiPath}/editor/aggregators`;
+  private getAttributesAggregatorsUrl = `${environment.apiPath}/editor/annotator_aggregators`;
 
   public constructor(private http: HttpClient) { }
 
@@ -129,15 +135,21 @@ export class PipelineEditorService {
     pipelineId: string,
     annotatorType: string,
     resources: object,
-    attributes: AttributeData[],
+    attributes: AnnotatorAttribute[],
   ): Observable<string> {
     const options = { headers: {'X-CSRFToken': this.getCSRFToken()}, withCredentials: true };
 
-    const extractedAttributes = attributes.map(({ name, source, internal }) => ({
+    const extractedAttributes = attributes.map(({ name, source, internal, selectedAggregator, parameterValue }) => ({
       name: name,
       source: source,
-      internal: internal
-    }));
+      internal: internal,
+      ...selectedAggregator && {
+        aggregator: {
+          // eslint-disable-next-line camelcase
+          aggregator_type: selectedAggregator,
+          ...parameterValue && { parameters: [parameterValue] }
+        }
+      }}));
 
     const body = {
       // eslint-disable-next-line camelcase
@@ -207,5 +219,52 @@ export class PipelineEditorService {
       url,
       options
     );
+  }
+
+  public getAggregators(): Observable<AggregatorConfig[]> {
+    const options = { headers: {'X-CSRFToken': this.getCSRFToken()}, withCredentials: true };
+
+    return this.http.get<AggregatorsResponse[]>(
+      this.getAggregatorsUrl,
+      options
+    ).pipe(map((response: AggregatorsResponse[]) =>
+      response.map(a => ({
+        aggregatorType: a.aggregator_type,
+        parametrized: a.parametrized,
+        ...a.default_parameter_value !== undefined && { defaultParameterValue: a.default_parameter_value }
+      }))
+    ));
+  }
+
+  public getAttributesAggregators(
+    annotatorType: string,
+    pipelineId: string,
+    resources: object,
+    selectedAttributeSources: string[]
+  ): Observable<AttributeAggregatorState[]> {
+    const options = { headers: {'X-CSRFToken': this.getCSRFToken()}, withCredentials: true };
+
+    /* eslint-disable camelcase*/
+    const body = {
+      annotator_type: annotatorType,
+      pipeline_id: pipelineId,
+      attribute_sources: selectedAttributeSources,
+      ...resources
+    };
+    /* eslint-enable */
+
+    return this.http.post<AttributeAggregatorsResponse>(
+      this.getAttributesAggregatorsUrl,
+      body,
+      options
+    ).pipe(map((configs) =>
+      Object.entries(configs).map(([source, config]) => ({
+        source: source,
+        aggregators: config?.aggregators ?? [],
+        defaultAggregator: config?.default_aggregator ?? null,
+        selectedAggregator: config?.default_aggregator ?? null,
+        parameterValue: null,
+      }))
+    ));
   }
 }

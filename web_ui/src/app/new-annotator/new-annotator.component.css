@@ -40,11 +40,6 @@ input[type="text"] {
   width: 97%;
 }
 
-#resource-search-input:focus,
-#resource-search-input:focus-visible {
-  outline-color: #85a2b9;
-}
-
 ::ng-deep .multiline-tooltip {
   white-space: pre-line;
 }
@@ -350,6 +345,12 @@ input[type="radio"]:checked {
   font-size: 14px;
 }
 
+.grid-container-aggregators {
+  display: grid;
+  grid-template-columns: 26% 10% 50% 10%;
+  font-size: 14px;
+}
+
 #resource-list {
   margin-top: 15px;
   grid-template-columns: max-content 38% 10% 38%;
@@ -385,7 +386,8 @@ input[type="radio"]:checked {
   color: #6b8daa;
 }
 
-.grid-header {
+.grid-header,
+.grid-header-aggregators {
   min-height: 2rem;
   line-height: 3rem;
   border: 1px solid #cfd8df;
@@ -397,7 +399,8 @@ input[type="radio"]:checked {
   top: 0;
 }
 
-.grid-cell {
+.grid-cell,
+.grid-cell-aggregators {
   border: 1px solid #cfd8df;
   padding: 7px;
   font-size: 14px;
@@ -624,4 +627,20 @@ input[type="checkbox"]:checked {
   color: #85a2b9;
   font-weight: 500;
   margin-bottom: 4px;
+}
+
+.parameter-input {
+  font-size: 15px;
+  width: 75%;
+  min-height: 20px;
+  padding: 4px 8px;
+  border: 1px solid #cfd8df;
+  border-radius: 5px;
+}
+
+#resource-search-input:focus,
+#resource-search-input:focus-visible,
+.parameter-input:focus-visible,
+.editable-name:focus-visible {
+  outline-color: #85a2b9;
 }

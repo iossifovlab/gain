@@ -6,13 +6,15 @@ import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { of, lastValueFrom, take, throwError } from 'rxjs';
 import {
   AnnotatorConfig,
+  AnnotatorAttribute,
   AttributeData,
   AttributePage,
   AnnotatorConfigResource,
   ResourceAnnotator,
   ResourceAnnotatorConfigs,
   Resource,
-  ResourcePage
+  ResourcePage,
+  AttributeAggregatorsResponse
 } from './new-annotator/annotator';
 
 const mockResources = [
@@ -301,6 +303,25 @@ describe('PipelineEditorService', () => {
     expect(res).toStrictEqual(['normalized_allele', 'hg19_annotatable']);
   });
 
+  const liftoverAttribute: AnnotatorAttribute = {
+    source: 'liftover_annotatable',
+    name: 'liftover_annotatable',
+    type: 'annotatable',
+    internal: true,
+    aggregators: [],
+    defaultAggregator: null,
+    selectedAggregator: null,
+    parameterValue: null,
+  };
+
+  const liftoverResources = {
+    chain: 'liftover/T2T_to_hg38',
+    // eslint-disable-next-line camelcase
+    source_genome: 'hg38/genomes/GRCh38-hg38',
+    // eslint-disable-next-line camelcase
+    target_genome: 'hg19/genomes/GATK_ResourceBundle_5777_b37_phiX174'
+  };
+
   it('should get yml config text', async() => {
     const yml = '- liftover_annotator:\n    '+
     'attributes:\n    '+
@@ -317,25 +338,7 @@ describe('PipelineEditorService', () => {
 
     const options = { headers: {'X-CSRFToken': ''}, withCredentials: true };
     const getResponse = service.getAnnotatorYml(
-      'pipelineId',
-      'liftover_annotator',
-      {
-        chain: 'liftover/T2T_to_hg38',
-        // eslint-disable-next-line camelcase
-        source_genome: 'hg38/genomes/GRCh38-hg38',
-        // eslint-disable-next-line camelcase
-        target_genome: 'hg19/genomes/GATK_ResourceBundle_5777_b37_phiX174'
-      },
-      [
-        new AttributeData(
-          'liftover_annotatable',
-          'annotatable',
-          'liftover_annotatable',
-          true,
-          true,
-          'The lifted over annotatable'
-        )
-      ]
+      'pipelineId', 'liftover_annotator', liftoverResources, [liftoverAttribute]
     );
 
     expect(httpPostSpy).toHaveBeenCalledWith(
@@ -343,16 +346,10 @@ describe('PipelineEditorService', () => {
       {
         // eslint-disable-next-line camelcase
         pipeline_id: 'pipelineId',
-        attributes: [
-          {name: 'liftover_annotatable', source: 'liftover_annotatable', internal: true,}
-        ],
+        attributes: [{ name: 'liftover_annotatable', source: 'liftover_annotatable', internal: true }],
         // eslint-disable-next-line camelcase
         annotator_type: 'liftover_annotator',
-        chain: 'liftover/T2T_to_hg38',
-        // eslint-disable-next-line camelcase
-        source_genome: 'hg38/genomes/GRCh38-hg38',
-        // eslint-disable-next-line camelcase
-        target_genome: 'hg19/genomes/GATK_ResourceBundle_5777_b37_phiX174'
+        ...liftoverResources,
       },
       options
     );
@@ -360,31 +357,109 @@ describe('PipelineEditorService', () => {
     expect(res).toStrictEqual(yml);
   });
 
+  it('should include aggregator in yml request when attribute has selectedAggregator', () => {
+    const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
+    httpPostSpy.mockReturnValue(of('yml'));
+
+    const options = { headers: {'X-CSRFToken': ''}, withCredentials: true };
+    service.getAnnotatorYml('pipelineId', 'gene_score_annotator', {}, [{
+      ...liftoverAttribute,
+      source: 'pLI',
+      name: 'pLI',
+      aggregators: ['min', 'max'],
+      defaultAggregator: 'min',
+      selectedAggregator: 'max',
+      parameterValue: null,
+    }]);
+
+    /* eslint-disable camelcase */
+    expect(httpPostSpy).toHaveBeenCalledWith(
+      '//localhost:8000/api/editor/annotator_yaml',
+      {
+        pipeline_id: 'pipelineId',
+        attributes: [
+          {
+            name: 'pLI',
+            source: 'pLI',
+            internal: true,
+            aggregator: { aggregator_type: 'max' }
+          }],
+        annotator_type: 'gene_score_annotator',
+      },
+      options
+    );
+    /* eslint-enable */
+  });
+
+  it('should include aggregator and parameter in yml request for parametrized aggregator', () => {
+    const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
+    httpPostSpy.mockReturnValue(of('yml'));
+
+    const options = { headers: {'X-CSRFToken': ''}, withCredentials: true };
+    service.getAnnotatorYml('pipelineId', 'gene_score_annotator', {}, [{
+      ...liftoverAttribute,
+      source: 'pLI',
+      name: 'pLI',
+      aggregators: ['min', 'max', 'join'],
+      defaultAggregator: 'min',
+      selectedAggregator: 'join',
+      parameterValue: ';',
+    }]);
+
+    /* eslint-disable camelcase */
+    expect(httpPostSpy).toHaveBeenCalledWith(
+      '//localhost:8000/api/editor/annotator_yaml',
+      {
+        pipeline_id: 'pipelineId',
+        attributes: [
+          {
+            name: 'pLI',
+            source: 'pLI',
+            internal: true,
+            aggregator: { aggregator_type: 'join', parameters: [';'] }
+          }
+        ],
+        annotator_type: 'gene_score_annotator',
+      },
+      options
+      /* eslint-enable */
+    );
+  });
+
+  it('should omit aggregator in yml request for non-aggregatable attribute', () => {
+    const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
+    httpPostSpy.mockReturnValue(of('yml'));
+
+    const options = { headers: {'X-CSRFToken': ''}, withCredentials: true };
+    service.getAnnotatorYml('pipelineId', 'gene_score_annotator', {}, [{
+      ...liftoverAttribute,
+      source: 'pLI_rank_null',
+      name: 'pLI_rank_null',
+      aggregators: [],
+      defaultAggregator: null,
+      selectedAggregator: null,
+      parameterValue: null,
+    }]);
+
+    expect(httpPostSpy).toHaveBeenCalledWith(
+      '//localhost:8000/api/editor/annotator_yaml',
+      {
+        // eslint-disable-next-line camelcase
+        pipeline_id: 'pipelineId',
+        attributes: [{ name: 'pLI_rank_null', source: 'pLI_rank_null', internal: true }],
+        // eslint-disable-next-line camelcase
+        annotator_type: 'gene_score_annotator',
+      },
+      options
+    );
+  });
+
   it('should catch error 400 when requesting yml', async() => {
     const httpError = new HttpErrorResponse({status: 400, error: {error: 'Invalid annotator configuration!'}});
-    const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
-    httpPostSpy.mockReturnValue(throwError(() => httpError));
+    jest.spyOn(HttpClient.prototype, 'post').mockReturnValue(throwError(() => httpError));
 
     const postResult = service.getAnnotatorYml(
-      'pipelineId',
-      'liftover_annotator',
-      {
-        chain: 'liftover/T2T_to_hg38',
-        // eslint-disable-next-line camelcase
-        source_genome: 'hg38/genomes/GRCh38-hg38',
-        // eslint-disable-next-line camelcase
-        target_genome: 'hg19/genomes/GATK_ResourceBundle_5777_b37_phiX174'
-      },
-      [
-        new AttributeData(
-          'liftover_annotatable',
-          'annotatable',
-          'liftover_annotatable',
-          true,
-          true,
-          'The lifted over annotatable'
-        )
-      ]
+      'pipelineId', 'liftover_annotator', liftoverResources, [liftoverAttribute]
     );
 
     await expect(() => lastValueFrom(postResult.pipe(take(1))))
@@ -393,33 +468,96 @@ describe('PipelineEditorService', () => {
 
   it('should return default error message when requesting yml fails', async() => {
     const httpError = new HttpErrorResponse({status: 415});
-    const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
-    httpPostSpy.mockReturnValue(throwError(() => httpError));
+    jest.spyOn(HttpClient.prototype, 'post').mockReturnValue(throwError(() => httpError));
 
     const postResult = service.getAnnotatorYml(
-      'pipelineId',
-      'liftover_annotator',
-      {
-        chain: 'liftover/T2T_to_hg38',
-        // eslint-disable-next-line camelcase
-        source_genome: 'hg38/genomes/GRCh38-hg38',
-        // eslint-disable-next-line camelcase
-        target_genome: 'hg19/genomes/GATK_ResourceBundle_5777_b37_phiX174'
-      },
-      [
-        new AttributeData(
-          'liftover_annotatable',
-          'annotatable',
-          'liftover_annotatable',
-          true,
-          true,
-          'The lifted over annotatable'
-        )
-      ]
+      'pipelineId', 'liftover_annotator', liftoverResources, [liftoverAttribute]
     );
 
     await expect(() => lastValueFrom(postResult.pipe(take(1))))
       .rejects.toThrow('Error occurred!');
+  });
+
+  it('should get aggregators list', async() => {
+    /* eslint-disable camelcase */
+    const aggregators = [
+      { aggregator_type: 'min', parametrized: false },
+      { aggregator_type: 'max', parametrized: false },
+      { aggregator_type: 'join', parametrized: true, default_parameter_value: ',' },
+    ];
+    /* eslint-enable*/
+    jest.spyOn(HttpClient.prototype, 'get').mockReturnValue(of(aggregators));
+    const res = await lastValueFrom(service.getAggregators().pipe(take(1)));
+    expect(res).toStrictEqual(
+      [
+        { aggregatorType: 'min', parametrized: false },
+        { aggregatorType: 'max', parametrized: false },
+        { aggregatorType: 'join', parametrized: true, defaultParameterValue: ',' }
+      ]
+    );
+  });
+
+  it('should return aggregator states from getAttributesAggregators', async() => {
+    /* eslint-disable camelcase */
+    const mock: AttributeAggregatorsResponse = {
+      pLI: { aggregators: ['min', 'max', 'join'], default_aggregator: 'min' },
+      pLI_rank: { aggregators: ['min', 'max', 'join'], default_aggregator: 'max' },
+      pLI_rank_null: null
+    };
+    /* eslint-enable */
+    jest.spyOn(HttpClient.prototype, 'post').mockReturnValue(of(mock));
+    const res = await lastValueFrom(
+      service.getAttributesAggregators('gene_score_annotator', 'pipelineId', {}, ['pLI', 'pLI_rank', 'pLI_rank_null'])
+        .pipe(take(1))
+    );
+    expect(res).toHaveLength(3);
+
+    const aggregatable1 = res.find(r => r.source === 'pLI');
+    expect(aggregatable1.aggregators).toStrictEqual(['min', 'max', 'join']);
+    expect(aggregatable1.defaultAggregator).toBe('min');
+    expect(aggregatable1.selectedAggregator).toBe('min');
+    const aggregatable2 = res.find(r => r.source === 'pLI_rank');
+    expect(aggregatable2.aggregators).toStrictEqual(['min', 'max', 'join']);
+    expect(aggregatable2.defaultAggregator).toBe('max');
+    expect(aggregatable2.selectedAggregator).toBe('max');
+    const nonAggregatable = res.find(r => r.source === 'pLI_rank_null');
+    expect(nonAggregatable.aggregators).toStrictEqual([]);
+    expect(nonAggregatable.defaultAggregator).toBeNull();
+    expect(nonAggregatable.selectedAggregator).toBeNull();
+  });
+
+
+  it('should check parameters of attributes aggregators query', () => {
+    /* eslint-disable camelcase */
+    const mock: AttributeAggregatorsResponse = {
+      pLI: { aggregators: ['min', 'max', 'join'], default_aggregator: 'min' },
+      pLI_rank: { aggregators: ['min', 'max', 'join'], default_aggregator: 'max' },
+      pLI_rank_null: null
+    };
+
+    const postSpy = jest.spyOn(HttpClient.prototype, 'post').mockReturnValue(of(mock));
+
+    const options = { headers: {'X-CSRFToken': ''}, withCredentials: true };
+
+    service.getAttributesAggregators(
+      'gene_score_annotator',
+      'pipelineId',
+      { resource_id: 'gene_properties/gene_scores/RVIS', input_gene_list: 'gene_list' },
+      ['pLI', 'pLI_rank', 'pLI_rank_null']
+    );
+
+    expect(postSpy).toHaveBeenCalledWith(
+      '//localhost:8000/api/editor/annotator_aggregators',
+      {
+        annotator_type: 'gene_score_annotator',
+        pipeline_id: 'pipelineId',
+        attribute_sources: ['pLI', 'pLI_rank', 'pLI_rank_null'],
+        resource_id: 'gene_properties/gene_scores/RVIS',
+        input_gene_list: 'gene_list'
+      },
+      options
+    );
+    /* eslint-enable */
   });
 
   it('should get resource types', async() => {

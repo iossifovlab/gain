@@ -212,3 +212,34 @@ export class ResourceAnnotator {
     );
   }
 }
+
+export type AggregatorsResponse = {
+  aggregator_type: string;
+  parametrized: boolean;
+  default_parameter_value?: string;
+};
+
+
+export type AggregatorConfig = {
+  aggregatorType: string;
+  parametrized: boolean;
+  defaultParameterValue?: string;
+};
+
+export type AttributeAggregatorState = {
+  source: string;
+  aggregators: string[];
+  defaultAggregator: string | null;
+  selectedAggregator: string | null;
+  parameterValue: string | null;
+};
+
+export type AttributeAggregatorsResponse = Record<string, {
+  aggregators: string[];
+  default_aggregator: string;
+} | null>;
+
+export type AnnotatorAttribute =
+  AttributeAggregatorState &
+  Pick<AttributeData, 'name' | 'type' | 'source' | 'internal'>;
+
