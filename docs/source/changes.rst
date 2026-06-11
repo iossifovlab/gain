@@ -1,6 +1,47 @@
 Release Notes
 =============
 
+* 2026.6.6
+    * Fixed ``annotate_tabular`` crashing with ``UnicodeDecodeError``
+      when the bgzip/tabix input contained non-ASCII characters. The
+      tabix reader opened the input without an encoding, so pysam
+      decoded lines as ASCII; since the tool writes its own output as
+      UTF-8, reannotating a previous run that carried a non-ASCII value
+      (e.g. a ClinVar ``clinical_disease_name`` such as
+      ``Roussy-Lévy_syndrome``) failed. The input is now read as UTF-8.
+    * Default-verbosity runs no longer print ``INFO:distributed``
+      messages from dask. ``VerbosityConfiguration`` silenced the
+      ``distributed`` logger at startup, but importing ``distributed``
+      (done lazily when the cluster starts) reset its level back to
+      INFO; it is now re-silenced after the cluster is built.
+    * The dask cluster is now torn down gracefully in
+      ``DaskExecutor.close()``. The previous
+      ``retire_workers(close_workers=True)`` before ``shutdown()`` raced
+      the scheduler teardown and flooded the log with worker heartbeat
+      failures and "Connection ... closed" lines.
+    * Task graph executor teardown is now best-effort: a failure while
+      releasing executor resources (e.g. a dask worker shutdown timeout
+      when workers hold large resources) is logged and no longer crashes
+      a run whose results are already written. This applies to every
+      task-graph tool (``annotate_tabular``, ``annotate_vcf``, the
+      effect-annotation tools, ...).
+    * The fsspec "protocol with id ... already exists" message was
+      demoted from warning to debug.
+    * ``grr_manage`` repo-repair now writes each resource's
+      ``index.html`` and ``statistics/index.html`` only when the
+      rendered content actually changed. Re-running repair on an
+      unchanged repository previously rewrote every page and bumped its
+      mtime, which defeated mtime-based GRR consumers (notably the
+      ``gs://iossifovlab-grr`` bucket-publish pipeline, which then
+      re-uploaded hundreds of unchanged pages).
+    * Web UI: the new-annotator workflow gained an aggregation
+      configuration step for selecting per-attribute (gene) aggregators,
+      including fetching the available aggregators and supporting their
+      parameters.
+    * CI: docs-only ``gain`` master builds now also archive a
+      ``gain-core`` conda package, so downstream jobs that copy the last
+      successful build's conda artifact no longer fail with zero matches.
+
 * 2026.6.5
     * ``annotate_tabular`` and ``annotate_vcf`` now print a
       reannotation plan. A reannotation run emits an always-on stderr
