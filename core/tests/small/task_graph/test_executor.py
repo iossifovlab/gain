@@ -29,6 +29,41 @@ def noop(*args: Any, **kwargs: Any) -> None:
     pass
 
 
+class _CloseRaisingExecutor(TaskGraphExecutor):
+    """Minimal executor whose teardown fails, to exercise __exit__."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def execute(self, graph: TaskGraph) -> Any:
+        return iter(())
+
+    def get_completed_tasks(self, graph: TaskGraph) -> Any:
+        return iter(())
+
+    def close(self) -> None:
+        self.closed = True
+        raise TimeoutError("workers did not terminate in time")
+
+
+def test_exit_suppresses_close_failure() -> None:
+    """A teardown failure during context-manager exit must not crash a run
+    whose work already completed (iossifovlab/gain#127)."""
+    executor = _CloseRaisingExecutor()
+    with executor:
+        pass  # clean body; work is "done"
+    assert executor.closed  # close() was attempted, its error swallowed
+
+
+def test_exit_does_not_mask_body_exception() -> None:
+    """A teardown failure must not swallow or replace an error raised inside
+    the ``with`` body (iossifovlab/gain#127)."""
+    executor = _CloseRaisingExecutor()
+    with pytest.raises(ValueError, match="real failure"), executor:
+        raise ValueError("real failure")
+    assert executor.closed
+
+
 def test_dependency_chain(executor: TaskGraphExecutor) -> None:
     graph = TaskGraph()
     task_1 = graph.create_task("Task 1", do_work, args=[0.01], deps=[])

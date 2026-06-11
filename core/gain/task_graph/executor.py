@@ -46,7 +46,15 @@ class TaskGraphExecutor:
         exc_value: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> bool:
-        self.close()
+        # Teardown is best-effort: the task graph's results are produced and
+        # consumed inside the ``with`` body, so a failure while releasing
+        # executor resources (e.g. a dask worker shutdown timeout) must not
+        # crash a completed run, nor mask an exception raised in the body.
+        try:
+            self.close()
+        except Exception:  # noqa: BLE001 pylint: disable=broad-except
+            logger.warning("error while closing task graph executor",
+                           exc_info=True)
         return exc_type is None
 
     @abstractmethod
