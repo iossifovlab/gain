@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import logging
 from typing import Any
 from unittest.mock import DEFAULT
 
@@ -34,6 +35,42 @@ def named_cluster_config() -> dict[str, Any]:
 
         ],
     }
+
+
+def test_local_cluster_setup_silences_distributed_info_logs(
+    mocker: pytest_mock.MockerFixture,
+    named_cluster_config: dict[str, Any],
+) -> None:
+    """Building the local cluster must keep dask's ``distributed`` logger
+    silenced at the default verbosity.
+
+    Regression for iossifovlab/gain#123: ``VerbosityConfiguration`` silences
+    ``distributed`` to WARNING at CLI startup, but importing ``distributed``
+    (which happens lazily when the cluster is built) resets that logger back
+    to INFO via dask's own ``initialize_logging``. The resulting INFO spam
+    (e.g. ``Scheduler closing all comms``) then leaks to stderr even with no
+    ``-v`` flag. The cluster setup must re-assert the silencing.
+    """
+    mocker.patch("dask.distributed.LocalCluster", autospec=True)
+    mocker.patch("gain.dask.named_cluster.Client", autospec=True)
+
+    dist_logger = logging.getLogger("distributed")
+    old_level = dist_logger.level
+    try:
+        # Simulate the post-import clobber: distributed back at INFO.
+        dist_logger.setLevel(logging.INFO)
+        assert logging.getLogger("distributed.scheduler").isEnabledFor(
+            logging.INFO)
+
+        with config.set({"dae_named_cluster": named_cluster_config}):
+            client, _ = setup_client()
+            assert client
+
+        # After cluster setup, distributed INFO records are suppressed again.
+        assert not logging.getLogger("distributed.scheduler").isEnabledFor(
+            logging.INFO)
+    finally:
+        dist_logger.setLevel(old_level)
 
 
 def test_default(

@@ -103,6 +103,7 @@ def setup_client_from_config(
 ) -> tuple[Client, dict[str, Any]]:
     """Create a dask client from the provided config."""
     logger.info("CLUSTER CONFIG: %s", cluster_config)
+    _resilence_distributed_logging()
     _adjust_default_distributed_config()
     cluster_type = cluster_config["type"]
     if cluster_type == "manual":
@@ -144,6 +145,21 @@ def setup_client_from_config(
 
     client = Client(cluster)
     return client, cluster_config
+
+
+def _resilence_distributed_logging() -> None:
+    """Re-assert third-party logger verbosity after ``distributed`` import.
+
+    Importing ``distributed`` runs dask's ``initialize_logging``, which resets
+    the ``distributed`` logger to INFO and thereby clobbers the silencing
+    applied at CLI startup by ``VerbosityConfiguration`` (#123). ``distributed``
+    is imported lazily when the cluster is built, i.e. after that startup
+    silencing, so re-apply it here now that the import has happened.
+    """
+    # pylint: disable=import-outside-toplevel
+    from gain.utils.verbosity_configuration import VerbosityConfiguration
+    VerbosityConfiguration.adjust_verbosity(
+        logging.getLogger().getEffectiveLevel())
 
 
 def _adjust_default_distributed_config() -> None:
