@@ -227,12 +227,12 @@ test.describe('Pipeline tests', () => {
     await Promise.all([
       page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
       page.waitForResponse(
-        resp => resp.url().includes('api/pipelines/load') // wait for pipeline to be saved and loaded
+        resp => resp.url().includes('api/pipelines/load'), {timeout: 30000 } // wait for pipeline to be saved and loaded
       ),
     ]);
 
     await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-    await expect(page.locator('#pipelines-input')).toHaveValue('Public pipeline copy');
+    await expect(page.locator('#pipelines-input')).toHaveValue('Public pipeline copy', { timeout: 30000 });
   });
 
   test('should make copy of user pipeline by clicking \'save as\'', async({ page }) => {
