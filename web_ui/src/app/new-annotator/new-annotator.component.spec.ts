@@ -880,29 +880,35 @@ describe('NewAnnotatorComponent', () => {
     component.attributePage = attributePageMock;
     component.selectedAttributes = [attributesMock[0], attributesMock[1]];
 
+    jest.spyOn(pipelineEditorServiceMock, 'getAttributesAggregators').mockReturnValueOnce(
+      of([
+        {
+          source: 'mpc',
+          aggregators: ['min', 'max', 'join'],
+          defaultAggregator: 'min',
+          selectedAggregator: 'min',
+          parameterValue: null
+        },
+        {
+          source: 'effect_details',
+          aggregators: [],
+          defaultAggregator: null,
+          selectedAggregator: null,
+          parameterValue: null
+        },
+      ])
+    );
+
     component.requestAttributeAggregators();
 
-    expect(component.annotatorAttributes).toHaveLength(3); // mock returns pLI, pLI_rank, pLI_rank_null
-    const aggregatable = component.annotatorAttributes.find(a => a.source === 'pLI');
+    expect(component.annotatorAttributes).toHaveLength(2);
+    const aggregatable = component.annotatorAttributes.find(a => a.source === 'mpc');
     expect(aggregatable.aggregators).toStrictEqual(['min', 'max', 'join']);
     expect(aggregatable.defaultAggregator).toBe('min');
     expect(aggregatable.selectedAggregator).toBe('min');
-    const nonAggregatable = component.annotatorAttributes.find(a => a.source === 'pLI_rank_null');
+    const nonAggregatable = component.annotatorAttributes.find(a => a.source === 'effect_details');
     expect(nonAggregatable.aggregators).toStrictEqual([]);
     expect(nonAggregatable.defaultAggregator).toBeNull();
-  });
-
-  it('should preserve existing aggregator selection when rebuilding annotator attributes', () => {
-    component.annotatorStep.setControl('annotator', new FormControl('gene_set_annotator'));
-    component.attributePage = attributePageMock;
-    component.selectedAttributes = [attributesMock[0]];
-    component.requestAttributeAggregators();
-
-    component.annotatorAttributes[0].selectedAggregator = 'max';
-
-    component.requestAttributeAggregators();
-
-    expect(component.annotatorAttributes[0].selectedAggregator).toBe('max');
   });
 
   it('should set selectedAggregator and clear parameterValue for non-parametrized aggregator', () => {
@@ -941,7 +947,7 @@ describe('NewAnnotatorComponent', () => {
     expect(component.annotatorAttributes[0].parameterValue).toBe(',');
   });
 
-  it('should do nothing when onSelectAggregator is called with unknown source', () => {
+  it('should do nothing when onSelectAggregator is called with unknown name', () => {
     component.annotatorAttributes = [];
     component.onSelectAggregator('nonexistent', 'min');
     expect(component.annotatorAttributes).toHaveLength(0);

@@ -417,7 +417,7 @@
                     [disabled]="!row.aggregators.length"
                     [placeholder]="!row.aggregators.length ? 'Not aggregatable' : 'Select aggregator'"
                     [value]="row.defaultAggregator"
-                    (selectionChange)="onSelectAggregator(row.source, $event.value)">
+                    (selectionChange)="onSelectAggregator(row.name, $event.value)">
                     @for (aggregator of row.aggregators; track aggregator) {
                     <mat-option class="aggregator-option" [value]="aggregator" [title]="aggregator">
                       {{ aggregator }}{{ aggregator === row.defaultAggregator ? ' (default)' : '' }}

@@ -372,17 +372,23 @@ describe('PipelineEditorService', () => {
       parameterValue: null,
     }]);
 
+    /* eslint-disable camelcase */
     expect(httpPostSpy).toHaveBeenCalledWith(
       '//localhost:8000/api/editor/annotator_yaml',
       {
-        // eslint-disable-next-line camelcase
         pipeline_id: 'pipelineId',
-        attributes: [{ name: 'pLI', source: 'pLI', internal: true, aggregator: 'max' }],
-        // eslint-disable-next-line camelcase
+        attributes: [
+          {
+            name: 'pLI',
+            source: 'pLI',
+            internal: true,
+            aggregator: { aggregator_type: 'max' }
+          }],
         annotator_type: 'gene_score_annotator',
       },
       options
     );
+    /* eslint-enable */
   });
 
   it('should include aggregator and parameter in yml request for parametrized aggregator', () => {
@@ -400,17 +406,23 @@ describe('PipelineEditorService', () => {
       parameterValue: ';',
     }]);
 
+    /* eslint-disable camelcase */
     expect(httpPostSpy).toHaveBeenCalledWith(
       '//localhost:8000/api/editor/annotator_yaml',
       {
-        // eslint-disable-next-line camelcase
         pipeline_id: 'pipelineId',
-        // eslint-disable-next-line camelcase
-        attributes: [{ name: 'pLI', source: 'pLI', internal: true, aggregator: 'join', aggregator_parameter: ';' }],
-        // eslint-disable-next-line camelcase
+        attributes: [
+          {
+            name: 'pLI',
+            source: 'pLI',
+            internal: true,
+            aggregator: { aggregator_type: 'join', parameters: [';'] }
+          }
+        ],
         annotator_type: 'gene_score_annotator',
       },
       options
+      /* eslint-enable */
     );
   });
 

@@ -650,26 +650,19 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
       this.getPopulatedResourceValues(),
       this.selectedAttributes.map(a => a.source)
     ).pipe(take(1)).subscribe(res => {
-      this.annotatorAttributes = res.map(r => {
-        const existing = this.annotatorAttributes.find(
-          e => e.source === r.source
-        );
-        const attr = this.attributePage.attributes.find(a => a.source === r.source);
-        return {
-          ...r,
-          name: attr?.name || '',
-          type: attr?.type || '',
-          internal: attr?.internal ?? false,
-          selectedAggregator: existing?.selectedAggregator ?? r.selectedAggregator,
-          parameterValue: existing?.parameterValue ?? r.parameterValue,
-        };
-      });
+      this.annotatorAttributes = this.selectedAttributes.map(selected => ({
+        ...selected,
+        aggregators: res.find(r => r.source === selected.source).aggregators ?? [],
+        defaultAggregator: res.find(r => r.source === selected.source).defaultAggregator ?? null,
+        selectedAggregator: res.find(r => r.source === selected.source).selectedAggregator ?? null,
+        parameterValue: res.find(r => r.source === selected.source).parameterValue ?? null
+      } as AnnotatorAttribute));
       this.stepper.next();
     });
   }
 
-  public onSelectAggregator(source: string, aggregatorType: string): void {
-    const row = this.annotatorAttributes.find(r => r.source === source);
+  public onSelectAggregator(name: string, aggregatorType: string): void {
+    const row = this.annotatorAttributes.find(r => r.name === name);
     if (!row) {
       return;
     }

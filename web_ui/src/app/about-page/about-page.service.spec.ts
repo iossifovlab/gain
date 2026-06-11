@@ -39,6 +39,6 @@ describe('AboutPageService', () => {
 
     expect(httpGetSpy).toHaveBeenCalledWith('//localhost:8000/api/version');
     const res = await lastValueFrom(getResponse.pipe(take(1)));
-    expect(res).toEqual({version: '1.0.0'});
+    expect(res).toStrictEqual({version: '1.0.0'});
   });
 });

@@ -143,10 +143,13 @@ export class PipelineEditorService {
       name: name,
       source: source,
       internal: internal,
-      ...selectedAggregator && { aggregator: selectedAggregator },
-      // eslint-disable-next-line camelcase
-      ...parameterValue && { aggregator_parameter: parameterValue },
-    }));
+      ...selectedAggregator && {
+        aggregator: {
+          // eslint-disable-next-line camelcase
+          aggregator_type: selectedAggregator,
+          ...parameterValue && { parameters: [parameterValue] }
+        }
+      }}));
 
     const body = {
       // eslint-disable-next-line camelcase
