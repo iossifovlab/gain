@@ -952,7 +952,7 @@ test.describe('Add annotator to pipeline tests', () => {
     expect(value).not.toContain('name: worst_effect\n');
   });
 
-  test('should show duplicate attribute name error and hide Finish button', async({ page }) => {
+  test('should show duplicate attribute name error and disable Finish button', async({ page }) => {
     await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
     await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
 
@@ -970,7 +970,7 @@ test.describe('Add annotator to pipeline tests', () => {
     await page.locator('.editable-name').first().blur();
 
     await expect(page.locator('.error-message')).toContainText('Attribute with this name already exists');
-    await expect(page.getByRole('button', { name: 'Finish' })).not.toBeVisible();
+    await expect(page.getByRole('button', { name: 'Finish' })).toBeDisabled();
   });
 
   test('should disable New annotator button when pipeline config is invalid', async({ page }) => {
