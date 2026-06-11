@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import os
 import pathlib
 import textwrap
 
@@ -122,3 +123,36 @@ def test_repo_info(
     assert (path / "one/index.html").exists()
     assert (path / "two/index.html").exists()
     assert (path / "index.html").exists()
+
+
+def test_repo_info_does_not_rewrite_unchanged_pages(
+    proto_fixture: tuple[pathlib.Path, FsspecReadWriteProtocol],
+) -> None:
+    path, _proto = proto_fixture
+
+    cli_manage(["repo-info", "-R", str(path), "-j", "1"])
+
+    # the per-resource info pages repo-info generated
+    pages = [
+        p
+        for r in ("one", "two")
+        for p in (path / r / "index.html",
+                  path / r / "statistics/index.html")
+        if p.exists()
+    ]
+    assert pages, "repo-info generated no per-resource index.html"
+
+    # pin each page to a fixed past mtime
+    pinned = 1_000_000_000
+    for p in pages:
+        os.utime(p, (pinned, pinned))
+
+    # re-running on an unchanged repo must skip identical pages
+    cli_manage(["repo-info", "-R", str(path), "-j", "1"])
+
+    rewritten = [
+        str(p.relative_to(path))
+        for p in pages
+        if int(p.stat().st_mtime) != pinned
+    ]
+    assert rewritten == [], f"unchanged repo rewrote info pages: {rewritten}"

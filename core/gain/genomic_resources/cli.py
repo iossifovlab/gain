@@ -793,23 +793,39 @@ def _run_repo_info_command(
     return 0
 
 
+def _write_resource_file_if_changed(
+        proto: ReadWriteRepositoryProtocol,
+        res: GenomicResource,
+        filename: str,
+        content: str) -> None:
+    """Write ``content`` to a resource file only if it differs.
+
+    The generated info pages are deterministic, so regenerating them on
+    an unchanged repo produces identical bytes. Skipping the write in
+    that case keeps the file's mtime stable, so re-running repo-repair
+    is idempotent (and mtime-based consumers don't see spurious churn).
+    """
+    if proto.file_exists(res, filename):
+        with proto.open_raw_file(res, filename, "rt") as infile:
+            if infile.read() == content:
+                return
+    with proto.open_raw_file(res, filename, mode="wt") as outfile:
+        outfile.write(content)
+
+
 def _do_resource_info_command(
         repo: GenomicResourceRepo,
         proto: ReadWriteRepositoryProtocol,
         res: GenomicResource) -> None:
     implementation = build_resource_implementation(res)
 
-    with proto.open_raw_file(res, "index.html", mode="wt") as outfile:
-        content = implementation.get_info(repo=repo)
-        outfile.write(content)
+    _write_resource_file_if_changed(
+        proto, res, "index.html",
+        implementation.get_info(repo=repo))
 
-    with proto.open_raw_file(
-        res,
-        "statistics/index.html",
-        mode="wt",
-    ) as outfile:
-        content = implementation.get_statistics_info(repo=repo)
-        outfile.write(content)
+    _write_resource_file_if_changed(
+        proto, res, "statistics/index.html",
+        implementation.get_statistics_info(repo=repo))
 
 
 def cli_manage(cli_args: list[str] | None = None) -> None:
