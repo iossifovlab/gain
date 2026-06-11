@@ -240,9 +240,149 @@ GAIn provides two command-line tools for working with genomic resources and repo
 
 
 
+Version control for GRRs
+------------------------
+
+GRRs can be managed under version control using a combination of Git, DVC, and ``grr_manage``. In this setup, small files such as ``genomic_resource.yaml``, ``.MANIFEST`` files, histogram metadata, and ``.dvc`` tracking files are stored in Git, while large resource files are stored with DVC. The ``grr_manage`` tool is then used to generate or update GRR metadata, including manifests, resource statistics, histograms, and HTML info pages.
+
+This organization makes it possible to track both the structure and content of a GRR while avoiding the need to store large genomic data files directly in Git.
+
+Initializing version control
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+A version-controlled GRR starts as a directory-based GRR. In the `Adding local GRRs <https://iossifovlab.com/gaindocs/gain_getting_started_cli.html#adding-local-grrs>`_ section of the "Getting started on CLI" page, we created a local GRR named ``My_First_GRR`` and initialized it with ``grr_manage repo-init``. We can now place that GRR directory under Git and DVC control. 
+
+Git is used for small files, such as ``genomic_resource.yaml``, ``.MANIFEST``, histogram metadata, and ``.dvc`` pointer files. DVC is used for large genomic resource files.
+
+From the directory that contains ``My_First_GRR``, enter the GRR root directory and initialize Git and DVC:
+
+.. code-block:: bash
+
+    cd My_First_GRR
+    git init
+    dvc init
+
+After initializing DVC, configure a DVC remote where large files will be stored. The remote can be a shared filesystem, SSH server, cloud bucket, or another DVC-supported storage backend. For example:
+
+.. code-block:: bash
+
+    dvc remote add -d myremote <remote_url>
+
+After initializing Git locally, the GRR directory can optionally be connected to a remote Git repository, such as a private or public GitHub repository, so that the GRR structure and metadata can be shared with other users:
+
+.. code-block:: bash
+
+    git remote add origin git@github.com:<organization>/<repository>.git
+    git add .
+    git commit -m "Initialize version-controlled GRR"
+    git push -u origin main
+
+Only small files and DVC pointer files should be committed to Git. Large genomic
+resource files should be added with ``dvc add`` and stored in the configured DVC
+remote.
+
+Once this is done, the GRR can be managed using the same pattern as other
+version-controlled data repositories: small files are committed to Git, large
+resource files are added with ``dvc add`` and pushed with ``dvc push``, and
+``grr_manage`` is used to regenerate manifests, statistics, histograms, and info
+pages after changes. The public IossifovLab GRR is managed using this same
+approach.
+
+
+Adding a resource to version control
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+In the `Adding local GRRs <https://iossifovlab.com/gaindocs/gain_getting_started_cli.html#adding-local-grrs>`_ section of “Getting started on CLI” page, we added a gene score resource named ``my_score`` to ``My_First_GRR``. The resource directory contains the downloaded score file and its ``genomic_resource.yaml`` configuration file:
+
+.. code-block:: text
+
+    My_First_GRR/
+    └── my_score/
+        ├── Collins_rCNV_2022.dosage_sensitivity_scores.tsv.gz
+        └── genomic_resource.yaml
+
+In a version-controlled GRR, the large resource file should be added to DVC, while the small configuration file should be added to Git. From the root of ``My_First_GRR``:
+
+.. code-block:: bash
+
+    cd my_score
+    dvc add Collins_rCNV_2022.dosage_sensitivity_scores.tsv.gz
+
+This creates a ``.dvc`` pointer file for the large resource file. The ``.dvc`` file and the resource configuration should be added to Git:
+
+.. code-block:: bash
+
+    git add Collins_rCNV_2022.dosage_sensitivity_scores.tsv.gz.dvc
+    git add genomic_resource.yaml
+    git commit -m "Add my_score resource"
+
+The large resource file itself should be pushed to the configured DVC remote:
+
+.. code-block:: bash
+
+    dvc push
+
+After adding the resource, return to the GRR root directory and run
+
+``grr_manage resource-repair`` to generate or update the resource manifest, histograms, and other derived files:
+
+.. code-block:: bash
+
+    cd ..
+    grr_manage resource-repair
+
+The generated files should also be added to Git:
+
+.. code-block:: bash
+
+    git add my_score/.MANIFEST
+    git add my_score/histograms/
+    git commit -m "Add my_score generated metadata"
+    git push
+
+In this workflow, Git tracks the resource structure, configuration, DVC pointer files, manifests, and histogram outputs, while DVC stores the large resource data file itself.
+
+
+Metadata-only updates
+^^^^^^^^^^^^^^^^^^^^^
+
+Metadata-only changes are simpler than changes to the underlying resource data.
+For example, suppose we want to update the summary, description, labels, or score
+descriptions in the genomic_resource.yaml file for the my_score resource.
+Because the large score file itself is not changing, we do not need to download
+or modify the DVC-managed resource file.
+
+Edit the resource configuration file:
+
+.. code-block:: bash
+
+    cd My_First_GRR
+    vi my_score/genomic_resource.yaml
+
+After editing genomic_resource.yaml, run the repair command from the GRR root
+directory:
+
+.. code-block:: bash
+
+    grr_manage resource-repair
+
+This updates the resource manifest and any derived metadata that depend on the
+configuration. Then add the changed files to Git:
+
+.. code-block:: bash
+
+    git add my_score/genomic_resource.yaml
+    git add my_score/.MANIFEST
+    git commit -m "Update my_score metadata"
+    git push
+
+This workflow is efficient because metadata files are small and stored directly
+in Git, while large genomic resource files remain in DVC and do not need to be
+downloaded or modified for metadata-only updates.
+
+
+
 
 Genomic resource configuration
-------------------------
+------------------------------
 
 GAIn supports a large number of genomic resource types (for example, genomes, gene models, and position scores).
 Each resource lives in its own folder within a GRR and includes the resource files plus a ``genomic_resource.yaml``

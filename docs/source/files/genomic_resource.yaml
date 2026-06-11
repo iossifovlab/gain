@@ -1,0 +1,13 @@
+type: gene_score
+
+filename: Collins_rCNV_2022.dosage_sensitivity_scores.tsv.gz
+gene_column: "#gene"
+scores:
+  - id: pHaplo
+    desc: "Haplosensitivity probability"
+    histogram:
+      type: number
+  - id: pTriplo
+    desc: "Triplosensitivity probability"
+    histogram:
+      type: number
