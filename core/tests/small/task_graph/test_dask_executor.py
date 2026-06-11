@@ -1,5 +1,9 @@
 # pylint: disable=W0621,C0114,C0115,C0116,W0212,W0613
+import pathlib
+from unittest.mock import MagicMock
+
 import pytest
+from gain.task_graph.dask_executor import DaskExecutor
 from gain.task_graph.executor import (
     TaskGraphExecutor,
 )
@@ -8,6 +12,28 @@ from gain.task_graph.graph import Task, TaskGraph
 
 def noop() -> None:
     pass
+
+
+def test_close_tears_down_cluster_gracefully(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``close()`` must shut the cluster down with a single graceful
+    ``shutdown()``, not by retiring/closing workers first.
+
+    Regression for iossifovlab/gain#125: ``close()`` called
+    ``retire_workers(close_workers=True)`` *before* ``shutdown()``, which
+    races the scheduler teardown -- workers find the scheduler gone and emit a
+    storm of heartbeat failures and "Connection ... closed" INFO lines (one per
+    worker). ``shutdown()`` alone tears down workers and scheduler gracefully
+    and silently.
+    """
+    client = MagicMock()
+    executor = DaskExecutor(client, work_dir=str(tmp_path))
+
+    executor.close()
+
+    client.shutdown.assert_called_once()
+    client.retire_workers.assert_not_called()
 
 
 @pytest.mark.parametrize(
