@@ -1,10 +1,15 @@
 # pylint: disable=W0621,C0114,C0115,C0116,W0212,W0613
 """Tests for the rendered GRR browse page (grr_index.jinja).
 
-The browse page must fetch its search database (.CONTENTS.sqlite3.gz)
-relative to the current page so the in-page search works when the GRR is
-served under a sub-path (e.g. https://gpf.sfari.org/grr/), not only at an
-origin root.  See iossifovlab/gain#129.
+These tests assert the browse page expresses the search-database
+(.CONTENTS.sqlite3.gz) fetch as a page-relative URL in the *template
+source* — a leading-dot ref resolved against document.baseURI, never a
+root-absolute ref or window.location.origin. That is what keeps the
+in-page search working when the GRR is served under a sub-path (e.g.
+https://gpf.sfari.org/grr/) rather than at an origin root.
+
+These tests do not execute the JS URL resolution; behavioral sub-path
+resolution is covered by web_e2e, not here.  See iossifovlab/gain#129.
 """
 from __future__ import annotations
 
@@ -34,16 +39,26 @@ def _render_browse_page() -> str:
 
 
 def test_sqlite_fetch_is_resolved_relative_to_the_page() -> None:
-    """The sqlite db is fetched relative to the page, not the origin root.
+    """The sqlite db ref in the template source is page-relative.
 
-    Resolving against document.baseURI keeps the fetch under the page's
-    sub-path (…/grr/.CONTENTS.sqlite3.gz) instead of jumping to the
-    scheme+host root, which is what window.location.origin would do.
+    The template source must express the fetch as a leading-dot relative
+    URL resolved against document.baseURI, which keeps the fetch under
+    the page's sub-path (…/grr/.CONTENTS.sqlite3.gz). A root-absolute ref
+    (leading slash) or window.location.origin would jump to the
+    scheme+host root and rebreak sub-path serving — so both are asserted
+    absent. This checks the rendered source only, not JS URL resolution.
     """
     rendered = _render_browse_page()
 
+    # Correct: relative, leading-dot ref resolved against the page URL.
+    assert "new URL(`.CONTENTS.sqlite3.gz" in rendered
     assert "document.baseURI" in rendered
-    assert "new URL(" in rendered
+
+    # Broken: a root-absolute ref re-introduces the origin-root jump.
+    assert "new URL(`/" not in rendered
+    assert "`/.CONTENTS.sqlite3.gz" not in rendered
+
+    # Broken: explicitly anchoring to the origin root.
     assert "window.location.origin" not in rendered
 
 
