@@ -55,12 +55,25 @@ class LoggedRLock:
     def __init__(self, name: str) -> None:
         self._lock = RLock()
         self._name = name
+        self._owner: int | None = None
+        self._depth = 0
 
     def __enter__(self) -> "LoggedRLock":
-        thread = threading.current_thread().name
-        logger.debug("[%s] thread %s requesting lock", self._name, thread)
+        thread = threading.current_thread()
+        reentrant = self._owner == thread.ident
+        if reentrant:
+            logger.debug(
+                "[%s] thread %s re-entering lock (depth %d)",
+                self._name, thread.name, self._depth + 1)
+        else:
+            logger.debug(
+                "[%s] thread %s requesting lock", self._name, thread.name)
         self._lock.acquire()
-        logger.debug("[%s] thread %s acquired lock", self._name, thread)
+        self._owner = thread.ident
+        self._depth += 1
+        if not reentrant:
+            logger.debug(
+                "[%s] thread %s acquired lock", self._name, thread.name)
         return self
 
     def __exit__(
@@ -69,9 +82,18 @@ class LoggedRLock:
         _exc_value: BaseException | None,
         _exc_tb: TracebackType | None,
     ) -> None:
-        thread = threading.current_thread().name
-        self._lock.release()
-        logger.debug("[%s] thread %s released lock", self._name, thread)
+        thread = threading.current_thread()
+        self._depth -= 1
+        if self._depth == 0:
+            self._owner = None
+            self._lock.release()
+            logger.debug(
+                "[%s] thread %s released lock", self._name, thread.name)
+        else:
+            self._lock.release()
+            logger.debug(
+                "[%s] thread %s exiting re-entrant lock (depth %d)",
+                self._name, thread.name, self._depth)
 
 
 class ThreadSafePipeline(AnnotationPipeline):
@@ -200,6 +222,7 @@ class LRUPipelineCache:
         self._load_executor = ThreadedTaskExecutor(
             max_workers=load_workers,
             job_timeout=load_timeout,
+            thread_name_prefix="pipeline-loader",
         )
         self._load_timeout = load_timeout
 
@@ -232,9 +255,14 @@ class LRUPipelineCache:
         grr: GenomicResourceRepo,
         pipeline_id: str = "unknown",
     ) -> ThreadSafePipeline:
+        thread = threading.current_thread().name
+        logger.debug(
+            "thread %s loading pipeline %s", thread, pipeline_id)
         pipeline = ThreadSafePipeline(
             load_pipeline_from_yaml(raw, grr), pipeline_id)
         pipeline.open()
+        logger.debug(
+            "thread %s finished loading pipeline %s", thread, pipeline_id)
         return pipeline
 
     def put_pipeline(  # pylint: disable=too-many-arguments
