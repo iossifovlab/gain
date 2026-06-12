@@ -4,7 +4,7 @@
 
 
         const start = async (sqlite3) => {
-          const response = await fetch(`${window.location.origin}/.CONTENTS.sqlite3.gz?v={{ sqlite3_hash }}`)
+          const response = await fetch(new URL(`.CONTENTS.sqlite3.gz?v={{ sqlite3_hash }}`, document.baseURI))
           const ds = new DecompressionStream('gzip');
           const decompressedResponse = new Response(response.body.pipeThrough(ds));
           const arrayBuffer = await decompressedResponse.arrayBuffer()
