@@ -278,6 +278,9 @@ class LRUPipelineCache:
         """Put a pipeline into the cache."""
         pipeline_config_hash = hash(pipeline_config)
         started = time.time()
+        thread = threading.current_thread().name
+        logger.debug(
+            "thread %s calling put_pipeline for %s", thread, pipeline_id)
         with self._cache_lock:
             if pipeline_id in self._cache:
                 details = self._cache[pipeline_id]
@@ -334,6 +337,9 @@ class LRUPipelineCache:
     ) -> Future[ThreadSafePipeline]:
         """Get a pipeline future by its ID."""
         started = time.time()
+        logger.debug(
+            "thread %s calling get_pipeline_future for %s",
+            threading.current_thread().name, pipeline_id)
         with self._cache_lock:
             if pipeline_id not in self._cache:
                 raise ValueError(f"Pipeline {pipeline_id} not found")
@@ -348,6 +354,9 @@ class LRUPipelineCache:
         """Get a pipeline by its ID."""
         pipeline = None
         started = time.time()
+        logger.debug(
+            "thread %s calling get_pipeline for %s",
+            threading.current_thread().name, pipeline_id)
         while pipeline is None:
             pipeline_future = self.get_pipeline_future(pipeline_id)
             try:
@@ -365,6 +374,9 @@ class LRUPipelineCache:
         do_cancel: bool = True,
     ) -> None:
         """Unload a pipeline from the cache."""
+        logger.debug(
+            "thread %s calling delete_pipeline for %s",
+            threading.current_thread().name, pipeline_id)
         future = None
         details = None
         delete_cb = None
