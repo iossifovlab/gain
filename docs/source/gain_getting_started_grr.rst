@@ -23,12 +23,65 @@ Initialize this directory as a GRR:
 
 From now on, any subdirectory under ``my_GRR`` becomes a genomic resource if:
 
-1. It contains a properly configured genomic_resource.yaml, and
+1. It contains a properly configured ``genomic_resource.yaml``, and
 
 2. It includes the data files referenced in that YAML.
 
-Add new resources
----------------------
+
+
+Connect the local GRR to GAIn
+-----------------------------
+
+A fresh GAIn installation includes access to the default public IossifovLab GRR. To make GAIn use ``my_GRR`` for browsing and annotation, add it to your GRR definition file, ``~/.grr_definition.yaml``. Replace <path_to_my_GRR>/my_GRR with the full path to the ``my_GRR`` directory you created above.
+
+
+.. code-block:: yaml
+
+    id: development
+    type: group
+    children:
+
+    - id: main-GRR
+      type: url
+      url: https://grr.iossifovlab.com
+    
+    - id: my_GRR
+      type: directory
+      directory: <path_to_my_GRR>/my_GRR
+
+This configuration tells GAIn that, when resolving a resource ID, it should first look in the public GRR
+hosted by the Iossifov lab (``GRR``). If the resource is not found there, it then falls back to the local
+directory-based GRR (``my_GRR``). 
+
+You can confirm that GAIn recognizes both GRRs by running ``grr_browse``:
+
+.. code-block:: bash
+
+    grr_browse
+
+The output should show that GAIn is using ``~/.grr_definition.yaml`` and that
+both ``main-GRR`` and ``my_GRR`` are included in the active GRR definition:
+
+.. code-block:: text
+
+    Working with GRR definition: <home directory>/.grr_definition.yaml
+    id: development
+    type: group
+    children:
+    - id: main-GRR
+      type: url
+      url: https://grr.iossifovlab.com
+    - id: my_GRR
+      type: directory
+      directory: <path_to_my_GRR>/my_GRR
+
+    samocha_enrichment_background 0        4 1.38 MB      main-GRR enrichment/samocha_background
+    gene_score           0        6 7.8 MB       main-GRR gene_properties/gene_scores/Iossifov_Wigler_PNAS_2015
+    gene_score           0       11 576.07 KB    main-GRR gene_properties/gene_scores/LGD
+    ...
+
+Add new resources to the local GRR
+------------------------------
 
 1: Toy genome
 ^^^^^^^^^^^^^^^^^^^^^^^
@@ -77,9 +130,8 @@ this configures the minigenome resource so GAIn can recognize and use it for ann
       summary: mini genome
 
 
-With the FASTA, index, and ``genomic_resource.yaml`` in place, the minigenome resource is already usable for 
-annotation by GAIn (however, you will need to update your ``.grr_definition.yaml`` file to include ``my_GRR``, 
-which includes this resource). 
+With the FASTA, index, and ``genomic_resource.yaml`` in place, the ``my_minigenome`` resource is already usable for 
+annotation by GAIn. 
 We strongly recommend running the command below, which checks the resource and produces summary statistics.
 
 .. code-block:: bash
@@ -1001,65 +1053,18 @@ and any available statistics for the CNV collection resource.
 
 
 
+Annotation using the local GRR
+------------------------------
 
-Select GRR to work with
------------------------
+Your local GRR is now ready to support annotation. The examples above added several local resources, including genomes, gene models, position scores, and allele scores. Since ``my_GRR`` is listed in ``~/.grr_definition.yaml``, GAIn can use these resources during annotation. The example below uses the local resources created in this guide.
 
-As noted earlier, a fresh GAIn installation includes access to the default IossifovLab GRR. 
-If you want GAIn to use a different set of GRRs for annotation (for example, a local GRR you created), 
-you can define them explicitly by creating a file named .grr_definition.yaml in your home directory. 
-This file specifies which GRRs GAIn should connect to when browsing and annotating.
-
-To let GAIn see our newly created local repository, my_GRR, we create ~/.grr_definition.yaml with 
-the following content:
-
-.. code-block:: yaml
-
-   id: development
-   type: group
-   children:
-   - id: GRR
-     type: url
-     url: https://grr.iossifovlab.com
-
-   - id: my_GRR
-     type: directory
-     directory: <path to myGRR>/my_GRR
-
-
-This configuration tells GAIn that, when resolving a resource ID, it should first look in the public GRR
-hosted by the Iossifov lab (``GRR``). If the resource is not found there, it then falls back to the local
-directory-based GRR (``my_GRR``). 
-
-If you use the ``grr_browse`` command again, you will see that GAIn now recognizes both GRRs.
-
-.. code-block:: text
-
-    Working with GRR definition: <home directory>/.grr_definition.yaml
-    id: development
-    type: group
-    children:
-    - id: GRR
-      type: url
-      url: https://grr.iossifovlab.com
-    - id: my_GRR
-      type: directory
-      directory: <path to myGRR>/my_GRR
-
-    samocha_enrichment_background 0        4 1.38 MB      GRR enrichment/samocha_background
-    gene_score           0        6 7.8 MB       GRR gene_properties/gene_scores/Iossifov_Wigler_PNAS_2015
-    gene_score           0       11 576.07 KB    GRR gene_properties/gene_scores/LGD
-    ...
-
-Below is an example annotation pipeline you can run using your 
-local resources. Copy the contents into a text file named 
-``annotation_pipeline_local.yaml``.
+Create a file named ``annotation_pipeline_local.yaml`` with the following content:
 
 .. code-block:: yaml
 
     preamble:
-    summary: Local pipeline 
-    input_reference_genome: my_genome
+      summary: Local pipeline
+      input_reference_genome: my_genome
 
     annotators:
     - effect_annotator:
@@ -1069,82 +1074,59 @@ local resources. Copy the contents into a text file named
         - gene_list
         - genes
 
-    - position_score:
+    - position_score_annotator:
         resource_id: my_position
 
     - normalize_allele_annotator
-    - allele_score: 
-        resource_id: my_allele 
+
+    - allele_score_annotator:
+        resource_id: my_allele
         input_annotatable: normalized_allele
 
     - gene_score_annotator:
         resource_id: my_genescore
         input_gene_list: gene_list
 
-Run the following command to annotate your variants using this pipeline.
+Run the following command to annotate your variants using this pipeline:
 
 .. code-block:: bash
 
-    annotate_tabular variants.txt annotation_pipeline_local.yaml
+    annotate_tabular small_input.csv annotation_pipeline_local.yaml -variants_local_annotated.txt
 
-
-This will create a ``variants.annotated.txt`` file with the following content:
+This command creates a file named ``small_input.annotated.csv`` with the following content:
 
 .. csv-table::
     :header-rows: 1
 
     chrom,pos,ref,alt,worst_effect,genes,phyloP7way,am_pathogenicity,am_class,my_genescore
-    chr14,21415880,G,A,nonsense,CHD8,0.917,,,{'CHD8': 9}
-    chr17,7674904,TCT,T,frame-shift,TP53,-0.12,0.151,likely_benignlikely_benignlikely_benignlikely_benignlikely_benignlikely_benignlikely_benignlikely_benignlikely_benign,{'TP53': 3}
-    chr7,117587806,G,A,missense,CFTR,0.917,0.99,likely_pathogenic,{'CFTR': 7}
-
-You can now annotate your variants for gene effects using the latest genomic 
-assembly (GRCh38-p14), the MANE gene model (v1.5), PhyloP7, and AlphaMissense — 
-entirely offline. Simply comment out the Iossifov Lab GRR resource in your 
-``.grr_definition.yaml`` file, disconnect from the network, and run the annotation locally.
+    chr14,21415880,G,A,nonsense,CHD8,0.917,,,"{'CHD8': 9}"
+    chr17,7674904,TCT,T,frame-shift,TP53,-0.12,0.151,likely_benignlikely_benignlikely_benignlikely_benignlikely_benignlikely_benignlikely_benignlikely_benignlikely_benign,"{'TP53': 3}"
+    chr7,117587806,G,A,missense,CFTR,0.917,0.99,likely_pathogenic,"{'CFTR': 7}"
 
 
-.. code-block:: yaml
-
-    id: "development"
-    type: group
-    children:
-    #- id: "GRR"
-    #  type: "url"
-    #  url: "https://grr.iossifovlab.com"
-
-    - id: "my_GRR"
-    type: "directory"
-    directory: "/Users/muratcokol/Desktop/my_GRR"
-
-
-
-
-
-
-miniGRR: a template GRR
+mini-GRR: a template GRR
 -----------------------
 
-Defining new genomic resources can feel a bit abstract at first: different resource types expect different file formats 
-(FASTA, BigWig, tabix-indexed TSV/VCF, …), coordinate conventions (0-based vs 1-based), and configuration options in 
-``genomic_resource.yaml``. To make this concrete, we provide **miniGRR**, a small, self-contained Genomic Resource Repository on 
-GitHub that you can use as a template.
+Defining new genomic resources can feel abstract at first: different resource types expect different file formats, coordinate conventions, and configuration options in ``genomic_resource.yaml``. To make these patterns easier to inspect, we provide ``mini-GRR``, a small, self-contained Genomic Resource Repository that can be used as a template or reference.
 
-You can clone miniGRR with:
+You can clone ``mini-GRR`` with:
 
 .. code-block:: bash
 
-   git clone https://github.com/iossifovlab/mini_grr.git
-   cd mini_grr
+    git clone https://github.com/iossifovlab/mini-grr.git
+    cd mini-grr
 
-miniGRR contains a toy genome (two short chromosomes, 20 nucleotides each) with ready-made ``genomic_resource.yaml`` 
-descriptors, plus minimal examples of gene models (RefSeq- and GTF-style, one gene per chromosome), position scores, 
-allele scores, gene scores and gene sets. The resources span common file types (e.g., TSV/tabix, BedGraph/BigWig, VCF) 
-and both 0-based and 1-based coordinate conventions, so you can see exactly how formats and offsets are declared in practice.
+``mini-GRR`` contains a toy genome with ready-made ``genomic_resource.yaml`` descriptors, plus minimal examples of gene models, position scores, allele scores, gene scores, and gene sets. The resources span common file types, such as TSV/tabix, BedGraph/BigWig, and VCF, and include both 0-based and 1-based coordinate conventions.
 
-Once cloned, you can point GAIn to miniGRR in your ``.grr_definition.yaml`` and run pipelines against it on a laptop to verify 
-that your installation and configuration work as expected. After you understand how a given resource is structured, you can 
-swap in your own data (for example, replace the mini FASTA with a real assembly, or replace a toy score track with your own) 
-by editing the corresponding ``genomic_resource.yaml``. In this way, miniGRR serves as a template GRR that demonstrates directory 
-layout, metadata fields, and attribute wiring with minimal compute, making it easier to bootstrap a private GRR and extend it resource by resource.
+To use ``miniGRR`` with GAIn, add it to your ``~/.grr_definition.yaml`` file in the same way as any other local GRR:
 
+.. code-block:: yaml
+
+    id: development
+    type: group
+    children:
+    - id: miniGRR
+      type: directory
+      directory: <path_to_mini_grr>/mini-grr
+
+Once configured, you can browse and run pipelines against ``miniGRR`` to verify that your GAIn installation and GRR configuration work as expected. After you understand how a resource is structured, you can use the corresponding ``mini-GRR`` example as a starting point for your own data by replacing the toy files and editing ``genomic_resource.yaml``. In this way, ``mini-GRR`` provides a compact reference for GRR directory layout, metadata fields, and resource configuration.

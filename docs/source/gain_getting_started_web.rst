@@ -2,17 +2,15 @@
 Getting started on the web
 ===============================
 
-The GAIn Web Annotation page (https://gain.iossifovlab.com/) 
-provides a simple and interactive interface for annotating genetic variants, positions, or regions, collectively referred to as annotatables. The page is organized into two main areas. On the left, users can create, edit, and manage annotation pipelines, either by selecting a saved pipeline or by building a new one. This pipeline editor defines which resources and annotators are applied during annotation. On the right, users can enter an annotatable, submit it for processing, and view the resulting annotations. Together, these two panels allow users to configure an annotation workflow and immediately apply it to annotatables of interest.
+The GAIn Web Annotation page (https://gain.iossifovlab.com/) provides a simple and interactive interface for annotating genetic variants, positions, or regions, collectively referred to as annotatables. The page is organized into two main areas. On the left, users can create, edit, and manage annotation pipelines, either by selecting a saved pipeline or by building a new one. This pipeline editor defines which resources and annotators are applied during annotation. On the right, users can enter an annotatable, submit it for processing, and view the resulting annotations. Together, these two panels allow users to configure an annotation workflow and immediately apply it to annotatables of interest.
 
 .. figure:: figures/GAInWeb1b.png
-
-
+  :scale: 50 %
 
 Select annotation pipeline
 **************************
 
-To begin, open the Select pipeline menu, scroll through the available options, and choose ``pipeline/hg38_clinical_annotation``. This pipeline is designed for annotatables provided in the ``hg38`` assembly and annotates them with a broad set of clinically relevant attributes. In addition to effect prediction, it incorporates information from resources such as dbSNP, gnomAD, ClinVar, CADD, AlphaMissense, MPC, and gene-level constraint scores. After selecting it, users can review the full annotation pipeline definition in the annotation pipeline editor on the left.
+To begin, open the Select pipeline menu, scroll through the available options, and choose ``pipeline/hg38_clinical_annotation``. This pipeline is designed for annotatables provided in the ``hg38`` assembly and annotates them with a broad set of clinically relevant attributes. In addition to effect prediction, it incorporates information from resources such as dbSNP, gnomAD, ClinVar, PhyloP7, AlphaMissense, MPC, and gene-level constraint scores. After selecting it, users can review the full annotation pipeline definition in the annotation pipeline editor on the left.
 
 
 .. figure:: figures/GAInWeb2b.png
@@ -41,7 +39,7 @@ Annotation jobs
 The second annotation mode is **Annotation jobs**, which allows multiple annotatables 
 to be annotated at once. In this mode, users upload a file in tabular or VCF format 
 containing annotatables (variants, positions, or regions) with the required coordinate 
-information. Click Annotation jobs on the right side of the page. 
+information. Click Annotation jobs tab on the top. 
 
 .. figure:: figures/GAInWeb5.png
   :scale: 50 %

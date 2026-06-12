@@ -181,7 +181,7 @@ So far, GAIn has been using the default GRR definition, which corresponds to the
 
 After this configuration, GAIn downloads each required resource to the specified cache directory before using it for annotation. Because genomic resources can be large, the cache directory should have sufficient disk space and write permission for the user. If ``<path_to_cache>`` does not have enough available space, use another cache directory with sufficient storage. The approximate space requirements for the resources used in this guide are described below.
 
-This is especially important for large annotation pipelines. For example, a comprehensive clinical pipeline such as ``pipeline/hg38_clinical_annotation`` may require many large resources. These resources total approximately 40 GB and may take substantial time to download, depending on network speed and storage performance. Once cached, however, they can be reused directly from the local cache, making future annotation jobs much faster.
+This is especially important for large annotation pipelines. For example, a comprehensive clinical pipeline such as ``pipeline/hg38_clinical_annotation`` may require many large resources. These resources total approximately 40 GB and may take substantial time to download, depending on network speed and storage performance. This took approximately 16 minutes in our test with a Mac laptop. Once cached, however, they can be reused directly from the local cache, making future annotation jobs much faster.
 
 GAIn can automatically download required resources during annotation. For large pipelines, however, it is often better to pre-download them before starting the annotation job. GAIn provides a dedicated tool for this purpose:
 
@@ -191,7 +191,7 @@ GAIn can automatically download required resources during annotation. For large 
 
 This command downloads the resources required by the pipeline in one step, so that the actual annotation job does not need to pause while resources are being retrieved.
 
-Custom pipelines can also reduce the amount of data that must be cached. A broad clinical pipeline may require more than 40 GB of resources, whereas a focused custom pipeline may require only the resources needed for a specific analysis. For example, the custom pipeline shown above requires approximately 8 GB of resources. Custom pipelines therefore help control annotation content while reducing storage requirements and setup time. You can cache the resources for the custom pipeline used above with:
+Custom pipelines can also reduce the amount of data that must be cached. A broad clinical pipeline may require more than 40 GB of resources, whereas a focused custom pipeline may require only the resources needed for a specific analysis. For example, the custom pipeline shown above requires approximately 8 GB of resources. Custom pipelines therefore help control annotation content while reducing storage requirements and setup time. You can cache the resources for the custom pipeline used above with the following command. Since this custom pipeline is a subset of the hg38 clinical pipeline, this command will not download any additional resources if the clinical pipeline has already been cached.
 
 .. code-block:: bash
 
@@ -212,7 +212,7 @@ or
 
     annotate_tabular 50k_variants.tsv.gz custom_pipeline.yaml
 
-Without caching, annotating a file of this size through remote resource access can take a very long time. With the required resources already cached, GAIn uses the local copies for annotation, making the same large-scale job much faster and less dependent on network performance. For example, in our test on a recent Mac laptop using cached resources, annotating 50,000 variants with ``pipeline/hg38_clinical_annotation`` took approximately 4 minutes. The input file used in this test was pre-sorted by chromosome and position, which allows GAIn to access genomic resources more efficiently. Unsorted input files can be annotated, but they will run significantly more slowly.
+Without caching, annotating a file of this size through remote resource access can take a very long time. With the required resources already cached, GAIn uses the local copies for annotation, making the same large-scale job much faster and less dependent on network performance. For example, in our test on a recent Mac laptop using cached resources, annotating 50,000 variants with ``pipeline/hg38_clinical_annotation`` took approximately 5 minutes. The input file used in this test was pre-sorted by chromosome and position, which allows GAIn to access genomic resources more efficiently. Unsorted input files can be annotated, but they will run significantly more slowly.
 
 
 Parallelizing large annotation jobs
