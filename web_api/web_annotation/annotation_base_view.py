@@ -92,7 +92,8 @@ class AnnotationBaseView(views.APIView):
 
     JOB_EXECUTOR: TaskExecutor = ThreadedTaskExecutor(
             max_workers=settings.ANNOTATION_MAX_WORKERS,
-            job_timeout=settings.ANNOTATION_TASK_TIMEOUT)\
+            job_timeout=settings.ANNOTATION_TASK_TIMEOUT,
+            thread_name_prefix="annotation-job")
 
     """Base view for views which access annotation resources."""
     tool_columns: ClassVar = [

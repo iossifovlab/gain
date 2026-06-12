@@ -1,5 +1,6 @@
 """Module for thread-safe annotation utilities."""
 import logging
+import threading
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import CancelledError, Future
@@ -23,14 +24,86 @@ from web_annotation.executor import ThreadedTaskExecutor
 logger = logging.getLogger(__name__)
 
 
+class LoggedLock:
+    """Lock wrapper that logs acquire and release events."""
+
+    def __init__(self, name: str) -> None:
+        self._lock = Lock()
+        self._name = name
+
+    def __enter__(self) -> "LoggedLock":
+        thread = threading.current_thread().name
+        logger.debug("[%s] thread %s requesting lock", self._name, thread)
+        self._lock.acquire()
+        logger.debug("[%s] thread %s acquired lock", self._name, thread)
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc_value: BaseException | None,
+        _exc_tb: TracebackType | None,
+    ) -> None:
+        thread = threading.current_thread().name
+        self._lock.release()
+        logger.debug("[%s] thread %s released lock", self._name, thread)
+
+
+class LoggedRLock:
+    """RLock wrapper that logs acquire and release events."""
+
+    def __init__(self, name: str) -> None:
+        self._lock = RLock()
+        self._name = name
+        self._owner: int | None = None
+        self._depth = 0
+
+    def __enter__(self) -> "LoggedRLock":
+        thread = threading.current_thread()
+        reentrant = self._owner == thread.ident
+        if reentrant:
+            logger.debug(
+                "[%s] thread %s re-entering lock (depth %d)",
+                self._name, thread.name, self._depth + 1)
+        else:
+            logger.debug(
+                "[%s] thread %s requesting lock", self._name, thread.name)
+        self._lock.acquire()
+        self._owner = thread.ident
+        self._depth += 1
+        if not reentrant:
+            logger.debug(
+                "[%s] thread %s acquired lock", self._name, thread.name)
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc_value: BaseException | None,
+        _exc_tb: TracebackType | None,
+    ) -> None:
+        thread = threading.current_thread()
+        self._depth -= 1
+        if self._depth == 0:
+            self._owner = None
+            self._lock.release()
+            logger.debug(
+                "[%s] thread %s released lock", self._name, thread.name)
+        else:
+            self._lock.release()
+            logger.debug(
+                "[%s] thread %s exiting re-entrant lock (depth %d)",
+                self._name, thread.name, self._depth)
+
+
 class ThreadSafePipeline(AnnotationPipeline):
     """Thread-safe annotation pipeline wrapper."""
 
     def __init__(
-        self, pipeline: AnnotationPipeline,
+        self, pipeline: AnnotationPipeline, pipeline_id: str = "unknown",
     ):  # pylint: disable=super-init-not-called
         self.pipeline = pipeline
-        self.lock = Lock()
+        self.lock = LoggedLock(f"pipeline:{pipeline_id}")
 
     @property
     def annotators(self) -> list[Annotator]:  # type: ignore
@@ -149,13 +222,14 @@ class LRUPipelineCache:
         self._load_executor = ThreadedTaskExecutor(
             max_workers=load_workers,
             job_timeout=load_timeout,
+            thread_name_prefix="pipeline-loader",
         )
         self._load_timeout = load_timeout
 
         self.capacity = capacity
         self._cache: dict[str, LoadingDetails] = {}
         self._pipeline_callbacks: dict[str, Callable | None] = {}
-        self._cache_lock: RLock = RLock()
+        self._cache_lock: LoggedRLock = LoggedRLock("pipeline_cache")
         self._order: list[str] = []
 
     def has_pipeline(
@@ -179,9 +253,16 @@ class LRUPipelineCache:
     def _load_pipeline_raw(
         raw: str,
         grr: GenomicResourceRepo,
+        pipeline_id: str = "unknown",
     ) -> ThreadSafePipeline:
-        pipeline = ThreadSafePipeline(load_pipeline_from_yaml(raw, grr))
+        thread = threading.current_thread().name
+        logger.debug(
+            "thread %s loading pipeline %s", thread, pipeline_id)
+        pipeline = ThreadSafePipeline(
+            load_pipeline_from_yaml(raw, grr), pipeline_id)
         pipeline.open()
+        logger.debug(
+            "thread %s finished loading pipeline %s", thread, pipeline_id)
         return pipeline
 
     def put_pipeline(  # pylint: disable=too-many-arguments
@@ -197,6 +278,9 @@ class LRUPipelineCache:
         """Put a pipeline into the cache."""
         pipeline_config_hash = hash(pipeline_config)
         started = time.time()
+        thread = threading.current_thread().name
+        logger.debug(
+            "thread %s calling put_pipeline for %s", thread, pipeline_id)
         with self._cache_lock:
             if pipeline_id in self._cache:
                 details = self._cache[pipeline_id]
@@ -214,6 +298,7 @@ class LRUPipelineCache:
                 self._load_pipeline_raw,
                 raw=pipeline_config,
                 grr=self._grr,
+                pipeline_id=pipeline_id,
                 callback_start=begin_load_callback,
                 callback_success=finish_load_callback,
             )
@@ -252,6 +337,9 @@ class LRUPipelineCache:
     ) -> Future[ThreadSafePipeline]:
         """Get a pipeline future by its ID."""
         started = time.time()
+        logger.debug(
+            "thread %s calling get_pipeline_future for %s",
+            threading.current_thread().name, pipeline_id)
         with self._cache_lock:
             if pipeline_id not in self._cache:
                 raise ValueError(f"Pipeline {pipeline_id} not found")
@@ -266,6 +354,9 @@ class LRUPipelineCache:
         """Get a pipeline by its ID."""
         pipeline = None
         started = time.time()
+        logger.debug(
+            "thread %s calling get_pipeline for %s",
+            threading.current_thread().name, pipeline_id)
         while pipeline is None:
             pipeline_future = self.get_pipeline_future(pipeline_id)
             try:
@@ -283,27 +374,34 @@ class LRUPipelineCache:
         do_cancel: bool = True,
     ) -> None:
         """Unload a pipeline from the cache."""
+        logger.debug(
+            "thread %s calling delete_pipeline for %s",
+            threading.current_thread().name, pipeline_id)
+        future = None
+        details = None
+        delete_cb = None
         with self._cache_lock:
             if pipeline_id in self._cache:
                 details = self._cache[pipeline_id]
                 future = details.future
-                if future.done():
-                    try:
-                        future.result().close()
-                    except Exception:  # pylint: disable=broad-except
-                        logger.exception(
-                            "Error during pipeline close for %s", pipeline_id)
-                    delete_cb = self._pipeline_callbacks.get(pipeline_id)
-                    if delete_cb:
-                        try:
-                            delete_cb(self._cache[pipeline_id])
-                        except Exception:  # pylint: disable=broad-except
-                            logger.exception(
-                                "Error during pipeline deletion"
-                                "callback for %s", pipeline_id)
-                elif do_cancel:
-                    future.cancel()
-
+                delete_cb = self._pipeline_callbacks.get(pipeline_id)
                 del self._cache[pipeline_id]
                 del self._pipeline_callbacks[pipeline_id]
                 self._order.remove(pipeline_id)
+                if not future.done() and do_cancel:
+                    future.cancel()
+                    future = None
+
+        if future is not None and future.done():
+            try:
+                future.result().close()
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "Error during pipeline close for %s", pipeline_id)
+            if delete_cb and details is not None:
+                try:
+                    delete_cb(details)
+                except Exception:  # pylint: disable=broad-except
+                    logger.exception(
+                        "Error during pipeline deletion"
+                        "callback for %s", pipeline_id)
