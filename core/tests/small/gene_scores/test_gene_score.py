@@ -4,6 +4,7 @@ import json
 import logging
 import pathlib
 import textwrap
+from typing import cast
 
 import numpy as np
 import pytest
@@ -17,6 +18,9 @@ from gain.gene_scores.gene_scores import (
 )
 from gain.gene_scores.implementations.gene_scores_impl import (
     GeneScoreImplementation,
+)
+from gain.genomic_resources.fsspec_protocol import (
+    FsspecReadWriteProtocol,
 )
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
@@ -486,6 +490,33 @@ def test_get_histogram_image_url(scores_repo: GenomicResourceRepo) -> None:
     url = result.get_histogram_image_url("linear score")
     assert url is not None
     assert url.endswith("histogram_linear%20score.png")
+
+
+def test_get_histogram_image_public_url(
+    scores_repo: GenomicResourceRepo,
+) -> None:
+    res = scores_repo.get_resource("LinearHist")
+    proto = cast(FsspecReadWriteProtocol, res.proto)
+    proto.public_url = "https://grr.example.com"
+    result = build_gene_score_from_resource(res)
+    assert result is not None
+
+    url = result.get_histogram_image_public_url("linear score")
+    assert url is not None
+    # built from the resource's public URL, not the local repo URL
+    assert url == (
+        f"{res.get_public_url()}/statistics/histogram_linear%20score.png"
+    )
+    assert url.startswith("https://grr.example.com/LinearHist")
+    assert url != result.get_histogram_image_url("linear score")
+
+    # the rendered help page embeds the public histogram URL, so the
+    # image is reachable from a browser even for a directory GRR
+    score_def = result.score_definitions["linear score"]
+    help_text = _build_gene_score_help(score_def, result)
+    assert "https://grr.example.com" in help_text
+    # a revert to the local URL would leak the unreachable repo path
+    assert res.get_url() not in help_text
 
 
 def test_build_gene_scores_from_resource_id(

@@ -5,7 +5,10 @@ from typing import cast
 
 import pytest
 import pytest_mock
-from gain.genomic_resources.fsspec_protocol import build_fsspec_protocol
+from gain.genomic_resources.fsspec_protocol import (
+    FsspecReadWriteProtocol,
+    build_fsspec_protocol,
+)
 from gain.genomic_resources.genomic_position_table import (
     VCFGenomicPositionTable,
 )
@@ -934,6 +937,22 @@ def test_get_histogram_image_filename_and_url() -> None:
     url = score.get_histogram_image_url("score")
     assert url is not None
     assert url.endswith("/statistics/histogram_score.png")
+
+
+def test_get_histogram_image_public_url() -> None:
+    res = build_simple_position_score_resource()
+    proto = cast(FsspecReadWriteProtocol, res.proto)
+    proto.public_url = "https://grr.example.com"
+    score = build_score_from_resource(res)
+
+    url = score.get_histogram_image_public_url("score")
+    assert url is not None
+    # built from the resource's public URL, not the local repo URL
+    assert url == (
+        f"{res.get_public_url()}/statistics/histogram_score.png"
+    )
+    assert url.startswith("https://grr.example.com")
+    assert url != score.get_histogram_image_url("score")
 
 
 def test_fetch_region_lines_requires_open() -> None:

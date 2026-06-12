@@ -375,11 +375,25 @@ class GeneScore(
     def get_histogram_image_filename(self, score_id: str) -> str:
         return f"statistics/histogram_{score_id}.png"
 
-    def get_histogram_image_url(self, score_id: str) -> str | None:
+    def _histogram_image_url(self, score_id: str, repo_url: str) -> str:
         return (
-            f"{self.resource.get_url()}/"
+            f"{repo_url}/"
             f"{quote(self.get_histogram_image_filename(score_id))}"
         )
+
+    def get_histogram_image_url(self, score_id: str) -> str | None:
+        return self._histogram_image_url(
+            score_id, self.resource.get_url())
+
+    def get_histogram_image_public_url(self, score_id: str) -> str:
+        """Return the histogram image URL on the resource's public mirror.
+
+        Unlike :meth:`get_histogram_image_url`, this is built from the
+        resource's public URL so it is reachable from a browser even when
+        the GRR is a local directory repository.
+        """
+        return self._histogram_image_url(
+            score_id, self.resource.get_public_url())
 
 
 @dataclass
@@ -403,7 +417,7 @@ def _build_gene_score_help(
     gene_score: GeneScore,
 ) -> str:
     score_id = score_def.score_id
-    hist_url = gene_score.get_histogram_image_url(score_id)
+    hist_url = gene_score.get_histogram_image_public_url(score_id)
     assert score_def is not None
 
     histogram = get_template("score_histogram.jinja").render(
