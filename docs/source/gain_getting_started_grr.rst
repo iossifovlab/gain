@@ -107,8 +107,11 @@ Create a new text file with the content below and save it as ``minigenome.fa``.
     >chr2 2nd_chromosome
     AAAAAAAAAA
 
-Before GAIn can efficiently access a genome, the reference FASTA must be indexed to enable fast random access. 
-We use ``samtools`` (installed via bioconda and already included in the ``GAIn`` conda environment) for this step.
+Before GAIn can efficiently access a genome, the reference FASTA must be indexed to enable fast random access. We use ``samtools`` for this step. If it is not already available in your environment, install it with:
+
+.. code-block:: bash
+
+    mamba install -c bioconda -c conda-forge samtools
 
 Run the following command to index ``minigenome.fa``. This generates a FASTA index file (``.fai``) that GAIn uses as a 
 lookup table:
