@@ -199,7 +199,7 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
 
     def build_attribute_help(self, attr: Attribute) -> str:
         """Build attribute help."""
-        hist_url = self.score.get_histogram_image_url(attr.source)
+        hist_url = self.score.get_histogram_image_public_url(attr.source)
         score_def = self.score.get_score_definition(attr.source)
         assert score_def is not None
 
