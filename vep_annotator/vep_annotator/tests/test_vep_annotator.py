@@ -6,13 +6,14 @@ from collections.abc import Generator
 from io import StringIO
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
 from gain.annotation.annotatable import Annotatable, VCFAllele
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from pytest_mock import MockerFixture
 
-from vep_annotator.vep_annotator import VEPCacheAnnotator
+from vep_annotator.vep_annotator import VEPCacheAnnotator, VEPEffectAnnotator
 
 
 @pytest.fixture
@@ -254,3 +255,83 @@ def test_mock_annotate_renamed_attribute(
     assert results[0]["worst_consequence"] == "splice_acceptor_variant"
     assert results[0]["highest_impact"] == "HIGH"
     assert "CHD8" in results[0]["vep_gene"]
+
+
+def _make_effect_annotator(
+    mocker: MockerFixture,
+    genome_filename: str,
+    work_dir: Path,
+) -> tuple[VEPEffectAnnotator, MagicMock]:
+    """Build a VEPEffectAnnotator with all GRR/docker collaborators stubbed.
+
+    Bypasses ``__init__`` (which needs a live pipeline + GRR) and wires only
+    the attributes ``_do_batch_annotate`` reads, so the test can spy on the
+    companion-index pre-fetches without launching a container. Returns the
+    annotator and the mock genome resource to assert ``get_file_url`` calls.
+    """
+    annotator = object.__new__(VEPEffectAnnotator)
+
+    genome_resource = mocker.MagicMock()
+    genome_resource.get_genomic_resource_id_version.return_value = \
+        "hg38/genomes/GRCh38-hg38"
+
+    # Wire attributes through an Any alias: __init__ is bypassed, so the
+    # declared attribute types (None / GenomicResource | None) don't apply.
+    attrs: Any = annotator
+    attrs.genome_resource = genome_resource
+    attrs.genome_filename = genome_filename
+    attrs.gtf_path_gz = work_dir / "gene_models.gtf.gz"
+    attrs.work_dir = work_dir
+    attrs._attributes = []
+
+    (work_dir / "output.tsv").write_text("")
+    mocker.patch.object(annotator, "open_files", return_value=(
+        (work_dir / "input.tsv").open("w+t"),
+        work_dir / "output.tsv",
+    ))
+    mocker.patch.object(annotator, "prepare_input", return_value=None)
+    mocker.patch.object(annotator, "run", return_value=None)
+    mocker.patch.object(annotator, "read_output", return_value=None)
+    mocker.patch.object(annotator, "aggregate_attributes", return_value=None)
+
+    return annotator, genome_resource
+
+
+@pytest.mark.parametrize("genome_filename", [
+    "genome.fa.gz",
+    "genome.fa.bgz",
+])
+def test_prefetches_bgzf_index_for_bgzipped_genome(
+    mocker: MockerFixture, tmp_path: Path, genome_filename: str,
+) -> None:
+    annotator, genome_resource = _make_effect_annotator(
+        mocker, genome_filename, tmp_path,
+    )
+
+    annotator._do_batch_annotate([], [])
+
+    fetched = {
+        call.args[0]
+        for call in genome_resource.get_file_url.call_args_list
+    }
+    assert genome_filename in fetched
+    assert f"{genome_filename}.fai" in fetched
+    assert f"{genome_filename}.gzi" in fetched
+
+
+def test_does_not_prefetch_bgzf_index_for_plain_fasta(
+    mocker: MockerFixture, tmp_path: Path,
+) -> None:
+    annotator, genome_resource = _make_effect_annotator(
+        mocker, "genome.fa", tmp_path,
+    )
+
+    annotator._do_batch_annotate([], [])
+
+    fetched = {
+        call.args[0]
+        for call in genome_resource.get_file_url.call_args_list
+    }
+    assert "genome.fa" in fetched
+    assert "genome.fa.fai" in fetched
+    assert "genome.fa.gzi" not in fetched
