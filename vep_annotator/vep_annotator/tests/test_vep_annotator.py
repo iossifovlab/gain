@@ -6,6 +6,7 @@ from collections.abc import Generator
 from io import StringIO
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
 from gain.annotation.annotatable import Annotatable, VCFAllele
@@ -260,12 +261,13 @@ def _make_effect_annotator(
     mocker: MockerFixture,
     genome_filename: str,
     work_dir: Path,
-) -> VEPEffectAnnotator:
+) -> tuple[VEPEffectAnnotator, MagicMock]:
     """Build a VEPEffectAnnotator with all GRR/docker collaborators stubbed.
 
     Bypasses ``__init__`` (which needs a live pipeline + GRR) and wires only
     the attributes ``_do_batch_annotate`` reads, so the test can spy on the
-    companion-index pre-fetches without launching a container.
+    companion-index pre-fetches without launching a container. Returns the
+    annotator and the mock genome resource to assert ``get_file_url`` calls.
     """
     annotator = object.__new__(VEPEffectAnnotator)
 
@@ -273,11 +275,14 @@ def _make_effect_annotator(
     genome_resource.get_genomic_resource_id_version.return_value = \
         "hg38/genomes/GRCh38-hg38"
 
-    annotator.genome_resource = genome_resource  # type: ignore[assignment]
-    annotator.genome_filename = genome_filename
-    annotator.gtf_path_gz = work_dir / "gene_models.gtf.gz"
-    annotator.work_dir = work_dir
-    annotator._attributes = []
+    # Wire attributes through an Any alias: __init__ is bypassed, so the
+    # declared attribute types (None / GenomicResource | None) don't apply.
+    attrs: Any = annotator
+    attrs.genome_resource = genome_resource
+    attrs.genome_filename = genome_filename
+    attrs.gtf_path_gz = work_dir / "gene_models.gtf.gz"
+    attrs.work_dir = work_dir
+    attrs._attributes = []
 
     (work_dir / "output.tsv").write_text("")
     mocker.patch.object(annotator, "open_files", return_value=(
@@ -289,7 +294,7 @@ def _make_effect_annotator(
     mocker.patch.object(annotator, "read_output", return_value=None)
     mocker.patch.object(annotator, "aggregate_attributes", return_value=None)
 
-    return annotator
+    return annotator, genome_resource
 
 
 @pytest.mark.parametrize("genome_filename", [
@@ -299,7 +304,7 @@ def _make_effect_annotator(
 def test_prefetches_bgzf_index_for_bgzipped_genome(
     mocker: MockerFixture, tmp_path: Path, genome_filename: str,
 ) -> None:
-    annotator = _make_effect_annotator(
+    annotator, genome_resource = _make_effect_annotator(
         mocker, genome_filename, tmp_path,
     )
 
@@ -307,7 +312,7 @@ def test_prefetches_bgzf_index_for_bgzipped_genome(
 
     fetched = {
         call.args[0]
-        for call in annotator.genome_resource.get_file_url.call_args_list
+        for call in genome_resource.get_file_url.call_args_list
     }
     assert genome_filename in fetched
     assert f"{genome_filename}.fai" in fetched
@@ -317,7 +322,7 @@ def test_prefetches_bgzf_index_for_bgzipped_genome(
 def test_does_not_prefetch_bgzf_index_for_plain_fasta(
     mocker: MockerFixture, tmp_path: Path,
 ) -> None:
-    annotator = _make_effect_annotator(
+    annotator, genome_resource = _make_effect_annotator(
         mocker, "genome.fa", tmp_path,
     )
 
@@ -325,7 +330,7 @@ def test_does_not_prefetch_bgzf_index_for_plain_fasta(
 
     fetched = {
         call.args[0]
-        for call in annotator.genome_resource.get_file_url.call_args_list
+        for call in genome_resource.get_file_url.call_args_list
     }
     assert "genome.fa" in fetched
     assert "genome.fa.fai" in fetched
