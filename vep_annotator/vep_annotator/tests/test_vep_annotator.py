@@ -274,6 +274,7 @@ def _make_effect_annotator(
     genome_resource = mocker.MagicMock()
     genome_resource.get_genomic_resource_id_version.return_value = \
         "hg38/genomes/GRCh38-hg38"
+    genome_resource.get_config.return_value = {"filename": genome_filename}
 
     # Wire attributes through an Any alias: __init__ is bypassed, so the
     # declared attribute types (None / GenomicResource | None) don't apply.

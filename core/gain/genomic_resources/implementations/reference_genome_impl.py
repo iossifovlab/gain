@@ -12,6 +12,7 @@ import yaml
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
+    reference_genome_files,
 )
 from gain.genomic_resources.resource_implementation import (
     GenomicResourceImplementation,
@@ -322,10 +323,7 @@ class ReferenceGenomeImplementation(
 
     @property
     def files(self) -> set[str]:
-        config = self.resource.get_config()
-        file_name = config["filename"]
-        index_file_name = config.get("index_file", f"{file_name}.fai")
-        return {file_name, index_file_name}
+        return reference_genome_files(self.resource.get_config())
 
     template_name: ClassVar[str] = "reference_genome.jinja"
     styles_template_name: ClassVar[str] = "reference_genome_styles.jinja"

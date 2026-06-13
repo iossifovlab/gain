@@ -17,6 +17,7 @@ from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_file,
     build_reference_genome_from_resource,
     build_reference_genome_from_resource_id,
+    reference_genome_files,
 )
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
@@ -492,6 +493,57 @@ def test_build_reference_genome_from_resource_id(
         assert len(ref.get_all_chrom_lengths()) == 2
         assert ref.get_chrom_length("pesho") == 24
         assert ref.get_chrom_length("gosho") == 20
+
+
+def test_reference_genome_files_plain_fasta() -> None:
+    assert reference_genome_files({"filename": "chr.fa"}) == {
+        "chr.fa", "chr.fa.fai",
+    }
+
+
+def test_reference_genome_files_gz_includes_gzi() -> None:
+    assert reference_genome_files({"filename": "chr.fa.gz"}) == {
+        "chr.fa.gz", "chr.fa.gz.fai", "chr.fa.gz.gzi",
+    }
+
+
+def test_reference_genome_files_bgz_includes_gzi() -> None:
+    assert reference_genome_files({"filename": "chr.fa.bgz"}) == {
+        "chr.fa.bgz", "chr.fa.bgz.fai", "chr.fa.bgz.gzi",
+    }
+
+
+def test_reference_genome_files_honors_custom_index_file() -> None:
+    assert reference_genome_files({
+        "filename": "chr.fa",
+        "index_file": "custom.fai",
+    }) == {"chr.fa", "custom.fai"}
+
+
+def test_reference_genome_files_custom_index_gzi_derives_from_filename(
+) -> None:
+    # With a custom index_file AND a bgzipped genome, the .gzi must derive
+    # from the genome filename, never from the custom index name.
+    assert reference_genome_files({
+        "filename": "chr.fa.gz",
+        "index_file": "custom.fai",
+    }) == {"chr.fa.gz", "custom.fai", "chr.fa.gz.gzi"}
+
+
+def test_implementation_files_includes_gzi_for_bgzipped_genome(
+        bgz_genome_fixture: pathlib.Path) -> None:
+    res = build_filesystem_test_resource(bgz_genome_fixture)
+    impl = ReferenceGenomeImplementation(res)
+    assert impl.files == {
+        "chr.fa.gz", "chr.fa.gz.fai", "chr.fa.gz.gzi",
+    }
+
+
+def test_implementation_files_plain_fasta(
+        genome_fixture: pathlib.Path) -> None:
+    res = build_filesystem_test_resource(genome_fixture)
+    impl = ReferenceGenomeImplementation(res)
+    assert impl.files == {"chr.fa", "chr.fa.fai"}
 
 
 def test_reference_genome_split_into_regions(
