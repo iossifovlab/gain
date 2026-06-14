@@ -286,3 +286,38 @@ def test_in_flight_pipeline_not_evicted_under_capacity_pressure(
         f"get_pipeline for an actively-requested pipeline failed: {errors}"
     )
     assert result and result[0] is not None
+
+
+def test_clean_old_tasks_skips_pinned_in_flight_entry(
+    test_grr: GenomicResourceRepo,
+) -> None:
+    """The timeout reaper must not reap a pinned, in-flight pipeline (#140).
+
+    Reproduces Finding 2: ``clean_old_tasks`` deletes any entry past the load
+    timeout regardless of whether a ``get_pipeline`` caller is currently
+    awaiting it. Cancelling that entry's future surfaces a spurious cache-miss
+    in the awaiting caller. A pinned entry must be deferred (left in place with
+    a warning), not reaped.
+    """
+    config = "- position_score: scores/pos1"
+    # load_timeout=0 so the single entry is immediately "old".
+    lru_cache = LRUPipelineCache(test_grr, 2, load_timeout=0)
+    lru_cache.put_pipeline("pipelineA", config)
+    lru_cache.get_pipeline_future("pipelineA").result()
+
+    # Simulate an in-flight get_pipeline caller holding a pin.
+    assert lru_cache._pin_pipeline("pipelineA") is True
+    try:
+        lru_cache.clean_old_tasks()
+        # The pinned entry must survive the reaper pass.
+        assert lru_cache.has_pipeline("pipelineA"), (
+            "clean_old_tasks reaped a pinned in-flight pipeline"
+        )
+        # And it must still be resolvable, not cancelled.
+        assert lru_cache.get_pipeline_future("pipelineA").done()
+    finally:
+        lru_cache._unpin_pipeline("pipelineA")
+
+    # Once unpinned, a later reaper pass is free to reap it.
+    lru_cache.clean_old_tasks()
+    assert not lru_cache.has_pipeline("pipelineA")
