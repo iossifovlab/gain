@@ -47,7 +47,7 @@ The result should look similar to this:
 
 .. code-block:: bash
 
-    GAIn version: 2026.5.5
+    GAIn version: 2026.6.6
 
 
 Note that the version number may be different depending on when you install GAIn, but the command should run without error and print a version number.
@@ -66,7 +66,7 @@ GAIn is installed with access to the default IossifovLab GRR. You can confirm wh
 
     grr_browse
 
-This shows that you have access to the IossifovLab GRR server and lists all the resources available from that server.
+This shows that you have access to the IossifovLab's main GRR and lists all the resources available from that server.
 
 .. code-block:: bash
 
@@ -84,15 +84,15 @@ This shows that you have access to the IossifovLab GRR server and lists all the 
     ...
 
 
-This output contains several pieces of information. The first line shows that GAIn is using the default GRR definition, which points to the IossifovLab GRR server. The next three lines show the default configuration. This section is useful for confirming that GAIn is connected to the expected GRR server. In this example, the GRR server is ``https://grr.iossifovlab.com``. The following lines list the resources available on that server, including their type, size, and resource ID. For example, ``gene_properties/gene_scores/GTEx_V11_RNAexpression`` is the resource ID for the GTEx V11 RNA expression gene score resource. Resource IDs are used to refer to resources in annotation pipelines.
+This output contains several pieces of information. The first line shows that GAIn is using the default GRR definition, which points to the Iossifov lab's main GRR at ``https://grr.iossifovlab.com``. The next three lines show the default configuration. This section is useful for confirming that GAIn is connected to the expected GRR server. The following lines list the resources available on that server, including their type, size, and resource ID. For example, ``gene_properties/gene_scores/GTEx_V11_RNAexpression`` is the resource ID for the GTEx V11 RNA expression gene score resource. Resource IDs are used to refer to resources in annotation pipelines.
 
 
 Quick annotation test
 ---------------------
 
-After installation, GAIn can immediately run a small annotation test using the default IossifovLab GRR. This is a useful way to confirm that the command-line tools are working and can access the public resources.
+After installation, GAIn can immediately run a small annotation test using resources from the Iossifov Lab's main GRR. This is a useful way to confirm that the command-line tools are working and can access the public resources.
 
-In this example, we annotate a small comma-separated text file containing three variants. The test uses resources directly from the public GRR, so it is convenient for checking the setup but not intended for large annotation jobs.
+In this example, we annotate a small comma-separated text file containing three variants. The test uses resources directly from the remote public GRR, so it is convenient for checking the setup but not intended for large annotation jobs.
 
 Download the example input CSV file (:download:`small_input.csv <files/small_input.csv>`), whose content is shown below. The file contains three variant annotatables, each described by the columns ``chrom``, ``pos``, ``ref``, and ``alt``, which specify the chromosome, genomic position, reference allele, and alternate allele:
 
@@ -107,7 +107,7 @@ To annotate the file, run:
     
     annotate_tabular small_input.csv pipeline/hg38_clinical_annotation
 
-This command annotates ``small_input.csv`` using the predefined ``pipeline/hg38_clinical_annotation`` pipeline, which is hosted in the default GRR.
+This command annotates ``small_input.csv`` using the predefined pipeline resource with id ``pipeline/hg38_clinical_annotation`` included in the main GRR.
 
 GAIn writes the annotated output to a new file whose name is derived from the input file. For example, the command above produces (:download:`small_input.annotated.csv <files/small_input.annotated.csv>`), with the following content:
 
@@ -170,7 +170,7 @@ By default, GAIn can access genomic resources directly from a remote GRR. This w
 
 When caching is enabled, GAIn downloads a required resource into a local cache directory the first time the resource is used. After that, GAIn uses the local copy for annotation and reuses it in future jobs without downloading it again.
 
-So far, GAIn has been using the default GRR definition, which corresponds to the configuration shown by the first lines of ``grr_browse``. To enable caching, create a GRR definition file (``~/.grr_definition.yaml``), with the same default GRR configuration plus a ``cache_dir`` entry. For example: 
+So far, GAIn has been using the default GRR definition, which corresponds to the configuration shown by the first lines of ``grr_browse``. To enable caching, create a GRR definition file in your home directory named ``~/.grr_definition.yaml``, with the same default GRR configuration plus a ``cache_dir`` entry. For example: 
 
 .. code-block:: yaml
 
@@ -181,7 +181,7 @@ So far, GAIn has been using the default GRR definition, which corresponds to the
 
 After this configuration, GAIn downloads each required resource to the specified cache directory before using it for annotation. Because genomic resources can be large, the cache directory should have sufficient disk space and write permission for the user. If ``<path_to_cache>`` does not have enough available space, use another cache directory with sufficient storage. The approximate space requirements for the resources used in this guide are described below.
 
-This is especially important for large annotation pipelines. For example, a comprehensive clinical pipeline such as ``pipeline/hg38_clinical_annotation`` may require many large resources. These resources total approximately 40 GB and may take substantial time to download, depending on network speed and storage performance. This took approximately 16 minutes in our test with a Mac laptop. Once cached, however, they can be reused directly from the local cache, making future annotation jobs much faster.
+This is especially important for large annotation pipelines. For example, a comprehensive clinical pipeline such as ``pipeline/hg38_clinical_annotation`` may require many large resources. These resources total approximately 36 GB and may take substantial time to download, depending on network speed and storage performance. This took approximately 16 minutes in our test with a Mac laptop. Once cached, however, they can be reused directly from the local cache, making future annotation jobs much faster.
 
 GAIn can automatically download required resources during annotation. For large pipelines, however, it is often better to pre-download them before starting the annotation job. GAIn provides a dedicated tool for this purpose:
 
@@ -191,7 +191,7 @@ GAIn can automatically download required resources during annotation. For large 
 
 This command downloads the resources required by the pipeline in one step, so that the actual annotation job does not need to pause while resources are being retrieved.
 
-Custom pipelines can also reduce the amount of data that must be cached. A broad clinical pipeline may require more than 40 GB of resources, whereas a focused custom pipeline may require only the resources needed for a specific analysis. For example, the custom pipeline shown above requires approximately 8 GB of resources. Custom pipelines therefore help control annotation content while reducing storage requirements and setup time. You can cache the resources for the custom pipeline used above with the following command. Since this custom pipeline is a subset of the hg38 clinical pipeline, this command will not download any additional resources if the clinical pipeline has already been cached.
+Custom pipelines can also reduce the amount of data that must be cached. A broad clinical pipeline may require more than 35 GB of resources, whereas a focused custom pipeline may require only the resources needed for a specific analysis. For example, the custom pipeline shown above requires approximately 8 GB of resources. Custom pipelines therefore help control annotation content while reducing storage requirements and setup time. You can cache the resources for the custom pipeline used above with the following command. Since this custom pipeline is a subset of the hg38 clinical pipeline, this command will not download any additional resources if the clinical pipeline has already been cached.
 
 .. code-block:: bash
 
@@ -220,9 +220,9 @@ Parallelizing large annotation jobs
 
 Annotation can be computationally intensive, especially for large input files or pipelines with many steps. Because GAIn annotates each annotatable independently, these jobs can be accelerated by splitting the input into genomic regions and processing those regions in parallel across multiple CPU cores or cluster workers. Users could do this manually by splitting an input file into chunks, annotating each chunk separately, and merging the results. To avoid this extra workflow management, GAIn provides built-in parallelization support for indexed input files.
 
-To use GAIn's parallelization features, the input file must be sorted by genomic coordinates and indexed with tabix, a widely used genomic indexing tool that is installed automatically with GAIn. This requirement applies to both input formats supported by GAIn: tabular files and VCF files. VCF files can be sorted and indexed with bcftools, while tabular files can be sorted, compressed with bgzip, and indexed with tabix. See the “Preparing annotation input files for parallelization”[] section for details and examples.
+To use GAIn's parallelization features, the input file must be sorted by genomic coordinates and indexed with tabix, a widely used genomic indexing tool. This requirement applies to both input formats supported by GAIn: tabular files and VCF files. VCF files can be sorted and indexed with bcftools, while tabular files can be sorted, compressed with bgzip, and indexed with tabix. See the “Preparing annotation input files for parallelization”[] section for details and examples.
 
-When GAIn detects an indexed input file, it splits the annotation job into smaller tasks and executes them in parallel using a Dask cluster. By default, GAIn uses the available CPU cores on the host where the annotation command is run. For larger jobs, users can control both how the input is split and how many workers are used.
+When GAIn detects an indexed input file, it splits the annotation job into smaller tasks and executes them in parallel using a computation cluster. By default, GAIn uses local cluster that uses the available CPU cores on the host where the annotation command is run. For larger jobs, users can control both how the input is split and how many workers are used.
 
 The degree of parallelization can be controlled with the ``-j`` option, which specifies the number of workers. The optimal value depends on the input size, pipeline complexity, available CPU cores, memory, and storage performance.
 
@@ -255,7 +255,7 @@ By default, GAIn splits indexed inputs by chromosome. For human genomes, this cr
 
     annotate_tabular SSC_WES_variants_select.sorted.tsv.bgz pipeline/hg38_clinical_annotation -r 30_000_000
 
-GAIn can also use a configured Dask cluster that creates workers on a larger compute system, such as SGE or SLURM. For example, if a Dask cluster named ``my_sge_cluster`` has been configured to create workers on an SGE cluster, the annotation can be run with:
+GAIn can also use a configured cluster that creates workers on a larger compute system, such as SGE or SLURM. For example, if a cluster named ``my_sge_cluster`` has been configured to create workers on an SGE cluster, the annotation can be run with:
 
 .. code-block:: bash
 
