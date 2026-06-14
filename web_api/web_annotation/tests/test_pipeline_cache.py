@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import operator
+import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import cast
@@ -220,3 +221,68 @@ def test_lru_pipeline_cache_finish_callback_on_already_loaded(
         finish_load_callback=finish_callback,
     )
     assert len(finish_calls) == 2
+
+
+def test_in_flight_pipeline_not_evicted_under_capacity_pressure(
+    test_grr: GenomicResourceRepo,
+) -> None:
+    """A pipeline a caller is actively getting must not be evicted.
+
+    Reproduces iossifovlab/gain#140: under capacity pressure a concurrent
+    ``put_pipeline`` for a different id evicts the LRU entry. If that entry
+    is one another thread has just put and is currently resolving via
+    ``get_pipeline``, the getter races into a ``ValueError`` (surfaced as a
+    spurious HTTP 400 "Pipeline ... not found" in the view).
+
+    The interleaving is made deterministic with two gates: the getter is
+    paused after entering ``get_pipeline`` but before it resolves the entry,
+    the evictor is released to perform the capacity eviction of pipelineA,
+    and only then is the getter allowed to continue.
+    """
+    config = "- position_score: scores/pos1"
+    lru_cache = LRUPipelineCache(test_grr, 1)
+
+    # pipelineA is put and fully loaded; it is the only (LRU) cache entry.
+    lru_cache.put_pipeline("pipelineA", config)
+    lru_cache.get_pipeline_future("pipelineA").result()
+
+    getter_parked = threading.Event()
+    eviction_done = threading.Event()
+
+    original_get_future = lru_cache.get_pipeline_future
+
+    def gated_get_future(pipeline_id: str):  # type: ignore[no-untyped-def]
+        # Park the getter for pipelineA right at the start of resolution,
+        # then wait until the concurrent eviction has happened.
+        if pipeline_id == "pipelineA":
+            getter_parked.set()
+            assert eviction_done.wait(timeout=30)
+        return original_get_future(pipeline_id)
+
+    lru_cache.get_pipeline_future = gated_get_future  # type: ignore[method-assign]
+
+    errors: list[BaseException] = []
+    result: list[object] = []
+
+    def getter() -> None:
+        try:
+            result.append(lru_cache.get_pipeline("pipelineA"))
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    getter_thread = threading.Thread(target=getter)
+    getter_thread.start()
+
+    # Wait until the getter is parked inside get_pipeline, then evict
+    # pipelineA via a capacity-pressure put for a different pipeline.
+    assert getter_parked.wait(timeout=30)
+    lru_cache.put_pipeline("pipelineB", config)
+    eviction_done.set()
+
+    getter_thread.join(timeout=30)
+    assert not getter_thread.is_alive(), "getter hung (possible deadlock)"
+
+    assert not errors, (
+        f"get_pipeline for an actively-requested pipeline failed: {errors}"
+    )
+    assert result and result[0] is not None
