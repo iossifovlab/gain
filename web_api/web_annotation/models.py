@@ -14,8 +14,7 @@ from typing import Any, ClassVar, cast
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, AnonymousUser
-from django.db import models
-from django.db.models.functions import Greatest
+from django.db import connection, models
 from django.utils import timezone
 
 from web_annotation.mail import send_email
@@ -283,16 +282,39 @@ class User(AbstractUser):
 
         The counter is also floored at the number of existing jobs so that a
         lagging counter (e.g. for users that predate the counter) cannot hand
-        out a name that collides with an existing job's file paths.
+        out a name that collides with an existing job's file paths. That floor
+        is computed inside the same statement (a correlated subquery) so it,
+        too, is evaluated atomically rather than read separately.
+
+        ``UPDATE ... RETURNING`` is used so the allocate and the read-back
+        happen in a single statement: each caller reads back exactly the value
+        it wrote. A separate ``SELECT`` (e.g. ``refresh_from_db``) would
+        reopen a TOCTOU window under READ COMMITTED, letting two concurrent
+        callers read the same post-increment value and hand out duplicates.
+        Both Postgres (prod) and SQLite >= 3.35 (tests) support RETURNING;
+        the per-row "max" scalar is ``GREATEST`` on Postgres and ``MAX`` on
+        SQLite.
         """
-        job_count = self.job_class.objects.filter(owner=self).count()
-        User.objects.filter(pk=self.pk).update(
-            job_counter=Greatest(
-                models.F("job_counter"), models.Value(job_count),
-            ) + 1,
+        # Table/column names are the verified (and migration-stable) schema
+        # names for User.job_counter and Job.owner. SQLite's per-row "max"
+        # scalar is MAX(...); Postgres uses GREATEST(...).
+        max_fn = "MAX" if connection.vendor == "sqlite" else "GREATEST"
+        # max_fn is a hardcoded keyword (MAX/GREATEST), not user input.
+        sql = (
+            "UPDATE web_annotation_user "  # noqa: S608
+            f"SET job_counter = {max_fn}(job_counter, "
+            "(SELECT COUNT(*) FROM web_annotation_job "
+            "WHERE owner_id = %s)) + 1 "
+            "WHERE id = %s "
+            "RETURNING job_counter"
         )
-        self.refresh_from_db(fields=["job_counter"])
-        return self.job_counter
+        with connection.cursor() as cursor:
+            cursor.execute(sql, [self.pk, self.pk])
+            row = cursor.fetchone()
+
+        new_counter = int(row[0])
+        self.job_counter = new_counter
+        return new_counter
 
     def create_job(self, **kwargs: Any) -> Job:
         """Create a new job for the user."""

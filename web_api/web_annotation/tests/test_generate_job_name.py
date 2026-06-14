@@ -1,5 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from web_annotation.models import User
 
@@ -55,4 +57,39 @@ def test_generate_job_name_many_concurrent_instances_are_unique() -> None:
 
     assert len(set(names)) == len(names), (
         f"duplicate job names allocated: {names}"
+    )
+
+
+def test_generate_job_name_allocates_and_reads_in_one_statement(
+    user: User,
+) -> None:
+    """The allocation must write and read back in a single statement.
+
+    A naive implementation does an atomic ``UPDATE`` and then a *separate*
+    ``SELECT`` (``refresh_from_db``) to read the value back. Under
+    READ COMMITTED that opens a TOCTOU window: two concurrent callers can
+    both read back the same post-increment value and hand out duplicate
+    names. The fix uses ``UPDATE ... RETURNING`` so each caller reads back
+    exactly the value it wrote, in one statement.
+
+    This guard asserts that exactly one write statement runs and that no
+    separate read-back ``SELECT`` of the user row follows it.
+    """
+    with CaptureQueriesContext(connection) as ctx:
+        user.generate_job_name()
+
+    statements = [q["sql"] for q in ctx.captured_queries]
+    updates = [s for s in statements if s.lstrip().upper().startswith("UPDATE")]
+    readbacks = [
+        s for s in statements
+        if s.lstrip().upper().startswith("SELECT")
+        and "job_counter" in s.lower()
+    ]
+
+    assert len(updates) == 1, (
+        f"expected exactly one UPDATE allocating the name, got: {statements}"
+    )
+    assert not readbacks, (
+        "allocation must not read job_counter back with a separate SELECT "
+        f"(TOCTOU window); got: {readbacks}"
     )
