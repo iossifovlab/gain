@@ -30,8 +30,8 @@ from gain.genomic_resources.gene_models.gene_models_factory import (
 from gain.genomic_resources.gene_models.serialization import (
     gene_models_to_gtf,
 )
+from gain.genomic_resources.reference_genome import reference_genome_files
 from gain.genomic_resources.repository import GenomicResource
-from gain.utils.fs_utils import COMPRESSED_EXTENSIONS
 
 from vep_annotator.vep_attributes import effect_attributes, full_attributes
 
@@ -439,10 +439,9 @@ class VEPEffectAnnotator(VEPAnnotatorBase):
         assert self.gtf_path_gz is not None
         assert self.work_dir is not None
 
-        self.genome_resource.get_file_url(self.genome_filename)
-        self.genome_resource.get_file_url(f"{self.genome_filename}.fai")
-        if self.genome_filename.endswith(COMPRESSED_EXTENSIONS):
-            self.genome_resource.get_file_url(f"{self.genome_filename}.gzi")
+        for file_name in reference_genome_files(
+                self.genome_resource.get_config()):
+            self.genome_resource.get_file_url(file_name)
 
         genome_filepath = Path(
             "/grr",
