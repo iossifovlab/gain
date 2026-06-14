@@ -15,6 +15,7 @@ from typing import Any, ClassVar, cast
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, AnonymousUser
 from django.db import models
+from django.db.models.functions import Greatest
 from django.utils import timezone
 
 from web_annotation.mail import send_email
@@ -272,11 +273,25 @@ class User(AbstractUser):
         self.save()
 
     def generate_job_name(self) -> int:
+        """Atomically allocate the next job name for this user.
+
+        Concurrent callers (each request resolves ``request.user`` to its
+        own freshly-loaded ``User`` instance) must never receive the same
+        name, since the name derives the job's file paths. The increment is
+        therefore performed as a single ``UPDATE`` against the row, with the
+        counter as the sole source of truth, and the fresh value read back.
+
+        The counter is also floored at the number of existing jobs so that a
+        lagging counter (e.g. for users that predate the counter) cannot hand
+        out a name that collides with an existing job's file paths.
+        """
         job_count = self.job_class.objects.filter(owner=self).count()
-        if job_count > self.job_counter:
-            self.job_counter += job_count
-        self.job_counter += 1
-        self.save()
+        User.objects.filter(pk=self.pk).update(
+            job_counter=Greatest(
+                models.F("job_counter"), models.Value(job_count),
+            ) + 1,
+        )
+        self.refresh_from_db(fields=["job_counter"])
         return self.job_counter
 
     def create_job(self, **kwargs: Any) -> Job:
