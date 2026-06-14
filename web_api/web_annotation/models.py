@@ -14,7 +14,7 @@ from typing import Any, ClassVar, cast
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, AnonymousUser
-from django.db import connection, models
+from django.db import connection, IntegrityError, models, transaction
 from django.utils import timezone
 
 from web_annotation.mail import send_email
@@ -366,7 +366,15 @@ class User(AbstractUser):
         return not len(jobs_made) >= cast(int, settings.QUOTAS["daily_jobs"])
 
     def _get_or_create_user_quota(self) -> UserQuota:
-        quota, created = UserQuota.objects.get_or_create(user=self)
+        # ``user`` is unique, so a concurrent duplicate INSERT raises
+        # IntegrityError; wrap the create in its own transaction and fall
+        # back to a fetch so the loser of the race reuses the existing row
+        # instead of leaving a broken transaction or duplicate quota.
+        try:
+            with transaction.atomic():
+                quota, created = UserQuota.objects.get_or_create(user=self)
+        except IntegrityError:
+            return UserQuota.objects.get(user=self)
         if created:
             quota.reset_daily()
             quota.reset_monthly()
@@ -462,15 +470,26 @@ class WebAnnotationAnonymousUser(BaseUser, AnonymousUser):
         return not len(jobs_made) >= cast(int, settings.QUOTAS["daily_jobs"])
 
     def _get_or_create_session_quota(self) -> SessionQuota:
-        quota, created = SessionQuota.objects.get_or_create(
-            session_id=self.session_id)
+        # ``session_id`` is unique; see User._get_or_create_user_quota.
+        try:
+            with transaction.atomic():
+                quota, created = SessionQuota.objects.get_or_create(
+                    session_id=self.session_id)
+        except IntegrityError:
+            return SessionQuota.objects.get(session_id=self.session_id)
         if created:
             quota.reset_daily()
             quota.reset_monthly()
         return quota
 
     def _get_or_create_ip_quota(self) -> AnonymousUserQuota:
-        quota, created = AnonymousUserQuota.objects.get_or_create(ip=self.ip)
+        # ``ip`` is unique; see the note in User._get_or_create_user_quota.
+        try:
+            with transaction.atomic():
+                quota, created = AnonymousUserQuota.objects.get_or_create(
+                    ip=self.ip)
+        except IntegrityError:
+            return AnonymousUserQuota.objects.get(ip=self.ip)
         if created:
             quota.reset_daily()
             quota.reset_monthly()
@@ -1176,7 +1195,7 @@ class QuotaSnapshot:
 class AnonymousUserQuota(Quota):
     """Quota limits for anonymous (unauthenticated) users."""
 
-    ip = models.CharField(max_length=256, default="")
+    ip = models.CharField(max_length=256, default="", unique=True)
 
     class Meta:  # pylint: disable=too-few-public-methods
         """Meta class for anonymous user quotas."""
@@ -1202,7 +1221,7 @@ class SessionQuota(Quota):
 class UserQuota(Quota):
     """Quota limits for authenticated users."""
 
-    user = models.ForeignKey(
+    user = models.OneToOneField(
         "web_annotation.User",
         related_name="quota",
         on_delete=models.CASCADE,
