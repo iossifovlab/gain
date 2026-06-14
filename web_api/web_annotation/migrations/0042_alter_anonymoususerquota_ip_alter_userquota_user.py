@@ -19,6 +19,14 @@ def _dedup_user_quotas(
     race. Keep the newest row per user / per ip and delete the rest, so the
     AlterField operations that add the uniqueness guarantees do not fail on
     production data.
+
+    Policy / tradeoff: duplicates are rare race artifacts. We keep the
+    newest row (``Max("id")``) and discard the older ones. Any quota
+    consumption recorded on a discarded row is forgiven -- a user could
+    regain a little quota. This is a deliberate, accepted choice: the rows
+    are near-duplicates created within the same request window, the lost
+    consumption is tiny, and "keep newest" is simpler and more predictable
+    than trying to merge accumulated counters across the duplicates.
     """
     user_quota = apps.get_model("web_annotation", "UserQuota")
     dup_users = (
