@@ -428,8 +428,8 @@ The file contains a gene column with the header ``#gene`` and two gene scores, `
 
 .. code-block:: text
 
-    My_First_GRR/
-    └── my_score/
+    local_GRR/
+    └── collins_dosage_sensitivity/
         ├── Collins_rCNV_2022.dosage_sensitivity_scores.tsv.gz
         └── genomic_resource.yaml
 
@@ -438,12 +438,6 @@ The ``genomic_resource.yaml`` file describes the resource to GAIn:
 .. literalinclude:: files/genomic_resource.yaml
     :language: yaml
 
-After creating this folder structure, initialize ``My_First_GRR`` as a local GRR:
-
-.. code-block:: bash
-
-    cd My_First_GRR
-    grr_manage repo-init
 
 Then add the local GRR to the GRR definition file, ``~/.grr_definition.yaml``. For example, the configuration below connects GAIn to the main GRR, GRR-ENCODE, and the new local GRR:
 
@@ -463,9 +457,9 @@ Then add the local GRR to the GRR definition file, ``~/.grr_definition.yaml``. F
       - id: "GRR-ENCODE"
         type: "url"
         url: "https://grr-encode.iossifovlab.com"
-    - id: "My_First_GRR"
+    - id: "local_GRR"
       type: "directory"
-      directory: "<path_to_My_First_GRR>/My_First_GRR"
+      directory: "<path_to_local_GRR>/local_GRR"
 
 
 
