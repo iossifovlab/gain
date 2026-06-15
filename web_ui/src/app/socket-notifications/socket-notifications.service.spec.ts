@@ -115,26 +115,26 @@ describe('SocketNotificationsService', () => {
       return { subjects: subjects };
     }
 
-    it('should not propagate CloseEvent and retry immediately for job notifications', () => {
+    it('should propagate CloseEvent for job notifications', () => {
       const { subjects } = makeMultiSubscriptionWs();
       const errorSpy = jest.fn();
 
       service.getJobNotifications().subscribe({ error: errorSpy });
-      subjects[0].error(new CloseEvent('error'));
+      const closeEvent = new CloseEvent('close');
+      subjects[0].error(closeEvent);
 
-      expect(errorSpy).not.toHaveBeenCalled();
-      expect(subjects).toHaveLength(2);
+      expect(errorSpy).toHaveBeenCalledWith(closeEvent);
     });
 
-    it('should not propagate CloseEvent and retry immediately for pipeline notifications', () => {
+    it('should propagate CloseEvent for pipeline notifications', () => {
       const { subjects } = makeMultiSubscriptionWs();
       const errorSpy = jest.fn();
 
       service.getPipelineNotifications().subscribe({ error: errorSpy });
-      subjects[0].error(new CloseEvent('error'));
+      const closeEvent = new CloseEvent('close');
+      subjects[0].error(closeEvent);
 
-      expect(errorSpy).not.toHaveBeenCalled();
-      expect(subjects).toHaveLength(2);
+      expect(errorSpy).toHaveBeenCalledWith(closeEvent);
     });
 
     it('should not propagate Event error and retry after 2000ms', () => {
@@ -165,24 +165,26 @@ describe('SocketNotificationsService', () => {
       expect(subjects).toHaveLength(1);
     });
 
-    it('should receive messages after recovery from CloseEvent', () => {
+    it('should allow manual reconnection after CloseEvent', () => {
       const { subjects } = makeMultiSubscriptionWs();
       const job1 = new JobNotification(1, 'success');
-      const job2 = new JobNotification(2, 'failed');
       jest.spyOn(JobNotification, 'fromJson')
-        .mockReturnValueOnce(job1)
-        .mockReturnValueOnce(job2);
+        .mockReturnValueOnce(job1);
 
       const values: JobNotification[] = [];
-      service.getJobNotifications().subscribe({ next: v => values.push(v) });
+      const errorSpy = jest.fn();
+      service.getJobNotifications().subscribe({
+        next: v => values.push(v),
+        error: errorSpy
+      });
 
       // eslint-disable-next-line camelcase
       subjects[0].next({ type: 'job_status', job_id: 1, status: 3 });
-      subjects[0].error(new CloseEvent('error'));
-      // eslint-disable-next-line camelcase
-      subjects[1].next({ type: 'job_status', job_id: 2, status: 4 });
+      const closeEvent = new CloseEvent('close');
+      subjects[0].error(closeEvent);
 
-      expect(values).toStrictEqual([job1, job2]);
+      expect(values).toStrictEqual([job1]);
+      expect(errorSpy).toHaveBeenCalledWith(closeEvent);
     });
   });
 });

@@ -70,6 +70,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   public showMobileActions = false;
   public socketNotificationSubscription: Subscription = new Subscription();
   public pipelineValidationSubscription: Subscription = new Subscription();
+  private reconnectionSubscription: Subscription = new Subscription();
   public pipelineInfo: PipelineInfo;
   public disableActions: boolean;
   public invalidPipelineName = false;
@@ -177,7 +178,21 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
           pipeline.status = notification.status;
         }
       },
-      error: err => console.error(err)
+      error: err => {
+        console.error('Pipeline socket notifications error:', err);
+        if (err instanceof CloseEvent || err instanceof Event) {
+          this.socketNotificationSubscription.unsubscribe();
+          // Subscribe to reopenConnection to wait for it to complete
+          this.reconnectionSubscription = this.socketNotificationsService.reopenConnection().subscribe({
+            next: () => {
+              // Reconnected - refetch pipelines to catch up on missed notifications
+              this.getPipelines();
+              this.setupPipelineWebSocketConnection();
+            },
+            error: (e) => console.error('Reconnection failed:', e)
+          });
+        }
+      }
     });
   }
 
@@ -662,6 +677,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     }
     this.socketNotificationSubscription.unsubscribe();
     this.pipelineValidationSubscription.unsubscribe();
+    this.reconnectionSubscription.unsubscribe();
   }
 
   private updateDownloadLink(): void {

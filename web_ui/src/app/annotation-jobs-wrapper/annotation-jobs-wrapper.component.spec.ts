@@ -96,6 +96,10 @@ class SocketNotificationsServiceMock {
   }
 
   public closeConnection(): void { }
+
+  public reopenConnection(): Observable<void> {
+    return of(undefined);
+  }
 }
 
 class AnnotationPipelineServiceMock {
@@ -213,32 +217,36 @@ describe('AnnotationJobsWrapperComponent', () => {
     expect(component.downloadLink).toBe('url/1');
   });
 
-  it('should reconnects to socket notifications on close event', () => {
+  it('should reconnect on any socket error', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const setupSpy = jest.spyOn(component as any, 'setupJobWebSocketConnection');
+    const reopenSpy = jest.spyOn(socketNotificationsServiceMock, 'reopenConnection');
     jest.spyOn(socketNotificationsServiceMock, 'getJobNotifications')
-      .mockReturnValueOnce(throwError(new CloseEvent('close')));
+      .mockReturnValueOnce(throwError(new CloseEvent('close')))
+      .mockReturnValueOnce(of(new JobNotification(1, 'success')));
     const unsubSpy = jest.spyOn(component.socketNotificationSubscription, 'unsubscribe');
 
     component.ngOnInit();
 
     expect(unsubSpy).toHaveBeenCalledWith();
+    expect(reopenSpy).toHaveBeenCalledWith();
     expect(setupSpy).toHaveBeenCalledTimes(2);
   });
 
-  it('does not reconnect for non-close events', () => {
+  it('reconnects on Event socket errors', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const setupSpy = jest.spyOn(component as any, 'setupJobWebSocketConnection');
+    const reopenSpy = jest.spyOn(socketNotificationsServiceMock, 'reopenConnection');
+    const unsubSpy = jest.spyOn(component.socketNotificationSubscription, 'unsubscribe');
     jest.spyOn(socketNotificationsServiceMock, 'getJobNotifications')
-      .mockReturnValueOnce(throwError({ type: 'other' }));
+      .mockReturnValueOnce(throwError(new Event('network error')))
+      .mockReturnValueOnce(of(new JobNotification(1, 'success')));
 
     component.ngOnInit();
-    expect(setupSpy).toHaveBeenCalledTimes(1);
 
-    const unsubSpy = jest.spyOn(component.socketNotificationSubscription, 'unsubscribe');
-
-    expect(unsubSpy).not.toHaveBeenCalled();
-    expect(setupSpy).toHaveBeenCalledTimes(1);
+    expect(unsubSpy).toHaveBeenCalledWith();
+    expect(reopenSpy).toHaveBeenCalledWith();
+    expect(setupSpy).toHaveBeenCalledTimes(2);
   });
 
   it('should disable Create button if no file is uploaded', () => {
