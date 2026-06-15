@@ -1,8 +1,9 @@
 import { Injectable } from '@angular/core';
 import { environment } from '../../environments/environment';
 import { HttpClient } from '@angular/common/http';
-import { map, Observable } from 'rxjs';
+import { map, Observable, shareReplay } from 'rxjs';
 import { PipelineInfo } from './annotation-pipeline';
+import { AnnotationPipelineStateService } from './annotation-pipeline/annotation-pipeline-state.service';
 
 @Injectable({
   providedIn: 'root'
@@ -12,7 +13,10 @@ export class AnnotationPipelineService {
   private readonly getPipelineStatus = `${environment.apiPath}/editor/pipeline_status`;
   private readonly annotateDocumentationUrl = `${environment.apiPath}/pipelines/doc`;
 
-  public constructor(private http: HttpClient) { }
+  public constructor(
+    private http: HttpClient,
+    private stateService: AnnotationPipelineStateService
+  ) { }
 
   private getCSRFToken(): string {
     let res = '';
@@ -37,7 +41,11 @@ export class AnnotationPipelineService {
       formData,
       options
     ).pipe(
-      map((response: object) => response['id'] as string)
+      map((response: object) => {
+        const pipelineId = response['id'] as string;
+        this.stateService.clearPipelineInfoCache(pipelineId || id);
+        return pipelineId;
+      })
     );
   }
 
@@ -46,6 +54,11 @@ export class AnnotationPipelineService {
     return this.http.delete(
       `${this.pipelineUrl}?id=${id}`,
       options
+    ).pipe(
+      map((response) => {
+        this.stateService.clearPipelineInfoCache(id);
+        return response;
+      })
     );
   }
 
@@ -59,16 +72,26 @@ export class AnnotationPipelineService {
   }
 
   public getPipelineInfo(id: string): Observable<PipelineInfo> {
-    const options = { headers: {'X-CSRFToken': this.getCSRFToken()}, withCredentials: true };
-    return this.http.get<PipelineInfo>(
-      `${this.getPipelineStatus}?pipeline_id=${id}`,
-      options
-    ).pipe(
-      map(response => PipelineInfo.fromJson(response))
-    );
+    let request$ = this.stateService.getPendingPipelineInfoRequest(id);
+    if (!request$) {
+      const options = { headers: {'X-CSRFToken': this.getCSRFToken()}, withCredentials: true };
+      request$ = this.http.get<PipelineInfo>(
+        `${this.getPipelineStatus}?pipeline_id=${id}`,
+        options
+      ).pipe(
+        map(response => PipelineInfo.fromJson(response)),
+        shareReplay(1)
+      );
+      this.stateService.setPendingPipelineInfoRequest(id, request$);
+    }
+    return request$;
   }
 
   public getDownloadAnnotateDocumentationUrl(id: string): string {
     return `${this.annotateDocumentationUrl}?pipeline_id=${id}`;
+  }
+
+  public invalidateCache(id: string): void {
+    this.stateService.clearPipelineInfoCache(id);
   }
 }

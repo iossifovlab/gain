@@ -91,6 +91,23 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     effect(() => {
       this.editorWidth = this.pipelineStateService.editorWidth();
     });
+
+    effect(() => {
+      const tempId = this.pipelineStateService.currentTemporaryPipelineId();
+      const selectedId = this.pipelineStateService.selectedPipelineId();
+      const pipelineId = tempId || selectedId;
+      if (pipelineId) {
+        this.getPipelineInfo();
+      }
+    });
+
+    effect(() => {
+      this.pipelineStateService.currentPipelineText();
+      const pipelineId = this.currentTemporaryPipelineId || this.selectedPipeline?.id;
+      if (pipelineId) {
+        this.annotationPipelineService.invalidateCache(pipelineId);
+      }
+    });
   }
 
   public onEditorInit(editor: Monaco.editor.IStandaloneCodeEditor): void {
@@ -262,7 +279,6 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     this.displayUnsavedPipelineIndication();
     this.clearTemporaryPipeline();
     this.disableActions = false;
-    this.getPipelineInfo();
   }
 
   private restoreState(): void {
@@ -276,7 +292,6 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
       this.updateDownloadLink();
       const name = this.isPipelineChanged() ? `${pipeline.name} *` : pipeline.name;
       this.dropdownControl.setValue(name);
-      this.getPipelineInfo();
       this.clearTemporaryPipeline();
     }
   }
@@ -312,10 +327,8 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
       if (!this.configError) {
         this.pipelineStateService.isConfigValid.set(true);
         if (this.isPipelineChanged()) {
-          // Save pipeline as temporary when valid
+          // For new temp pipeline: autoSave sets ID
           this.autoSave().subscribe(() => this.getPipelineInfo());
-        } else {
-          this.getPipelineInfo();
         }
       } else {
         this.pipelineStateService.isConfigValid.set(false);
@@ -361,8 +374,6 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     this.clearTemporaryPipeline();
     this.updateDownloadLink();
     this.disableActions = false;
-
-    this.getPipelineInfo();
   }
 
   private getPipelineInfo(): void {
@@ -488,7 +499,6 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     this.pipelineStateService.currentPipelineText.set('');
     this.dropdownControl.setValue('');
     this.clearTemporaryPipeline();
-    this.isConfigValid();
   }
 
   private areThereUnsavedChanges(): boolean {
@@ -641,6 +651,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
       this.resizeObserver.disconnect();
     }
     this.socketNotificationSubscription.unsubscribe();
+    this.pipelineValidationSubscription.unsubscribe();
   }
 
   private updateDownloadLink(): void {

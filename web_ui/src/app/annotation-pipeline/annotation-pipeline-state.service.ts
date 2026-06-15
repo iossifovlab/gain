@@ -1,4 +1,5 @@
 import { Injectable, signal } from '@angular/core';
+import { Observable } from 'rxjs';
 import { Pipeline } from '../job-creation/pipelines';
 import { PipelineStatus } from '../socket-notifications/socket-notifications';
 import { PipelineInfo } from '../annotation-pipeline';
@@ -15,4 +16,18 @@ export class AnnotationPipelineStateService {
   public readonly editorWidth = signal<number>(null);
   public readonly hideComponents = signal<boolean>(false);
   public readonly loadedWhileLoggedIn = signal<boolean>(false);
+
+  private pipelineInfoRequestCache: Map<string, Observable<PipelineInfo>> = new Map();
+
+  public getPendingPipelineInfoRequest(id: string): Observable<PipelineInfo> | undefined {
+    return this.pipelineInfoRequestCache.get(id);
+  }
+
+  public setPendingPipelineInfoRequest(id: string, request$: Observable<PipelineInfo>): void {
+    this.pipelineInfoRequestCache.set(id, request$);
+  }
+
+  public clearPipelineInfoCache(id: string): void {
+    this.pipelineInfoRequestCache.delete(id);
+  }
 }
