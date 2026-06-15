@@ -11,6 +11,7 @@ import { AnnotationPipelineService } from '../annotation-pipeline.service';
 import { SingleAnnotationComponent } from '../single-annotation/single-annotation.component';
 import { MatTooltip } from '@angular/material/tooltip';
 import { AnnotationPipelineStateService } from '../annotation-pipeline/annotation-pipeline-state.service';
+import { PipelineInfo } from '../annotation-pipeline';
 
 class UserServiceMock {
   public userData = new BehaviorSubject<UserData>({
@@ -37,6 +38,16 @@ class AnnotationPipelineServiceMock {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   public savePipeline(id: string, name: string, config: string): Observable<string> {
     return of('id1');
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  public getPipelineInfo(id: string): Observable<PipelineInfo> {
+    return of(new PipelineInfo(20, 4, ['hg19_annotatable'], ['gene_list']));
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  public invalidateCache(id: string): void {
+    // Mock implementation - no-op
   }
 }
 

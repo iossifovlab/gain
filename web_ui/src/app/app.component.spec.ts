@@ -83,6 +83,7 @@ describe('AppComponent', () => {
         diskSpace: '10GB'
       }
     };
+    component.ngOnInit();
     component.currentUserData = null;
     usersServiceMock.userData.next(mockUserData);
     component.ngDoCheck();

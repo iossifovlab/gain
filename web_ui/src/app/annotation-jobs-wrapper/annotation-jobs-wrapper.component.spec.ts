@@ -12,6 +12,7 @@ import { provideMonacoEditor } from 'ngx-monaco-editor-v2';
 import { SocketNotificationsService } from '../socket-notifications/socket-notifications.service';
 import { JobNotification, PipelineNotification } from '../socket-notifications/socket-notifications';
 import { AnnotationPipelineService } from '../annotation-pipeline.service';
+import { PipelineInfo } from '../annotation-pipeline';
 import { MatTooltip } from '@angular/material/tooltip';
 import { AnnotationPipelineStateService } from '../annotation-pipeline/annotation-pipeline-state.service';
 
@@ -111,6 +112,16 @@ class AnnotationPipelineServiceMock {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   public getDownloadAnnotateDocumentationUrl(id: string): string {
     return `//localhost:8000/api/pipelines/doc?pipeline_id=${id}`;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  public getPipelineInfo(id: string): Observable<PipelineInfo> {
+    return of(new PipelineInfo(20, 4, ['hg19_annotatable'], ['gene_list']));
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  public invalidateCache(id: string): void {
+    // Mock implementation - no-op
   }
 }
 

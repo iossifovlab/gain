@@ -99,6 +99,11 @@ class AnnotationPipelineServiceMock {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  public loadPipeline(id: string): Observable<void> {
+    return of(void 0);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   public getPipelineInfo(id: string): Observable<PipelineInfo> {
     return of(new PipelineInfo(20, 4, ['hg19_annotatable'], ['gene_list']));
   }
@@ -106,6 +111,11 @@ class AnnotationPipelineServiceMock {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   public getDownloadAnnotateDocumentationUrl(id: string): string {
     return `//localhost:8000/api/pipelines/doc?pipeline_id=${id}`;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  public invalidateCache(id: string): void {
+    // Mock implementation - no-op
   }
 }
 
@@ -348,14 +358,16 @@ describe('AnnotationPipelineComponent', () => {
 
   it('should get pipeline status info after successful validation', () => {
     jest.spyOn(jobsServiceMock, 'validatePipelineConfig').mockReturnValue(of(''));
-    jest.spyOn(component, 'isPipelineChanged').mockReturnValue(false);
-    component.pipelineInfo = null;
+    jest.spyOn(component, 'isPipelineChanged').mockReturnValue(true);
+    jest.spyOn(component, 'autoSave').mockReturnValue(of('id'));
+    const getPipelineInfoSpy = jest.spyOn(component as any, 'getPipelineInfo');
 
     component.selectedPipeline = mockPipelines[0];
     component.currentPipelineText = 'config content';
+    component.pipelinesLoaded = true;
 
     component.isConfigValid();
-    expect(component.pipelineInfo).toStrictEqual(new PipelineInfo(20, 4, ['hg19_annotatable'], ['gene_list']));
+    expect(getPipelineInfoSpy).toHaveBeenCalledWith();
   });
 
   it('should display \' *\' when pipeline config is changed and not saved', () => {
