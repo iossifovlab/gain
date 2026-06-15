@@ -231,6 +231,16 @@ class LRUPipelineCache:
         self._pipeline_callbacks: dict[str, Callable | None] = {}
         self._cache_lock: LoggedRLock = LoggedRLock("pipeline_cache")
         self._order: list[str] = []
+        # Refcount of pipelines currently being resolved by a get_pipeline
+        # caller, keyed by pipeline_id (the cache key / name) -- NOT by the
+        # identity of a particular LoadingDetails entry. A pinned (in-use)
+        # pipeline is never chosen for LRU eviction (#140), so it cannot be
+        # evicted out from under an in-flight caller by capacity pressure.
+        # The pin is name-scoped: a force/config-change delete+re-put of the
+        # same id pops the pin, so a concurrent awaiter is no longer pinning
+        # the replacement entry -- that residual case is recovered by the
+        # reload-on-miss retry in AnnotationBaseView.get_pipeline, not here.
+        self._in_use: dict[str, int] = {}
 
     def has_pipeline(
         self, pipeline_id: str,
@@ -265,6 +275,20 @@ class LRUPipelineCache:
             "thread %s finished loading pipeline %s", thread, pipeline_id)
         return pipeline
 
+    def _evictable_pipeline_id(self) -> str | None:
+        """Return the LRU pipeline id that is not pinned in-use.
+
+        Must be called while holding ``self._cache_lock``. Returns ``None``
+        when every cached pipeline is currently being resolved by a
+        ``get_pipeline`` caller; in that case the caller skips eviction and
+        the cache is allowed to exceed capacity briefly rather than evict an
+        in-flight pipeline out from under its requester (#140).
+        """
+        for pipeline_id in self._order:
+            if self._in_use.get(pipeline_id, 0) == 0:
+                return pipeline_id
+        return None
+
     def put_pipeline(  # pylint: disable=too-many-arguments
         self,
         pipeline_id: str,
@@ -290,9 +314,17 @@ class LRUPipelineCache:
                     return
                 self.delete_pipeline(pipeline_id)
 
-            if len(self._cache) >= self.capacity:
-                last_pipeline_id = self._order[0]
-                self.delete_pipeline(last_pipeline_id, do_cancel=False)
+            while len(self._cache) >= self.capacity:
+                evict_id = self._evictable_pipeline_id()
+                if evict_id is None:
+                    logger.warning(
+                        "pipeline cache temporarily over capacity: all %d "
+                        "entries are pinned in-use, cannot evict to make room "
+                        "for %s",
+                        len(self._cache), pipeline_id,
+                    )
+                    break
+                self.delete_pipeline(evict_id, do_cancel=False)
 
             pipeline_future = self._load_executor.execute(
                 self._load_pipeline_raw,
@@ -318,12 +350,28 @@ class LRUPipelineCache:
             "put pipeline %s in %.2f seconds", pipeline_id, elapsed)
 
     def clean_old_tasks(self) -> None:
-        """Clean old tasks that have timed out"""
+        """Clean old tasks that have timed out.
+
+        Skips entries that are currently pinned in-use by an in-flight
+        ``get_pipeline`` caller (#140): reaping such an entry would cancel the
+        future the caller is awaiting and surface a spurious cache-miss. A
+        pinned entry that is genuinely stuck past the timeout is left in place
+        with a warning rather than force-deleted; it is reaped on a later pass
+        once its caller unpins.
+        """
         to_remove = []
         now = time.time()
         with self._cache_lock:
             for pipeline_id, details in self._cache.items():
                 if now - details.time_started > self._load_timeout:
+                    if self._in_use.get(pipeline_id, 0) > 0:
+                        logger.warning(
+                            "long-running pipeline %s (started at %s) is past "
+                            "the load timeout but pinned in-use; deferring "
+                            "reap so an in-flight caller is not broken",
+                            pipeline_id, details.time_started,
+                        )
+                        continue
                     logger.warning(
                         "Cancelling long-running task started at %s",
                         details.time_started,
@@ -350,6 +398,33 @@ class LRUPipelineCache:
                 "get_pipeline_future %s in %.2f seconds", pipeline_id, elapsed)
             return self._cache[pipeline_id].future
 
+    def _pin_pipeline(self, pipeline_id: str) -> bool:
+        """Mark a cached pipeline as in-use so it is skipped by eviction.
+
+        Returns ``True`` if the pipeline was present and pinned, ``False`` if
+        it is not (currently) in the cache. Pinning under ``_cache_lock`` is
+        atomic with the cache-membership check, so the pin reliably prevents
+        *capacity-driven* eviction of an in-flight pipeline. It does not by
+        itself close every removal window (the view's check-then-act between
+        put_pipeline and get_pipeline, the timeout reaper, or a force/config
+        reload can still race); those residual windows are recovered by the
+        reload-on-miss retry in AnnotationBaseView.get_pipeline.
+        """
+        with self._cache_lock:
+            if pipeline_id not in self._cache:
+                return False
+            self._in_use[pipeline_id] = self._in_use.get(pipeline_id, 0) + 1
+            return True
+
+    def _unpin_pipeline(self, pipeline_id: str) -> None:
+        """Release one in-use reference acquired by ``_pin_pipeline``."""
+        with self._cache_lock:
+            count = self._in_use.get(pipeline_id, 0)
+            if count <= 1:
+                self._in_use.pop(pipeline_id, None)
+            else:
+                self._in_use[pipeline_id] = count - 1
+
     def get_pipeline(self, pipeline_id: str) -> ThreadSafePipeline:
         """Get a pipeline by its ID."""
         pipeline = None
@@ -357,12 +432,24 @@ class LRUPipelineCache:
         logger.debug(
             "thread %s calling get_pipeline for %s",
             threading.current_thread().name, pipeline_id)
-        while pipeline is None:
-            pipeline_future = self.get_pipeline_future(pipeline_id)
-            try:
-                pipeline = pipeline_future.result()
-            except CancelledError:
-                logger.debug("Retrying to get %s", pipeline_id)
+        # Pin the entry before resolving its future so a concurrent
+        # capacity-pressure put_pipeline cannot evict it out from under us
+        # (#140). The pin only prevents capacity-driven eviction; if the entry
+        # is removed by another path (reaper, force/config reload, or it was
+        # never cached because of the view's check-then-act window) the
+        # awaiting result()/get_pipeline_future raises -- and the caller
+        # (AnnotationBaseView.get_pipeline) recovers via reload-on-miss.
+        pinned = self._pin_pipeline(pipeline_id)
+        try:
+            while pipeline is None:
+                pipeline_future = self.get_pipeline_future(pipeline_id)
+                try:
+                    pipeline = pipeline_future.result()
+                except CancelledError:
+                    logger.debug("Retrying to get %s", pipeline_id)
+        finally:
+            if pinned:
+                self._unpin_pipeline(pipeline_id)
         elapsed = time.time() - started
         logger.debug(
             "got pipeline %s in %.2f seconds", pipeline_id, elapsed)
@@ -388,6 +475,7 @@ class LRUPipelineCache:
                 del self._cache[pipeline_id]
                 del self._pipeline_callbacks[pipeline_id]
                 self._order.remove(pipeline_id)
+                self._in_use.pop(pipeline_id, None)
                 if not future.done() and do_cancel:
                     future.cancel()
                     future = None

@@ -253,13 +253,51 @@ class AnnotationBaseView(views.APIView):
             force=force,
         )
 
+    #: Bounded number of reload-on-miss attempts in ``get_pipeline``. Caps
+    #: the retry loop so a genuinely-missing pipeline still raises (4xx) and
+    #: cache thrash cannot spin forever.
+    GET_PIPELINE_MAX_ATTEMPTS: ClassVar[int] = 3
+
     def get_pipeline(
         self, pipeline_id: str, user: BaseUser,
     ) -> ThreadSafePipeline:
-        """Get an annotation pipeline by id."""
-        if not self.lru_cache.has_pipeline(pipeline_id):
-            self.put_pipeline(pipeline_id, user)
-        return self.lru_cache.get_pipeline(pipeline_id)
+        """Get an annotation pipeline by id, reloading on a cache-miss.
+
+        Pinning in ``LRUPipelineCache`` prevents *capacity-driven* eviction of
+        an in-flight pipeline (#140), but residual removal windows remain: the
+        check-then-act gap between ``has_pipeline``/``put_pipeline`` here and
+        the pin taken inside ``lru_cache.get_pipeline``, the timeout reaper, or
+        a force/config reload of the same id. Any of those surfaces a
+        ``ValueError`` cache-miss from the cache.
+
+        Recover by re-loading from the same source the view would normally use
+        (``put_pipeline`` -> GRR / user pipeline) and retrying, up to
+        ``GET_PIPELINE_MAX_ATTEMPTS``. The reload/put goes through the existing
+        locked cache methods and the await inside ``lru_cache.get_pipeline``
+        stays lockless, so thread-safety is preserved and no new lock is held
+        across the await. After the bound is exhausted the original
+        ``ValueError`` is re-raised so a genuinely-missing pipeline still 4xx's.
+        """
+        last_error: ValueError | None = None
+        for attempt in range(self.GET_PIPELINE_MAX_ATTEMPTS):
+            if not self.lru_cache.has_pipeline(pipeline_id):
+                self.put_pipeline(pipeline_id, user)
+            try:
+                return self.lru_cache.get_pipeline(pipeline_id)
+            except ValueError as error:
+                # The entry vanished between put and the cache's pin (residual
+                # eviction window), or was reaped / force-reloaded while we
+                # awaited. Reload from source and retry rather than emit a
+                # spurious 4xx for a pipeline that is actually available.
+                last_error = error
+                logger.warning(
+                    "pipeline %s missed in cache on attempt %d/%d; "
+                    "reloading and retrying",
+                    pipeline_id, attempt + 1, self.GET_PIPELINE_MAX_ATTEMPTS,
+                )
+                self.put_pipeline(pipeline_id, user)
+        assert last_error is not None
+        raise last_error
 
     def get_genome(self, data: QueryDict) -> str:
         """Get genome from a request."""
