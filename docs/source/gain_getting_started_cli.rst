@@ -360,8 +360,12 @@ Then run the following command to annotate the regions:
 
     annotate_tabular regions.tsv position_pipeline.yaml
 
-This produces :download:`regions.annotated.tsv <files/regions.annotated.tsv>` which is too large to display in full here.
+This produces :download:`regions.annotated.tsv <files/regions.annotated.tsv>` shown below.
 
+.. csv-table::
+    :file: files/regions.annotated.tsv
+    :header-rows: 1
+    :delim: tab
 
 This output shows how the same pipeline summarizes annotations over genomic intervals. The ``simple_effect_annotator`` reports the broad genomic context of each region and any overlapping genes. For ``phyloP7way``, the ``max`` and ``mean`` columns summarize conservation scores across the positions spanned by each region, while the ``list`` column reports the individual position-level values. For ``AlphaMissense``, GAIn aggregates across both the positions in the region and the possible allelic changes at those positions, producing summary ``am_pathogenicity`` values and listing the contributing alleles when available.
 

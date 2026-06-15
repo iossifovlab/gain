@@ -16,14 +16,15 @@
 
 
 - allele_score_annotator:
-    resource_id: hg38/scores/AlphaMissense
+    resource_id: hg38/variant_frequencies/gnomAD_4.1.0/exomes/ALL
     attributes:
-    - name: am_pathogenicity_max
-      source: am_pathogenicity
+    - name: af_max
+      source: AF
       aggregator: max
-    - name: am_pathogenicity_mean
-      source: am_pathogenicity
+    - name: af_mean
+      source: AF
       aggregator: mean
-    - source: allele
+    - name: af_alleles
+      source: allele
       include_attributes:
-      - am_pathogenicity
+      - AF
