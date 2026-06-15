@@ -1,6 +1,43 @@
 Release Notes
 =============
 
+* 2026.6.7
+    * Fixed the VEP effect annotator segfaulting on a bgzipped
+      reference genome. A bgzipped FASTA needs both a ``.fai`` faidx
+      and a ``.gzi`` bgzf-offset index for htslib random access, but
+      only the FASTA and ``.fai`` were pre-fetched into the GRR cache;
+      htslib then tried to build the missing ``.gzi`` in place and died
+      on the read-only ``/grr`` mount. The ``.gzi`` is now declared as
+      part of a bgzipped reference genome and pre-fetched alongside the
+      FASTA. Reference-genome file resolution (the FASTA, its ``.fai``
+      honoring the optional ``index_file`` config key, and ``.gzi``
+      when bgzipped) was unified into a single helper shared by the
+      resource implementation and the VEP annotator, so an
+      ``index_file`` override is now honored for VEP too.
+    * Fixed in-page GRR search breaking when the repository is served
+      under a sub-path (e.g. ``…/grr/``): the browse page fetched
+      ``.CONTENTS.sqlite3.gz`` from the origin root instead of relative
+      to the page. The fetch is now resolved against the page URL,
+      which is sub-path-safe and unchanged for root-served
+      repositories.
+    * Fixed the histogram image on gene-score and genomic-score info
+      pages being unreachable from a browser on a directory GRR: it was
+      embedded via the resource's local ``file://`` URL. The live web
+      help now builds the image link from the resource's public URL
+      (honoring a directory GRR's configured ``public_url``); the
+      static-doc builders (``annotate_doc``, pipeline documentation)
+      keep the local URL they need for relative links.
+    * Fixed slow annotation-pipeline loading in the web API under
+      concurrency: unloading a pipeline from the LRU cache held the
+      cache lock while closing the (potentially slow) pipeline, which
+      blocked other threads' loads. The close now happens after the
+      lock is released. Detailed lock acquire/release logging was added
+      at ``DEBUG`` to diagnose such contention.
+    * Restructured the getting-started GRR documentation, added a
+      resource version-control section to the Genomic Resources and
+      Repositories page, noted the ``samtools`` prerequisite, and made
+      further edits to the getting-started CLI tutorial.
+
 * 2026.6.6
     * Fixed ``annotate_tabular`` crashing with ``UnicodeDecodeError``
       when the bgzip/tabix input contained non-ASCII characters. The
