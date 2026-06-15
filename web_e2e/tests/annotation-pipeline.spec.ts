@@ -213,7 +213,13 @@ test.describe('Pipeline tests', () => {
     ]);
 
     await page.getByRole('button', { name: 'Delete' }).click();
-    await page.locator('#confirm-delete').click();
+
+    await Promise.all([
+      page.locator('#confirm-delete').click(),
+      page.waitForResponse(
+        resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
+      ),
+    ]);
     await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/hg38_clinical_annotation');
   });
 
