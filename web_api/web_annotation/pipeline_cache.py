@@ -314,17 +314,17 @@ class LRUPipelineCache:
                     return
                 self.delete_pipeline(pipeline_id)
 
-            if len(self._cache) >= self.capacity:
+            while len(self._cache) >= self.capacity:
                 evict_id = self._evictable_pipeline_id()
-                if evict_id is not None:
-                    self.delete_pipeline(evict_id, do_cancel=False)
-                else:
+                if evict_id is None:
                     logger.warning(
                         "pipeline cache temporarily over capacity: all %d "
                         "entries are pinned in-use, cannot evict to make room "
                         "for %s",
                         len(self._cache), pipeline_id,
                     )
+                    break
+                self.delete_pipeline(evict_id, do_cancel=False)
 
             pipeline_future = self._load_executor.execute(
                 self._load_pipeline_raw,
