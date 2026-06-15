@@ -93,12 +93,9 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     });
 
     effect(() => {
-      const tempId = this.pipelineStateService.currentTemporaryPipelineId();
-      const selectedId = this.pipelineStateService.selectedPipelineId();
-      const pipelineId = tempId || selectedId;
-      if (pipelineId) {
-        this.getPipelineInfo();
-      }
+      this.pipelineStateService.currentTemporaryPipelineId();
+      this.pipelineStateService.selectedPipelineId();
+      this.getPipelineInfo();
     });
 
     effect(() => {
@@ -379,7 +376,13 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   private getPipelineInfo(): void {
     this.pipelineInfo = null;
     this.pipelineStateService.pipelineInfo.set(null);
-    this.annotationPipelineService.getPipelineInfo(this.currentTemporaryPipelineId || this.selectedPipeline.id).pipe(
+    const tempId = this.pipelineStateService.currentTemporaryPipelineId();
+    const selectedId = this.pipelineStateService.selectedPipelineId();
+    const id = tempId || selectedId;
+    if (!id) {
+      return;
+    }
+    this.annotationPipelineService.getPipelineInfo(id).pipe(
       take(1)
     ).subscribe({
       next: res => {
@@ -552,7 +555,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   }
 
   public save(): void {
-    if (!this.isPipelineChanged()) {
+    if (!this.isPipelineChanged() || !this.selectedPipeline) {
       return;
     }
 
@@ -571,6 +574,9 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   }
 
   public delete(): void {
+    if (!this.selectedPipeline?.id) {
+      return;
+    }
     this.annotationPipelineService.deletePipeline(this.selectedPipeline.id).subscribe(() => {
       // Reset the editor buffer before the post-delete getPipelines().
       // Otherwise the no-arg branch's userHasTyped heuristic (tb-l7c) sees
