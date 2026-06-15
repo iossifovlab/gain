@@ -10,7 +10,7 @@
     - name: phyloP7way_mean
       source: phyloP7way
       aggregator: mean
-    - name: phyloP7way_all
+    - name: phyloP7way_list
       source: phyloP7way
       aggregator: list
 

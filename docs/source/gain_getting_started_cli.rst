@@ -402,7 +402,7 @@ This makes ENCODE-derived regulatory tracks available through the same pipeline 
 Adding local GRRs
 -----------------
 
-Suppose you are using the public GRRs for variant annotation, but your analysis also requires a gene-level score that is not available in the main GRR or GRR-ENCODE. For example, you may want to annotate variants with the Collins rCNV 2022 dosage sensitivity scores, including pHaplo and pTriplo, which estimate gene-level sensitivity to deletion and duplication, respectively. In this situation, you can download the external dataset, define it as a local GAIn resource, and use it together with the public GRRs in the same annotation workflow.
+Suppose you are using the public GRRs for variant annotation, but your analysis also requires a gene-level score that is not available in the main GRR or GRR-ENCODE. For example, you may want to annotate variants with the Collins rCNV 2022 dosage sensitivity scores, including pHaplo and pTriplo, which estimate gene-level sensitivity to deletion and duplication, respectively. In this situation, you can download the external dataset, add it as a GAIn resource to a local GRR, and use it together with the public GRRs in the same annotation workflow.
 
 Download the Collins rCNV dosage sensitivity score table and inspect the first few lines, shown below, to see the available columns before adding the resource file to a local GRR:
 
