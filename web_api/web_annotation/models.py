@@ -1176,7 +1176,7 @@ class QuotaSnapshot:
 class AnonymousUserQuota(Quota):
     """Quota limits for anonymous (unauthenticated) users."""
 
-    ip = models.CharField(max_length=256, default="")
+    ip = models.CharField(max_length=256, default="", unique=True)
 
     class Meta:  # pylint: disable=too-few-public-methods
         """Meta class for anonymous user quotas."""
@@ -1202,7 +1202,7 @@ class SessionQuota(Quota):
 class UserQuota(Quota):
     """Quota limits for authenticated users."""
 
-    user = models.ForeignKey(
+    user = models.OneToOneField(
         "web_annotation.User",
         related_name="quota",
         on_delete=models.CASCADE,
