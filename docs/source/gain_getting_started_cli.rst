@@ -406,13 +406,26 @@ This makes ENCODE-derived regulatory tracks available through the same pipeline 
 Adding local GRRs
 -----------------
 
-Suppose you are using the public GRRs for variant annotation, but your analysis also requires a gene-level score that is not available in the main GRR or GRR-ENCODE. For example, you may want to annotate variants with the Collins rCNV 2022 dosage sensitivity scores, including pHaplo and pTriplo, which estimate gene-level sensitivity to deletion and duplication, respectively. In this situation, you can download the external dataset, add it as a GAIn resource to a local GRR, and use it together with the public GRRs in the same annotation workflow.
+If an annotation workflow requires a resource that is not available in the public GRRs, you can add it through a local GRR. The resource may be a score generated in your own study or a previously published dataset. Here, we demonstrate this by adding the `Collins rCNV 2022 dosage sensitivity scores <https://pubmed.ncbi.nlm.nih.gov/35917817/>`_, including ``pHaplo`` and ``pTriplo``, which estimate gene-level sensitivity to deletion and duplication, respectively. This section walks through one simple example: adding a gene score resource to a local GRR and using it together with public GRRs. The `Getting started with GRR <https://iossifovlab.com/gaindocs/gain_getting_started_grr.html>`_ and `Genomic resources and repositories <https://iossifovlab.com/gaindocs/grr.html>`_ sections of the GAIn documentation provide more detailed instructions for adding other resource types, configuring resources, and managing local GRRs.
 
-Download the Collins rCNV dosage sensitivity score table and inspect the first few lines, shown below, to see the available columns before adding the resource file to a local GRR:
+First, create a local GRR directory and a resource directory for the Collins rCNV 2022 dosage sensitivity scores:
+
+.. code-block:: bash
+
+    mkdir -p local_GRR/collins_dosage_sensitivity
+    cd local_GRR/collins_dosage_sensitivity
+
+
+Download the Collins rCNV dosage sensitivity score table: 
 
 .. code-block:: bash
 
     curl -L -O https://zenodo.org/record/6347673/files/Collins_rCNV_2022.dosage_sensitivity_scores.tsv.gz
+
+Inspect the first few lines, shown below, to see the available columns before writing the ``genomic_resource.yaml`` configuration file:
+
+.. code-block:: bash
+
     gzip -dc Collins_rCNV_2022.dosage_sensitivity_scores.tsv.gz | head -n 5
 
 .. csv-table::
@@ -424,7 +437,7 @@ Download the Collins rCNV dosage sensitivity score table and inspect the first f
     CHD8,0.991649600531021,0.999999986508108
     GRIN2B,0.996808517025246,0.999999958700358
 
-The file contains a gene column with the header ``#gene`` and two gene scores, ``pHaplo`` and ``pTriplo``, for each gene. To make this file available as a GAIn resource, place it in a folder together with a :download:`genomic_resource.yaml <files/genomic_resource.yaml>` file:
+The file contains a gene column with the header ``#gene`` and two gene scores, ``pHaplo`` and ``pTriplo``, for each gene. To make this file available as a GAIn resource, create a :download:`genomic_resource.yaml <files/genomic_resource.yaml>` file in the same directory:
 
 .. code-block:: text
 
@@ -439,7 +452,7 @@ The ``genomic_resource.yaml`` file describes the resource to GAIn:
     :language: yaml
 
 
-Then add the local GRR to the GRR definition file, ``~/.grr_definition.yaml``. For example, the configuration below connects GAIn to the main GRR, GRR-ENCODE, and the new local GRR:
+Then add the local GRR to the GRR definition file, ``~/.grr_definition.yaml``. For annotation, the local GRR only needs to be a directory that contains resource subdirectories with valid ``genomic_resource.yaml`` files. For example, the configuration below connects GAIn to the main GRR, GRR-ENCODE, and the new local GRR:
 
 .. code-block:: yaml
 
@@ -453,7 +466,6 @@ Then add the local GRR to the GRR definition file, ``~/.grr_definition.yaml``. F
       - id: "main-GRR"
         type: "url"
         url: "https://grr.iossifovlab.com"
-
       - id: "GRR-ENCODE"
         type: "url"
         url: "https://grr-encode.iossifovlab.com"
@@ -463,14 +475,12 @@ Then add the local GRR to the GRR definition file, ``~/.grr_definition.yaml``. F
 
 
 
-With this configuration, GAIn can use the local resource in annotation pipelines, as well as the public resources in the main GRR and GRR-ENCODE. For example, the following custom pipeline combines resources from all three repositories: a gene-effect annotator from the main GRR, an ATAC-seq track from GRR-ENCODE, and the ``pHaplo`` score from ``My_First_GRR``.
+With this configuration, GAIn can use the local resource in annotation pipelines, as well as the public resources in the main GRR and GRR-ENCODE. For example, the following custom pipeline combines resources from all three repositories: gene models resource from the main GRR, an ATAC-seq track from GRR-ENCODE, and the ``collins_dosage_sensitivity`` score from ``local_GRR``.
 
-Download the example pipeline (:download:`multiple_grr_pipeline.yaml <files/multiple_grr_pipeline.yaml>`) which uses multiple GRRs: 
+Download the example pipeline, (:download:`multiple_grr_pipeline.yaml <files/multiple_grr_pipeline.yaml>`), which uses multiple GRRs: 
 
 .. literalinclude:: files/multiple_grr_pipeline.yaml
     :language: yaml
-
-
 
 To annotate the original example input with this pipeline, run:
 
