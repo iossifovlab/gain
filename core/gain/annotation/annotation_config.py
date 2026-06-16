@@ -14,6 +14,7 @@ import yaml
 from lark import Lark, Token, Tree
 
 from gain.genomic_resources.aggregators import (
+    Aggregator,
     AggregatorDefinition,
     AggregatorSource,
 )
@@ -197,6 +198,8 @@ class Attribute:
         compare=False, hash=False)
     spec: AttributeSpec | None = field(
         default=None, compare=False, hash=False)
+    aggregator_instance: Aggregator | None = field(
+        default=None, compare=False, hash=False)
     _documentation: str | None = field(
         default=None, compare=False, hash=False)
 
@@ -206,6 +209,20 @@ class Attribute:
 
     @property
     def value_type(self) -> str:
+        """Value type produced by this attribute after aggregation.
+
+        When the attribute has a built aggregator with a fixed output type
+        (e.g. mean→float, count→int, join→str), that type takes precedence
+        over the spec's declared type, which reflects the raw pre-aggregation
+        value.  Aggregators that preserve the input type (max, min, median,
+        mode) have output_value_type=None, so the spec type is used as the
+        fallback.  The original spec type is always accessible via
+        ``self.spec.value_type``.
+        """
+        if self.aggregator_instance is not None:
+            agg_output_type = type(self.aggregator_instance).output_value_type
+            if agg_output_type is not None:
+                return agg_output_type
         return self.spec.value_type if self.spec else ""
 
     @property
