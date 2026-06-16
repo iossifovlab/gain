@@ -15,13 +15,7 @@ GAIn command-line tools determine which GRR definition to use by checking severa
     grr_browse -g /path/to/my_grr_definition.yaml
     annotate_tabular -g /path/to/my_grr_definition.yaml input.tsv pipeline.yaml
 
-Some tools also support ``--grr-directory``, which is a shortcut for using a single local directory as a GRR without writing a separate configuration file:
-
-.. code-block:: bash
-
-    grr_browse --grr-directory /path/to/my_grr
-
-If no command-line GRR is provided, GAIn next checks the ``GRR_DEFINITION_FILE`` environment variable, followed by the default ``~/.grr_definition.yaml`` file in the user's home directory. 
+If no command-line GRR definition is provided, GAIn next checks the ``GRR_DEFINITION_FILE`` environment variable, followed by the default ``~/.grr_definition.yaml`` file in the user's home directory. 
 
 .. code-block:: bash
 
