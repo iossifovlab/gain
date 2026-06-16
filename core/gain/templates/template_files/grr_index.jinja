@@ -159,12 +159,20 @@
         margin-left: auto;
       }
 
-      #id-col-header {
+      #id-col-header,
+      #type-col-header,
+      #version-col-header,
+      #size-col-header,
+      #summary-col-header {
         cursor: pointer;
         user-select: none;
       }
 
-      #id-sort-indicator {
+      #id-sort-indicator,
+      #type-sort-indicator,
+      #version-sort-indicator,
+      #size-sort-indicator,
+      #summary-sort-indicator {
         margin-left: 2px;
         font-size: 18px;
         vertical-align: middle;
@@ -255,14 +263,15 @@
           </colgroup>
           <thead>
             <tr>
-              <th class="nowrap type-cell">Type<div class="col-resizer"></div></th>
+              <th class="nowrap type-cell" id="type-col-header">Type<span id="type-sort-indicator" class="material-symbols-outlined">unfold_more</span><div class="col-resizer"></div></th>
               <th class="nowrap id-cell" id="id-col-header">ID<span id="id-sort-indicator" class="material-symbols-outlined">unfold_more</span><div class="col-resizer"></div></th>
-              <th class="nowrap version-cell">Version<div class="col-resizer"></div></th>
+              <th class="nowrap version-cell" id="version-col-header">Version<span id="version-sort-indicator" class="material-symbols-outlined">unfold_more</span><div class="col-resizer"></div></th>
               <th
                 class="nowrap size-cell"
                 title="Total size"
-              >Total size<div class="col-resizer"></div></th>
-              <th class="nowrap">Summary</th>
+                id="size-col-header"
+              >Total size<span id="size-sort-indicator" class="material-symbols-outlined">unfold_more</span><div class="col-resizer"></div></th>
+              <th class="nowrap" id="summary-col-header">Summary<span id="summary-sort-indicator" class="material-symbols-outlined">unfold_more</span></th>
             </tr>
           </thead>
           <tbody>

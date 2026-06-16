@@ -37,27 +37,69 @@
         };
 
 
+        function parseSizeToBytes(sizeStr) {
+            const units = {
+                'B': 1,
+                'KB': 1024,
+                'MB': 1024 * 1024,
+                'GB': 1024 * 1024 * 1024,
+                'TB': 1024 * 1024 * 1024 * 1024,
+            };
+            const match = sizeStr.match(/^([\d.]+)\s*([A-Z]+)$/);
+            if (!match) return 0;
+            const [, value, unit] = match;
+            const multiplier = units[unit] || 1;
+            return parseFloat(value) * multiplier;
+        }
+
         const rowData = {}
         $(".contents > tbody > tr").each((index, row) => {
             const id = $(row).attr("id");
             const children = $(row).find("td");
+            const sizeStr = children[3].textContent.trim();
             rowData[id] = {
                 "type": children[0].textContent.trim(),
                 "id": children[1].getElementsByTagName("a")[0].textContent.trim(),
                 "version": children[2].textContent.trim(),
-                "sizeInBytes": children[3].textContent.trim(),
+                "size": sizeStr,
+                "sizeInBytes": parseSizeToBytes(sizeStr),
                 "summary": children[4].textContent.trim(),
                 "url": $(children[1].getElementsByTagName("a")[0]).attr("href").trim(),
             };
         })
         window.rowData = rowData;
 
+        let sortColumn = 'none'; // 'none' | 'id' | 'type' | 'version' | 'summary'
         let sortOrder = 'none'; // 'none' | 'asc' | 'desc'
         let lastIds = [];
 
         function sortedIds(ids) {
-            if (sortOrder === 'none') return ids;
-            const sorted = [...ids].sort((a, b) => a.localeCompare(b));
+            if (sortOrder === 'none' || sortColumn === 'none') return ids;
+            const sorted = [...ids].sort((a, b) => {
+                let aVal, bVal;
+                let isNumeric = false;
+                if (sortColumn === 'id') {
+                    aVal = window.rowData[a].id;
+                    bVal = window.rowData[b].id;
+                } else if (sortColumn === 'type') {
+                    aVal = window.rowData[a].type;
+                    bVal = window.rowData[b].type;
+                } else if (sortColumn === 'version') {
+                    aVal = window.rowData[a].version;
+                    bVal = window.rowData[b].version;
+                } else if (sortColumn === 'size') {
+                    aVal = window.rowData[a].sizeInBytes;
+                    bVal = window.rowData[b].sizeInBytes;
+                    isNumeric = true;
+                } else if (sortColumn === 'summary') {
+                    aVal = window.rowData[a].summary;
+                    bVal = window.rowData[b].summary;
+                }
+                if (isNumeric) {
+                    return aVal - bVal;
+                }
+                return aVal.localeCompare(bVal);
+            });
             return sortOrder === 'desc' ? sorted.reverse() : sorted;
         }
 
@@ -100,7 +142,7 @@
                 $(cells[1]).find("a").attr("href", rowData.url).text(rowData.id);
                 $(cells[1]).children("div").children("span")[0].className = `material-symbols-outlined copy-icon ${rowData.id}`;
                 cells[2].textContent = rowData.version;
-                cells[3].textContent = rowData.sizeInBytes;
+                cells[3].textContent = rowData.size;
                 cells[4].textContent = rowData.summary;
                 cells[4].title = rowData.summary;
                 row.show();
@@ -216,13 +258,35 @@
           )
         });
 
-        document.getElementById('id-col-header').addEventListener('click', (e) => {
-            if (e.target.closest('.col-resizer')) return;
-            sortOrder = sortOrder === 'none' ? 'asc' : sortOrder === 'asc' ? 'desc' : 'none';
-            const sortIcons = { none: 'unfold_more', asc: 'arrow_upward', desc: 'arrow_downward' };
-            const indicator = document.getElementById('id-sort-indicator');
-            indicator.textContent = sortIcons[sortOrder];
-            refreshData(sortedIds(lastIds));
+        const sortableColumns = {
+            'id-col-header': 'id',
+            'type-col-header': 'type',
+            'version-col-header': 'version',
+            'size-col-header': 'size',
+            'summary-col-header': 'summary'
+        };
+
+        const sortIcons = { none: 'unfold_more', asc: 'arrow_upward', desc: 'arrow_downward' };
+
+        function updateSortIndicators() {
+            Object.entries(sortableColumns).forEach(([headerId, colName]) => {
+                const indicator = document.getElementById(colName + '-sort-indicator');
+                indicator.textContent = sortColumn === colName ? sortIcons[sortOrder] : sortIcons['none'];
+            });
+        }
+
+        Object.entries(sortableColumns).forEach(([headerId, colName]) => {
+            document.getElementById(headerId).addEventListener('click', (e) => {
+                if (e.target.closest('.col-resizer')) return;
+                if (sortColumn === colName) {
+                    sortOrder = sortOrder === 'none' ? 'asc' : sortOrder === 'asc' ? 'desc' : 'none';
+                } else {
+                    sortColumn = colName;
+                    sortOrder = 'asc';
+                }
+                updateSortIndicators();
+                refreshData(sortedIds(lastIds));
+            });
         });
 
     </script>
