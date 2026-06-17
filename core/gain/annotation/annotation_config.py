@@ -207,19 +207,17 @@ class Attribute:
         return hash(
             (self.name, self.source, self.internal, str(self.aggregator)))
 
-    @property
-    def value_type(self) -> str:
-        """Value type produced by this attribute after aggregation.
+    def get_value_type(self, aggregated: bool = True) -> str:
+        """Value type produced by this attribute.
 
-        When the attribute has a built aggregator with a fixed output type
-        (e.g. mean→float, count→int, join→str), that type takes precedence
-        over the spec's declared type, which reflects the raw pre-aggregation
-        value.  Aggregators that preserve the input type (max, min, median,
-        mode) have output_value_type=None, so the spec type is used as the
-        fallback.  The original spec type is always accessible via
-        ``self.spec.value_type``.
+        Pass ``aggregated=True`` (default) when the aggregator is known to have
+        run; the aggregator's ``output_value_type`` then takes precedence over
+        the spec's declared type.  Pass ``aggregated=False`` when aggregation
+        was skipped (e.g. a scalar value that bypassed a list aggregator) so
+        that the spec type is returned instead.  The raw spec type is always
+        accessible via ``self.spec.value_type``.
         """
-        if self.aggregator_instance is not None:
+        if aggregated and self.aggregator_instance is not None:
             agg_output_type = type(self.aggregator_instance).output_value_type
             if agg_output_type is not None:
                 return agg_output_type

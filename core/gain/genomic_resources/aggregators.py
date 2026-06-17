@@ -88,6 +88,8 @@ class Aggregator(abc.ABC):
 class MaxAggregator(Aggregator):
     """Maximum value aggregator for genomic scores."""
 
+    output_value_type: ClassVar[str | None] = "float"
+
     def __init__(self) -> None:
         super().__init__()
         self.current_max = None
@@ -111,6 +113,8 @@ class MaxAggregator(Aggregator):
 
 class MinAggregator(Aggregator):
     """Minimum value aggregator for genomic scores."""
+
+    output_value_type: ClassVar[str | None] = "float"
 
     def __init__(self) -> None:
         super().__init__()
@@ -209,6 +213,8 @@ class ConcatAggregator(Aggregator):
 class MedianAggregator(Aggregator):
     """Aggregator for genomic scores that calculates median value."""
 
+    output_value_type: ClassVar[str | None] = "float"
+
     def __init__(self) -> None:
         super().__init__()
         self.values: list[Any] = []
@@ -301,7 +307,7 @@ class JoinAggregator(Aggregator):
 class ListAggregator(Aggregator):
     """Aggregator that builds a list of all passed values."""
 
-    output_value_type: ClassVar[str | None] = "object"
+    output_value_type: ClassVar[str | None] = "list"
 
     def __init__(self) -> None:
         super().__init__()

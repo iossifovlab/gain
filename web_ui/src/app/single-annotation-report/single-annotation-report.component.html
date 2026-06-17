@@ -146,6 +146,7 @@
                 <div class="attribute-header">{{ attribute.name }}</div>
                 <div class="attribute-description">{{ attribute.description }}</div>
                 <div class="attribute-source">source: {{ attribute.source }}</div>
+                <div *ngIf="attribute.aggregator" class="attribute-aggregator">aggregator: {{ attribute.aggregator }}</div>
                 <div>
                   <app-histogram-wrapper
                     *ngIf="attribute.result.histogramLink"
