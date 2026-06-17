@@ -1,8 +1,8 @@
 preamble:
    input_reference_genome: hg38/genomes/GRCh38-hg38
-   summary: Modified Clinical Annotation Pipeline 
-   description: This is a pipeline to annotate with Clinical resources  
-
+   summary: Clinical Annotation Pipeline for hg38
+   description: This pipeline annotates hg38 variants with clinical resources.
+   
 annotators:
 
 - effect_annotator:
@@ -34,7 +34,7 @@ annotators:
     input_annotatable: normalized_allele
 
 - allele_score_annotator:
-    resource_id: hg38/scores/ClinVar_20240730           #### CHANGED FROM ClinVar_20251019
+    resource_id: hg38/scores/ClinVar_20240730
     input_annotatable: normalized_allele
     attributes:
     - name: clinical_significance
@@ -42,10 +42,15 @@ annotators:
     - name: clinical_disease_name
       source: CLNDN 
 
-# - position_score_annotator: hg38/scores/phyloP7way    #### REMOVED
+# - position_score_annotator:
+#     resource_id: hg38/scores/phyloP7way
+#     attributes:
+#     - name: phyloP7way
+#       source: phyloP7way
 
 - allele_score_annotator: 
     resource_id: hg38/scores/AlphaMissense
+    input_annotatable: normalized_allele
     attributes:
     - name: AlphaMissense_pathogenicity
       source: am_pathogenicity
@@ -89,7 +94,7 @@ annotators:
       source: pLI_rank
     - name: pLI_rank_min
       source: pLI_rank
-      gene_aggregator: min 
+      aggregator: min 
       
 - gene_score_annotator:
     resource_id: gene_properties/gene_scores/LOEUF
@@ -99,7 +104,7 @@ annotators:
       source: LOEUF_rank
     - name: LOEUF_rank_min
       source: LOEUF_rank
-      gene_aggregator: min 
+      aggregator: min 
 
 - position_score_annotator:                              #### NEW ANNOTATOR
     resource_id: ATAC-seq/ENCSR814RGG

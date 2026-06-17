@@ -15,14 +15,18 @@ GAIn command-line tools determine which GRR definition to use by checking severa
     grr_browse -g /path/to/my_grr_definition.yaml
     annotate_tabular -g /path/to/my_grr_definition.yaml input.tsv pipeline.yaml
 
-If no command-line GRR definition is provided, GAIn next checks the ``GRR_DEFINITION_FILE`` environment variable, followed by the default ``~/.grr_definition.yaml`` file in the user's home directory. 
+If no command-line GRR definition is provided, GAIn next checks the ``GRR_DEFINITION_FILE`` environment variable,
 
 .. code-block:: bash
 
     export GRR_DEFINITION_FILE=/path/to/my_grr_definition.yaml
     grr_browse
 
-If none of these are available, GAIn falls back to the public IossifovLab GRR. To configure which GRRs GAIn uses by default, create a file named ``.grr_definition.yaml`` in your home directory. The example below points GAIn to the public `IossifovLab GRR <https://grr.iossifovlab.com/>`_ (a remote repository accessed via URL):
+If ``GRR_DEFINITION_FILE`` is not set, GAIn then checks the default ``~/.grr_definition.yaml`` file in the user's home directory.
+
+If none of these are available, GAIn falls back to the public IossifovLab GRR. 
+
+To configure which GRRs GAIn uses by default, create a file named ``.grr_definition.yaml`` in your home directory. The example below points GAIn to the public `IossifovLab GRR <https://grr.iossifovlab.com/>`_ (a remote repository accessed via URL):
 
 .. code-block:: yaml
 
