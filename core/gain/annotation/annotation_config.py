@@ -207,7 +207,7 @@ class Attribute:
         return hash(
             (self.name, self.source, self.internal, str(self.aggregator)))
 
-    def get_value_type(self, aggregated: bool = True) -> str:
+    def get_value_type(self, *, aggregated: bool = True) -> str:
         """Value type produced by this attribute.
 
         Pass ``aggregated=True`` (default) when the aggregator is known to have
