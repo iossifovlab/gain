@@ -20,6 +20,9 @@ class Aggregator(abc.ABC):
 
     parametrized: ClassVar[bool] = False
     default_parameter: ClassVar[str | None] = None
+    # Output value type produced by this aggregator, independent of the input
+    # type. None means the output type matches the input type (e.g. max/min).
+    output_value_type: ClassVar[str | None] = None
 
     def __call__(self) -> Any:
         return self.get_final()
@@ -85,6 +88,8 @@ class Aggregator(abc.ABC):
 class MaxAggregator(Aggregator):
     """Maximum value aggregator for genomic scores."""
 
+    output_value_type: ClassVar[str | None] = "float"
+
     def __init__(self) -> None:
         super().__init__()
         self.current_max = None
@@ -108,6 +113,8 @@ class MaxAggregator(Aggregator):
 
 class MinAggregator(Aggregator):
     """Minimum value aggregator for genomic scores."""
+
+    output_value_type: ClassVar[str | None] = "float"
 
     def __init__(self) -> None:
         super().__init__()
@@ -133,6 +140,8 @@ class MinAggregator(Aggregator):
 class MeanAggregator(Aggregator):
     """Aggregator for genomic scores that calculates mean value."""
 
+    output_value_type: ClassVar[str | None] = "float"
+
     def __init__(self) -> None:
         super().__init__()
         self.sum = 0
@@ -156,6 +165,8 @@ class MeanAggregator(Aggregator):
 class CountAggregator(Aggregator):
     """Aggregator that counts values."""
 
+    output_value_type: ClassVar[str | None] = "int"
+
     def __init__(self) -> None:
         super().__init__()
         self.count = 0
@@ -178,6 +189,8 @@ class CountAggregator(Aggregator):
 class ConcatAggregator(Aggregator):
     """Aggregator that concatenates all passed values."""
 
+    output_value_type: ClassVar[str | None] = "str"
+
     def __init__(self) -> None:
         super().__init__()
         self.out = ""
@@ -199,6 +212,8 @@ class ConcatAggregator(Aggregator):
 
 class MedianAggregator(Aggregator):
     """Aggregator for genomic scores that calculates median value."""
+
+    output_value_type: ClassVar[str | None] = "float"
 
     def __init__(self) -> None:
         super().__init__()
@@ -268,6 +283,7 @@ class JoinAggregator(Aggregator):
 
     parametrized: ClassVar[bool] = True
     default_parameter: ClassVar[str | None] = ","
+    output_value_type: ClassVar[str | None] = "str"
 
     def __init__(self, separator: str):
         super().__init__()
@@ -290,6 +306,8 @@ class JoinAggregator(Aggregator):
 
 class ListAggregator(Aggregator):
     """Aggregator that builds a list of all passed values."""
+
+    output_value_type: ClassVar[str | None] = "list"
 
     def __init__(self) -> None:
         super().__init__()
@@ -320,6 +338,8 @@ class ListAggregator(Aggregator):
 class BoolAggregator(Aggregator):
     """Aggregator that returns True if any non-None value was added."""
 
+    output_value_type: ClassVar[str | None] = "bool"
+
     def __init__(self) -> None:
         super().__init__()
         self.values: list[Any] = []
@@ -338,6 +358,8 @@ class BoolAggregator(Aggregator):
 
 class CounterAggregator(Aggregator):
     """Aggregator that counts values."""
+
+    output_value_type: ClassVar[str | None] = "object"
 
     def __init__(self) -> None:
         super().__init__()

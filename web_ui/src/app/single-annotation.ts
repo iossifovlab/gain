@@ -161,6 +161,7 @@ export class Attribute {
     public name: string,
     public description: string,
     public source: string,
+    public aggregator: string | null,
     public result: Result,
   ) {}
 
@@ -180,6 +181,7 @@ export class Attribute {
       json['name'] as string,
       json['description'] as string,
       json['source'] as string,
+      (json['aggregator'] as string) ?? null,
       Result.fromJson(
         json['result'] as { histogram: string; value: string | number | boolean; },
         json['type'] as string

@@ -59,9 +59,9 @@ describe('SingleAnnotationReportComponent', () => {
       new Annotatable('chr14', 204000100, 'A', 'AA', 'ins', null, null),
       [
         new Annotator(new AnnotatorDetails('allele_score', 'desc', [new Resource('resourceId', 'resourceUrl')]), [
-          new Attribute('attr1', 'desc1', 'AF', {value: 'true', histogramLink: null} as Result),
-          new Attribute('attr2', 'desc2', 'AF', {value: 'false', histogramLink: null} as Result),
-          new Attribute('attr3', 'desc3', 'AF', {value: 0, histogramLink: null} as Result),
+          new Attribute('attr1', 'desc1', 'AF', null, {value: 'true', histogramLink: null} as Result),
+          new Attribute('attr2', 'desc2', 'AF', null, {value: 'false', histogramLink: null} as Result),
+          new Attribute('attr3', 'desc3', 'AF', null, {value: 0, histogramLink: null} as Result),
         ])
       ],
     );
@@ -78,7 +78,7 @@ describe('SingleAnnotationReportComponent', () => {
   });
 
   it('should set sort state when sorting a new column', () => {
-    const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
+    const attribute = new Attribute('attr1', 'desc1', 'AF', null, new Result(
       new Map([['KeyA', 3], ['KeyB', 1], ['KeyC', 2]]), null
     ));
 
@@ -89,7 +89,7 @@ describe('SingleAnnotationReportComponent', () => {
   });
 
   it('should toggle sort direction when sorting the same column twice', () => {
-    const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
+    const attribute = new Attribute('attr1', 'desc1', 'AF', null, new Result(
       new Map([['KeyA', 3], ['KeyB', 1], ['KeyC', 2]]), null
     ));
 
@@ -101,7 +101,7 @@ describe('SingleAnnotationReportComponent', () => {
   });
 
   it('should reset sort direction to asc when switching to a different column', () => {
-    const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
+    const attribute = new Attribute('attr1', 'desc1', 'AF', null, new Result(
       new Map([['KeyA', 3], ['KeyB', 1], ['KeyC', 2]]), null
     ));
 
@@ -115,7 +115,7 @@ describe('SingleAnnotationReportComponent', () => {
   });
 
   it('should sort by key name ascending', () => {
-    const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
+    const attribute = new Attribute('attr1', 'desc1', 'AF', null, new Result(
       new Map([['KeyC', 2], ['KeyA', 3], ['KeyB', 1]]), null
     ));
 
@@ -126,7 +126,7 @@ describe('SingleAnnotationReportComponent', () => {
   });
 
   it('should sort by key name descending', () => {
-    const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
+    const attribute = new Attribute('attr1', 'desc1', 'AF', null, new Result(
       new Map([['KeyC', 2], ['KeyA', 3], ['KeyB', 1]]), null
     ));
 
@@ -138,7 +138,7 @@ describe('SingleAnnotationReportComponent', () => {
   });
 
   it('should sort by value ascending', () => {
-    const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
+    const attribute = new Attribute('attr1', 'desc1', 'AF', null, new Result(
       new Map([['KeyA', 3], ['KeyB', 1], ['KeyC', 2]]), null
     ));
 
@@ -149,7 +149,7 @@ describe('SingleAnnotationReportComponent', () => {
   });
 
   it('should sort by value descending', () => {
-    const attribute = new Attribute('attr1', 'desc1', 'AF', new Result(
+    const attribute = new Attribute('attr1', 'desc1', 'AF', null, new Result(
       new Map([['KeyA', 3], ['KeyB', 1], ['KeyC', 2]]), null
     ));
 
@@ -161,7 +161,7 @@ describe('SingleAnnotationReportComponent', () => {
   });
 
   it('should not sort when attribute value is not a Map', () => {
-    const attribute = new Attribute('attr1', 'desc1', 'AF', new Result('plain string', null));
+    const attribute = new Attribute('attr1', 'desc1', 'AF', null, new Result('plain string', null));
 
     component.sort('Value', attribute);
 
@@ -175,10 +175,10 @@ describe('SingleAnnotationReportComponent', () => {
       new Annotatable('chr14', 204000100, 'A', 'AA', 'ins', null, null),
       [
         new Annotator(new AnnotatorDetails('allele_score', 'desc', [new Resource('resourceId', 'resourceUrl')]), [
-          new Attribute('attr1', 'desc1\nblabla1\n', 'AF', {value: 'true', histogramLink: null} as Result),
-          new Attribute('attr2', 'desc2\nblabla2\n', 'AF', {value: 13, histogramLink: null} as Result),
-          new Attribute('attr3', 'desc3\nblabla3\n', 'AF', {value: 'mock_value', histogramLink: null} as Result),
-          new Attribute('attr4', 'desc4\nblabla4\n', 'AF',
+          new Attribute('attr1', 'desc1\nblabla1\n', 'AF', null, {value: 'true', histogramLink: null} as Result),
+          new Attribute('attr2', 'desc2\nblabla2\n', 'AF', null, {value: 13, histogramLink: null} as Result),
+          new Attribute('attr3', 'desc3\nblabla3\n', 'AF', null, {value: 'mock_value', histogramLink: null} as Result),
+          new Attribute('attr4', 'desc4\nblabla4\n', 'AF', null,
             {value: new Map<string, number>([['fo', 5], ['po', 3]]), histogramLink: null} as Result
           ),
         ])
@@ -259,7 +259,7 @@ describe('SingleAnnotationReportComponent', () => {
       new Annotatable('chr1', 100, 'A', 'T', 'snv', null, null),
       [
         new Annotator(new AnnotatorDetails('score', 'desc', [new Resource('rid', 'rurl')]), [
-          new Attribute('effects', 'effect list', 'AF',
+          new Attribute('effects', 'effect list', 'AF', null,
             {value: ['missense', 'synonymous'], histogramLink: null} as Result),
         ]),
       ],
@@ -279,7 +279,7 @@ describe('SingleAnnotationReportComponent', () => {
       new Annotatable('chr1', 100, 'A', 'T', 'snv', null, null),
       [
         new Annotator(new AnnotatorDetails('score', 'desc', [new Resource('rid', 'rurl')]), [
-          new Attribute('score', 'score desc', 'AF',
+          new Attribute('score', 'score desc', 'AF', null,
             {value: null, histogramLink: null} as Result),
         ]),
       ],
@@ -293,12 +293,12 @@ describe('SingleAnnotationReportComponent', () => {
   });
 
   it('should return unfold_more when attribute has no sort state', () => {
-    const attribute = new Attribute('attr1', 'desc', 'AF', new Result(null, null));
+    const attribute = new Attribute('attr1', 'desc', 'AF', null, new Result(null, null));
     expect(component.getSortIcon('Value', attribute)).toBe('unfold_more');
   });
 
   it('should return unfold_more when queried column differs from sorted column', () => {
-    const attribute = new Attribute('attr1', 'desc', 'AF', new Result(
+    const attribute = new Attribute('attr1', 'desc', 'AF', null, new Result(
       new Map([['K', 1]]), null
     ));
     component.sort('Key', attribute);
@@ -306,7 +306,7 @@ describe('SingleAnnotationReportComponent', () => {
   });
 
   it('should return keyboard_arrow_up when column is sorted ascending', () => {
-    const attribute = new Attribute('attr1', 'desc', 'AF', new Result(
+    const attribute = new Attribute('attr1', 'desc', 'AF', null, new Result(
       new Map([['K', 1]]), null
     ));
     component.sort('Key', attribute);
@@ -314,7 +314,7 @@ describe('SingleAnnotationReportComponent', () => {
   });
 
   it('should return keyboard_arrow_down when column is sorted descending', () => {
-    const attribute = new Attribute('attr1', 'desc', 'AF', new Result(
+    const attribute = new Attribute('attr1', 'desc', 'AF', null, new Result(
       new Map([['K', 1]]), null
     ));
     component.sort('Key', attribute);
@@ -323,7 +323,7 @@ describe('SingleAnnotationReportComponent', () => {
   });
 
   it('should not mutate attribute value when sortData is called with no sort state', () => {
-    const attribute = new Attribute('attr1', 'desc', 'AF', new Result(
+    const attribute = new Attribute('attr1', 'desc', 'AF', null, new Result(
       new Map([['B', 2], ['A', 1]]), null
     ));
 
@@ -333,13 +333,13 @@ describe('SingleAnnotationReportComponent', () => {
   });
 
   it('should sort array attribute values ascending', () => {
-    const attribute = new Attribute('attr1', 'desc', 'AF', new Result(['c', 'a', 'b'], null));
+    const attribute = new Attribute('attr1', 'desc', 'AF', null, new Result(['c', 'a', 'b'], null));
     component.sort('Value', attribute);
     expect(attribute.result.value).toStrictEqual(['a', 'b', 'c']);
   });
 
   it('should sort array attribute values descending', () => {
-    const attribute = new Attribute('attr1', 'desc', 'AF', new Result(['c', 'a', 'b'], null));
+    const attribute = new Attribute('attr1', 'desc', 'AF', null, new Result(['c', 'a', 'b'], null));
     component.sort('Value', attribute);
     component.sort('Value', attribute);
     expect(attribute.result.value).toStrictEqual(['c', 'b', 'a']);

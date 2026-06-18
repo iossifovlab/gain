@@ -80,30 +80,25 @@ class AnnotatorBase(Annotator):
                 if attr_config.aggregator is not None
                 else default_aggregator
             )
-            self._attributes.append(Attribute(
+            attr = Attribute(
                 name=attr_config.name,
                 source=attr_config.source,
                 internal=internal,
                 aggregator=aggregator,
                 spec=spec,
                 parameters=parameters,
-            ))
-
-        self._aggregator_instances: list[Aggregator | None] = []
-        for attr in self._attributes:
-            if attr.aggregator is not None:
-                if attr.spec is not None and not attr.spec.supports_aggregation:
+            )
+            if aggregator is not None:
+                if spec is not None and not spec.supports_aggregation:
                     raise ValueError(
                         f"Attribute '{attr.source}' in annotator"
                         f" {info.type} does not support aggregation.")
                 validate_aggregator(
-                    attr.aggregator,
+                    aggregator,
                     self._aggregator_value_type(attr),
                 )
-                self._aggregator_instances.append(
-                    Aggregator.build(attr.aggregator))
-            else:
-                self._aggregator_instances.append(None)
+                attr.aggregator_instance = Aggregator.build(aggregator)
+            self._attributes.append(attr)
 
         work_dir = info.parameters.get("work_dir")
         if work_dir is None:
@@ -142,12 +137,10 @@ class AnnotatorBase(Annotator):
         self, values: dict[str, Any],
     ) -> dict[str, Any]:
         result = {}
-        for attr, aggregator in zip(
-            self._attributes, self._aggregator_instances, strict=True,
-        ):
+        for attr in self._attributes:
             value = values.get(attr.source)
-            if aggregator is not None and isinstance(value, list):
-                result[attr.name] = aggregator.aggregate(value)
+            if attr.aggregator_instance is not None and isinstance(value, list):
+                result[attr.name] = attr.aggregator_instance.aggregate(value)
             else:
                 result[attr.name] = value
         return result

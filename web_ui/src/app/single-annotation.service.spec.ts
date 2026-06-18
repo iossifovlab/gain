@@ -170,6 +170,7 @@ describe('SingleAnnotationService', () => {
               // eslint-disable-next-line @stylistic/max-len
               'cadd_raw - CADD raw score for functional prediction of a SNP. The larger the score \nthe more likely the SNP has damaging effect\n',
               'AF',
+              null,
               new Result(null, 'histograms/score?test=1'),
             ),
           ]
@@ -282,6 +283,7 @@ describe('SingleAnnotationService', () => {
               // eslint-disable-next-line @stylistic/max-len
               'cadd_raw - CADD raw score for functional prediction of a SNP. The larger the score \nthe more likely the SNP has damaging effect\n',
               'AF',
+              null,
               new Result(null, 'histograms/score?test=1'),
             ),
           ]

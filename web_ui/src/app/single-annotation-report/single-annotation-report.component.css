@@ -134,7 +134,8 @@ hr {
   padding-bottom: 0;
 }
 
-.attribute-source {
+.attribute-source,
+.attribute-aggregator {
   margin-top: 8px;
   color: #85a2b9;
 }

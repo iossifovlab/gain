@@ -273,8 +273,22 @@ class SingleAnnotation(AnnotationBaseView):
                     attribute_info,
                 )
 
+        agg_instance = attribute_info.aggregator_instance
+        agg_output_type = (
+            type(agg_instance).output_value_type if agg_instance else None
+        )
+        # Aggregation ran when the value is a list (list aggregator applied),
+        # or when the aggregator declares a fixed non-list output type and a
+        # non-None value was produced (e.g. max/min collapsing to a float).
+        aggregated = isinstance(value, list) or (
+            agg_instance is not None
+            and agg_output_type != "list"
+            and value is not None
+        )
+        effective_type = attribute_info.get_value_type(aggregated=aggregated)
+
         if (
-            attribute_info.value_type in ["object", "annotatable"]
+            effective_type in ["object", "annotatable"]
             and not isinstance(value, (dict, list))
         ):
             value = str(value)
@@ -285,7 +299,7 @@ class SingleAnnotation(AnnotationBaseView):
             "description": attribute_info.description,
             "help": annotator_help,
             "source": attribute_info.source,
-            "type": attribute_info.value_type,
+            "type": effective_type,
             "attribute_type": attribute_info.spec.attribute_type,
             "supports_aggregation": attribute_info.spec.supports_aggregation,
             "aggregator": str(aggregator) if aggregator is not None else None,
