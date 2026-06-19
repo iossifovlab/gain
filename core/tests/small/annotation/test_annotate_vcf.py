@@ -1596,3 +1596,39 @@ def test_annotate_vcf_function_with_compressed_input_output(
     with pysam.VariantFile(str(tmp_path / "out.vcf.gz")) as vcf_file:
         result = [v.info["score"][0] for v in vcf_file.fetch()]
     assert result == ["0.1", "0.2"]
+
+
+def test_annotate_vcf_cli_csi_input_produces_csi_output(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A .csi-indexed input must produce a .csi output index, not .tbi."""
+    in_content = textwrap.dedent("""
+        ##fileformat=VCFv4.2
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+        ##contig=<ID=chr1>
+        #CHROM POS ID REF ALT QUAL FILTER INFO FORMAT m1  d1  c1
+        chr1   23  .  C   T   .    .      .    GT     0/1 0/0 0/0
+        chr1   24  .  C   A   .    .      .    GT     0/0 0/1 0/0
+    """)
+    root_path = annotate_directory_fixture
+    in_file = tmp_path / "in.vcf.gz"
+    out_file = tmp_path / "out.vcf.gz"
+    annotation_file = root_path / "annotation.yaml"
+    grr_file = root_path / "grr.yaml"
+
+    setup_vcf(in_file, in_content, csi=True)
+
+    cli([
+        str(a) for a in [
+            in_file, annotation_file, "--grr", grr_file,
+            "-o", out_file, "-w", tmp_path / "work", "-j", 1,
+        ]
+    ])
+
+    assert out_file.exists()
+    assert (tmp_path / "out.vcf.gz.csi").exists()
+    assert not (tmp_path / "out.vcf.gz.tbi").exists()
+    with pysam.VariantFile(str(out_file)) as vcf_file:
+        result = [vcf.info["score"][0] for vcf in vcf_file.fetch()]
+    assert result == ["0.1", "0.2"]

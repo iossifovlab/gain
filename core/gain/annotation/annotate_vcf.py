@@ -465,8 +465,8 @@ def _count_vcf_records(input_path: str, limit: int) -> int:
     return count
 
 
-def _tabix_index(filepath: str) -> None:
-    tabix_index(filepath, preset="vcf", force=True)
+def _tabix_index(filepath: str, *, csi: bool = False) -> None:
+    tabix_index(filepath, preset="vcf", force=True, csi=csi)
 
 
 def _tabix_compress(filepath: str, output_path: str | None = None) -> None:
@@ -529,6 +529,8 @@ def _add_tasks_tabixed(
     output_path: str,
     pipeline_config: RawPipelineConfig,
     grr_definition: dict[str, Any],
+    *,
+    use_csi: bool = False,
 ) -> None:
     # output_path carries the final compression suffix (.gz/.bgz); annotate
     # into the uncompressed working file, then compress to the final name.
@@ -538,7 +540,9 @@ def _add_tasks_tabixed(
         f"_add_tasks_tabixed: output_path must carry a compression suffix, "
         f"got {output_path!r}")
     working_path = strip_compression_suffix(output_path)
-    with closing(TabixFile(args["input"])) as pysam_file:
+    input_path = args["input"]
+    input_index = f"{input_path}.csi" if use_csi else f"{input_path}.tbi"
+    with closing(TabixFile(input_path, index=input_index)) as pysam_file:
         regions = produce_regions(pysam_file, args["region_size"])
     file_paths = produce_partfile_paths(
         args["input"], regions, args["work_dir"])
@@ -575,12 +579,14 @@ def _add_tasks_tabixed(
         output_files=[output_path],
         deps=[concat_task])
 
+    index_suffix = ".csi" if use_csi else ".tbi"
     task_graph.create_task(
         "tabix_index",
         _tabix_index,
         args=[output_path],
+        kwargs={"csi": use_csi},
         input_files=[output_path],
-        output_files=[f"{output_path}.tbi"],
+        output_files=[f"{output_path}{index_suffix}"],
         deps=[compress_task])
 
 
@@ -630,13 +636,15 @@ def cli(argv: list[str] | None = None) -> None:
         region_size = args["region_size"]
 
         task_graph = TaskGraph()
-        if tabix_index_filename(args["input"]) and region_size > 0:
+        input_index = tabix_index_filename(args["input"])
+        if input_index and region_size > 0:
             _add_tasks_tabixed(
                 args,
                 task_graph,
                 output_path,
                 pipeline.raw,
                 grr.definition,
+                use_csi=input_index.endswith(".csi"),
             )
         else:
             logger.info(
