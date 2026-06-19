@@ -244,6 +244,7 @@ class UserPipeline(AnnotationBaseView):
             )
 
         request.user.delete_pipeline(pipeline_id)
+        self.lru_cache.unload_pipeline(pipeline_id)
 
         return Response(status=views.status.HTTP_204_NO_CONTENT)
 

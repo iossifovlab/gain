@@ -305,46 +305,70 @@ class LRUPipelineCache:
         thread = threading.current_thread().name
         logger.debug(
             "thread %s calling put_pipeline for %s", thread, pipeline_id)
+        same_config = False
+        detached: list[tuple[
+            str, Future[ThreadSafePipeline] | None,
+            LoadingDetails | None, Callable | None,
+        ]] = []
         with self._cache_lock:
             if pipeline_id in self._cache:
                 details = self._cache[pipeline_id]
                 if details.config_hash == pipeline_config_hash and not force:
-                    if finish_load_callback is not None:
-                        finish_load_callback()
-                    return
-                self.delete_pipeline(pipeline_id)
-
-            while len(self._cache) >= self.capacity:
-                evict_id = self._evictable_pipeline_id()
-                if evict_id is None:
-                    logger.warning(
-                        "pipeline cache temporarily over capacity: all %d "
-                        "entries are pinned in-use, cannot evict to make room "
-                        "for %s",
-                        len(self._cache), pipeline_id,
+                    same_config = True
+                else:
+                    old_future, old_details, old_delete_cb = (
+                        self._detach_pipeline_locked(pipeline_id)
                     )
-                    break
-                self.delete_pipeline(evict_id, do_cancel=False)
+                    detached.append(
+                        (pipeline_id, old_future, old_details, old_delete_cb))
 
-            pipeline_future = self._load_executor.execute(
-                self._load_pipeline_raw,
-                raw=pipeline_config,
-                grr=self._grr,
-                pipeline_id=pipeline_id,
-                callback_start=begin_load_callback,
-                callback_success=finish_load_callback,
-            )
+            if not same_config:
+                while len(self._cache) >= self.capacity:
+                    evict_id = self._evictable_pipeline_id()
+                    if evict_id is None:
+                        logger.warning(
+                            "pipeline cache temporarily over capacity: all %d "
+                            "entries are pinned in-use, cannot evict to make "
+                            "room for %s",
+                            len(self._cache), pipeline_id,
+                        )
+                        break
+                    old_future, old_details, old_delete_cb = (
+                        self._detach_pipeline_locked(evict_id, do_cancel=False)
+                    )
+                    detached.append(
+                        (evict_id, old_future, old_details, old_delete_cb))
 
-            loading_details = LoadingDetails(
-                time_started=started,
-                pipeline_id=pipeline_id,
-                config_hash=pipeline_config_hash,
-                future=pipeline_future,
-            )
+                pipeline_future = self._load_executor.execute(
+                    self._load_pipeline_raw,
+                    raw=pipeline_config,
+                    grr=self._grr,
+                    pipeline_id=pipeline_id,
+                    callback_success=finish_load_callback,
+                )
 
-            self._pipeline_callbacks[pipeline_id] = delete_callback
-            self._cache[pipeline_id] = loading_details
-            self._order.append(pipeline_id)
+                loading_details = LoadingDetails(
+                    time_started=started,
+                    pipeline_id=pipeline_id,
+                    config_hash=pipeline_config_hash,
+                    future=pipeline_future,
+                )
+
+                self._pipeline_callbacks[pipeline_id] = delete_callback
+                self._cache[pipeline_id] = loading_details
+                self._order.append(pipeline_id)
+
+        if same_config:
+            if finish_load_callback is not None:
+                finish_load_callback()
+            return
+
+        for pid, old_future, old_details, old_delete_cb in detached:
+            self._close_detached(pid, old_future, old_details, old_delete_cb)
+
+        if begin_load_callback is not None:
+            begin_load_callback()
+
         elapsed = time.time() - started
         logger.debug(
             "put pipeline %s in %.2f seconds", pipeline_id, elapsed)
@@ -359,10 +383,13 @@ class LRUPipelineCache:
         with a warning rather than force-deleted; it is reaped on a later pass
         once its caller unpins.
         """
-        to_remove = []
+        detached: list[tuple[
+            str, Future[ThreadSafePipeline] | None,
+            LoadingDetails | None, Callable | None,
+        ]] = []
         now = time.time()
         with self._cache_lock:
-            for pipeline_id, details in self._cache.items():
+            for pipeline_id, details in list(self._cache.items()):
                 if now - details.time_started > self._load_timeout:
                     if self._in_use.get(pipeline_id, 0) > 0:
                         logger.warning(
@@ -376,9 +403,13 @@ class LRUPipelineCache:
                         "Cancelling long-running task started at %s",
                         details.time_started,
                     )
-                    to_remove.append(pipeline_id)
-            for pipeline_id in to_remove:
-                self.delete_pipeline(pipeline_id)
+                    old_future, old_details, old_delete_cb = (
+                        self._detach_pipeline_locked(pipeline_id)
+                    )
+                    detached.append(
+                        (pipeline_id, old_future, old_details, old_delete_cb))
+        for pid, old_future, old_details, old_delete_cb in detached:
+            self._close_detached(pid, old_future, old_details, old_delete_cb)
 
     def get_pipeline_future(
         self, pipeline_id: str,
@@ -397,6 +428,61 @@ class LRUPipelineCache:
             logger.debug(
                 "get_pipeline_future %s in %.2f seconds", pipeline_id, elapsed)
             return self._cache[pipeline_id].future
+
+    def _detach_pipeline_locked(
+        self, pipeline_id: str, *, do_cancel: bool = True,
+    ) -> tuple[
+        Future[ThreadSafePipeline] | None,
+        LoadingDetails | None,
+        Callable | None,
+    ]:
+        """Remove a pipeline entry from the cache dict.
+
+        Must be called while holding ``_cache_lock``. Returns
+        ``(future, details, delete_cb)`` so the caller can close the
+        pipeline *outside* the lock. With ``do_cancel=True`` (the
+        default) an unfinished future is cancelled and ``None`` is
+        returned in its place so the caller skips the ``close`` call.
+        """
+        if pipeline_id not in self._cache:
+            return None, None, None
+        details = self._cache[pipeline_id]
+        future: Future[ThreadSafePipeline] | None = details.future
+        delete_cb = self._pipeline_callbacks.get(pipeline_id)
+        del self._cache[pipeline_id]
+        del self._pipeline_callbacks[pipeline_id]
+        self._order.remove(pipeline_id)
+        self._in_use.pop(pipeline_id, None)
+        if future is not None and not future.done() and do_cancel:
+            future.cancel()
+            future = None
+        return future, details, delete_cb
+
+    @staticmethod
+    def _close_detached(
+        pipeline_id: str,
+        future: Future[ThreadSafePipeline] | None,
+        details: LoadingDetails | None,
+        delete_cb: Callable | None,
+    ) -> None:
+        """Close a detached pipeline and call its delete callback.
+
+        Must be called *outside* ``_cache_lock`` — ``pipeline.close()``
+        can block while holding the pipeline's own lock.
+        """
+        if future is not None and future.done():
+            try:
+                future.result().close()
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    "Error during pipeline close for %s", pipeline_id)
+            if delete_cb and details is not None:
+                try:
+                    delete_cb(details)
+                except Exception:  # pylint: disable=broad-except
+                    logger.exception(
+                        "Error during pipeline deletion"
+                        "callback for %s", pipeline_id)
 
     def _pin_pipeline(self, pipeline_id: str) -> bool:
         """Mark a cached pipeline as in-use so it is skipped by eviction.
@@ -455,41 +541,18 @@ class LRUPipelineCache:
             "got pipeline %s in %.2f seconds", pipeline_id, elapsed)
         return pipeline
 
-    def delete_pipeline(
+    def unload_pipeline(
         self, pipeline_id: str,
         *,
         do_cancel: bool = True,
     ) -> None:
-        """Unload a pipeline from the cache."""
+        """Unload a pipeline from the in-memory cache."""
         logger.debug(
-            "thread %s calling delete_pipeline for %s",
+            "thread %s calling unload_pipeline for %s",
             threading.current_thread().name, pipeline_id)
-        future = None
-        details = None
-        delete_cb = None
         with self._cache_lock:
-            if pipeline_id in self._cache:
-                details = self._cache[pipeline_id]
-                future = details.future
-                delete_cb = self._pipeline_callbacks.get(pipeline_id)
-                del self._cache[pipeline_id]
-                del self._pipeline_callbacks[pipeline_id]
-                self._order.remove(pipeline_id)
-                self._in_use.pop(pipeline_id, None)
-                if not future.done() and do_cancel:
-                    future.cancel()
-                    future = None
-
-        if future is not None and future.done():
-            try:
-                future.result().close()
-            except Exception:  # pylint: disable=broad-except
-                logger.exception(
-                    "Error during pipeline close for %s", pipeline_id)
-            if delete_cb and details is not None:
-                try:
-                    delete_cb(details)
-                except Exception:  # pylint: disable=broad-except
-                    logger.exception(
-                        "Error during pipeline deletion"
-                        "callback for %s", pipeline_id)
+            old_future, old_details, old_delete_cb = (
+                self._detach_pipeline_locked(pipeline_id, do_cancel=do_cancel)
+            )
+        self._close_detached(
+            pipeline_id, old_future, old_details, old_delete_cb)
