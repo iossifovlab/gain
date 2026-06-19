@@ -58,7 +58,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
     }
   ],
   templateUrl: './new-annotator.component.html',
-  styleUrl: './new-annotator.component.css',
+  styleUrls: ['./new-annotator.component.css', './material-components.css'],
 })
 export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
   public resourceStep: FormGroup<{ resourceType: FormControl<string>, resourceId: FormControl<string> }>;
