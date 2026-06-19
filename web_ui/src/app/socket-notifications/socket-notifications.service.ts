@@ -79,8 +79,10 @@ export class SocketNotificationsService {
       return throwError(() => new Error('Max reconnection attempts reached'));
     }
 
-    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, etc. (max 30s)
-    const delayMs = Math.min(1000 * Math.pow(2, this.reconnectionAttempts), 30000);
+    // First reconnection attempt: immediate. Then exponential backoff: 1s, 2s, 4s, 8s, 16s, etc. (max 30s)
+    const delayMs = this.reconnectionAttempts === 0
+      ? 0
+      : Math.min(1000 * Math.pow(2, this.reconnectionAttempts - 1), 30000);
     this.reconnectionAttempts++;
 
     // Create the observable FIRST (don't close old connection yet - let subscriptions continue)
