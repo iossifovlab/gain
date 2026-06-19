@@ -554,4 +554,5 @@ class LRUPipelineCache:
             old_future, old_details, old_delete_cb = (
                 self._detach_pipeline_locked(pipeline_id, do_cancel=do_cancel)
             )
-        self._close_detached(pipeline_id, old_future, old_details, old_delete_cb)
+        self._close_detached(
+            pipeline_id, old_future, old_details, old_delete_cb)
