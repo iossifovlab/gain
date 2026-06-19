@@ -42,7 +42,7 @@
               <div class="grid-header" title="Resource">Resource</div>
               <div class="grid-header" title="Resource type">Resource type</div>
               <div class="grid-header" title="Summary">Summary</div>
-              @for (resource of resources(); track $index) {
+              @for (resource of resources(); track resource.fullId) {
               <ng-container>
                 <span class="resource-select grid-cell">
                   <button
@@ -79,8 +79,8 @@
                 <span class="resource-summary grid-cell" [title]="resource.summary">{{ resource.summary }}</span>
               </ng-container>
               }
-              <div id="load-page-indicator" #loadPageIndicator style="height: 1px"></div>
             </div>
+            <div id="load-page-indicator" #loadPageIndicator style="height: 1px"></div>
           </div>
         </div>
         <div class="resource-footer">
@@ -151,7 +151,7 @@
       <ng-template matStepContent>
         <div class="summary-content">
           @if (data.isResourceWorkflow) {
-          <div class="resource-type-display-text">{{ 'resource type\n' + getResourceById().type }}</div>
+          <div class="resource-type-display-text">{{ 'resource type\n' + getResourceById()?.type }}</div>
           <div class="resource-type-display-text" [title]="resourceStep.get('resourceId').value">
             {{ 'resource id\n' + resourceStep.get('resourceId').value }}</div
           >
@@ -237,7 +237,7 @@
       <ng-template matStepContent>
         <div class="summary-content">
           @if (data.isResourceWorkflow) {
-          <div class="resource-type-display-text">{{ 'resource type\n' + getResourceById().type }}</div>
+          <div class="resource-type-display-text">{{ 'resource type\n' + getResourceById()?.type }}</div>
           <div class="resource-type-display-text" [title]="resourceStep.get('resourceId').value">
             {{ 'resource id\n' + resourceStep.get('resourceId').value }}</div
           >
@@ -307,52 +307,53 @@
             </div>
             @if(selectedAttributes.length) {
             <span class="attributes-section-label">Selected attributes ({{ selectedAttributes.length }}):</span>
-            <div class="grid-container" id="attributes-list">
-              <div class="grid-header" title="Name">Name</div>
-              <div class="grid-header" title="Source">Source</div>
-              <div class="grid-header" title="Internal">Internal</div>
-              <div class="grid-header" title="Description">Description</div>
-              <div class="grid-header" title="Delete">Delete</div>
-              @for (selectedAttribute of selectedAttributes; track $index) {
-              <ng-container>
-                <span
-                  class="attribute-name grid-cell"
-                  [title]="selectedAttribute.name"
-                  [ngClass]="!isAttributeValid(selectedAttribute) ? 'duplicate-name' : ''">
-                  <input
-                    class="editable-name"
-                    type="text"
-                    #attributeNameInput
+            <div style="overflow: auto">
+              <div class="grid-container" id="attributes-list">
+                <div class="grid-header" title="Name">Name</div>
+                <div class="grid-header" title="Source">Source</div>
+                <div class="grid-header" title="Internal">Internal</div>
+                <div class="grid-header" title="Description">Description</div>
+                <div class="grid-header" title="Delete">Delete</div>
+                @for (selectedAttribute of selectedAttributes; track $index) {
+                <ng-container>
+                  <span
+                    class="attribute-name grid-cell"
                     [title]="selectedAttribute.name"
-                    [attr.aria-label]="'Attribute name: ' + selectedAttribute.name"
-                    [ngModel]="selectedAttribute.name"
-                    (ngModelChange)="onAttributeNameChange(selectedAttribute, attributeNameInput.value)"
-                    [ngClass]="!isAttributeValid(selectedAttribute) ? 'duplicate-name-input' : ''" />
-                </span>
-                <span class="attribute-source grid-cell" [title]="selectedAttribute.source">{{
-                  selectedAttribute.source
-                }}</span>
-                <span class="attribute-internal grid-cell center-cell"
-                  ><input
-                    type="checkbox"
-                    [checked]="selectedAttribute.internal"
-                    (change)="toggleAttributeInternal(selectedAttribute)"
-                    [attr.aria-label]="'Mark ' + selectedAttribute.name + ' as internal'" />
-                </span>
-                <span class="attribute-description grid-cell" [title]="selectedAttribute.description">{{
-                  selectedAttribute.description
-                }}</span>
-                <div class="delete-buttons grid-cell center-cell">
-                  <button
-                    [attr.id]="selectedAttribute.name + '-remove-button'"
-                    class="material-symbols-outlined remove-attribute"
-                    (click)="removeSelectedAttribute(selectedAttribute)"
-                    [attr.aria-label]="'Remove ' + selectedAttribute.name"
-                    >delete</button
-                  >
-                </div>
-              </ng-container>
-              }
+                    [ngClass]="!isAttributeValid(selectedAttribute) ? 'duplicate-name' : ''">
+                    <input
+                      class="editable-name"
+                      type="text"
+                      [title]="selectedAttribute.name"
+                      [attr.aria-label]="'Attribute name: ' + selectedAttribute.name"
+                      [ngModel]="selectedAttribute.name"
+                      (ngModelChange)="onAttributeNameChange(selectedAttribute, $event)"
+                      [ngClass]="!isAttributeValid(selectedAttribute) ? 'duplicate-name-input' : ''" />
+                  </span>
+                  <span class="attribute-source grid-cell" [title]="selectedAttribute.source">{{
+                    selectedAttribute.source
+                  }}</span>
+                  <span class="attribute-internal grid-cell center-cell"
+                    ><input
+                      type="checkbox"
+                      [checked]="selectedAttribute.internal"
+                      (change)="toggleAttributeInternal(selectedAttribute)"
+                      [attr.aria-label]="'Mark ' + selectedAttribute.name + ' as internal'" />
+                  </span>
+                  <span class="attribute-description grid-cell" [title]="selectedAttribute.description">{{
+                    selectedAttribute.description
+                  }}</span>
+                  <div class="delete-buttons grid-cell center-cell">
+                    <button
+                      [attr.id]="selectedAttribute.name + '-remove-button'"
+                      class="material-symbols-outlined remove-attribute"
+                      (click)="removeSelectedAttribute(selectedAttribute)"
+                      [attr.aria-label]="'Remove ' + selectedAttribute.name"
+                      >delete</button
+                    >
+                  </div>
+                </ng-container>
+                }
+              </div>
             </div>
             }
           </div>
@@ -382,7 +383,7 @@
       <ng-template matStepContent>
         <div class="summary-content">
           @if (data.isResourceWorkflow) {
-          <div class="resource-type-display-text">{{ 'resource type\n' + getResourceById().type }}</div>
+          <div class="resource-type-display-text">{{ 'resource type\n' + getResourceById()?.type }}</div>
           <div class="resource-type-display-text" [title]="resourceStep.get('resourceId').value">
             {{ 'resource id\n' + resourceStep.get('resourceId').value }}</div
           >
@@ -404,18 +405,23 @@
               <div class="grid-header-aggregators" title="Attribute">Attribute</div>
               <div class="grid-header-aggregators" title="Type">Type</div>
               <div class="grid-header-aggregators" title="Aggregator">Aggregator</div>
-              <div class="grid-header-aggregators" title="Parameters">Parameters</div>
+              <div class="grid-header-aggregators" title="Separator">Separator</div>
               @for (row of annotatorAttributes; track row.name) {
               <ng-container>
-                <span class="attribute grid-cell-aggregators" [title]="row.name">
-                  {{ row.name }} / {{ row.source }}
+                <span class="grid-cell-aggregators">
+                  <span class="attribute-with-description">
+                    <div class="attribute-name-main">{{ row.name }}</div>
+                    <div class="attribute-source-description">{{ row.source }}</div>
+                  </span>
                 </span>
-                <span class="attribute-type grid-cell-aggregators" [title]="row.type">{{ row.type }}</span>
+                <span class="grid-cell-aggregators" [attr.data-type]="row.type?.toLowerCase()">
+                  <span class="data-type-badge">{{ row.type }}</span>
+                </span>
                 <span class="aggregator grid-cell-aggregators">
                   <mat-select
                     [attr.id]="'aggregators-dropdown-' + row.name"
                     [disabled]="!row.aggregators.length"
-                    [placeholder]="!row.aggregators.length ? 'Not aggregatable' : 'Select aggregator'"
+                    [placeholder]="!row.aggregators.length ? 'No aggregation' : 'Select aggregator'"
                     [value]="row.defaultAggregator"
                     (selectionChange)="onSelectAggregator(row.name, $event.value)">
                     @for (aggregator of row.aggregators; track aggregator) {
@@ -425,14 +431,15 @@
                     }
                   </mat-select>
                 </span>
-                <span class="aggregator-parameters grid-cell-aggregators">
+                <span class="separator-input grid-cell-aggregators">
                   @if (row.parameterValue !== null) {
                   <input
-                    class="parameter-input"
+                    class="separator-field"
                     type="text"
                     [value]="row.parameterValue"
-                    (input)="row.parameterValue = $event.target.value" />
-                  } @else { - }
+                    (input)="row.parameterValue = $event.target.value"
+                    placeholder="separator" />
+                  } @else { — }
                 </span>
               </ng-container>
               }

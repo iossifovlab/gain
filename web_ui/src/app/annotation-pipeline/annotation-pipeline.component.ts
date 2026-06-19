@@ -548,6 +548,10 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
         if (this.currentTemporaryPipelineId === '') {
           this.currentTemporaryPipelineId = pipelineId;
           this.pipelineStateService.currentTemporaryPipelineId.set(pipelineId);
+          // Immediately mark as loading to prevent incoming notifications
+          // from being misattributed to the previous pipeline
+          this.currentTemporaryPipelineStatus = 'loading';
+          this.pipelineStateService.currentTemporaryPipelineStatus.set('loading');
           this.updateDownloadLink();
         }
       })

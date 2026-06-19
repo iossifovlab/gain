@@ -1281,6 +1281,16 @@ describe('Annotator created by resource', () => {
   });
 
   it('should get resource by id from resource page', () => {
+    component.resources.set([
+      new Resource(
+        'hg19/scores/phyloP46_primates',
+        'hg19/scores/phyloP46_primates',
+        'position_score',
+        0,
+        'url/index.html',
+        'phyloP46_primates summary'
+      )
+    ]);
     component.resourceStep.get('resourceId').setValue('hg19/scores/phyloP46_primates');
     const resource = component.getResourceById();
     expect(resource.fullId).toBe('hg19/scores/phyloP46_primates');

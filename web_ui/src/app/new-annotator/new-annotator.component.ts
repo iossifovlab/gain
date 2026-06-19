@@ -34,7 +34,6 @@ import {
 } from './annotator';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
 import { MatSelect } from '@angular/material/select';
-import { cloneDeep } from 'lodash';
 import { MatTooltipModule } from '@angular/material/tooltip';
 
 @Component({
@@ -152,6 +151,13 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
         this.setupResourceSearching();
         this.selectedResourceType = this.resourceTypes[0];
       });
+
+      // Clear search when returning to resource selection step from later steps
+      this.stepper.selectionChange.subscribe(event => {
+        if (event.selectedIndex === 0 && event.previouslySelectedIndex > 0) {
+          this.resourceStep.get('resourceId').setValue('', { emitEvent: true });
+        }
+      });
     } else {
       this.requestAnnotators();
     }
@@ -165,7 +171,12 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
     if (!this.data.isResourceWorkflow) {
       return;
     }
-    const container: Element = this.loadPageIndicator.nativeElement.closest('#resource-list');
+    const container: Element = this.loadPageIndicator.nativeElement.closest('.resource-list-wrapper');
+    if (!container) {
+      console.error('Resource list container not found for infinite scroll');
+      return;
+    }
+
     this.observer = new IntersectionObserver(entries => {
       if (entries[0].isIntersecting && this.hasMore && !this.isLoading && this.isResourceTableInitialized) {
         this.loadMore();
@@ -173,7 +184,7 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
     },
     {
       root: container,
-      threshold: 0.1
+      threshold: 0
     });
 
     this.observer.observe(this.loadPageIndicator.nativeElement);
@@ -189,6 +200,7 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
     ).subscribe({
       next: (data) => {
         this.resources.update(current => [...current, ...data.resources]);
+        this.resourcePage.resources.push(...data.resources);
         this.nextPage++;
         this.hasMore = this.nextPage < this.totalPages;
         this.isLoading = false;
@@ -225,8 +237,6 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
       },
       error: (err: Error) => {
         this.searchError = err.message;
-        this.resourceSearchSubscription.unsubscribe();
-        this.setupResourceSearching();
       }
     });
 
@@ -426,7 +436,7 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
     this.attributesSubscription = this.getAttributesObservable().subscribe({
       next: res => {
         this.attributePage = res;
-        this.selectedAttributes = cloneDeep(res.attributes.filter(a => a.selectedByDefault));
+        this.selectedAttributes = [...res.attributes.filter(a => a.selectedByDefault)];
         this.filteredAttributes = res.attributes;
         this.setupAttributeValueFiltering();
         this.getPipelineAttributesNames();
@@ -494,8 +504,9 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   public isAttributeValid(attribute: AttributeData): boolean {
+    const currentIndex = this.selectedAttributes.indexOf(attribute);
     return !this.existingAttributeNames.has(attribute.name) &&
-      !this.selectedAttributes.filter(a => a !== attribute).some(a => a.name === attribute.name);
+      !this.selectedAttributes.some((a, index) => index !== currentIndex && a.name === attribute.name);
   }
 
   public onFinish(): void {
@@ -573,7 +584,7 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   public onSelectAttribute(attribute: AttributeData): void {
-    this.selectedAttributes.push(this.attributePage.attributes.find(a => a === attribute));
+    this.selectedAttributes.push(attribute);
     this.clearAttributeInput();
     this.validateAttributes();
   }
@@ -621,7 +632,7 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
 
   public getResourceById(): Resource {
     const id = this.resourceStep.get('resourceId').value;
-    return this.resourcePage.resources.find(r => r.fullId === id);
+    return this.resources().find(r => r.fullId === id);
   }
 
   public removeAllSelectedAttributes(): void {
@@ -640,7 +651,7 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
     const totalPages = this.attributePage.totalPages;
 
     if (nextPage >= totalPages) {
-      this.selectedAttributes = cloneDeep(this.filteredAttributes);
+      this.selectedAttributes = [...this.filteredAttributes];
       return;
     }
 
@@ -654,7 +665,7 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
         this.filteredAttributes = allAttributes;
         this.attributePage.attributes = allAttributes;
         this.attributePage.page = totalPages - 1;
-        this.selectedAttributes = cloneDeep(allAttributes);
+        this.selectedAttributes = [...allAttributes];
       });
   }
 
