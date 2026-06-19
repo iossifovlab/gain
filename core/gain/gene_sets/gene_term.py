@@ -1,5 +1,6 @@
 import copy
 import glob
+import gzip
 import logging
 import os
 import pathlib
@@ -296,13 +297,14 @@ def rename_gene_terms(
 
 def load_gene_terms(path: str) -> GeneTerms | None:
     """Load gene terms from a file."""
-    if path.endswith("-map.txt"):
-        names_file = path[:-4] + "names.txt"
-        if not pathlib.Path(names_file).exists():
-            with open(path) as mapfile:
+    if path.endswith(("-map.txt", "-map.txt.gz")):
+        base = path.removesuffix(".gz")
+        names_file = base[:-4] + "names.txt"
+        map_ctx = gzip.open(path, "rt") if path.endswith(".gz") else open(path)  # noqa: SIM115
+        with map_ctx as mapfile:
+            if not pathlib.Path(names_file).exists():
                 return read_mapping_file(mapfile, None)
-        else:
-            with open(path) as mapfile, open(names_file) as namesfile:
+            with open(names_file) as namesfile:
                 return read_mapping_file(mapfile, namesfile)
     if path.endswith(".gmt"):
         with open(path) as gmtfile:

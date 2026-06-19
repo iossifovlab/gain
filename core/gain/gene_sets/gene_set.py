@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import abc
+import gzip
 import json
 import logging
 import os
@@ -183,7 +184,7 @@ class GeneSetCollection(
             filename = self.config.filename
             assert filename is not None
             res.add(filename)
-            names_filename = filename[:-4] + "names.txt"
+            names_filename = filename.removesuffix(".gz")[:-4] + "names.txt"
             if names_filename in self.resource.get_manifest():
                 res.add(names_filename)
         elif collection_format == "gmt":
@@ -231,14 +232,16 @@ class GeneSetCollection(
         if collection_format == "map":
             filename = self.config.filename
             assert filename is not None
-            names_filename = filename[:-4] + "names.txt"
+            names_filename = filename.removesuffix(".gz")[:-4] + "names.txt"
             names_file = None
             if self.resource.file_exists(names_filename):
                 names_file = self.resource.open_raw_file(names_filename)
-            gene_terms = read_mapping_file(
-                self.resource.open_raw_file(filename),
-                names_file,
-            )
+            if filename.endswith(".gz"):
+                map_file = gzip.open(  # noqa: SIM115
+                    self.resource.open_raw_file(filename, "rb"), "rt")
+            else:
+                map_file = self.resource.open_raw_file(filename)
+            gene_terms = read_mapping_file(map_file, names_file)
         elif collection_format == "gmt":
             filename = self.config.filename
             assert filename is not None
