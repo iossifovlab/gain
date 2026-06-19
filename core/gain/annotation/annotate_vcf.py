@@ -465,7 +465,7 @@ def _count_vcf_records(input_path: str, limit: int) -> int:
     return count
 
 
-def _tabix_index(filepath: str, csi: bool = False) -> None:
+def _tabix_index(filepath: str, *, csi: bool = False) -> None:
     tabix_index(filepath, preset="vcf", force=True, csi=csi)
 
 
@@ -583,7 +583,8 @@ def _add_tasks_tabixed(
     task_graph.create_task(
         "tabix_index",
         _tabix_index,
-        args=[output_path, use_csi],
+        args=[output_path],
+        kwargs={"csi": use_csi},
         input_files=[output_path],
         output_files=[f"{output_path}{index_suffix}"],
         deps=[compress_task])
