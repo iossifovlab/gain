@@ -331,9 +331,17 @@ class User(AbstractUser):
         return list(jobs)
 
     def delete_jobs(self) -> None:
-        """Get user's jobs."""
+        """Deactivate the user's jobs, sparing any that are still running.
+
+        A job that is still ``WAITING`` or ``IN_PROGRESS`` is left untouched so
+        its result file is not unlinked out from under an in-flight annotation
+        task, which would make the job's ``on_success`` ``stat`` fail with
+        ``[Errno 2]``.
+        """
         jobs = self.job_class.objects.filter(
             owner=cast(User, self.as_owner),
+        ).exclude(
+            status__in=self.job_class.ACTIVE_STATUSES,
         )
         for job in jobs:
             job.deactivate()
@@ -446,9 +454,18 @@ class WebAnnotationAnonymousUser(BaseUser, AnonymousUser):
         return list(jobs)
 
     def delete_jobs(self) -> None:
-        """Get user's jobs."""
+        """Delete the user's jobs, sparing any that are still running.
+
+        Called when an anonymous user's last WebSocket disconnects
+        (see ``AnnotationStateConsumer.disconnect``). A job that is still
+        ``WAITING`` or ``IN_PROGRESS`` is left untouched so its result file is
+        not unlinked out from under an in-flight annotation task, which would
+        make the job's ``on_success`` ``stat`` fail with ``[Errno 2]``.
+        """
         jobs = self.job_class.objects.filter(
             owner=self.as_owner,
+        ).exclude(
+            status__in=self.job_class.ACTIVE_STATUSES,
         )
         for job in jobs:
             job.delete()
@@ -609,6 +626,12 @@ class BaseJob(models.Model):
         IN_PROGRESS = 2
         SUCCESS = 3
         FAILED = 4
+
+    #: Statuses of a job that is queued or executing in ``JOB_EXECUTOR``.
+    #: Cleanup paths must never remove such a job's files: doing so unlinks
+    #: ``result-<name>.vcf`` out from under the running annotation task and
+    #: makes its ``on_success`` ``stat`` fail with ``[Errno 2]`` (gain#147).
+    ACTIVE_STATUSES: ClassVar = (Status.WAITING, Status.IN_PROGRESS)
 
     input_path = models.FilePathField()
     config_path = models.FilePathField()
