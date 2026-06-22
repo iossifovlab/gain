@@ -173,6 +173,10 @@ class _CSVSource(Source):
         errors = []
         for lnum, line in enumerate(line_iterator):
             try:
+                # The ``[]`` default is unreachable in practice
+                # (``csv.reader`` always yields a row for a single string,
+                # even ""), but it keeps ``next`` from raising StopIteration
+                # inside this generator -- pylint R1708 flags that pattern.
                 columns = next(
                     csv.reader([line], delimiter=self.input_separator), [])
                 record = dict(zip(self.header, columns, strict=True))
@@ -533,9 +537,11 @@ def _tabix_compress(filepath: str, output_path: str | None = None) -> None:
         os.remove(filepath)
 
 
-def _tabix_index(filepath: str, args: dict | None = None) -> None:
+def _tabix_index(
+    filepath: str, args: dict | None = None, separator: str = "\t",
+) -> None:
     """Produce a tabix index file for the given variants file."""
-    header = _read_header(filepath)
+    header = _read_header(filepath, separator)
     line_skip = 0 if header[0].startswith("#") else 1
     header = [c.strip("#") for c in header]
     record_to_annotatable = build_record_to_annotatable(
@@ -642,7 +648,7 @@ def _add_tasks_tabixed(
     task_graph.create_task(
         "tabix_index",
         _tabix_index,
-        args=[output_path, args["columns_args"]],
+        args=[output_path, args["columns_args"], args["output_separator"]],
         deps=[compress_task],
         input_files=[output_path],
         output_files=[f"{output_path}.tbi"],

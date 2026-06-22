@@ -28,6 +28,7 @@ from gain.annotation.annotate_tabular import (
     _CSVSource,
     _CSVWriter,
     _read_header,
+    _tabix_index,
     annotate_tabular,
     cli,
 )
@@ -2890,6 +2891,40 @@ def test_csv_header_quoted_column_name_parsed_consistently(
     assert source.header == ["chrom", "pos", "last, first"]
     assert _read_header(str(csv_path), separator=",") == \
         ["chrom", "pos", "last, first"]
+
+
+def test_tabix_index_comma_separated_header_resolves(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``_tabix_index`` resolves the seq/start/end columns from a
+    comma-separated output file when the output separator is threaded
+    through.
+
+    With the previously-hardcoded ``\\t`` the header parses as a single
+    column ``['#chrom,pos,name']`` and ``build_record_to_annotatable``
+    raises before any htslib call. Passing the real output separator lets
+    the columns resolve and the header-resolution step succeed; the
+    htslib ``tabix_index`` step itself still requires tab-delimited data
+    (an htslib limitation outside this function's control), so we assert
+    on the column-resolution behavior, not on a produced ``.tbi``."""
+    raw = tmp_path / "out.txt"
+    raw.write_text(
+        "#chrom,pos,name\n"
+        "chr1,23,a\n"
+        "chr1,24,b\n",
+    )
+    gz_path = tmp_path / "out.txt.gz"
+    pysam.tabix_compress(str(raw), str(gz_path), force=True)
+
+    # Old hardcoded-tab behavior: header is one column, no record type
+    # can be resolved -> ValueError before htslib is ever reached.
+    with pytest.raises(ValueError, match="no record to annotatable"):
+        _tabix_index(str(gz_path), {})
+
+    # Threaded separator: columns resolve, so the failure (if any) now
+    # comes from the htslib indexing step (OSError), not column lookup.
+    with pytest.raises(OSError, match="building of index"):
+        _tabix_index(str(gz_path), {}, separator=",")
 
 
 def test_cli_rejects_multichar_input_separator(
