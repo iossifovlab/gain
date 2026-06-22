@@ -7,7 +7,7 @@ import json
 import logging
 import os
 from threading import Lock
-from typing import Annotated, Any, Literal, cast
+from typing import IO, Annotated, Any, Literal, cast
 
 from pydantic import BaseModel, Field
 
@@ -236,6 +236,7 @@ class GeneSetCollection(
             names_file = None
             if self.resource.file_exists(names_filename):
                 names_file = self.resource.open_raw_file(names_filename)
+            map_file: IO[Any]
             if filename.endswith(".gz"):
                 map_file = gzip.open(  # noqa: SIM115
                     self.resource.open_raw_file(filename, "rb"), "rt")

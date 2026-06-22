@@ -300,8 +300,9 @@ def load_gene_terms(path: str) -> GeneTerms | None:
     if path.endswith(("-map.txt", "-map.txt.gz")):
         base = path.removesuffix(".gz")
         names_file = base[:-4] + "names.txt"
-        map_ctx = gzip.open(path, "rt") if path.endswith(".gz") else open(path)  # noqa: SIM115
-        with map_ctx as mapfile:
+        with (
+            gzip.open(path, "rt") if path.endswith(".gz") else open(path)
+        ) as mapfile:
             if not pathlib.Path(names_file).exists():
                 return read_mapping_file(mapfile, None)
             with open(names_file) as namesfile:
