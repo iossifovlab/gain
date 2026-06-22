@@ -19,7 +19,7 @@ from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline, Annotator
 from gain.genomic_resources.repository import GenomicResourceRepo
 
-from web_annotation.executor import ThreadedTaskExecutor
+from web_annotation.executor import TaskExecutor, ThreadedTaskExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -219,7 +219,10 @@ class LRUPipelineCache:
         load_timeout: float = 5 * 60,
     ):
         self._grr = grr
-        self._load_executor = ThreadedTaskExecutor(
+        # Typed to the TaskExecutor interface (the cache only uses .execute);
+        # production always builds a ThreadedTaskExecutor, but tests may swap
+        # in a SequentialTaskExecutor. See iossifovlab/gain#154.
+        self._load_executor: TaskExecutor = ThreadedTaskExecutor(
             max_workers=load_workers,
             job_timeout=load_timeout,
             thread_name_prefix="pipeline-loader",
