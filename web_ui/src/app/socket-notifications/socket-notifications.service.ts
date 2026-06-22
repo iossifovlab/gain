@@ -15,7 +15,7 @@ export class SocketNotificationsService {
   private socketNotifications: WebSocketSubject<object> | null = null;
   private readonly socket$ = new BehaviorSubject<WebSocketSubject<object> | null>(null);
   private reconnectionAttempts = 0;
-  private maxReconnectionAttempts = 10;
+  private maxReconnectionAttempts = 5;
   private isReconnecting = false;
   private pendingReconnection$: Observable<void> | null = null;
 
@@ -79,10 +79,10 @@ export class SocketNotificationsService {
       return throwError(() => new Error('Max reconnection attempts reached'));
     }
 
-    // First reconnection attempt: immediate. Then exponential backoff: 1s, 2s, 4s, 8s, 16s, etc. (max 30s)
+    // First reconnection attempt: 200ms (allow session sync in CI). Then exponential backoff: 1s, 2s, 4s, etc. (max 10s)
     const delayMs = this.reconnectionAttempts === 0
-      ? 0
-      : Math.min(1000 * Math.pow(2, this.reconnectionAttempts - 1), 30000);
+      ? 200
+      : Math.min(1000 * Math.pow(2, this.reconnectionAttempts - 1), 10000);
     this.reconnectionAttempts++;
 
     // Create the observable FIRST (don't close old connection yet - let subscriptions continue)
