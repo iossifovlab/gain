@@ -252,11 +252,23 @@ class LRUPipelineCache:
     def is_pipeline_loaded(
         self, pipeline_id: str,
     ) -> bool:
-        """Check if a pipeline is loaded."""
+        """Check if a pipeline is loaded.
+
+        A finished-but-failed load is *not* loaded: ``Future.done()`` is True
+        for a failed future too, so check that it completed without an
+        exception (resource validation is deferred to this load, #150 H1, so
+        failed builds are an expected state).
+        """
         with self._cache_lock:
             try:
-                return self.get_pipeline_future(pipeline_id).done()
+                future = self.get_pipeline_future(pipeline_id)
             except ValueError:
+                return False
+            if not future.done():
+                return False
+            try:
+                return future.exception() is None
+            except CancelledError:
                 return False
 
     @staticmethod
@@ -296,6 +308,7 @@ class LRUPipelineCache:
         *,
         begin_load_callback: Callable[[], None] | None = None,
         finish_load_callback: Callable[[], None] | None = None,
+        fail_load_callback: Callable[[BaseException], None] | None = None,
         delete_callback: Callable[[LoadingDetails], None] | None = None,
         force: bool = False,
     ) -> None:
@@ -306,6 +319,7 @@ class LRUPipelineCache:
         logger.debug(
             "thread %s calling put_pipeline for %s", thread, pipeline_id)
         same_config = False
+        same_config_future: Future[ThreadSafePipeline] | None = None
         detached: list[tuple[
             str, Future[ThreadSafePipeline] | None,
             LoadingDetails | None, Callable | None,
@@ -315,6 +329,7 @@ class LRUPipelineCache:
                 details = self._cache[pipeline_id]
                 if details.config_hash == pipeline_config_hash and not force:
                     same_config = True
+                    same_config_future = details.future
                 else:
                     old_future, old_details, old_delete_cb = (
                         self._detach_pipeline_locked(pipeline_id)
@@ -345,6 +360,7 @@ class LRUPipelineCache:
                     grr=self._grr,
                     pipeline_id=pipeline_id,
                     callback_success=finish_load_callback,
+                    callback_failure=fail_load_callback,
                 )
 
                 loading_details = LoadingDetails(
@@ -359,7 +375,19 @@ class LRUPipelineCache:
                 self._order.append(pipeline_id)
 
         if same_config:
-            if finish_load_callback is not None:
+            # The cached entry already has this exact config. Re-fire the
+            # terminal callback matching its *outcome*: a cached failed load
+            # must not be reported as loaded (#150 H1 follow-up).
+            same_config_exc: BaseException | None = None
+            if same_config_future is not None and same_config_future.done():
+                try:
+                    same_config_exc = same_config_future.exception()
+                except CancelledError:
+                    same_config_exc = None
+            if same_config_exc is not None:
+                if fail_load_callback is not None:
+                    fail_load_callback(same_config_exc)
+            elif finish_load_callback is not None:
                 finish_load_callback()
             return
 

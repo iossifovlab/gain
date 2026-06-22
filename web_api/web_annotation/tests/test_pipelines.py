@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import contextlib
 import textwrap
 from unittest.mock import MagicMock
 
@@ -10,6 +11,7 @@ from django.test import Client
 from gain.genomic_resources.repository import GenomicResourceRepo
 
 from web_annotation.annotation_base_view import AnnotationBaseView
+from web_annotation.executor import SequentialTaskExecutor
 from web_annotation.models import Pipeline, User
 from web_annotation.pipeline_cache import LRUPipelineCache
 
@@ -196,3 +198,197 @@ def test_view_get_pipeline_reraises_after_exhausting_retries(
     # Bounded: a small finite number of attempts, not an infinite loop.
     assert 1 < fake_cache.get_pipeline.call_count <= 5
     assert put_spy.call_count >= 1
+
+
+@pytest.mark.django_db
+def test_save_user_pipeline_defers_resource_validation(
+    user_client: Client,
+    test_grr: GenomicResourceRepo,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Saving a pipeline must not build it against the GRR on the request
+    thread (#150 H1).
+
+    A structurally-valid config that references a resource which does not
+    exist in the GRR is accepted (200): deep, resource-resolving validation
+    is deferred to the background loader, not performed inline. Previously
+    this returned 400 because the view built the pipeline synchronously.
+    """
+    cache = LRUPipelineCache(test_grr, 16)
+    mocker.patch(
+        "web_annotation.pipelines.views.UserPipeline.lru_cache", new=cache)
+
+    params = {
+        "config": ContentFile("- position_score: scores/NONEXISTENT"),
+        "name": "deferred_validation_pipeline",
+    }
+    response = user_client.post("/api/pipelines/user", params)
+
+    assert response.status_code == 200
+
+    # The deep build is deferred to the background loader and fails there
+    # (the resource is missing); drain that future so the worker thread does
+    # not outlive the test.
+    pipeline_id = response.json()["id"]
+    with contextlib.suppress(Exception):
+        cache._cache[pipeline_id].future.result(timeout=10)
+
+
+@pytest.mark.django_db
+def test_save_user_pipeline_rejects_malformed_yaml(
+    user_client: Client,
+    test_grr: GenomicResourceRepo,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Structurally-broken config is still rejected synchronously (400).
+
+    Deferring *resource* validation to the loader must not drop the cheap
+    structural check: a config that is not even valid YAML never reaches the
+    background loader and is rejected up front.
+    """
+    cache = LRUPipelineCache(test_grr, 16)
+    mocker.patch(
+        "web_annotation.pipelines.views.UserPipeline.lru_cache", new=cache)
+
+    params = {
+        "config": ContentFile("annotators: [unbalanced"),
+        "name": "malformed_pipeline",
+    }
+    response = user_client.post("/api/pipelines/user", params)
+
+    assert response.status_code == 400
+    assert Pipeline.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_background_load_failure_notifies_user(
+    user_client: Client,
+    test_grr: GenomicResourceRepo,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """A deferred load failure is surfaced to the user via the load path.
+
+    Because resource validation is deferred (#150 H1), a config that cannot
+    be built must not leave the client waiting on a 'loading' status forever:
+    the background loader must notify the user when the load fails.
+    """
+    cache = LRUPipelineCache(test_grr, 16)
+    # Run the deferred load inline + synchronously so the failure callback
+    # fires deterministically within the request.
+    cache._load_executor = SequentialTaskExecutor()
+    mocker.patch(
+        "web_annotation.pipelines.views.UserPipeline.lru_cache", new=cache)
+    notify = mocker.patch.object(
+        AnnotationBaseView, "_notify_user_pipeline")
+
+    params = {
+        "config": ContentFile("- position_score: scores/NONEXISTENT"),
+        "name": "bad_resource_pipeline",
+    }
+    response = user_client.post("/api/pipelines/user", params)
+
+    assert response.status_code == 200
+    notified_statuses = [call.args[-1] for call in notify.call_args_list]
+    assert "unloaded" in notified_statuses
+
+
+@pytest.mark.django_db
+def test_use_unbuildable_saved_pipeline_returns_4xx_not_500(
+    user_client: Client,
+    test_grr: GenomicResourceRepo,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Consuming a saved-but-unbuildable pipeline yields a 4xx, not a 500.
+
+    Resource validation is deferred (#150 H1), so an unresolvable config is
+    saved (200). Using it later (here via the doc endpoint, which resolves the
+    pipeline through get_pipeline) must surface a clean client error, not a
+    500 from the deferred build exception leaking out.
+    """
+    cache = LRUPipelineCache(test_grr, 16)
+    mocker.patch(
+        "web_annotation.annotation_base_view.AnnotationBaseView.lru_cache",
+        new=cache)
+
+    save = user_client.post("/api/pipelines/user", {
+        "config": ContentFile("- position_score: scores/NONEXISTENT"),
+        "name": "broken_pipeline",
+    })
+    assert save.status_code == 200
+    pipeline_id = save.json()["id"]
+
+    # Wait for the deferred build to fail.
+    with contextlib.suppress(Exception):
+        cache._cache[pipeline_id].future.result(timeout=10)
+
+    response = user_client.get(
+        f"/api/pipelines/doc?pipeline_id={pipeline_id}")
+    assert 400 <= response.status_code < 500
+
+
+@pytest.mark.django_db
+def test_list_pipelines_reports_failed_load_as_unloaded(
+    user_client: Client,
+    test_grr: GenomicResourceRepo,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """A pipeline whose deferred build failed lists as 'unloaded'.
+
+    is_pipeline_loaded must not count a failed (but done) future as loaded;
+    otherwise the listing status contradicts the 'unloaded' the loader pushes
+    over the websocket.
+    """
+    cache = LRUPipelineCache(test_grr, 16)
+    mocker.patch(
+        "web_annotation.annotation_base_view.AnnotationBaseView.lru_cache",
+        new=cache)
+
+    save = user_client.post("/api/pipelines/user", {
+        "config": ContentFile("- position_score: scores/NONEXISTENT"),
+        "name": "broken_pipeline",
+    })
+    assert save.status_code == 200
+    pipeline_id = save.json()["id"]
+    with contextlib.suppress(Exception):
+        cache._cache[pipeline_id].future.result(timeout=10)
+
+    pipelines = user_client.get("/api/pipelines").json()
+    broken = next(p for p in pipelines if p["id"] == pipeline_id)
+    assert broken["status"] == "unloaded"
+
+
+@pytest.mark.django_db
+def test_resaving_identical_broken_config_does_not_notify_loaded(
+    user_client: Client,
+    test_grr: GenomicResourceRepo,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Re-saving an identical broken config must not report 'loaded'.
+
+    The same-config cache short-circuit in put_pipeline must not fire the
+    success notification for a cached *failed* load (#150 H1 follow-up).
+    """
+    cache = LRUPipelineCache(test_grr, 16)
+    mocker.patch(
+        "web_annotation.annotation_base_view.AnnotationBaseView.lru_cache",
+        new=cache)
+    config = "- position_score: scores/NONEXISTENT"
+
+    save = user_client.post("/api/pipelines/user", {
+        "config": ContentFile(config), "name": "broken_pipeline",
+    })
+    assert save.status_code == 200
+    pipeline_id = save.json()["id"]
+    with contextlib.suppress(Exception):
+        cache._cache[pipeline_id].future.result(timeout=10)
+
+    # Re-save the identical config -> same-config short-circuit path.
+    notify = mocker.patch.object(AnnotationBaseView, "_notify_user_pipeline")
+    resave = user_client.post("/api/pipelines/user", {
+        "id": pipeline_id,
+        "config": ContentFile(config),
+        "name": "broken_pipeline",
+    })
+    assert resave.status_code == 200
+    statuses = [call.args[-1] for call in notify.call_args_list]
+    assert "loaded" not in statuses

@@ -1603,6 +1603,11 @@ def test_get_pipelines(
     assert TemporaryPipeline.objects.filter(
         session_id=user_client.session.session_key).count() == 1
 
+    # Resource validation / pipeline build is deferred to the background
+    # loader (#150 H1), so the listed status is "loaded" only once that load
+    # finishes. Wait for it instead of relying on it racing ahead of the GET.
+    mock_lru_cache.get_pipeline("1")
+
     response = user_client.get("/api/pipelines")
     pipelines = response.json()
     assert len(pipelines) == 4

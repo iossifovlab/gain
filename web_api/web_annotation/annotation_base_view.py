@@ -20,6 +20,7 @@ from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
 from rest_framework import views
+from rest_framework.exceptions import ValidationError
 from rest_framework.request import MultiValueDict
 from rest_framework.views import Request, Response
 
@@ -241,6 +242,15 @@ class AnnotationBaseView(views.APIView):
         def finish_load_callback() -> None:
             notify_function(pipeline_id, "loaded")
 
+        def fail_load_callback(exc: BaseException) -> None:
+            # Resource-resolving validation is deferred to this background
+            # load (#150 H1), so a build failure here is the user's first and
+            # only signal that the config is bad -- surface it instead of
+            # leaving the client stuck on "loading".
+            logger.warning(
+                "background load of pipeline %s failed: %s", pipeline_id, exc)
+            notify_function(pipeline_id, "unloaded")
+
         def delete_callback(*_args: Any) -> None:
             notify_function(pipeline_id, "unloaded")
 
@@ -249,6 +259,7 @@ class AnnotationBaseView(views.APIView):
             pipeline_config,
             begin_load_callback=begin_load_callback,
             finish_load_callback=finish_load_callback,
+            fail_load_callback=fail_load_callback,
             delete_callback=delete_callback,
             force=force,
         )
@@ -296,6 +307,19 @@ class AnnotationBaseView(views.APIView):
                     pipeline_id, attempt + 1, self.GET_PIPELINE_MAX_ATTEMPTS,
                 )
                 self.put_pipeline(pipeline_id, user)
+            except Exception as build_error:
+                # The deferred background build itself failed (missing/invalid
+                # resource, bad config). Resource validation is deferred to
+                # this load (#150 H1), so an unbuildable saved pipeline first
+                # fails here -- retrying is futile (the config is
+                # deterministically unbuildable), so surface it as a 4xx
+                # client error instead of letting it escape as a 500.
+                logger.warning(
+                    "pipeline %s failed to build: %s",
+                    pipeline_id, build_error)
+                raise ValidationError(
+                    f"Pipeline could not be loaded: {build_error}",
+                ) from build_error
         assert last_error is not None
         raise last_error
 
