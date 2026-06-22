@@ -9,11 +9,12 @@ from django.conf import settings
 from django.core.files.base import ContentFile
 from django.test import Client
 from gain.genomic_resources.repository import GenomicResourceRepo
+from rest_framework.exceptions import NotFound, ValidationError
 
 from web_annotation.annotation_base_view import AnnotationBaseView
 from web_annotation.executor import SequentialTaskExecutor
 from web_annotation.models import Pipeline, User
-from web_annotation.pipeline_cache import LRUPipelineCache
+from web_annotation.pipeline_cache import LRUPipelineCache, PipelineNotCached
 
 
 @pytest.mark.django_db
@@ -160,7 +161,7 @@ def test_view_get_pipeline_reloads_on_cache_miss(
     # First resolution misses (evicted/reaped in the residual window);
     # after a reload it resolves.
     fake_cache.get_pipeline.side_effect = [
-        ValueError("Pipeline p not found"),
+        PipelineNotCached("Pipeline p not found"),
         sentinel,
     ]
     mocker.patch.object(view, "lru_cache", fake_cache)
@@ -180,19 +181,20 @@ def test_view_get_pipeline_reraises_after_exhausting_retries(
     """A genuinely-missing pipeline still raises after bounded retries (#140).
 
     The reload-on-miss retry must be bounded so a pipeline that cannot be
-    loaded does not loop forever; after the bound it re-raises the original
-    cache-miss ValueError so the view layer still returns a 4xx.
+    loaded does not loop forever; after the bound it raises NotFound so the
+    view layer still returns a 4xx.
     """
     view = AnnotationBaseView()
     user = MagicMock()
 
     fake_cache = MagicMock()
     fake_cache.has_pipeline.return_value = False
-    fake_cache.get_pipeline.side_effect = ValueError("Pipeline p not found")
+    fake_cache.get_pipeline.side_effect = PipelineNotCached(
+        "Pipeline p not found")
     mocker.patch.object(view, "lru_cache", fake_cache)
     put_spy = mocker.patch.object(view, "put_pipeline")
 
-    with pytest.raises(ValueError, match="Pipeline p not found"):
+    with pytest.raises(NotFound):
         view.get_pipeline("p", user)
 
     # Bounded: a small finite number of attempts, not an infinite loop.
@@ -324,6 +326,64 @@ def test_use_unbuildable_saved_pipeline_returns_4xx_not_500(
     response = user_client.get(
         f"/api/pipelines/doc?pipeline_id={pipeline_id}")
     assert 400 <= response.status_code < 500
+
+
+@pytest.mark.django_db
+def test_use_pipeline_with_unsupported_annotator_returns_4xx(
+    user_client: Client,
+    test_grr: GenomicResourceRepo,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """A deferred build that fails on a bad config yields 4xx, not 500.
+
+    Real-stack regression for an unsupported-annotator config (which the
+    factory raises as AnnotationConfigurationError).
+    """
+    cache = LRUPipelineCache(test_grr, 16)
+    mocker.patch(
+        "web_annotation.annotation_base_view.AnnotationBaseView.lru_cache",
+        new=cache)
+
+    save = user_client.post("/api/pipelines/user", {
+        "config": ContentFile("- not_a_real_annotator: scores/pos1"),
+        "name": "bad_annotator_pipeline",
+    })
+    assert save.status_code == 200
+    pipeline_id = save.json()["id"]
+    with contextlib.suppress(Exception):
+        cache._cache[pipeline_id].future.result(timeout=10)
+
+    response = user_client.get(
+        f"/api/pipelines/doc?pipeline_id={pipeline_id}")
+    assert 400 <= response.status_code < 500
+
+
+def test_get_pipeline_build_error_is_4xx_not_cache_miss_retry(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """A build error (even a plain ValueError) is surfaced as a 4xx, not
+    misclassified as a cache-miss and retried (#150 review).
+
+    The cache-miss signal must be a distinct type so that a build ValueError
+    is not conflated with it (which would re-run the expensive build up to the
+    retry bound and then escape as a 500).
+    """
+    view = AnnotationBaseView()
+    user = MagicMock()
+
+    fake_cache = MagicMock()
+    fake_cache.has_pipeline.return_value = True
+    fake_cache.get_pipeline.side_effect = ValueError(
+        "unsupported annotator type")
+    mocker.patch.object(view, "lru_cache", fake_cache)
+    put_spy = mocker.patch.object(view, "put_pipeline")
+
+    with pytest.raises(ValidationError):
+        view.get_pipeline("p", user)
+
+    # Not retried as a cache-miss: built once, no reload.
+    assert fake_cache.get_pipeline.call_count == 1
+    assert not put_spy.called
 
 
 @pytest.mark.django_db

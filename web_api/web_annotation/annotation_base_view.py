@@ -20,7 +20,7 @@ from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
 from rest_framework import views
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.request import MultiValueDict
 from rest_framework.views import Request, Response
 
@@ -35,7 +35,11 @@ from web_annotation.models import (
     Job,
     User,
 )
-from web_annotation.pipeline_cache import LRUPipelineCache, ThreadSafePipeline
+from web_annotation.pipeline_cache import (
+    LRUPipelineCache,
+    PipelineNotCached,
+    ThreadSafePipeline,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -289,13 +293,13 @@ class AnnotationBaseView(views.APIView):
         across the await. After the bound is exhausted the original
         ``ValueError`` is re-raised so a genuinely-missing pipeline still 4xx's.
         """
-        last_error: ValueError | None = None
+        last_error: PipelineNotCached | None = None
         for attempt in range(self.GET_PIPELINE_MAX_ATTEMPTS):
             if not self.lru_cache.has_pipeline(pipeline_id):
                 self.put_pipeline(pipeline_id, user)
             try:
                 return self.lru_cache.get_pipeline(pipeline_id)
-            except ValueError as error:
+            except PipelineNotCached as error:
                 # The entry vanished between put and the cache's pin (residual
                 # eviction window), or was reaped / force-reloaded while we
                 # awaited. Reload from source and retry rather than emit a
@@ -309,19 +313,25 @@ class AnnotationBaseView(views.APIView):
                 self.put_pipeline(pipeline_id, user)
             except Exception as build_error:
                 # The deferred background build itself failed (missing/invalid
-                # resource, bad config). Resource validation is deferred to
-                # this load (#150 H1), so an unbuildable saved pipeline first
-                # fails here -- retrying is futile (the config is
-                # deterministically unbuildable), so surface it as a 4xx
-                # client error instead of letting it escape as a 500.
+                # resource, bad config -- the annotation factory raises these
+                # as ValueError/AnnotationConfigurationError/etc, distinct from
+                # the PipelineNotCached cache-miss above). Validation is
+                # deferred to this load (#150 H1), so an unbuildable saved
+                # pipeline first fails here -- retrying is futile (the config
+                # is deterministically unbuildable), so surface a 4xx client
+                # error instead of letting it escape as a 500.
                 logger.warning(
                     "pipeline %s failed to build: %s",
                     pipeline_id, build_error)
                 raise ValidationError(
                     f"Pipeline could not be loaded: {build_error}",
                 ) from build_error
-        assert last_error is not None
-        raise last_error
+        # Exhausted the reload-on-miss bound: the pipeline is genuinely not
+        # available. Surface a 4xx everywhere (NotFound renders as 404 via
+        # DRF) instead of re-raising the bare cache-miss as a 500.
+        raise NotFound(
+            f"Pipeline {pipeline_id} could not be loaded",
+        ) from last_error
 
     def get_genome(self, data: QueryDict) -> str:
         """Get genome from a request."""
