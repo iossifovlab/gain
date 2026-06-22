@@ -176,7 +176,7 @@ less conserved positions. This provides a compact view of how conservation varie
 
 This example summarizes how many resources of selected types are available for each genome build 
 in the GRR. The script iterates over all resources, assigns each resource to a genome based on 
-the prefix of its resource ID (e.g., ``hg19/``, ``hg38/``, ``t2t/``), filters by resource type, and counts 
+the prefix of its resource ID (e.g., ``hg19/``, ``hg38/``, ``hs1/``), filters by resource type, and counts 
 how many resources of each type are present for each genome. The result is organized as a table (DataFrame).
 
 .. code-block:: python
@@ -187,7 +187,7 @@ how many resources of each type are present for each genome. The result is organ
 
     grr = build_genomic_resource_repository()
 
-    genomes = ["hg19", "hg38", "t2t"]
+    genomes = ["hg19", "hg38", "hs1"]
     types = ["genome", "gene_models", "position_score", "allele_score", "cnv_collection"]
 
     # initialize counts
