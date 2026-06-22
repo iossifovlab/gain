@@ -415,6 +415,21 @@ pipeline {
         }
         cleanup {
             sh '''
+                # Backstop teardown of the whole compose project
+                # (db + volumes + network). The Run-e2e stage's own
+                # `down -v` only fires when the pipeline reaches that
+                # stage; a failure or abort earlier leaves containers
+                # orphaned. The dominant path is the `Instance import`
+                # stage: `compose run --rm backend-e2e-setup` removes
+                # only the setup container, but the `db` it pulled up
+                # via depends_on stays running — and if that stage
+                # fails, Run-e2e's `down -v` never runs. Keyed on
+                # $COMPOSE_PROJECT with no `-f` files so `down`
+                # resolves the project by label and works even if
+                # checkout never ran.
+                docker compose -p "$COMPOSE_PROJECT" \
+                    down -v --remove-orphans 2>/dev/null || true
+
                 for img in "$BACKEND_IMAGE" "$FRONTEND_IMAGE"; do
                     docker rmi "$img" 2>/dev/null || true
                 done
