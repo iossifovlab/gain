@@ -33,6 +33,24 @@ def test_gene_set_collection_main(
     assert gene_set["desc"] == "Main Candidates"
 
 
+def test_gene_set_collection_gzipped_map(
+    gene_sets_repo_in_memory: GenomicResourceRepo,
+) -> None:
+    resource = gene_sets_repo_in_memory.get_resource("test_mapping_gz")
+    gsc = GeneSetCollection(resource)
+    gsc.load()
+
+    gene_set = gsc.get_gene_set("test:01")
+    assert gene_set is not None
+    assert set(gene_set["syms"]) == {"POGZ"}
+    assert gene_set["desc"] == "test_first"
+
+    gene_set = gsc.get_gene_set("test:02")
+    assert gene_set is not None
+    assert set(gene_set["syms"]) == {"POGZ", "CHD8"}
+    assert gene_set["desc"] == "test_second"
+
+
 def test_build_gene_set_collection_from_resource_id(
     gene_sets_repo_in_memory: GenomicResourceRepo,
 ) -> None:
