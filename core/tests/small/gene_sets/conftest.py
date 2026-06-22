@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 
+import gzip
 import os
 import textwrap
 from typing import Any
@@ -65,6 +66,26 @@ def grr_contents() -> dict[str, Any]:
                 "#geneNS\tsym\n"
                 "POGZ\ttest:01 test:02\n"
                 "CHD8\ttest:02 test:03\n"
+            ),
+            "test-mapnames.txt": (
+                "test:01\ttest_first\n"
+                "test:02\ttest_second\n"
+                "test:03\ttest_third\n"
+            ),
+        },
+        "test_mapping_gz": {
+            GR_CONF_FILE_NAME: textwrap.dedent("""
+                type: gene_set_collection
+                id: test_mapping_gz
+                format: map
+                filename: test-map.txt.gz
+                web_label: Test mapping gz
+                web_format_str: "key| (|count|)"
+            """),
+            "test-map.txt.gz": gzip.compress(
+                b"#geneNS\tsym\n"
+                b"POGZ\ttest:01 test:02\n"
+                b"CHD8\ttest:02 test:03\n",
             ),
             "test-mapnames.txt": (
                 "test:01\ttest_first\n"

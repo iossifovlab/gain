@@ -1,5 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import gzip
 import os
+import pathlib
 from collections.abc import Callable
 
 import pytest
@@ -90,6 +92,28 @@ def test_load_gmt_file(fixture_filename: Callable[[str], str]) -> None:
             "DCXR",
           "UGT1A9",
         }
+
+
+def test_load_gene_terms_gzipped_map(tmp_path: pathlib.Path) -> None:
+    map_gz = tmp_path / "test-map.txt.gz"
+    map_gz.write_bytes(gzip.compress(
+        b"#geneNS\tsym\n"
+        b"POGZ\ttest:01 test:02\n"
+        b"CHD8\ttest:02 test:03\n",
+    ))
+    (tmp_path / "test-mapnames.txt").write_text(
+        "test:01\ttest_first\n"
+        "test:02\ttest_second\n"
+        "test:03\ttest_third\n",
+    )
+
+    gene_terms = load_gene_terms(str(map_gz))
+    assert gene_terms is not None
+    assert set(gene_terms.t2g["test:01"].keys()) == {"POGZ"}
+    assert set(gene_terms.t2g["test:02"].keys()) == {"POGZ", "CHD8"}
+    assert gene_terms.t_desc["test:01"] == "test_first"
+    assert gene_terms.t_desc["test:02"] == "test_second"
+    assert gene_terms.t_desc["test:03"] == "test_third"
 
 
 def test_load_gene_sets_directory(
