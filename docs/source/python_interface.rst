@@ -223,7 +223,7 @@ where each entry gives the number of resources of that type for the correspondin
 .. csv-table::
     :header-rows: 1
 
-    resource_type,hg19,hg38,t2t
+    resource_type,hg19,hg38,hs1
     genome,1,3,1
     gene_models,5,47,1
     position_score,152,8,0
