@@ -77,16 +77,6 @@ describe('SocketNotificationsService', () => {
     expect(result).toBe(converted);
   });
 
-  it('calls complete on the underlying WebSocketSubject when closeConnection is called', () => {
-    const completeSpy = jest.spyOn(subject, 'complete');
-
-    service.getJobNotifications();
-    service.closeConnection();
-
-    expect(service['socketNotifications']).toBeNull();
-    expect(completeSpy).toHaveBeenCalledWith();
-  });
-
   it('should propagate non-retryable errors for job notifications', async() => {
     const error = new Error('connection error');
     const resultPromise = firstValueFrom(service.getJobNotifications());

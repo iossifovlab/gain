@@ -88,9 +88,10 @@ export class SocketNotificationsService {
     // Create the observable FIRST (don't close old connection yet - let subscriptions continue)
     const reconnectObservable = timer(delayMs).pipe(
       tap(() => {
-        // Close the old connection before creating new one
-        this.closeConnection();
-        // After delay, create and emit the new WebSocket
+        // Create new WebSocket without explicitly closing old one.
+        // Let old connection die naturally; don't force close to avoid
+        // "closed before connection established" race condition.
+        this.socketNotifications = null;
         this.ensureConnected();
         this.isReconnecting = false;
         this.pendingReconnection$ = null;
@@ -114,8 +115,4 @@ export class SocketNotificationsService {
     return reconnectObservable;
   }
 
-  public closeConnection(): void {
-    this.socketNotifications?.complete();
-    this.socketNotifications = null;
-  }
 }

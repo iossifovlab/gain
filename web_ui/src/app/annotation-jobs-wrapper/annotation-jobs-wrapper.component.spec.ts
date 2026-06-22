@@ -82,8 +82,6 @@ class JobsServiceMock {
   public getSocketNotifications(): Observable<object> {
     return of({});
   }
-
-  public closeConnection(): void { }
 }
 
 class SocketNotificationsServiceMock {
@@ -94,8 +92,6 @@ class SocketNotificationsServiceMock {
   public getJobNotifications(): Observable<JobNotification> {
     return of(new JobNotification(1, 'failed'));
   }
-
-  public closeConnection(): void { }
 
   public reopenConnection(): Observable<void> {
     return of(undefined);
