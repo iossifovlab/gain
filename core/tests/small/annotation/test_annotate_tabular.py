@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613,C0302
+import csv
 import gzip
 import logging
 import os
@@ -26,6 +27,8 @@ from gain.annotation.annotate_tabular import (
     _CSVHeader,
     _CSVSource,
     _CSVWriter,
+    _read_header,
+    _tabix_index,
     annotate_tabular,
     cli,
 )
@@ -2686,3 +2689,319 @@ def test_annotate_tabular_function_with_compressed_input_output(
     with gzip.open(str(out_file), "rt") as result:
         out_file_content = result.read()
     assert out_file_content == out_expected_content
+
+
+# ---------------------------------------------------------------------------
+# Quote-aware CSV/TSV parsing and writing (iossifovlab/gain#144).
+# ---------------------------------------------------------------------------
+
+
+def test_csv_source_quoted_comma_field_is_one_column(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A quoted CSV field containing the comma delimiter parses as ONE column.
+
+    Regression for iossifovlab/gain#144: the reader used a naive
+    ``str.split(sep)`` that broke a quoted ``"Smith, John"`` into two columns.
+    """
+    csv_path = tmp_path / "data.csv"
+    csv_path.write_text(
+        'chrom,pos,name\n'
+        'chr1,23,"Smith, John"\n',
+    )
+
+    with _CSVSource(str(csv_path), None, {}, ",") as source:
+        result = list(source.fetch())
+    assert len(result) == 1
+    assert result[0].source == {
+        "chrom": "chr1", "pos": "23", "name": "Smith, John",
+    }
+
+
+def test_csv_source_quoted_tab_field_is_one_column(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A quoted TSV field containing the tab delimiter parses as ONE column."""
+    tsv_path = tmp_path / "data.tsv"
+    tsv_path.write_text(
+        'chrom\tpos\tname\n'
+        'chr1\t23\t"a\tb"\n',
+    )
+
+    with _CSVSource(str(tsv_path), None, {}, "\t") as source:
+        result = list(source.fetch())
+    assert len(result) == 1
+    assert result[0].source == {
+        "chrom": "chr1", "pos": "23", "name": "a\tb",
+    }
+
+
+def test_csv_source_escaped_quote_parses_to_literal_quote(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An escaped quote ``""`` inside a quoted field parses to a literal
+    ``"``."""
+    csv_path = tmp_path / "data.csv"
+    csv_path.write_text(
+        'chrom,pos,note\n'
+        'chr1,23,"say ""hi"""\n',
+    )
+
+    with _CSVSource(str(csv_path), None, {}, ",") as source:
+        result = list(source.fetch())
+    assert result[0].source["note"] == 'say "hi"'
+
+
+def test_csv_source_tabixed_quoted_field(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A bgzipped+tabix-indexed input with a quoted field parses correctly
+    through the ``TabixFile.fetch()`` path."""
+    raw = tmp_path / "data.txt"
+    raw.write_text(
+        '#chrom\tpos\tname\n'
+        'chr1\t23\t"Smith, John"\n'
+        'chr1\t24\t"a\tb"\n',
+    )
+    gz_path = tmp_path / "data.txt.gz"
+    pysam.tabix_compress(str(raw), str(gz_path), force=True)
+    pysam.tabix_index(
+        str(gz_path), seq_col=0, start_col=1, end_col=1, force=True)
+
+    with _CSVSource(str(gz_path), None, {}, "\t") as source:
+        result = list(source.fetch())
+    assert len(result) == 2
+    assert result[0].source == {
+        "chrom": "chr1", "pos": "23", "name": "Smith, John",
+    }
+    assert result[1].source["name"] == "a\tb"
+
+
+def test_csv_writer_quotes_value_containing_delimiter(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A written value containing the delimiter is emitted wrapped in quotes."""
+    out_path = tmp_path / "out.csv"
+    header = _CSVHeader(["chrom", "pos", "name"], [])
+
+    with _CSVWriter(str(out_path), ",", header) as writer:
+        writer.filter(AnnotationsWithSource(
+            {"chrom": "chr1", "pos": "23", "name": "Smith, John"},
+            [Annotation(Position("chr1", 23), {})],
+        ))
+
+    lines = out_path.read_text().splitlines()
+    assert lines[0] == "chrom,pos,name"
+    assert lines[1] == 'chr1,23,"Smith, John"'
+
+
+def test_csv_writer_doubles_and_wraps_embedded_quote(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A written value containing a quote is doubled and wrapped in quotes."""
+    out_path = tmp_path / "out.csv"
+    header = _CSVHeader(["chrom", "pos", "note"], [])
+
+    with _CSVWriter(str(out_path), ",", header) as writer:
+        writer.filter(AnnotationsWithSource(
+            {"chrom": "chr1", "pos": "23", "note": 'say "hi"'},
+            [Annotation(Position("chr1", 23), {})],
+        ))
+
+    lines = out_path.read_text().splitlines()
+    assert lines[1] == 'chr1,23,"say ""hi"""'
+
+
+def test_csv_writer_uses_lf_line_endings(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Output uses ``\\n`` line endings, never ``\\r\\n`` (tabix/concat rely
+    on stripping ``\\r\\n`` and the default csv ``\\r\\n`` would break that)."""
+    out_path = tmp_path / "out.csv"
+    header = _CSVHeader(["chrom", "pos", "name"], [])
+
+    with _CSVWriter(str(out_path), ",", header) as writer:
+        writer.filter(AnnotationsWithSource(
+            {"chrom": "chr1", "pos": "23", "name": "Smith, John"},
+            [Annotation(Position("chr1", 23), {})],
+        ))
+
+    raw = out_path.read_bytes()
+    assert b"\r" not in raw
+
+
+def test_csv_writer_plain_tsv_is_byte_identical(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A plain TSV row with no quotable characters is emitted unchanged --
+    QUOTE_MINIMAL must not churn ordinary output."""
+    out_path = tmp_path / "out.tsv"
+    header = _CSVHeader(["chrom", "pos"], ["score"])
+
+    with _CSVWriter(str(out_path), "\t", header) as writer:
+        writer.filter(AnnotationsWithSource(
+            {"chrom": "chr1", "pos": "23"},
+            [Annotation(Position("chr1", 23), {"score": "0.1"})],
+        ))
+
+    assert out_path.read_bytes() == b"chrom\tpos\tscore\nchr1\t23\t0.1\n"
+
+
+def test_annotate_tabular_round_trip_quoted_field(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Annotating an input whose column contains the separator and re-parsing
+    the output with Python's csv keeps every column aligned."""
+    in_file = tmp_path / "in.csv"
+    out_file = tmp_path / "out.csv"
+    in_file.write_text(
+        'chrom,pos,name\n'
+        'chr1,23,"Smith, John"\n'
+        'chr1,24,"Doe, Jane"\n',
+    )
+
+    grr_file = annotate_directory_fixture / "grr.yaml"
+    grr = build_genomic_resource_repository(file_name=str(grr_file))
+    pipeline = build_annotation_pipeline([{"position_score": "one"}], grr)
+    args = _build_annotate_tabular_args(
+        input_separator=",", output_separator=",")
+
+    annotate_tabular(str(in_file), pipeline, str(out_file), args)
+
+    with open(out_file, newline="") as out:
+        rows = list(csv.reader(out))
+    assert rows[0] == ["chrom", "pos", "name", "score"]
+    assert rows[1] == ["chr1", "23", "Smith, John", "0.1"]
+    assert rows[2] == ["chr1", "24", "Doe, Jane", "0.2"]
+
+
+def test_csv_header_quoted_column_name_parsed_consistently(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A quoted column name containing the delimiter is parsed as one column
+    by both ``_CSVSource._extract_header`` and ``_read_header``."""
+    csv_path = tmp_path / "data.csv"
+    csv_path.write_text(
+        'chrom,pos,"last, first"\n'
+        'chr1,23,x\n',
+    )
+
+    source = _CSVSource(str(csv_path), None, {}, ",")
+    assert source.header == ["chrom", "pos", "last, first"]
+    assert _read_header(str(csv_path), separator=",") == \
+        ["chrom", "pos", "last, first"]
+
+
+def test_tabix_index_comma_separated_header_resolves(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``_tabix_index`` resolves the seq/start/end columns from a
+    comma-separated output file when the output separator is threaded
+    through.
+
+    With the previously-hardcoded ``\\t`` the header parses as a single
+    column ``['#chrom,pos,name']`` and ``build_record_to_annotatable``
+    raises before any htslib call. Passing the real output separator lets
+    the columns resolve and the header-resolution step succeed; the
+    htslib ``tabix_index`` step itself still requires tab-delimited data
+    (an htslib limitation outside this function's control), so we assert
+    on the column-resolution behavior, not on a produced ``.tbi``."""
+    raw = tmp_path / "out.txt"
+    raw.write_text(
+        "#chrom,pos,name\n"
+        "chr1,23,a\n"
+        "chr1,24,b\n",
+    )
+    gz_path = tmp_path / "out.txt.gz"
+    pysam.tabix_compress(str(raw), str(gz_path), force=True)
+
+    # Old hardcoded-tab behavior: header is one column, no record type
+    # can be resolved -> ValueError before htslib is ever reached.
+    with pytest.raises(ValueError, match="no record to annotatable"):
+        _tabix_index(str(gz_path), {})
+
+    # Threaded separator: columns resolve, so the failure (if any) now
+    # comes from the htslib indexing step (OSError), not column lookup.
+    with pytest.raises(OSError, match="building of index"):
+        _tabix_index(str(gz_path), {}, separator=",")
+
+
+def test_cli_rejects_multichar_input_separator(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A multi-character ``--input-separator`` is rejected early with a clear
+    message (the csv module requires a single-character delimiter)."""
+    root_path = annotate_directory_fixture
+    in_file = tmp_path / "in.txt"
+    setup_denovo(in_file, "chrom\tpos\nchr1\t23\n")
+
+    with pytest.raises(ValueError, match=r"--input-separator must be a single"):
+        cli([
+            str(a) for a in [
+                in_file, root_path / "annotation.yaml",
+                "--grr", root_path / "grr.yaml",
+                "-o", tmp_path / "out.txt", "-w", tmp_path / "work",
+                "-j", 1, "--in-sep", "\t\t",
+            ]
+        ])
+
+
+def test_cli_rejects_multichar_output_separator(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A multi-character ``--output-separator`` is rejected early."""
+    root_path = annotate_directory_fixture
+    in_file = tmp_path / "in.txt"
+    setup_denovo(in_file, "chrom\tpos\nchr1\t23\n")
+
+    with pytest.raises(
+            ValueError, match=r"--output-separator must be a single"):
+        cli([
+            str(a) for a in [
+                in_file, root_path / "annotation.yaml",
+                "--grr", root_path / "grr.yaml",
+                "-o", tmp_path / "out.txt", "-w", tmp_path / "work",
+                "-j", 1, "--out-sep", "||",
+            ]
+        ])
+
+
+def test_annotate_tabular_function_rejects_multichar_input_separator(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The library ``annotate_tabular()`` entry validates separators too."""
+    in_file = tmp_path / "in.txt"
+    out_file = tmp_path / "out.txt"
+    setup_denovo(in_file, "chrom\tpos\nchr1\t23\n")
+
+    grr = build_genomic_resource_repository(
+        file_name=str(annotate_directory_fixture / "grr.yaml"))
+    pipeline = build_annotation_pipeline([{"position_score": "one"}], grr)
+    args = _build_annotate_tabular_args(input_separator=",,")
+
+    with pytest.raises(ValueError, match=r"--input-separator must be a single"):
+        annotate_tabular(str(in_file), pipeline, str(out_file), args)
+
+
+def test_annotate_tabular_function_rejects_multichar_output_separator(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The library ``annotate_tabular()`` entry validates the output
+    separator too."""
+    in_file = tmp_path / "in.txt"
+    out_file = tmp_path / "out.txt"
+    setup_denovo(in_file, "chrom\tpos\nchr1\t23\n")
+
+    grr = build_genomic_resource_repository(
+        file_name=str(annotate_directory_fixture / "grr.yaml"))
+    pipeline = build_annotation_pipeline([{"position_score": "one"}], grr)
+    args = _build_annotate_tabular_args(output_separator="::")
+
+    with pytest.raises(
+            ValueError, match=r"--output-separator must be a single"):
+        annotate_tabular(str(in_file), pipeline, str(out_file), args)

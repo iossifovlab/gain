@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import gc
 import gzip
 import itertools
@@ -147,10 +148,9 @@ class _CSVSource(Source):
             with open(self.path, "rt") as in_file_raw:
                 raw_header = in_file_raw.readline()
 
-        return [
-            c.strip("#")
-            for c in raw_header.strip("\r\n").split(self.input_separator)
-        ]
+        columns = next(
+            csv.reader([raw_header], delimiter=self.input_separator))
+        return [c.strip("#") for c in columns]
 
     def _get_line_iterator(self, region: Region | None) -> Iterable:
         if not isinstance(self.source_file, TabixFile):
@@ -173,7 +173,12 @@ class _CSVSource(Source):
         errors = []
         for lnum, line in enumerate(line_iterator):
             try:
-                columns = line.strip("\n\r").split(self.input_separator)
+                # The ``[]`` default is unreachable in practice
+                # (``csv.reader`` always yields a row for a single string,
+                # even ""), but it keeps ``next`` from raising StopIteration
+                # inside this generator -- pylint R1708 flags that pattern.
+                columns = next(
+                    csv.reader([line], delimiter=self.input_separator), [])
                 record = dict(zip(self.header, columns, strict=True))
                 annotatable = record_to_annotatable.build(record)
                 if annotatable.position < reg_start:
@@ -256,14 +261,18 @@ class _CSVWriter(Filter):
         self.separator = separator
         self.header = header
         self.out_file: Any
+        self.writer: Any
 
     def __enter__(self) -> _CSVWriter:
         self.out_file = open(self.path, "w")
-        header_row = self.separator.join([
+        # lineterminator="\n" is mandatory: the default "\r\n" would break the
+        # downstream concat / tabix-compress steps that strip("\r\n").
+        self.writer = csv.writer(
+            self.out_file, delimiter=self.separator, lineterminator="\n")
+        self.writer.writerow([
             *self.header.input_header,
             *self.header.annotation_header,
         ])
-        self.out_file.write(f"{header_row}\n")
         return self
 
     def __exit__(
@@ -292,13 +301,11 @@ class _CSVWriter(Filter):
             col: context[col]
             for col in self.header.annotation_header
         }
-        self.out_file.write(
-            self.separator.join(
-                stringify(val)
-                for val in [
-                    *source_result.values(), *annotation_result.values()]))
-
-        self.out_file.write("\n")
+        self.writer.writerow([
+            stringify(val)
+            for val in [
+                *source_result.values(), *annotation_result.values()]
+        ])
 
 
 class _CSVBatchWriter(Filter):
@@ -504,7 +511,8 @@ def _read_header(filepath: str, separator: str = "\t") -> list[str]:
         file = open(filepath, "r")  # noqa: SIM115
     with file:
         header = file.readline()
-    return [c.strip() for c in header.split(separator)]
+    columns = next(csv.reader([header], delimiter=separator))
+    return [c.strip() for c in columns]
 
 
 def _count_tabular_rows(input_path: str, limit: int) -> int:
@@ -529,9 +537,11 @@ def _tabix_compress(filepath: str, output_path: str | None = None) -> None:
         os.remove(filepath)
 
 
-def _tabix_index(filepath: str, args: dict | None = None) -> None:
+def _tabix_index(
+    filepath: str, args: dict | None = None, separator: str = "\t",
+) -> None:
     """Produce a tabix index file for the given variants file."""
-    header = _read_header(filepath)
+    header = _read_header(filepath, separator)
     line_skip = 0 if header[0].startswith("#") else 1
     header = [c.strip("#") for c in header]
     record_to_annotatable = build_record_to_annotatable(
@@ -638,7 +648,7 @@ def _add_tasks_tabixed(
     task_graph.create_task(
         "tabix_index",
         _tabix_index,
-        args=[output_path, args["columns_args"]],
+        args=[output_path, args["columns_args"], args["output_separator"]],
         deps=[compress_task],
         input_files=[output_path],
         output_files=[f"{output_path}.tbi"],
@@ -743,6 +753,23 @@ def _adjust_default_output_separator(args: dict[str, Any]) -> dict[str, Any]:
     return args
 
 
+def _validate_separators(args: dict[str, Any]) -> None:
+    """Reject multi-character separators.
+
+    The csv module requires a single-character delimiter, so a multi-character
+    ``--input-separator`` / ``--output-separator`` cannot be honored. Fail
+    early with a clear message before any task graph or file work begins.
+    """
+    for flag, key in (
+        ("--input-separator", "input_separator"),
+        ("--output-separator", "output_separator"),
+    ):
+        value = args.get(key)
+        if value is not None and len(value) != 1:
+            raise ValueError(
+                f"{flag} must be a single character, got {value!r}")
+
+
 def cli(argv: list[str] | None = None) -> None:
     """Entry point for running the tabular annotation tool."""
     if not argv:
@@ -759,6 +786,7 @@ def cli(argv: list[str] | None = None) -> None:
     args = handle_default_args(args)
     args = _adjust_default_input_separator(args)
     args = _adjust_default_output_separator(args)
+    _validate_separators(args)
 
     # Run inside work_dir so that intermediate files created by worker
     # processes (e.g. htslib downloading a remote tabix .tbi index over
@@ -847,6 +875,7 @@ def _annotate_tabular_helper(
     attributes_to_delete: Sequence[str] | None = None,
 ) -> None:
     """Annotate a tabular file using a processing pipeline."""
+    _validate_separators(args)
     attributes_to_delete = attributes_to_delete or []
 
     filters: list[Filter] = []
