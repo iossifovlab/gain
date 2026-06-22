@@ -2,6 +2,23 @@ Release Notes
 =============
 
 * 2026.6.7
+    * **Behavior change:** ``annotate_tabular`` (and its deprecated
+      ``annotate_columns`` alias) now reads and writes delimited files
+      with quote-aware CSV parsing (Python's ``csv`` module) instead of a
+      naive split/join on the separator. Quoted fields containing the
+      separator are now respected on input (e.g. a CSV cell
+      ``"Smith, John"`` is one column, not two), an escaped quote ``""``
+      decodes to a literal ``"``, and on output any value containing the
+      separator or a quote is wrapped in quotes (with embedded quotes
+      doubled). Plain rows with no special characters are emitted
+      unchanged. This quoting is applied uniformly to all inputs, TSV and
+      CSV alike, so a bare ``"`` in existing data is now significant and
+      may change how a file is parsed -- pre-quote your data if it
+      contains literal quote characters. Embedded newlines inside quoted
+      fields remain unsupported (incompatible with the line-based tabix
+      path). The ``--input-separator`` / ``--output-separator`` must now
+      be a single character; a multi-character value is rejected early
+      with a clear error.
     * Fixed the VEP effect annotator segfaulting on a bgzipped
       reference genome. A bgzipped FASTA needs both a ``.fai`` faidx
       and a ``.gzi`` bgzf-offset index for htslib random access, but
