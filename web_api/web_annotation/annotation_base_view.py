@@ -89,7 +89,7 @@ def count_input_variants(input_path: str, annotation_type: str) -> int:
         if line.strip() and not line.startswith("#")
     )
     # Columnar input files have one header line not prefixed with '#'
-    if annotation_type == "columns":
+    if annotation_type == "tabular":
         return max(0, count - 1)
     return count
 

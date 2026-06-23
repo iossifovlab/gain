@@ -1,6 +1,14 @@
 Release Notes
 =============
 
+* unreleased
+    * Renamed the stored ``Job.annotation_type`` value from ``"columns"``
+      to ``"tabular"`` (#29, deferred from #25). The annotate-tabular
+      endpoint now writes ``"tabular"`` and the job-detail endpoint
+      branches on ``"tabular"``. Migration 0043 rewrites existing rows in
+      both the ``Job`` and ``AnonymousJob`` tables (``columns`` →
+      ``tabular``) and is reversible.
+
 * 2026.6.8
     * ``annotate_vcf`` now supports CSI-indexed input. When the input
       VCF carries a ``.csi`` index (rather than a ``.tbi``), it is split

@@ -144,7 +144,7 @@ class JobDetail(AnnotationBaseView):
         except ObjectDoesNotExist:
             return Response(response, status=views.status.HTTP_200_OK)
 
-        if job.annotation_type == "columns":
+        if job.annotation_type == "tabular":
             response["columns"] = details.columns.split(";")
             file_head = extract_head(
                 str(job.input_path),
@@ -303,7 +303,7 @@ class AnnotateTabular(AnnotationBaseView):
     def post(self, request: Request) -> Response:
         """Run column annotation job."""
 
-        job_or_response = self._create_job(request, "columns")
+        job_or_response = self._create_job(request, "tabular")
         if isinstance(job_or_response, Response):
             return job_or_response
         _, pipeline, job = job_or_response

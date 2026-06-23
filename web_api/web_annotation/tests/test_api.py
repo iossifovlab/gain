@@ -167,6 +167,32 @@ def test_annotate_tabular_job_details(user_client: Client) -> None:
 
 
 @pytest.mark.django_db
+def test_annotate_tabular_stores_annotation_type_tabular(
+    user_client: Client,
+) -> None:
+    params = {
+        "genome": "hg38/GRCh38-hg38/genome",
+        "pipeline_id": "pipeline/test_pipeline",
+        "data": ContentFile(
+            textwrap.dedent("""chr,pos_beg,pos_end,cnv\nchr1,7,20,cnv+"""),
+            "test_input.csv",
+        ),
+        "col_chrom": "chr",
+        "col_pos_beg": "pos_beg",
+        "col_pos_end": "pos_end",
+        "col_cnv_type": "end",
+        "separator": ",",
+    }
+
+    annotate_response = user_client.post("/api/jobs/annotate_tabular", params)
+    assert annotate_response.status_code == 200
+    job_id = int(annotate_response.json()["job_id"])
+
+    job = Job.objects.get(pk=job_id)
+    assert job.annotation_type == "tabular"
+
+
+@pytest.mark.django_db
 def test_job_details_not_owner(user_client: Client) -> None:
     response = user_client.get("/api/jobs/2")
     assert response.status_code == 403
