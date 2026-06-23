@@ -220,7 +220,11 @@ test.describe('Pipeline tests', () => {
         resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
       ),
     ]);
-    await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/hg38_clinical_annotation');
+    // The dropdown reverts to the default only after the (un-awaited) post-action
+    // GET /api/pipelines returns; under daphne sync-view serialization that GET can
+    // exceed the 5s default window (gain#150), so allow the response budget here.
+    await expect(page.locator('#pipelines-input')).toHaveValue(
+      'pipeline/hg38_clinical_annotation', { timeout: 30000 });
   });
 
   test('should make copy of public pipeline by clicking \'save as\'', async({ page }) => {
@@ -296,7 +300,11 @@ test.describe('Pipeline tests', () => {
   });
 
   test('should not be able to delete and save public pipeline', async({ page }) => {
-    await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/hg38_clinical_annotation');
+    // The dropdown reverts to the default only after the (un-awaited) post-action
+    // GET /api/pipelines returns; under daphne sync-view serialization that GET can
+    // exceed the 5s default window (gain#150), so allow the response budget here.
+    await expect(page.locator('#pipelines-input')).toHaveValue(
+      'pipeline/hg38_clinical_annotation', { timeout: 30000 });
     await expect(page.getByRole('button', { name: 'Delete' })).not.toBeVisible();
     await expect(page.getByRole('button', { name: 'Save', exact: true })).not.toBeVisible();
   });
