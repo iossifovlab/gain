@@ -87,5 +87,7 @@ def test_0043_rewrites_columns_to_tabular() -> None:
 
     assert job_model.objects.get(pk=legacy_job.pk).annotation_type \
         == "columns"
+    assert job_model.objects.get(pk=vcf_job.pk).annotation_type == "vcf"
     assert anon_job_model.objects.get(pk=legacy_anon.pk).annotation_type \
         == "columns"
+    assert anon_job_model.objects.get(pk=vcf_anon.pk).annotation_type == "vcf"
