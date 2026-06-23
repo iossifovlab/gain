@@ -229,9 +229,10 @@ class LRUPipelineCache:
         load_timeout: float = 5 * 60,
     ):
         self._grr = grr
-        # Typed to the TaskExecutor interface (the cache only uses .execute);
-        # production always builds a ThreadedTaskExecutor, but tests may swap
-        # in a SequentialTaskExecutor. See iossifovlab/gain#154.
+        # Typed to the TaskExecutor interface (the cache only uses .execute).
+        # Production uses ThreadedTaskExecutor for real concurrency; tests may
+        # swap in a SequentialTaskExecutor, now behaviorally interchangeable on
+        # the failure path too (FakeFuture honors exceptions, gain#154).
         self._load_executor: TaskExecutor = ThreadedTaskExecutor(
             max_workers=load_workers,
             job_timeout=load_timeout,

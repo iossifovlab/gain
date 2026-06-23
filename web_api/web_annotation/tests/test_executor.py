@@ -73,6 +73,28 @@ def test_sequential_task_executor_failure() -> None:
     assert str(args[0]) == "Test error"
 
 
+def test_sequential_task_executor_failure_future_honors_exception() -> None:
+    """A failed task's future exposes the exception (#154).
+
+    SequentialTaskExecutor must be behaviorally interchangeable with
+    ThreadedTaskExecutor: exception() returns the error and result() re-raises
+    it, matching concurrent.futures.Future.
+    """
+    executor = SequentialTaskExecutor()
+
+    error = RuntimeError("Test error")
+
+    def failing_fn() -> None:
+        raise error
+
+    future = executor.execute(failing_fn)
+
+    assert future.done() is True
+    assert future.exception() is error
+    with pytest.raises(RuntimeError, match="Test error"):
+        future.result()
+
+
 def test_sequential_task_executor_no_callbacks() -> None:
     executor = SequentialTaskExecutor()
 
