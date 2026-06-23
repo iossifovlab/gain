@@ -39,6 +39,11 @@
   box-shadow: 0 0 0 0.2rem rgb(248, 220, 167);
 }
 
+.failed-editor {
+  border: 2px solid #c14747 !important;
+  box-shadow: 0 0 0 0.2rem #f8d7d7;
+}
+
 .unloaded-circle {
   color: #c1c1c1 !important;
 }
@@ -49,6 +54,10 @@
 
 .loading-circle {
   color: orange !important;
+}
+
+.failed-circle {
+  color: #c14747 !important;
 }
 
 .pipeline-option {

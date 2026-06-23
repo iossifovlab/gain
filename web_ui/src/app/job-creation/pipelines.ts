@@ -6,7 +6,8 @@ export class Pipeline {
     public name: string,
     public content: string,
     public type: 'user' | 'default',
-    public status: PipelineStatus
+    public status: PipelineStatus,
+    public error?: string,
   ) {}
 
   public static fromJsonArray(jsonArray: object[]): Pipeline[] {
@@ -27,6 +28,7 @@ export class Pipeline {
       json['content'] as string,
       json['type'] as 'user' | 'default',
       json['status'] as PipelineStatus,
+      json['error'] as string,
     );
   }
 }

@@ -56,6 +56,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   public currentTemporaryPipelineStatus: PipelineStatus;
   public selectedPipeline: Pipeline = null;
   public configError = '';
+  public currentTemporaryPipelineError: string | undefined;
   public filteredPipelines: Pipeline[] = null;
   public dropdownControl = new FormControl<string>('');
   @ViewChild('nameInput') public nameInputTemplateRef: TemplateRef<ElementRef>;
@@ -105,6 +106,19 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
         this.annotationPipelineService.invalidateCache(pipelineId);
       }
     });
+  }
+
+  // Reason for a deferred background-load failure (#155), shown alongside
+  // configError in the .error-message div. Derived from the displayed
+  // pipeline (selected first, else the temporary one — same precedence as the
+  // editor border class) so it can never go stale across pipeline switches.
+  public get loadError(): string {
+    if (this.selectedPipeline) {
+      return this.selectedPipeline.status === 'failed'
+        ? this.selectedPipeline.error ?? '' : '';
+    }
+    return this.currentTemporaryPipelineStatus === 'failed'
+      ? this.currentTemporaryPipelineError ?? '' : '';
   }
 
   public onEditorInit(editor: Monaco.editor.IStandaloneCodeEditor): void {
@@ -161,12 +175,14 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
       next: (notification: PipelineNotification) => {
         if (this.currentTemporaryPipelineId === notification.pipelineId) {
           this.currentTemporaryPipelineStatus = notification.status;
+          this.currentTemporaryPipelineError = notification.error;
           this.pipelineStateService.currentTemporaryPipelineStatus.set(notification.status);
           return;
         }
         if (!this.currentTemporaryPipelineId && !this.pipelines.find(p => p.id === notification.pipelineId)) {
           this.currentTemporaryPipelineId = notification.pipelineId;
           this.currentTemporaryPipelineStatus = notification.status;
+          this.currentTemporaryPipelineError = notification.error;
           this.pipelineStateService.currentTemporaryPipelineId.set(this.currentTemporaryPipelineId);
           this.pipelineStateService.currentTemporaryPipelineStatus.set(notification.status);
           return;
@@ -175,6 +191,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
         const pipeline = this.pipelines.find(p => p.id === notification.pipelineId);
         if (pipeline) {
           pipeline.status = notification.status;
+          pipeline.error = notification.error;
         }
       },
       error: err => console.error(err)
@@ -406,6 +423,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   public clearTemporaryPipeline(): void {
     this.currentTemporaryPipelineId = '';
     this.currentTemporaryPipelineStatus = null;
+    this.currentTemporaryPipelineError = undefined;
     this.pipelineStateService.currentTemporaryPipelineId.set('');
     this.pipelineStateService.currentTemporaryPipelineStatus.set(null);
   }

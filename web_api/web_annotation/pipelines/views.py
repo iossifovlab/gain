@@ -7,10 +7,7 @@ import yaml
 from django.conf import settings
 from django.core.files.uploadedfile import UploadedFile
 from django.http import HttpResponse, QueryDict
-from gain.annotation.annotation_config import (
-    AnnotationConfigParser,
-    AnnotationConfigurationError,
-)
+from gain.annotation.annotation_config import AnnotationConfigParser
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.genomic_scores import GenomicScore
 from gain.genomic_resources.repository import GenomicResource
@@ -20,7 +17,10 @@ from rest_framework import views
 from rest_framework.request import MultiValueDict
 from rest_framework.views import Request, Response
 
-from web_annotation.annotation_base_view import AnnotationBaseView
+from web_annotation.annotation_base_view import (
+    AnnotationBaseView,
+    format_config_error,
+)
 from web_annotation.authentication import WebAnnotationAuthentication
 from web_annotation.models import (
     BaseUser,
@@ -261,39 +261,55 @@ class ListPipelines(AnnotationBaseView):
 
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
-    def _get_grr_pipelines(self) -> list[dict[str, str]]:
-        return [
-            {
+    def _pipeline_status(
+        self, pipeline_id: str,
+    ) -> tuple[str, str | None]:
+        """Resolve the durable load status for the listing (#155).
+
+        A finished-but-failed deferred build (#150 H1) reads as a distinct
+        'failed' carrying an actionable reason, so a refresh does not collapse
+        it back to a bare 'unloaded' indistinguishable from never-loaded.
+        """
+        if self.lru_cache.is_pipeline_loaded(pipeline_id):
+            return "loaded", None
+        error = self.lru_cache.get_pipeline_error(pipeline_id)
+        if error is not None:
+            return "failed", format_config_error(error)
+        return "unloaded", None
+
+    def _get_grr_pipelines(self) -> list[dict[str, str | None]]:
+        result = []
+        for pipeline in self.grr_pipelines.values():
+            status, error = self._pipeline_status(pipeline["id"])
+            result.append({
                 "id": pipeline["id"],
                 "type": "default",
                 "name": pipeline["id"],
                 "content": pipeline["content"],
-                "status": "loaded" if super().lru_cache.is_pipeline_loaded(
-                    pipeline["id"]) else "unloaded",
-            }
-            for pipeline in self.grr_pipelines.values()
-        ]
+                "status": status,
+                "error": error,
+            })
+        return result
 
-    def _get_user_pipelines(self, user: BaseUser) -> list[dict[str, str]]:
-        pipelines = [
-            *user.get_pipelines(),
-        ]
+    def _get_user_pipelines(
+        self, user: BaseUser,
+    ) -> list[dict[str, str | None]]:
+        filtered_pipelines = filter(None, user.get_pipelines())
 
-        filtered_pipelines = filter(None, pipelines)
-
-        return [
-            {
+        result = []
+        for pipeline in filtered_pipelines:
+            status, error = self._pipeline_status(pipeline.identifier)
+            result.append({
                 "id": str(pipeline.pk),
                 "name": pipeline.name,
                 "type": "user",
                 "content": Path(
                     pipeline.config_path,
                 ).read_text(encoding="utf-8"),
-                "status": "loaded" if super().lru_cache.is_pipeline_loaded(
-                    pipeline.identifier) else "unloaded",
-            }
-            for pipeline in filtered_pipelines
-        ]
+                "status": status,
+                "error": error,
+            })
+        return result
 
     def get(self, request: Request) -> Response:
         """List all available annotation pipelines."""
@@ -379,14 +395,10 @@ class PipelineValidation(AnnotationBaseView):
         try:
             AnnotationConfigParser.parse_str(content, grr=self.grr)
             load_pipeline_from_yaml(content, self.grr)
-        except (AnnotationConfigurationError, KeyError) as e:
-            error = str(e)
-            if error == "":
-                result = {"errors": "Invalid configuration"}
-            else:
-                result = {"errors": f"Invalid configuration, reason: {error}"}
-        except Exception:  # noqa: BLE001
-            result = {"errors": "Invalid configuration"}
+        except Exception as e:  # noqa: BLE001
+            # Same formatter as the deferred-load failure path (#155) so the
+            # synchronous and background error messages stay identical.
+            result = {"errors": format_config_error(e)}
 
         return Response(result, status=views.status.HTTP_200_OK)
 

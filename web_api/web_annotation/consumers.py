@@ -48,13 +48,16 @@ class AnnotationStateConsumer(WebsocketConsumer):
         )
 
     def pipeline_status(self, event: Any) -> None:
-        self.send(
-            text_data=json.dumps({
-                "type": "pipeline_status",
-                "pipeline_id": event["pipeline_id"],
-                "status": event["status"],
-            }),
-        )
+        """Relay a pipeline load status to the client, with any error reason."""
+        payload = {
+            "type": "pipeline_status",
+            "pipeline_id": event["pipeline_id"],
+            "status": event["status"],
+        }
+        error = event.get("error")
+        if error is not None:
+            payload["error"] = error
+        self.send(text_data=json.dumps(payload))
 
     def job_status(self, event: Any) -> None:
         self.send(

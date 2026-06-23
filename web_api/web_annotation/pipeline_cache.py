@@ -284,6 +284,28 @@ class LRUPipelineCache:
             except CancelledError:
                 return False
 
+    def get_pipeline_error(
+        self, pipeline_id: str,
+    ) -> BaseException | None:
+        """Return the build exception of a finished-but-failed load, else None.
+
+        Lets the listing surface a durable 'failed' status with a reason after
+        a page refresh (#155): the cache retains the failed future, so the
+        exception that broke the deferred build is still recoverable. Returns
+        None for loaded, in-flight, cancelled, or not-cached pipelines.
+        """
+        with self._cache_lock:
+            try:
+                future = self.get_pipeline_future(pipeline_id)
+            except PipelineNotCached:
+                return None
+            if not future.done():
+                return None
+            try:
+                return future.exception()
+            except CancelledError:
+                return None
+
     @staticmethod
     def _load_pipeline_raw(
         raw: str,

@@ -21,7 +21,11 @@ export default defineConfig({
   workers: process.env.CI ? 4 : undefined,
   timeout: 300000,
   expect: {
-    timeout: 5000,
+    // Sync DRF views serialize on daphne's single thread_sensitive thread
+    // (gain#150), so UI assertions waiting on a backend response can exceed a
+    // 5s window under load. Widen the default to absorb that until the
+    // multi-worker web tier lands; per-test timeout (300s) leaves ample budget.
+    timeout: 15000,
     toHaveScreenshot: {
       maxDiffPixels: 100
     },
