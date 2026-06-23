@@ -41,6 +41,7 @@ class FakeFuture:
     def __init__(self, result: Any) -> None:
         """Initializes fake future."""
         self._result = result
+        self._exception: BaseException | None = None
         self._done_callbacks: Any = []
 
     def _invoke_callbacks(self) -> None:
@@ -67,10 +68,14 @@ class FakeFuture:
         self._invoke_callbacks()
 
     def result(self, timeout: Any = None) -> Any:  # noqa: ARG002
+        # Match concurrent.futures.Future: a failed future re-raises on
+        # result() rather than returning a stale/None value (#154).
+        if self._exception is not None:
+            raise self._exception
         return self._result
 
-    def exception(self, timeout: Any = None) -> None:  # noqa: ARG002
-        return None
+    def exception(self, timeout: Any = None) -> BaseException | None:  # noqa: ARG002
+        return self._exception
 
     def set_running_or_notify_cancel(self) -> None:
         return
@@ -79,7 +84,8 @@ class FakeFuture:
         self._result = result
         self._invoke_callbacks()
 
-    def set_exception(self, exception: Any) -> None:  # noqa: ARG002
+    def set_exception(self, exception: Any) -> None:
+        self._exception = exception
         self._invoke_callbacks()
 
 
@@ -92,20 +98,21 @@ class SequentialTaskExecutor(TaskExecutor):
         callback_failure: Callable[[BaseException], None] | None = None,
         **kwargs: Any,
     ) -> Future[Any]:
-        result = None
+        future = FakeFuture(None)
         try:
             if callback_start is not None:
                 callback_start()
             result = fn(**kwargs)
+            future.set_result(result)
             if callback_success is not None:
                 logger.debug("Task completed with result: %s", result)
                 callback_success()
-            return cast(Future, FakeFuture(result))
         except BaseException as e:
             logger.exception("Task failed with exception")
+            future.set_exception(e)
             if callback_failure is not None:
                 callback_failure(e)
-        return cast(Future, FakeFuture(result))
+        return cast(Future, future)
 
     def wait_all(self, timeout: float) -> None:  # noqa: ARG002
         return

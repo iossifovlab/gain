@@ -7,6 +7,7 @@ from typing import cast
 
 import pytest
 from gain.annotation.annotatable import VCFAllele
+from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.genomic_resources.repository import GenomicResourceRepo
@@ -193,6 +194,28 @@ def test_lru_pipeline_cache_callbacks(
 
     assert len(deleted_pipelines) == 1
     assert deleted_pipelines[0].pipeline_id == "pipeline1"
+
+
+def test_sequential_executor_failed_load_is_interchangeable(
+    test_grr: GenomicResourceRepo,
+) -> None:
+    """A failed deferred load behaves the same under either executor (#154).
+
+    The latent prod trap: with the exception-swallowing FakeFuture a failed
+    SequentialTaskExecutor load was reported 'loaded' (is_pipeline_loaded True)
+    and looped forever in get_pipeline (result() returned None). Honoring the
+    exception makes the failure path match ThreadedTaskExecutor.
+    """
+    lru_cache = LRUPipelineCache(test_grr, 2)
+    lru_cache._load_executor = cast(
+        ThreadedTaskExecutor, SequentialTaskExecutor())
+
+    lru_cache.put_pipeline("broken", "- position_score: scores/NONEXISTENT")
+
+    assert lru_cache.is_pipeline_loaded("broken") is False
+    assert lru_cache.get_pipeline_error("broken") is not None
+    with pytest.raises(AnnotationConfigurationError):
+        lru_cache.get_pipeline("broken")
 
 
 def test_lru_pipeline_cache_finish_callback_on_already_loaded(
