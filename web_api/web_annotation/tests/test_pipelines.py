@@ -263,6 +263,31 @@ def test_save_user_pipeline_rejects_malformed_yaml(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("config", ["   ", "# only a comment\n", ""])
+def test_save_user_pipeline_accepts_empty_config(
+    user_client: Client,
+    test_grr: GenomicResourceRepo,
+    mocker: pytest_mock.MockerFixture,
+    config: str,
+) -> None:
+    """An empty / whitespace / comment-only pipeline saves (200).
+
+    The app treats an empty config as a valid (empty) pipeline -- the
+    /validate endpoint returns no error for "   " -- and the web_ui saves an
+    empty temp pipeline whenever the editor is cleared (e.g. 'New pipeline').
+    The cheap structural check must not reject these (#152 e2e regression).
+    """
+    cache = LRUPipelineCache(test_grr, 16)
+    mocker.patch(
+        "web_annotation.pipelines.views.UserPipeline.lru_cache", new=cache)
+
+    response = user_client.post(
+        "/api/pipelines/user", {"config": ContentFile(config, name="c.yaml")})
+
+    assert response.status_code == 200
+
+
+@pytest.mark.django_db
 def test_background_load_failure_notifies_user(
     user_client: Client,
     test_grr: GenomicResourceRepo,

@@ -70,7 +70,13 @@ class UserPipeline(AnnotationBaseView):
                 {"errors": "Invalid configuration"},
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
-        if not parsed or not isinstance(parsed, (list, dict)):
+        # An empty config (None: blank / whitespace / comments-only) is a
+        # valid empty pipeline -- the app and the /validate endpoint accept it,
+        # and the web_ui saves an empty temp pipeline whenever the editor is
+        # cleared (e.g. "New pipeline"). Only reject a non-empty scalar that
+        # cannot be a pipeline structure; deeper validation is deferred to the
+        # background loader.
+        if parsed is not None and not isinstance(parsed, (list, dict)):
             return Response(
                 {"errors": "Invalid configuration"},
                 status=views.status.HTTP_400_BAD_REQUEST,
