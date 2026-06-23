@@ -49,13 +49,17 @@ class AnnotationStateConsumer(WebsocketConsumer):
         ``pipeline_status`` exactly so the existing client handler parses it.
         """
         for pipeline_id in self._owned_pipeline_ids(user):
-            status = self._pipeline_status_for(pipeline_id)
-            if status is None:
+            resolved = self._pipeline_status_for(pipeline_id)
+            if resolved is None:
                 continue
-            self.pipeline_status({
+            status, error = resolved
+            event = {
                 "pipeline_id": pipeline_id,
                 "status": status,
-            })
+            }
+            if error is not None:
+                event["error"] = error
+            self.pipeline_status(event)
 
     def _owned_pipeline_ids(self, user: User | BaseUser) -> list[str]:
         """Enumerate the cache ids of the connecting user's pipelines.
@@ -86,13 +90,17 @@ class AnnotationStateConsumer(WebsocketConsumer):
 
         return pipeline_ids
 
-    def _pipeline_status_for(self, pipeline_id: str) -> str | None:
-        """Map a pipeline's cache state to a status frame value, or None.
+    def _pipeline_status_for(
+        self, pipeline_id: str,
+    ) -> tuple[str, str | None] | None:
+        """Map a pipeline's cache state to a (status, error) frame, or None.
 
         Reuses the cache's own loaded/failed/loading notions (the same source
         the listing and notifications use) rather than inventing a parallel
         one. Returns None when the pipeline is not cached at all, so no
-        ``unloaded`` frame is emitted on connect.
+        ``unloaded`` frame is emitted on connect. A ``failed`` build carries
+        its actionable reason, mirroring the HTTP listing and the live fail
+        path (#155) so the editor does not show an empty error box.
         """
         # Deferred import: annotation_base_view builds the GRR at module load
         # (a module-level build_genomic_resource_repository scan). Importing it
@@ -101,15 +109,19 @@ class AnnotationStateConsumer(WebsocketConsumer):
         # lazily here reuses the single shared LRUPipelineCache the views
         # already built.
         # pylint: disable=import-outside-toplevel
-        from web_annotation.annotation_base_view import AnnotationBaseView
+        from web_annotation.annotation_base_view import (
+            AnnotationBaseView,
+            format_config_error,
+        )
         cache = AnnotationBaseView.lru_cache
         if not cache.has_pipeline(pipeline_id):
             return None
         if cache.is_pipeline_loaded(pipeline_id):
-            return "loaded"
-        if cache.get_pipeline_error(pipeline_id) is not None:
-            return "failed"
-        return "loading"
+            return "loaded", None
+        error = cache.get_pipeline_error(pipeline_id)
+        if error is not None:
+            return "failed", format_config_error(error)
+        return "loading", None
 
     def disconnect(self, _code: Any) -> None:
         async_to_sync(self.channel_layer.group_discard)(

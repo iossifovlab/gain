@@ -4,8 +4,10 @@ import pathlib
 import pytest
 import pytest_mock
 from asgiref.sync import sync_to_async
+from channels.auth import UserLazyObject
 from django.conf import settings
 from django.test import Client
+from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.genomic_resources.repository import GenomicResourceRepo
 
 from web_annotation.consumers import AnnotationStateConsumer
@@ -144,11 +146,17 @@ async def test_connect_resyncs_loading_saved_pipeline(
 async def test_connect_resyncs_failed_saved_pipeline(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
-    """A finished-but-failed deferred build re-syncs as 'failed'."""
+    """A finished-but-failed deferred build re-syncs as 'failed' with reason.
+
+    Parity with the live fail path (#155) and the HTTP listing: the resync
+    frame must carry the actionable failure reason, not just the bare 'failed'
+    status (which would leave the editor showing an empty error box).
+    """
     mocker.patch(
         "web_annotation.annotation_base_view.AnnotationBaseView.lru_cache",
         new=FakeCache(
-            present=True, loaded=False, error=ValueError("bad config")),
+            present=True, loaded=False,
+            error=AnnotationConfigurationError("bad config")),
     )
     user = await sync_to_async(User.objects.get)(email="user@example.com")
     pipeline = await sync_to_async(_write_saved_pipeline)(
@@ -164,6 +172,7 @@ async def test_connect_resyncs_failed_saved_pipeline(
         "type": "pipeline_status",
         "pipeline_id": str(pipeline.pk),
         "status": "failed",
+        "error": "Invalid configuration, reason: bad config",
     }
 
     await communicator.disconnect(timeout=1000)
@@ -257,5 +266,100 @@ async def test_connect_resyncs_anonymous_temporary_pipeline(
         "pipeline_id": str(temporary.id),
         "status": "loaded",
     }
+
+    await communicator.disconnect(timeout=1000)
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_connect_resyncs_with_lazy_wrapped_scope_user(
+    patched_lru_cache: LRUPipelineCache,
+) -> None:
+    """Resync still works when the scope user is a UserLazyObject.
+
+    Production wraps ``scope["user"]`` in ``channels.auth.UserLazyObject``
+    (see asgi.py's AnonymousAuthMiddleware) -- the unit tests otherwise pass a
+    bare ``User``. This guards the ``isinstance(user, User)`` branch (which
+    gates saved-pipeline resync) against a future regression: Django's
+    LazyObject proxies ``__class__`` so the isinstance check must still hold
+    through the wrapper.
+    """
+    user = await sync_to_async(User.objects.get)(email="user@example.com")
+    pipeline = await sync_to_async(_write_saved_pipeline)(
+        user, "lazy-pipe", "- position_score: scores/pos1")
+
+    patched_lru_cache.put_pipeline(
+        str(pipeline.pk), "- position_score: scores/pos1")
+    await sync_to_async(patched_lru_cache.get_pipeline)(str(pipeline.pk))
+
+    lazy_user = UserLazyObject()
+    lazy_user._wrapped = user
+
+    communicator = CustomWebsocketCommunicator(
+        AnnotationStateConsumer.as_asgi(), "/ws/test/", user=lazy_user)
+    connected, _ = await communicator.connect(timeout=1000)
+    assert connected
+
+    output = await communicator.receive_json_from(timeout=5)
+    assert output == {
+        "type": "pipeline_status",
+        "pipeline_id": str(pipeline.pk),
+        "status": "loaded",
+    }
+
+    await communicator.disconnect(timeout=1000)
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_connect_resyncs_multiple_saved_pipelines_mixed_cache(
+    patched_lru_cache: LRUPipelineCache,
+) -> None:
+    """Multiple saved pipelines: a frame per cached one, none for uncached.
+
+    Pins both the per-connect fan-out (every owned pipeline is considered) and
+    the per-id filtering (only cached pipelines emit, with the correct id and
+    status), so neither can silently regress.
+    """
+    user = await sync_to_async(User.objects.get)(email="user@example.com")
+    cached_a = await sync_to_async(_write_saved_pipeline)(
+        user, "cached-a", "- position_score: scores/pos1")
+    cached_b = await sync_to_async(_write_saved_pipeline)(
+        user, "cached-b", "- position_score: scores/pos2")
+    uncached = await sync_to_async(_write_saved_pipeline)(
+        user, "uncached", "- position_score: scores/pos1")
+
+    for pipeline, config in (
+        (cached_a, "- position_score: scores/pos1"),
+        (cached_b, "- position_score: scores/pos2"),
+    ):
+        patched_lru_cache.put_pipeline(str(pipeline.pk), config)
+        await sync_to_async(patched_lru_cache.get_pipeline)(str(pipeline.pk))
+
+    communicator = CustomWebsocketCommunicator(
+        AnnotationStateConsumer.as_asgi(), "/ws/test/", user=user)
+    connected, _ = await communicator.connect(timeout=1000)
+    assert connected
+
+    received = [
+        await communicator.receive_json_from(timeout=5) for _ in range(2)
+    ]
+
+    assert await communicator.receive_nothing(timeout=1) is True
+
+    by_id = {frame["pipeline_id"]: frame for frame in received}
+    assert by_id == {
+        str(cached_a.pk): {
+            "type": "pipeline_status",
+            "pipeline_id": str(cached_a.pk),
+            "status": "loaded",
+        },
+        str(cached_b.pk): {
+            "type": "pipeline_status",
+            "pipeline_id": str(cached_b.pk),
+            "status": "loaded",
+        },
+    }
+    assert str(uncached.pk) not in by_id
 
     await communicator.disconnect(timeout=1000)
