@@ -218,6 +218,27 @@ def test_sequential_executor_failed_load_is_interchangeable(
         lru_cache.get_pipeline("broken")
 
 
+def test_sequential_executor_successful_load_is_interchangeable(
+    test_grr: GenomicResourceRepo,
+) -> None:
+    """A successful deferred load behaves the same under either executor (#154).
+
+    The other half of interchangeability: a buildable config loads, reports
+    loaded with no error, and get_pipeline returns a usable pipeline.
+    """
+    lru_cache = LRUPipelineCache(test_grr, 2)
+    lru_cache._load_executor = cast(
+        ThreadedTaskExecutor, SequentialTaskExecutor())
+
+    lru_cache.put_pipeline("good", "- position_score: scores/pos1")
+
+    assert lru_cache.is_pipeline_loaded("good") is True
+    assert lru_cache.get_pipeline_error("good") is None
+    pipeline = lru_cache.get_pipeline("good")
+    assert pipeline is not None
+    assert pipeline.raw == [{"position_score": "scores/pos1"}]
+
+
 def test_lru_pipeline_cache_finish_callback_on_already_loaded(
     test_grr: GenomicResourceRepo,
 ) -> None:
