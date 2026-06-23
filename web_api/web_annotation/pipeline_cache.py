@@ -19,9 +19,19 @@ from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline, Annotator
 from gain.genomic_resources.repository import GenomicResourceRepo
 
-from web_annotation.executor import ThreadedTaskExecutor
+from web_annotation.executor import TaskExecutor, ThreadedTaskExecutor
 
 logger = logging.getLogger(__name__)
+
+
+class PipelineNotCached(Exception):
+    """A pipeline id is not present in the cache.
+
+    A dedicated type so callers can distinguish a genuine cache-miss (reload
+    and retry) from a pipeline *build* failure -- both of which would
+    otherwise be a bare ``ValueError`` (the annotation factory raises
+    ``ValueError`` for bad configs). See iossifovlab/gain#150 review.
+    """
 
 
 class LoggedLock:
@@ -219,7 +229,10 @@ class LRUPipelineCache:
         load_timeout: float = 5 * 60,
     ):
         self._grr = grr
-        self._load_executor = ThreadedTaskExecutor(
+        # Typed to the TaskExecutor interface (the cache only uses .execute);
+        # production always builds a ThreadedTaskExecutor, but tests may swap
+        # in a SequentialTaskExecutor. See iossifovlab/gain#154.
+        self._load_executor: TaskExecutor = ThreadedTaskExecutor(
             max_workers=load_workers,
             job_timeout=load_timeout,
             thread_name_prefix="pipeline-loader",
@@ -252,11 +265,23 @@ class LRUPipelineCache:
     def is_pipeline_loaded(
         self, pipeline_id: str,
     ) -> bool:
-        """Check if a pipeline is loaded."""
+        """Check if a pipeline is loaded.
+
+        A finished-but-failed load is *not* loaded: ``Future.done()`` is True
+        for a failed future too, so check that it completed without an
+        exception (resource validation is deferred to this load, #150 H1, so
+        failed builds are an expected state).
+        """
         with self._cache_lock:
             try:
-                return self.get_pipeline_future(pipeline_id).done()
-            except ValueError:
+                future = self.get_pipeline_future(pipeline_id)
+            except PipelineNotCached:
+                return False
+            if not future.done():
+                return False
+            try:
+                return future.exception() is None
+            except CancelledError:
                 return False
 
     @staticmethod
@@ -296,6 +321,7 @@ class LRUPipelineCache:
         *,
         begin_load_callback: Callable[[], None] | None = None,
         finish_load_callback: Callable[[], None] | None = None,
+        fail_load_callback: Callable[[BaseException], None] | None = None,
         delete_callback: Callable[[LoadingDetails], None] | None = None,
         force: bool = False,
     ) -> None:
@@ -306,6 +332,7 @@ class LRUPipelineCache:
         logger.debug(
             "thread %s calling put_pipeline for %s", thread, pipeline_id)
         same_config = False
+        same_config_future: Future[ThreadSafePipeline] | None = None
         detached: list[tuple[
             str, Future[ThreadSafePipeline] | None,
             LoadingDetails | None, Callable | None,
@@ -315,6 +342,7 @@ class LRUPipelineCache:
                 details = self._cache[pipeline_id]
                 if details.config_hash == pipeline_config_hash and not force:
                     same_config = True
+                    same_config_future = details.future
                 else:
                     old_future, old_details, old_delete_cb = (
                         self._detach_pipeline_locked(pipeline_id)
@@ -345,6 +373,7 @@ class LRUPipelineCache:
                     grr=self._grr,
                     pipeline_id=pipeline_id,
                     callback_success=finish_load_callback,
+                    callback_failure=fail_load_callback,
                 )
 
                 loading_details = LoadingDetails(
@@ -359,8 +388,22 @@ class LRUPipelineCache:
                 self._order.append(pipeline_id)
 
         if same_config:
-            if finish_load_callback is not None:
-                finish_load_callback()
+            # The cached entry already has this exact config. Only announce a
+            # terminal status if its load has finished, and make it match the
+            # outcome: a cached failed load must not be reported as loaded
+            # (#150 H1 follow-up). If the load is still in flight, fire
+            # nothing -- its own begin/finish/fail callbacks will announce it.
+            fut = same_config_future
+            if fut is not None and fut.done():
+                try:
+                    exc = fut.exception()
+                except CancelledError:
+                    exc = None
+                if exc is not None:
+                    if fail_load_callback is not None:
+                        fail_load_callback(exc)
+                elif finish_load_callback is not None:
+                    finish_load_callback()
             return
 
         for pid, old_future, old_details, old_delete_cb in detached:
@@ -421,7 +464,8 @@ class LRUPipelineCache:
             threading.current_thread().name, pipeline_id)
         with self._cache_lock:
             if pipeline_id not in self._cache:
-                raise ValueError(f"Pipeline {pipeline_id} not found")
+                raise PipelineNotCached(
+                    f"Pipeline {pipeline_id} not found")
             self._order.remove(pipeline_id)
             self._order.append(pipeline_id)
             elapsed = time.time() - started

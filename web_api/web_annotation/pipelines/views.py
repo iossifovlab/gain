@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 from typing import ClassVar
 
+import yaml
 from django.conf import settings
 from django.core.files.uploadedfile import UploadedFile
 from django.http import HttpResponse, QueryDict
@@ -55,21 +56,27 @@ class UserPipeline(AnnotationBaseView):
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
 
+        # Structural validation only -- this runs on the single shared
+        # thread_sensitive sync-view thread under daphne, so building the
+        # pipeline against the GRR here serializes every other API request
+        # behind it (#150 H1). Deep, resource-resolving validation is deferred
+        # to the background pipeline loader scheduled by put_pipeline below;
+        # load failures surface to the user via the pipeline load-status
+        # channel rather than as a synchronous 400.
         try:
-            AnnotationConfigParser.parse_str(content, grr=self.grr)
-            load_pipeline_from_yaml(content, self.grr)
-        except (AnnotationConfigurationError, KeyError) as e:
-            error = str(e)
-            if error == "":
-                return Response(
-                    {"errors": "Invalid configuration"},
-                    status=views.status.HTTP_400_BAD_REQUEST,
-                )
+            parsed = yaml.safe_load(content)
+        except yaml.YAMLError:
             return Response(
-                {"errors": f"Invalid configuration, reason: {error}"},
+                {"errors": "Invalid configuration"},
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
-        except Exception:  # noqa: BLE001
+        # An empty config (None: blank / whitespace / comments-only) is a
+        # valid empty pipeline -- the app and the /validate endpoint accept it,
+        # and the web_ui saves an empty temp pipeline whenever the editor is
+        # cleared (e.g. "New pipeline"). Only reject a non-empty scalar that
+        # cannot be a pipeline structure; deeper validation is deferred to the
+        # background loader.
+        if parsed is not None and not isinstance(parsed, (list, dict)):
             return Response(
                 {"errors": "Invalid configuration"},
                 status=views.status.HTTP_400_BAD_REQUEST,
