@@ -1,7 +1,86 @@
 Release Notes
 =============
 
-* 2026.6.7
+* 2026.6.8
+    * ``annotate_vcf`` now supports CSI-indexed input. When the input
+      VCF carries a ``.csi`` index (rather than a ``.tbi``), it is split
+      by genomic region using that index and the annotated output is
+      itself CSI-indexed; ``.tbi`` inputs are unchanged. CSI lifts
+      tabix's 512 Mbp coordinate limit, so VCFs on long contigs can now
+      be region-parallelized.
+    * Gene-set collections in ``map`` format may now be supplied
+      gzip-compressed: a ``filename`` ending in ``.gz`` is read through
+      ``gzip``, and the companion ``…names.txt`` is resolved against the
+      de-gzipped stem so a gzipped map still finds its names file.
+    * Follow-up to the 2026.6.7 quote-aware CSV/TSV change (#144): the
+      tabix-indexing step parsed the header with a hardcoded tab even
+      for comma-separated output, so column resolution failed on a
+      CSV-delimited run. The configured output separator is now threaded
+      through to header parsing.
+    * Fixed duplicate annotation-job names under concurrency (#138).
+      ``User.generate_job_name`` was a non-atomic read-modify-write of
+      ``job_counter``, so two concurrent job creations by the same user
+      could read the same counter and return the same name — and since
+      the name derives the job's data/config/result paths, the two jobs
+      collided on one ``result_path`` (lost/overwritten results). The
+      allocation is now a single ``UPDATE … RETURNING`` that increments
+      and reads back atomically (with the catch-up floor folded in as a
+      correlated subquery), closing the read-back race under READ
+      COMMITTED on multi-process Postgres.
+    * Fixed duplicate quota rows under concurrency (#139). ``UserQuota``
+      and ``AnonymousUserQuota`` used non-unique key fields, so
+      concurrent first-time requests each passed the ``get_or_create``
+      check and inserted a row; the duplicates then made every
+      ``get_quota()`` raise ``MultipleObjectsReturned`` and return
+      HTTP 500 on ``/api/jobs/annotate_vcf``. ``UserQuota.user`` is now a
+      ``OneToOneField`` and ``AnonymousUserQuota.ip`` is unique, the
+      creates run in a transaction with an ``IntegrityError`` fallback to
+      the existing row, and migration 0042 de-duplicates pre-existing
+      rows (keeping the newest per user/ip) before adding the
+      constraints.
+    * Fixed the annotation web API returning a spurious HTTP 400
+      "Pipeline … not found" under load (#140). The ``LRUPipelineCache``
+      could evict, purely by recency, an entry another thread had just
+      put and was still resolving. In-use pipelines are now pinned by a
+      refcount under the cache lock; eviction skips pinned entries (and
+      may briefly exceed capacity rather than evict an in-flight
+      pipeline), the timeout reaper likewise defers pinned entries, and
+      ``get_pipeline`` retries the load-and-cache sequence on a cache
+      miss so a genuinely-missing pipeline still 4xx's.
+    * Fixed running annotation jobs losing their result file when a
+      WebSocket disconnected (#147). On an anonymous user's last
+      disconnect, ``delete_jobs`` removed every job's files regardless of
+      state, so a job still executing had its ``result-<name>.vcf``
+      unlinked mid-run and ``on_success`` then failed with ``[Errno 2]``
+      (an intermittent gain-web-e2e flake). Both ``delete_jobs``
+      implementations now skip jobs whose status is ``WAITING`` or
+      ``IN_PROGRESS``, so in-flight and queued jobs keep their files
+      until they complete.
+    * Deleting a saved pipeline now also evicts it from the annotation
+      web API's pipeline cache — the delete endpoint was removing the
+      pipeline from the user's store but leaving the stale entry cached.
+    * Web UI: per-attribute (gene) aggregator selection now renders
+      correctly in the new-annotator workflow, and the result value-type
+      options are now finer-grained and driven by the chosen aggregator
+      (an aggregator can influence the attribute's value type). The
+      new-annotator grid-table styling was refreshed and its Material
+      theme overrides extracted into a separate stylesheet.
+    * Web UI: pipeline-info loading is now driven from reactive signals
+      as a single source of truth, ``pipeline_status`` requests are
+      de-duplicated (``shareReplay``), and the cache is invalidated on
+      YAML changes — removing race conditions behind several flaky tests.
+    * The GRR browser index table can now be sorted by any column, not
+      only the ID column.
+    * Revised the getting-started CLI tutorial and GRR documentation:
+      reworked the local-GRR walkthrough, simplified the positions and
+      regions handling in the examples, refreshed the reannotation
+      pipeline example, dropped the ``--grr-directory`` option and the
+      obsolete GRR configuration-files page, and corrected a
+      ``t2t``/``hs1`` reference in the Python-interface page.
+    * CI: the gain-web e2e pipeline now tears down its Docker Compose
+      project in ``post.cleanup`` as a backstop, so a failure or abort
+      before the Run-e2e stage no longer orphans the per-build ``db``
+      container, volume and network (mirrors iossifovlab/gpf#953).
     * **Behavior change:** ``annotate_tabular`` (and its deprecated
       ``annotate_columns`` alias) now reads and writes delimited files
       with quote-aware CSV parsing (Python's ``csv`` module) instead of a
@@ -19,6 +98,8 @@ Release Notes
       path). The ``--input-separator`` / ``--output-separator`` must now
       be a single character; a multi-character value is rejected early
       with a clear error.
+
+* 2026.6.7
     * Fixed the VEP effect annotator segfaulting on a bgzipped
       reference genome. A bgzipped FASTA needs both a ``.fai`` faidx
       and a ``.gzi`` bgzf-offset index for htslib random access, but
