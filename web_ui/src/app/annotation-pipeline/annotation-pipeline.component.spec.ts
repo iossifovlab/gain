@@ -973,24 +973,65 @@ describe('AnnotationPipelineComponent', () => {
     expect(pipelineStateService.currentTemporaryPipelineStatus()).toBe('loading');
   });
 
-  it('should surface the reason as loadError when a failed notification matches the current temporary pipeline', () => {
+  it('should surface the reason as loadError for a failed temporary pipeline', () => {
     jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications').mockReturnValueOnce(
       of(new PipelineNotification('215', 'failed', 'Invalid configuration, reason: boom'))
     );
     component.currentTemporaryPipelineId = '215';
     component.ngOnInit();
+    // New-pipeline editing flow: no saved pipeline selected, only the temp one.
+    component.selectedPipeline = null;
     expect(component.currentTemporaryPipelineStatus).toBe('failed');
     expect(component.loadError).toBe('Invalid configuration, reason: boom');
   });
 
-  it('should clear loadError when a subsequent non-failed notification arrives', () => {
+  it('should clear loadError when a temporary pipeline recovers', () => {
     component.currentTemporaryPipelineId = '215';
-    component.loadError = 'Invalid configuration, reason: boom';
-    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications').mockReturnValueOnce(
+    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications').mockReturnValue(
       of(new PipelineNotification('215', 'loaded'))
     );
+    component.currentTemporaryPipelineStatus = 'failed';
+    component.currentTemporaryPipelineError = 'Invalid configuration, reason: boom';
     component.ngOnInit();
+    component.selectedPipeline = null;
     expect(component.loadError).toBe('');
+  });
+
+  it('should surface the failure reason when a failed pipeline is selected', () => {
+    const failed = new Pipeline(
+      '1', 'broken', 'content', 'user', 'failed', 'Invalid configuration, reason: boom');
+    component.onPipelineClick(failed);
+    expect(component.loadError).toBe('Invalid configuration, reason: boom');
+  });
+
+  it('should not leave a stale loadError when switching to a healthy pipeline', () => {
+    const failed = new Pipeline(
+      '1', 'broken', 'content', 'user', 'failed', 'Invalid configuration, reason: boom');
+    const healthy = new Pipeline('2', 'good', 'content', 'user', 'loaded');
+    component.onPipelineClick(failed);
+    expect(component.loadError).toBe('Invalid configuration, reason: boom');
+    component.onPipelineClick(healthy);
+    expect(component.loadError).toBe('');
+  });
+
+  it('should clear loadError on New pipeline (doClear)', () => {
+    const failed = new Pipeline(
+      '1', 'broken', 'content', 'user', 'failed', 'Invalid configuration, reason: boom');
+    component.onPipelineClick(failed);
+    component.doClear();
+    expect(component.loadError).toBe('');
+  });
+
+  it('should surface the reason when a failed notification targets the selected pipeline', () => {
+    const listed = new Pipeline('215', 'broken', 'content', 'user', 'loaded');
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines').mockReturnValue(of([listed]));
+    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications').mockReturnValue(
+      of(new PipelineNotification('215', 'failed', 'Invalid configuration, reason: boom'))
+    );
+    component.ngOnInit();
+    expect(listed.status).toBe('failed');
+    expect(listed.error).toBe('Invalid configuration, reason: boom');
+    expect(component.loadError).toBe('Invalid configuration, reason: boom');
   });
 
   it('should sync pipeline text to state when selecting a pipeline', () => {

@@ -480,6 +480,47 @@ def test_list_pipelines_reports_failed_load_with_reason(
 
 
 @pytest.mark.django_db
+def test_list_pipeline_recovers_from_failed_to_loaded(
+    user_client: Client,
+    test_grr: GenomicResourceRepo,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Re-saving a good config flips the listing 'failed' -> 'loaded' (#155).
+
+    The durable failed status must not be sticky: once the config is fixed and
+    the deferred build succeeds, the listing reports 'loaded' with no error.
+    """
+    cache = LRUPipelineCache(test_grr, 16)
+    mocker.patch(
+        "web_annotation.annotation_base_view.AnnotationBaseView.lru_cache",
+        new=cache)
+
+    save = user_client.post("/api/pipelines/user", {
+        "config": ContentFile("- position_score: scores/NONEXISTENT"),
+        "name": "recovering_pipeline",
+    })
+    pipeline_id = save.json()["id"]
+    with contextlib.suppress(Exception):
+        cache._cache[pipeline_id].future.result(timeout=10)
+    broken = next(p for p in user_client.get("/api/pipelines").json()
+                  if p["id"] == pipeline_id)
+    assert broken["status"] == "failed"
+
+    resave = user_client.post("/api/pipelines/user", {
+        "id": pipeline_id,
+        "config": ContentFile("- position_score: scores/pos1"),
+        "name": "recovering_pipeline",
+    })
+    assert resave.status_code == 200
+    cache._cache[pipeline_id].future.result(timeout=10)
+
+    fixed = next(p for p in user_client.get("/api/pipelines").json()
+                 if p["id"] == pipeline_id)
+    assert fixed["status"] == "loaded"
+    assert fixed["error"] is None
+
+
+@pytest.mark.django_db
 def test_resaving_identical_broken_config_does_not_notify_loaded(
     user_client: Client,
     test_grr: GenomicResourceRepo,
