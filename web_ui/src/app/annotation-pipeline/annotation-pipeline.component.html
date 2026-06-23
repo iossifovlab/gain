@@ -58,7 +58,11 @@
         [title]="pipeline.name"
         [value]="pipeline.name">
         <span id="socket-notification">
-          <span [ngClass]="pipeline.status + '-circle'" class="material-symbols-outlined pipeline-status-icon"
+          <span
+            [ngClass]="pipeline.status + '-circle'"
+            class="material-symbols-outlined pipeline-status-icon"
+            [matTooltip]="pipeline.status === 'failed' ? pipeline.error : ''"
+            matTooltipShowDelay="200"
             >circle</span
           ></span
         >
@@ -113,8 +117,8 @@
       >
     </div>
   </div>
-  @if(configError) {
-  <div class="error-message">{{ configError }}</div>
+  @if(configError || loadError) {
+  <div class="error-message">{{ configError || loadError }}</div>
   }
 </div>
 

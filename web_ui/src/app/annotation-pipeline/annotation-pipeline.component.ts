@@ -56,6 +56,10 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   public currentTemporaryPipelineStatus: PipelineStatus;
   public selectedPipeline: Pipeline = null;
   public configError = '';
+  // Reason for a deferred background-load failure (#155), kept separate from
+  // configError (owned by the synchronous-validate subscription) so neither
+  // clobbers the other; both render in the same .error-message div.
+  public loadError = '';
   public filteredPipelines: Pipeline[] = null;
   public dropdownControl = new FormControl<string>('');
   @ViewChild('nameInput') public nameInputTemplateRef: TemplateRef<ElementRef>;
@@ -159,14 +163,17 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   private setupPipelineWebSocketConnection(): void {
     this.socketNotificationSubscription = this.socketNotificationsService.getPipelineNotifications().subscribe({
       next: (notification: PipelineNotification) => {
+        const loadError = notification.status === 'failed' ? notification.error ?? '' : '';
         if (this.currentTemporaryPipelineId === notification.pipelineId) {
           this.currentTemporaryPipelineStatus = notification.status;
+          this.loadError = loadError;
           this.pipelineStateService.currentTemporaryPipelineStatus.set(notification.status);
           return;
         }
         if (!this.currentTemporaryPipelineId && !this.pipelines.find(p => p.id === notification.pipelineId)) {
           this.currentTemporaryPipelineId = notification.pipelineId;
           this.currentTemporaryPipelineStatus = notification.status;
+          this.loadError = loadError;
           this.pipelineStateService.currentTemporaryPipelineId.set(this.currentTemporaryPipelineId);
           this.pipelineStateService.currentTemporaryPipelineStatus.set(notification.status);
           return;
@@ -175,6 +182,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
         const pipeline = this.pipelines.find(p => p.id === notification.pipelineId);
         if (pipeline) {
           pipeline.status = notification.status;
+          pipeline.error = notification.error;
         }
       },
       error: err => console.error(err)

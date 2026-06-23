@@ -11,6 +11,7 @@ from channels.layers import get_channel_layer
 from django.conf import settings
 from django.core.files.uploadedfile import UploadedFile
 from django.http import QueryDict
+from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.genomic_resources.implementations.annotation_pipeline_impl import (
     AnnotationPipelineImplementation,
@@ -44,6 +45,21 @@ from web_annotation.pipeline_cache import (
 logger = logging.getLogger(__name__)
 
 GRR = build_genomic_resource_repository(file_name=settings.GRR_DEFINITION_PATH)
+
+
+def format_config_error(exc: BaseException) -> str:
+    """Render a pipeline-config build failure as a user-facing message.
+
+    Single source of truth shared by the synchronous ``PipelineValidation``
+    endpoint and the deferred-load failure path (#155). Known configuration
+    errors carry their reason; anything else degrades to a bare message so
+    internal exception text (e.g. server filesystem paths) is not leaked.
+    """
+    if isinstance(exc, (AnnotationConfigurationError, KeyError)):
+        reason = str(exc)
+        if reason:
+            return f"Invalid configuration, reason: {reason}"
+    return "Invalid configuration"
 
 
 def get_grr_pipelines(grr: GenomicResourceRepo) -> dict[str, dict[str, str]]:
@@ -183,7 +199,7 @@ class AnnotationBaseView(views.APIView):
         return Path(user_pipeline.config_path).read_text(encoding="utf-8")
 
     def _notify_global_pipeline(
-        self, pipeline_id: str, status: str,
+        self, pipeline_id: str, status: str, error: str | None = None,
     ) -> None:
         async_to_sync(self.channel_layer.group_send)(
             "global",
@@ -191,11 +207,13 @@ class AnnotationBaseView(views.APIView):
                 "type": "pipeline_status",
                 "pipeline_id": pipeline_id,
                 "status": status,
+                "error": error,
             },
         )
 
     def _notify_user_pipeline(
         self, user: BaseUser, pipeline_id: str, status: str,
+        error: str | None = None,
     ) -> None:
         group_id = user.get_socket_group()
 
@@ -205,6 +223,7 @@ class AnnotationBaseView(views.APIView):
                 "type": "pipeline_status",
                 "pipeline_id": pipeline_id,
                 "status": status,
+                "error": error,
             },
         )
 
@@ -249,11 +268,13 @@ class AnnotationBaseView(views.APIView):
         def fail_load_callback(exc: BaseException) -> None:
             # Resource-resolving validation is deferred to this background
             # load (#150 H1), so a build failure here is the user's first and
-            # only signal that the config is bad -- surface it instead of
-            # leaving the client stuck on "loading".
+            # only signal that the config is bad -- surface it with an
+            # actionable reason (#155) instead of a bare status that is
+            # indistinguishable from a delete.
             logger.warning(
                 "background load of pipeline %s failed: %s", pipeline_id, exc)
-            notify_function(pipeline_id, "unloaded")
+            notify_function(pipeline_id, "failed", error=format_config_error(
+                exc))
 
         def delete_callback(*_args: Any) -> None:
             notify_function(pipeline_id, "unloaded")

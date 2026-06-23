@@ -973,6 +973,26 @@ describe('AnnotationPipelineComponent', () => {
     expect(pipelineStateService.currentTemporaryPipelineStatus()).toBe('loading');
   });
 
+  it('should surface the reason as loadError when a failed notification matches the current temporary pipeline', () => {
+    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications').mockReturnValueOnce(
+      of(new PipelineNotification('215', 'failed', 'Invalid configuration, reason: boom'))
+    );
+    component.currentTemporaryPipelineId = '215';
+    component.ngOnInit();
+    expect(component.currentTemporaryPipelineStatus).toBe('failed');
+    expect(component.loadError).toBe('Invalid configuration, reason: boom');
+  });
+
+  it('should clear loadError when a subsequent non-failed notification arrives', () => {
+    component.currentTemporaryPipelineId = '215';
+    component.loadError = 'Invalid configuration, reason: boom';
+    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications').mockReturnValueOnce(
+      of(new PipelineNotification('215', 'loaded'))
+    );
+    component.ngOnInit();
+    expect(component.loadError).toBe('');
+  });
+
   it('should sync pipeline text to state when selecting a pipeline', () => {
     component.onPipelineClick(new Pipeline('1', 'other pipeline', 'config content', 'default', 'loaded'));
     expect(pipelineStateService.currentPipelineText()).toBe('config content');

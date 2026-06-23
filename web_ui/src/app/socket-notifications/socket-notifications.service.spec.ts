@@ -217,4 +217,12 @@ describe('PipelineNotification', () => {
     const result = PipelineNotification.fromJson({pipeline_id: 7, status: 'loaded'});
     expect(result).toStrictEqual(new PipelineNotification('7', 'loaded'));
   });
+
+  it('should carry the failure reason for a failed status', () => {
+    const result = PipelineNotification.fromJson(
+      // eslint-disable-next-line camelcase
+      {pipeline_id: 7, status: 'failed', error: 'Invalid configuration, reason: boom'});
+    expect(result.status).toBe('failed');
+    expect(result.error).toBe('Invalid configuration, reason: boom');
+  });
 });

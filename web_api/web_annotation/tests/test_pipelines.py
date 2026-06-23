@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import contextlib
+import json
 import textwrap
 from unittest.mock import MagicMock
 
@@ -12,6 +13,7 @@ from gain.genomic_resources.repository import GenomicResourceRepo
 from rest_framework.exceptions import NotFound, ValidationError
 
 from web_annotation.annotation_base_view import AnnotationBaseView
+from web_annotation.consumers import AnnotationStateConsumer
 from web_annotation.executor import SequentialTaskExecutor
 from web_annotation.models import Pipeline, User
 from web_annotation.pipeline_cache import LRUPipelineCache, PipelineNotCached
@@ -315,8 +317,41 @@ def test_background_load_failure_notifies_user(
     response = user_client.post("/api/pipelines/user", params)
 
     assert response.status_code == 200
-    notified_statuses = [call.args[-1] for call in notify.call_args_list]
-    assert "unloaded" in notified_statuses
+    notified_statuses = [call.args[2] for call in notify.call_args_list]
+    assert "failed" in notified_statuses
+
+
+@pytest.mark.django_db
+def test_background_load_failure_notifies_reason(
+    user_client: Client,
+    test_grr: GenomicResourceRepo,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """The 'failed' notification carries an actionable reason (#155).
+
+    A bare 'unloaded'/'failed' status is indistinguishable from a delete and
+    gives the user nothing to act on. The deferred-build failure must thread
+    the formatted configuration error through the pipeline_status channel so
+    the editor can show why the load failed.
+    """
+    cache = LRUPipelineCache(test_grr, 16)
+    cache._load_executor = SequentialTaskExecutor()
+    mocker.patch(
+        "web_annotation.pipelines.views.UserPipeline.lru_cache", new=cache)
+    notify = mocker.patch.object(
+        AnnotationBaseView, "_notify_user_pipeline")
+
+    response = user_client.post("/api/pipelines/user", {
+        "config": ContentFile("- position_score: scores/NONEXISTENT"),
+        "name": "bad_resource_pipeline",
+    })
+
+    assert response.status_code == 200
+    failed_calls = [c for c in notify.call_args_list if c.args[2] == "failed"]
+    assert failed_calls, "expected a 'failed' status notification"
+    error = failed_calls[-1].kwargs.get("error")
+    assert error
+    assert "Invalid configuration" in error
 
 
 @pytest.mark.django_db
@@ -412,16 +447,16 @@ def test_get_pipeline_build_error_is_4xx_not_cache_miss_retry(
 
 
 @pytest.mark.django_db
-def test_list_pipelines_reports_failed_load_as_unloaded(
+def test_list_pipelines_reports_failed_load_with_reason(
     user_client: Client,
     test_grr: GenomicResourceRepo,
     mocker: pytest_mock.MockerFixture,
 ) -> None:
-    """A pipeline whose deferred build failed lists as 'unloaded'.
+    """A pipeline whose deferred build failed lists as 'failed' + reason (#155).
 
-    is_pipeline_loaded must not count a failed (but done) future as loaded;
-    otherwise the listing status contradicts the 'unloaded' the loader pushes
-    over the websocket.
+    The listing is the durable signal after a page refresh: a build that failed
+    must read as a distinct 'failed' status carrying an actionable error, not a
+    bare 'unloaded' indistinguishable from a never-loaded or deleted pipeline.
     """
     cache = LRUPipelineCache(test_grr, 16)
     mocker.patch(
@@ -439,7 +474,9 @@ def test_list_pipelines_reports_failed_load_as_unloaded(
 
     pipelines = user_client.get("/api/pipelines").json()
     broken = next(p for p in pipelines if p["id"] == pipeline_id)
-    assert broken["status"] == "unloaded"
+    assert broken["status"] == "failed"
+    assert "Invalid configuration" in broken["error"]
+    assert "NONEXISTENT" in broken["error"]
 
 
 @pytest.mark.django_db
@@ -477,3 +514,26 @@ def test_resaving_identical_broken_config_does_not_notify_loaded(
     assert resave.status_code == 200
     statuses = [call.args[-1] for call in notify.call_args_list]
     assert "loaded" not in statuses
+
+
+def test_pipeline_status_consumer_relays_error(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """The websocket consumer forwards the failure reason to the client (#155).
+
+    fail_load_callback puts an 'error' on the channel event; the consumer must
+    relay it to the browser, otherwise the live failure reason is dropped at
+    the socket boundary.
+    """
+    consumer = AnnotationStateConsumer()
+    send = mocker.patch.object(consumer, "send")
+
+    consumer.pipeline_status({
+        "pipeline_id": "7",
+        "status": "failed",
+        "error": "Invalid configuration, reason: boom",
+    })
+
+    payload = json.loads(send.call_args.kwargs["text_data"])
+    assert payload["status"] == "failed"
+    assert payload["error"] == "Invalid configuration, reason: boom"

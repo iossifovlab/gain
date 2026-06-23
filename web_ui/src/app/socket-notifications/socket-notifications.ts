@@ -18,12 +18,13 @@ export class JobNotification {
   }
 }
 
-export type PipelineStatus = 'loaded' | 'loading' | 'unloaded';
+export type PipelineStatus = 'loaded' | 'loading' | 'unloaded' | 'failed';
 
 export class PipelineNotification {
   public constructor(
     public pipelineId: string,
     public status: PipelineStatus,
+    public error?: string,
   ) {}
 
   public static fromJson(json: object): PipelineNotification {
@@ -34,6 +35,7 @@ export class PipelineNotification {
     return new PipelineNotification(
       (json['pipeline_id'] as number).toString(),
       json['status'] as PipelineStatus,
+      json['error'] as string,
     );
   }
 }
