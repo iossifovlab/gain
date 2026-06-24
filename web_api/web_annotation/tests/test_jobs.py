@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,C0302,W0212,W0613
 import datetime
 import gzip
+import operator
 import pathlib
 import textwrap
 from typing import Any
@@ -1699,6 +1700,53 @@ def test_annotate_vcf_user_pipeline(
     assert result_path.exists()
 
 
+async def _collect_notifications(
+    communicator: CustomWebsocketCommunicator,
+    *,
+    expected_pipeline: list[dict[str, str]],
+    expected_jobs: list[dict[str, str]],
+    timeout: int = 5,
+) -> None:
+    """Drain and assert one batch of pipeline + job notifications robustly.
+
+    The ``pipeline_status`` ``loading``/``loaded`` (and ``unloaded``) frames are
+    NOT delivered in a guaranteed back-to-back order: ``loading`` is emitted
+    synchronously in the request path while ``loaded`` is fired from the
+    background loader-pool thread the moment the (often very fast) build
+    finishes -- so a fast build can deliver ``loaded`` before ``loading``
+    reaches the channel. Asserting a strict sequence here is the cause of the
+    intermittent CI flake (iossifovlab/gain#174). The client never depends on
+    that ordering (it converges on the latest status, and re-syncs on connect),
+    so this helper asserts the expected *set* of ``pipeline_status`` frames
+    arrives -- every notification, unweakened -- while still asserting the
+    ``job_status`` frames in strict order (the job lifecycle is emitted
+    sequentially and is genuinely ordered).
+    """
+    expected_total = len(expected_pipeline) + len(expected_jobs)
+    pipeline_received: list[dict[str, str]] = []
+    job_received: list[dict[str, str]] = []
+    for _ in range(expected_total):
+        output = await communicator.receive_json_from(timeout=timeout)
+        if output.get("type") == "pipeline_status":
+            pipeline_received.append(output)
+        elif output.get("type") == "job_status":
+            job_received.append(output)
+        else:  # pragma: no cover - defensive
+            raise AssertionError(f"unexpected notification: {output!r}")
+
+    # pipeline_status frames: assert the expected set arrived, order-agnostic
+    # (the loading/loaded/unloaded delivery order races the loader thread).
+    frame_key = operator.itemgetter("pipeline_id", "status")
+    assert sorted(pipeline_received, key=frame_key) == sorted(
+        expected_pipeline, key=frame_key,
+    ), f"pipeline_status frames: {pipeline_received!r}"
+
+    # job_status frames: the job lifecycle is emitted sequentially, so its
+    # order is a real invariant and is asserted strictly.
+    assert job_received == expected_jobs, \
+        f"job_status frames: {job_received!r}"
+
+
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
 async def test_annotate_vcf_notifications(
@@ -1737,36 +1785,26 @@ async def test_annotate_vcf_notifications(
 
     job_id = response.json()["job_id"]
 
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "pipeline_status",
-        "pipeline_id": "pipeline/test_pipeline",
-        "status": "loading",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "pipeline_status",
-        "pipeline_id": "pipeline/test_pipeline",
-        "status": "loaded",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "waiting",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "in_progress",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "success",
-    }
+    await _collect_notifications(
+        communicator,
+        expected_pipeline=[
+            {
+                "type": "pipeline_status",
+                "pipeline_id": "pipeline/test_pipeline",
+                "status": "loading",
+            },
+            {
+                "type": "pipeline_status",
+                "pipeline_id": "pipeline/test_pipeline",
+                "status": "loaded",
+            },
+        ],
+        expected_jobs=[
+            {"type": "job_status", "job_id": job_id, "status": "waiting"},
+            {"type": "job_status", "job_id": job_id, "status": "in_progress"},
+            {"type": "job_status", "job_id": job_id, "status": "success"},
+        ],
+    )
 
 
 @pytest.mark.asyncio
@@ -1814,36 +1852,26 @@ async def test_annotate_tabular_notifications(
 
     job_id = response.json()["job_id"]
 
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "pipeline_status",
-        "pipeline_id": "pipeline/test_pipeline",
-        "status": "loading",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "pipeline_status",
-        "pipeline_id": "pipeline/test_pipeline",
-        "status": "loaded",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "waiting",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "in_progress",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "success",
-    }
+    await _collect_notifications(
+        communicator,
+        expected_pipeline=[
+            {
+                "type": "pipeline_status",
+                "pipeline_id": "pipeline/test_pipeline",
+                "status": "loading",
+            },
+            {
+                "type": "pipeline_status",
+                "pipeline_id": "pipeline/test_pipeline",
+                "status": "loaded",
+            },
+        ],
+        expected_jobs=[
+            {"type": "job_status", "job_id": job_id, "status": "waiting"},
+            {"type": "job_status", "job_id": job_id, "status": "in_progress"},
+            {"type": "job_status", "job_id": job_id, "status": "success"},
+        ],
+    )
 
 
 @pytest.mark.asyncio
@@ -1889,36 +1917,26 @@ async def test_annotate_vcf_notifications_fail(
 
     job_id = response.json()["job_id"]
 
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "pipeline_status",
-        "pipeline_id": "pipeline/test_pipeline",
-        "status": "loading",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "pipeline_status",
-        "pipeline_id": "pipeline/test_pipeline",
-        "status": "loaded",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "waiting",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "in_progress",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "failed",
-    }
+    await _collect_notifications(
+        communicator,
+        expected_pipeline=[
+            {
+                "type": "pipeline_status",
+                "pipeline_id": "pipeline/test_pipeline",
+                "status": "loading",
+            },
+            {
+                "type": "pipeline_status",
+                "pipeline_id": "pipeline/test_pipeline",
+                "status": "loaded",
+            },
+        ],
+        expected_jobs=[
+            {"type": "job_status", "job_id": job_id, "status": "waiting"},
+            {"type": "job_status", "job_id": job_id, "status": "in_progress"},
+            {"type": "job_status", "job_id": job_id, "status": "failed"},
+        ],
+    )
 
 
 @pytest.mark.asyncio
@@ -1971,36 +1989,26 @@ async def test_annotate_tabular_notifications_fail(
 
     job_id = response.json()["job_id"]
 
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "pipeline_status",
-        "pipeline_id": "pipeline/test_pipeline",
-        "status": "loading",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "pipeline_status",
-        "pipeline_id": "pipeline/test_pipeline",
-        "status": "loaded",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "waiting",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "in_progress",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "failed",
-    }
+    await _collect_notifications(
+        communicator,
+        expected_pipeline=[
+            {
+                "type": "pipeline_status",
+                "pipeline_id": "pipeline/test_pipeline",
+                "status": "loading",
+            },
+            {
+                "type": "pipeline_status",
+                "pipeline_id": "pipeline/test_pipeline",
+                "status": "loaded",
+            },
+        ],
+        expected_jobs=[
+            {"type": "job_status", "job_id": job_id, "status": "waiting"},
+            {"type": "job_status", "job_id": job_id, "status": "in_progress"},
+            {"type": "job_status", "job_id": job_id, "status": "failed"},
+        ],
+    )
 
 
 @pytest.mark.asyncio
@@ -2041,36 +2049,26 @@ async def test_annotate_notifications_unloading_pipeline(
 
     assert response.status_code == 200
 
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "pipeline_status",
-        "pipeline_id": "pipeline/test_pipeline",
-        "status": "loading",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "pipeline_status",
-        "pipeline_id": "pipeline/test_pipeline",
-        "status": "loaded",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "waiting",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "in_progress",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "success",
-    }
+    await _collect_notifications(
+        communicator,
+        expected_pipeline=[
+            {
+                "type": "pipeline_status",
+                "pipeline_id": "pipeline/test_pipeline",
+                "status": "loading",
+            },
+            {
+                "type": "pipeline_status",
+                "pipeline_id": "pipeline/test_pipeline",
+                "status": "loaded",
+            },
+        ],
+        expected_jobs=[
+            {"type": "job_status", "job_id": job_id, "status": "waiting"},
+            {"type": "job_status", "job_id": job_id, "status": "in_progress"},
+            {"type": "job_status", "job_id": job_id, "status": "success"},
+        ],
+    )
 
     response = await sync_to_async(user_client.post)(
         "/api/jobs/annotate_vcf",
@@ -2084,42 +2082,34 @@ async def test_annotate_notifications_unloading_pipeline(
 
     assert response.status_code == 200
 
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "pipeline_status",
-        "pipeline_id": "pipeline/test_pipeline",
-        "status": "unloaded",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "pipeline_status",
-        "pipeline_id": "t4c8/t4c8_pipeline",
-        "status": "loading",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "pipeline_status",
-        "pipeline_id": "t4c8/t4c8_pipeline",
-        "status": "loaded",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "waiting",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "in_progress",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "success",
-    }
+    # The capacity-1 cache evicts test_pipeline to load t4c8_pipeline, so this
+    # batch carries an extra unloaded frame. The unloaded/loading/loaded
+    # delivery order races the loader thread (#174), so assert the set.
+    await _collect_notifications(
+        communicator,
+        expected_pipeline=[
+            {
+                "type": "pipeline_status",
+                "pipeline_id": "pipeline/test_pipeline",
+                "status": "unloaded",
+            },
+            {
+                "type": "pipeline_status",
+                "pipeline_id": "t4c8/t4c8_pipeline",
+                "status": "loading",
+            },
+            {
+                "type": "pipeline_status",
+                "pipeline_id": "t4c8/t4c8_pipeline",
+                "status": "loaded",
+            },
+        ],
+        expected_jobs=[
+            {"type": "job_status", "job_id": job_id, "status": "waiting"},
+            {"type": "job_status", "job_id": job_id, "status": "in_progress"},
+            {"type": "job_status", "job_id": job_id, "status": "success"},
+        ],
+    )
 
 
 def test_job_failure_stores_exception(
@@ -2243,36 +2233,27 @@ async def test_annotate_anonymous_notifications(
 
     job_id = response.json()["job_id"]
 
-    output = await communicator.receive_json_from(timeout=1000)
-    assert output == {
-        "type": "pipeline_status",
-        "pipeline_id": "pipeline/test_pipeline",
-        "status": "loading",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "pipeline_status",
-        "pipeline_id": "pipeline/test_pipeline",
-        "status": "loaded",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "waiting",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "in_progress",
-    }
-    output = await communicator.receive_json_from()
-    assert output == {
-        "type": "job_status",
-        "job_id": job_id,
-        "status": "success",
-    }
+    await _collect_notifications(
+        communicator,
+        expected_pipeline=[
+            {
+                "type": "pipeline_status",
+                "pipeline_id": "pipeline/test_pipeline",
+                "status": "loading",
+            },
+            {
+                "type": "pipeline_status",
+                "pipeline_id": "pipeline/test_pipeline",
+                "status": "loaded",
+            },
+        ],
+        expected_jobs=[
+            {"type": "job_status", "job_id": job_id, "status": "waiting"},
+            {"type": "job_status", "job_id": job_id, "status": "in_progress"},
+            {"type": "job_status", "job_id": job_id, "status": "success"},
+        ],
+        timeout=1000,
+    )
 
 
 @pytest.mark.asyncio
