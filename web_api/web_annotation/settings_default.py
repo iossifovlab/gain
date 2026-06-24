@@ -341,8 +341,3 @@ PIPELINES_CACHE_SIZE = 256
 ANNOTATION_TASK_TIMEOUT = 60 * 60 * 2  # 2 hours
 
 DEFAULT_PIPELINE: str | None = "pipeline/hg38_clinical_annotation"
-
-# SPIKE #162 -- gate the throwaway /api/_spike/adrf-probe endpoint. Defaults to
-# False so the probe is NEVER wired into production URLconfs (settings_daphne /
-# settings_gunicorn). Enabled only in test settings. Remove when #163 lands.
-ENABLE_ADRF_SPIKE = False

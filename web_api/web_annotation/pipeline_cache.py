@@ -1,4 +1,5 @@
 """Module for thread-safe annotation utilities."""
+import asyncio
 import logging
 import threading
 import time
@@ -7,6 +8,7 @@ from concurrent.futures import CancelledError, Future
 from dataclasses import dataclass
 from threading import Lock, RLock
 from types import TracebackType
+from typing import Any, TypeVar
 
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
@@ -32,6 +34,72 @@ class PipelineNotCached(Exception):
     otherwise be a bare ``ValueError`` (the annotation factory raises
     ``ValueError`` for bad configs). See iossifovlab/gain#150 review.
     """
+
+
+class BuildCancelled(Exception):
+    """The shared build future was cancelled (reaper / force-reload).
+
+    The build future is *shared* across every concurrent reader, so a single
+    request awaiting it must NOT cancel it on its own. When the reaper or a
+    force/config-reload cancels the shared future, an awaiter sees this
+    sentinel (rather than a bare ``asyncio.CancelledError``, which is
+    indistinguishable from the awaiting task itself being cancelled) and
+    retries against a freshly re-loaded entry. See iossifovlab/gain#163.
+    """
+
+
+_T = TypeVar("_T")
+
+
+def _settle(
+    waiter: "asyncio.Future[Any]",
+    source: "Future[Any]",
+) -> None:
+    """Settle a per-request waiter from a finished shared build future.
+
+    Runs on the event-loop thread (scheduled via ``call_soon_threadsafe``).
+    A cancellation of the *shared* future is reported as ``BuildCancelled`` so
+    the awaiter can retry; it is never propagated as ``CancelledError``, which
+    would be confused with the awaiting task being cancelled.
+    """
+    if waiter.cancelled():
+        return
+    if source.cancelled():
+        waiter.set_exception(BuildCancelled())
+        return
+    exc = source.exception()
+    if exc is not None:
+        waiter.set_exception(exc)
+    else:
+        waiter.set_result(source.result())
+
+
+async def _await_build(future: "Future[_T]") -> _T:
+    """Await a *shared* build future without cancelling it on caller-cancel.
+
+    Bridges a blocking ``concurrent.futures.Future`` (prod) -- or the test
+    ``FakeFuture``, which the executor exposes typed as ``Future`` -- onto the
+    running event loop via a per-request one-shot ``loop.create_future()``
+    waiter. ``add_done_callback`` + ``call_soon_threadsafe`` settle the waiter
+    when the shared build finishes.
+
+    Cancelling the awaiting task cancels only the per-request ``waiter``, never
+    the shared ``future`` (so a reaped/force-reloaded build that *is* cancelled
+    surfaces as ``BuildCancelled``, not a spurious propagation). This is why a
+    bare ``asyncio.wrap_future`` is wrong here -- it would cancel the shared
+    build on caller-cancel and could not distinguish the two cancel sources.
+    """
+    loop = asyncio.get_running_loop()
+    waiter: asyncio.Future[_T] = loop.create_future()
+
+    def _on_done(source: "Future[_T]") -> None:
+        loop.call_soon_threadsafe(_settle, waiter, source)
+
+    # For an already-done future (e.g. the test FakeFuture, which fires its
+    # callbacks immediately at add_done_callback time) this still schedules the
+    # settle on the loop, so the await below resolves on the next loop turn.
+    future.add_done_callback(_on_done)
+    return await waiter
 
 
 class LoggedLock:
@@ -607,6 +675,40 @@ class LRUPipelineCache:
         logger.debug(
             "got pipeline %s in %.2f seconds", pipeline_id, elapsed)
         return pipeline
+
+    async def aget_pipeline(self, pipeline_id: str) -> ThreadSafePipeline:
+        """Async mirror of ``get_pipeline``: await the build off the loop.
+
+        Pins the entry (fast, microsecond lock bookkeeping), awaits the shared
+        build future via ``_await_build`` so the event-loop thread is never
+        parked on ``future.result()``, then unpins in ``finally``. The same
+        retry-on-cancel contract as the sync ``get_pipeline`` is expressed here
+        through ``BuildCancelled`` (the decoupled-waiter analogue of the sync
+        path's ``CancelledError``): a reaper/force-reload cancel of the shared
+        build loops to re-resolve the (possibly replaced) entry rather than
+        surfacing a spurious failure. A genuine ``PipelineNotCached`` is left to
+        propagate so the view's reload-on-miss retry can recover it.
+        """
+        started = time.time()
+        logger.debug(
+            "thread %s calling aget_pipeline for %s",
+            threading.current_thread().name, pipeline_id)
+        pinned = self._pin_pipeline(pipeline_id)
+        try:
+            while True:
+                pipeline_future = self.get_pipeline_future(pipeline_id)
+                try:
+                    pipeline = await _await_build(pipeline_future)
+                except BuildCancelled:
+                    logger.debug("Retrying to get %s", pipeline_id)
+                    continue
+                elapsed = time.time() - started
+                logger.debug(
+                    "got pipeline %s in %.2f seconds", pipeline_id, elapsed)
+                return pipeline
+        finally:
+            if pinned:
+                self._unpin_pipeline(pipeline_id)
 
     def unload_pipeline(
         self, pipeline_id: str,

@@ -2,13 +2,13 @@
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from django.test import Client
 from django.utils import timezone
 from gain.annotation.annotation_config import Attribute
-from gain.annotation.annotation_pipeline import AttributeSpec
+from gain.annotation.annotation_pipeline import Annotator, AttributeSpec
 from gain.genomic_resources.repository import GenomicResourceRepo
 from pytest_mock import MockerFixture
 
@@ -88,7 +88,7 @@ def test_build_attribute_description_with_histogram(
 
     description = view._build_attribute_description(
         result,
-        annotator,
+        cast(Annotator, annotator),
         attribute_info,
     )
 
@@ -134,7 +134,7 @@ def test_build_attribute_description_stringifies_non_mapping_objects(
 
     description = view._build_attribute_description(
         result,
-        annotator,
+        cast(Annotator, annotator),
         attribute_info,
     )
 
@@ -142,7 +142,8 @@ def test_build_attribute_description_stringifies_non_mapping_objects(
     assert description["result"]["value"] == "456"
 
 
-def test_use_of_thread_safe_pipelines(
+@pytest.mark.asyncio
+async def test_use_of_thread_safe_pipelines(
     mocker: MockerFixture,
     test_grr: GenomicResourceRepo,
 ) -> None:
@@ -163,6 +164,7 @@ def test_use_of_thread_safe_pipelines(
         },
     }
     request_data.user = MagicMock()
+    request_data.user.is_authenticated = False
     request_data.user.as_owner = request_data.user
     pipeline_mock = MagicMock()
     pipeline_mock.table_id.return_value = "dummy"
@@ -174,14 +176,15 @@ def test_use_of_thread_safe_pipelines(
         new=custom_cache,
     )
     assert thread_safe_dummy.lock.__enter__.call_count == 0
-    view.post(request_data)
+    await view.post(request_data)
     assert thread_safe_dummy.lock.__enter__.call_count == 1
-    view.post(request_data)
-    view.post(request_data)
+    await view.post(request_data)
+    await view.post(request_data)
     assert thread_safe_dummy.lock.__enter__.call_count == 3
 
 
-def test_single_annotation_returns_429_when_quota_exceeded(
+@pytest.mark.asyncio
+async def test_single_annotation_returns_429_when_quota_exceeded(
     mocker: MockerFixture,
     test_grr: GenomicResourceRepo,
 ) -> None:
@@ -207,13 +210,14 @@ def test_single_annotation_returns_429_when_quota_exceeded(
         new=custom_cache,
     )
 
-    response = view.post(request_data)
+    response = await view.post(request_data)
 
     assert response.status_code == 429
     request_data.user.quota_single_allele_complete.assert_not_called()
 
 
-def test_single_annotation_records_quota_usage_on_success(
+@pytest.mark.asyncio
+async def test_single_annotation_records_quota_usage_on_success(
     mocker: MockerFixture,
     test_grr: GenomicResourceRepo,
 ) -> None:
@@ -231,6 +235,7 @@ def test_single_annotation_records_quota_usage_on_success(
         "annotatable": {"chrom": "1", "pos": 12345, "ref": "A", "alt": "T"},
     }
     request_data.user.is_unlimited = False
+    request_data.user.is_authenticated = False
     request_data.user.get_quota.return_value = quota_mock
 
     mocker.patch(
@@ -239,7 +244,7 @@ def test_single_annotation_records_quota_usage_on_success(
         new=custom_cache,
     )
 
-    response = view.post(request_data)
+    response = await view.post(request_data)
 
     assert response.status_code == 200
     # Empty pipeline has no annotators, so attributes_count == 0
@@ -247,7 +252,8 @@ def test_single_annotation_records_quota_usage_on_success(
     request_data.user.quota_single_allele_complete.assert_called_once_with(0)
 
 
-def test_single_annotation_quota_counts_only_non_internal_attributes(
+@pytest.mark.asyncio
+async def test_single_annotation_quota_counts_only_non_internal_attributes(
     mocker: MockerFixture,
     test_grr: GenomicResourceRepo,
 ) -> None:
@@ -273,7 +279,8 @@ def test_single_annotation_quota_counts_only_non_internal_attributes(
         view, "_build_attribute_description", return_value={},
     )
     mocker.patch.object(
-        view, "get_pipeline", return_value=dummy_pipeline,
+        view, "aget_pipeline",
+        new=AsyncMock(return_value=dummy_pipeline),
     )
 
     quota_mock = MagicMock()
@@ -285,9 +292,10 @@ def test_single_annotation_quota_counts_only_non_internal_attributes(
         "annotatable": {"chrom": "1", "pos": 12345, "ref": "A", "alt": "T"},
     }
     request_data.user.is_unlimited = False
+    request_data.user.is_authenticated = False
     request_data.user.get_quota.return_value = quota_mock
 
-    view.post(request_data)
+    await view.post(request_data)
 
     # 2 non-internal attributes, 1 internal — only non-internal counted
     quota_mock.single_allele_allowed.assert_called_once_with(2)

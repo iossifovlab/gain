@@ -74,18 +74,6 @@ if "admin_panel" in settings.INSTALLED_APPS:
     from admin_panel.urls import urlpatterns as admin_panel_urls
     urlpatterns += admin_panel_urls
 
-# SPIKE #162 -- throwaway async-vehicle probe; remove with #163. Wired only in
-# test/dev (ENABLE_ADRF_SPIKE defaults to False) so it never reaches production.
-if getattr(settings, "ENABLE_ADRF_SPIKE", False):
-    # pylint: disable-next=ungrouped-imports
-    from web_annotation.spike_adrf_probe import AdrfProbeView
-    urlpatterns += [
-        path(
-            "api/_spike/adrf-probe",
-            AdrfProbeView.as_view(),
-        ),
-    ]
-
 websocket_urlpatterns = [
     re_path(
         r"ws/notifications/?$",
