@@ -5,6 +5,12 @@ against our real `WebAnnotationAuthentication` + `UserRateThrottle` stack, runs
 the blocking session I/O off the event loop, and preserves DRF exception
 mapping. Proceed with the real read-view conversion in #163.
 
+**Scope of this GO (do not overclaim).** This spike proved that adrf offloads
+the sync auth/throttle stack OFF the event loop and preserves DRF exception
+mapping; it did NOT itself `await` a long-running GRR pipeline build off-loop —
+that end-to-end behavior (the actual fix for the daphne event-loop stall) is
+validated in #163, not here.
+
 ## Why this spike exists
 
 Under daphne every sync DRF view runs on one shared `thread_sensitive`
@@ -76,6 +82,12 @@ Throwaway probe (delete with #163):
 - `web_annotation/tests/test_spike_adrf_probe.py` — async tests
   (`@pytest.mark.asyncio` + Django `AsyncClient`) under the existing
   `django_db(transaction=True)` setup.
+
+Note: the probe's `ProbeAuthentication` forces an **unconditional**
+`request.session.save()` purely for instrumentation (to record the save-thread
+on both the authenticated and anonymous paths). The real
+`WebAnnotationAuthentication.authenticate` only saves the session when
+`session_key is None` — the probe is not representative of that save cadence.
 
 ## Gate results
 
