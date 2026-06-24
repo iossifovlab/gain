@@ -35,6 +35,10 @@
     "tslib": "2.3.0",
     "zone.js": "0.15.0"
   },
+  "overrides": {
+    "@noble/hashes": "2.2.0",
+    "yaml": "2.9.0"
+  },
   "devDependencies": {
     "@angular-builders/jest": "21",
     "@angular-eslint/builder": "21.1.0",
