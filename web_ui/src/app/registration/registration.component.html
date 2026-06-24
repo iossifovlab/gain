@@ -28,19 +28,22 @@
           required
           autocomplete="new-password" />
       </div>
-      <div id="validation-message" role="alert" *ngIf="validationMessage">{{ validationMessage }}</div>
+      @if (validationMessage) {
+      <div id="validation-message" role="alert">{{ validationMessage }}</div>
+      }
       <button id="login-button" type="submit">Create</button>
     </form>
 
     <div id="login-options">
+      @if (responseMessage) {
       <div
-        *ngIf="responseMessage"
         id="registration-message"
         role="alert"
         [class.response-success]="responseMessage.includes('success')"
         [class.response-error]="!responseMessage.includes('success')"
         >{{ responseMessage }}</div
       >
+      }
       <div>
         <span>Already have an account? </span>
         <a routerLink="/login" id="login-link">Login</a>

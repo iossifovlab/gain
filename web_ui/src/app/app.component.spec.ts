@@ -111,14 +111,16 @@ describe('AppComponent', () => {
   });
 
   it('should call refreshUserData after logout completes', () => {
-    const reloadSpy = jest.fn();
     const originalLocation = window.location;
-    delete (window as any).location;
-    (window as any).location = { reload: reloadSpy };
+    // @ts-expect-error - jsdom limitation: window.location cannot be properly typed
+    delete window.location;
+    // @ts-expect-error - jsdom limitation: window.location cannot be properly typed
+    window.location = { reload: jest.fn() };
     jest.spyOn(usersServiceMock, 'logout').mockReturnValue(of({}));
     const refreshUserDataSpy = jest.spyOn(usersServiceMock, 'refreshUserData');
     component.logout();
     expect(refreshUserDataSpy).toHaveBeenCalledWith();
-    (window as any).location = originalLocation;
+    // @ts-expect-error - jsdom limitation: window.location cannot be properly typed
+    window.location = originalLocation;
   });
 });

@@ -4,7 +4,8 @@
     <span>Disk space quota: {{ userLimitations.diskSpace }}</span>
   </div>
   <div>
-    <div *ngIf="!file" id="file-upload-field" (dragover)="onDragOver($event)" (drop)="onDropSuccess($event)">
+    @if (!file) {
+    <div id="file-upload-field" (dragover)="onDragOver($event)" (drop)="onDropSuccess($event)">
       <div id="upload-instructions">
         Drag & drop here or
         <label id="file-upload-label" for="file-upload">Choose file</label>
@@ -15,11 +16,14 @@
         <div class="restrictions">*Maximum file size: {{ userLimitations.filesize }}</div>
       </div>
     </div>
-
-    <div *ngIf="file" id="uploaded-file-container">
+    } @if (file) {
+    <div id="uploaded-file-container">
       <div id="file-info">
-        <span *ngIf="uploadError" class="material-symbols-outlined warning-icon">warning</span>
-        <span *ngIf="!uploadError" class="material-symbols-outlined file-icon">article</span>
+        @if (uploadError) {
+        <span class="material-symbols-outlined warning-icon">warning</span>
+        } @if (!uploadError) {
+        <span class="material-symbols-outlined file-icon">article</span>
+        }
         <span>{{ file.name }}</span>
         <span class="error-message">{{ uploadError }}</span>
       </div>
@@ -27,8 +31,8 @@
         <span class="material-symbols-outlined delete-icon">delete</span>
       </button>
     </div>
-
-    <div *ngIf="this.file && !this.file.name.endsWith('vcf') && !uploadError" class="separator-list">
+    } @if (this.file && !this.file.name.endsWith('vcf') && !uploadError) {
+    <div class="separator-list">
       <label class="separator-label">Separate columns by: </label>
       <input
         type="radio"
@@ -38,7 +42,6 @@
         (click)="submitNewSeparator('\t')"
         [checked]="fileSeparator === '\t'" />
       <label class="separator-label" for="tab-separtor-radio">Tab</label>
-
       <input
         type="radio"
         id="comma-separtor-radio"
@@ -47,7 +50,6 @@
         (click)="submitNewSeparator(',')"
         [checked]="fileSeparator === ','" />
       <label class="separator-label" for="comma-separtor-radio">Comma</label>
-
       <input
         type="radio"
         id="no-separator-radio"
@@ -57,17 +59,17 @@
         [checked]="!fileSeparator" />
       <label class="separator-label" for="no-separator-radio">No separator</label>
     </div>
-
-    <app-column-specifying
-      *ngIf="fileContent"
-      [fileContent]="fileContent"
-      (emitColumns)="getColumns($event)"></app-column-specifying>
-
-    <div *ngIf="requireGenome">
+    } @if (fileContent) {
+    <app-column-specifying [fileContent]="fileContent" (emitColumns)="getColumns($event)"></app-column-specifying>
+    } @if (requireGenome) {
+    <div>
       <label for="select-genome">Select genome:</label>
       <select id="select-genome" [(ngModel)]="selectedGenome" (ngModelChange)="onSelectGenome($event)">
-        <option *ngFor="let genome of genomes" [value]="genome">{{ genome }}</option>
+        @for (genome of genomes; track genome) {
+        <option [value]="genome">{{ genome }}</option>
+        }
       </select>
     </div>
+    }
   </div>
 </div>

@@ -1,47 +1,44 @@
-<div *ngIf="annotatables.length">
+@if (annotatables.length) {
+<div>
   <div id="history-header">History</div>
   <div id="grid-container">
     <div class="grid-header">Annotatables</div>
     <div class="grid-header">Actions</div>
-
-    <ng-container *ngFor="let annotatable of annotatables">
-      <div class="grid-cell annotatable-cell" [class.editing]="editingId === annotatable.id">
-        <ng-container *ngIf="editingId === annotatable.id; else viewMode">
-          <input
-            class="note-input"
-            type="text"
-            [(ngModel)]="editingNote"
-            (keydown.enter)="saveEdit(annotatable)"
-            (keydown.escape)="cancelEdit()"
-            placeholder="Add a label..."
-            autofocus />
-        </ng-container>
-        <ng-template #viewMode>
-          <span class="note-label" [class.empty]="!annotatable.note">{{ annotatable.note || 'no label' }}</span>
-        </ng-template>
-        <a class="annotatable-link" (click)="makeRequest(annotatable.name)">{{ annotatable.name }}</a>
-      </div>
-
-      <div class="grid-cell actions-cell" [class.editing]="editingId === annotatable.id">
-        <ng-container *ngIf="editingId === annotatable.id; else viewActions">
-          <button class="action-btn confirm-btn" (click)="saveEdit(annotatable)" title="Save">
-            <span class="material-symbols-outlined">check</span>
-          </button>
-          <button class="action-btn cancel-btn" (click)="cancelEdit()" title="Cancel">
-            <span class="material-symbols-outlined">close</span>
-          </button>
-        </ng-container>
-        <ng-template #viewActions>
-          <button class="action-btn edit-btn" (click)="startEdit(annotatable)" title="Edit label">
-            <span class="material-symbols-outlined">edit</span>
-          </button>
-          <button class="action-btn delete-btn" (click)="onDelete(annotatable.id)" title="Delete">
-            <span class="material-symbols-outlined">delete</span>
-          </button>
-        </ng-template>
-      </div>
-    </ng-container>
+    @for (annotatable of annotatables; track annotatable) {
+    <div class="grid-cell annotatable-cell" [class.editing]="editingId === annotatable.id">
+      @if (editingId === annotatable.id) {
+      <input
+        class="note-input"
+        type="text"
+        [(ngModel)]="editingNote"
+        (keydown.enter)="saveEdit(annotatable)"
+        (keydown.escape)="cancelEdit()"
+        placeholder="Add a label..."
+        autofocus />
+      } @else {
+      <span class="note-label" [class.empty]="!annotatable.note">{{ annotatable.note || 'no label' }}</span>
+      }
+      <a class="annotatable-link" (click)="makeRequest(annotatable.name)">{{ annotatable.name }}</a>
+    </div>
+    <div class="grid-cell actions-cell" [class.editing]="editingId === annotatable.id">
+      @if (editingId === annotatable.id) {
+      <button class="action-btn confirm-btn" (click)="saveEdit(annotatable)" title="Save">
+        <span class="material-symbols-outlined">check</span>
+      </button>
+      <button class="action-btn cancel-btn" (click)="cancelEdit()" title="Cancel">
+        <span class="material-symbols-outlined">close</span>
+      </button>
+      } @else {
+      <button class="action-btn edit-btn" (click)="startEdit(annotatable)" title="Edit label">
+        <span class="material-symbols-outlined">edit</span>
+      </button>
+      <button class="action-btn delete-btn" (click)="onDelete(annotatable.id)" title="Delete">
+        <span class="material-symbols-outlined">delete</span>
+      </button>
+      }
+    </div>
+    }
   </div>
-
   <span id="note">Note: Annotatables are stored for 30 days</span>
 </div>
+}

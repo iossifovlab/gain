@@ -10,8 +10,10 @@
           histogram.smallValuesDesc && histogram.largeValuesDesc ? 'translate(10, 50)' : 'translate(10, 10)'
         ">
         <g #histogramContainer style="transform: 'translate(0px, 0px)'"></g>
-        <g *ngIf="scoreValues.length">
-          <ng-container *ngFor="let score of scoreValues">
+        @if (scoreValues.length) {
+        <g>
+          @for (score of scoreValues; track score) {
+          <ng-container>
             <line
               class="single-score-marker"
               style="stroke: rgb(255, 0, 0); stroke-width: 2"
@@ -20,13 +22,17 @@
               [attr.x2]="getCoordinate(score)"
               [attr.y2]="-5" />
           </ng-container>
+          }
         </g>
+        }
       </g>
     </svg>
 
-    <div *ngIf="histogram.smallValuesDesc && histogram.largeValuesDesc" id="values-description">
+    @if (histogram.smallValuesDesc && histogram.largeValuesDesc) {
+    <div id="values-description">
       <span>{{ histogram.smallValuesDesc }}</span>
       <span>{{ histogram.largeValuesDesc }}</span>
     </div>
+    }
   </div>
 </div>

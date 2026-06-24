@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, EventEmitter, Input, OnChanges, Output } from '@angular/core';
+import { Component, EventEmitter, inject, Input, OnChanges, Output } from '@angular/core';
 import { FileContent } from '../job-creation/jobs';
 import { TextShortenPipe } from '../text-shorten.pipe';
 import { MatSelectModule } from '@angular/material/select';
@@ -34,9 +34,7 @@ export class ColumnSpecifyingComponent implements OnChanges {
   public annotatable = '';
   public validationSubscription = new Subscription();
 
-  public constructor(
-    private jobsService: JobsService,
-  ) { }
+  private readonly jobsService = inject(JobsService);
 
   public ngOnChanges(): void {
     this.selectDefaultNames();

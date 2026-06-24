@@ -1,4 +1,4 @@
-import { Component, ViewChild, OnInit, HostListener, effect } from '@angular/core';
+import { Component, ViewChild, OnInit, HostListener, effect, inject } from '@angular/core';
 import { JobsTableComponent } from '../jobs-table/jobs-table.component';
 import { filter, Observable, Subscription, take } from 'rxjs';
 import { JobsService } from '../job-creation/jobs.service';
@@ -49,14 +49,13 @@ export class AnnotationJobsWrapperComponent implements OnInit {
   public blockCreate: boolean = false;
   public socketNotificationSubscription: Subscription = new Subscription();
 
+  private readonly jobsService = inject(JobsService);
+  private readonly userService = inject(UsersService);
+  private readonly socketNotificationsService = inject(SocketNotificationsService);
+  private readonly annotationPipelineService = inject(AnnotationPipelineService);
+  private readonly pipelineStateService = inject(AnnotationPipelineStateService);
 
-  public constructor(
-      private jobsService: JobsService,
-      private userService: UsersService,
-      private socketNotificationsService: SocketNotificationsService,
-      private annotationPipelineService: AnnotationPipelineService,
-      public pipelineStateService: AnnotationPipelineStateService,
-  ) {
+  public constructor() {
     effect(() => {
       const id = this.pipelineStateService.currentTemporaryPipelineId() ||
         this.pipelineStateService.selectedPipelineId();

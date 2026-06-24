@@ -41,8 +41,9 @@ describe('AnnotationPipelineService', () => {
 
     service.savePipeline('1', 'pipeline-name', config);
 
-    expect(httpPostSpy).toHaveBeenCalled();
-    const [url, formData, options] = httpPostSpy.mock.calls[0];
+    expect(httpPostSpy).toHaveBeenCalledTimes(1);
+    const calls = httpPostSpy.mock.calls as unknown as Array<[string, FormData, object]>;
+    const [url, formData, options] = calls[0];
 
     expect(url).toBe('//localhost:8000/api/pipelines/user');
     expect(formData).toBeInstanceOf(FormData);
@@ -50,7 +51,7 @@ describe('AnnotationPipelineService', () => {
     expect(formData.get('name')).toBe('pipeline-name');
     expect(formData.get('config')).toBeInstanceOf(File);
 
-    expect(options).toEqual({
+    expect(options).toStrictEqual({
       headers: {
         'X-CSRFToken': 'token1'
       },

@@ -1,4 +1,5 @@
-<mat-dialog-content *ngIf="job">
+@if (job) {
+<mat-dialog-content>
   <div>
     <span class="label">User: </span>
     <span class="data owner">{{ job.owner }}</span>
@@ -25,16 +26,19 @@
   <div>
     <span class="label">Duration: </span>
     <span class="data duration">
-      <ng-container *ngIf="job.duration">{{ job.duration * 1000 | date : 'HH:mm:ss' : 'UTC' }}</ng-container>
-      <ng-container *ngIf="!job.duration">-</ng-container>
+      @if (job.duration) {
+      {{ job.duration * 1000 | date : 'HH:mm:ss' : 'UTC' }}
+      } @if (!job.duration) { - }
     </span>
   </div>
-  <div *ngIf="job.status === 'success'">
+  @if (job.status === 'success') {
+  <div>
     <span class="label">Annotated file: </span>
     <a id="download-annotated" [href]="annotatedFileLink" download>
       <span class="material-symbols-outlined download-icon">download</span>
     </a>
   </div>
+  }
   <div>
     <span class="label">Uploaded file: </span>
     <a id="download-input" [href]="uploadedFileLink" download>
@@ -51,7 +55,10 @@
     <span class="label">Job size: </span>
     <span id="data-size">{{ job.size }}</span>
   </div>
-  <div class="error-block" *ngIf="job.error">
+  @if (job.error) {
+  <div class="error-block">
     <span id="data-error">{{ job.error }}</span>
   </div>
+  }
 </mat-dialog-content>
+}

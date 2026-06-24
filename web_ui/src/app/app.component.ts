@@ -1,5 +1,5 @@
-import { CommonModule } from '@angular/common';
-import { ChangeDetectorRef, Component, DoCheck, OnInit } from '@angular/core';
+
+import { ChangeDetectorRef, Component, DoCheck, inject, OnInit } from '@angular/core';
 import { Router, RouterModule, RouterOutlet } from '@angular/router';
 import { UsersService } from './users.service';
 import { UserData } from './users';
@@ -10,7 +10,7 @@ import { SocketNotificationsService } from './socket-notifications/socket-notifi
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, CommonModule, RouterModule, MarkdownModule],
+  imports: [RouterOutlet, RouterModule, MarkdownModule],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
 })
@@ -19,12 +19,10 @@ export class AppComponent implements DoCheck, OnInit {
   public readonly environment = environment;
   public menuOpen = false;
 
-  public constructor(
-    private usersService: UsersService,
-    private changeDetectorRef: ChangeDetectorRef,
-    private socketNotificationsService: SocketNotificationsService,
-    private router: Router,
-  ) { }
+  private readonly usersService = inject(UsersService);
+  private readonly changeDetectorRef = inject(ChangeDetectorRef);
+  private readonly socketNotificationsService = inject(SocketNotificationsService);
+  private readonly router = inject(Router);
 
   public ngOnInit(): void {
     this.usersService.refreshUserData();

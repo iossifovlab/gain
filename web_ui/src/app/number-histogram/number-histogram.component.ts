@@ -1,7 +1,7 @@
 import { Component, ElementRef, Input, OnInit, ViewChild } from '@angular/core';
 import { NumberHistogram } from '../single-annotation';
 import * as d3 from 'd3';
-import { CommonModule } from '@angular/common';
+
 import { FormatResultValuePipe } from '../format-result-value.pipe';
 
 interface BinBar {
@@ -12,7 +12,7 @@ interface BinBar {
 
 @Component({
   selector: 'app-number-histogram',
-  imports: [CommonModule, FormatResultValuePipe],
+  imports: [FormatResultValuePipe],
   providers: [FormatResultValuePipe],
   templateUrl: './number-histogram.component.html',
   styleUrl: './number-histogram.component.css'

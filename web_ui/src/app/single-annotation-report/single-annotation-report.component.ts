@@ -1,4 +1,4 @@
-import { Component, effect, ElementRef, Input, TemplateRef, ViewChild } from '@angular/core';
+import { Component, effect, ElementRef, inject, Input, TemplateRef, ViewChild } from '@angular/core';
 import { Annotator, Attribute, SingleAnnotationReport } from '../single-annotation';
 import { CommonModule } from '@angular/common';
 import { MarkdownModule } from 'ngx-markdown';
@@ -30,11 +30,11 @@ export class SingleAnnotationReportComponent {
   @ViewChild('infoModal') public infoModalRef: TemplateRef<ElementRef>;
   public sortState = new Map<Attribute, { column: string; direction: 'asc' | 'desc' }>();
 
-  public constructor(
-    private dialog: MatDialog,
-    private singleAnnotationReportStateService: SingleAnnotationReportStateService,
-    private viewportService: ViewportService
-  ) {
+  private readonly dialog = inject(MatDialog);
+  private readonly singleAnnotationReportStateService = inject(SingleAnnotationReportStateService);
+  private readonly viewportService = inject(ViewportService);
+
+  public constructor() {
     effect(() => {
       this.showFullReport = this.singleAnnotationReportStateService.isFullReport();
     });

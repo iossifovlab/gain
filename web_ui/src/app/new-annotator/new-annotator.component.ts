@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { AfterViewInit, Component, ElementRef, Inject, OnDestroy, OnInit, signal, ViewChild } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, inject, OnDestroy, OnInit, signal, ViewChild } from '@angular/core';
 import { FormBuilder, FormControl, FormGroup, FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
 import { MatAutocompleteModule, MatAutocompleteTrigger } from '@angular/material/autocomplete';
 import { MatButtonModule } from '@angular/material/button';
@@ -126,13 +126,10 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
     });
   }
 
-  public constructor(
-    private editorService: PipelineEditorService,
-    private formBuilder: FormBuilder,
-    @Inject(MAT_DIALOG_DATA) public data: {pipelineId: string, isResourceWorkflow: boolean},
-    private dialogRef: MatDialogRef<NewAnnotatorComponent>
-  ) {
-  }
+  public readonly data = inject(MAT_DIALOG_DATA) as {pipelineId: string, isResourceWorkflow: boolean};
+  private readonly dialogRef = inject(MatDialogRef) as MatDialogRef<NewAnnotatorComponent>;
+  private readonly editorService = inject(PipelineEditorService);
+  private readonly formBuilder = inject(FormBuilder);
 
   public ngOnInit(): void {
     this.annotatorStep = this.formBuilder.group({

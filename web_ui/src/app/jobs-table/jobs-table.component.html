@@ -1,31 +1,35 @@
-<div *ngIf="!jobs.length" id="empty-state">No annotation jobs yet.</div>
-<div *ngIf="jobs.length">
+@if (!jobs.length) {
+<div id="empty-state">No annotation jobs yet.</div>
+} @if (jobs.length) {
+<div>
   <div id="history-header">History</div>
   <div id="grid-container">
     <div class="grid-header">Job</div>
     <div class="grid-header">Actions</div>
-
-    <ng-container *ngFor="let j of jobs">
-      <div class="grid-cell job-name" [ngClass]="getStatusClass(j.status)"
-        >{{ j.name
-        }}<button
-          class="material-symbols-outlined info-icon"
-          (click)="openDetailsModal(j.id)"
-          aria-label="Show job details"
-          >info</button
-        ></div
+    @for (j of jobs; track j) {
+    <div class="grid-cell job-name" [ngClass]="getStatusClass(j.status)"
+      >{{ j.name
+      }}<button
+        class="material-symbols-outlined info-icon"
+        (click)="openDetailsModal(j.id)"
+        aria-label="Show job details"
+        >info</button
+      ></div
+    >
+    <div class="grid-cell actions" [ngClass]="getStatusClass(j.status)">
+      @if (j.status === 'success') {
+      <a class="download-result" [href]="getDownloadLink(j.id)" download
+        ><span class="material-symbols-outlined download-icon">download</span></a
       >
-      <div class="grid-cell actions" [ngClass]="getStatusClass(j.status)">
-        <a *ngIf="j.status === 'success'" class="download-result" [href]="getDownloadLink(j.id)" download
-          ><span class="material-symbols-outlined download-icon">download</span></a
-        >
-        <span *ngIf="j.status !== 'success'" class="material-symbols-outlined no-download-icon">file_download_off</span>
-        <button class="delete-job-btn" (click)="onDelete(j.id)" aria-label="Delete job"
-          ><span class="material-symbols-outlined delete-icon">delete</span></button
-        >
-      </div>
-    </ng-container>
+      } @if (j.status !== 'success') {
+      <span class="material-symbols-outlined no-download-icon">file_download_off</span>
+      }
+      <button class="delete-job-btn" (click)="onDelete(j.id)" aria-label="Delete job"
+        ><span class="material-symbols-outlined delete-icon">delete</span></button
+      >
+    </div>
+    }
   </div>
-
   <span id="note">Note: Jobs are stored for 30 days</span>
 </div>
+}

@@ -1,5 +1,5 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
-import { Injectable } from '@angular/core';
+import { inject, Injectable } from '@angular/core';
 import { catchError, map, Observable, throwError } from 'rxjs';
 import { FileContent, Job } from './jobs';
 import { Pipeline } from './pipelines';
@@ -15,7 +15,7 @@ export class JobsService {
   private readonly annotateTabularUrl = `${environment.apiPath}/jobs/annotate_tabular`;
   private readonly annotateVcfUrl = `${environment.apiPath}/jobs/annotate_vcf`;
 
-  public constructor(private http: HttpClient) { }
+  private readonly http = inject(HttpClient);
 
   private getCSRFToken(): string {
     let res = '';

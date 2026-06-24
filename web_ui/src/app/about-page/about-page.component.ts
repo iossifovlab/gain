@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, inject, OnInit } from '@angular/core';
 import { take } from 'rxjs';
 import { AboutPageService } from './about-page.service';
 import { MarkdownModule } from 'ngx-markdown';
@@ -12,7 +12,7 @@ import { MarkdownModule } from 'ngx-markdown';
 export class AboutPageComponent implements OnInit {
   public content: string;
   public version: string;
-  public constructor(private aboutPageService: AboutPageService) {}
+  private readonly aboutPageService = inject(AboutPageService);
 
   public ngOnInit(): void {
     this.aboutPageService.getContent().pipe(take(1)).subscribe(content => {

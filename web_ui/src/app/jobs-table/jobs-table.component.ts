@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, EventEmitter, OnDestroy, OnInit, Output } from '@angular/core';
+import { Component, EventEmitter, inject, OnDestroy, OnInit, Output } from '@angular/core';
 import { MatDialog } from '@angular/material/dialog';
 import { JobsService } from '../job-creation/jobs.service';
 import { Subscription, take } from 'rxjs';
@@ -18,11 +18,9 @@ export class JobsTableComponent implements OnInit, OnDestroy {
   @Output() public jobDelete = new EventEmitter<void>();
   private refreshJobsSubscription = new Subscription();
 
-  public constructor(
-    private dialog: MatDialog,
-    private jobsService: JobsService,
-    private viewportService: ViewportService,
-  ) {}
+  private readonly dialog = inject(MatDialog);
+  private readonly jobsService = inject(JobsService);
+  private readonly viewportService = inject(ViewportService);
 
   public ngOnInit(): void {
     this.refreshTable();

@@ -1,13 +1,13 @@
-import { Component, EventEmitter, OnDestroy, OnInit, Output } from '@angular/core';
+import { Component, EventEmitter, inject, OnDestroy, OnInit, Output } from '@angular/core';
 import { Subscription, take } from 'rxjs';
 import { SingleAnnotationService } from '../single-annotation.service';
-import { CommonModule } from '@angular/common';
+
 import { FormsModule } from '@angular/forms';
 import { AnnotatableHistory } from '../single-annotation';
 
 @Component({
   selector: 'app-annotatables-table',
-  imports: [CommonModule, FormsModule],
+  imports: [FormsModule],
   templateUrl: './annotatables-table.component.html',
   styleUrl: './annotatables-table.component.css'
 })
@@ -18,7 +18,7 @@ export class AnnotatablesTableComponent implements OnInit, OnDestroy {
   private refreshAnnotatablesSubscription = new Subscription();
   @Output() public emitAnnotatable = new EventEmitter<string>();
 
-  public constructor(private singleAnnotationService: SingleAnnotationService) {}
+  private readonly singleAnnotationService = inject(SingleAnnotationService);
 
   public ngOnInit(): void {
     this.getAnnotatables();

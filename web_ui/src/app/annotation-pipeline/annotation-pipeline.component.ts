@@ -5,6 +5,7 @@ import {
   effect,
   ElementRef,
   HostListener,
+  inject,
   NgZone,
   OnDestroy,
   OnInit,
@@ -79,16 +80,16 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   public editorWidth: number;
   public downloadDocLink: string;
 
-  public constructor(
-    private jobsService: JobsService,
-    private annotationPipelineService: AnnotationPipelineService,
-    private dialog: MatDialog,
-    private userService: UsersService,
-    private socketNotificationsService: SocketNotificationsService,
-    private ngZone: NgZone,
-    private pipelineStateService: AnnotationPipelineStateService,
-    private viewportService: ViewportService,
-  ) {
+  private readonly jobsService = inject(JobsService);
+  private readonly annotationPipelineService = inject(AnnotationPipelineService);
+  private readonly dialog = inject(MatDialog);
+  private readonly userService = inject(UsersService);
+  private readonly socketNotificationsService = inject(SocketNotificationsService);
+  private readonly ngZone = inject(NgZone);
+  private readonly pipelineStateService = inject(AnnotationPipelineStateService);
+  private readonly viewportService = inject(ViewportService);
+
+  public constructor() {
     effect(() => {
       this.editorWidth = this.pipelineStateService.editorWidth();
     });
@@ -689,3 +690,4 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
       : '';
   }
 }
+

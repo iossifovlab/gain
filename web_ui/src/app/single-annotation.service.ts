@@ -1,4 +1,4 @@
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 import { catchError, map, Observable, throwError } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
@@ -18,7 +18,7 @@ export class SingleAnnotationService {
   private readonly annotatablesHistoryUrl = `${environment.apiPath}/single_allele/history`;
   private readonly getHistogramUrl = `${environment.apiPath}/single_allele`;
   private readonly updateNoteUrl = `${environment.apiPath}/single_allele/note`;
-  public constructor(private http: HttpClient) { }
+  private readonly http: HttpClient = inject(HttpClient);
 
   private getCSRFToken(): string {
     let res = '';
