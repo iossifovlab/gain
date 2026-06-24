@@ -17,8 +17,7 @@ describe('AnnotationPipelineService', () => {
 
     service = TestBed.inject(AnnotationPipelineService);
 
-    const mockCookie = 'csrftoken=token1; csrftoken=token2';
-    document.cookie = mockCookie;
+    jest.spyOn(document, 'cookie', 'get').mockReturnValue('csrftoken=token1; Path=/');
   });
 
   it('should be created', () => {
@@ -32,34 +31,31 @@ describe('AnnotationPipelineService', () => {
     const config = `
       preamble:
         input_reference_genome: hg38/genomes/GRCh38-hg38
-        summary: Clinical Annotation Pipeline 
-        description: This is a pipeline to annotate with Clinical resources  
+        summary: Clinical Annotation Pipeline
+        description: This is a pipeline to annotate with Clinical resources
 
       annotators:
-    
+
         - normalize_allele_annotator: genome: hg38/genomes/GRCh38-hg38'
     `;
 
-    const formData = new FormData();
-    const configFile = new File([config], 'config.yml');
-    formData.append('id', '1');
-    formData.append('name', 'pipeline-name');
-    formData.append('config', configFile);
+    service.savePipeline('1', 'pipeline-name', config);
 
-    const options = {
+    expect(httpPostSpy).toHaveBeenCalled();
+    const [url, formData, options] = httpPostSpy.mock.calls[0];
+
+    expect(url).toBe('//localhost:8000/api/pipelines/user');
+    expect(formData).toBeInstanceOf(FormData);
+    expect(formData.get('id')).toBe('1');
+    expect(formData.get('name')).toBe('pipeline-name');
+    expect(formData.get('config')).toBeInstanceOf(File);
+
+    expect(options).toEqual({
       headers: {
         'X-CSRFToken': 'token1'
       },
       withCredentials: true
-    };
-
-    service.savePipeline('1', 'pipeline-name', config);
-
-    expect(httpPostSpy).toHaveBeenCalledWith(
-      '//localhost:8000/api/pipelines/user',
-      formData,
-      options
-    );
+    });
   });
 
   it('should save pipeline and get pipeline name as response', async() => {

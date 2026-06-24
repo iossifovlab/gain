@@ -111,20 +111,14 @@ describe('AppComponent', () => {
   });
 
   it('should call refreshUserData after logout completes', () => {
+    const reloadSpy = jest.fn();
     const originalLocation = window.location;
-    Object.defineProperty(window, 'location', {
-      value: { reload: jest.fn() },
-      configurable: true,
-      writable: true,
-    });
+    delete (window as any).location;
+    (window as any).location = { reload: reloadSpy };
     jest.spyOn(usersServiceMock, 'logout').mockReturnValue(of({}));
     const refreshUserDataSpy = jest.spyOn(usersServiceMock, 'refreshUserData');
     component.logout();
     expect(refreshUserDataSpy).toHaveBeenCalledWith();
-    Object.defineProperty(window, 'location', {
-      value: originalLocation,
-      configurable: true,
-      writable: true,
-    });
+    (window as any).location = originalLocation;
   });
 });
