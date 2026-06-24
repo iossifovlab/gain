@@ -30,6 +30,15 @@ from web_annotation.authentication import WebAnnotationAuthentication
 from web_annotation.pipeline_cache import ThreadSafePipeline
 
 
+class _InvalidSearchTermError(Exception):
+    """Raised off-loop when a search term is not a string.
+
+    Lets ``_collect_attributes`` defer the search-term type check until after
+    the factory build (master's order) and have the async caller map it to the
+    same 400 ("Search term must be a string").
+    """
+
+
 class EditorMixin:  # pylint: disable=too-few-public-methods
     """Editor-specific helpers shared by the sync and async editor bases.
 
@@ -260,7 +269,8 @@ class EditorView(EditorMixin, AnnotationBaseView):
 
 
 class AsyncEditorView(EditorMixin, AsyncAnnotationBaseView):
-    """Async base view (``adrf``) for editor read GETs that await the build.
+    """Async base view (``adrf``) for editor read GETs and POSTs that await the
+    build.
 
     Shares the same ``EditorMixin`` helpers as ``EditorView`` and the same
     cache/executors as every other annotation view (via ``AnnotationMixin``).
@@ -356,8 +366,11 @@ class AnnotatorAttributes(AsyncEditorView):
 
         # Long pole: await the GRR pipeline build OFF the event loop. Build
         # failure -> 400, missing -> 404 mapping comes from aget_pipeline.
-        # Resolved before the unknown-type / search-term checks to preserve the
-        # exact prior validation order of the sync handler.
+        # Resolved before the unknown-type check to preserve the exact prior
+        # validation order of the sync handler. The search-term string-type
+        # check stays inside _collect_attributes (after the factory build) so a
+        # dual-invalid request -- non-string search AND an unbuildable annotator
+        # config -- still yields the build's 400, exactly as master did.
         pipeline = await self.aget_pipeline(pipeline_id, request.user)
 
         data["work_dir"] = "/tmp"  # noqa: S108
@@ -365,12 +378,6 @@ class AnnotatorAttributes(AsyncEditorView):
         if annotator_type not in get_available_annotator_types():
             return Response(
                 {"error": f"Unknown annotator_type: {annotator_type}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if search_term is not None and not isinstance(search_term, str):
-            return Response(
-                {"error": "Search term must be a string"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -383,6 +390,11 @@ class AnnotatorAttributes(AsyncEditorView):
         except AnnotationConfigurationError as e:
             return Response(
                 {"error": f"Invalid annotator configuration: {e!s}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except _InvalidSearchTermError:
+            return Response(
+                {"error": "Search term must be a string"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -403,13 +415,14 @@ class AnnotatorAttributes(AsyncEditorView):
         annotator_type: str,
         data: dict[str, Any],
         page: int,
-        search_term: str | None,
+        search_term: Any,
     ) -> tuple[list[dict[str, Any]], int]:
         """Build the annotator and page its attribute specs off the loop.
 
         Touches GRR metadata (factory build, ``get_attribute_specs``); raises
-        ``AnnotationConfigurationError`` for an invalid annotator config, which
-        the caller maps to 400.
+        ``AnnotationConfigurationError`` for an invalid annotator config and
+        ``_InvalidSearchTermError`` for a non-string ``search_term`` (checked
+        after the build, matching master), both mapped to 400 by the caller.
         """
         annotator_config = AnnotatorInfo(annotator_type, [], data)
         factory = get_annotator_factory(annotator_type)
@@ -421,6 +434,12 @@ class AnnotatorAttributes(AsyncEditorView):
         if search_term is None:
             attribute_items: Any = list(all_specs.items())
         else:
+            # Master validated the search-term type HERE, after the factory
+            # build -- so a non-string search on an unbuildable config surfaces
+            # the build's 400 first. Preserve that by checking after the build
+            # and mapping to the same 400 in the caller (#166 review).
+            if not isinstance(search_term, str):
+                raise _InvalidSearchTermError
             attribute_items = [
                 (name, spec)
                 for name, spec in all_specs.items()
