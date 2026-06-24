@@ -1,6 +1,7 @@
 """Module for thread-safe annotation utilities."""
 import asyncio
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable, Sequence
@@ -24,6 +25,30 @@ from gain.genomic_resources.repository import GenomicResourceRepo
 from web_annotation.executor import TaskExecutor, ThreadedTaskExecutor
 
 logger = logging.getLogger(__name__)
+
+
+def _load_test_build_delay() -> float:
+    """Return the injected, deterministic build delay in seconds.
+
+    LOAD-TEST AID (iossifovlab/gain#164). Gated by the
+    ``GPFWA_BUILD_DELAY_SECONDS`` environment variable; **defaults to 0.0, i.e.
+    a true no-op**, so this is safe to leave in production code. When set to a
+    positive float it makes every GRR pipeline build sleep that long on the
+    loader thread, simulating a slow GRR build deterministically. This lets the
+    load harness in ``web_annotation/loadtest/`` dial contention without
+    depending on a real slow GRR. A malformed value is ignored (treated as 0.0)
+    so a typo can never take the build path down.
+    """
+    raw = os.environ.get("GPFWA_BUILD_DELAY_SECONDS")
+    if not raw:
+        return 0.0
+    try:
+        delay = float(raw)
+    except ValueError:
+        logger.warning(
+            "ignoring invalid GPFWA_BUILD_DELAY_SECONDS=%r (not a float)", raw)
+        return 0.0
+    return max(0.0, delay)
 
 
 class PipelineNotCached(Exception):
@@ -384,6 +409,13 @@ class LRUPipelineCache:
         thread = threading.current_thread().name
         logger.debug(
             "thread %s loading pipeline %s", thread, pipeline_id)
+        # LOAD-TEST AID (iossifovlab/gain#164): deterministic, env-gated build
+        # delay -- a true no-op unless GPFWA_BUILD_DELAY_SECONDS is set. Runs on
+        # the loader thread (the same place a slow real GRR build would block),
+        # so the async path's off-thread await is exercised faithfully.
+        build_delay = _load_test_build_delay()
+        if build_delay > 0.0:
+            time.sleep(build_delay)
         pipeline = ThreadSafePipeline(
             load_pipeline_from_yaml(raw, grr), pipeline_id)
         pipeline.open()
