@@ -74,6 +74,10 @@ if "admin_panel" in settings.INSTALLED_APPS:
     from admin_panel.urls import urlpatterns as admin_panel_urls
     urlpatterns += admin_panel_urls
 
+if getattr(settings, "LOADTEST_PING_ENABLED", False):
+    from web_annotation.loadtest.ping_view import loadtest_ping
+    urlpatterns += [path("api/_loadtest/ping", loadtest_ping)]
+
 websocket_urlpatterns = [
     re_path(
         r"ws/notifications/?$",

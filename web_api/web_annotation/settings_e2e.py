@@ -19,3 +19,7 @@ RESOURCES_BASE_URL = "http://grr.seqpipe.org/"
 
 ANNOTATION_MAX_WORKERS = 16
 PIPELINES_CACHE_SIZE = 256
+
+# Enable the test-only WS ping route (web_annotation.loadtest.ping_view) used by
+# the #170 WS-notification-responsiveness harness. Never set in production.
+LOADTEST_PING_ENABLED = True
