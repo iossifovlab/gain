@@ -35,7 +35,7 @@ from web_annotation.annotation_base_view import (
 )
 from web_annotation.authentication import WebAnnotationAuthentication
 from web_annotation.models import AlleleQuery, BaseUser, User
-from web_annotation.pipeline_cache import ThreadSafePipeline, _await_build
+from web_annotation.pipeline_cache import ThreadSafePipeline, await_build
 from web_annotation.serializers import AlleleSerializer
 
 
@@ -118,7 +118,7 @@ class SingleAnnotation(AsyncAnnotationBaseView):
     Async (#163): only the two long poles leave the shared ``thread_sensitive``
     thread -- the GRR build wait (awaited via ``aget_pipeline``) and
     ``pipeline.annotate(...)`` (submitted to the dedicated bounded
-    ``ANNOTATE_EXECUTOR`` and awaited via ``_await_build``). All ORM, auth and
+    ``ANNOTATE_EXECUTOR`` and awaited via ``await_build``). All ORM, auth and
     GRR-metadata access stays on the single ``thread_sensitive=True`` thread via
     ``sync_to_async`` (asgiref default), so connection-safety is preserved and
     no ``async_to_sync`` channel callback ever runs on the event loop.
@@ -206,7 +206,7 @@ class SingleAnnotation(AsyncAnnotationBaseView):
 
         # Long pole #2: run annotate on the dedicated bounded pool, awaited via
         # the same decoupled waiter used for builds (it awaits any Future).
-        annotation: dict[str, Any] = await _await_build(
+        annotation: dict[str, Any] = await await_build(
             self.ANNOTATE_EXECUTOR.execute(
                 self._run_annotate, pipeline=pipeline, annotatable=annotatable,
             ),

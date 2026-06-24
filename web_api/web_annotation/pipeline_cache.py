@@ -74,7 +74,7 @@ def _settle(
         waiter.set_result(source.result())
 
 
-async def _await_build(future: "Future[_T]") -> _T:
+async def await_build(future: "Future[_T]") -> _T:
     """Await a *shared* build future without cancelling it on caller-cancel.
 
     Bridges a blocking ``concurrent.futures.Future`` (prod) -- or the test
@@ -680,7 +680,7 @@ class LRUPipelineCache:
         """Async mirror of ``get_pipeline``: await the build off the loop.
 
         Pins the entry (fast, microsecond lock bookkeeping), awaits the shared
-        build future via ``_await_build`` so the event-loop thread is never
+        build future via ``await_build`` so the event-loop thread is never
         parked on ``future.result()``, then unpins in ``finally``. The same
         retry-on-cancel contract as the sync ``get_pipeline`` is expressed here
         through ``BuildCancelled`` (the decoupled-waiter analogue of the sync
@@ -698,7 +698,7 @@ class LRUPipelineCache:
             while True:
                 pipeline_future = self.get_pipeline_future(pipeline_id)
                 try:
-                    pipeline = await _await_build(pipeline_future)
+                    pipeline = await await_build(pipeline_future)
                 except BuildCancelled:
                     logger.debug("Retrying to get %s", pipeline_id)
                     continue
