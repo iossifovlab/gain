@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import yaml
+from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.core.files.uploadedfile import UploadedFile
 from django.http import HttpResponse, QueryDict
@@ -19,6 +20,7 @@ from rest_framework.views import Request, Response
 
 from web_annotation.annotation_base_view import (
     AnnotationBaseView,
+    AsyncAnnotationBaseView,
     format_config_error,
 )
 from web_annotation.authentication import WebAnnotationAuthentication
@@ -28,6 +30,7 @@ from web_annotation.models import (
     TemporaryPipeline,
     WebAnnotationAnonymousUser,
 )
+from web_annotation.pipeline_cache import ThreadSafePipeline
 
 logger = logging.getLogger(__name__)
 
@@ -338,12 +341,35 @@ class ListPipelines(AnnotationBaseView):
         )
 
 
-class PipelineDoc(AnnotationBaseView):
-    """View for downloading the annotate_doc HTML for a pipeline."""
+class PipelineDoc(AsyncAnnotationBaseView):
+    """View for downloading the annotate_doc HTML for a pipeline.
+
+    Async (#167): the only long pole -- the GRR pipeline build wait -- leaves
+    the event loop via ``aget_pipeline``. Converting for *event-loop
+    protection* (await the GRR build OFF the loop) and uniformity with the
+    other read views (#163/#165/#166); Django ASGI already wraps each sync HTTP
+    request in its own ``ThreadSensitiveContext`` (#164), so this is not about
+    unblocking a shared sync thread. The doc render touches GRR metadata
+    (resource/histogram URLs) and does CPU-bound markdown + Jinja template work,
+    so it runs off the loop via ``sync_to_async`` (asgiref default
+    thread_sensitive). Build failure -> 400, missing -> 404 mapping is inherited
+    from ``aget_pipeline``. No ORM and no ``annotate()`` here, so no dedicated
+    executor is needed. adrf dispatches a view async iff *all* its handlers are
+    coroutines; this view has only ``get`` so it qualifies.
+
+    The handler returns a bare Django ``HttpResponse`` on the happy path (the
+    rendered-doc download) and a DRF ``Response`` on the early ``pipeline_id``
+    400. adrf's async dispatch finalizes both through the same DRF
+    ``finalize_response`` as the sync path: a bare ``HttpResponse`` is an
+    ``HttpResponseBase`` and passes through untouched (the renderer-attachment
+    branch only runs for DRF ``Response``), so no special handling is required
+    and the response bytes/headers/status are byte-for-byte the prior sync
+    output.
+    """
 
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
-    def get(self, request: Request) -> Response | HttpResponse:
+    async def get(self, request: Request) -> Response | HttpResponse:
         """Return an HTML doc for the given pipeline as a download."""
         pipeline_id = request.query_params.get("pipeline_id")
         if not pipeline_id:
@@ -352,8 +378,24 @@ class PipelineDoc(AnnotationBaseView):
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
 
-        pipeline = self.get_pipeline(pipeline_id, request.user)
+        # Long pole: await the GRR pipeline build OFF the event loop. Build
+        # failure -> 400, missing -> 404 mapping comes from aget_pipeline.
+        pipeline = await self.aget_pipeline(pipeline_id, request.user)
 
+        # The render touches GRR metadata and does CPU-bound markdown/Jinja
+        # work; run it off the loop. Byte-for-byte identical to the prior sync
+        # render.
+        html_doc = await sync_to_async(self._render_doc)(pipeline)
+
+        response = HttpResponse(html_doc, content_type="text/html")
+        response["Content-Disposition"] = (
+            f'attachment; filename="{pipeline_id}.html"'
+        )
+        return response
+
+    @staticmethod
+    def _render_doc(pipeline: ThreadSafePipeline) -> str:
+        """Render the annotate_doc HTML off the loop (touches GRR metadata)."""
         def make_resource_url(resource: GenomicResource) -> str:
             return resource.get_url()
 
@@ -363,19 +405,13 @@ class PipelineDoc(AnnotationBaseView):
             return score.get_histogram_image_url(score_id)
 
         template = get_template("annotate_doc_pipeline_template.jinja")
-        html_doc = template.render(
+        return template.render(
             pipeline=pipeline,
             pipeline_path=None,
             markdown=markdown,
             res_url=make_resource_url,
             hist_url=make_histogram_url,
         )
-
-        response = HttpResponse(html_doc, content_type="text/html")
-        response["Content-Disposition"] = (
-            f'attachment; filename="{pipeline_id}.html"'
-        )
-        return response
 
 
 class PipelineValidation(AnnotationBaseView):
