@@ -430,13 +430,18 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
     def open_vcf_file(
             self, resource: GenomicResource,
             filename: str,
-            index_filename: str | None = None) -> pysam.VariantFile:
+            index_filename: str | None = None,
+            *,
+            require_index: bool = True) -> pysam.VariantFile:
 
         if self.scheme not in {"file", "s3", "http", "https"}:
             raise OSError(
                 f"vcf files are not supported on schema {self.scheme}")
 
         file_url = self._get_file_url(resource, filename)
+
+        if not require_index:
+            return pysam.VariantFile(file_url)  # pylint: disable=no-member
 
         if index_filename is None:
             index_filename = f"{filename}.tbi"
