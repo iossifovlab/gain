@@ -27,6 +27,7 @@ from web_annotation.annotation_base_view import (
     AsyncAnnotationBaseView,
 )
 from web_annotation.authentication import WebAnnotationAuthentication
+from web_annotation.pipeline_cache import ThreadSafePipeline
 
 
 class EditorMixin:  # pylint: disable=too-few-public-methods
@@ -452,7 +453,7 @@ class PipelineAttributes(AsyncEditorView):
 
     @staticmethod
     def _collect_attribute_names(
-        pipeline: Any, attribute_type: str | None,
+        pipeline: ThreadSafePipeline, attribute_type: str | None,
     ) -> list[str]:
         """Read attribute names off the loop (touches GRR metadata)."""
         if attribute_type is not None:
@@ -641,7 +642,7 @@ class PipelineStatus(AsyncEditorView):
         return Response(status_info, status=status.HTTP_200_OK)
 
     @staticmethod
-    def _build_status_info(pipeline: Any) -> dict[str, Any]:
+    def _build_status_info(pipeline: ThreadSafePipeline) -> dict[str, Any]:
         """Read pipeline metadata off the loop (touches GRR)."""
         return {
             "attributes_count": len(pipeline.get_attributes()),
