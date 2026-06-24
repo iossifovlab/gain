@@ -33,6 +33,20 @@ wheels = [
 ]
 
 [[package]]
+name = "adrf"
+version = "0.1.13"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "async-property" },
+    { name = "django" },
+    { name = "djangorestframework" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8f/12/0ad45c9d1f61d85ae97b3261a6ad5500e552bd22e8897f390828c95f0790/adrf-0.1.13.tar.gz", hash = "sha256:769c1b1e9e2abb7f46c83bc066e672ce832e8debfdaa455a995b906c41e168b7", size = 19262, upload-time = "2026-06-24T05:06:03.756Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/53/cb/a1d0826cd96ae8bfe07aaa58b151f548bdf32f1db7df6e67e8bc469b827c/adrf-0.1.13-py3-none-any.whl", hash = "sha256:684c082725b68d41d776d5f03102177c74d15af29dd3f748d329efad152e7f5a", size = 22765, upload-time = "2026-06-24T05:06:02.318Z" },
+]
+
+[[package]]
 name = "aiobotocore"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -282,6 +296,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f3/af/4182184d3c338792894f34a62672919db7ca008c89abee9b564dd34d8029/astunparse-1.6.3.tar.gz", hash = "sha256:5ad93a8456f0d084c3456d059fd9a92cce667963232cbf763eac3bc5b7940872", size = 18290, upload-time = "2019-12-22T18:12:13.129Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2b/03/13dde6512ad7b4557eb792fbcf0c653af6076b81e5941d36ec61f7ce6028/astunparse-1.6.3-py2.py3-none-any.whl", hash = "sha256:c2652417f2c8b5bb325c885ae329bdf3f86424075c4fd1a128674bc6fba4b8e8", size = 12732, upload-time = "2019-12-22T18:12:11.297Z" },
+]
+
+[[package]]
+name = "async-property"
+version = "0.2.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a7/12/900eb34b3af75c11b69d6b78b74ec0fd1ba489376eceb3785f787d1a0a1d/async_property-0.2.2.tar.gz", hash = "sha256:17d9bd6ca67e27915a75d92549df64b5c7174e9dc806b30a3934dc4ff0506380", size = 16523, upload-time = "2023-07-03T17:21:55.688Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/80/9f608d13b4b3afcebd1dd13baf9551c95fc424d6390e4b1cfd7b1810cd06/async_property-0.2.2-py2.py3-none-any.whl", hash = "sha256:8924d792b5843994537f8ed411165700b27b2bd966cefc4daeefc1253442a9d7", size = 9546, upload-time = "2023-07-03T17:21:54.293Z" },
 ]
 
 [[package]]
@@ -1407,6 +1430,7 @@ dev = [
 name = "gain-web-api"
 source = { editable = "web_api" }
 dependencies = [
+    { name = "adrf" },
     { name = "asgiref" },
     { name = "channels" },
     { name = "daphne" },
@@ -1440,6 +1464,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "adrf", specifier = ">=0.1.13" },
     { name = "asgiref" },
     { name = "channels", specifier = ">=4" },
     { name = "daphne", specifier = ">=4" },

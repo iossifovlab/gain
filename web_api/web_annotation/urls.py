@@ -20,7 +20,7 @@ from typing import cast
 from django.conf import settings
 from django.urls import URLResolver, include, path, re_path
 
-from web_annotation import views
+from web_annotation import spike_adrf_probe, views
 from web_annotation.consumers import AnnotationStateConsumer
 from web_annotation.editor.urls import (
     urlpatterns as editor_urls,
@@ -39,6 +39,12 @@ from web_annotation.single_allele_annotation.urls import (
 
 urlpatterns = [
     path("api-auth", include("rest_framework.urls")),
+
+    # SPIKE #162 -- throwaway async-vehicle probe; remove with #163.
+    path(
+        "api/_spike/adrf-probe",
+        spike_adrf_probe.AdrfProbeView.as_view(),
+    ),
 
     *job_urls,
     *single_allele_urls,

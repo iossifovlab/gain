@@ -25,6 +25,7 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP",
 ]
 dependencies = [
+    "adrf>=0.1.13",
     "asgiref",
     "channels>=4",
     "daphne>=4",
