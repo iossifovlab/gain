@@ -160,6 +160,31 @@ async def test_async_annotator_attributes_search_paginates() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
+async def test_async_annotator_attributes_search_matches_description() -> None:
+    """A search term matching ``spec.description`` (not the source) hits.
+
+    Mirrors the second case of the deleted sync ``test_attributes_search``:
+    "all transcripts" matches only ``worst_effect`` via its description.
+    """
+    client = AsyncClient()
+    response = await _post_json(client, ATTRIBUTES_POST_URL, {
+        "annotator_type": "effect_annotator",
+        "genome": "t4c8/t4c8_genome",
+        "gene_models": "t4c8/t4c8_genes",
+        "pipeline_id": "pipeline/test_pipeline",
+        "search": "all transcripts",
+    })
+    assert response.status_code == 200, response.content
+    data = response.json()
+    assert data["page"] == 0
+    assert data["total_pages"] == 1
+    assert data["total_attributes"] == 1
+    assert len(data["attributes"]) == 1
+    assert data["attributes"][0]["name"] == "worst_effect"
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
 async def test_async_annotator_attributes_missing_type_400() -> None:
     client = AsyncClient()
     response = await _post_json(client, ATTRIBUTES_POST_URL, {
@@ -322,6 +347,47 @@ async def test_async_annotator_attributes_authenticated_returns_200() -> None:
     })
     assert response.status_code == 200, response.content
     assert response.json()["attributes"][0]["name"] == "pos1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_async_annotator_yaml_authenticated_returns_200() -> None:
+    client = AsyncClient()
+    await client.alogin(email="user@example.com", password="secret")
+    response = await _post_json(client, YAML_POST_URL, {
+        "pipeline_id": "pipeline/test_pipeline",
+        "annotator_type": "position_score",
+        "resource_id": "scores/pos1",
+        "attributes": [
+            {"name": "pos1", "source": "pos1", "internal": False},
+        ],
+    })
+    assert response.status_code == 200, response.content
+    assert yaml.safe_load(response.json()) == [{
+        "position_score": {
+            "resource_id": "scores/pos1",
+            "attributes": [
+                {"name": "pos1", "source": "pos1", "internal": False},
+            ],
+        },
+    }]
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_async_annotator_aggregators_authenticated_returns_200() -> None:
+    client = AsyncClient()
+    await client.alogin(email="user@example.com", password="secret")
+    response = await _post_json(client, AGGREGATORS_POST_URL, {
+        "annotator_type": "position_score_annotator",
+        "resource_id": "scores/pos1",
+        "pipeline_id": "pipeline/test_pipeline",
+        "attribute_sources": ["pos1"],
+    })
+    assert response.status_code == 200, response.content
+    result = response.json()
+    assert "pos1" in result
+    assert result["pos1"]["default_aggregator"] == "mean"
 
 
 # ---------------------------------------------------------------------------
