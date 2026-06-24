@@ -53,7 +53,7 @@ export class AnnotationJobsWrapperComponent implements OnInit {
   private readonly userService = inject(UsersService);
   private readonly socketNotificationsService = inject(SocketNotificationsService);
   private readonly annotationPipelineService = inject(AnnotationPipelineService);
-  private readonly pipelineStateService = inject(AnnotationPipelineStateService);
+  public readonly pipelineStateService = inject(AnnotationPipelineStateService);
 
   public constructor() {
     effect(() => {

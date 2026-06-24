@@ -248,7 +248,7 @@
           >
           @for (entry of configurationStep.value | keyvalue; track entry.key) { @if (!data.isResourceWorkflow ||
           entry.value && resourceStep.get('resourceId').value !== entry.value) {
-          <div class="resources-display-text">{{ entry.key + '\n' + entry.value }}</div>
+          <div class="resources-display-text">{{ [entry.key, entry.value].join('\n') }}</div>
           } }
         </div>
 
@@ -394,7 +394,7 @@
           >
           @for (entry of configurationStep.value | keyvalue; track entry.key) { @if (!data.isResourceWorkflow ||
           entry.value && resourceStep.get('resourceId').value !== entry.value) {
-          <div class="resources-display-text">{{ entry.key + '\n' + entry.value }}</div>
+          <div class="resources-display-text">{{ entry.key.toString() + '\n' + entry.value }}</div>
           } }
         </div>
 
