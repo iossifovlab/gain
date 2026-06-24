@@ -1,0 +1,112 @@
+[
+  {
+    "label": "async-K8",
+    "params": {
+      "base_url": "http://127.0.0.1:21016",
+      "ws_url": "ws://127.0.0.1:21016/ws/notifications/",
+      "pipeline_id": "t4c8/t4c8_pipeline",
+      "concurrency_K": 8,
+      "duration_seconds": 10.0,
+      "ping_interval_seconds": 0.1,
+      "injected_build_delay_seconds": 0.4
+    },
+    "annotate": {
+      "fired": 538,
+      "ok_200": 538,
+      "non_200": []
+    },
+    "ws": {
+      "missed_pings": 0,
+      "baseline": {
+        "count": 19,
+        "p50_ms": 2.64,
+        "p95_ms": 3.31,
+        "p99_ms": 3.76,
+        "max_ms": 3.87,
+        "min_ms": 2.05
+      },
+      "under_load": {
+        "count": 97,
+        "p50_ms": 2.49,
+        "p95_ms": 7.61,
+        "p99_ms": 20.18,
+        "max_ms": 68.99,
+        "min_ms": 2.01
+      }
+    }
+  },
+  {
+    "label": "async-K16",
+    "params": {
+      "base_url": "http://127.0.0.1:21016",
+      "ws_url": "ws://127.0.0.1:21016/ws/notifications/",
+      "pipeline_id": "t4c8/t4c8_pipeline",
+      "concurrency_K": 16,
+      "duration_seconds": 10.0,
+      "ping_interval_seconds": 0.1,
+      "injected_build_delay_seconds": 0.4
+    },
+    "annotate": {
+      "fired": 528,
+      "ok_200": 528,
+      "non_200": []
+    },
+    "ws": {
+      "missed_pings": 0,
+      "baseline": {
+        "count": 19,
+        "p50_ms": 2.55,
+        "p95_ms": 3.22,
+        "p99_ms": 3.65,
+        "max_ms": 3.76,
+        "min_ms": 2.29
+      },
+      "under_load": {
+        "count": 98,
+        "p50_ms": 2.53,
+        "p95_ms": 10.45,
+        "p99_ms": 68.0,
+        "max_ms": 84.01,
+        "min_ms": 1.95
+      }
+    }
+  },
+  {
+    "label": "async-K32",
+    "params": {
+      "base_url": "http://127.0.0.1:21016",
+      "ws_url": "ws://127.0.0.1:21016/ws/notifications/",
+      "pipeline_id": "t4c8/t4c8_pipeline",
+      "concurrency_K": 32,
+      "duration_seconds": 10.0,
+      "ping_interval_seconds": 0.1,
+      "injected_build_delay_seconds": 0.4
+    },
+    "annotate": {
+      "fired": 472,
+      "ok_200": 469,
+      "non_200": [
+        "500"
+      ]
+    },
+    "ws": {
+      "missed_pings": 0,
+      "baseline": {
+        "count": 20,
+        "p50_ms": 2.41,
+        "p95_ms": 3.79,
+        "p99_ms": 4.76,
+        "max_ms": 5.0,
+        "min_ms": 2.18
+      },
+      "under_load": {
+        "count": 100,
+        "p50_ms": 2.59,
+        "p95_ms": 8.74,
+        "p99_ms": 32.77,
+        "max_ms": 54.25,
+        "min_ms": 2.04
+      }
+    }
+  }
+]
