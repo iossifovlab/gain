@@ -2,11 +2,13 @@
 from datetime import datetime
 from typing import Any, ClassVar, cast
 
+from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.db.models import QuerySet
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.http import last_modified
+from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import Attribute
 from gain.annotation.annotation_pipeline import Annotator
 from gain.annotation.gene_score_annotator import GeneScoreAnnotator
@@ -27,9 +29,13 @@ from rest_framework import generics, permissions, views
 from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import Request, Response
 
-from web_annotation.annotation_base_view import AnnotationBaseView
+from web_annotation.annotation_base_view import (
+    AnnotationBaseView,
+    AsyncAnnotationBaseView,
+)
 from web_annotation.authentication import WebAnnotationAuthentication
 from web_annotation.models import AlleleQuery, BaseUser, User
+from web_annotation.pipeline_cache import ThreadSafePipeline, _await_build
 from web_annotation.serializers import AlleleSerializer
 
 
@@ -106,8 +112,17 @@ def always_cache(
     return STARTUP_TIME
 
 
-class SingleAnnotation(AnnotationBaseView):
-    """Single annotation view."""
+class SingleAnnotation(AsyncAnnotationBaseView):
+    """Single annotation view.
+
+    Async (#163): only the two long poles leave the shared ``thread_sensitive``
+    thread -- the GRR build wait (awaited via ``aget_pipeline``) and
+    ``pipeline.annotate(...)`` (submitted to the dedicated bounded
+    ``ANNOTATE_EXECUTOR`` and awaited via ``_await_build``). All ORM, auth and
+    GRR-metadata access stays on the single ``thread_sensitive=True`` thread via
+    ``sync_to_async`` (asgiref default), so connection-safety is preserved and
+    no ``async_to_sync`` channel callback ever runs on the event loop.
+    """
 
     throttle_classes: ClassVar = [UserRateThrottle]
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
@@ -138,17 +153,20 @@ class SingleAnnotation(AnnotationBaseView):
                 )
         return None
 
-    def post(self, request: Request) -> Response:
-        """View for single annotation"""
+    async def post(self, request: Request) -> Response:
+        """Async view for single annotation.
 
+        The GRR build wait and ``annotate`` run off the shared thread; ORM /
+        auth / GRR-metadata access stays on it via ``sync_to_async`` (#163).
+        """
         assert isinstance(request.data, dict)
         if "annotatable" not in request.data:
             return Response(
                 {"reason": "Annotatable not provided!"},
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
-        annotatable = request.data["annotatable"]
-        assert isinstance(annotatable, dict)
+        annotatable_data = request.data["annotatable"]
+        assert isinstance(annotatable_data, dict)
 
         if "pipeline_id" not in request.data:
             return Response(
@@ -163,7 +181,8 @@ class SingleAnnotation(AnnotationBaseView):
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
 
-        pipeline = self.get_pipeline(pipeline_id, request.user)
+        # Long pole #1: await the GRR pipeline build OFF the shared thread.
+        pipeline = await self.aget_pipeline(pipeline_id, request.user)
 
         attributes_count = sum(
             1 for annotator in pipeline.annotators
@@ -171,8 +190,9 @@ class SingleAnnotation(AnnotationBaseView):
             if not attr.internal
         )
 
+        # ORM / auth on the single thread_sensitive thread.
         is_unlimited = getattr(request.user, "is_unlimited", False)
-        quota = request.user.get_quota()
+        quota = await sync_to_async(request.user.get_quota)()
         if (
             not is_unlimited and
             not quota.single_allele_allowed(attributes_count)
@@ -182,21 +202,82 @@ class SingleAnnotation(AnnotationBaseView):
                 status=views.status.HTTP_429_TOO_MANY_REQUESTS,
             )
 
-        annotatable = build_annotatable_from_dict(annotatable)
+        annotatable = build_annotatable_from_dict(annotatable_data)
 
-        annotation = pipeline.annotate(annotatable, {})
+        # Long pole #2: run annotate on the dedicated bounded pool, awaited via
+        # the same decoupled waiter used for builds (it awaits any Future).
+        annotation: dict[str, Any] = await _await_build(
+            self.ANNOTATE_EXECUTOR.execute(
+                self._run_annotate, pipeline=pipeline, annotatable=annotatable,
+            ),
+        )
 
-        annotators_data = []
+        # Response building touches GRR metadata (self.grr.get_resource); the
+        # AlleleQuery read/save and quota completion are ORM. Keep them on the
+        # single thread_sensitive thread.
+        response_data = await sync_to_async(self._build_and_persist)(
+            request, pipeline, annotation, annotatable,
+            attributes_count, is_unlimited=is_unlimited,
+        )
+        return Response(response_data)
+
+    @staticmethod
+    def _run_annotate(
+        pipeline: ThreadSafePipeline, annotatable: Annotatable,
+    ) -> dict[str, Any]:
+        """Annotate on the interactive-annotate worker pool (#163)."""
+        return pipeline.annotate(annotatable, {})
+
+    def _build_and_persist(  # pylint: disable=too-many-arguments
+        self,
+        request: Request,
+        pipeline: ThreadSafePipeline,
+        annotation: dict[str, Any],
+        annotatable: Annotatable,
+        attributes_count: int,
+        *,
+        is_unlimited: bool,
+    ) -> dict[str, Any]:
+        """Build the response payload and persist history + quota.
+
+        Runs on the single ``thread_sensitive`` thread (GRR metadata + ORM).
+        """
+        annotators_data = self._build_annotators_data(pipeline, annotation)
+
         if (
-            settings.RESOURCES_BASE_URL is None
-            or settings.RESOURCES_BASE_URL is None
+            request.user.is_authenticated
+            and isinstance(request.user, BaseUser)
         ):
-            base_url = ""
-        else:
-            base_url = settings.RESOURCES_BASE_URL
+            allele = str(annotatable)
+            allele_query = AlleleQuery.objects.filter(
+                allele=allele,
+                owner=cast(User, request.user.as_owner),
+            ).first()
+            if allele_query is None:
+                allele_query = AlleleQuery(
+                    allele=allele,
+                    owner=cast(User, request.user.as_owner),
+                )
+            else:
+                allele_query.last_used = timezone.now()
+            allele_query.save()
+
+        if not is_unlimited:
+            request.user.quota_single_allele_complete(attributes_count)
+
+        return {
+            "annotatable": annotatable.to_dict(),
+            "annotators": annotators_data,
+        }
+
+    def _build_annotators_data(
+        self, pipeline: ThreadSafePipeline, annotation: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Assemble the per-annotator response payload (touches GRR)."""
+        annotators_data = []
+        base_url = settings.RESOURCES_BASE_URL or ""
 
         for annotator in pipeline.annotators:
-            details = {}
             attributes = []
             annotator_info = annotator.get_info()
             annotator_resources = []
@@ -224,34 +305,7 @@ class SingleAnnotation(AnnotationBaseView):
             annotators_data.append(
                 {"details": details, "attributes": attributes},
             )
-
-        if (
-            request.user.is_authenticated
-            and isinstance(request.user, BaseUser)
-        ):
-            allele = str(annotatable)
-            allele_query = AlleleQuery.objects.filter(
-                allele=allele,
-                owner=cast(User, request.user.as_owner),
-            ).first()
-            if allele_query is None:
-                allele_query = AlleleQuery(
-                    allele=allele,
-                    owner=cast(User, request.user.as_owner),
-                )
-            else:
-                allele_query.last_used = timezone.now()
-            allele_query.save()
-
-        if not is_unlimited:
-            request.user.quota_single_allele_complete(attributes_count)
-
-        response_data = {
-            "annotatable": annotatable.to_dict(),
-            "annotators": annotators_data,
-        }
-
-        return Response(response_data)
+        return annotators_data
 
     def _build_attribute_description(
             self, result: dict[str, Any], annotator: Annotator,

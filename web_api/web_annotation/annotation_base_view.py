@@ -5,10 +5,12 @@ from functools import partial
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
+import adrf.views
 import yaml
-from asgiref.sync import async_to_sync
+from asgiref.sync import async_to_sync, sync_to_async
 from channels.layers import get_channel_layer
 from django.conf import settings
+from django.core.exceptions import ObjectDoesNotExist
 from django.core.files.uploadedfile import UploadedFile
 from django.http import QueryDict
 from gain.annotation.annotation_config import AnnotationConfigurationError
@@ -106,8 +108,16 @@ def get_grr_genomes(grr: GenomicResourceRepo) -> list[str]:
 GRR_GENOMES = get_grr_genomes(GRR)
 
 
-class AnnotationBaseView(views.APIView):
-    """Base view for views which access annotation resources."""
+class AnnotationMixin:
+    """Shared annotation state + helpers for the sync and async base views.
+
+    The cache and executors live on this mixin's class body so they are
+    instantiated *once* and shared across BOTH ``AnnotationBaseView`` (sync,
+    ``rest_framework.views.APIView``) and ``AsyncAnnotationBaseView`` (async,
+    ``adrf.views.APIView``). A pipeline built through the async path is
+    therefore visible to the sync path and vice-versa (single-shared-cache
+    invariant -- see iossifovlab/gain#163).
+    """
 
     lru_cache = LRUPipelineCache(GRR, settings.PIPELINES_CACHE_SIZE)
 
@@ -116,7 +126,17 @@ class AnnotationBaseView(views.APIView):
             job_timeout=settings.ANNOTATION_TASK_TIMEOUT,
             thread_name_prefix="annotation-job")
 
-    """Base view for views which access annotation resources."""
+    #: Dedicated bounded pool for *interactive* ``pipeline.annotate(...)`` calls
+    #: from async views (#163). Kept separate from ``JOB_EXECUTOR`` (file-job
+    #: annotation) and from asgiref's default ``sync_to_async`` thread pool, so
+    #: a burst of single-allele annotates cannot starve file jobs or the shared
+    #: ORM/auth thread. Same-pipeline annotates still serialize on the
+    #: per-pipeline ``LoggedLock`` -- out of scope here.
+    ANNOTATE_EXECUTOR: TaskExecutor = ThreadedTaskExecutor(
+            max_workers=8,
+            job_timeout=settings.ANNOTATION_TASK_TIMEOUT,
+            thread_name_prefix="interactive-annotate")
+
     tool_columns: ClassVar = [
         "col_chrom",
         "col_pos",
@@ -141,12 +161,17 @@ class AnnotationBaseView(views.APIView):
         self.channel_layer = channel_layer
 
     def check_throttles(self, request: Request) -> None:
-        """Override to disable throttling."""
+        """Override to disable throttling.
+
+        ``super()`` resolves to the concrete ``APIView`` base at runtime via
+        the MRO of ``AnnotationBaseView`` / ``AsyncAnnotationBaseView``; the
+        mixin itself does not statically inherit ``APIView``.
+        """
         if (
             (request.user.is_authenticated and not request.user.is_unlimited)
             or not request.user.is_authenticated
         ):
-            super().check_throttles(request)
+            super().check_throttles(request)  # type: ignore[misc]
 
     @property
     def grr(self) -> GenomicResourceRepo:
@@ -294,6 +319,32 @@ class AnnotationBaseView(views.APIView):
     #: cache thrash cannot spin forever.
     GET_PIPELINE_MAX_ATTEMPTS: ClassVar[int] = 3
 
+    @staticmethod
+    def _build_error_to_drf(build_error: BaseException) -> ValidationError:
+        """Return a DRF 400 for a deferred build failure.
+
+        Shared by the sync ``get_pipeline`` and the async ``aget_pipeline`` so
+        the two cannot drift. Validation is deferred to the background load
+        (#150 H1), so an unbuildable saved pipeline first fails here; retrying
+        is futile (the config is deterministically unbuildable), so surface a
+        4xx client error instead of letting it escape as a 500. Returns the
+        exception so the caller can ``raise ... from`` with the original cause.
+        """
+        logger.warning("pipeline failed to build: %s", build_error)
+        return ValidationError(
+            f"Pipeline could not be loaded: {build_error}")
+
+    @staticmethod
+    def _missing_pipeline_to_drf(pipeline_id: str) -> NotFound:
+        """Return a DRF 404 for a genuinely-missing pipeline.
+
+        Shared by the sync and async pipeline getters. After the reload bound
+        is exhausted (or source resolution fails) the pipeline is genuinely not
+        available; surface a 404 (via DRF) instead of re-raising the bare
+        cache-miss as a 500.
+        """
+        return NotFound(f"Pipeline {pipeline_id} could not be loaded")
+
     def get_pipeline(
         self, pipeline_id: str, user: BaseUser,
     ) -> ThreadSafePipeline:
@@ -336,23 +387,68 @@ class AnnotationBaseView(views.APIView):
                 # The deferred background build itself failed (missing/invalid
                 # resource, bad config -- the annotation factory raises these
                 # as ValueError/AnnotationConfigurationError/etc, distinct from
-                # the PipelineNotCached cache-miss above). Validation is
-                # deferred to this load (#150 H1), so an unbuildable saved
-                # pipeline first fails here -- retrying is futile (the config
-                # is deterministically unbuildable), so surface a 4xx client
-                # error instead of letting it escape as a 500.
-                logger.warning(
-                    "pipeline %s failed to build: %s",
-                    pipeline_id, build_error)
-                raise ValidationError(
-                    f"Pipeline could not be loaded: {build_error}",
-                ) from build_error
+                # the PipelineNotCached cache-miss above).
+                raise self._build_error_to_drf(build_error) from build_error
         # Exhausted the reload-on-miss bound: the pipeline is genuinely not
-        # available. Surface a 4xx everywhere (NotFound renders as 404 via
-        # DRF) instead of re-raising the bare cache-miss as a 500.
-        raise NotFound(
-            f"Pipeline {pipeline_id} could not be loaded",
-        ) from last_error
+        # available.
+        raise self._missing_pipeline_to_drf(pipeline_id) from last_error
+
+    async def aget_pipeline(
+        self, pipeline_id: str, user: BaseUser,
+    ) -> ThreadSafePipeline:
+        """Async mirror of ``get_pipeline``: await the build off the loop.
+
+        The reload-on-miss orchestration matches the sync version exactly (same
+        bound, same ``ValidationError``/``NotFound`` mapping via the shared
+        helpers). Two things must stay off the event-loop thread:
+
+        * ``put_pipeline`` -- it fires channel callbacks that call
+          ``async_to_sync(...)``, which RAISES if run on the loop thread; it is
+          invoked via ``sync_to_async`` so its ``async_to_sync`` stays legal on
+          a worker thread.
+        * the GRR build wait -- delegated to ``lru_cache.aget_pipeline``, which
+          awaits the shared build future via ``_await_build``.
+
+        The pin/unpin and ``has_pipeline`` bookkeeping inside the cache are
+        microsecond lock operations and stay on the loop thread.
+        """
+        last_error: BaseException | None = None
+        for attempt in range(self.GET_PIPELINE_MAX_ATTEMPTS):
+            if not self.lru_cache.has_pipeline(pipeline_id):
+                await self._aput_pipeline_or_404(pipeline_id, user)
+            try:
+                return await self.lru_cache.aget_pipeline(pipeline_id)
+            except PipelineNotCached as error:
+                last_error = error
+                logger.warning(
+                    "pipeline %s missed in cache on attempt %d/%d; "
+                    "reloading and retrying",
+                    pipeline_id, attempt + 1, self.GET_PIPELINE_MAX_ATTEMPTS,
+                )
+                await self._aput_pipeline_or_404(pipeline_id, user)
+            except Exception as build_error:  # pylint: disable=broad-except
+                raise self._build_error_to_drf(build_error) from build_error
+        raise self._missing_pipeline_to_drf(pipeline_id) from last_error
+
+    async def _aput_pipeline_or_404(
+        self, pipeline_id: str, user: BaseUser,
+    ) -> None:
+        """Resolve + schedule a build via ``put_pipeline``, off the loop.
+
+        Source resolution (GRR / user-pipeline lookup) happens here, before
+        the build. A pipeline id that resolves to nothing raises a lookup error
+        (``ValueError`` / ``NotImplementedError`` / ``ObjectDoesNotExist``) --
+        that is a genuinely-missing pipeline, mapped to 404, distinct from a
+        build failure (400). ``put_pipeline`` runs via ``sync_to_async`` so its
+        ``async_to_sync`` channel callbacks stay legal on a worker thread.
+        """
+        try:
+            await sync_to_async(self.put_pipeline)(pipeline_id, user)
+        except (
+            ValueError, NotImplementedError, ObjectDoesNotExist,
+        ) as lookup_error:
+            raise self._missing_pipeline_to_drf(
+                pipeline_id) from lookup_error
 
     def get_genome(self, data: QueryDict) -> str:
         """Get genome from a request."""
@@ -585,3 +681,22 @@ class AnnotationBaseView(views.APIView):
             disk_size=job_size,
         )
         return (job_name, pipeline, job)
+
+
+class AnnotationBaseView(AnnotationMixin, views.APIView):
+    """Synchronous base view for views which access annotation resources.
+
+    Dispatch is unchanged from the original ``rest_framework.views.APIView``;
+    every existing sync view keeps working untouched. Shared cache/executors
+    and helpers come from ``AnnotationMixin``.
+    """
+
+
+class AsyncAnnotationBaseView(AnnotationMixin, adrf.views.APIView):
+    """Async base view (``adrf``) for read views that await the GRR build.
+
+    ``adrf`` picks the sync-vs-async dispatch per view via ``view_is_async``
+    (true iff *all* handlers are coroutines); converted views must expose ONLY
+    async handlers. Shares the same cache/executors as ``AnnotationBaseView``
+    via ``AnnotationMixin`` -- see the single-shared-cache invariant.
+    """
