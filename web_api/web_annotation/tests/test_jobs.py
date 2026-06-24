@@ -1,7 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,C0302,W0212,W0613
 import datetime
 import gzip
-import operator
 import pathlib
 import textwrap
 from typing import Any
@@ -1736,7 +1735,11 @@ async def _collect_notifications(
 
     # pipeline_status frames: assert the expected set arrived, order-agnostic
     # (the loading/loaded/unloaded delivery order races the loader thread).
-    frame_key = operator.itemgetter("pipeline_id", "status")
+    # Sort on the *whole* frame content (frames are flat dicts of hashable
+    # scalars) so two frames that share (pipeline_id, status) but differ in
+    # another field cannot sort ambiguously and mask a mismatch.
+    def frame_key(frame: dict[str, str]) -> tuple[tuple[str, str], ...]:
+        return tuple(sorted(frame.items()))
     assert sorted(pipeline_received, key=frame_key) == sorted(
         expected_pipeline, key=frame_key,
     ), f"pipeline_status frames: {pipeline_received!r}"
