@@ -306,14 +306,23 @@ class AnnotatorTypes(EditorView):
         return Response(annotator_types, status=status.HTTP_200_OK)
 
 
-class AnnotatorAttributes(EditorView):
-    """View for annotator attributes."""
+class AnnotatorAttributes(AsyncEditorView):
+    """View for annotator attributes.
+
+    Async (#166): the long pole -- the GRR pipeline build wait -- leaves the
+    event loop via ``aget_pipeline``. The annotator factory build and the
+    attribute-spec computation that follow touch GRR metadata, so they run off
+    the loop via ``sync_to_async`` (asgiref default thread_sensitive). Build
+    failure -> 400, missing -> 404 mapping is inherited from ``aget_pipeline``.
+    ``request.data`` is parsed by adrf without blocking the loop. There is no
+    ORM and no ``annotate()`` here, so no dedicated executor is needed.
+    """
 
     ATTRIBUTE_PAGE_SIZE = 50
 
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
-    def post(self, request: Request) -> Response:
+    async def post(self, request: Request) -> Response:
         """POST method to get annotator attributes."""
         assert isinstance(request.data, dict)
         data = dict(request.data)
@@ -345,11 +354,13 @@ class AnnotatorAttributes(EditorView):
 
         search_term = data.pop("search", None)
 
-        pipeline = self.get_pipeline(pipeline_id, request.user)
+        # Long pole: await the GRR pipeline build OFF the event loop. Build
+        # failure -> 400, missing -> 404 mapping comes from aget_pipeline.
+        # Resolved before the unknown-type / search-term checks to preserve the
+        # exact prior validation order of the sync handler.
+        pipeline = await self.aget_pipeline(pipeline_id, request.user)
 
         data["work_dir"] = "/tmp"  # noqa: S108
-
-        annotator_config = AnnotatorInfo(annotator_type, [], data)
 
         if annotator_type not in get_available_annotator_types():
             return Response(
@@ -357,16 +368,52 @@ class AnnotatorAttributes(EditorView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        factory = get_annotator_factory(annotator_type)
+        if search_term is not None and not isinstance(search_term, str):
+            return Response(
+                {"error": "Search term must be a string"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Factory build + spec computation touch GRR metadata; run off the loop.
         try:
-            annotator = factory(pipeline, annotator_config)
+            attributes_result, total_attribute_count = await sync_to_async(
+                self._collect_attributes)(
+                pipeline, annotator_type, data, page, search_term,
+            )
         except AnnotationConfigurationError as e:
             return Response(
                 {"error": f"Invalid annotator configuration: {e!s}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        annotator_info = annotator.get_info()
-        annotator_type = annotator_info.type
+
+        return Response(
+            {
+                "page": page,
+                "total_pages": (
+                    total_attribute_count // self.ATTRIBUTE_PAGE_SIZE) + 1,
+                "total_attributes": total_attribute_count,
+                "attributes": attributes_result,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def _collect_attributes(
+        self,
+        pipeline: ThreadSafePipeline,
+        annotator_type: str,
+        data: dict[str, Any],
+        page: int,
+        search_term: str | None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Build the annotator and page its attribute specs off the loop.
+
+        Touches GRR metadata (factory build, ``get_attribute_specs``); raises
+        ``AnnotationConfigurationError`` for an invalid annotator config, which
+        the caller maps to 400.
+        """
+        annotator_config = AnnotatorInfo(annotator_type, [], data)
+        factory = get_annotator_factory(annotator_type)
+        annotator = factory(pipeline, annotator_config)
         all_specs = annotator.get_attribute_specs()
         attributes_by_source = {
             attr.source: attr for attr in annotator.attributes
@@ -374,11 +421,6 @@ class AnnotatorAttributes(EditorView):
         if search_term is None:
             attribute_items: Any = list(all_specs.items())
         else:
-            if not isinstance(search_term, str):
-                return Response(
-                    {"error": "Search term must be a string"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
             attribute_items = [
                 (name, spec)
                 for name, spec in all_specs.items()
@@ -392,25 +434,13 @@ class AnnotatorAttributes(EditorView):
             (page + 1) * self.ATTRIBUTE_PAGE_SIZE,
         )
         attributes_result = []
-        used_attributes = set()
         for source, spec in page_attributes:
-            used_attributes.add(source)
             attr = attributes_by_source.get(source)
             attributes_result.append({
                 "name": attr.name if attr else source,
                 **spec.as_dict(),
             })
-
-        return Response(
-            {
-                "page": page,
-                "total_pages": (
-                    total_attribute_count // self.ATTRIBUTE_PAGE_SIZE) + 1,
-                "total_attributes": total_attribute_count,
-                "attributes": attributes_result,
-            },
-            status=status.HTTP_200_OK,
-        )
+        return attributes_result, total_attribute_count
 
 
 class PipelineAttributes(AsyncEditorView):
@@ -463,12 +493,20 @@ class PipelineAttributes(AsyncEditorView):
         return [attr.name for attr in attributes]
 
 
-class AnnotatorYAML(EditorView):
-    """View for annotator configuration in YAML format."""
+class AnnotatorYAML(AsyncEditorView):
+    """View for annotator configuration in YAML format.
+
+    Async (#166): the GRR pipeline build wait leaves the event loop via
+    ``aget_pipeline``. The subsequent ``build_pipeline_annotator`` /
+    repeated-attribute check and config serialization touch GRR metadata, so
+    they run off the loop via ``sync_to_async``. Build failure -> 400, missing
+    -> 404 mapping is inherited from ``aget_pipeline``; ``request.data`` is
+    parsed by adrf without blocking the loop. No ORM, no ``annotate()``.
+    """
 
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
-    def post(self, request: Request) -> Response:
+    async def post(self, request: Request) -> Response:
         """POST method to get annotator config in YAML format."""
         assert isinstance(request.data, dict)
         data = dict(request.data)
@@ -490,7 +528,9 @@ class AnnotatorYAML(EditorView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        pipeline = self.get_pipeline(pipeline_id, request.user)
+        # Long pole: await the GRR pipeline build OFF the event loop. Build
+        # failure -> 400, missing -> 404 mapping comes from aget_pipeline.
+        pipeline = await self.aget_pipeline(pipeline_id, request.user)
 
         annotator_type = data.pop("annotator_type")
 
@@ -506,18 +546,11 @@ class AnnotatorYAML(EditorView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        _, annotator_configs = AnnotationConfigParser.parse_raw(
-            [{annotator_type: data}])
-
-        assert len(annotator_configs) == 1
-        annotator_config = annotator_configs[0]
-
+        # Annotator build + repeated-attribute check + serialization touch GRR
+        # metadata; run off the loop.
         try:
-            build_pipeline_annotator(
-                pipeline, annotator_config, Path("./work"),
-            )
-            check_for_repeated_attributes_in_pipeline(
-                pipeline, annotator_config=annotator_config,
+            config_yaml = await sync_to_async(self._build_annotator_yaml)(
+                pipeline, annotator_type, data,
             )
         except AnnotationConfigurationError as e:
             return Response(
@@ -525,18 +558,42 @@ class AnnotatorYAML(EditorView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        return Response(config_yaml, status=status.HTTP_200_OK)
+
+    @staticmethod
+    def _build_annotator_yaml(
+        pipeline: ThreadSafePipeline,
+        annotator_type: str,
+        data: dict[str, Any],
+    ) -> str:
+        """Build the annotator against the pipeline and dump its config to YAML.
+
+        Touches GRR metadata; raises ``AnnotationConfigurationError`` for an
+        invalid config or a repeated-attribute clash, which the caller maps to
+        400.
+        """
+        _, annotator_configs = AnnotationConfigParser.parse_raw(
+            [{annotator_type: data}])
+
+        assert len(annotator_configs) == 1
+        annotator_config = annotator_configs[0]
+
+        build_pipeline_annotator(
+            pipeline, annotator_config, Path("./work"),
+        )
+        check_for_repeated_attributes_in_pipeline(
+            pipeline, annotator_config=annotator_config,
+        )
+
         config_dict = annotator_config.to_dict()
 
         if "work_dir" in config_dict[annotator_type]:
             del config_dict[annotator_type]["work_dir"]
 
-        return Response(
-            yaml.safe_dump(
-                [config_dict],
-                sort_keys=False,
-                default_flow_style=False,
-            ),
-            status=status.HTTP_200_OK,
+        return yaml.safe_dump(
+            [config_dict],
+            sort_keys=False,
+            default_flow_style=False,
         )
 
 
@@ -676,12 +733,20 @@ class Aggregators(EditorView):
         return Response(result, status=status.HTTP_200_OK)
 
 
-class AnnotatorAggregators(EditorView):
-    """View for computing valid aggregators per attribute source."""
+class AnnotatorAggregators(AsyncEditorView):
+    """View for computing valid aggregators per attribute source.
+
+    Async (#166): the GRR pipeline build wait leaves the event loop via
+    ``aget_pipeline``. The annotator factory build and per-source spec lookup
+    touch GRR metadata, so they run off the loop via ``sync_to_async``. Build
+    failure -> 400, missing -> 404 mapping is inherited from ``aget_pipeline``;
+    ``request.data`` is parsed by adrf without blocking the loop. No ORM, no
+    ``annotate()``.
+    """
 
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
-    def post(self, request: Request) -> Response:
+    async def post(self, request: Request) -> Response:
         """POST method to get valid aggregators per attribute source."""
         assert isinstance(request.data, dict)
         data = dict(request.data)
@@ -717,10 +782,10 @@ class AnnotatorAggregators(EditorView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        pipeline = self.get_pipeline(pipeline_id, request.user)
+        # Long pole: await the GRR pipeline build OFF the event loop. Build
+        # failure -> 400, missing -> 404 mapping comes from aget_pipeline.
+        pipeline = await self.aget_pipeline(pipeline_id, request.user)
         data["work_dir"] = "/tmp"  # noqa: S108
-
-        annotator_config = AnnotatorInfo(annotator_type, [], data)
 
         if annotator_type not in get_available_annotator_types():
             return Response(
@@ -728,14 +793,34 @@ class AnnotatorAggregators(EditorView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        factory = get_annotator_factory(annotator_type)
+        # Factory build + spec lookup touch GRR metadata; run off the loop.
         try:
-            annotator = factory(pipeline, annotator_config)
+            result = await sync_to_async(self._compute_aggregators)(
+                pipeline, annotator_type, data, attribute_sources,
+            )
         except AnnotationConfigurationError as e:
             return Response(
                 {"error": f"Invalid annotator configuration: {e!s}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        return Response(result, status=status.HTTP_200_OK)
+
+    @staticmethod
+    def _compute_aggregators(
+        pipeline: ThreadSafePipeline,
+        annotator_type: str,
+        data: dict[str, Any],
+        attribute_sources: list[Any],
+    ) -> dict[str, Any]:
+        """Build the annotator and compute valid aggregators off the loop.
+
+        Touches GRR metadata; raises ``AnnotationConfigurationError`` for an
+        invalid annotator config, which the caller maps to 400.
+        """
+        annotator_config = AnnotatorInfo(annotator_type, [], data)
+        factory = get_annotator_factory(annotator_type)
+        annotator = factory(pipeline, annotator_config)
 
         all_specs = annotator.get_attribute_specs()
         attributes_by_source = {
@@ -766,4 +851,4 @@ class AnnotatorAggregators(EditorView):
                 "default_aggregator": default_aggregator,
             }
 
-        return Response(result, status=status.HTTP_200_OK)
+        return result
