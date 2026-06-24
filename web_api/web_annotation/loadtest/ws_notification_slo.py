@@ -206,8 +206,8 @@ async def _ws_pinger(
             ) as resp:
                 await resp.read()
         except (asyncio.TimeoutError, aiohttp.ClientError):
-            pending.pop(seq, None)
-            samples.missed += 1
+            if pending.pop(seq, None) is not None:
+                samples.missed += 1
         seq += 1
         await asyncio.sleep(interval)
 
@@ -260,6 +260,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                 await asyncio.wait_for(receiver, timeout=args.timeout)
             except asyncio.TimeoutError:
                 receiver.cancel()
+                samples.missed += len(pending)
             await ws.close()
 
     return {
