@@ -61,3 +61,7 @@ EMAIL_REDIRECT_ENDPOINT = os.environ.get(
 JOB_CLEANUP_INTERVAL_DAYS = 7
 
 DEFAULT_PIPELINE = None
+
+# SPIKE #162 -- wire the throwaway /api/_spike/adrf-probe endpoint under the
+# test suite so test_spike_adrf_probe.py can resolve it. Remove when #163 lands.
+ENABLE_ADRF_SPIKE = True
