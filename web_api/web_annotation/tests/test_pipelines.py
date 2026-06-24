@@ -12,13 +12,21 @@ from django.test import Client
 from gain.genomic_resources.repository import GenomicResourceRepo
 from rest_framework.exceptions import NotFound, ValidationError
 
-from web_annotation.annotation_base_view import AnnotationBaseView
+from web_annotation.annotation_base_view import (
+    AnnotationBaseView,
+    AnnotationMixin,
+)
 from web_annotation.consumers import AnnotationStateConsumer
 from web_annotation.executor import SequentialTaskExecutor
 from web_annotation.models import Pipeline, User
 from web_annotation.pipeline_cache import LRUPipelineCache, PipelineNotCached
 
 
+# ``PipelineDoc.get`` is async as of #167; the async-native round-trip is
+# covered in ``test_pipelines_doc_async.py``. These sync-Client tests are
+# retained on purpose: they exercise the converted async view through Django's
+# *synchronous* test Client (a real production path -- a sync caller hitting an
+# async view), and assert the HttpResponse/Response paths are unchanged.
 @pytest.mark.django_db
 def test_pipeline_doc_returns_html_download(
     user_client: Client,
@@ -368,9 +376,12 @@ def test_use_unbuildable_saved_pipeline_returns_4xx_not_500(
     500 from the deferred build exception leaking out.
     """
     cache = LRUPipelineCache(test_grr, 16)
-    mocker.patch(
-        "web_annotation.annotation_base_view.AnnotationBaseView.lru_cache",
-        new=cache)
+    # PipelineDoc is async (#167) and extends AsyncAnnotationBaseView, while the
+    # save view (UserPipeline) is sync. Patch the shared owner AnnotationMixin
+    # so BOTH the sync save-path and the async doc-path resolve to this one
+    # fixture cache (the single-shared-cache invariant); patching only
+    # AnnotationBaseView would leave the async doc view reading the real cache.
+    mocker.patch.object(AnnotationMixin, "lru_cache", new=cache)
 
     save = user_client.post("/api/pipelines/user", {
         "config": ContentFile("- position_score: scores/NONEXISTENT"),
@@ -400,9 +411,10 @@ def test_use_pipeline_with_unsupported_annotator_returns_4xx(
     factory raises as AnnotationConfigurationError).
     """
     cache = LRUPipelineCache(test_grr, 16)
-    mocker.patch(
-        "web_annotation.annotation_base_view.AnnotationBaseView.lru_cache",
-        new=cache)
+    # PipelineDoc is async (#167); patch the shared AnnotationMixin so both the
+    # sync save-path and the async doc-path use this fixture cache (see the
+    # companion test above for the rationale).
+    mocker.patch.object(AnnotationMixin, "lru_cache", new=cache)
 
     save = user_client.post("/api/pipelines/user", {
         "config": ContentFile("- not_a_real_annotator: scores/pos1"),
