@@ -10,7 +10,6 @@ import yaml
 from asgiref.sync import async_to_sync, sync_to_async
 from channels.layers import get_channel_layer
 from django.conf import settings
-from django.core.exceptions import ObjectDoesNotExist
 from django.core.files.uploadedfile import UploadedFile
 from django.http import QueryDict
 from gain.annotation.annotation_config import AnnotationConfigurationError
@@ -365,6 +364,12 @@ class AnnotationMixin:
         across the await. After the bound is exhausted the original
         ``ValueError`` is re-raised so a genuinely-missing pipeline still 4xx's.
         """
+        # Known sync/async divergence: the async ``_aput_pipeline_or_404``
+        # wraps this ``put_pipeline`` to map a missing-pipeline source-
+        # resolution failure (``ValueError``/``NotImplementedError``) to 404 --
+        # the target behavior. The sync path leaves it bare, so the same
+        # ``ValueError`` escapes as a 500. This is left unchanged in #163 to
+        # avoid altering existing sync callers; 404 is the eventual goal.
         last_error: PipelineNotCached | None = None
         for attempt in range(self.GET_PIPELINE_MAX_ATTEMPTS):
             if not self.lru_cache.has_pipeline(pipeline_id):
@@ -407,7 +412,7 @@ class AnnotationMixin:
           invoked via ``sync_to_async`` so its ``async_to_sync`` stays legal on
           a worker thread.
         * the GRR build wait -- delegated to ``lru_cache.aget_pipeline``, which
-          awaits the shared build future via ``_await_build``.
+          awaits the shared build future via ``await_build``.
 
         The pin/unpin and ``has_pipeline`` bookkeeping inside the cache are
         microsecond lock operations and stay on the loop thread.
@@ -437,16 +442,23 @@ class AnnotationMixin:
 
         Source resolution (GRR / user-pipeline lookup) happens here, before
         the build. A pipeline id that resolves to nothing raises a lookup error
-        (``ValueError`` / ``NotImplementedError`` / ``ObjectDoesNotExist``) --
-        that is a genuinely-missing pipeline, mapped to 404, distinct from a
-        build failure (400). ``put_pipeline`` runs via ``sync_to_async`` so its
-        ``async_to_sync`` channel callbacks stay legal on a worker thread.
+        (``ValueError`` from the user models'
+        ``get_pipeline``/``get_temporary_pipeline`` ``.filter().first()`` miss,
+        or ``NotImplementedError`` from the anonymous user) -- that is a
+        genuinely-missing pipeline, mapped to 404, distinct from a build
+        failure (400). The user models resolve pipelines via ``.filter(
+        ...).first()`` + ``ValueError`` (never ``.get()``), so ``DoesNotExist``
+        / ``ObjectDoesNotExist`` is not reachable here and is deliberately
+        absent from the catch tuple -- catching it would only mask unrelated
+        errors as 404. Note the missing-config-file case (``FileNotFoundError``,
+        an ``OSError`` from ``_get_user_pipeline_yaml``) is intentionally *not*
+        caught, so a present-row/missing-file stays a 500. ``put_pipeline`` runs
+        via ``sync_to_async`` so its ``async_to_sync`` channel callbacks stay
+        legal on a worker thread.
         """
         try:
             await sync_to_async(self.put_pipeline)(pipeline_id, user)
-        except (
-            ValueError, NotImplementedError, ObjectDoesNotExist,
-        ) as lookup_error:
+        except (ValueError, NotImplementedError) as lookup_error:
             raise self._missing_pipeline_to_drf(
                 pipeline_id) from lookup_error
 
