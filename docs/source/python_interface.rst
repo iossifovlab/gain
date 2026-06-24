@@ -110,7 +110,7 @@ allowing users to compare the Python output with the GAIn resource summary.
 
 
 2: Position scores across a gene
-^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 This example shows how to retrieve and visualize position scores across a gene (e.g. TP53). 
 The script uses the MANE 1.5 gene models resource (``hg38/gene_models/MANE/1.5``) to obtain 
@@ -172,7 +172,7 @@ less conserved positions. This provides a compact view of how conservation varie
 
 
 3: Resource counts by genome
-^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 This example summarizes how many resources of selected types are available for each genome build 
 in the GRR. The script iterates over all resources, assigns each resource to a genome based on 
@@ -229,3 +229,52 @@ where each entry gives the number of resources of that type for the correspondin
     position_score,152,8,0
     allele_score,5,31,0
     cnv_collection,0,7,0
+
+
+
+4: Annotating variants in Python
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The previous examples accessed GRR resources directly. The Python interface can also be used to construct and run GAIn annotation pipelines without calling the command-line ``annotate_tabular`` or ``annotate_vcf`` tools. This is useful when variants are already available inside a Python script, notebook, or larger analysis workflow, and when users want to annotate them programmatically.
+
+In this example, a small annotation pipeline is defined directly as a YAML string. The pipeline contains a single ``effect_annotator``, which uses the MANE 1.5 gene models resource to predict the effect of a variant. The variant is represented as a VCFAllele object, and the pipeline is then used to annotate that allele.
+
+.. code-block:: python
+
+    from gain.annotation.annotation_factory import load_pipeline_from_yaml
+    from gain.annotation.annotatable import VCFAllele
+
+
+    pipeline = load_pipeline_from_yaml("""
+    - effect_annotator:
+        gene_models: hg38/gene_models/MANE/1.5
+    """, None)
+
+    allele = VCFAllele("chr1", 11796321, "G", "A")
+
+    result = pipeline.annotate(allele)
+    batchresult = pipeline.batch_annotate([allele, allele])
+
+    print(result)
+    print(batch_result)
+
+Save this file as ``python_4.py``, and run it as before:
+
+.. code-block:: bash
+
+    python python_4.py
+
+
+This prints two outputs. The first output, ``result``, is the annotation result for one allele. It is produced by calling ``pipeline.annotate()``, which runs the pipeline on a single annotatable object.
+
+.. code-block:: python
+
+    {'worst_effect': 'missense', 'worst_effect_genes': 'MTHFR', 'gene_effects': 'MTHFR:missense', 'effect_details': 'ENST00000376590.9:MTHFR:missense:222/656(Ala->Val)', 'gene_list': ['MTHFR']}
+
+The second output, ``batch_result``, is produced by calling ``pipeline.batch_annotate()``. This method takes a list of annotatable objects and returns annotation results for all of them. In this example, the same allele is provided twice, so the batch output contains two equivalent annotation results.
+
+.. code-block:: python
+
+    [{'worst_effect': 'missense', 'worst_effect_genes': 'MTHFR', 'gene_effects': 'MTHFR:missense', 'effect_details': 'ENST00000376590.9:MTHFR:missense:222/656(Ala->Val)', 'gene_list': ['MTHFR']}, {'worst_effect': 'missense', 'worst_effect_genes': 'MTHFR', 'gene_effects': 'MTHFR:missense', 'effect_details': 'ENST00000376590.9:MTHFR:missense:222/656(Ala->Val)', 'gene_list': ['MTHFR']}]
+
+The output shows that the allele is annotated as a missense variant in MTHFR according to the MANE 1.5 gene models resource. In larger analyses, the same pattern can be extended by adding more annotators to the YAML pipeline, such as position scores, allele scores, or additional gene model resources. The annotate method is convenient for annotating one variant at a time, while batch_annotate is useful when many variants are processed inside the same Python workflow.
