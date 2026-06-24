@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import yaml
+from asgiref.sync import sync_to_async
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotationConfigurationError,
@@ -21,12 +22,23 @@ from gain.genomic_resources.aggregators import (
 )
 from rest_framework.views import Request, Response, status
 
-from web_annotation.annotation_base_view import AnnotationBaseView
+from web_annotation.annotation_base_view import (
+    AnnotationBaseView,
+    AsyncAnnotationBaseView,
+)
 from web_annotation.authentication import WebAnnotationAuthentication
 
 
-class EditorView(AnnotationBaseView):
-    """Base view for editor API endpoints."""
+class EditorMixin:  # pylint: disable=too-few-public-methods
+    """Editor-specific helpers shared by the sync and async editor bases.
+
+    These helpers are pure config/template builders -- no ORM, no GRR build --
+    so they are mixed into BOTH ``EditorView`` (sync) and ``AsyncEditorView``
+    (async). The cache/executors and the (a)``get_pipeline`` machinery come
+    from ``AnnotationMixin`` via the concrete annotation base each editor base
+    inherits, so the single-shared-cache invariant (iossifovlab/gain#163) is
+    preserved across both editor paths.
+    """
 
     def _get_annotator_types(self) -> list[str]:
         """Get all available annotator types from the DAE registry."""
@@ -237,6 +249,25 @@ class EditorView(AnnotationBaseView):
         raise KeyError(f"Unknown annotator_type: {annotator_type}")
 
 
+class EditorView(EditorMixin, AnnotationBaseView):
+    """Synchronous base view for editor API endpoints.
+
+    Dispatch is unchanged from ``AnnotationBaseView``; every existing sync
+    editor view keeps working untouched. Editor helpers come from
+    ``EditorMixin``; cache/executors from ``AnnotationMixin``.
+    """
+
+
+class AsyncEditorView(EditorMixin, AsyncAnnotationBaseView):
+    """Async base view (``adrf``) for editor read GETs that await the build.
+
+    Shares the same ``EditorMixin`` helpers as ``EditorView`` and the same
+    cache/executors as every other annotation view (via ``AnnotationMixin``).
+    ``adrf`` dispatches a view async iff *all* its handlers are coroutines, so
+    a subclass must expose ONLY async handlers (iossifovlab/gain#165).
+    """
+
+
 class AnnotatorConfig(EditorView):
     """View for annotator configuration templates."""
     def post(self, request: Request) -> Response:
@@ -381,12 +412,19 @@ class AnnotatorAttributes(EditorView):
         )
 
 
-class PipelineAttributes(EditorView):
-    """View for annotator attributes."""
+class PipelineAttributes(AsyncEditorView):
+    """View for annotator attributes.
+
+    Async (#165): the only long pole -- the GRR pipeline build wait -- leaves
+    the event loop via ``aget_pipeline``. The pipeline-metadata reads
+    (``get_attributes`` / ``get_attributes_by_type``) touch GRR, so they run
+    off the loop via ``sync_to_async`` (asgiref default thread_sensitive). There
+    is no ``annotate()`` and no ORM here, so no dedicated executor is needed.
+    """
 
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
-    def get(self, request: Request) -> Response:
+    async def get(self, request: Request) -> Response:
         """GET method to get pipeline attributes."""
         pipeline_id = request.query_params.get("pipeline_id")
         if pipeline_id is None:
@@ -395,23 +433,33 @@ class PipelineAttributes(EditorView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        pipeline = self.get_pipeline(pipeline_id, request.user)
-
         attribute_type = request.query_params.get("attribute_type")
-        if attribute_type is not None:
-            if not isinstance(attribute_type, str):
-                return Response(
-                    {"error": "attribute_type must be a string"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+        if attribute_type is not None and not isinstance(attribute_type, str):
+            return Response(
+                {"error": "attribute_type must be a string"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-            attributes = pipeline.get_attributes_by_type(attribute_type)
-            result = [attr.name for attr in attributes]
-        else:
-            attributes = pipeline.get_attributes()
-            result = [attr.name for attr in attributes]
+        # Long pole: await the GRR pipeline build OFF the event loop. Build
+        # failure -> 400, missing -> 404 mapping comes from aget_pipeline.
+        pipeline = await self.aget_pipeline(pipeline_id, request.user)
+
+        result = await sync_to_async(self._collect_attribute_names)(
+            pipeline, attribute_type,
+        )
 
         return Response(result, status=status.HTTP_200_OK)
+
+    @staticmethod
+    def _collect_attribute_names(
+        pipeline: Any, attribute_type: str | None,
+    ) -> list[str]:
+        """Read attribute names off the loop (touches GRR metadata)."""
+        if attribute_type is not None:
+            attributes = pipeline.get_attributes_by_type(attribute_type)
+        else:
+            attributes = pipeline.get_attributes()
+        return [attr.name for attr in attributes]
 
 
 class AnnotatorYAML(EditorView):
@@ -564,12 +612,18 @@ class ResourceAnnotators(EditorView):
             }, status=status.HTTP_200_OK)
 
 
-class PipelineStatus(EditorView):
-    """View for pipeline status and statistics."""
+class PipelineStatus(AsyncEditorView):
+    """View for pipeline status and statistics.
+
+    Async (#165): the GRR build wait leaves the event loop via
+    ``aget_pipeline``; the pipeline-metadata reads (attribute/annotator counts)
+    touch GRR and run off the loop via ``sync_to_async``. No ``annotate()`` and
+    no ORM here.
+    """
 
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
-    def get(self, request: Request) -> Response:
+    async def get(self, request: Request) -> Response:
         """GET method to retrieve pipeline status."""
         pipeline_id = request.query_params.get("pipeline_id")
         if pipeline_id is None:
@@ -578,12 +632,19 @@ class PipelineStatus(EditorView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        pipeline = self.get_pipeline(pipeline_id, request.user)
+        # Long pole: await the GRR pipeline build OFF the event loop. Build
+        # failure -> 400, missing -> 404 mapping comes from aget_pipeline.
+        pipeline = await self.aget_pipeline(pipeline_id, request.user)
 
-        attributes_count = len(pipeline.get_attributes())
+        status_info = await sync_to_async(self._build_status_info)(pipeline)
 
-        status_info = {
-            "attributes_count": attributes_count,
+        return Response(status_info, status=status.HTTP_200_OK)
+
+    @staticmethod
+    def _build_status_info(pipeline: Any) -> dict[str, Any]:
+        """Read pipeline metadata off the loop (touches GRR)."""
+        return {
+            "attributes_count": len(pipeline.get_attributes()),
             "annotators_count": len(pipeline.annotators),
             "annotatables": [
                 attr.name for attr in
@@ -594,8 +655,6 @@ class PipelineStatus(EditorView):
                 pipeline.get_attributes_by_type("gene_list")
             ],
         }
-
-        return Response(status_info, status=status.HTTP_200_OK)
 
 
 class Aggregators(EditorView):
