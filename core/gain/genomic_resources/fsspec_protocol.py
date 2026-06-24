@@ -1084,11 +1084,16 @@ def _build_filesystem(
         # sock_read/sock_connect still turn a genuinely stalled read or hung
         # connect into a (retryable) error rather than killing the run. See
         # gain#43.
-        return HTTPFileSystem(client_kwargs={
+        client_kwargs: dict[str, Any] = {
             "base_url": base_url,
             "timeout": aiohttp.ClientTimeout(
                 total=None, sock_read=120, sock_connect=60),
-        })
+        }
+        user = kwargs.get("user")
+        password = kwargs.get("password")
+        if user is not None and password is not None:
+            client_kwargs["auth"] = aiohttp.BasicAuth(user, password)
+        return HTTPFileSystem(client_kwargs=client_kwargs)
     if parsed_url.scheme == "s3":
         from s3fs.core import S3FileSystem
         endpoint_url = kwargs.get("endpoint_url")

@@ -106,7 +106,7 @@ def _build_real_repository(
 
         if urlparse(root_url).scheme not in {"http", "https"}:
             raise ValueError(f"not an http(s) root url: {root_url}")
-        protocol = build_fsspec_protocol(repo_id, root_url)
+        protocol = build_fsspec_protocol(repo_id, root_url, **kwargs)
         repo = GenomicResourceProtocolRepo(protocol)
 
     elif proto_type == "s3":
