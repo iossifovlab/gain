@@ -278,7 +278,7 @@
                 <mat-autocomplete
                   #attributesDropdown="matAutocomplete"
                   (optionSelected)="onSelectAttribute($event.option.value)">
-                  @for (attribute of filteredAttributes; track attribute.name) {
+                  @for (attribute of filteredAttributes; track $index) {
                   <mat-option
                     class="attribute-option"
                     [value]="attribute"

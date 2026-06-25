@@ -670,12 +670,31 @@ describe('NewAnnotatorComponent', () => {
     expect(component.filteredAttributes).toStrictEqual(attributesMock);
   });
 
-  it('should change name of a selected attribute', () => {
+  it('should trim the new name of a selected attribute', () => {
     const attribute = new AttributeData('name', 'str', 'source', true, false, 'desc');
     component.selectedAttributes = [attribute];
     component.onAttributeNameChange(attribute, ' newName      ');
     expect(attribute.name).toBe('newName');
     expect(component.isAttributeValid(attribute)).toBe(true);
+    expect(component.areAttributesValid).toBe(true);
+  });
+
+  it('should change name of a selected attribute', () => {
+    const attribute = new AttributeData('name', 'str', 'source', true, false, 'desc');
+    jest.spyOn(component, 'clearAttributeInput').mockImplementation();
+    component.onSelectAttribute(attribute);
+    component.onSelectAttribute(attribute);
+    expect(component.selectedAttributes[0].name).toBe('name');
+    expect(component.selectedAttributes[1].name).toBe('name');
+    expect(component.isAttributeValid(component.selectedAttributes[0])).toBe(false);
+    expect(component.isAttributeValid(component.selectedAttributes[1])).toBe(false);
+    expect(component.areAttributesValid).toBe(false);
+
+    component.onAttributeNameChange(component.selectedAttributes[0], ' newName      ');
+    expect(component.selectedAttributes[0].name).toBe('newName');
+    expect(component.selectedAttributes[1].name).toBe('name');
+    expect(component.isAttributeValid(component.selectedAttributes[0])).toBe(true);
+    expect(component.isAttributeValid(component.selectedAttributes[1])).toBe(true);
     expect(component.areAttributesValid).toBe(true);
   });
 

@@ -35,6 +35,7 @@ import {
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
 import { MatSelect } from '@angular/material/select';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { cloneDeep } from 'lodash';
 
 @Component({
   selector: 'app-new-annotator',
@@ -433,7 +434,7 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
     this.attributesSubscription = this.getAttributesObservable().subscribe({
       next: res => {
         this.attributePage = res;
-        this.selectedAttributes = [...res.attributes.filter(a => a.selectedByDefault)];
+        this.selectedAttributes = cloneDeep(res.attributes.filter(a => a.selectedByDefault));
         this.filteredAttributes = res.attributes;
         this.setupAttributeValueFiltering();
         this.getPipelineAttributesNames();
@@ -581,7 +582,7 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   public onSelectAttribute(attribute: AttributeData): void {
-    this.selectedAttributes.push(attribute);
+    this.selectedAttributes.push(cloneDeep(attribute));
     this.clearAttributeInput();
     this.validateAttributes();
   }
