@@ -7,10 +7,11 @@ import logging
 import os
 import pathlib
 import tempfile
-from typing import Any, cast
+from typing import Annotated, Any, Literal, cast
 from urllib.parse import urlparse
 
 import yaml
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from .cached_repository import GenomicResourceCachedRepo
 from .fsspec_protocol import build_fsspec_protocol, build_inmemory_protocol
@@ -23,6 +24,90 @@ from .repository import (
 from .resource_implementation import GenomicResourceImplementation
 
 logger = logging.getLogger(__name__)
+
+
+_PathOrStr = str | pathlib.Path
+
+
+class _RepoDefinitionBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str | None = None
+    public_url: str | None = None
+
+
+class HttpRepoDefinition(_RepoDefinitionBase):
+    """Definition for an HTTP/HTTPS genomic resource repository."""
+
+    type: Literal["http"]
+    url: str
+    user: str | None = None
+    password: str | None = None
+    cache_dir: _PathOrStr | None = None
+
+    @model_validator(mode="after")
+    def check_credentials_together(self) -> HttpRepoDefinition:
+        if (self.user is None) != (self.password is None):
+            raise ValueError(
+                "user and password must be provided together or not at all")
+        return self
+
+
+class UrlRepoDefinition(_RepoDefinitionBase):
+    """Definition for a generic URL (http/https/s3) repository."""
+
+    type: Literal["url"]
+    url: str
+    cache_dir: _PathOrStr | None = None
+
+
+class FileRepoDefinition(_RepoDefinitionBase):
+    """Definition for a local filesystem genomic resource repository."""
+
+    type: Literal["file", "dir", "directory"]
+    directory: _PathOrStr
+    cache_dir: _PathOrStr | None = None
+    read_only: bool | None = None
+
+
+class S3RepoDefinition(_RepoDefinitionBase):
+    """Definition for an S3 genomic resource repository."""
+
+    type: Literal["s3"]
+    url: str
+    endpoint_url: str | None = None
+    cache_dir: _PathOrStr | None = None
+
+
+class EmbeddedRepoDefinition(_RepoDefinitionBase):
+    """Definition for an in-memory genomic resource repository."""
+
+    type: Literal["embedded", "memory"]
+    content: dict[str, Any] | None = None
+    cache_dir: _PathOrStr | None = None
+
+
+class GroupRepoDefinition(_RepoDefinitionBase):
+    """Definition for a group of genomic resource repositories."""
+
+    type: Literal["group"]
+    children: list[RepoDefinition]
+    cache_dir: _PathOrStr | None = None
+
+
+RepoDefinition = Annotated[
+    HttpRepoDefinition
+    | FileRepoDefinition
+    | S3RepoDefinition
+    | UrlRepoDefinition
+    | EmbeddedRepoDefinition
+    | GroupRepoDefinition,
+    Field(discriminator="type"),
+]
+
+GroupRepoDefinition.model_rebuild()
+
+_REPO_DEFINITION_ADAPTER: TypeAdapter[RepoDefinition] = TypeAdapter(
+    RepoDefinition)
 
 
 DEFAULT_DEFINITION = {
@@ -106,7 +191,7 @@ def _build_real_repository(
 
         if urlparse(root_url).scheme not in {"http", "https"}:
             raise ValueError(f"not an http(s) root url: {root_url}")
-        protocol = build_fsspec_protocol(repo_id, root_url)
+        protocol = build_fsspec_protocol(repo_id, root_url, **kwargs)
         repo = GenomicResourceProtocolRepo(protocol)
 
     elif proto_type == "s3":
@@ -185,15 +270,9 @@ def build_genomic_resource_repository(
     if definition is None:
         raise ValueError("can't find GRR definition")
 
-    logger.info("GRR definition in use: %s", definition)
+    _REPO_DEFINITION_ADAPTER.validate_python(definition)
 
-    if "type" not in definition:
-        logger.error(
-            "missing type in genomic resources repository definition: %s",
-            definition)
-        raise ValueError(
-            f"The repository definition element {definition} "
-            "has no type attiribute.")
+    logger.info("GRR definition in use: %s", definition)
 
     definition_copy = copy.deepcopy(definition)
 

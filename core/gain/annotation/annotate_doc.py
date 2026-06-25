@@ -57,10 +57,10 @@ def cli(raw_args: list[str] | None = None) -> None:
         pipeline_path = args.pipeline
 
     def make_resource_url(resource: GenomicResource) -> str:
-        return resource.get_url()
+        return resource.get_public_url()
 
     def make_histogram_url(score: GenomicScore, score_id: str) -> str | None:
-        return score.get_histogram_image_url(score_id)
+        return score.get_histogram_image_public_url(score_id)
 
     template = get_template("annotate_doc_pipeline_template.jinja")
     html_doc = template.render(pipeline=pipeline,
