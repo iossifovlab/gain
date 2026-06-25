@@ -51,12 +51,8 @@
     (optionSelected)="selectPipelineByName($event.option.value)">
     @for (group of ['default', 'user']; track group) {
     <mat-optgroup [label]="group === 'user' ? 'User pipelines' : 'Public pipelines'">
-      @for (pipeline of filteredPipelines; track pipeline.id) {
-      <mat-option
-        *ngIf="pipeline.type === group"
-        class="pipeline-option"
-        [title]="pipeline.name"
-        [value]="pipeline.name">
+      @for (pipeline of filteredPipelines; track pipeline.id) { @if (pipeline.type === group) {
+      <mat-option class="pipeline-option" [title]="pipeline.name" [value]="pipeline.name">
         <span id="socket-notification">
           <span
             [ngClass]="pipeline.status + '-circle'"
@@ -68,7 +64,7 @@
         >
         {{ pipeline.name }}
       </mat-option>
-      }
+      } }
     </mat-optgroup>
     }
   </mat-autocomplete>
@@ -140,29 +136,25 @@
     >
   </div>
   <div>
-    <button *ngIf="isUserLoggedIn" (click)="saveAs()" id="save-as-button" [disabled]="configError || disableActions"
+    @if (isUserLoggedIn) {
+    <button (click)="saveAs()" id="save-as-button" [disabled]="configError || disableActions"
       ><span class="material-symbols-outlined save-as-icon">save_as</span>Save as</button
     >
-    <button
-      *ngIf="isUserLoggedIn && selectedPipeline && selectedPipeline.type === 'user'"
-      (click)="save()"
-      id="save-button"
-      [disabled]="!isPipelineChanged() || configError || disableActions"
+    } @if (isUserLoggedIn && selectedPipeline && selectedPipeline.type === 'user') {
+    <button (click)="save()" id="save-button" [disabled]="!isPipelineChanged() || configError || disableActions"
       ><span class="material-symbols-outlined save-icon">save</span>Save</button
     >
-    @if(downloadDocLink && isUserLoggedIn) {
+    } @if(downloadDocLink && isUserLoggedIn) {
     <a id="download-pipeline-documentation" [href]="downloadDocLink" download
       ><span class="material-symbols-outlined download-icon">download</span>Documentation</a
     >
     }
     <span cdkOverlayOrigin #pipelineDelete="cdkOverlayOrigin">
-      <button
-        *ngIf="isUserLoggedIn && selectedPipeline && selectedPipeline.type === 'user'"
-        (click)="showConfimDeletePopup = true"
-        id="delete-button"
-        [disabled]="disableActions"
+      @if (isUserLoggedIn && selectedPipeline && selectedPipeline.type === 'user') {
+      <button (click)="showConfimDeletePopup = true" id="delete-button" [disabled]="disableActions"
         ><span class="material-symbols-outlined delete-icon">delete</span>Delete</button
       >
+      }
     </span>
   </div>
 </div>
@@ -182,25 +174,24 @@
     <button (click)="clearPipeline(); showMobileActions = false" [disabled]="disableActions"
       ><span class="material-symbols-outlined">draft</span>New pipeline</button
     >
-    <button
-      *ngIf="isUserLoggedIn"
-      (click)="saveAs(); showMobileActions = false"
-      [disabled]="configError || disableActions"
+    @if (isUserLoggedIn) {
+    <button (click)="saveAs(); showMobileActions = false" [disabled]="configError || disableActions"
       ><span class="material-symbols-outlined">save_as</span>Save as</button
     >
+    } @if (isUserLoggedIn && selectedPipeline && selectedPipeline.type === 'user') {
     <button
-      *ngIf="isUserLoggedIn && selectedPipeline && selectedPipeline.type === 'user'"
       (click)="save(); showMobileActions = false"
       [disabled]="!isPipelineChanged() || configError || disableActions"
       ><span class="material-symbols-outlined">save</span>Save</button
     >
+    } @if (isUserLoggedIn && selectedPipeline && selectedPipeline.type === 'user') {
     <button
-      *ngIf="isUserLoggedIn && selectedPipeline && selectedPipeline.type === 'user'"
       (click)="showConfimDeletePopup = true; showMobileActions = false"
       [disabled]="disableActions"
       class="mobile-delete-button"
       ><span class="material-symbols-outlined">delete</span>Delete</button
     >
+    }
   </div>
   }
 </div>

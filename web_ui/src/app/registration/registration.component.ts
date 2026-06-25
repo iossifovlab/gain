@@ -1,14 +1,14 @@
-import { Component, ElementRef, ViewChild } from '@angular/core';
+import { Component, ElementRef, inject, ViewChild } from '@angular/core';
 import { UsersService } from '../users.service';
 import { FormsModule } from '@angular/forms';
-import { CommonModule } from '@angular/common';
+
 import { HttpErrorResponse } from '@angular/common/http';
 import { Router, RouterModule } from '@angular/router';
 import { environment } from '../../../environments/environment';
 
 @Component({
   selector: 'app-registration',
-  imports: [FormsModule, CommonModule, RouterModule],
+  imports: [FormsModule, RouterModule],
   templateUrl: './registration.component.html',
   styleUrl: './registration.component.css'
 })
@@ -18,8 +18,8 @@ export class RegistrationComponent {
   public responseMessage: string = '';
   public validationMessage: string = '';
   public readonly environment = environment;
-
-  public constructor(private usersService: UsersService, private router: Router) {}
+  private readonly usersService: UsersService = inject(UsersService);
+  private readonly router: Router = inject(Router);
 
   public register(): void {
     this.responseMessage = '';

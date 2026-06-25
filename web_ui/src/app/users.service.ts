@@ -1,5 +1,5 @@
 import { HttpClient } from '@angular/common/http';
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 import { Router } from '@angular/router';
 import { CookieService } from 'ngx-cookie-service';
 import { BehaviorSubject, Observable, map, switchMap, take, tap } from 'rxjs';
@@ -15,11 +15,9 @@ export class UsersService {
   private readonly userQuotasUrl = `${environment.apiPath}/quotas`;
   public userData = new BehaviorSubject<UserData>(null);
 
-  public constructor(
-    private http: HttpClient,
-    private cookieService: CookieService,
-    private router: Router,
-  ) { }
+  private readonly http = inject(HttpClient);
+  private readonly cookieService = inject(CookieService);
+  private readonly router = inject(Router);
 
   public logout(): Observable<object> {
     const csrfToken = this.cookieService.get('csrftoken');

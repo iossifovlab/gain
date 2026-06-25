@@ -1,5 +1,5 @@
-import { CommonModule } from '@angular/common';
-import { Component, EventEmitter, OnInit, Output } from '@angular/core';
+
+import { Component, EventEmitter, inject, OnInit, Output } from '@angular/core';
 import { FileContent } from './jobs';
 import { JobsService } from './jobs.service';
 import { take } from 'rxjs';
@@ -11,9 +11,8 @@ import { SingleAnnotationService } from '../single-annotation.service';
 @Component({
   selector: 'app-job-creation',
   imports: [
-    CommonModule,
     FormsModule,
-    ColumnSpecifyingComponent,
+    ColumnSpecifyingComponent
   ],
   templateUrl: './job-creation.component.html',
   styleUrl: './job-creation.component.css'
@@ -38,11 +37,9 @@ export class JobCreationComponent implements OnInit {
       diskSpace: string;
   } = null;
 
-  public constructor(
-    private jobsService: JobsService,
-    private usersService: UsersService,
-    private singleAnnotationService: SingleAnnotationService,
-  ) { }
+  private readonly jobsService = inject(JobsService);
+  private readonly usersService = inject(UsersService);
+  private readonly singleAnnotationService = inject(SingleAnnotationService);
 
   public ngOnInit(): void {
     this.usersService.userData.pipe(

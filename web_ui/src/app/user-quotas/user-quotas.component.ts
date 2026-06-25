@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, inject, OnInit } from '@angular/core';
 import { UsersService } from '../users.service';
 import { filter, take } from 'rxjs';
 import { RateLimits } from '../users';
@@ -13,9 +13,7 @@ import { CommonModule, KeyValuePipe } from '@angular/common';
 export class UserQuotasComponent implements OnInit {
   public quotas: RateLimits;
   public isUserLoggedIn: boolean;
-  public constructor(
-    private userService: UsersService
-  ) {}
+  private readonly userService = inject(UsersService);
 
   public ngOnInit(): void {
     this.userService.getQuotas().pipe(take(1)).subscribe(quotas => {

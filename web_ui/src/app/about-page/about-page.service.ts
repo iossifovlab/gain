@@ -1,5 +1,5 @@
 import { HttpClient } from '@angular/common/http';
-import { Injectable } from '@angular/core';
+import { inject, Injectable } from '@angular/core';
 import { Observable } from 'rxjs/internal/Observable';
 import { environment } from '../../../environments/environment';
 
@@ -9,8 +9,7 @@ import { environment } from '../../../environments/environment';
 export class AboutPageService {
   private readonly getContentUrl = `${environment.apiPath}/about`;
   private readonly getVersionUrl = `${environment.apiPath}/version`;
-
-  public constructor(private http: HttpClient) {}
+  private readonly http = inject(HttpClient);
 
   public getContent(): Observable<string> {
     return this.http.get<string>(this.getContentUrl);

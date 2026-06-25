@@ -1,13 +1,13 @@
-import { Component, Input, OnInit } from '@angular/core';
+import { Component, inject, Input, OnInit } from '@angular/core';
 import { SingleAnnotationService } from '../single-annotation.service';
 import { CategoricalHistogram, NumberHistogram, ValueType } from '../single-annotation';
 import { NumberHistogramComponent } from '../number-histogram/number-histogram.component';
 import { CategoricalHistogramComponent } from '../categorical-histogram/categorical-histogram.component';
-import { CommonModule } from '@angular/common';
+
 
 @Component({
   selector: 'app-histogram-wrapper',
-  imports: [CommonModule, NumberHistogramComponent, CategoricalHistogramComponent],
+  imports: [NumberHistogramComponent, CategoricalHistogramComponent],
   templateUrl: './histogram-wrapper.component.html'
 })
 export class HistogramWrapperComponent implements OnInit {
@@ -15,7 +15,7 @@ export class HistogramWrapperComponent implements OnInit {
   @Input() public value: ValueType;
   public histogram: CategoricalHistogram | NumberHistogram = null;
 
-  public constructor(private singleAnnotationService: SingleAnnotationService) { }
+  private readonly singleAnnotationService = inject(SingleAnnotationService);
 
   public ngOnInit(): void {
     if (this.histogramUrl) {

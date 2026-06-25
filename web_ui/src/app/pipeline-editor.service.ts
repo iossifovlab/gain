@@ -1,4 +1,4 @@
-import { Injectable } from '@angular/core';
+import { inject, Injectable } from '@angular/core';
 import { environment } from '../../environments/environment';
 import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { catchError, forkJoin, map, Observable, of, switchMap, tap, throwError } from 'rxjs';
@@ -28,8 +28,7 @@ export class PipelineEditorService {
   private getResourceAnnotatorsUrl = `${environment.apiPath}/editor/resource_annotators`;
   private getAggregatorsUrl = `${environment.apiPath}/editor/aggregators`;
   private getAttributesAggregatorsUrl = `${environment.apiPath}/editor/annotator_aggregators`;
-
-  public constructor(private http: HttpClient) { }
+  private readonly http = inject(HttpClient);
 
   private getCSRFToken(): string {
     let res = '';

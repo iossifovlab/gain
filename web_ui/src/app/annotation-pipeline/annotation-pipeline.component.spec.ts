@@ -360,7 +360,10 @@ describe('AnnotationPipelineComponent', () => {
     jest.spyOn(jobsServiceMock, 'validatePipelineConfig').mockReturnValue(of(''));
     jest.spyOn(component, 'isPipelineChanged').mockReturnValue(true);
     jest.spyOn(component, 'autoSave').mockReturnValue(of('id'));
-    const getPipelineInfoSpy = jest.spyOn(component as any, 'getPipelineInfo');
+    const getPipelineInfoSpy = jest.spyOn(
+      component as unknown as { getPipelineInfo: () => void },
+      'getPipelineInfo'
+    );
 
     component.selectedPipeline = mockPipelines[0];
     component.currentPipelineText = 'config content';

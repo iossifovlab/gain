@@ -1,4 +1,4 @@
-import { Injectable } from '@angular/core';
+import { inject, Injectable } from '@angular/core';
 import { environment } from '../../environments/environment';
 import { HttpClient } from '@angular/common/http';
 import { map, Observable, shareReplay } from 'rxjs';
@@ -12,11 +12,8 @@ export class AnnotationPipelineService {
   private readonly pipelineUrl = `${environment.apiPath}/pipelines/user`;
   private readonly getPipelineStatus = `${environment.apiPath}/editor/pipeline_status`;
   private readonly annotateDocumentationUrl = `${environment.apiPath}/pipelines/doc`;
-
-  public constructor(
-    private http: HttpClient,
-    private stateService: AnnotationPipelineStateService
-  ) { }
+  private readonly http = inject(HttpClient);
+  private readonly stateService = inject(AnnotationPipelineStateService);
 
   private getCSRFToken(): string {
     let res = '';

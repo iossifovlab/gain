@@ -29,12 +29,14 @@
               <span class="job-name">Job name: {{ currentJob.name }}</span>
               <span class="status-label" [ngClass]="getStatusClass()">{{ currentJob.status }}</span>
             </div>
-            <div *ngIf="currentJob.status === 'success'">
+            @if (currentJob.status === 'success') {
+            <div>
               <span id="file-name">{{ currentJob.annotatedFileName }}</span>
               <a id="download-result" [href]="downloadLink" download
                 ><span class="material-symbols-outlined download-icon">download</span></a
               >
             </div>
+            }
           </div>
 
           <div id="new-job-section">

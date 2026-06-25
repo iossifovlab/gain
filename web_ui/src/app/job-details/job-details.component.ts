@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, Inject, OnInit } from '@angular/core';
+import { Component, inject, OnInit } from '@angular/core';
 import { MAT_DIALOG_DATA, MatDialogContent } from '@angular/material/dialog';
 import { JobsService } from '../job-creation/jobs.service';
 import { getStatusClassName, Job } from '../job-creation/jobs';
@@ -16,10 +16,8 @@ export class JobDetailsComponent implements OnInit {
   public uploadedFileLink: string;
   public configFileLink: string;
 
-  public constructor(
-    @Inject(MAT_DIALOG_DATA) public jobId: number,
-    private jobsService: JobsService
-  ) { }
+  public readonly jobId = inject(MAT_DIALOG_DATA) as number;
+  private readonly jobsService = inject(JobsService);
 
   public ngOnInit(): void {
     this.jobsService.getJobDetails(this.jobId).subscribe(res => {

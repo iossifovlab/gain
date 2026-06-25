@@ -1,4 +1,4 @@
-import { Component, ViewChild, OnInit, HostListener, effect } from '@angular/core';
+import { Component, ViewChild, OnInit, HostListener, effect, inject } from '@angular/core';
 import { filter, take } from 'rxjs';
 import { AnnotationPipelineComponent } from '../annotation-pipeline/annotation-pipeline.component';
 import { CommonModule } from '@angular/common';
@@ -35,12 +35,11 @@ export class SingleAnnotationWrapperComponent implements OnInit {
   }
   public isUserLoggedIn = false;
 
+  private readonly userService = inject(UsersService);
+  private readonly annotationPipelineService = inject(AnnotationPipelineService);
+  public readonly pipelineStateService = inject(AnnotationPipelineStateService);
 
-  public constructor(
-      private userService: UsersService,
-      private annotationPipelineService: AnnotationPipelineService,
-      public pipelineStateService: AnnotationPipelineStateService,
-  ) {
+  public constructor() {
     effect(() => {
       const id = this.pipelineStateService.currentTemporaryPipelineId() ||
         this.pipelineStateService.selectedPipelineId();

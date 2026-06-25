@@ -1,4 +1,5 @@
-<div *ngIf="report" id="report">
+@if (report) {
+<div id="report">
   <div id="annotatable">
     <div id="report-header">
       <div id="toggle-view-container">
@@ -61,11 +62,12 @@
       }
     </div>
   </div>
-
   <div id="annotators">
-    <div *ngFor="let annotator of report.annotators" class="annotator">
+    @for (annotator of report.annotators; track annotator) {
+    <div class="annotator">
       <div class="attributes">
-        <div *ngFor="let attribute of annotator.attributes" class="attribute-container">
+        @for (attribute of annotator.attributes; track attribute) {
+        <div class="attribute-container">
           <div class="attribute">
             <div class="attribute-header">{{ attribute.name }}</div>
             @if(showFullReport) {
@@ -129,8 +131,8 @@
             }
           </div>
         </div>
+        }
       </div>
-
       <div id="compact-report">
         <button
           class="material-symbols-outlined info-icon"
@@ -138,22 +140,26 @@
           (click)="showInfo(annotator)"
           >info</button
         >
-
         <ng-template #infoModal let-annotator>
           <div id="modal-content">
             <div style="width: 100%">
-              <div *ngFor="let attribute of annotator.attributes" class="attribute-container-modal">
+              @for (attribute of annotator.attributes; track attribute) {
+              <div class="attribute-container-modal">
                 <div class="attribute-header">{{ attribute.name }}</div>
                 <div class="attribute-description">{{ attribute.description }}</div>
                 <div class="attribute-source">source: {{ attribute.source }}</div>
-                <div *ngIf="attribute.aggregator" class="attribute-aggregator">aggregator: {{ attribute.aggregator }}</div>
+                @if (attribute.aggregator) {
+                <div class="attribute-aggregator">aggregator: {{ attribute.aggregator }}</div>
+                }
                 <div>
+                  @if (attribute.result.histogramLink) {
                   <app-histogram-wrapper
-                    *ngIf="attribute.result.histogramLink"
                     [histogramUrl]="attribute.result.histogramLink"
                     [value]="attribute.result.value"></app-histogram-wrapper>
+                  }
                 </div>
               </div>
+              }
             </div>
             <div class="annotator-details">
               <div>
@@ -162,9 +168,10 @@
                 >
                 <markdown class="annotator-description">{{ annotator.details.description }}</markdown>
               </div>
-
-              <div *ngIf="annotator.details.resources.length" class="resources">
-                <div *ngFor="let resource of annotator.details.resources" class="resource">
+              @if (annotator.details.resources.length) {
+              <div class="resources">
+                @for (resource of annotator.details.resources; track resource) {
+                <div class="resource">
                   <div class="resource-label">Resource</div>
                   <div
                     ><span class="id-label">id: </span>
@@ -173,11 +180,15 @@
                     }}</a></div
                   >
                 </div>
+                }
               </div>
+              }
             </div>
           </div>
         </ng-template>
       </div>
     </div>
+    }
   </div>
 </div>
+}

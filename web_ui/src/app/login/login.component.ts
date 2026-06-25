@@ -1,7 +1,7 @@
-import { Component, ElementRef, OnInit, ViewChild } from '@angular/core';
+import { Component, ElementRef, inject, OnInit, ViewChild } from '@angular/core';
 import { UsersService } from '../users.service';
 import { FormsModule } from '@angular/forms';
-import { CommonModule } from '@angular/common';
+
 import { RouterModule, Router, ActivatedRoute } from '@angular/router';
 import { HttpErrorResponse } from '@angular/common/http';
 import { environment } from '../../../environments/environment';
@@ -9,7 +9,7 @@ import { map, take } from 'rxjs';
 
 @Component({
   selector: 'app-login',
-  imports: [FormsModule, CommonModule, RouterModule],
+  imports: [FormsModule, RouterModule],
   templateUrl: './login.component.html',
   styleUrl: './login.component.css',
 })
@@ -21,11 +21,9 @@ export class LoginComponent implements OnInit {
   public readonly resetPasswordUrl = `${environment.apiPath}/forgotten_password`;
   public activationStatus: '' | 'successful' | 'failed';
 
-  public constructor(
-    private usersService: UsersService,
-    private router: Router,
-    private route: ActivatedRoute,
-  ) {}
+  private readonly usersService = inject(UsersService);
+  private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute);
 
   public ngOnInit(): void {
     this.route.queryParamMap.pipe(

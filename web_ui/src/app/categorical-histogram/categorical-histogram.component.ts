@@ -1,12 +1,12 @@
 import { Component, ElementRef, Input, OnInit, ViewChild } from '@angular/core';
 import { CategoricalHistogram } from '../single-annotation';
-import { CommonModule } from '@angular/common';
+
 import * as d3 from 'd3';
 import { cloneDeep } from 'lodash';
 
 @Component({
   selector: 'app-categorical-histogram',
-  imports: [CommonModule],
+  imports: [],
   templateUrl: './categorical-histogram.component.html',
   styleUrl: './categorical-histogram.component.css'
 })

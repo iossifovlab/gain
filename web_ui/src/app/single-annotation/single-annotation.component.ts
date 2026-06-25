@@ -1,6 +1,6 @@
-import { Component, EventEmitter, OnInit, Output } from '@angular/core';
+import { Component, EventEmitter, OnInit, Output, inject } from '@angular/core';
 import { environment } from '../../../environments/environment';
-import { CommonModule } from '@angular/common';
+
 import { FormControl, FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { SingleAnnotationReportComponent } from '../single-annotation-report/single-annotation-report.component';
 import { SingleAnnotationService } from '../single-annotation.service';
@@ -15,7 +15,6 @@ import { AnnotationPipelineStateService } from '../annotation-pipeline/annotatio
 @Component({
   selector: 'app-single-annotation',
   imports: [
-    CommonModule,
     FormsModule,
     SingleAnnotationReportComponent,
     MatProgressSpinnerModule,
@@ -37,11 +36,9 @@ export class SingleAnnotationComponent implements OnInit {
   public examples: string[];
   public annotateErrorMessage: string = '';
 
-  public constructor(
-    private singleAnnotationService: SingleAnnotationService,
-    private userService: UsersService,
-    private pipelineStateService: AnnotationPipelineStateService,
-  ) { }
+  private readonly pipelineStateService: AnnotationPipelineStateService = inject(AnnotationPipelineStateService);
+  private readonly singleAnnotationService: SingleAnnotationService = inject(SingleAnnotationService);
+  private readonly userService: UsersService = inject(UsersService);
 
   public ngOnInit(): void {
     this.examples = [
