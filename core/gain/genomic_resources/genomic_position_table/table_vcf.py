@@ -30,8 +30,7 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
         header_filename = filename[:idx] + ".header" + filename[idx:]
         assert self.genomic_resource.file_exists(header_filename), \
             "VCF tables must have an accompanying *.header.vcf.gz file!"
-        return self.genomic_resource.open_vcf_file(
-            header_filename, require_index=False).header.info
+        return self.genomic_resource.open_vcf_file(header_filename).header.info
 
     def _transform_vcf_result(self, line: VCFLine) -> None:
         rchrom = self._map_result_chrom(line.chrom)

@@ -572,12 +572,9 @@ class GenomicResource:
 
     def open_vcf_file(
             self, filename: str,
-            index_filename: str | None = None,
-            *,
-            require_index: bool = True) -> pysam.VariantFile:
+            index_filename: str | None = None) -> pysam.VariantFile:
         """Open a vcf file and returns a pysam.VariantFile."""
-        return self.proto.open_vcf_file(
-            self, filename, index_filename, require_index=require_index)
+        return self.proto.open_vcf_file(self, filename, index_filename)
 
     def open_fasta_file(
             self, filename: str,
@@ -809,9 +806,7 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
     @abc.abstractmethod
     def open_vcf_file(
             self, resource: GenomicResource, filename: str,
-            index_filename: str | None = None,
-            *,
-            require_index: bool = True) -> pysam.VariantFile:
+            index_filename: str | None = None) -> pysam.VariantFile:
         """Open a vcf file in a resource and return a pysam VariantFile.
 
         Not all repositories support this method. Repositories that do

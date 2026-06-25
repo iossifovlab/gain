@@ -276,3 +276,83 @@ def test_open_utf8_tabix_file(
 
     with proto.open_tabix_file(res, "in.vcf.gz") as vcf:
         print(vcf.contigs)
+
+
+# ---------------------------------------------------------------------------
+# open_vcf_file — index handling
+# ---------------------------------------------------------------------------
+
+VCF_CONTENT = """\
+##fileformat=VCFv4.2
+##INFO=<ID=AF,Number=A,Type=Float,Description="Allele frequency">
+##contig=<ID=1>
+#CHROM POS ID REF ALT QUAL FILTER INFO
+1      10  .  T   G     .    .    AF=0.1
+1      20  .  A   C     .    .    AF=0.2
+"""
+
+
+@pytest.fixture
+def vcf_proto_with_index(tmp_path: pathlib.Path) -> RepositoryProtocol:
+    """Filesystem protocol where the VCF has a .tbi index."""
+    setup_directories(tmp_path, {"res": {GR_CONF_FILE_NAME: ""}})
+    setup_vcf(tmp_path / "res" / "data.vcf.gz", VCF_CONTENT)
+    return build_filesystem_test_protocol(tmp_path)
+
+
+@pytest.fixture
+def vcf_proto_without_index(tmp_path: pathlib.Path) -> RepositoryProtocol:
+    """Filesystem protocol where the VCF has NO .tbi index."""
+    setup_directories(tmp_path, {"res": {GR_CONF_FILE_NAME: ""}})
+    setup_vcf(tmp_path / "res" / "data.vcf.gz", VCF_CONTENT)
+    (tmp_path / "res" / "data.vcf.gz.tbi").unlink()
+    return build_filesystem_test_protocol(tmp_path)
+
+
+@pytest.mark.grr_tabix
+def test_open_vcf_file_with_index_reads_contigs(
+        vcf_proto_with_index: RepositoryProtocol) -> None:
+    proto = vcf_proto_with_index
+    res = proto.get_resource("res")
+    with proto.open_vcf_file(res, "data.vcf.gz") as vcf:
+        assert list(vcf.header.contigs) == ["1"]
+
+
+@pytest.mark.grr_tabix
+def test_open_vcf_file_with_index_fetches_by_region(
+        vcf_proto_with_index: RepositoryProtocol) -> None:
+    proto = vcf_proto_with_index
+    res = proto.get_resource("res")
+    with proto.open_vcf_file(res, "data.vcf.gz") as vcf:
+        records = list(vcf.fetch("1"))
+    assert len(records) == 2
+
+
+@pytest.mark.grr_tabix
+def test_open_vcf_file_without_index_reads_contigs(
+        vcf_proto_without_index: RepositoryProtocol) -> None:
+    proto = vcf_proto_without_index
+    res = proto.get_resource("res")
+    with proto.open_vcf_file(res, "data.vcf.gz") as vcf:
+        assert list(vcf.header.contigs) == ["1"]
+
+
+@pytest.mark.grr_tabix
+def test_open_vcf_file_without_index_does_not_build_index_url(
+        vcf_proto_without_index: RepositoryProtocol,
+        mocker: pytest_mock.MockerFixture) -> None:
+    """_get_file_url must not be called for the index when it does not exist.
+
+    This is critical for remote protocols (S3, HTTP) where constructing the
+    index URL alone can trigger a network request or presigned-URL generation.
+    """
+    proto = vcf_proto_without_index
+    res = proto.get_resource("res")
+
+    spy = mocker.spy(proto, "_get_file_url")
+    with proto.open_vcf_file(res, "data.vcf.gz"):
+        pass
+
+    called_filenames = [call.args[1] for call in spy.call_args_list]
+    assert "data.vcf.gz" in called_filenames
+    assert "data.vcf.gz.tbi" not in called_filenames
