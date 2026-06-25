@@ -25,6 +25,7 @@ from gain.genomic_resources.fsspec_protocol import (
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
     NumberHistogram,
+    NumberHistogramConfig,
 )
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
@@ -422,11 +423,12 @@ def test_load_wrong_resource_type(
 def test_load_gene_score_without_histogram(
         scores_repo: GenomicResourceRepo) -> None:
     res = scores_repo.get_resource("OopsHist")
-    with pytest.raises(
-        TypeError,
-        match="Missing histogram config for linear in OopsHist",
-    ):
-        build_gene_score_from_resource(res)
+    gene_score = build_gene_score_from_resource(res)
+    assert gene_score is not None
+    assert isinstance(
+        gene_score.score_definitions["linear"].hist_conf,
+        NumberHistogramConfig,
+    )
 
 
 def test_load_gene_score_without_gene_scores(

@@ -17,6 +17,7 @@ from gain.genomic_resources.histogram import (
     HistogramConfig,
     NumberHistogram,
     NumberHistogramConfig,
+    build_default_histogram_conf,
     build_histogram_config,
     load_histogram,
 )
@@ -107,6 +108,9 @@ class GeneScore(
             else:
                 score_name = score_conf.get("column_name", score_id)
             hist_conf = build_histogram_config(score_conf)
+            if hist_conf is None:
+                hist_conf = build_default_histogram_conf(
+                    score_conf.get("type", "float"))
 
             if not isinstance(
                     hist_conf,

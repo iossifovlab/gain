@@ -143,6 +143,40 @@ def test_position_score_annotator_empty_default_annotation(
     assert all(attr_desc.is_default is False for attr_desc in attr_descs)
 
 
+def test_position_score_annotator_default_annotation_specs() -> None:
+    repo = build_inmemory_test_repository({
+        "score": {
+            "genomic_resource.yaml": """\
+                type: position_score
+                table:
+                    filename: data.mem
+                scores:
+                - id: s1
+                  type: float
+                  desc: "score 1"
+                - id: s2
+                  type: float
+                  desc: "score 2"
+                - id: s3
+                  type: float
+                  desc: "score 3"
+                default_annotation:
+                  - source: s1
+                  - source: s3
+                """,
+            "data.mem": "chrom pos_begin pos_end s1 s2 s3\n1 1 2 1.0 2.0 3.0\n",
+        },
+    })
+
+    pipeline = load_pipeline_from_yaml(
+        "- position_score: score\n", repo)
+    specs = pipeline.annotators[0].get_attribute_specs()
+
+    assert specs["s1"].is_default is True
+    assert specs["s2"].is_default is False
+    assert specs["s3"].is_default is True
+
+
 #  hg19
 #  chrom: 1      # noqa: ERA001
 #  pos:   14970  # noqa: ERA001

@@ -122,18 +122,24 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
         super().close()
 
     def get_attribute_specs(self) -> dict[str, AttributeSpec]:
-        has_default_annotation = \
-            self.score.get_config().get("default_annotation") is not None
-        return {
+        default_annotation = self.score.get_config().get("default_annotation")
+        specs = {
             attr_source: AttributeSpec(
                 source=attr_def.score_id,
                 value_type=attr_def.value_type,
                 description=attr_def.desc,
-                is_default=not has_default_annotation,
+                is_default=default_annotation is None,
                 internal_default=False,
             )
             for attr_source, attr_def in self.score.score_definitions.items()
         }
+        if default_annotation is not None:
+            for attr in default_annotation:
+                parsed = \
+                    AnnotationConfigParser.parse_raw_attribute_config(attr)
+                if parsed.source in specs:
+                    specs[parsed.source].is_default = True
+        return specs
 
     def get_attribute_defaults(
         self, spec: AttributeSpec,
