@@ -26,7 +26,6 @@ from gain.genomic_resources.histogram import (
 )
 from gain.genomic_resources.repository import GenomicResource
 from rest_framework import generics, permissions, views
-from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import Request, Response
 
 from web_annotation.annotation_base_view import (
@@ -37,6 +36,9 @@ from web_annotation.authentication import WebAnnotationAuthentication
 from web_annotation.models import AlleleQuery, BaseUser, User
 from web_annotation.pipeline_cache import ThreadSafePipeline, await_build
 from web_annotation.serializers import AlleleSerializer
+from web_annotation.single_allele_annotation.throttling import (
+    AnnotateUserRateThrottle,
+)
 
 
 def get_histogram_genomic_score(
@@ -124,7 +126,7 @@ class SingleAnnotation(AsyncAnnotationBaseView):
     no ``async_to_sync`` channel callback ever runs on the event loop.
     """
 
-    throttle_classes: ClassVar = [UserRateThrottle]
+    throttle_classes: ClassVar = [AnnotateUserRateThrottle]
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
 
     def generate_annotator_help(
