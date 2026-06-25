@@ -32,6 +32,7 @@ _PathOrStr = str | pathlib.Path
 class _RepoDefinitionBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str | None = None
+    public_url: str | None = None
 
 
 class HttpRepoDefinition(_RepoDefinitionBase):
@@ -42,7 +43,6 @@ class HttpRepoDefinition(_RepoDefinitionBase):
     user: str | None = None
     password: str | None = None
     cache_dir: _PathOrStr | None = None
-    public_url: str | None = None
 
     @model_validator(mode="after")
     def check_credentials_together(self) -> HttpRepoDefinition:
@@ -58,7 +58,6 @@ class UrlRepoDefinition(_RepoDefinitionBase):
     type: Literal["url"]
     url: str
     cache_dir: _PathOrStr | None = None
-    public_url: str | None = None
 
 
 class FileRepoDefinition(_RepoDefinitionBase):
@@ -67,7 +66,6 @@ class FileRepoDefinition(_RepoDefinitionBase):
     type: Literal["file", "dir", "directory"]
     directory: _PathOrStr
     cache_dir: _PathOrStr | None = None
-    public_url: str | None = None
     read_only: bool | None = None
 
 
@@ -78,7 +76,6 @@ class S3RepoDefinition(_RepoDefinitionBase):
     url: str
     endpoint_url: str | None = None
     cache_dir: _PathOrStr | None = None
-    public_url: str | None = None
 
 
 class EmbeddedRepoDefinition(_RepoDefinitionBase):
