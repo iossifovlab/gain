@@ -440,6 +440,10 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
 
         if index_filename is None:
             index_filename = f"{filename}.tbi"
+
+        if not resource.file_exists(index_filename):
+            return pysam.VariantFile(file_url)  # pylint: disable=no-member
+
         index_url = self._get_file_url(resource, index_filename)
 
         return pysam.VariantFile(  # pylint: disable=no-member
