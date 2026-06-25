@@ -75,6 +75,10 @@ if "admin_panel" in settings.INSTALLED_APPS:
     urlpatterns += admin_panel_urls
 
 if getattr(settings, "LOADTEST_PING_ENABLED", False):
+    # Deferred + gated on purpose: importing ping_view only under settings_e2e
+    # keeps the test-only route out of any production URLconf, so the
+    # ungrouped-imports grouping rule does not apply here.
+    # pylint: disable=ungrouped-imports
     from web_annotation.loadtest.ping_view import loadtest_ping
     urlpatterns += [path("api/_loadtest/ping", loadtest_ping)]
 
