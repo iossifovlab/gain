@@ -21,7 +21,12 @@ from django.views.decorators.csrf import csrf_exempt
 @csrf_exempt
 def loadtest_ping(request: HttpRequest) -> HttpResponse:
     """Group-send a sentinel ping to the ``global`` group; return 200."""
-    seq = request.GET.get("seq", "0")
+    # The route contract is ``?seq=<int>``; coerce so the sentinel is always
+    # well-formed (a malformed seq falls back to 0 rather than 500-ing).
+    try:
+        seq = int(request.GET.get("seq", "0"))
+    except (TypeError, ValueError):
+        seq = 0
     channel_layer = get_channel_layer()
     assert channel_layer is not None, "No channel layer configured"
     async_to_sync(channel_layer.group_send)(

@@ -3,7 +3,7 @@ from collections.abc import Callable
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest_mock
+from pytest_mock import MockerFixture
 
 from web_annotation import settings_e2e
 from web_annotation.loadtest import ping_view
@@ -17,7 +17,7 @@ def test_settings_e2e_enables_loadtest_ping() -> None:
 
 
 def test_ping_view_group_sends_sentinel(
-    mocker: pytest_mock.MockerFixture,
+    mocker: MockerFixture,
 ) -> None:
     # The route is import-time gated and absent under test_settings, so call the
     # view callable directly rather than going through a URL/Client.
