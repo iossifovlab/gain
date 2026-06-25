@@ -31,10 +31,17 @@ class AnnotateUserRateThrottle(UserRateThrottle):
             session = getattr(request, "session", None)
             session_key = getattr(session, "session_key", None)
             if session_key:
+                # Build the key by hand for this session-scoped branch; ``key``
+                # is annotated so mypy accepts the ``Any``-typed
+                # ``cache_format %`` result.
                 key: str = self.cache_format % {
                     "scope": self.scope,
                     "ident": session_key,
                 }
                 return key
 
+        # No session key -> fall back to the IP bucket. Not hit in the real
+        # annotate flow: WebAnnotationAuthentication forces ``session.save()``
+        # and DRF authenticates before ``check_throttles``, so ``session_key``
+        # is always populated by the time the bucket is keyed.
         return cast("str | None", super().get_cache_key(request, view))
