@@ -69,6 +69,7 @@ class AnnotationPipelineImplementation(
                 "Referencing resource outside managed GRR %s",
                 resource.get_id(),
             )
+            res_url = resource.get_public_url()
         return res_url
 
     def _make_histogram_url(
@@ -89,6 +90,7 @@ class AnnotationPipelineImplementation(
                 "Referencing resource outside managed GRR %s",
                 score.resource.get_id(),
             )
+            hist_url = score.get_histogram_image_public_url(score_id)
         return hist_url
 
     def _get_template_data(self) -> dict[str, Any]:
