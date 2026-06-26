@@ -658,12 +658,13 @@ class FsspecReadWriteProtocol(
         path_array: list[str],
         specs: list[tuple[int, pathspec.PathSpec]],
     ) -> bool:
-        """Return True if name should be excluded based on accumulated gitignore specs."""
+        """Return True if name is excluded by any accumulated gitignore spec."""
         for base_depth, spec in specs:
             # Path relative to the directory that contains this .gitignore.
             rel_parts = [*path_array[base_depth:], name]
             rel_path = "/".join(rel_parts)
-            # Check both as a file and as a directory (handles trailing-/ patterns).
+            # Check as both a file and a directory path so that
+            # trailing-/ patterns (e.g. logs/) prune whole directories.
             if spec.match_file(rel_path) or spec.match_file(rel_path + "/"):
                 return True
         return False
