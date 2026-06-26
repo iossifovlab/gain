@@ -347,7 +347,7 @@ The rule reads three attributes from the context: ``gnomad_v4_exome_ALL_af``, ``
     def annotate_experimental_followup(annotatable, context: dict[str, Any]) -> str:
         exome_af = to_float(context.get("gnomad_v4_exome_ALL_af"))
         phylo = to_float(context.get("phyloP7way"))
-        clinvar = str(context.get("clinical_significance", "")).lower()
+        clinvar = str(context.get("clinical_significance", "")).strip()
 
         rare = exome_af is not None and exome_af < 0.01
         conserved = phylo is not None and phylo > 0
@@ -401,7 +401,7 @@ After installation, the plugin annotator can be used in a regular GAIn annotatio
 
     annotate_tabular small_input.csv plugin_pipeline.yaml -f -o small_input.plugin.csv
 
-The output file contains the attributes produced by the standard annotators, together with the new `experimental_followup` attribute added by the plugin. For each input variant, this attribute is set to `yes` only when the variant is rare in gnomAD, conserved according to `phyloP7way`, and pathogenic according to ClinVar. Otherwise, the value is set to `no`.
+The output file contains the attributes produced by the standard annotators, together with the new ``experimental_followup`` attribute added by the plugin. For each input variant, this attribute is set to ``yes`` only when the variant is rare in gnomAD, conserved according to ``phyloP7way``, and pathogenic according to ``ClinVar``. Otherwise, the value is set to `no`.
 
 .. csv-table::
     :header-rows: 1
