@@ -1,13 +1,126 @@
 Release Notes
 =============
 
-* unreleased
+* 2026.6.10
+    * Reading a VCF score resource's header no longer logs a spurious
+      htslib ``[E::idx_find_and_load] Could not retrieve index file``
+      line to stderr. ``VCFGenomicPositionTable`` opens the resource's
+      companion ``*.header.vcf.gz`` purely to read its INFO definitions,
+      and such header-only files correctly ship no ``.tbi``; htslib
+      auto-probed for the missing index on open and logged the
+      (harmless) error, which was noisy during ``grr_manage``
+      resource-repair and other resource operations. The header open is
+      now wrapped in ``pysam.set_verbosity(0)`` (restored afterwards) so
+      the probe stays quiet.
+    * Added a "creating an annotator plugin" walkthrough to the
+      Python-interface documentation page, with a worked example
+      adapter.
+
+* 2026.6.9
+    * Fixed default-attribute selection for score annotators that
+      declare a ``default_annotation``. A genomic-score annotator now
+      marks exactly the attributes named in the resource's
+      ``default_annotation`` as defaults; previously, when any
+      ``default_annotation`` was configured, *no* attribute was flagged
+      as a default. Gene scores with no histogram configuration now fall
+      back to a default histogram for their value type instead of
+      raising ``Missing histogram config``.
+    * Opening a VCF score resource's header file no longer triggers a
+      needless index lookup. ``VCFGenomicPositionTable`` opens the
+      companion ``*.header.vcf.gz`` only to read its INFO definitions,
+      and that header file ships no ``.tbi``; ``open_vcf_file`` now
+      checks whether the index actually exists and opens the file
+      index-less when it does not, instead of always handing pysam a
+      ``.tbi`` URL (which over an http GRR meant fetching a
+      non-existent index).
+    * Genomic resource repository definitions are now validated against
+      typed schemas. Each repository entry in a ``.grr_definition.yaml``
+      is parsed through a per-type pydantic model that rejects unknown
+      keys and checks required fields (e.g. an ``http`` repo's ``user``
+      and ``password`` must be supplied together or not at all), so a
+      malformed definition fails early with a clear error instead of
+      being silently mis-read.
+    * A ``public_url`` may now be set on any repository definition type,
+      not only ``http``/``url`` — ``file``, ``dir`` and ``s3`` repos
+      accept it too, so a directory- or S3-backed GRR can advertise the
+      public address its generated pages and histogram images link to.
+    * HTTP genomic resource repositories now support basic
+      authentication: an ``http`` repository definition with ``user``
+      and ``password`` set passes them to the underlying
+      ``HTTPFileSystem`` as ``aiohttp`` basic-auth credentials, so a GRR
+      served behind HTTP basic auth can be read.
+    * The ``annotate_doc`` CLI now builds resource and score-histogram
+      links from each resource's public URL (``get_public_url`` /
+      ``get_histogram_image_public_url``) rather than its local
+      ``file://`` URL, so the generated pipeline documentation is
+      reachable from a browser — matching the live web-help fix in
+      2026.6.7.
     * Renamed the stored ``Job.annotation_type`` value from ``"columns"``
       to ``"tabular"`` (#29, deferred from #25). The annotate-tabular
       endpoint now writes ``"tabular"`` and the job-detail endpoint
       branches on ``"tabular"``. Migration 0043 rewrites existing rows in
       both the ``Job`` and ``AnonymousJob`` tables (``columns`` →
       ``tabular``) and is reversible.
+    * **Behavior change:** saving a user pipeline whose config
+      references a missing or broken GRR resource now succeeds
+      (HTTP 200) and reports the failure asynchronously, instead of
+      returning a synchronous HTTP 400 (#150/#152).
+      ``POST /api/pipelines/user`` built the pipeline against the GRR
+      inline on daphne's single sync request thread, so a multi-second
+      build serialized every other API request behind it (an
+      intermittent gain-web-e2e timeout). The save endpoint now does
+      only cheap structural YAML validation; deep, resource-resolving
+      validation is deferred to the background pipeline loader, and an
+      unbuildable pipeline surfaces as a load failure on the
+      pipeline-status channel rather than a 500.
+    * A deferred pipeline build failure now carries a reason (#155/#156).
+      Because resource validation is deferred (above), a bad config
+      previously surfaced only as a bare ``unloaded`` status —
+      indistinguishable from a delete and carrying no explanation. A
+      distinct ``failed`` pipeline-load status now carries the formatted
+      error, surfaced both live (over the ``pipeline_status`` WebSocket)
+      and durably (the pipeline listing reports ``failed`` + reason for a
+      cached-but-failed build, so a refresh or reconnect does not
+      collapse it back to ``unloaded``). The Web UI shows the reason in
+      the editor and a red failed marker with a tooltip in the pipeline
+      dropdown.
+    * Fixed the annotation-pipeline editor getting stuck on "loading"
+      after a WebSocket reconnect (#160). The editor's loaded state was
+      driven only by a one-shot ``pipeline_status`` "loaded"
+      notification; if that frame fired while the browser's WebSocket
+      was between reconnects it was lost permanently over the no-replay
+      in-memory channel layer. On connect the consumer now replays the
+      current load status of the session's editor pipeline (and, for an
+      authenticated user, their saved pipelines) from the shared
+      pipeline cache, so a client that connects late still converges on
+      the real status.
+    * The web API's read endpoints — single-allele annotation, the
+      pipeline editor's status/attributes/YAML/aggregator handlers and
+      the ``annotate_doc`` download — were converted to async, awaiting
+      the GRR pipeline build and the annotate call off the event loop
+      (#162–#167). This keeps the ASGI event loop (and the WebSocket
+      notifications it drives) responsive while a cold pipeline builds
+      under concurrent load, removing the head-of-line blocking behind
+      an intermittent gain-web-e2e flake. Request behavior, status codes
+      and payloads are unchanged.
+    * Web UI: the new-annotator workflow now detects duplicate output
+      attribute names — selecting an attribute whose name collides with
+      an existing one shows an "Attribute with this name already exists"
+      error and disables Finish until the conflict is resolved by
+      renaming or deleting the duplicate; original attribute names are
+      preserved through the flow.
+    * Web UI: images on the GRR resource and gene-set-collection pages
+      are now constrained to a maximum width so large figures no longer
+      overflow their modal.
+    * Web UI: upgraded the Angular framework to v21.
+    * Added a fourth worked example to the Python-interface
+      documentation page.
+    * CI: the anonymous annotate rate-limit is now keyed by session
+      rather than IP under the e2e settings only (#179), so Playwright
+      tests — each running in a fresh browser session — no longer
+      cross-exhaust one shared per-IP bucket and flake with spurious
+      HTTP 429s; production keying (IP for anonymous, user id for
+      authenticated) is unchanged.
 
 * 2026.6.8
     * ``annotate_vcf`` now supports CSI-indexed input. When the input
