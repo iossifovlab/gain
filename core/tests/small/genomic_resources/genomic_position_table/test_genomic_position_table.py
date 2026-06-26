@@ -1237,6 +1237,55 @@ def test_vcf_get_all_records(vcf_res: GenomicResource) -> None:
         assert res2.pos_end == 30
 
 
+def test_vcf_header_load_silences_htslib_index_probe(
+        tmp_path: pathlib.Path,
+        mocker: pytest_mock.MockerFixture) -> None:
+    """Loading an index-less VCF header must not leak htslib stderr noise.
+
+    Real VCF ``allele_score`` resources (e.g. dbSNP) ship a header-only
+    ``*.header.vcf.gz`` with no accompanying ``.tbi``.  Opening it makes
+    htslib auto-probe for an index and log ``[E::idx_find_and_load]`` to
+    stderr.  ``_load_vcf_header`` only reads ``header.info`` and never
+    fetches, so it must bracket the open with ``pysam.set_verbosity(0)``.
+    """
+    setup_directories(
+        tmp_path, {
+            "genomic_resource.yaml": textwrap.dedent("""
+                tabix_table:
+                    filename: data.vcf.gz
+                    format: vcf_info
+            """),
+        })
+    setup_vcf(
+        tmp_path / "data.vcf.gz",
+        textwrap.dedent("""
+##fileformat=VCFv4.1
+##INFO=<ID=A,Number=1,Type=Integer,Description="Score A">
+##contig=<ID=chr1>
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      A=1
+    """),
+    )
+    # setup_vcf indexes the header; real score resources ship it without an
+    # index, so drop the .tbi to exercise the header-only path.
+    (tmp_path / "data.header.vcf.gz.tbi").unlink()
+
+    res = build_filesystem_test_resource(tmp_path)
+    assert res.config is not None
+
+    spy = mocker.spy(pysam, "set_verbosity")
+
+    with build_genomic_position_table(
+        res, res.config["tabix_table"],
+    ) as tab:
+        assert isinstance(tab, VCFGenomicPositionTable)
+        # the header was read despite the missing index
+        assert "A" in set(tab.header.keys())
+
+    # the header open is bracketed by set_verbosity(0) ... set_verbosity(prev)
+    assert mocker.call(0) in spy.call_args_list
+
+
 def test_vcf_get_records_in_region(vcf_res: GenomicResource) -> None:
     assert vcf_res.config is not None
 

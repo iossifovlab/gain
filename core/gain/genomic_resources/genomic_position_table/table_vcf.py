@@ -30,7 +30,16 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
         header_filename = filename[:idx] + ".header" + filename[idx:]
         assert self.genomic_resource.file_exists(header_filename), \
             "VCF tables must have an accompanying *.header.vcf.gz file!"
-        return self.genomic_resource.open_vcf_file(header_filename).header.info
+        # The header file is opened only to read `header.info`; it is never
+        # fetched. Header-only resources (e.g. dbSNP) ship no index, so htslib
+        # would log a spurious `[E::idx_find_and_load]` while auto-probing for
+        # one on open. Silence htslib for the duration of the open.
+        saved_verbosity = pysam.set_verbosity(0)
+        try:
+            vcf_file = self.genomic_resource.open_vcf_file(header_filename)
+        finally:
+            pysam.set_verbosity(saved_verbosity)
+        return vcf_file.header.info
 
     def _transform_vcf_result(self, line: VCFLine) -> None:
         rchrom = self._map_result_chrom(line.chrom)
