@@ -29,6 +29,7 @@ from urllib.parse import urlparse
 import apsw
 import fsspec
 import fsspec.exceptions
+import pathspec
 import pyBigWig
 import pysam
 import yaml
@@ -605,6 +606,7 @@ class FsspecReadWriteProtocol(
 
     def _scan_resource_for_files(
         self, resource_path: str, path_array: list[str],
+        ancestor_specs: list[tuple[int, pathspec.PathSpec]] | None = None,
     ) -> Generator[Any, None, None]:
 
         url = os.path.join(self.url, resource_path, *path_array)
@@ -614,6 +616,26 @@ class FsspecReadWriteProtocol(
             return
 
         path = os.path.join(self.root_path, resource_path, *path_array)
+
+        if ancestor_specs is None:
+            ancestor_specs = []
+
+        # Read .gitignore in the current directory and accumulate specs.
+        # Each spec is paired with the depth at which it was found so that
+        # patterns are matched against paths relative to their .gitignore root.
+        gitignore_url = os.path.join(url, ".gitignore")
+        current_specs = ancestor_specs
+        if self.filesystem.exists(gitignore_url):
+            with self.filesystem.open(gitignore_url, "rt") as f:
+                raw = cast(str, f.read())
+            lines: list[str] = [
+                line for line in raw.splitlines()
+                if line and not line.startswith("#")
+            ]
+            if lines:
+                spec = pathspec.PathSpec.from_lines("gitignore", lines)
+                current_specs = [*ancestor_specs, (len(path_array), spec)]
+
         content = []
         for direntry in self.filesystem.ls(url, detail=False):
             if self.netloc and direntry.startswith(self.netloc):
@@ -622,11 +644,29 @@ class FsspecReadWriteProtocol(
             name = os.path.relpath(direntry, path)
             if name.startswith("."):
                 continue
+            if self._is_gitignored(name, path_array, current_specs):
+                continue
             content.append(name)
 
         for name in content:
             yield from self._scan_resource_for_files(
-                resource_path, [*path_array, name])
+                resource_path, [*path_array, name], current_specs)
+
+    @staticmethod
+    def _is_gitignored(
+        name: str,
+        path_array: list[str],
+        specs: list[tuple[int, pathspec.PathSpec]],
+    ) -> bool:
+        """Return True if name should be excluded based on accumulated gitignore specs."""
+        for base_depth, spec in specs:
+            # Path relative to the directory that contains this .gitignore.
+            rel_parts = [*path_array[base_depth:], name]
+            rel_path = "/".join(rel_parts)
+            # Check both as a file and as a directory (handles trailing-/ patterns).
+            if spec.match_file(rel_path) or spec.match_file(rel_path + "/"):
+                return True
+        return False
 
     def _get_filepath_timestamp(self, filepath: str) -> float:
         try:
