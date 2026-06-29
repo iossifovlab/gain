@@ -461,3 +461,124 @@ def test_htslib_verbosity_is_lowered_at_module_import() -> None:
     # "[W::hts_idx_load3] index older than data" warning emitted on opens
     # of parallel-downloaded GRR resources (caching protocol + DVC).
     assert pysam.get_verbosity() == 1
+
+
+def test_gitignore_excludes_files_from_entries() -> None:
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            "debug.log": "log content",
+            ".gitignore": "*.log\n",
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "data.txt" in entries
+    assert "debug.log" not in entries
+
+
+def test_gitignore_directory_pattern() -> None:
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            "logs": {
+                "run.log": "log1",
+                "error.log": "log2",
+            },
+            ".gitignore": "logs/\n",
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "data.txt" in entries
+    assert "logs/run.log" not in entries
+    assert "logs/error.log" not in entries
+
+
+def test_gitignore_in_subdirectory() -> None:
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            "subdir": {
+                "keep.txt": "keep",
+                "drop.log": "drop",
+                ".gitignore": "*.log\n",
+            },
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "data.txt" in entries
+    assert "subdir/keep.txt" in entries
+    assert "subdir/drop.log" not in entries
+
+
+def test_gitignore_pattern_in_root_ignores_nested_files() -> None:
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            "subdir": {
+                "run.log": "log",
+            },
+            ".gitignore": "*.log\n",
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "data.txt" in entries
+    assert "subdir/run.log" not in entries
+
+
+def test_gitignore_comments_and_blank_lines_are_ignored() -> None:
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            "notes.md": "notes",
+            ".gitignore": "\n# This is a comment\n*.log\n",
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "data.txt" in entries
+    assert "notes.md" in entries
+
+
+def test_gitignore_build_manifest_excludes_ignored_files() -> None:
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            "temp.log": "temp",
+            ".gitignore": "*.log\n",
+        },
+    })
+    res = proto.get_resource("res")
+    manifest = proto.build_manifest(res)
+    assert "data.txt" in manifest
+    assert "temp.log" not in manifest
+
+
+def test_gitignore_subdirectory_pattern_does_not_affect_sibling() -> None:
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "a": {
+                "data.txt": "data",
+                "drop.log": "drop",
+                ".gitignore": "*.log\n",
+            },
+            "b": {
+                "also.log": "kept",
+            },
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "a/data.txt" in entries
+    assert "a/drop.log" not in entries
+    assert "b/also.log" in entries

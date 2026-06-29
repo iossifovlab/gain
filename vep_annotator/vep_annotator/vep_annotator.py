@@ -221,7 +221,7 @@ class VEPAnnotatorBase(DockerAnnotator):
         header = next(reader)[1:]
         unsupported_cols = {col for col in header if col not in contexts[0]}
         if len(unsupported_cols) > 0:
-            logger.warning(
+            logger.info(
                 "VEP annotator detected new unsupported columns: %s",
                 unsupported_cols,
             )
