@@ -406,6 +406,19 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
       next: res => {
         this.pipelineInfo = res;
         this.pipelineStateService.pipelineInfo.set(res);
+        // A 200 from the blocking pipeline_status endpoint means the GRR build
+        // finished, i.e. the temporary pipeline is loaded. Treat the successful
+        // fetch as the authoritative 'loaded' signal so the editor converges
+        // even when the one-shot WS 'pipeline_status: loaded' frame was missed
+        // (#160): the shared multicast socket can hand that frame to the
+        // job_status stream -- which discards it -- before the editor's
+        // pipeline_status stream attaches to an already-open socket that never
+        // re-connects.
+        if (tempId && id === tempId) {
+          this.currentTemporaryPipelineStatus = 'loaded';
+          this.currentTemporaryPipelineError = undefined;
+          this.pipelineStateService.currentTemporaryPipelineStatus.set('loaded');
+        }
       },
       error: () => {
         this.pipelineInfo = null;
