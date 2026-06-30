@@ -518,7 +518,7 @@ class GenomicResource:
             raise ValueError(f"resource {self.resource_id} not configured")
         config_type = config.get("type")
         if config_type is None:
-            return "Basic"
+            return "basic"
         return cast(str, config_type)
 
     def get_version_str(self) -> str:

@@ -98,7 +98,7 @@ def test_cli_list(
 
     assert err == ""
     assert out == (
-        "Basic                0        2 7.0 B        manage one\n"
+        "basic                0        2 7.0 B        manage one\n"
         "gene_models          1.0      2 50.0 B       manage sub/two\n"
     )
 
@@ -122,7 +122,7 @@ def test_cli_list_without_repo_argument(
     assert err == ""
     assert out == (
         f"working with repository: {path!s}\n"
-        "Basic                0        2 7.0 B        manage one\n"
+        "basic                0        2 7.0 B        manage one\n"
         "gene_models          1.0      2 50.0 B       manage sub/two\n"
     )
 

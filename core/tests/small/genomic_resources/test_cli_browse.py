@@ -75,7 +75,7 @@ def test_cli_browse_with_grr_argument(
         "id: test_grr\n"
         "type: directory\n"
         f"directory: {repo_fixture[0]!s}\n\n"
-        "Basic                0        2 7.0 B        test_grr one\n"
+        "basic                0        2 7.0 B        test_grr one\n"
         "gene_models          1.0      2 50.0 B       test_grr sub/two\n"
     )
 
@@ -99,7 +99,7 @@ def test_cli_browse_with_env_variable(
         "id: test_grr\n"
         "type: directory\n"
         f"directory: {repo_fixture[0]!s}\n\n"
-        "Basic                0        2 7.0 B        test_grr one\n"
+        "basic                0        2 7.0 B        test_grr one\n"
         "gene_models          1.0      2 50.0 B       test_grr sub/two\n"
     )
 
@@ -125,7 +125,7 @@ def test_cli_browse_default_defintion(
         "id: test_grr\n"
         "type: directory\n"
         f"directory: {repo_fixture[0]!s}\n\n"
-        "Basic                0        2 7.0 B        test_grr one\n"
+        "basic                0        2 7.0 B        test_grr one\n"
         "gene_models          1.0      2 50.0 B       test_grr sub/two\n"
     )
 
