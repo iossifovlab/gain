@@ -349,6 +349,12 @@ class SingleAnnotation(AsyncAnnotationBaseView):
         ):
             value = str(value)
         assert attribute_info.spec is not None
+        preserves_domain = (
+            agg_instance.preserves_domain(
+                value_type=attribute_info.spec.value_type,
+            )
+            if agg_instance is not None else None
+        )
         aggregator = attribute_info.aggregator
         return {
             "name": attribute_info.name,
@@ -359,6 +365,7 @@ class SingleAnnotation(AsyncAnnotationBaseView):
             "attribute_type": attribute_info.spec.attribute_type,
             "supports_aggregation": attribute_info.spec.supports_aggregation,
             "aggregator": str(aggregator) if aggregator is not None else None,
+            "preserves_domain": preserves_domain,
             "result": {
                 "value": value,
                 "histogram": histogram_path,
