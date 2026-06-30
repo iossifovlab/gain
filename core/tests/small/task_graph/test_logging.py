@@ -1,6 +1,7 @@
 # pylint: disable=C0114,C0115,C0116,W0212
 import logging
 import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,40 @@ def test_ensure_log_dir_creates_directory(tmp_path: Path) -> None:
 
     assert result == str(log_dir)
     assert os.path.isdir(result)
+
+
+def test_ensure_log_dir_is_idempotent(tmp_path: Path) -> None:
+    log_dir = tmp_path / "nested"
+    assert ensure_log_dir(task_log_dir=str(log_dir)) == str(log_dir)
+    # A second call on an existing directory must not raise.
+    assert ensure_log_dir(task_log_dir=str(log_dir)) == str(log_dir)
+
+
+def test_ensure_log_dir_is_race_safe(tmp_path: Path) -> None:
+    # Many workers sharing a cwd-relative ``.task-log`` race to create it
+    # (as pytest-xdist workers do). The creation must be free of the
+    # check-then-mkdir TOCTOU window, otherwise the losing worker gets a
+    # FileExistsError.
+    log_dir = str(tmp_path / "nested")
+    workers = 32
+    barrier = threading.Barrier(workers)
+    errors: list[BaseException] = []
+
+    def create() -> None:
+        barrier.wait()
+        try:
+            ensure_log_dir(task_log_dir=log_dir)
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=create) for _ in range(workers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors, f"concurrent ensure_log_dir raised: {errors!r}"
+    assert os.path.isdir(log_dir)
 
 
 def test_ensure_log_dir_defaults_to_cwd(
