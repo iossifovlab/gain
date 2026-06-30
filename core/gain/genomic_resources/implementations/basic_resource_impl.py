@@ -1,4 +1,4 @@
-"""Provides LiftOver chain resource."""
+"""Provides the catch-all ``basic`` resource implementation."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from typing import Any, ClassVar
 
 from markdown2 import markdown
 
-from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.resource_implementation import (
     GenomicResourceImplementation,
     InfoImplementationMixin,
@@ -22,13 +21,29 @@ class BasicResourceImplementation(
     GenomicResourceImplementation,
     InfoImplementationMixin,
 ):
-    """Defines BasicResource implementation."""
+    """Implementation for resources without a more specific type.
 
-    def __init__(self, resource: GenomicResource):
-
-        super().__init__(resource)
+    A resource whose config carries no ``type`` resolves to the ``basic``
+    type (see ``GenomicResource.get_type``). It has no schema or statistics of
+    its own; it only renders a minimal info page and -- crucially -- exposes
+    every data file via ``files`` so caching covers the whole resource, the
+    same way untyped resources were cached before they had an implementation
+    (gain#78).
+    """
 
     template_name: ClassVar[str] = "basic.jinja"
+
+    @property
+    def files(self) -> set[str]:
+        # No type-specific file list: a basic resource ships arbitrary files,
+        # so every manifest entry (other than the config that
+        # _enumerate_resource_files adds itself, and lockfiles) is part of it.
+        return {
+            entry.name
+            for entry in self.resource.get_manifest()
+            if entry.name != "genomic_resource.yaml"
+            and not entry.name.endswith(".lockfile")
+        }
 
     def _get_template_data(self) -> dict[str, Any]:
         info = copy.deepcopy(self.config)

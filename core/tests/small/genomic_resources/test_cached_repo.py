@@ -433,7 +433,7 @@ def test_cached_repo_list_cli(
         print(out)
         assert err == ""
         assert out == \
-            "Basic                0        1/ 3 14.0 B       test_grr one\n"
+            "basic                0        1/ 3 14.0 B       test_grr one\n"
 
 
 @pytest.mark.grr_full
@@ -472,7 +472,7 @@ def test_cached_repo_nested_list_cli(
         print(out)
         assert err == ""
         assert out == (
-            "Basic                0        1/ 2 7.0 B        test_grr one\n"
+            "basic                0        1/ 2 7.0 B        test_grr one\n"
             "gene_models          0        1/ 2 41.0 B       test_grr "
             "sub/two\n"
         )
