@@ -857,7 +857,8 @@ class AnnotatorAggregators(AsyncEditorView):
                 continue
 
             valid_aggregators = [
-                agg_type for agg_type in AGGREGATOR_CLASS_DICT
+                agg_type
+                for agg_type in AGGREGATOR_CLASS_DICT
                 if agg_type not in NUMERIC_ONLY_AGGREGATORS
                 or spec.value_type in {"int", "float"}
             ]

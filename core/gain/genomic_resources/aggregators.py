@@ -24,6 +24,13 @@ class Aggregator(abc.ABC):
     # type. None means the output type matches the input type (e.g. max/min).
     output_value_type: ClassVar[str | None] = None
 
+    @classmethod
+    def preserves_domain(
+        cls, *, value_type: str | None = None,  # noqa: ARG003
+    ) -> bool:
+        """Return True if output stays within the source value domain."""
+        return False
+
     def __call__(self) -> Any:
         return self.get_final()
 
@@ -90,6 +97,12 @@ class MaxAggregator(Aggregator):
 
     output_value_type: ClassVar[str | None] = "float"
 
+    @classmethod
+    def preserves_domain(
+        cls, *, value_type: str | None = None,  # noqa: ARG003
+    ) -> bool:
+        return True
+
     def __init__(self) -> None:
         super().__init__()
         self.current_max = None
@@ -116,6 +129,12 @@ class MinAggregator(Aggregator):
 
     output_value_type: ClassVar[str | None] = "float"
 
+    @classmethod
+    def preserves_domain(
+        cls, *, value_type: str | None = None,  # noqa: ARG003
+    ) -> bool:
+        return True
+
     def __init__(self) -> None:
         super().__init__()
         self.current_min = None
@@ -141,6 +160,12 @@ class MeanAggregator(Aggregator):
     """Aggregator for genomic scores that calculates mean value."""
 
     output_value_type: ClassVar[str | None] = "float"
+
+    @classmethod
+    def preserves_domain(
+        cls, *, value_type: str | None = None,  # noqa: ARG003
+    ) -> bool:
+        return True
 
     def __init__(self) -> None:
         super().__init__()
@@ -215,6 +240,12 @@ class MedianAggregator(Aggregator):
 
     output_value_type: ClassVar[str | None] = "float"
 
+    @classmethod
+    def preserves_domain(
+        cls, *, value_type: str | None = None,  # noqa: ARG003
+    ) -> bool:
+        return True
+
     def __init__(self) -> None:
         super().__init__()
         self.values: list[Any] = []
@@ -245,6 +276,12 @@ class MedianAggregator(Aggregator):
 
 class ModeAggregator(Aggregator):
     """Aggregator for genomic scores that calculates mode value."""
+
+    @classmethod
+    def preserves_domain(
+        cls, *, value_type: str | None = None,  # noqa: ARG003
+    ) -> bool:
+        return True
 
     def __init__(self) -> None:
         super().__init__()
@@ -385,9 +422,9 @@ AGGREGATOR_CLASS_DICT: dict[str, type[Aggregator]] = {
     "max": MaxAggregator,
     "min": MinAggregator,
     "mean": MeanAggregator,
+    "median": MedianAggregator,
     "count": CountAggregator,
     "concatenate": ConcatAggregator,
-    "median": MedianAggregator,
     "mode": ModeAggregator,
     "join": JoinAggregator,
     "list": ListAggregator,

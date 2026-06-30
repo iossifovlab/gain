@@ -2,6 +2,8 @@
 
 import numpy
 from gain.genomic_resources.aggregators import (
+    AGGREGATOR_CLASS_DICT,
+    NUMERIC_ONLY_AGGREGATORS,
     BoolAggregator,
     ConcatAggregator,
     CountAggregator,
@@ -250,3 +252,12 @@ def test_counter_aggregator_aggregate_method_empty_list() -> None:
 def test_counter_aggregator_aggregate_method_none_input() -> None:
     agg = CounterAggregator()
     assert agg.aggregate(None) == {}
+
+
+def test_numeric_aggregators_appear_first_in_dict() -> None:
+    keys = list(AGGREGATOR_CLASS_DICT.keys())
+    numeric_indices = [keys.index(a) for a in NUMERIC_ONLY_AGGREGATORS]
+    non_numeric_indices = [
+        i for i, k in enumerate(keys) if k not in NUMERIC_ONLY_AGGREGATORS
+    ]
+    assert max(numeric_indices) < min(non_numeric_indices)
