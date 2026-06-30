@@ -1096,6 +1096,25 @@ describe('AnnotationPipelineComponent', () => {
     expect(pipelineStateService.pipelineInfo()).toBeNull();
   });
 
+  it('marks the temporary pipeline loaded when the status fetch succeeds even if the WS frame was missed', () => {
+    // Simulate: temp pipeline saved, GRR build pending, and the one-shot WS
+    // 'pipeline_status: loaded' frame was missed (#160) -- the editor is stuck
+    // on 'loading'. The blocking GET /api/editor/pipeline_status returns 200
+    // only once the build has finished, so a successful fetch is authoritative
+    // proof the pipeline is loaded and the editor must converge regardless.
+    pipelineStateService.currentTemporaryPipelineId.set('temp-1');
+    pipelineStateService.selectedPipelineId.set('');
+    component.selectedPipeline = null;
+    component.currentTemporaryPipelineStatus = 'loading';
+    jest.spyOn(annotationPipelineServiceMock, 'getPipelineInfo')
+      .mockReturnValueOnce(of(new PipelineInfo(20, 4, [], [])));
+
+    component['getPipelineInfo']();
+
+    expect(component.currentTemporaryPipelineStatus).toBe('loaded');
+    expect(pipelineStateService.currentTemporaryPipelineStatus()).toBe('loaded');
+  });
+
   it('should return early from clearPipeline when both text and pipeline are empty', () => {
     component.selectedPipeline = null;
     component.currentPipelineText = '';
