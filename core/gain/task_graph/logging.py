@@ -49,9 +49,8 @@ def ensure_log_dir(**kwargs: Any) -> str:
         log_dir = os.path.join(os.getcwd(), ".task-log")
 
     log_dir = fs_utils.abspath(log_dir)
-    if not fs_utils.exists(log_dir):
-        fs, path = fs_utils.url_to_fs(log_dir)
-        fs.mkdir(path, exists_ok=True)
+    fs, path = fs_utils.url_to_fs(log_dir)
+    fs.makedirs(path, exist_ok=True)
     return log_dir
 
 
