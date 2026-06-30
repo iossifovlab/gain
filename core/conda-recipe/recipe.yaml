@@ -48,6 +48,7 @@ requirements:
     - networkx >=3.6
     - numpy >=2.2
     - pandas >=2.2
+    - pathspec >=1.0
     - psutil
     - pybigwig >=0.3
     - pydantic >=2.8
