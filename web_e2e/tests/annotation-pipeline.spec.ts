@@ -1156,6 +1156,94 @@ test.describe('Add annotator to pipeline tests', () => {
     await expect(page.locator('.attribute-source')).toHaveCount(1);
     await expect(page.locator('.attribute-source').first()).toHaveText('worst_effect');
   });
+
+  test('should filter attributes in the dropdown by search text', async({ page }) => {
+    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    await page.getByRole('combobox', { name: 'Select annotator' }).click();
+    await page.locator('mat-option').getByText('simple_effect_annotator').click();
+    await page.getByRole('button', { name: 'Next' }).click();
+
+    await page.locator('[id="gene_models-dropdown"]').click();
+    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
+    await page.getByRole('button', { name: 'Next' }).click();
+
+    // simple_effect_annotator exposes 15 attributes in the dropdown.
+    await page.locator('#attributes-dropdown .dropdown-icon').click();
+    await expect(page.locator('mat-option.attribute-option')).toHaveCount(15);
+
+    // Typing runs a server-side search that narrows the option list.
+    await Promise.all([
+      page.locator('#attributes-dropdown input').fill('worst'),
+      page.waitForResponse(resp => resp.url().includes('editor/annotator_attributes')),
+    ]);
+
+    const options = page.locator('mat-option.attribute-option');
+    await expect(options).toHaveCount(3);
+    // Options render as "<source> - <description>"; anchor on the " -" separator
+    // so each source name matches exactly one option (they share the "worst_effect"
+    // prefix otherwise).
+    await Promise.all(
+      ['worst_effect', 'worst_effect_genes', 'worst_effect_gene_list'].map(
+        name => expect(options.filter({ hasText: `${name} -` })).toHaveCount(1)
+      )
+    );
+  });
+
+  test('should trim a whitespace-only attribute name to empty and flag empty duplicates', async({ page }) => {
+    // Start from a clean pipeline so simple_effect's gene_list does not collide
+    // with an existing pipeline attribute and pollute the validation state.
+    await customDefaultPipeline(page);
+    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    await page.getByRole('combobox', { name: 'Select annotator' }).click();
+    await page.locator('mat-option').getByText('simple_effect_annotator').click();
+    await page.getByRole('button', { name: 'Next' }).click();
+
+    await page.locator('[id="gene_models-dropdown"]').click();
+    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
+    await page.getByRole('button', { name: 'Next' }).click();
+
+    await expect(page.locator('.attribute-source')).toHaveCount(3);
+
+    // A whitespace-only name is trimmed to empty; a single empty name is accepted
+    // (only duplicates are rejected), so Finish stays enabled.
+    const firstName = page.locator('.editable-name').nth(0);
+    await firstName.fill('   ');
+    await firstName.blur();
+    await expect(firstName).toHaveValue('');
+    await expect(page.locator('mat-dialog-container .error-message')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Finish' })).toBeEnabled();
+
+    // Emptying a second name collides with the first (both ''): duplicate error.
+    const secondName = page.locator('.editable-name').nth(1);
+    await secondName.fill('  ');
+    await secondName.blur();
+    await expect(page.locator('mat-dialog-container .error-message'))
+      .toContainText('Attribute with this name already exists');
+    await expect(page.getByRole('button', { name: 'Finish' })).toBeDisabled();
+  });
+
+  test('should warn instead of selecting all when a resource has over 1000 attributes', async({ page }) => {
+    // gene_set_annotator needs an input_gene_list; the default clinical pipeline
+    // provides gene_list. The GO release exposes >1000 gene-set attributes.
+    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    await page.getByRole('combobox', { name: 'Select annotator' }).click();
+    await page.locator('mat-option').getByText('gene_set_annotator').click();
+    await page.getByRole('button', { name: 'Next' }).click();
+
+    await page.locator('[id="resource_id-dropdown"]').click();
+    await page.locator('[id="resource_id-dropdown"] input').fill('GO_2024-06-17_release');
+    await page.locator('mat-option', { hasText: 'gene_properties/gene_sets/GO_2024-06-17_release' }).first().click();
+    await page.locator('[id="input_gene_list-dropdown"]').click();
+    await page.locator('mat-option').getByText('gene_list').click();
+    await page.getByRole('button', { name: 'Next' }).click();
+
+    await expect(page.locator('.attributes-section-label')).toContainText('(1)');
+
+    // "Select all" is blocked with a performance warning; selection stays at 1.
+    await page.getByRole('button', { name: 'Select all' }).click();
+    await expect(page.locator('.warning-message')).toContainText('Selecting more than 1000 attributes');
+    await expect(page.locator('.attributes-section-label')).toContainText('(1)');
+  });
 });
 
 
@@ -1475,6 +1563,382 @@ test.describe('Pipeline status bar tests', () => {
     await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu2 annotators');
     await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open5 attributes');
   });
+
+  test('should update status bar counts when editing YAML directly', async({ page }) => {
+    await customDefaultPipeline(page);
+
+    // Initial state: 1 annotator, 2 attributes
+    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu1 annotators');
+    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open2 attributes');
+
+    // Add another annotator to the existing YAML (append, not replace)
+    const editor = page.locator('.monaco-editor');
+    await editor.click();
+    // Move cursor to end of file
+    await page.keyboard.press('Control+End');
+    // Add new annotator
+    await page.keyboard.type('\n- normalize_allele_annotator:\n    genome: hg38/genomes/GRCh38.p13\n');
+
+    await page.waitForResponse(resp => resp.url().includes('api/editor/pipeline_status'));
+
+    // Verify counts updated: 2 annotators, 3 attributes
+    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu2 annotators');
+    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open3 attributes');
+  });
+
+  test('should show all status bar items together with correct values', async({ page }) => {
+    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+
+    const saveResponse = page.waitForResponse(
+      resp => resp.url().includes('api/pipelines/user'), { timeout: 30000 }
+    );
+
+    await utils.typeInPipelineEditor(
+      page,
+      'preamble:\n' +
+      '   input_reference_genome: hg38/genomes/GRCh38-hg38\n' +
+      'annotators:\n' +
+      '- effect_annotator:\n' +
+      '    gene_models: hg38/gene_models/GENCODE/48/basic/ALL\n' +
+      '    genome: hg38/genomes/GRCh38.p13\n' +
+      '    attributes:\n' +
+      '    - worst_effect\n' +
+      '    - gene_effects\n' +
+      '    - effect_details\n' +
+      '    - name: gene_list\n' +
+      '      source: gene_list\n' +
+      '      internal: true\n' +
+      '- allele_score:\n' +
+      '    resource_id: hg38/scores/CADD_v1.7\n'
+    );
+
+    await saveResponse;
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+
+    // Verify all status bar items
+    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu2 annotators');
+    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open6 attributes');
+    await expect(page.locator('#status-bar .status-item').nth(2)).toHaveText('edit_note0 annotatables');
+    await expect(page.locator('#status-bar .status-item').nth(3)).toHaveText('grain1 gene list');
+  });
+
+  test('should update counts when removing annotators from YAML', async({ page }) => {
+    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
+
+    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu13 annotators');
+    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open23 attributes');
+
+    /* eslint-disable */
+    await page.evaluate(() => {
+      const monaco = (window as any).monaco;
+      const model = monaco.editor.getModels()[0];
+
+      model.applyEdits([
+        {
+          range: new monaco.Range(19, 1, 88, 1), // clear from line 19 col 1 to line 88 col 1
+          text: ''
+        }
+      ]);
+    });
+    /* eslint-enable */
+
+    await page.waitForResponse(resp => resp.url().includes('api/editor/pipeline_status'));
+
+    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu3 annotators');
+    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open8 attributes');
+    await expect(page.locator('#status-bar .status-item').nth(2)).toHaveText('edit_note0 annotatables');
+    await expect(page.locator('#status-bar .status-item').nth(3)).toHaveText('grain1 gene list');
+  });
+
+  test('should show all zeros for an empty new pipeline', async({ page }) => {
+    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+    await expect(page.locator('#pipelines-input')).toBeEmpty();
+    await expect(page.locator('.monaco-editor').nth(0)).toBeEmpty();
+
+    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu0 annotators');
+    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open0 attributes');
+    await expect(page.locator('#status-bar .status-item').nth(2)).toHaveText('edit_note0 annotatables');
+    await expect(page.locator('#status-bar .status-item').nth(3)).toHaveText('grain0 gene list');
+  });
+
+  test('should keep the last valid counts in the status bar when config becomes invalid', async({ page }) => {
+    // Start from a valid pipeline so the status bar holds non-zero counts.
+    await customDefaultPipeline(page);
+    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu1 annotators');
+    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open2 attributes');
+
+    // Make the config invalid (preamble only, no annotators). The status is only
+    // refreshed on a successful validation, so the bar retains the last valid
+    // counts while the config is invalid rather than resetting to zero.
+    /* eslint-disable */
+    await page.evaluate(() => {
+      const monaco = (window as any).monaco;
+      const model = monaco.editor.getModels()[0];
+      model.setValue('preamble:\n input_reference_genome: hg38/genomes/GRCh38-hg38');
+    });
+    /* eslint-enable */
+
+    await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
+    await expect(page.getByText('Invalid configuration')).toBeVisible();
+
+    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu1 annotators');
+    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open2 attributes');
+  });
+});
+
+
+test.describe('Pipeline aggregators tests', () => {
+  test.beforeEach(async({ page }) => {
+    await page.goto('/', { waitUntil: 'load' });
+    const email = utils.getRandomString() + '@email.com';
+    const password = 'aaabbb';
+    await utils.registerUser(page, email, password);
+    await utils.loginUser(page, email, password);
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  });
+
+  // Walk the New annotator dialog for a score resource up to the
+  // "Configure aggregation" step. The final Next triggers the
+  // annotator_aggregators request that populates the aggregators grid.
+  async function openAggregatorsStep(page: Page, annotator: string, resourceId: string): Promise<void> {
+    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+
+    await page.getByRole('combobox', { name: 'Select annotator' }).click();
+    await page.getByRole('combobox', { name: 'Select annotator' }).fill(annotator);
+    await page.locator('mat-option').getByText(annotator).first().click();
+    await page.locator('.mat-horizontal-stepper-content-current button.next-button').click();
+
+    await page.locator('[id="resource_id-dropdown"]').click();
+    await page.locator('[id="resource_id-dropdown"] input').fill(resourceId);
+    await page.locator('mat-option', { hasText: resourceId }).first().click();
+    await page.locator('.mat-horizontal-stepper-content-current button.next-button').click();
+
+    // Wait for the attributes step to populate before advancing; the aggregators
+    // request maps over the selected attributes, so it must not fire empty.
+    await expect(page.locator('.attribute-source').first()).toBeVisible();
+
+    // attributes step -> aggregators step
+    await Promise.all([
+      page.locator('.mat-horizontal-stepper-content-current button.next-button').click(),
+      page.waitForResponse(resp => resp.url().includes('editor/annotator_aggregators')),
+    ]);
+    await expect(page.locator('#attributes-aggregators-list')).toBeVisible();
+  }
+
+  test('should show default attributes, float types and max aggregator for CADD', async({ page }) => {
+    await openAggregatorsStep(page, 'allele_score', 'hg38/scores/CADD_v1.7');
+
+    const names = page.locator('#attributes-aggregators-list .attribute-name-main');
+    await expect(names).toHaveText(['cadd_raw', 'cadd_phred']);
+
+    const types = page.locator('#attributes-aggregators-list .data-type-badge');
+    await expect(types).toHaveText(['float', 'float']);
+
+    // Float attributes default to the "max" aggregator.
+    const aggregators = page.locator('#attributes-aggregators-list .aggregator mat-select');
+    await expect(aggregators.nth(0)).toContainText('max (default)');
+    await expect(aggregators.nth(1)).toContainText('max (default)');
+  });
+
+  test('should show str types and list aggregator for ClinVar', async({ page }) => {
+    await openAggregatorsStep(page, 'allele_score', 'hg38/scores/ClinVar_20240730');
+
+    const names = page.locator('#attributes-aggregators-list .attribute-name-main');
+    await expect(names).toHaveText(['CLNDN', 'CLNSIG']);
+
+    const types = page.locator('#attributes-aggregators-list .data-type-badge');
+    await expect(types).toHaveText(['str', 'str']);
+
+    // String attributes default to the "list" aggregator (contrast with CADD).
+    const aggregators = page.locator('#attributes-aggregators-list .aggregator mat-select');
+    await expect(aggregators.nth(0)).toContainText('list (default)');
+    await expect(aggregators.nth(1)).toContainText('list (default)');
+  });
+
+  test('should list the aggregator options and mark exactly one default for a float attribute', async({ page }) => {
+    await openAggregatorsStep(page, 'allele_score', 'hg38/scores/CADD_v1.7');
+
+    await page.locator('#attributes-aggregators-list .aggregator mat-select').nth(0).click();
+
+    const options = page.locator('mat-option.aggregator-option');
+    // The default option is labelled "max (default)"; the others are plain names.
+    await expect(options.filter({ hasText: '(default)' })).toHaveCount(1);
+    await expect(options.filter({ hasText: 'max (default)' })).toHaveCount(1);
+    await Promise.all(
+      ['min', 'mean', 'median', 'concatenate'].map(
+        name => expect(options.filter({ hasText: name })).toHaveCount(1)
+      )
+    );
+  });
+
+  test('should write the selected aggregator into the finished YAML', async({ page }) => {
+    await openAggregatorsStep(page, 'allele_score', 'hg38/scores/CADD_v1.7');
+
+    // Change the first attribute (cadd_raw) from the default "max" to "mean".
+    await page.locator('#attributes-aggregators-list .aggregator mat-select').nth(0).click();
+    await page.locator('mat-option.aggregator-option').getByText('mean', { exact: true }).click();
+
+    await Promise.all([
+      page.locator('.mat-horizontal-stepper-content-current button.finish-button').click(),
+      page.waitForResponse(resp => resp.url().includes('api/pipelines/validate')),
+    ]);
+
+    /* eslint-disable */
+    const value = await page.evaluate(() => {
+      return (window as any).monaco.editor.getModels()[0].getValue();
+    });
+    /* eslint-enable */
+
+    // The changed aggregator and the untouched default are both serialised.
+    expect(value).toContain(
+      '- allele_score_annotator:\n' +
+      '    resource_id: hg38/scores/CADD_v1.7\n' +
+      '    attributes:\n' +
+      '    - name: cadd_raw\n' +
+      '      source: cadd_raw\n' +
+      '      internal: false\n' +
+      '      aggregator: mean\n' +
+      '    - name: cadd_phred\n' +
+      '      source: cadd_phred\n' +
+      '      internal: false\n' +
+      '      aggregator: max\n'
+    );
+  });
+
+  test('should default to mean and write a join aggregator with separator for phastCons100way', async({ page }) => {
+    // phastCons100way is a position_score resource with a single float attribute.
+    await openAggregatorsStep(page, 'position_score_annotator', 'hg38/scores/phastCons100way');
+
+    await expect(page.locator('#attributes-aggregators-list .attribute-name-main')).toHaveText('phastcons100way');
+    await expect(page.locator('#attributes-aggregators-list .attribute-source-description'))
+      .toHaveText('phastCons100way');
+    await expect(page.locator('#attributes-aggregators-list .data-type-badge')).toHaveText('float');
+
+    const aggregator = page.locator('#attributes-aggregators-list .aggregator mat-select');
+    await expect(aggregator).toContainText('mean (default)');
+
+    // Switch to the parametrized "join" aggregator; a separator field appears
+    // pre-filled with the default separator ",".
+    await aggregator.click();
+    await page.locator('mat-option.aggregator-option').getByText('join', { exact: true }).click();
+    await expect(aggregator).toContainText('join');
+    await expect(page.locator('#attributes-aggregators-list .separator-field')).toHaveValue(',');
+
+    await Promise.all([
+      page.locator('.mat-horizontal-stepper-content-current button.finish-button').click(),
+      page.waitForResponse(resp => resp.url().includes('api/pipelines/validate')),
+    ]);
+
+    /* eslint-disable */
+    const value = await page.evaluate(() => {
+      return (window as any).monaco.editor.getModels()[0].getValue();
+    });
+    /* eslint-enable */
+
+    // The parametrized aggregator serialises as "join(<separator>)".
+    expect(value).toContain(
+      '- position_score_annotator:\n' +
+      '    resource_id: hg38/scores/phastCons100way\n' +
+      '    attributes:\n' +
+      '    - name: phastcons100way\n' +
+      '      source: phastCons100way\n' +
+      '      internal: false\n' +
+      '      aggregator: join(,)\n'
+    );
+  });
+
+  test('should write per-attribute aggregators when changing several at once', async({ page }) => {
+    // CADD has two float attributes; give each a different aggregator and verify
+    // both land in the pipeline text, including a custom join separator.
+    await openAggregatorsStep(page, 'allele_score', 'hg38/scores/CADD_v1.7');
+
+    const aggregators = page.locator('#attributes-aggregators-list .aggregator mat-select');
+
+    // cadd_raw -> min
+    await aggregators.nth(0).click();
+    await page.locator('mat-option.aggregator-option').getByText('min', { exact: true }).click();
+
+    // cadd_phred -> join, then change the separator from the default "," to ";"
+    await aggregators.nth(1).click();
+    await page.locator('mat-option.aggregator-option').getByText('join', { exact: true }).click();
+    const separator = page.locator('#attributes-aggregators-list .separator-field');
+    await expect(separator).toHaveValue(',');
+    await separator.fill(';');
+
+    await Promise.all([
+      page.locator('.mat-horizontal-stepper-content-current button.finish-button').click(),
+      page.waitForResponse(resp => resp.url().includes('api/pipelines/validate')),
+    ]);
+
+    /* eslint-disable */
+    const value = await page.evaluate(() => {
+      return (window as any).monaco.editor.getModels()[0].getValue();
+    });
+    /* eslint-enable */
+
+    expect(value).toContain(
+      '- allele_score_annotator:\n' +
+      '    resource_id: hg38/scores/CADD_v1.7\n' +
+      '    attributes:\n' +
+      '    - name: cadd_raw\n' +
+      '      source: cadd_raw\n' +
+      '      internal: false\n' +
+      '      aggregator: min\n' +
+      '    - name: cadd_phred\n' +
+      '      source: cadd_phred\n' +
+      '      internal: false\n' +
+      '      aggregator: join(;)\n'
+    );
+  });
+
+  test('should disable the aggregator for a non-aggregatable annotatable attribute', async({ page }) => {
+    // normalize_allele_annotator produces a single "annotatable"-typed attribute,
+    // which has no aggregators. Use a clean pipeline so normalized_allele does not
+    // collide with the default clinical pipeline's existing attribute.
+    await customDefaultPipeline(page);
+    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    await page.getByRole('combobox', { name: 'Select annotator' }).click();
+    await page.getByRole('combobox', { name: 'Select annotator' }).fill('normalize_allele');
+    await page.locator('mat-option').getByText('normalize_allele_annotator').click();
+    await page.locator('.mat-horizontal-stepper-content-current button.next-button').click();
+
+    await page.locator('[id="genome-dropdown"]').click();
+    await page.locator('mat-option').getByText('hg38/genomes/GRCh38.p14').click();
+    await page.locator('.mat-horizontal-stepper-content-current button.next-button').click();
+
+    await expect(page.locator('.attribute-source').first()).toBeVisible();
+    await Promise.all([
+      page.locator('.mat-horizontal-stepper-content-current button.next-button').click(),
+      page.waitForResponse(resp => resp.url().includes('editor/annotator_aggregators')),
+    ]);
+
+    await expect(page.locator('#attributes-aggregators-list .data-type-badge')).toHaveText('annotatable');
+    const aggregator = page.locator('#attributes-aggregators-list .aggregator mat-select');
+    await expect(aggregator).toContainText('No aggregation');
+    await expect(aggregator).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  test('should preserve attributes on Back and recompute the aggregators grid when the set changes',
+    async({ page }) => {
+      await openAggregatorsStep(page, 'allele_score', 'hg38/scores/CADD_v1.7');
+
+      await expect(page.locator('#attributes-aggregators-list .attribute-name-main'))
+        .toHaveText(['cadd_raw', 'cadd_phred']);
+
+      // Back to the attributes step keeps the previously selected attributes.
+      await page.locator('.mat-horizontal-stepper-content-current button.back-button').click();
+      await expect(page.locator('.attribute-source')).toHaveText(['cadd_raw', 'cadd_phred']);
+
+      // Remove one attribute and return: the aggregators grid reflects the new set.
+      await page.locator('#cadd_phred-remove-button').click();
+      await expect(page.locator('.attribute-source')).toHaveText(['cadd_raw']);
+
+      await Promise.all([
+        page.locator('.mat-horizontal-stepper-content-current button.next-button').click(),
+        page.waitForResponse(resp => resp.url().includes('editor/annotator_aggregators')),
+      ]);
+      await expect(page.locator('#attributes-aggregators-list .attribute-name-main')).toHaveText('cadd_raw');
+    });
 });
 
 
