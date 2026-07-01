@@ -62,6 +62,17 @@
 
 .pipeline-option {
   color: #435869;
+  box-sizing: border-box;
+  width: calc(100% + 32px);
+  margin: 0 -16px;
+
+  --mat-option-selected-state-label-text-color: #435869;
+}
+
+/* stylelint-disable-next-line selector-class-pattern */
+::ng-deep .mat-mdc-optgroup .mdc-list-item__primary-text {
+  display: block;
+  width: 100%;
 }
 
 ::ng-deep .mat-mdc-option.mdc-list-item {

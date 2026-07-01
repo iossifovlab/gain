@@ -63,7 +63,7 @@
     </div>
   </div>
   <div id="annotators">
-    @for (annotator of report.annotators; track annotator) {
+    @for (annotator of report.annotators; track $index) {
     <div class="annotator">
       <div class="attributes">
         @for (attribute of annotator.attributes; track attribute) {

@@ -1285,6 +1285,32 @@ test.describe('Add resource to pipeline tests', () => {
     await expect(page.getByTitle('hg38/scores/dbNSFP4.9a')).toBeVisible();
   });
 
+  test('should keep searching resources after an invalid search value', async({ page }) => {
+    await page.locator('#pipeline-actions').locator('#add-resource-button').click();
+
+    // An invalid search value returns a 500 and surfaces an error.
+    await Promise.all([
+      page.locator('#resource-search-input').fill('"unclosed'),
+      page.waitForResponse(
+        resp => resp.url().includes('api/resources/search') && resp.status() === 500, {timeout: 30000}
+      )
+    ]);
+    await expect(page.locator('#resource-input-form .error-message').nth(0)).toHaveText('Invalid search value');
+
+    // Typing a valid value must still trigger a search. Regression: the search
+    // stream used to terminate on the first error, so later searches never fired.
+    await Promise.all([
+      page.locator('#resource-search-input').fill('CADD'),
+      page.waitForResponse(
+        resp => resp.url().includes('api/resources/search?search=CADD') && resp.status() === 200, {timeout: 30000}
+      )
+    ]);
+
+    await expect(page.locator('#resource-input-form .error-message').nth(0)).toHaveText('');
+    await expect(page.locator('#resource-count')).toHaveText('2 resources');
+    await expect(page.getByTitle('hg38/scores/CADD_v1.7')).toBeVisible();
+  });
+
   test('should filter resources by resource type', async({ page }) => {
     await page.locator('#pipeline-actions').locator('#add-resource-button').click();
     await expect(page.locator('#resource-count')).toHaveText('259 resources');

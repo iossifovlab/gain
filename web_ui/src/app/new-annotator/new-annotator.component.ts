@@ -19,7 +19,9 @@ import {
   filter,
   Subscription,
   distinctUntilChanged,
-  Subject
+  Subject,
+  catchError,
+  EMPTY
 } from 'rxjs';
 import {
   AnnotatorConfig,
@@ -222,20 +224,22 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
     // Set up the search subject to handle API calls
     this.resourceSearchSubscription = this.searchSubject.pipe(
       distinctUntilChanged((prev, curr) => prev.value === curr.value && prev.type === curr.type),
-      switchMap(({ value, type }) => this.editorService.getResourcesBySearch(value, type)),
-    ).subscribe({
-      next: pageData => {
-        this.resourcePage = pageData;
-        this.resources.set(pageData.resources);
-        this.nextPage = pageData.page + 1;
-        this.totalPages = pageData.totalPages;
-        this.hasMore = this.nextPage < this.totalPages;
-        this.searchError = '';
-        this.isResourceTableInitialized = true;
-      },
-      error: (err: Error) => {
-        this.searchError = err.message;
-      }
+      // Catch inside switchMap so a failed search (e.g. an invalid search value)
+      // does not terminate the outer stream and stop subsequent searches.
+      switchMap(({ value, type }) => this.editorService.getResourcesBySearch(value, type).pipe(
+        catchError((err: Error) => {
+          this.searchError = err.message;
+          return EMPTY;
+        })
+      )),
+    ).subscribe(pageData => {
+      this.resourcePage = pageData;
+      this.resources.set(pageData.resources);
+      this.nextPage = pageData.page + 1;
+      this.totalPages = pageData.totalPages;
+      this.hasMore = this.nextPage < this.totalPages;
+      this.searchError = '';
+      this.isResourceTableInitialized = true;
     });
 
     // Trigger search on resourceId value changes
