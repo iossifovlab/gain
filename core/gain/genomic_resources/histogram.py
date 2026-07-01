@@ -445,10 +445,11 @@ class NumberHistogram(Statistic):
                 wrap=True,
                 color="gray",
                 style="italic",
+                fontsize=14,
             )
 
-        ax.set_xlabel(f"\n{score_id}")
-        ax.set_ylabel("count" if y_axis_label is None else y_axis_label)
+        ax.set_xlabel(f"\n{score_id}", fontsize=14)
+        ax.set_ylabel("count" if y_axis_label is None else y_axis_label, fontsize=14)
 
         ax.grid(axis="y")
         ax.grid(axis="x")
@@ -734,10 +735,11 @@ class CategoricalHistogram(Statistic):
                 wrap=True,
                 color="gray",
                 style="italic",
+                fontsize=14,
             )
 
-        ax.set_xlabel(f"\n{score_id}")
-        ax.set_ylabel("count" if y_axis_label is None else y_axis_label)
+        ax.set_xlabel(f"\n{score_id}", fontsize=14)
+        ax.set_ylabel("count" if y_axis_label is None else y_axis_label, fontsize=14)
 
         label_angle = self.config.label_rotation % 360
         if self.config.label_rotation < 0:
