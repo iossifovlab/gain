@@ -122,7 +122,7 @@ def _make_attribute_info(
         aggregator_instance=aggregator_instance,
         aggregator=None,
         spec=spec,
-        get_value_type=lambda _aggregated: value_type,
+        get_value_type=lambda **_kw: value_type,
     )
 
 
