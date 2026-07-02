@@ -494,6 +494,26 @@ test.describe('Pipeline validation tests', () => {
       'parameters={\'work_dir\': \'work/A0_allele_score\'}, documentation=\'\', resources=[]) ' +
       'has not \'resource_id\' parameters');
   });
+
+  test('should show a resource-not-found error for a config referencing a missing resource', async({ page }) => {
+    // Resource resolution happens during validation, so a config that is
+    // otherwise valid but points at a non-existent resource is surfaced as an
+    // invalid config (not the async 'failed' build state).
+    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+    await utils.typeInPipelineEditor(
+      page,
+      'preamble:\n' +
+      '   input_reference_genome: hg38/genomes/GRCh38-hg38\n' +
+      'annotators:\n' +
+      '- allele_score:\n' +
+      '    resource_id: hg38/scores/THIS_RESOURCE_DOES_NOT_EXIST\n' +
+      '    input_annotatable: normalized_allele\n'
+    );
+    await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
+    await expect(page.locator('.error-message').nth(0))
+      .toContainText('resource hg38/scores/THIS_RESOURCE_DOES_NOT_EXIST');
+    await expect(page.locator('.error-message').nth(0)).toContainText('not found');
+  });
 });
 
 test.describe('Pipeline confirmation popup tests', () => {
@@ -1244,6 +1264,34 @@ test.describe('Add annotator to pipeline tests', () => {
     await expect(page.locator('.warning-message')).toContainText('Selecting more than 1000 attributes');
     await expect(page.locator('.attributes-section-label')).toContainText('(1)');
   });
+
+  test('should load more attributes when scrolling the attribute dropdown panel', async({ page }) => {
+    // The GO release exposes >1000 attributes, so the attribute autocomplete
+    // panel is paginated and loads more as it is scrolled.
+    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    await page.getByRole('combobox', { name: 'Select annotator' }).click();
+    await page.locator('mat-option').getByText('gene_set_annotator').click();
+    await page.getByRole('button', { name: 'Next' }).click();
+
+    await page.locator('[id="resource_id-dropdown"]').click();
+    await page.locator('[id="resource_id-dropdown"] input').fill('GO_2024-06-17_release');
+    await page.locator('mat-option', { hasText: 'gene_properties/gene_sets/GO_2024-06-17_release' }).first().click();
+    await page.locator('[id="input_gene_list-dropdown"]').click();
+    await page.locator('mat-option').getByText('gene_list').click();
+    await page.getByRole('button', { name: 'Next' }).click();
+
+    // Open the attribute autocomplete panel and record the first page.
+    await page.locator('#attributes-dropdown input').click();
+    const options = page.locator('.mat-mdc-autocomplete-panel mat-option.attribute-option');
+    await expect(options.first()).toBeVisible();
+    const initialCount = await options.count();
+
+    // Scrolling the panel to the bottom triggers loadMoreAttributes, which
+    // appends the next page of options.
+    await page.locator('.mat-mdc-autocomplete-panel').evaluate((el: HTMLElement) => el.scrollTo(0, el.scrollHeight));
+
+    await expect.poll(() => options.count(), { timeout: 30000 }).toBeGreaterThan(initialCount);
+  });
 });
 
 
@@ -1309,6 +1357,21 @@ test.describe('Add resource to pipeline tests', () => {
     await expect(page.locator('#resource-input-form .error-message').nth(0)).toHaveText('');
     await expect(page.locator('#resource-count')).toHaveText('2 resources');
     await expect(page.getByTitle('hg38/scores/CADD_v1.7')).toBeVisible();
+  });
+
+  test('should load more resources when scrolling to the bottom of the list', async({ page }) => {
+    await page.locator('#pipeline-actions').locator('#add-resource-button').click();
+
+    // The unfiltered list is paginated; the first page renders on open.
+    const rows = page.locator('#resource-list .resource-full-id');
+    await expect(rows.first()).toBeVisible();
+    const initialCount = await rows.count();
+
+    // Scrolling to the bottom brings the load-page indicator into view, which
+    // triggers the IntersectionObserver to fetch and append the next page.
+    await page.locator('.resource-list-wrapper').evaluate((el: HTMLElement) => el.scrollTo(0, el.scrollHeight));
+
+    await expect.poll(() => rows.count(), { timeout: 30000 }).toBeGreaterThan(initialCount);
   });
 
   test('should filter resources by resource type', async({ page }) => {

@@ -650,6 +650,33 @@ test.describe('Single annotation value type rendering', () => {
     await expect(valueGrid.locator('.value-grid-cell').first()).toHaveText('MTHFR');
     await expect(valueGrid.locator('.value-grid-cell').nth(1)).toHaveText('2');
   });
+
+  test('should sort the value grid ascending then descending when clicking the Value header', async({ page }) => {
+    // A region-mode list aggregator yields a multi-item array value grid.
+    await clinvarListPipeline(page);
+    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796000 11800000');
+    await page.getByRole('button', { name: 'Go', exact: true }).click();
+    await page.waitForSelector('#report', { timeout: 120000 });
+    await page.locator('.switch').click();
+
+    const container = page.locator('.attribute-container').filter({
+      has: page.locator('.attribute-header', { hasText: 'clnsig_list' })
+    });
+    const cells = container.locator('.value-grid-cell');
+    await expect(cells.first()).toBeVisible();
+    expect(await cells.count()).toBeGreaterThan(1);
+
+    const valueHeader = container.locator('.value-grid-header', { hasText: 'Value' });
+    const cmp = (a: string, b: string): number => a.localeCompare(b, undefined, { sensitivity: 'base' });
+
+    await valueHeader.click();
+    const ascending = await cells.allTextContents();
+    expect(ascending).toEqual([...ascending].sort((a, b) => cmp(a, b)));
+
+    await valueHeader.click();
+    const descending = await cells.allTextContents();
+    expect(descending).toEqual([...descending].sort((a, b) => cmp(b, a)));
+  });
 });
 
 async function effectAnnotatorPipeline(page: Page): Promise<void> {
