@@ -12,7 +12,7 @@
         <g #histogramContainer style="transform: 'translate(0px, 0px)'"></g>
         @if (scoreValues.length) {
         <g>
-          @for (score of scoreValues; track score) {
+          @for (score of scoreValues; track $index) {
           <ng-container>
             <line
               class="single-score-marker"

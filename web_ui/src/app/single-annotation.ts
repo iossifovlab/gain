@@ -163,6 +163,10 @@ export class Attribute {
     public source: string,
     public aggregator: string | null,
     public result: Result,
+    // true: the value belongs on the score histogram (no aggregation, or a
+    // domain-preserving aggregator); false: the aggregated output is not a
+    // score in that domain, so the histogram is hidden.
+    public preservesDomain: boolean,
   ) {}
 
   public static fromJsonArray(jsonArray: object[]): Attribute[] {
@@ -186,6 +190,10 @@ export class Attribute {
         json['result'] as { histogram: string; value: string | number | boolean; },
         json['type'] as string
       ),
+      // The backend still sends null for non-aggregated attributes; treat it as
+      // true since the single value belongs on the histogram. TODO: the backend
+      // should be updated to send only true/false.
+      (json['preserves_domain'] as boolean | null) !== false,
     );
   }
 }

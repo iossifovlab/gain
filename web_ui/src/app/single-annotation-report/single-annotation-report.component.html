@@ -66,7 +66,7 @@
     @for (annotator of report.annotators; track $index) {
     <div class="annotator">
       <div class="attributes">
-        @for (attribute of annotator.attributes; track attribute) {
+        @for (attribute of annotator.attributes; track $index) {
         <div class="attribute-container">
           <div class="attribute">
             <div class="attribute-header">{{ attribute.name }}</div>
@@ -124,7 +124,7 @@
           <div class="attribute-description">{{ attribute.description }}</div>
           }
           <div style="display: flex; justify-content: center">
-            @if(showFullReport && attribute.result.histogramLink) {
+            @if(showFullReport && attribute.result.histogramLink && attribute.preservesDomain !== false) {
             <app-histogram-wrapper
               [histogramUrl]="attribute.result.histogramLink"
               [value]="attribute.result.value"></app-histogram-wrapper>
@@ -143,7 +143,7 @@
         <ng-template #infoModal let-annotator>
           <div id="modal-content">
             <div style="width: 100%">
-              @for (attribute of annotator.attributes; track attribute) {
+              @for (attribute of annotator.attributes; track $index) {
               <div class="attribute-container-modal">
                 <div class="attribute-header">{{ attribute.name }}</div>
                 <div class="attribute-description">{{ attribute.description }}</div>
@@ -152,7 +152,7 @@
                 <div class="attribute-aggregator">aggregator: {{ attribute.aggregator }}</div>
                 }
                 <div>
-                  @if (attribute.result.histogramLink) {
+                  @if (attribute.result.histogramLink && attribute.preservesDomain !== false) {
                   <app-histogram-wrapper
                     [histogramUrl]="attribute.result.histogramLink"
                     [value]="attribute.result.value"></app-histogram-wrapper>

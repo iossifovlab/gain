@@ -1,6 +1,7 @@
 import {
   Resource,
   AnnotatorDetails,
+  Attribute,
   Result,
   NumberHistogram,
   CategoricalHistogram,
@@ -90,6 +91,30 @@ describe('Result', () => {
   it('should store string value', () => {
     const result = Result.fromJson({ value: 'unknown', histogram: null }, 'str');
     expect(result.value).toBe('unknown');
+  });
+});
+
+describe('Attribute', () => {
+  const makeJson = (preservesDomain: boolean | null): object => ({
+    name: 'attr',
+    description: 'desc',
+    source: 'src',
+    aggregator: 'max',
+    result: { value: 0.5, histogram: 'histograms/x' },
+    type: 'float',
+    // eslint-disable-next-line camelcase
+    preserves_domain: preservesDomain,
+  });
+
+  it('should return undefined when fromJson is called with null', () => {
+    expect(Attribute.fromJson(null)).toBeUndefined();
+  });
+
+  it('should parse preserves_domain, treating null as true', () => {
+    expect(Attribute.fromJson(makeJson(true)).preservesDomain).toBe(true);
+    expect(Attribute.fromJson(makeJson(false)).preservesDomain).toBe(false);
+    // The backend may send null for non-aggregated attributes; treat it as true.
+    expect(Attribute.fromJson(makeJson(null)).preservesDomain).toBe(true);
   });
 });
 

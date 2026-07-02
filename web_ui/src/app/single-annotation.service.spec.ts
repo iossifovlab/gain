@@ -116,11 +116,14 @@ const mockResponse = {
           // eslint-disable-next-line @stylistic/max-len
           description: 'cadd_raw - CADD raw score for functional prediction of a SNP. The larger the score \nthe more likely the SNP has damaging effect\n',
           source: 'AF',
+          aggregator: 'max',
           result: {
             value: undefined,
             histogram: 'histograms/score?test=1',
           },
-          type: ''
+          type: '',
+          // eslint-disable-next-line camelcase
+          preserves_domain: true,
         },
       ],
     },
@@ -170,8 +173,9 @@ describe('SingleAnnotationService', () => {
               // eslint-disable-next-line @stylistic/max-len
               'cadd_raw - CADD raw score for functional prediction of a SNP. The larger the score \nthe more likely the SNP has damaging effect\n',
               'AF',
-              null,
+              'max',
               new Result(null, 'histograms/score?test=1'),
+              true,
             ),
           ]
         ),
@@ -283,8 +287,9 @@ describe('SingleAnnotationService', () => {
               // eslint-disable-next-line @stylistic/max-len
               'cadd_raw - CADD raw score for functional prediction of a SNP. The larger the score \nthe more likely the SNP has damaging effect\n',
               'AF',
-              null,
+              'max',
               new Result(null, 'histograms/score?test=1'),
+              true,
             ),
           ]
         ),
