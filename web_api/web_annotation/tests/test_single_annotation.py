@@ -9,6 +9,7 @@ from django.test import Client
 from django.utils import timezone
 from gain.annotation.annotation_config import Attribute
 from gain.annotation.annotation_pipeline import Annotator, AttributeSpec
+from gain.genomic_resources.aggregators import CountAggregator, MaxAggregator
 from gain.genomic_resources.repository import GenomicResourceRepo
 from pytest_mock import MockerFixture
 
@@ -103,6 +104,86 @@ def test_build_attribute_description_with_histogram(
     expected_histogram = "histograms/dummy_resource?score_id=score_id"
     assert description["result"]["histogram"] == expected_histogram
     assert description["result"]["value"] == 123
+
+
+def _make_attribute_info(
+    aggregator_instance: Any = None,
+    value_type: str = "float",
+) -> Any:
+    spec = SimpleNamespace(
+        value_type=value_type,
+        attribute_type="attribute",
+        supports_aggregation=True,
+    )
+    return SimpleNamespace(
+        name="score",
+        source="score_id",
+        description="",
+        aggregator_instance=aggregator_instance,
+        aggregator=None,
+        spec=spec,
+        get_value_type=lambda _aggregated: value_type,
+    )
+
+
+def test_preserves_domain_is_true_without_aggregation(
+    mocker: MockerFixture,
+) -> None:
+    view = SingleAnnotation()
+    view._grr = cast(GenomicResourceRepo, DummyRepo(DummyResource("dummy")))
+    mocker.patch(
+        "web_annotation.single_allele_annotation.views.has_histogram",
+        return_value=False,
+    )
+    mocker.patch.object(view, "generate_annotator_help", return_value=None)
+
+    attr = _make_attribute_info(aggregator_instance=None)
+    annotator = SimpleNamespace(resource_ids=set())
+
+    result = view._build_attribute_description(
+        {"score": 0.5}, cast(Annotator, annotator), cast(Attribute, attr),
+    )
+    assert result["preserves_domain"] is True
+
+
+def test_preserves_domain_is_true_with_domain_preserving_aggregator(
+    mocker: MockerFixture,
+) -> None:
+    view = SingleAnnotation()
+    view._grr = cast(GenomicResourceRepo, DummyRepo(DummyResource("dummy")))
+    mocker.patch(
+        "web_annotation.single_allele_annotation.views.has_histogram",
+        return_value=False,
+    )
+    mocker.patch.object(view, "generate_annotator_help", return_value=None)
+
+    attr = _make_attribute_info(aggregator_instance=MaxAggregator())
+    annotator = SimpleNamespace(resource_ids=set())
+
+    result = view._build_attribute_description(
+        {"score": 0.5}, cast(Annotator, annotator), cast(Attribute, attr),
+    )
+    assert result["preserves_domain"] is True
+
+
+def test_preserves_domain_is_false_with_non_preserving_aggregator(
+    mocker: MockerFixture,
+) -> None:
+    view = SingleAnnotation()
+    view._grr = cast(GenomicResourceRepo, DummyRepo(DummyResource("dummy")))
+    mocker.patch(
+        "web_annotation.single_allele_annotation.views.has_histogram",
+        return_value=False,
+    )
+    mocker.patch.object(view, "generate_annotator_help", return_value=None)
+
+    attr = _make_attribute_info(aggregator_instance=CountAggregator())
+    annotator = SimpleNamespace(resource_ids=set())
+
+    result = view._build_attribute_description(
+        {"score": 0.5}, cast(Annotator, annotator), cast(Attribute, attr),
+    )
+    assert result["preserves_domain"] is False
 
 
 def test_build_attribute_description_stringifies_non_mapping_objects(
