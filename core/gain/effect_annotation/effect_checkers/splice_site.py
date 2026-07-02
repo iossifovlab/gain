@@ -27,7 +27,7 @@ class SpliceSiteEffectChecker(EffectChecker):
                 prev = j.stop
                 continue
 
-            logger.debug(
+            logger.trace(  # type: ignore[attr-defined]
                 "pos: %d-%d checking intronic region %d-%d %d",
                 request.variant.position,
                 last_position,

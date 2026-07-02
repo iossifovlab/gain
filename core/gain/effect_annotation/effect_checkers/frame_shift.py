@@ -81,7 +81,7 @@ class FrameShiftEffectChecker(EffectChecker):
             if len(request.variant.reference) == 0:
                 stop += 1
 
-            logger.debug(
+            logger.trace(  # type: ignore[attr-defined]
                 "frameshift %d<=%d<=%d cds:%d-%d exon:%d-%d",
                 start,
                 request.variant.position,
@@ -93,7 +93,7 @@ class FrameShiftEffectChecker(EffectChecker):
             )
 
             if start <= request.variant.position <= stop:
-                logger.debug(
+                logger.trace(  # type: ignore[attr-defined]
                     "fs detected %d<=%d-%d<=%d cds:%d-%d",
                     start,
                     request.variant.position,

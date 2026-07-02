@@ -24,7 +24,7 @@ class UTREffectChecker(EffectChecker):
         effect = EffectFactory.create_effect_with_prot_length(
             effect_name, request,
         )
-        logger.debug(
+        logger.trace(  # type: ignore[attr-defined]
             "pos=%d cds end=%d",
             request.variant.ref_position_last - 1,
             request.transcript_model.cds[0],
@@ -103,7 +103,7 @@ class UTREffectChecker(EffectChecker):
         if request.is_stop_codon_affected():
             return self.check_stop_codon(request)
 
-        logger.debug(
+        logger.trace(  # type: ignore[attr-defined]
             "utr check: %d<%d or %d>%d exons:%d-%d",
             request.variant.position,
             request.transcript_model.cds[0],

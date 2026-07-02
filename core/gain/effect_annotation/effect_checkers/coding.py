@@ -15,7 +15,7 @@ class CodingEffectChecker(EffectChecker):
         assert request.variant.ref_position_last is not None
         assert request.variant.corrected_ref_position_last is not None
 
-        logger.debug("is coding=%s", request.transcript_model.is_coding())
+        logger.trace("is coding=%s", request.transcript_model.is_coding())  # type: ignore[attr-defined]
         if not request.transcript_model.is_coding():
             all_regs = request.transcript_model.all_regions()
             last_pos = request.variant.corrected_ref_position_last
