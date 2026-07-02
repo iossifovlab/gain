@@ -248,19 +248,24 @@ input[type="radio"]:checked {
 }
 
 .aggregators-content-wrapper {
+  /* Fill the space between the header and the footer so the footer stays
+     anchored; the grid inside hugs its content and scrolls within this box. */
   flex: 1 1 0;
-  overflow: auto;
-
-  /* Border + radius live on the scroll container so its overflow clips the
-     scrolled rows and the sticky header to the rounded corners. */
-  border: 1px solid #cfd8df;
-  border-radius: 15px;
+  min-height: 0;
 }
 
 .grid-container-aggregators {
   display: grid;
   grid-template-columns: 1.2fr 0.8fr 1.2fr 0.6fr;
   font-size: 14px;
+
+  /* Hug the rows, but cap at the wrapper's height and scroll. Border + radius
+     live on this scroll container so its overflow clips the scrolled rows and
+     the sticky header to the rounded corners. */
+  max-height: 100%;
+  overflow: auto;
+  border: 1px solid #cfd8df;
+  border-radius: 15px;
 }
 
 #resource-list {
