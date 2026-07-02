@@ -233,6 +233,25 @@ describe('AnnotationPipelineComponent', () => {
     expect(pipelineStateService.currentTemporaryPipelineId()).toBe('215');
   });
 
+  it('should update the tracked temporary pipeline when a follow-up notification arrives', () => {
+    const notifications = new Subject<PipelineNotification>();
+    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
+      .mockReturnValue(notifications.asObservable());
+    component.ngOnInit();
+
+    // The first notification adopts '215' as the temporary pipeline being built.
+    notifications.next(new PipelineNotification('215', 'loading'));
+    expect(component.currentTemporaryPipelineId).toBe('215');
+
+    // A follow-up notification for that same temp id updates its status/error.
+    notifications.next(
+      new PipelineNotification('215', 'failed', 'Invalid configuration, reason: boom')
+    );
+    expect(component.currentTemporaryPipelineStatus).toBe('failed');
+    expect(component.currentTemporaryPipelineError).toBe('Invalid configuration, reason: boom');
+    expect(pipelineStateService.currentTemporaryPipelineStatus()).toBe('failed');
+  });
+
   it('does not reconnect for non-close events', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const setupSpy = jest.spyOn(component as any, 'setupPipelineWebSocketConnection');

@@ -894,6 +894,43 @@ describe('NewAnnotatorComponent', () => {
     expect(component.isAttributeLoading).toBe(false);
   });
 
+  it('should load more attributes when the attribute panel is scrolled near the bottom', () => {
+    component.attributePage = new AttributePage(attributesMock, 0, 3, 9);
+    component.isAttributeLoading = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const loadMoreSpy = jest.spyOn(component as any, 'loadMoreAttributes').mockImplementation(() => undefined);
+    component['onAttributePanelScroll'](
+      { scrollTop: 100, clientHeight: 100, scrollHeight: 200 } as HTMLElement
+    );
+    expect(loadMoreSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('should not load more attributes when the panel is far from the bottom', () => {
+    component.attributePage = new AttributePage(attributesMock, 0, 3, 9);
+    component.isAttributeLoading = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const loadMoreSpy = jest.spyOn(component as any, 'loadMoreAttributes').mockImplementation(() => undefined);
+    component['onAttributePanelScroll'](
+      { scrollTop: 0, clientHeight: 100, scrollHeight: 1000 } as HTMLElement
+    );
+    expect(loadMoreSpy).not.toHaveBeenCalled();
+  });
+
+  it('should detach the attribute-panel scroll handler', () => {
+    const removeEventListener = jest.fn();
+    component['attributePanelScrollHandler'] = (): void => undefined;
+    component['attributePanel'] = { removeEventListener: removeEventListener } as unknown as HTMLElement;
+    component['removeAttributePanelScrollHandler']();
+    expect(removeEventListener).toHaveBeenCalledWith('scroll', expect.any(Function));
+    expect(component['attributePanelScrollHandler']).toBeNull();
+    expect(component['attributePanel']).toBeNull();
+  });
+
+  it('should be a no-op when there is no attribute-panel scroll handler to detach', () => {
+    component['attributePanelScrollHandler'] = null;
+    expect(() => component['removeAttributePanelScrollHandler']()).not.toThrow();
+  });
+
   it('should build annotator attributes from aggregator response', () => {
     component.annotatorStep.setControl('annotator', new FormControl('gene_set_annotator'));
     component.attributePage = attributePageMock;
