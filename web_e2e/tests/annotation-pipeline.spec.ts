@@ -510,9 +510,11 @@ test.describe('Pipeline validation tests', () => {
       '    input_annotatable: normalized_allele\n'
     );
     await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
-    await expect(page.locator('.error-message').nth(0))
-      .toContainText('resource hg38/scores/THIS_RESOURCE_DOES_NOT_EXIST');
-    await expect(page.locator('.error-message').nth(0)).toContainText('not found');
+
+    const errorMessage = page.locator('.error-message').nth(0);
+    await expect(errorMessage).toContainText('Invalid configuration');
+    await expect(errorMessage).toContainText('hg38/scores/THIS_RESOURCE_DOES_NOT_EXIST');
+    await expect(errorMessage).toContainText('not found');
   });
 });
 
