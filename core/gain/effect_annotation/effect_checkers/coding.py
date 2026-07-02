@@ -1,4 +1,4 @@
-import gain.logging as logging
+from gain import logging
 
 from ..effect import EffectFactory
 from .effect_checker import AnnotationEffect, AnnotationRequest, EffectChecker

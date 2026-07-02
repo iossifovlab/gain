@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-import gain.logging as logging
+from gain import logging
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotationConfigurationError,

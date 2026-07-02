@@ -3,7 +3,7 @@ from __future__ import annotations
 from threading import Lock
 from typing import TYPE_CHECKING, Any
 
-import gain.logging as logging
+from gain import logging
 
 if TYPE_CHECKING:
     from gain.genomic_resources.gene_models.gene_models import GeneModels

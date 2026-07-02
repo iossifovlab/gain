@@ -3,7 +3,7 @@
 Import this instead of stdlib logging to guarantee TRACE and USER_INFO
 are registered before any logger is created:
 
-    import gain.logging as logging
+    from gain import logging
     logger = logging.getLogger(__name__)
 """
 from __future__ import annotations

@@ -4,7 +4,7 @@ import json
 import math
 from typing import Any, ClassVar
 
-import gain.logging as logging
+from gain import logging
 from gain.gene_scores.gene_scores import (
     GeneScore,
     build_gene_score_from_resource,

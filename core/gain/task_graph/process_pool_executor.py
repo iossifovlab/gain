@@ -13,7 +13,7 @@ from typing import Any
 
 import psutil
 
-import gain.logging as logging
+from gain import logging
 from gain.task_graph.base_executor import TaskGraphExecutorBase
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph
 from gain.task_graph.logging import (

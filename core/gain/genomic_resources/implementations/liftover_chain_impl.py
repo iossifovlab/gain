@@ -7,7 +7,7 @@ from typing import Any, ClassVar
 
 from markdown2 import markdown
 
-import gain.logging as logging
+from gain import logging
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.liftover_chain import (
     build_liftover_chain_from_resource,

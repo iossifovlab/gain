@@ -1,6 +1,6 @@
-import gain.logging as logging
 from django.conf import settings
 from django.core.mail import send_mail
+from gain import logging
 
 logger = logging.getLogger(__name__)
 

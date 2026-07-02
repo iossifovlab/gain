@@ -5,13 +5,13 @@ from pathlib import Path
 from typing import Any, ClassVar, cast
 
 import adrf.views
-import gain.logging as logging
 import yaml
 from asgiref.sync import async_to_sync, sync_to_async
 from channels.layers import get_channel_layer
 from django.conf import settings
 from django.core.files.uploadedfile import UploadedFile
 from django.http import QueryDict
+from gain import logging
 from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.genomic_resources.implementations.annotation_pipeline_impl import (

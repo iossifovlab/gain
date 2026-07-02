@@ -2,7 +2,7 @@ import os
 
 import pysam
 
-import gain.logging as logging
+from gain import logging
 from gain.genomic_resources.repository import GenomicResource
 
 from .table import GenomicPositionTable

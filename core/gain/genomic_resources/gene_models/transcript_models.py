@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import gain.logging as logging
+from gain import logging
 from gain.utils.regions import (
     BedRegion,
 )

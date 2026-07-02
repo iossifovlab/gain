@@ -9,7 +9,7 @@ from typing import Any, cast
 import numpy as np
 from pysam import TabixFile
 
-import gain.logging as logging
+from gain import logging
 from gain.annotation.annotation_factory import (
     load_pipeline_from_file_or_resource,
 )

@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import fsspec
 
-import gain.logging as logging
+from gain import logging
 from gain.task_graph.graph import Task, TaskDesc
 from gain.utils import fs_utils
 

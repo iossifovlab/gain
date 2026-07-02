@@ -13,7 +13,7 @@ import fsspec
 import networkx
 import psutil
 
-import gain.logging as logging
+from gain import logging
 from gain.task_graph.cache import (
     CacheRecord,
     CacheRecordType,

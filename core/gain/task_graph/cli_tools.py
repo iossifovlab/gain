@@ -7,7 +7,7 @@ from typing import Any
 
 import yaml
 
-import gain.logging as logging
+from gain import logging
 from gain.task_graph.cache import CacheRecordType, NoTaskCache, TaskCache
 from gain.task_graph.executor import (
     TaskGraphExecutor,

@@ -7,7 +7,7 @@ from contextlib import AbstractContextManager
 from types import TracebackType
 from typing import Any
 
-import gain.logging as logging
+from gain import logging
 from gain.utils.regions import Region
 
 logger = logging.getLogger(__name__)

@@ -3,7 +3,7 @@ from urllib.parse import quote
 
 from markdown2 import markdown
 
-import gain.logging as logging
+from gain import logging
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.genomic_resources.genomic_scores import GenomicScore

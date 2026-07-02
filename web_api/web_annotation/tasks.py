@@ -2,9 +2,9 @@
 from datetime import timedelta
 from typing import Any
 
-import gain.logging as logging
 from django.conf import settings
 from django.utils import timezone
+from gain import logging
 from gain.annotation.annotate_tabular import annotate_tabular
 from gain.annotation.annotate_vcf import annotate_vcf
 from gain.annotation.annotation_pipeline import AnnotationPipeline

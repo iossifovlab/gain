@@ -13,7 +13,7 @@ import argparse
 import pathlib
 from typing import Any
 
-import gain.logging as logging
+from gain import logging
 from gain.annotation.annotation_factory import (
     load_pipeline_from_file_or_resource,
 )

@@ -10,7 +10,7 @@ from threading import Lock, RLock
 from types import TracebackType
 from typing import Any, TypeVar
 
-import gain.logging as logging
+from gain import logging
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
     AnnotationPreamble,

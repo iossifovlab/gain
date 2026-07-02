@@ -14,8 +14,7 @@ import apsw
 import yaml
 from cerberus.schema import SchemaError
 
-import gain.logging as logging
-from gain import __version__
+from gain import __version__, logging
 from gain.genomic_resources.cached_repository import GenomicResourceCachedRepo
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,

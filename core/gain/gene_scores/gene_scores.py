@@ -10,7 +10,7 @@ from urllib.parse import quote
 import numpy as np
 import pandas as pd
 
-import gain.logging as logging
+from gain import logging
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.histogram import (
     CategoricalHistogramConfig,

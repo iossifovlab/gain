@@ -16,7 +16,7 @@ from typing import (
 )
 from urllib.parse import quote
 
-import gain.logging as logging
+from gain import logging
 from gain.genomic_resources.genomic_position_table import (
     Line,
     VCFGenomicPositionTable,

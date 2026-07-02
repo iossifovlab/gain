@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 
 import yaml
 
-import gain.logging as logging
+from gain import logging
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.gene_models.gene_models import (
     TranscriptModel,

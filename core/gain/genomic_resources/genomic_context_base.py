@@ -37,7 +37,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from typing import Any
 
-import gain.logging as logging
+from gain import logging
 from gain.genomic_resources.gene_models import (
     GeneModels,
 )

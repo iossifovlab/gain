@@ -10,7 +10,7 @@ from typing import Any
 
 import networkx
 
-import gain.logging as logging
+from gain import logging
 
 logger = logging.getLogger(__name__)
 

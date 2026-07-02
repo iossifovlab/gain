@@ -12,7 +12,7 @@ import apsw
 import pysam
 from tqdm import tqdm
 
-import gain.logging as logging
+from gain import logging
 from gain.genomic_resources.fsspec_protocol import (
     FileCacheVerdict,
     FsspecReadWriteProtocol,

@@ -35,7 +35,7 @@ import yaml
 from filelock import FileLock
 from markdown2 import markdown
 
-import gain.logging as logging
+from gain import logging
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,

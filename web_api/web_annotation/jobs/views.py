@@ -4,11 +4,11 @@ from pathlib import Path
 from subprocess import CalledProcessError
 from typing import Any, ClassVar, cast
 
-import gain.logging as logging
 from django.core.files.uploadedfile import UploadedFile
 from django.db.models import ObjectDoesNotExist, QuerySet
 from django.http import FileResponse, QueryDict
 from django.shortcuts import get_object_or_404
+from gain import logging
 from gain.annotation.annotation_factory import build_annotation_pipeline
 from gain.annotation.record_to_annotatable import build_record_to_annotatable
 from pysam import VariantFile

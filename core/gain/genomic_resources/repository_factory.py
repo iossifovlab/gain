@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
-import gain.logging as logging
+from gain import logging
 
 from .cached_repository import GenomicResourceCachedRepo
 from .fsspec_protocol import build_fsspec_protocol, build_inmemory_protocol

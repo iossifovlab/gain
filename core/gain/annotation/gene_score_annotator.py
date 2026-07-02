@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from typing import Any
 
-import gain.logging as logging
+from gain import logging
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,

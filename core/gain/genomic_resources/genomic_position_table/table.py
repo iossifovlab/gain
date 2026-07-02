@@ -8,7 +8,7 @@ from typing import cast
 
 from box import Box
 
-import gain.logging as logging
+from gain import logging
 from gain.genomic_resources.repository import GenomicResource
 
 from .line import Key, Line, LineBase

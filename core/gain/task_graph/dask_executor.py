@@ -6,7 +6,7 @@ from typing import Any
 
 from dask.distributed import Client, Future, wait
 
-import gain.logging as logging
+from gain import logging
 from gain.task_graph.base_executor import TaskGraphExecutorBase
 from gain.task_graph.cache import NoTaskCache, TaskCache
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph

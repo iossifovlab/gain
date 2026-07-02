@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from types import TracebackType
 from typing import Any
 
-import gain.logging as logging
+from gain import logging
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,

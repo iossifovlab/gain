@@ -7,7 +7,7 @@ import dask.config
 from distributed.client import Client
 from distributed.deploy import Cluster  # pyright: ignore
 
-import gain.logging as logging
+from gain import logging
 
 _CLUSTER_TYPES: dict[str, Callable[[dict[str, Any]], Cluster]] = {}
 logger = logging.getLogger(__name__)

@@ -56,7 +56,7 @@ import argparse
 import sys
 from typing import Any
 
-import gain.logging as logging
+from gain import logging
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )

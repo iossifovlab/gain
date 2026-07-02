@@ -4,7 +4,7 @@ from datetime import datetime
 from io import StringIO
 from typing import IO
 
-import gain.logging as logging
+from gain import logging
 from gain.utils.regions import BedRegion, difference, total_length
 
 from .gene_models import (

@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import IO, Any, cast
 
-import gain.logging as logging
+from gain import logging
 
 logger = logging.getLogger(__name__)
 

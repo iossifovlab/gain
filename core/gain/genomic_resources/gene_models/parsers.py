@@ -6,7 +6,7 @@ from typing import IO, cast
 
 import pandas as pd
 
-import gain.logging as logging
+from gain import logging
 from gain.genomic_resources.repository import (
     GenomicResource,
 )

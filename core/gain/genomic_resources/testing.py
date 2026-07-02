@@ -17,7 +17,7 @@ import pyBigWig
 import pysam
 from s3fs.core import S3FileSystem
 
-import gain.logging as logging
+from gain import logging
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadOnlyProtocol,
     FsspecReadWriteProtocol,

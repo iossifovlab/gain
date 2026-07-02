@@ -3,7 +3,7 @@ import abc
 import textwrap
 from typing import Any, Protocol
 
-import gain.logging as logging
+from gain import logging
 from gain.annotation.annotation_config import AnnotatorInfo
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,

@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 
 import yaml
 
-import gain.logging as logging
+from gain import logging
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,

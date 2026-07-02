@@ -10,7 +10,7 @@ from intervaltree import (
     IntervalTree,
 )
 
-import gain.logging as logging
+from gain import logging
 from gain.genomic_resources.repository import (
     GenomicResource,
 )

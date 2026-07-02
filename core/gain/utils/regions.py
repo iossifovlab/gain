@@ -9,7 +9,7 @@ from typing import Any
 import networkx as nx
 import pysam
 
-import gain.logging as logging
+from gain import logging
 
 logger = logging.getLogger(__name__)
 

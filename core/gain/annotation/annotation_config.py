@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 import yaml
 from lark import Lark, Token, Tree
 
-import gain.logging as logging
+from gain import logging
 from gain.genomic_resources.aggregators import (
     Aggregator,
     AggregatorDefinition,

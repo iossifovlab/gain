@@ -7,7 +7,7 @@ from pathlib import Path
 
 from markdown2 import markdown
 
-import gain.logging as logging
+from gain import logging
 from gain.annotation.annotation_genomic_context_cli import (
     get_context_pipeline,
 )

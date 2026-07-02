@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import abc
 
-import gain.logging as logging
+from gain import logging
 from gain.effect_annotation.gene_codes import NuclearCode
 from gain.effect_annotation.variant import Variant
 from gain.genomic_resources.gene_models import TranscriptModel

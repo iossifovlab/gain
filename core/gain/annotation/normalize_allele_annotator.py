@@ -1,7 +1,7 @@
 """Provides normalize allele annotator and helpers."""
 from typing import Any
 
-import gain.logging as logging
+from gain import logging
 from gain.annotation.annotatable import Annotatable, VCFAllele
 from gain.annotation.annotation_config import AnnotatorInfo
 from gain.annotation.annotation_pipeline import (

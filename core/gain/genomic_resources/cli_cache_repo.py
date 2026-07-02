@@ -23,7 +23,7 @@ import argparse
 import sys
 import time
 
-import gain.logging as logging
+from gain import logging
 from gain.annotation.annotate_utils import (
     build_cli_genomic_context,
     cache_pipeline_resources,

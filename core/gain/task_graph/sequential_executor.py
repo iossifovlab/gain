@@ -1,7 +1,7 @@
 from collections.abc import Iterator
 from typing import Any
 
-import gain.logging as logging
+from gain import logging
 from gain.task_graph.base_executor import TaskGraphExecutorBase
 from gain.task_graph.cache import NoTaskCache
 from gain.task_graph.graph import Task, TaskGraph

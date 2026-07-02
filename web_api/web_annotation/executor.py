@@ -7,7 +7,7 @@ from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, cast
 
-import gain.logging as logging
+from gain import logging
 
 logger = logging.getLogger(__name__)
 

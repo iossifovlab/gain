@@ -10,7 +10,7 @@ from typing import Any, cast
 
 from lark import Lark, Token, Tree
 
-import gain.logging as logging
+from gain import logging
 from gain.annotation.annotatable import Annotatable, VCFAllele
 from gain.annotation.annotate_utils import stringify
 from gain.annotation.annotation_config import (

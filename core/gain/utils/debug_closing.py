@@ -3,7 +3,7 @@ from contextlib import AbstractContextManager
 from types import TracebackType
 from typing import Generic, Protocol, TypeVar
 
-import gain.logging as logging
+from gain import logging
 
 logger = logging.getLogger(__name__)
 

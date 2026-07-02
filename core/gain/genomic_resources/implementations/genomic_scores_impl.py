@@ -6,7 +6,7 @@ from typing import Any, ClassVar, cast
 
 import numpy as np
 
-import gain.logging as logging
+from gain import logging
 from gain.genomic_resources.genomic_position_table import (
     TabixGenomicPositionTable,
 )

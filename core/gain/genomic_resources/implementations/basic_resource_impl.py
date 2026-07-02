@@ -7,7 +7,7 @@ from typing import Any, ClassVar
 
 from markdown2 import markdown
 
-import gain.logging as logging
+from gain import logging
 from gain.genomic_resources.resource_implementation import (
     GenomicResourceImplementation,
     InfoImplementationMixin,
