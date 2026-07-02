@@ -1,5 +1,4 @@
-import logging
-
+import gain.logging as logging
 from django.conf import settings
 from django.core.mail import send_mail
 

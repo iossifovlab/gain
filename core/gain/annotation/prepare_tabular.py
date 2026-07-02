@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import gzip
-import logging
 import os
 import subprocess
 import sys
@@ -24,6 +23,7 @@ from typing import Any, TextIO
 
 from pysam import BGZFile, tabix_index
 
+import gain.logging as logging
 from gain import __version__
 from gain.annotation.annotatable import (
     Annotatable,

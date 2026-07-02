@@ -1,6 +1,6 @@
-import logging
 from typing import Any
 
+import gain.logging as logging
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
     AnnotatorInfo,

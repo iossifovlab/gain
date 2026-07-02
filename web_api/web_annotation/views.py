@@ -1,10 +1,10 @@
 # pylint: disable=too-many-lines
 """View classes for web annotation."""
-import logging
 import pathlib
 from importlib.metadata import version
 from typing import ClassVar, cast
 
+import gain.logging as logging
 from django import forms
 from django.conf import settings
 from django.contrib.auth import (

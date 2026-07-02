@@ -10,10 +10,10 @@ instances available through the shared genomic context mechanism.
 from __future__ import annotations
 
 import argparse
-import logging
 import pathlib
 from typing import Any
 
+import gain.logging as logging
 from gain.annotation.annotation_factory import (
     load_pipeline_from_file_or_resource,
 )

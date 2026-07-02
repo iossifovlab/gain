@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import logging
 from collections import defaultdict
 from collections.abc import Iterator, Sequence
 from pathlib import Path
@@ -9,6 +8,8 @@ from typing import Any
 
 import networkx as nx
 import pysam
+
+import gain.logging as logging
 
 logger = logging.getLogger(__name__)
 

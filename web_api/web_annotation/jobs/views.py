@@ -1,10 +1,10 @@
 """Module with views for job operations."""
-import logging
 import time
 from pathlib import Path
 from subprocess import CalledProcessError
 from typing import Any, ClassVar, cast
 
+import gain.logging as logging
 from django.core.files.uploadedfile import UploadedFile
 from django.db.models import ObjectDoesNotExist, QuerySet
 from django.http import FileResponse, QueryDict

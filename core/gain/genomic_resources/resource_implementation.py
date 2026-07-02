@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
@@ -8,6 +7,7 @@ from typing import Any, ClassVar, cast
 from cerberus import Validator
 from markdown2 import markdown
 
+import gain.logging as logging
 from gain.task_graph.graph import TaskDesc
 from gain.templates import get_template
 from gain.utils.helpers import convert_size

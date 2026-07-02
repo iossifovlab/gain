@@ -1,10 +1,10 @@
 import argparse
 import gzip
-import logging
 import sys
 from collections.abc import Iterator
 from typing import ClassVar
 
+import gain.logging as logging
 from gain.effect_annotation.annotator import EffectAnnotator
 from gain.effect_annotation.effect import AnnotationEffect
 from gain.genomic_resources.gene_models import (

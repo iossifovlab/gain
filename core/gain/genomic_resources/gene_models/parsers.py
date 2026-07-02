@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import logging
 from collections import defaultdict
 from collections.abc import Callable
 from typing import IO, cast
 
 import pandas as pd
 
+import gain.logging as logging
 from gain.genomic_resources.repository import (
     GenomicResource,
 )

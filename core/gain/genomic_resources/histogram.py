@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import logging
 import pathlib
 import sys
 from collections import Counter
@@ -17,6 +16,7 @@ import numpy as np
 import yaml
 from matplotlib import ticker
 
+import gain.logging as logging
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.base_statistic import Statistic
 from gain.genomic_resources.statistics.min_max import MinMaxValue

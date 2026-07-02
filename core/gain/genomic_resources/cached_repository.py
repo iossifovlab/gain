@@ -1,7 +1,6 @@
 """Provides caching genomic resources."""
 from __future__ import annotations
 
-import logging
 import os
 import sys
 import threading
@@ -13,6 +12,7 @@ import apsw
 import pysam
 from tqdm import tqdm
 
+import gain.logging as logging
 from gain.genomic_resources.fsspec_protocol import (
     FileCacheVerdict,
     FsspecReadWriteProtocol,

@@ -53,10 +53,10 @@ parser you can do:
 from __future__ import annotations
 
 import argparse
-import logging
 import sys
 from typing import Any
 
+import gain.logging as logging
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )

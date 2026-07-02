@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from collections import Counter
 from collections.abc import Callable, Generator
 from functools import cache
@@ -8,6 +7,7 @@ from typing import Any
 
 import pysam
 
+import gain.logging as logging
 from gain.genomic_resources.repository import GenomicResource
 from gain.utils.regions import get_chromosome_length_tabix
 

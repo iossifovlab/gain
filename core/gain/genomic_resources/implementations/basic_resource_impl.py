@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import copy
-import logging
 from typing import Any, ClassVar
 
 from markdown2 import markdown
 
+import gain.logging as logging
 from gain.genomic_resources.resource_implementation import (
     GenomicResourceImplementation,
     InfoImplementationMixin,

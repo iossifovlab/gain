@@ -1,5 +1,4 @@
-import logging
-
+import gain.logging as logging
 from gain.annotation.annotation_config import (
     AnnotatorInfo,
 )

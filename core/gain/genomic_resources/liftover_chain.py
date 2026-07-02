@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 from threading import Lock, RLock
 from typing import Any, cast
 
 from pyliftover import LiftOver
 
+import gain.logging as logging
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import abc
-import logging
 import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, cast
+
+import gain.logging as logging
 
 logger = logging.getLogger(__name__)
 

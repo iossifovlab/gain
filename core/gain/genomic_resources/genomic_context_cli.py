@@ -9,9 +9,9 @@ repository, reference genome, and gene models at runtime.
 """
 
 import argparse
-import logging
 from typing import Any
 
+import gain.logging as logging
 from gain.genomic_resources.gene_models.gene_models_factory import (
     build_gene_models_from_resource,
 )

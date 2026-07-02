@@ -4,13 +4,13 @@ Genomic score annotators defined are position_score_annotator,
 np_score_annotator, and allele_score_annotator.
 """
 import abc
-import logging
 import textwrap
 from collections.abc import Callable
 from typing import Any, cast
 
 from lark import Lark, Token, Tree
 
+import gain.logging as logging
 from gain.annotation.annotatable import Annotatable, VCFAllele
 from gain.annotation.annotate_utils import stringify
 from gain.annotation.annotation_config import (

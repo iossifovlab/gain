@@ -5,7 +5,6 @@ import csv
 import gc
 import gzip
 import itertools
-import logging
 import os
 import sys
 import traceback
@@ -18,6 +17,7 @@ from typing import Any, TextIO, cast
 
 from pysam import TabixFile, tabix_compress, tabix_index
 
+import gain.logging as logging
 from gain import __version__
 from gain.annotation import annotation_pipeline as _annotation_pipeline
 from gain.annotation.annotate_utils import (

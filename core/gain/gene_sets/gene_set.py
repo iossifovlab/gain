@@ -4,13 +4,13 @@ from __future__ import annotations
 import abc
 import gzip
 import json
-import logging
 import os
 from threading import Lock
 from typing import IO, Annotated, Any, Literal, cast
 
 from pydantic import BaseModel, Field
 
+import gain.logging as logging
 from gain.gene_sets.gene_term import (
     read_ewa_set_file,
     read_gmt_file,

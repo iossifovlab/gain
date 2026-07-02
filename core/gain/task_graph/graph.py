@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import multiprocessing as mp
 from collections import defaultdict
 from collections.abc import Callable, Generator, Sequence
@@ -10,6 +9,8 @@ from types import TracebackType
 from typing import Any
 
 import networkx
+
+import gain.logging as logging
 
 logger = logging.getLogger(__name__)
 

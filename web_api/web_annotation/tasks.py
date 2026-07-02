@@ -1,8 +1,8 @@
 """Web annotation tasks"""
-import logging
 from datetime import timedelta
 from typing import Any
 
+import gain.logging as logging
 from django.conf import settings
 from django.utils import timezone
 from gain.annotation.annotate_tabular import annotate_tabular

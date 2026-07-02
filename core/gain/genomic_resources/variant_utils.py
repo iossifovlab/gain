@@ -1,6 +1,6 @@
 import itertools
-import logging
 
+import gain.logging as logging
 from gain.genomic_resources.reference_genome import (
     ReferenceGenome,
 )

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import logging
 import os
 import pathlib
 import time
@@ -12,6 +11,7 @@ from abc import abstractmethod
 from datetime import timedelta
 from typing import Any, ClassVar, cast
 
+import gain.logging as logging
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, AnonymousUser
 from django.db import connection, models

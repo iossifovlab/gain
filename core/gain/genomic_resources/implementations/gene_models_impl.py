@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from functools import lru_cache
@@ -9,6 +8,7 @@ from typing import Any, ClassVar
 
 import yaml
 
+import gain.logging as logging
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.gene_models.gene_models import (
     TranscriptModel,

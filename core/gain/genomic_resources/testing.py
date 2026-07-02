@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import contextlib
 import gzip
-import logging
 import os
 import pathlib
 import shutil
@@ -18,6 +17,7 @@ import pyBigWig
 import pysam
 from s3fs.core import S3FileSystem
 
+import gain.logging as logging
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadOnlyProtocol,
     FsspecReadWriteProtocol,

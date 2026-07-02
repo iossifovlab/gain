@@ -1,5 +1,4 @@
 import argparse
-import logging
 import os
 import shutil
 import urllib.parse
@@ -10,6 +9,7 @@ from typing import Any, cast
 import numpy as np
 from pysam import TabixFile
 
+import gain.logging as logging
 from gain.annotation.annotation_factory import (
     load_pipeline_from_file_or_resource,
 )

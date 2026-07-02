@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import logging
 from abc import abstractmethod
 from collections.abc import Generator, Iterator
 from types import TracebackType
 from typing import Any
 
+import gain.logging as logging
 from gain.task_graph.graph import Task, TaskGraph
 
 logger = logging.getLogger(__name__)

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from functools import lru_cache
 from io import StringIO
@@ -11,6 +10,7 @@ from urllib.parse import quote
 import numpy as np
 import pandas as pd
 
+import gain.logging as logging
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.histogram import (
     CategoricalHistogramConfig,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from collections import defaultdict
 from collections.abc import Generator
 from threading import Lock
@@ -11,6 +10,7 @@ from intervaltree import (
     IntervalTree,
 )
 
+import gain.logging as logging
 from gain.genomic_resources.repository import (
     GenomicResource,
 )

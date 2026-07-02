@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import logging
 import os
 from collections.abc import Generator
 from types import TracebackType
 from typing import IO, Any
 
+import gain.logging as logging
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.fsspec_protocol import build_local_resource
 from gain.genomic_resources.repository import GenomicResourceRepo

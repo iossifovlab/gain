@@ -1,11 +1,11 @@
 """Module containing base view for annotation work."""
 import gzip
-import logging
 from functools import partial
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
 import adrf.views
+import gain.logging as logging
 import yaml
 from asgiref.sync import async_to_sync, sync_to_async
 from channels.layers import get_channel_layer

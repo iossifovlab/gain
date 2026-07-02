@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import abc
 import argparse
-import logging
 
+import gain.logging as logging
 from gain.annotation.annotatable import (
     Annotatable,
     CNVAllele,
