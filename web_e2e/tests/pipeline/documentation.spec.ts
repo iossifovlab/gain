@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import { test, expect, Page } from '@playwright/test';
-import * as utils from '../utils';
+import * as utils from '../../utils';
 const VALID_PIPELINE_DOC =
   'preamble:\n' +
   '   input_reference_genome: hg38/genomes/GRCh38-hg38\n' +

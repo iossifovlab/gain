@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import * as utils from '../utils';
+import * as utils from '../../utils';
 
 const VALID_PIPELINE =
   'preamble:\n' +
