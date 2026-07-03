@@ -353,7 +353,7 @@ class SingleAnnotation(AsyncAnnotationBaseView):
             agg_instance.preserves_domain(
                 value_type=attribute_info.spec.value_type,
             )
-            if agg_instance is not None else None
+            if agg_instance is not None else True
         )
         aggregator = attribute_info.aggregator
         return {
