@@ -1,3 +1,4 @@
+# pylint: disable=unused-import
 """Drop-in replacement for stdlib logging with GAIn's custom levels.
 
 Import this instead of stdlib logging to guarantee TRACE and USER_INFO
