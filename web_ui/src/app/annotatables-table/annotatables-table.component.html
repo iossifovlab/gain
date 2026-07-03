@@ -4,7 +4,7 @@
   <div id="grid-container">
     <div class="grid-header">Annotatables</div>
     <div class="grid-header">Actions</div>
-    @for (annotatable of annotatables; track annotatable) {
+    @for (annotatable of annotatables; track annotatable.id) {
     <div class="grid-cell annotatable-cell" [class.editing]="editingId === annotatable.id">
       @if (editingId === annotatable.id) {
       <input
