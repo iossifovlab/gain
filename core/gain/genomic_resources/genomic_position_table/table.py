@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import abc
-import logging
 from collections.abc import Generator
 from functools import cache
 from types import TracebackType
@@ -9,6 +8,7 @@ from typing import cast
 
 from box import Box
 
+from gain import logging
 from gain.genomic_resources.repository import GenomicResource
 
 from .line import Key, Line, LineBase

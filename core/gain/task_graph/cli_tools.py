@@ -1,5 +1,4 @@
 import argparse
-import logging
 import sys
 import textwrap
 import traceback
@@ -8,6 +7,7 @@ from typing import Any
 
 import yaml
 
+from gain import logging
 from gain.task_graph.cache import CacheRecordType, NoTaskCache, TaskCache
 from gain.task_graph.executor import (
     TaskGraphExecutor,

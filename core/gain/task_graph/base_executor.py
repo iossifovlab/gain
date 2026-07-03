@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import multiprocessing as mp
 import os
 import pickle  # noqa: S403
@@ -14,6 +13,7 @@ import fsspec
 import networkx
 import psutil
 
+from gain import logging
 from gain.task_graph.cache import (
     CacheRecord,
     CacheRecordType,

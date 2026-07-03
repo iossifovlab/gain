@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import fnmatch
 import json
-import logging
 import textwrap
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
@@ -13,6 +12,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 import yaml
 from lark import Lark, Token, Tree
 
+from gain import logging
 from gain.genomic_resources.aggregators import (
     Aggregator,
     AggregatorDefinition,

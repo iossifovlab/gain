@@ -1,6 +1,5 @@
 # pylint: disable=too-many-lines
 """View classes for web annotation."""
-import logging
 import pathlib
 from importlib.metadata import version
 from typing import ClassVar, cast
@@ -20,6 +19,7 @@ from django.http.response import (
 )
 from django.shortcuts import render
 from django.utils import timezone
+from gain import logging
 from rest_framework import generics, permissions, views
 from rest_framework.parsers import JSONParser
 from rest_framework.request import QueryDict, Request

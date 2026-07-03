@@ -4,7 +4,6 @@ from __future__ import annotations
 import abc
 import copy
 import enum
-import logging
 import warnings
 from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass
@@ -17,6 +16,7 @@ from typing import (
 )
 from urllib.parse import quote
 
+from gain import logging
 from gain.genomic_resources.genomic_position_table import (
     Line,
     VCFGenomicPositionTable,

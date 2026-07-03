@@ -1,8 +1,8 @@
-import logging
 import os
 
 import pysam
 
+from gain import logging
 from gain.genomic_resources.repository import GenomicResource
 
 from .table import GenomicPositionTable

@@ -1,6 +1,7 @@
 """Provides common configuration for loggers verbosity."""
 import argparse
-import logging
+
+from gain import logging
 
 
 class VerbosityConfiguration:

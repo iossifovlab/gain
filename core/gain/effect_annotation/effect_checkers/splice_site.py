@@ -1,4 +1,4 @@
-import logging
+from gain import logging
 
 from ..effect import EffectFactory
 from .effect_checker import AnnotationEffect, AnnotationRequest, EffectChecker
@@ -27,7 +27,7 @@ class SpliceSiteEffectChecker(EffectChecker):
                 prev = j.stop
                 continue
 
-            logger.debug(
+            logger.trace(  # type: ignore[attr-defined]
                 "pos: %d-%d checking intronic region %d-%d %d",
                 request.variant.position,
                 last_position,

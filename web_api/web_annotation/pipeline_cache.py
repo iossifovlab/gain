@@ -1,6 +1,5 @@
 """Module for thread-safe annotation utilities."""
 import asyncio
-import logging
 import os
 import threading
 import time
@@ -11,6 +10,7 @@ from threading import Lock, RLock
 from types import TracebackType
 from typing import Any, TypeVar
 
+from gain import logging
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
     AnnotationPreamble,

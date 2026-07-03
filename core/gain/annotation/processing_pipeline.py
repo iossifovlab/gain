@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import abc
 import itertools
-import logging
 import traceback
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
@@ -10,6 +9,7 @@ from dataclasses import dataclass, field
 from types import TracebackType
 from typing import Any
 
+from gain import logging
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,

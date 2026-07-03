@@ -33,11 +33,11 @@ gain.genomic_resources.genomic_context
 from __future__ import annotations
 
 import argparse
-import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from typing import Any
 
+from gain import logging
 from gain.genomic_resources.gene_models import (
     GeneModels,
 )

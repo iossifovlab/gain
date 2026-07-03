@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import abc
 import itertools
-import logging
 import sys
 import traceback
 from collections.abc import Callable, Iterable, Sequence
@@ -12,6 +11,7 @@ from dataclasses import dataclass, field
 from types import TracebackType
 from typing import IO, Any
 
+from gain import logging
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
     AnnotationPreamble,

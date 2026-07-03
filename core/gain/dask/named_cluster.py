@@ -1,5 +1,4 @@
 import copy
-import logging
 import os
 from collections.abc import Callable
 from typing import Any, cast
@@ -7,6 +6,8 @@ from typing import Any, cast
 import dask.config
 from distributed.client import Client
 from distributed.deploy import Cluster  # pyright: ignore
+
+from gain import logging
 
 _CLUSTER_TYPES: dict[str, Callable[[dict[str, Any]], Cluster]] = {}
 logger = logging.getLogger(__name__)

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-import logging
 import math
 from typing import Any, ClassVar
 
+from gain import logging
 from gain.gene_scores.gene_scores import (
     GeneScore,
     build_gene_score_from_resource,

@@ -1,8 +1,9 @@
 # pylint: disable=W0603
-import logging
 from contextlib import AbstractContextManager
 from types import TracebackType
 from typing import Generic, Protocol, TypeVar
+
+from gain import logging
 
 logger = logging.getLogger(__name__)
 

@@ -3,12 +3,12 @@ from __future__ import annotations
 import copy
 import itertools
 import json
-import logging
 import os
 from typing import Any, ClassVar
 
 import yaml
 
+from gain import logging
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,

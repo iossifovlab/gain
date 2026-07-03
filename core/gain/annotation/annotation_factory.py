@@ -1,12 +1,12 @@
 """Factory for creation of annotation pipeline."""
 
-import logging
 from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 
 import yaml
 
+from gain import logging
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotationConfigurationError,

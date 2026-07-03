@@ -1,6 +1,5 @@
 """Module containing base view for annotation work."""
 import gzip
-import logging
 from functools import partial
 from pathlib import Path
 from typing import Any, ClassVar, cast
@@ -12,6 +11,7 @@ from channels.layers import get_channel_layer
 from django.conf import settings
 from django.core.files.uploadedfile import UploadedFile
 from django.http import QueryDict
+from gain import logging
 from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.genomic_resources.implementations.annotation_pipeline_impl import (

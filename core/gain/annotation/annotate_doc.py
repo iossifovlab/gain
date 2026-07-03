@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import argparse
-import logging
 import os
 import sys
 from pathlib import Path
 
 from markdown2 import markdown
 
+from gain import logging
 from gain.annotation.annotation_genomic_context_cli import (
     get_context_pipeline,
 )

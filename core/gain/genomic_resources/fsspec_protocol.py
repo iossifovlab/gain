@@ -7,7 +7,6 @@ import datetime
 import gzip
 import hashlib
 import json
-import logging
 import operator
 import os
 import pathlib
@@ -36,6 +35,7 @@ import yaml
 from filelock import FileLock
 from markdown2 import markdown
 
+from gain import logging
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,

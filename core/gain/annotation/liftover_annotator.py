@@ -1,9 +1,9 @@
 """Provides a lift over annotator and helpers."""
 import abc
-import logging
 import textwrap
 from typing import Any, Protocol
 
+from gain import logging
 from gain.annotation.annotation_config import AnnotatorInfo
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,

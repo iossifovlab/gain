@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import gc
 import json
-import logging
 from typing import Any, ClassVar, cast
 
 import numpy as np
 
+from gain import logging
 from gain.genomic_resources.genomic_position_table import (
     TabixGenomicPositionTable,
 )

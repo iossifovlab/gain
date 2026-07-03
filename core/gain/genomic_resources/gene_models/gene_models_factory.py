@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import logging
 from threading import Lock
 from typing import TYPE_CHECKING, Any
+
+from gain import logging
 
 if TYPE_CHECKING:
     from gain.genomic_resources.gene_models.gene_models import GeneModels

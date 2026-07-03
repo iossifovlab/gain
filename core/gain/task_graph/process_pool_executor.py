@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import os
 import time
 from collections import deque
@@ -14,6 +13,7 @@ from typing import Any
 
 import psutil
 
+from gain import logging
 from gain.task_graph.base_executor import TaskGraphExecutorBase
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph
 from gain.task_graph.logging import (

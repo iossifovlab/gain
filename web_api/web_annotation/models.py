@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import logging
 import os
 import pathlib
 import time
@@ -16,6 +15,7 @@ from django.conf import settings
 from django.contrib.auth.models import AbstractUser, AnonymousUser
 from django.db import connection, models
 from django.utils import timezone
+from gain import logging
 
 from web_annotation.mail import send_email
 

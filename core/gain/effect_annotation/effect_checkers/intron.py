@@ -1,4 +1,4 @@
-import logging
+from gain import logging
 
 from ..effect import EffectFactory
 from .effect_checker import AnnotationEffect, AnnotationRequest, EffectChecker
@@ -26,7 +26,7 @@ class IntronicEffectChecker(EffectChecker):
 
         intron_regions_before_coding = 0
         for exon in request.transcript_model.exons:
-            logger.debug(
+            logger.trace(  # type: ignore[attr-defined]
                 "reg %d-%d cds:%d",
                 exon.start,
                 exon.stop,
@@ -37,7 +37,7 @@ class IntronicEffectChecker(EffectChecker):
             intron_regions_before_coding += 1
 
         for i, j in enumerate(coding_regions):
-            logger.debug(
+            logger.trace(  # type: ignore[attr-defined]
                 "pos: %d-%d checking intronic region %d-%d",
                 request.variant.position,
                 last_position,

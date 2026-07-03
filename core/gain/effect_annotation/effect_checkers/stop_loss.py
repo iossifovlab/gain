@@ -1,4 +1,4 @@
-import logging
+from gain import logging
 
 from ..effect import EffectFactory
 from .effect_checker import AnnotationEffect, AnnotationRequest, EffectChecker
@@ -17,7 +17,7 @@ class StopLossEffectChecker(EffectChecker):
             request.variant.reference,
         )
 
-        logger.debug(
+        logger.trace(  # type: ignore[attr-defined]
             "position check %d <= %d-%d <= %d",
             request.transcript_model.cds[1] - 2,
             request.variant.position,
@@ -33,7 +33,7 @@ class StopLossEffectChecker(EffectChecker):
                         alt_aa[ref_aa.index("End")] == "End":
                     return None
 
-                logger.debug("ref aa=%s, alt aa=%s", ref_aa, alt_aa)
+                logger.trace("ref aa=%s, alt aa=%s", ref_aa, alt_aa)  # type: ignore[attr-defined]
 
             except IndexError:
                 pass

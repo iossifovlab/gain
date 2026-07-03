@@ -1,5 +1,4 @@
 """Views for pipeline creation and manipulation."""
-import logging
 from pathlib import Path
 from typing import ClassVar
 
@@ -8,6 +7,7 @@ from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.core.files.uploadedfile import UploadedFile
 from django.http import HttpResponse, QueryDict
+from gain import logging
 from gain.annotation.annotation_config import AnnotationConfigParser
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.genomic_scores import GenomicScore

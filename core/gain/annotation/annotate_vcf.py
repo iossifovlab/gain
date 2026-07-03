@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import gc
 import itertools
-import logging
 import os
 import sys
 import traceback
@@ -23,7 +22,7 @@ from pysam import (
     tabix_index,
 )
 
-from gain import __version__
+from gain import __version__, logging
 from gain.annotation.annotatable import VCFAllele
 from gain.annotation.annotate_utils import (
     add_common_annotation_arguments,

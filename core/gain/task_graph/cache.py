@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime
-import logging
 import os
 import pickle  # noqa: S403
 from abc import abstractmethod
@@ -11,6 +10,7 @@ from typing import Any, cast
 
 import fsspec
 
+from gain import logging
 from gain.task_graph.graph import Task, TaskDesc
 from gain.utils import fs_utils
 

@@ -1,13 +1,14 @@
 import copy
 import glob
 import gzip
-import logging
 import os
 import pathlib
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import IO, Any, cast
+
+from gain import logging
 
 logger = logging.getLogger(__name__)
 

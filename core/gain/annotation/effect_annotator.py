@@ -1,7 +1,7 @@
-import logging
 import textwrap
 from typing import Any
 
+from gain import logging
 from gain.annotation.annotatable import Annotatable, CNVAllele, VCFAllele
 from gain.annotation.annotation_config import (
     AnnotatorInfo,

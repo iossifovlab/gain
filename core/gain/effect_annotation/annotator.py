@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import logging
-
+from gain import logging
 from gain.annotation.annotatable import Annotatable
 from gain.genomic_resources.gene_models import (
     GeneModels,

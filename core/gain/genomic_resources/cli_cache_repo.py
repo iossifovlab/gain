@@ -20,10 +20,10 @@ used. When neither is supplied (positional omitted / left at its
 a warning and exits cleanly without caching anything.
 """
 import argparse
-import logging
 import sys
 import time
 
+from gain import logging
 from gain.annotation.annotate_utils import (
     build_cli_genomic_context,
     cache_pipeline_resources,

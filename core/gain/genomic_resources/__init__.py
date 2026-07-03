@@ -1,6 +1,7 @@
-import logging
 from collections.abc import Callable
 from importlib.metadata import EntryPoint, entry_points
+
+from gain import logging
 
 from .repository import GenomicResource
 from .resource_implementation import GenomicResourceImplementation
