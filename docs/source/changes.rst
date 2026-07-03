@@ -1,6 +1,73 @@
 Release Notes
 =============
 
+* 2026.7.0
+    * Untyped genomic resources now resolve to a dedicated ``basic``
+      resource type with its own implementation (#185). A resource whose
+      config carries no ``type`` previously had no implementation at all;
+      it now renders a minimal info page and, crucially, exposes every
+      data file through the implementation's ``files`` set so repository
+      caching again covers the whole resource (gain#78).
+      ``GenomicResource.get_type`` returns the lower-case ``basic`` (was
+      ``Basic``) so the entry-point lookup resolves.
+    * The GRR resource file scan now honors ``.gitignore`` files. When a
+      repository directory contains a ``.gitignore``, its patterns are
+      applied — accumulated across nested directories, each matched
+      relative to its own ``.gitignore`` root — so ignored files are
+      excluded from the resource manifest and from caching. ``pathspec``
+      is now a runtime dependency of ``gain-core`` (added to both the
+      pyproject and the conda recipe, #184).
+    * Score aggregators now declare whether they preserve the source
+      value domain. A new ``Aggregator.preserves_domain(value_type=…)``
+      returns ``True`` for ``min``/``max``/``mean``/``median``/``mode``
+      (whose aggregated result stays within the range of the input
+      values) and ``False`` otherwise. The editor's aggregator-list
+      endpoint and the single-allele annotation response now carry this
+      flag per attribute.
+    * Web UI: the single-annotation report now hides the score histogram
+      for an attribute whose chosen aggregator does not preserve the
+      score domain, since the resource's own histogram no longer
+      describes the aggregated value.
+    * Fixed the annotation-pipeline editor still getting stuck on
+      "loading" after a WebSocket reconnect in a case the 2026.6.9 fix
+      (#160) missed. The front end shares one rxjs ``webSocket()`` subject
+      across the ``job_status`` and ``pipeline_status`` streams, so the
+      backend's connect-time re-sync ``loaded`` frame could be multicast
+      to — and discarded by — the ``job_status`` filter, leaving the
+      editor's stream attached to an already-open socket that never
+      re-connects. The editor already issues a blocking
+      ``GET /api/editor/pipeline_status``; a successful (200) response
+      means the GRR build finished, so it is now treated as the
+      authoritative ``loaded`` signal and the editor converges regardless
+      of WebSocket attach order or churn.
+    * Fixed a flaky ``FileExistsError`` when creating the task-graph log
+      directory under concurrency (#186). ``ensure_log_dir`` did a
+      check-then-create with an ineffective ``exists_ok`` kwarg (fsspec's
+      ``mkdir`` ignores it); under pytest-xdist all workers share a
+      cwd-relative ``.task-log`` and raced the creation window. It now
+      uses the atomic, idempotent ``makedirs(exist_ok=True)``.
+    * Added two custom logging levels, ``TRACE`` and ``USER_INFO``, and
+      the matching ``logger.trace()`` / ``logger.user_info()`` helper
+      methods, installed when the ``gain`` package is imported.
+      ``USER_INFO`` (25, between INFO and WARNING) is for messages aimed
+      at end users; ``TRACE`` is for fine-grained diagnostic output.
+    * Fixed generated pipeline documentation leaving a resource or
+      histogram link unset when the resource is referenced from outside
+      the managed GRR: it now falls back to the resource's public URL
+      (``get_public_url`` / ``get_histogram_image_public_url``).
+    * Enlarged the axis and note-label font on generated score-histogram
+      images to a shared ``HISTOGRAM_LABELS_FONT_SIZE`` constant, and
+      applied it to the categorical histogram's bar labels too.
+    * Web UI: fixed several annotation-pipeline editor and new-annotator
+      dialog layout issues — the aggregators table now hugs its rows
+      while keeping the footer visible, scrollable tables render their
+      rounded corners correctly, and assorted editor styling was cleaned
+      up.
+    * Corrected the "creating an annotator plugin" documentation example:
+      the sample rule read ``clinical_significance`` with ``.lower()``
+      where ``.strip()`` was intended, and its inline literals are now
+      formatted as RST code.
+
 * 2026.6.10
     * Reading a VCF score resource's header no longer logs a spurious
       htslib ``[E::idx_find_and_load] Could not retrieve index file``
