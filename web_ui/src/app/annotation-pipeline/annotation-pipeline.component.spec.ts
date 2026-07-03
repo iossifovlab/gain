@@ -222,15 +222,66 @@ describe('AnnotationPipelineComponent', () => {
   });
 
   it('should set temporary pipeline id on notification arrival if id is not set', () => {
-    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications').mockReturnValueOnce(
-      of(new PipelineNotification('215', 'loading'))
-    );
+    const notifications = new Subject<PipelineNotification>();
+    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
+      .mockReturnValue(notifications.asObservable());
     component.currentTemporaryPipelineId = '';
     component.currentTemporaryPipelineStatus = null;
     component.ngOnInit();
+
+    // The user has unsaved edits (an autoSave is in flight, so the client is
+    // awaiting a temp id) -- a WS frame for an unknown pipeline is adopted.
+    component.currentPipelineText = 'edited config';
+    notifications.next(new PipelineNotification('215', 'loading'));
+
     expect(component.currentTemporaryPipelineId).toBe('215');
     expect(component.currentTemporaryPipelineStatus).toBe('loading');
     expect(pipelineStateService.currentTemporaryPipelineId()).toBe('215');
+  });
+
+  it('ignores an unknown-pipeline resync frame when there are no unsaved edits (post-refresh)', () => {
+    // On (re)connect the backend resyncs the session's temporary pipeline
+    // status. After a refresh the editor shows the default pipeline unchanged,
+    // so that frame must not resurrect the stale temp id and hijack queries.
+    const notifications = new Subject<PipelineNotification>();
+    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
+      .mockReturnValue(notifications.asObservable());
+    component.ngOnInit();
+
+    // ngOnInit loaded the default pipeline; currentPipelineText matches it, so
+    // isPipelineChanged() is false.
+    notifications.next(new PipelineNotification('215', 'loading'));
+
+    expect(component.currentTemporaryPipelineId).toBe('');
+    expect(pipelineStateService.currentTemporaryPipelineId()).toBe('');
+  });
+
+  it('ignores a resync frame that arrives before pipelines finish loading (refresh race)', () => {
+    // On refresh the backend resync frame can beat the getPipelines response.
+    // In that window pipelinesLoaded is false, no pipeline is selected and the
+    // editor is empty -- where isPipelineChanged() is spuriously true. The stale
+    // temp id must NOT be adopted, otherwise the status bar fires a second
+    // getPipelineInfo request for the temp pipeline that overrides the default.
+    const pipelines = new Subject<Pipeline[]>();
+    // mockReturnValueOnce so the never-emitting fetch doesn't leak to later
+    // tests (beforeEach only clears mock calls, not implementations).
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines').mockReturnValueOnce(pipelines.asObservable());
+    const notifications = new Subject<PipelineNotification>();
+    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
+      .mockReturnValueOnce(notifications.asObservable());
+    // Force the async fetch path (empty cache) so getPipelines stays pending.
+    pipelineStateService.pipelines.set([]);
+
+    component.ngOnInit();
+    // Reproduce the fresh-load window: nothing selected, editor empty, no temp.
+    component.selectedPipeline = null;
+    component.currentPipelineText = '';
+    component.currentTemporaryPipelineId = '';
+    notifications.next(new PipelineNotification('215', 'loading'));
+
+    expect(component.pipelinesLoaded).toBe(false);
+    expect(component.currentTemporaryPipelineId).toBe('');
+    expect(pipelineStateService.currentTemporaryPipelineId()).toBe('');
   });
 
   it('should update the tracked temporary pipeline when a follow-up notification arrives', () => {
@@ -238,6 +289,7 @@ describe('AnnotationPipelineComponent', () => {
     jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
       .mockReturnValue(notifications.asObservable());
     component.ngOnInit();
+    component.currentPipelineText = 'edited config';
 
     // The first notification adopts '215' as the temporary pipeline being built.
     notifications.next(new PipelineNotification('215', 'loading'));
@@ -977,45 +1029,62 @@ describe('AnnotationPipelineComponent', () => {
   });
 
   it('should update temporary pipeline status in state when notification matches current temporary pipeline', () => {
-    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications').mockReturnValueOnce(
-      of(new PipelineNotification('215', 'loaded'))
-    );
-    component.currentTemporaryPipelineId = '215';
+    const notifications = new Subject<PipelineNotification>();
+    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
+      .mockReturnValue(notifications.asObservable());
     component.ngOnInit();
+
+    // The client is already tracking temp '215'; a matching frame updates it.
+    component.currentTemporaryPipelineId = '215';
+    notifications.next(new PipelineNotification('215', 'loaded'));
+
     expect(component.currentTemporaryPipelineStatus).toBe('loaded');
     expect(pipelineStateService.currentTemporaryPipelineStatus()).toBe('loaded');
   });
 
   it('should also update temporary pipeline status in state when new id arrives from notification', () => {
-    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications').mockReturnValueOnce(
-      of(new PipelineNotification('215', 'loading'))
-    );
+    const notifications = new Subject<PipelineNotification>();
+    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
+      .mockReturnValue(notifications.asObservable());
     component.currentTemporaryPipelineId = '';
     component.ngOnInit();
+
+    component.currentPipelineText = 'edited config';
+    notifications.next(new PipelineNotification('215', 'loading'));
+
     expect(pipelineStateService.currentTemporaryPipelineStatus()).toBe('loading');
   });
 
   it('should surface the reason as loadError for a failed temporary pipeline', () => {
-    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications').mockReturnValueOnce(
-      of(new PipelineNotification('215', 'failed', 'Invalid configuration, reason: boom'))
-    );
-    component.currentTemporaryPipelineId = '215';
+    const notifications = new Subject<PipelineNotification>();
+    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
+      .mockReturnValue(notifications.asObservable());
     component.ngOnInit();
-    // New-pipeline editing flow: no saved pipeline selected, only the temp one.
+
+    // New-pipeline editing flow: no saved pipeline selected, only the temp one
+    // being built from the user's unsaved edits.
     component.selectedPipeline = null;
+    component.currentPipelineText = 'edited config';
+    notifications.next(new PipelineNotification('215', 'failed', 'Invalid configuration, reason: boom'));
+
     expect(component.currentTemporaryPipelineStatus).toBe('failed');
     expect(component.loadError).toBe('Invalid configuration, reason: boom');
   });
 
   it('should clear loadError when a temporary pipeline recovers', () => {
+    const notifications = new Subject<PipelineNotification>();
+    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
+      .mockReturnValue(notifications.asObservable());
+    component.ngOnInit();
+
+    // A tracked temp failed, then a matching frame reports it recovered.
+    component.selectedPipeline = null;
     component.currentTemporaryPipelineId = '215';
-    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications').mockReturnValue(
-      of(new PipelineNotification('215', 'loaded'))
-    );
     component.currentTemporaryPipelineStatus = 'failed';
     component.currentTemporaryPipelineError = 'Invalid configuration, reason: boom';
-    component.ngOnInit();
-    component.selectedPipeline = null;
+    notifications.next(new PipelineNotification('215', 'loaded'));
+
+    expect(component.currentTemporaryPipelineStatus).toBe('loaded');
     expect(component.loadError).toBe('');
   });
 

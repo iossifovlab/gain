@@ -8,6 +8,21 @@ const VALID_PIPELINE =
   '- allele_score:\n' +
   '    resource_id: hg38/scores/CADD_v1.7\n';
 
+async function readEditorContent(page: Page): Promise<string> {
+  // window.monaco is only assigned once the editor has loaded, which can lag
+  // behind the .loaded-editor class right after login and after a reload.
+  /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access,
+                    @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
+  await page.waitForFunction(
+    () => Boolean((window as any).monaco?.editor?.getModels?.()?.[0]?.getValue?.().length),
+    undefined,
+    { timeout: 120000 },
+  );
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+  return page.evaluate(() => (window as any).monaco.editor.getModels()[0].getValue());
+  /* eslint-enable */
+}
+
 async function goToAnnotationJobs(page: Page): Promise<void> {
   await page.getByRole('link', { name: 'Annotation Jobs' }).click();
   await page.waitForSelector('app-annotation-jobs-wrapper', { timeout: 30000 });
@@ -209,6 +224,61 @@ test.describe('Annotation pipeline state persistence across navigation', () => {
 
     await goToAnnotationJobs(page);
     await expect(page.locator('app-jobs-table')).toBeVisible();
+  });
+});
+
+test.describe('Annotation pipeline state on browser refresh', () => {
+  test.beforeEach(async({ page }) => {
+    await page.goto('/', { waitUntil: 'load' });
+    const email = utils.getRandomString() + '@email.com';
+    const password = 'aaabbb';
+    await utils.registerUser(page, email, password);
+    await utils.loginUser(page, email, password);
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  });
+
+  test('reloads the default pipeline name and content, not the unsaved temporary one', async({ page }) => {
+    // Capture the default pipeline the app loads on start.
+    const defaultName = await page.locator('#pipelines-input').inputValue();
+    expect(defaultName).not.toBe('');
+    const defaultContent = await readEditorContent(page);
+
+    // Create an unsaved temporary pipeline (dropdown empties; editor shows the temp).
+    await createTempPipeline(page);
+    await expect(page.locator('#pipelines-input')).toBeEmpty();
+    expect(await readEditorContent(page)).toContain('hg38/scores/CADD_v1.7');
+
+    // Refresh the browser. The state signals are wiped; the backend still holds
+    // the session temp pipeline and resyncs its status over the socket on
+    // reconnect, but the editor must reselect and load the default pipeline.
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+
+    await expect(page.locator('#pipelines-input')).toHaveValue(defaultName);
+    // Editor shows the default content again, not the temporary pipeline's.
+    expect(await readEditorContent(page)).toBe(defaultContent);
+  });
+
+  test('drives the status bar from the default pipeline, not the temporary one', async({ page }) => {
+    const defaultName = await page.locator('#pipelines-input').inputValue();
+    // Wait for the default pipeline info to populate the status bar, then capture it.
+    await expect(page.locator('#status-bar .status-item').nth(0)).not.toHaveText('menu0 annotators');
+    const defaultAnnotators = await page.locator('#status-bar .status-item').nth(0).textContent() ?? '';
+    const defaultAttributes = await page.locator('#status-bar .status-item').nth(1).textContent() ?? '';
+
+    // Create an unsaved temporary pipeline whose status bar shows a single annotator.
+    await createTempPipeline(page);
+    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu1 annotators');
+
+    // Refresh: the status bar must reflect the reloaded default pipeline, not the
+    // stale temp resynced over the socket. That resync previously fired a second
+    // pipeline_status request for the temp that overrode the default's counts.
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+
+    await expect(page.locator('#pipelines-input')).toHaveValue(defaultName);
+    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText(defaultAnnotators);
+    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText(defaultAttributes);
   });
 });
 

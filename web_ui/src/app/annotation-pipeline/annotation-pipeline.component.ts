@@ -180,7 +180,24 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
           this.pipelineStateService.currentTemporaryPipelineStatus.set(notification.status);
           return;
         }
-        if (!this.currentTemporaryPipelineId && !this.pipelines.find(p => p.id === notification.pipelineId)) {
+        // Adopt an unknown pipelineId as the temporary pipeline only while the
+        // user is actively editing a loaded pipeline (unsaved changes) and thus
+        // awaiting a temp id from an in-flight autoSave whose POST may not have
+        // returned yet. On (re)connect the backend resyncs the session's
+        // temporary pipeline status (consumers.py _resync_pipeline_status, added
+        // for #160). On a page refresh that frame can arrive BEFORE getPipelines
+        // resolves -- while selectedPipeline is null and currentPipelineText is
+        // '' -- where isPipelineChanged() is spuriously true (undefined !== '').
+        // Gating on pipelinesLoaded (the same precondition isConfigValid uses)
+        // ignores the resync frame during that initial-load window, so the stale
+        // temp id is not resurrected and does not hijack the status-bar query
+        // (getPipelineInfo uses currentTemporaryPipelineId() || selectedPipelineId()).
+        if (
+          !this.currentTemporaryPipelineId &&
+          this.pipelinesLoaded &&
+          this.isPipelineChanged() &&
+          !this.pipelines.find(p => p.id === notification.pipelineId)
+        ) {
           this.currentTemporaryPipelineId = notification.pipelineId;
           this.currentTemporaryPipelineStatus = notification.status;
           this.currentTemporaryPipelineError = notification.error;
