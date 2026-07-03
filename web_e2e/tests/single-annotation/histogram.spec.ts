@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { PipelineEditor } from '../../pages/pipeline-editor.page';
 import * as utils from '../../utils';
 import { customDefaultPipeline, caddListPipeline, clinvarListPipeline } from './helpers';
 
@@ -9,7 +10,7 @@ test.describe('Histogram visibility and red markers', () => {
     const password = 'aaabbb';
     await utils.registerUser(page, email, password);
     await utils.loginUser(page, email, password);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
   });
 
   test('domain-preserving value shows the histogram with one red marker and percentage', async({ page }) => {

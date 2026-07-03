@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { PipelineEditor } from '../../pages/pipeline-editor.page';
 import { scanCSV } from 'nodejs-polars';
 import * as utils from '../../utils';
 import { customDefaultPipeline } from './helpers';
@@ -10,7 +11,7 @@ test.describe('Single annotation report tests', () => {
     const password = 'aaabbb';
     await utils.registerUser(page, email, password);
     await utils.loginUser(page, email, password);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
     await customDefaultPipeline(page);
     await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
     await page.getByRole('button', { name: 'Go', exact: true }).click();
@@ -57,7 +58,7 @@ test.describe('Single annotation report tests', () => {
     await page.locator('#pipelines-input').click();
     await page.getByRole('button', { name: 'Continue' }).click();
     await page.locator('mat-option').getByText('pipeline/T2T_clinical_annotation').click();
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
     await page.getByRole('button', { name: 'Go', exact: true }).click();

@@ -1,5 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 import * as utils from '../../utils';
+import { PipelineEditor } from '../../pages/pipeline-editor.page';
 
 test.describe('Pipeline confirmation popup tests', () => {
   test.beforeEach(async({ page }) => {
@@ -11,7 +12,7 @@ test.describe('Pipeline confirmation popup tests', () => {
 
     await utils.loginUser(page, email, password);
     // wait for default pipeline to load
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
   });
 
   const pipelineContent =
@@ -22,7 +23,8 @@ test.describe('Pipeline confirmation popup tests', () => {
     '    resource_id: hg38/scores/CADD_v1.7\n';
 
   async function setupTempPipeline(page: Page): Promise<void> {
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+    const editor = new PipelineEditor(page);
+    await editor.newPipeline();
     const saveResponse = page.waitForResponse(
       resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
     );
@@ -31,41 +33,44 @@ test.describe('Pipeline confirmation popup tests', () => {
   }
 
   test('should show confirmation popup when selecting a pipeline with unsaved temp changes', async({ page }) => {
+    const editor = new PipelineEditor(page);
     await setupTempPipeline(page);
 
-    await page.locator('.dropdown-icon').click();
+    await editor.dropdownIcon.click();
 
-    await expect(page.locator('#change-confirmation-popover')).toBeVisible();
-    await expect(page.locator('#change-confirmation-popover p')).toHaveText(
+    await expect(editor.changeConfirmPopover).toBeVisible();
+    await expect(editor.changeConfirmPopover.locator('p')).toHaveText(
       'Are you sure? You are going to lose your changes.'
     );
-    await expect(page.locator('#confirm-change')).toBeVisible();
-    await expect(page.locator('#cancel-change')).toBeVisible();
+    await expect(editor.confirmChangeButton).toBeVisible();
+    await expect(editor.cancelChangeButton).toBeVisible();
   });
 
   test('should open pipeline dropdown after confirming pipeline selection', async({ page }) => {
+    const editor = new PipelineEditor(page);
     await setupTempPipeline(page);
 
-    await page.locator('.dropdown-icon').click();
-    await expect(page.locator('#change-confirmation-popover')).toBeVisible();
+    await editor.dropdownIcon.click();
+    await expect(editor.changeConfirmPopover).toBeVisible();
 
-    await page.locator('#confirm-change').click();
+    await editor.confirmChangeButton.click();
 
-    await expect(page.locator('#change-confirmation-popover')).not.toBeVisible();
-    await expect(page.locator('#pipelines-input')).toBeEmpty();
+    await expect(editor.changeConfirmPopover).not.toBeVisible();
+    await expect(editor.pipelineInput).toBeEmpty();
     await expect(page.locator('mat-option').first()).toBeVisible();
   });
 
   test('should keep unsaved changes after cancelling pipeline selection', async({ page }) => {
+    const editor = new PipelineEditor(page);
     await setupTempPipeline(page);
 
-    await page.locator('.dropdown-icon').click();
-    await expect(page.locator('#change-confirmation-popover')).toBeVisible();
+    await editor.dropdownIcon.click();
+    await expect(editor.changeConfirmPopover).toBeVisible();
 
-    await page.locator('#cancel-change').click();
+    await editor.cancelChangeButton.click();
 
-    await expect(page.locator('#change-confirmation-popover')).not.toBeVisible();
-    await expect(page.locator('.monaco-editor').nth(0)).toHaveText(
+    await expect(editor.changeConfirmPopover).not.toBeVisible();
+    await expect(editor.monacoEditor.nth(0)).toHaveText(
       'preamble:' +
       ' input_reference_genome: hg38/genomes/GRCh38-hg38' +
       'annotators:' +
@@ -74,46 +79,50 @@ test.describe('Pipeline confirmation popup tests', () => {
   });
 
   test('should show confirmation popup when clicking "New pipeline" with unsaved temp changes', async({ page }) => {
+    const editor = new PipelineEditor(page);
     await setupTempPipeline(page);
 
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+    await editor.newPipeline();
 
-    await expect(page.locator('#create-confirmation-popover')).toBeVisible();
-    await expect(page.locator('#create-confirmation-popover p')).toHaveText(
+    await expect(editor.createConfirmPopover).toBeVisible();
+    await expect(editor.createConfirmPopover.locator('p')).toHaveText(
       'Are you sure? You are going to lose your changes.'
     );
-    await expect(page.locator('#confirm-change')).toBeVisible();
-    await expect(page.locator('#cancel-change')).toBeVisible();
+    await expect(editor.confirmChangeButton).toBeVisible();
+    await expect(editor.cancelChangeButton).toBeVisible();
   });
 
   test('should clear pipeline after confirming new pipeline creation', async({ page }) => {
+    const editor = new PipelineEditor(page);
     await setupTempPipeline(page);
 
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
-    await expect(page.locator('#create-confirmation-popover')).toBeVisible();
+    await editor.newPipeline();
+    await expect(editor.createConfirmPopover).toBeVisible();
 
-    await page.locator('#confirm-change').click();
+    await editor.confirmChangeButton.click();
 
-    await expect(page.locator('#create-confirmation-popover')).not.toBeVisible();
-    await expect(page.locator('#pipelines-input')).toBeEmpty();
-    await expect(page.locator('.monaco-editor').nth(0)).toBeEmpty();
+    await expect(editor.createConfirmPopover).not.toBeVisible();
+    await expect(editor.pipelineInput).toBeEmpty();
+    await expect(editor.monacoEditor.nth(0)).toBeEmpty();
   });
 
   test('should keep unsaved changes after cancelling new pipeline creation', async({ page }) => {
+    const editor = new PipelineEditor(page);
     await setupTempPipeline(page);
 
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
-    await expect(page.locator('#create-confirmation-popover')).toBeVisible();
+    await editor.newPipeline();
+    await expect(editor.createConfirmPopover).toBeVisible();
 
-    await page.locator('#cancel-change').click();
+    await editor.cancelChangeButton.click();
 
-    await expect(page.locator('#create-confirmation-popover')).not.toBeVisible();
-    await expect(page.locator('.monaco-editor').nth(0)).not.toBeEmpty();
+    await expect(editor.createConfirmPopover).not.toBeVisible();
+    await expect(editor.monacoEditor.nth(0)).not.toBeEmpty();
   });
 
   test('should show confirmation popup when selecting pipeline with unsaved user pipeline changes', async({ page }) => {
+    const editor = new PipelineEditor(page);
     // create and save a user pipeline first
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+    await editor.newPipeline();
 
     const saveResponse = page.waitForResponse(
       resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
@@ -121,17 +130,12 @@ test.describe('Pipeline confirmation popup tests', () => {
     await utils.typeInPipelineEditor(page, pipelineContent);
     await saveResponse;
 
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-    await page.getByRole('button', { name: 'Save as' }).click();
-    await expect(page.locator('#name-modal')).toBeVisible();
-    await page.locator('#name-modal input').fill('My Pipeline');
+    await PipelineEditor.waitForLoaded(page);
+    await editor.saveAs();
+    await expect(editor.nameModal).toBeVisible();
+    await editor.saveAsName('My Pipeline');
 
-    await Promise.all([
-      page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
-      page.waitForResponse(resp => resp.url().includes('api/pipelines/load')),
-    ]);
-
-    await expect(page.locator('#pipelines-input')).toHaveValue('My Pipeline');
+    await expect(editor.pipelineInput).toHaveValue('My Pipeline');
 
     // modify the saved pipeline to trigger unsaved indicator (*)
     /* eslint-disable */
@@ -145,12 +149,12 @@ test.describe('Pipeline confirmation popup tests', () => {
     });
     /* eslint-enable */
 
-    await expect(page.locator('#pipelines-input')).toHaveValue('My Pipeline *');
+    await expect(editor.pipelineInput).toHaveValue('My Pipeline *');
 
-    await page.locator('.dropdown-icon').click();
+    await editor.dropdownIcon.click();
 
-    await expect(page.locator('#change-confirmation-popover')).toBeVisible();
-    await expect(page.locator('#change-confirmation-popover p')).toHaveText(
+    await expect(editor.changeConfirmPopover).toBeVisible();
+    await expect(editor.changeConfirmPopover.locator('p')).toHaveText(
       'Are you sure? You are going to lose your changes.'
     );
   });

@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import * as utils from '../../utils';
 import { customDefaultPipeline } from './helpers';
+import { PipelineEditor } from '../../pages/pipeline-editor.page';
 
 test.describe('Pipeline tests', () => {
   test.beforeEach(async({ page }) => {
@@ -12,13 +13,14 @@ test.describe('Pipeline tests', () => {
 
     await utils.loginUser(page, email, password);
     // wait for default pipeline to load
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
   });
 
   test('should create new pipeline and save it', async({ page }) => {
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
-    await expect(page.locator('#pipelines-input')).toBeEmpty();
-    await expect(page.locator('.monaco-editor').nth(0)).toBeEmpty();
+    const editor = new PipelineEditor(page);
+    await editor.newPipeline();
+    await expect(editor.pipelineInput).toBeEmpty();
+    await expect(editor.monacoEditor.nth(0)).toBeEmpty();
 
     const saveResponse = page.waitForResponse(
       resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
@@ -35,22 +37,22 @@ test.describe('Pipeline tests', () => {
 
     await saveResponse;
 
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
-    await page.getByRole('button', { name: 'Save as' }).click();
+    await editor.saveAs();
 
-    await expect(page.locator('#name-modal')).toBeVisible();
-    await page.locator('#name-modal input').fill('My Pipeline');
-    await page.locator('#name-modal').getByRole('button', { name: 'Save' }).click();
+    await expect(editor.nameModal).toBeVisible();
+    await editor.saveAsName('My Pipeline');
 
-    await expect(page.locator('#pipelines-input')).toHaveValue('My Pipeline');
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await expect(editor.pipelineInput).toHaveValue('My Pipeline');
+    await PipelineEditor.waitForLoaded(page);
   });
 
 
   test('should create new pipeline and use it without saving it', async({ page }) => {
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline' }).click();
+    const editor = new PipelineEditor(page);
+    await PipelineEditor.waitForLoaded(page);
+    await editor.newPipeline();
 
     const saveResponse = page.waitForResponse(
       resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
@@ -73,12 +75,13 @@ test.describe('Pipeline tests', () => {
 
     await page.locator('#examples-button').click();
     await page.getByRole('menuitem', {name: 'chr1 11796321 G A', exact: true}).click();
-    await expect(page.locator('#pipelines-input')).toBeEmpty();
+    await expect(editor.pipelineInput).toBeEmpty();
     await expect(page.locator('#report')).toBeVisible({timeout: 120000});
   });
 
   test('should not be able to save pipeline if invalid', async({ page }) => {
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+    const editor = new PipelineEditor(page);
+    await editor.newPipeline();
     await utils.typeInPipelineEditor(
       page,
       'preamble:\n' +
@@ -89,11 +92,12 @@ test.describe('Pipeline tests', () => {
     );
     await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
     await expect(page.getByText('Invalid configuration')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Save as' })).toBeDisabled();
+    await expect(editor.saveAsButton).toBeDisabled();
   });
 
   test('should edit public pipeline and annotate with it', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
+    const editor = new PipelineEditor(page);
+    await editor.selectPipeline('pipeline/hg38_clinical_annotation');
     /* eslint-disable */
     await page.evaluate(() => {
       const monaco = (window as any).monaco;
@@ -108,8 +112,8 @@ test.describe('Pipeline tests', () => {
     });
     /* eslint-enable */
 
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-    await expect(page.locator('#pipelines-input')).toBeEmpty();
+    await PipelineEditor.waitForLoaded(page);
+    await expect(editor.pipelineInput).toBeEmpty();
 
     await page.locator('#examples-button').click();
     await page.getByRole('menuitem', {name: 'chr1 11796321 G A', exact: true}).click();
@@ -117,10 +121,11 @@ test.describe('Pipeline tests', () => {
   });
 
   test('should edit user pipeline and save it', async({ page }) => {
+    const editor = new PipelineEditor(page);
     // create pipeline
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
-    await expect(page.locator('#pipelines-input')).toBeEmpty();
-    await expect(page.locator('.monaco-editor').nth(0)).toBeEmpty();
+    await editor.newPipeline();
+    await expect(editor.pipelineInput).toBeEmpty();
+    await expect(editor.monacoEditor.nth(0)).toBeEmpty();
 
     const saveResponse = page.waitForResponse(
       resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
@@ -137,21 +142,14 @@ test.describe('Pipeline tests', () => {
 
     await saveResponse;
 
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
-    await page.getByRole('button', { name: 'Save as' }).click();
+    await editor.saveAs();
 
-    await expect(page.locator('#name-modal')).toBeVisible();
-    await page.locator('#name-modal input').fill('My pipeline');
+    await expect(editor.nameModal).toBeVisible();
+    await editor.saveAsName('My pipeline');
 
-    await Promise.all([
-      page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
-      page.waitForResponse(
-        resp => resp.url().includes('api/pipelines/load') // wait for pipeline to be saved and loaded
-      ),
-    ]);
-
-    await expect(page.locator('#pipelines-input')).toHaveValue('My pipeline');
+    await expect(editor.pipelineInput).toHaveValue('My pipeline');
 
     // edit pipeline
     /* eslint-disable */
@@ -173,16 +171,17 @@ test.describe('Pipeline tests', () => {
     });
     /* eslint-enable */
 
-    await expect(page.locator('#pipelines-input')).toHaveValue('My pipeline *');
-    await page.locator('#save-button').click();
-    await expect(page.locator('#pipelines-input')).toHaveValue('My pipeline');
+    await expect(editor.pipelineInput).toHaveValue('My pipeline *');
+    await editor.save();
+    await expect(editor.pipelineInput).toHaveValue('My pipeline');
   });
 
   test('should delete user pipeline', async({ page }) => {
+    const editor = new PipelineEditor(page);
     // create pipeline
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
-    await expect(page.locator('#pipelines-input')).toBeEmpty();
-    await expect(page.locator('.monaco-editor').nth(0)).toBeEmpty();
+    await editor.newPipeline();
+    await expect(editor.pipelineInput).toBeEmpty();
+    await expect(editor.monacoEditor.nth(0)).toBeEmpty();
 
     const saveResponse = page.waitForResponse(
       resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
@@ -199,24 +198,17 @@ test.describe('Pipeline tests', () => {
 
     await saveResponse;
 
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
-    await page.getByRole('button', { name: 'Save as' }).click();
+    await editor.saveAs();
 
-    await expect(page.locator('#name-modal')).toBeVisible();
-    await page.locator('#name-modal input').fill('My pipeline');
+    await expect(editor.nameModal).toBeVisible();
+    await editor.saveAsName('My pipeline');
 
-    await Promise.all([
-      page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
-      page.waitForResponse(
-        resp => resp.url().includes('api/pipelines/load') // wait for pipeline to be saved and loaded
-      ),
-    ]);
-
-    await page.getByRole('button', { name: 'Delete' }).click();
+    await editor.delete();
 
     await Promise.all([
-      page.locator('#confirm-delete').click(),
+      editor.confirmDeleteButton.click(),
       page.waitForResponse(
         resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
       ),
@@ -224,33 +216,28 @@ test.describe('Pipeline tests', () => {
     // The dropdown reverts to the default only after the (un-awaited) post-action
     // GET /api/pipelines returns; under daphne sync-view serialization that GET can
     // exceed the 5s default window (gain#150), so allow the response budget here.
-    await expect(page.locator('#pipelines-input')).toHaveValue(
+    await expect(editor.pipelineInput).toHaveValue(
       'pipeline/hg38_clinical_annotation', { timeout: 30000 });
   });
 
   test('should make copy of public pipeline by clicking \'save as\'', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
-    await page.getByRole('button', { name: 'Save as' }).click();
+    const editor = new PipelineEditor(page);
+    await editor.selectPipeline('pipeline/hg38_clinical_annotation');
+    await editor.saveAs();
 
-    await expect(page.locator('#name-modal')).toBeVisible();
-    await page.locator('#name-modal input').fill('Public pipeline copy');
+    await expect(editor.nameModal).toBeVisible();
+    await editor.saveAsName('Public pipeline copy');
 
-    await Promise.all([
-      page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
-      page.waitForResponse(
-        resp => resp.url().includes('api/pipelines/load'), {timeout: 30000 } // wait for pipeline to be saved and loaded
-      ),
-    ]);
-
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-    await expect(page.locator('#pipelines-input')).toHaveValue('Public pipeline copy', { timeout: 30000 });
+    await PipelineEditor.waitForLoaded(page);
+    await expect(editor.pipelineInput).toHaveValue('Public pipeline copy', { timeout: 30000 });
   });
 
   test('should make copy of user pipeline by clicking \'save as\'', async({ page }) => {
+    const editor = new PipelineEditor(page);
     // create pipeline
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
-    await expect(page.locator('#pipelines-input')).toBeEmpty();
-    await expect(page.locator('.monaco-editor').nth(0)).toBeEmpty();
+    await editor.newPipeline();
+    await expect(editor.pipelineInput).toBeEmpty();
+    await expect(editor.monacoEditor.nth(0)).toBeEmpty();
 
     const saveResponse = page.waitForResponse(
       resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
@@ -267,51 +254,39 @@ test.describe('Pipeline tests', () => {
 
     await saveResponse;
 
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
-    await page.getByRole('button', { name: 'Save as' }).click();
+    await editor.saveAs();
 
-    await expect(page.locator('#name-modal')).toBeVisible();
-    await page.locator('#name-modal input').fill('My pipeline');
+    await expect(editor.nameModal).toBeVisible();
+    await editor.saveAsName('My pipeline');
 
-    await Promise.all([
-      page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
-      page.waitForResponse(
-        resp => resp.url().includes('api/pipelines/load') // wait for pipeline to be saved and loaded
-      ),
-    ]);
+    await editor.saveAs();
 
-    await page.getByRole('button', { name: 'Save as' }).click();
-
-    await expect(page.locator('#name-modal')).toBeVisible();
-    await page.locator('#name-modal input').fill('User pipeline copy');
-
-    await Promise.all([
-      page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
-      page.waitForResponse(
-        resp => resp.url().includes('api/pipelines/load') // wait for pipeline to be saved and loaded
-      ),
-    ]);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-    await expect(page.locator('#pipelines-input')).toHaveValue('User pipeline copy');
-    await expect(page.locator('.monaco-editor').nth(0)).toHaveText(
+    await expect(editor.nameModal).toBeVisible();
+    await editor.saveAsName('User pipeline copy');
+    await PipelineEditor.waitForLoaded(page);
+    await expect(editor.pipelineInput).toHaveValue('User pipeline copy');
+    await expect(editor.monacoEditor.nth(0)).toHaveText(
       // eslint-disable-next-line max-len
       'preamble:   input_reference_genome: hg38/genomes/GRCh38-hg38annotators:- allele_score:    resource_id: hg38/scores/CADD_v1.7'
     );
   });
 
   test('should not be able to delete and save public pipeline', async({ page }) => {
+    const editor = new PipelineEditor(page);
     // The dropdown reverts to the default only after the (un-awaited) post-action
     // GET /api/pipelines returns; under daphne sync-view serialization that GET can
     // exceed the 5s default window (gain#150), so allow the response budget here.
-    await expect(page.locator('#pipelines-input')).toHaveValue(
+    await expect(editor.pipelineInput).toHaveValue(
       'pipeline/hg38_clinical_annotation', { timeout: 30000 });
-    await expect(page.getByRole('button', { name: 'Delete' })).not.toBeVisible();
-    await expect(page.getByRole('button', { name: 'Save', exact: true })).not.toBeVisible();
+    await expect(editor.deleteButton).not.toBeVisible();
+    await expect(editor.saveButton).not.toBeVisible();
   });
 
   test('should search pipeline from dropdown', async({ page }) => {
-    await page.locator('#pipelines-input').fill('clini');
+    const editor = new PipelineEditor(page);
+    await editor.pipelineInput.fill('clini');
     await expect(page.locator('mat-option')).toHaveCount(3);
     await expect(page.getByRole('option', { name: 'circle pipeline/T2T_clinical_annotation' })).toBeVisible();
     await expect(page.getByRole('option', { name: 'circle pipeline/hg38_clinical_annotation' })).toBeVisible();
@@ -319,21 +294,19 @@ test.describe('Pipeline tests', () => {
   });
 
   test('should search for nonexistent pipeline in dropdown', async({ page }) => {
-    await page.locator('#pipelines-input').fill('piepline');
+    const editor = new PipelineEditor(page);
+    await editor.pipelineInput.fill('piepline');
     await expect(page.locator('mat-option')).toHaveCount(0);
   });
 
   test('should save user pipeline with Ctrl+S', async({ page }) => {
+    const editor = new PipelineEditor(page);
     await customDefaultPipeline(page);
 
-    await page.getByRole('button', { name: 'Save as' }).click();
-    await page.locator('#name-modal input').fill('My pipeline');
-    await Promise.all([
-      page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
-      page.waitForResponse(resp => resp.url().includes('api/pipelines/load')),
-    ]);
+    await editor.saveAs();
+    await editor.saveAsName('My pipeline');
 
-    await expect(page.locator('#pipelines-input')).toHaveValue('My pipeline');
+    await expect(editor.pipelineInput).toHaveValue('My pipeline');
 
     /* eslint-disable */
     await page.evaluate(() => {
@@ -343,7 +316,7 @@ test.describe('Pipeline tests', () => {
     });
     /* eslint-enable */
 
-    await expect(page.locator('#pipelines-input')).toHaveValue('My pipeline *');
+    await expect(editor.pipelineInput).toHaveValue('My pipeline *');
 
     const saveResponse = page.waitForResponse(
       resp => resp.url().includes('api/pipelines/user') && resp.request().method() === 'POST'
@@ -351,84 +324,77 @@ test.describe('Pipeline tests', () => {
     await page.keyboard.press('Control+s');
     await saveResponse;
 
-    await expect(page.locator('#pipelines-input')).toHaveValue('My pipeline');
+    await expect(editor.pipelineInput).toHaveValue('My pipeline');
   });
 
   test('should cancel name modal without saving pipeline', async({ page }) => {
+    const editor = new PipelineEditor(page);
     await customDefaultPipeline(page);
 
-    await page.getByRole('button', { name: 'Save as' }).click();
-    await expect(page.locator('#name-modal')).toBeVisible();
-    await page.locator('#name-modal input').fill('My Pipeline');
-    await page.locator('#cancel-button').click();
+    await editor.saveAs();
+    await expect(editor.nameModal).toBeVisible();
+    await editor.nameInput.fill('My Pipeline');
+    await editor.cancelNameButton.click();
 
-    await expect(page.locator('#name-modal')).not.toBeVisible();
-    await expect(page.locator('#pipelines-input')).toBeEmpty();
+    await expect(editor.nameModal).not.toBeVisible();
+    await expect(editor.pipelineInput).toBeEmpty();
   });
 
   test('should show error when saving pipeline with already existing name', async({ page }) => {
+    const editor = new PipelineEditor(page);
     await customDefaultPipeline(page);
 
-    await page.getByRole('button', { name: 'Save as' }).click();
-    await page.locator('#name-modal input').fill('My Pipeline');
-    await Promise.all([
-      page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
-      page.waitForResponse(resp => resp.url().includes('api/pipelines/load')),
-    ]);
+    await editor.saveAs();
+    await editor.saveAsName('My Pipeline');
 
-    await expect(page.locator('#pipelines-input')).toHaveValue('My Pipeline');
+    await expect(editor.pipelineInput).toHaveValue('My Pipeline');
 
-    await page.getByRole('button', { name: 'Save as' }).click();
-    await page.locator('#name-modal input').fill('My Pipeline');
-    await page.locator('#name-modal').getByRole('button', { name: 'Save' }).click();
+    await editor.saveAs();
+    await editor.nameInput.fill('My Pipeline');
+    await editor.saveNameButton.click();
 
-    await expect(page.locator('#name-modal .error-message')).toHaveText('Pipeline with this name already exists.');
-    await expect(page.locator('#name-modal')).toBeVisible();
+    await expect(editor.nameError).toHaveText('Pipeline with this name already exists.');
+    await expect(editor.nameModal).toBeVisible();
   });
 
   test('should keep pipeline when Cancel is clicked on delete confirmation', async({ page }) => {
+    const editor = new PipelineEditor(page);
     await customDefaultPipeline(page);
-    await page.getByRole('button', { name: 'Save as' }).click();
-    await page.locator('#name-modal input').fill('My Pipeline');
-    await Promise.all([
-      page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
-      page.waitForResponse(resp => resp.url().includes('api/pipelines/load')),
-    ]);
-    await expect(page.locator('#pipelines-input')).toHaveValue('My Pipeline');
+    await editor.saveAs();
+    await editor.saveAsName('My Pipeline');
+    await expect(editor.pipelineInput).toHaveValue('My Pipeline');
 
-    await page.getByRole('button', { name: 'Delete' }).click();
-    await expect(page.locator('#delete-confirmation-popover')).toBeVisible();
-    await page.locator('#cancel-delete').click();
+    await editor.delete();
+    await expect(editor.deleteConfirmPopover).toBeVisible();
+    await editor.cancelDeleteButton.click();
 
-    await expect(page.locator('#delete-confirmation-popover')).not.toBeVisible();
-    await expect(page.locator('#pipelines-input')).toHaveValue('My Pipeline');
+    await expect(editor.deleteConfirmPopover).not.toBeVisible();
+    await expect(editor.pipelineInput).toHaveValue('My Pipeline');
   });
 
   test('should save pipeline name via Enter key in name modal', async({ page }) => {
+    const editor = new PipelineEditor(page);
     await customDefaultPipeline(page);
-    await page.getByRole('button', { name: 'Save as' }).click();
-    await expect(page.locator('#name-modal')).toBeVisible();
-    await page.locator('#name-modal input').fill('My Pipeline');
+    await editor.saveAs();
+    await expect(editor.nameModal).toBeVisible();
+    await editor.nameInput.fill('My Pipeline');
 
     await Promise.all([
-      page.locator('#name-modal input').press('Enter'),
+      editor.nameInput.press('Enter'),
       page.waitForResponse(resp => resp.url().includes('api/pipelines/load')),
     ]);
 
-    await expect(page.locator('#name-modal')).not.toBeVisible();
-    await expect(page.locator('#pipelines-input')).toHaveValue('My Pipeline');
+    await expect(editor.nameModal).not.toBeVisible();
+    await expect(editor.pipelineInput).toHaveValue('My Pipeline');
   });
 
   test('should disable Save button when pipeline is unchanged and enable it after an edit', async({ page }) => {
+    const editor = new PipelineEditor(page);
     await customDefaultPipeline(page);
-    await page.getByRole('button', { name: 'Save as' }).click();
-    await page.locator('#name-modal input').fill('My Pipeline');
-    await Promise.all([
-      page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
-      page.waitForResponse(resp => resp.url().includes('api/pipelines/load')),
-    ]);
+    await editor.saveAs();
+    await editor.saveAsName('My Pipeline');
 
-    await expect(page.locator('#save-button')).toBeDisabled();
+    await expect(editor.saveButton).toBeDisabled();
 
     /* eslint-disable */
     await page.evaluate(() => {
@@ -438,19 +404,16 @@ test.describe('Pipeline tests', () => {
     });
     /* eslint-enable */
 
-    await expect(page.locator('#save-button')).toBeEnabled();
+    await expect(editor.saveButton).toBeEnabled();
   });
 
   test('should show Public pipelines and User pipelines group labels in dropdown', async({ page }) => {
+    const editor = new PipelineEditor(page);
     await customDefaultPipeline(page);
-    await page.getByRole('button', { name: 'Save as' }).click();
-    await page.locator('#name-modal input').fill('My Pipeline');
-    await Promise.all([
-      page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
-      page.waitForResponse(resp => resp.url().includes('api/pipelines/load')),
-    ]);
-    await expect(page.locator('#pipelines-input')).toHaveValue('My Pipeline');
-    await page.locator('#pipelines-input').click();
+    await editor.saveAs();
+    await editor.saveAsName('My Pipeline');
+    await expect(editor.pipelineInput).toHaveValue('My Pipeline');
+    await editor.pipelineInput.click();
 
     await expect(page.getByRole('group', { name: 'Public pipelines' })).toBeVisible();
     await expect(page.getByRole('group', { name: 'User pipelines' })).toBeVisible();

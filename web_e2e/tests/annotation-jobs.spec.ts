@@ -1,4 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
+import { PipelineEditor } from '../pages/pipeline-editor.page';
 import * as utils from '../utils';
 import { scanCSV } from 'nodejs-polars';
 import * as fs from 'fs';
@@ -13,10 +14,7 @@ test.describe('Create job tests', () => {
 
     await utils.loginUser(page, email, password);
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-    await page.waitForSelector(
-      '.loaded-editor',
-      { state: 'visible', timeout: 120000 }
-    ); // wait for default pipeline to load
+    await PipelineEditor.waitForLoaded(page); // wait for default pipeline to load
   });
 
   test('should create job with vcf file', async({ page }) => {
@@ -104,10 +102,7 @@ test.describe('Job details tests', () => {
 
     await utils.loginUser(page, email, password);
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-    await page.waitForSelector(
-      '.loaded-editor',
-      { state: 'visible', timeout: 120000 }
-    ); // wait for default pipeline to load
+    await PipelineEditor.waitForLoaded(page); // wait for default pipeline to load
   });
 
   test('should check job details of the first job', async({ page }) => {
@@ -218,10 +213,7 @@ test.describe('Jobs table tests', () => {
 
     await utils.loginUser(page, email, password);
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-    await page.waitForSelector(
-      '.loaded-editor',
-      { state: 'visible', timeout: 120000 }
-    ); // wait for default pipeline to load
+    await PipelineEditor.waitForLoaded(page); // wait for default pipeline to load
   });
 
   test('should create job and check first row', async({ page }) => {
@@ -295,10 +287,7 @@ test.describe('Jobs validation tests', () => {
 
     await utils.loginUser(page, email, password);
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-    await page.waitForSelector(
-      '.loaded-editor',
-      { state: 'visible', timeout: 120000 }
-    ); // wait for default pipeline to load
+    await PipelineEditor.waitForLoaded(page); // wait for default pipeline to load
   });
 
   test('should check if create button is disabled when invalid file is uploaded', async({ page }) => {
@@ -354,7 +343,7 @@ test.describe('Job file upload tests', () => {
     await utils.registerUser(page, email, password);
     await utils.loginUser(page, email, password);
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
   });
 
   test('should upload VCF file via drag-and-drop', async({ page }) => {
@@ -467,5 +456,5 @@ async function customDefaultPipeline(page: Page): Promise<void> {
 
   await saveResponse;
 
-  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  await PipelineEditor.waitForLoaded(page);
 }

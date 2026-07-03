@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { PipelineEditor } from '../../pages/pipeline-editor.page';
 import * as utils from '../../utils';
 import { customDefaultPipeline } from './helpers';
 
@@ -12,7 +13,7 @@ test.describe('Single annotation note tests', () => {
     password = 'aaabbb';
     await utils.registerUser(page, email, password);
     await utils.loginUser(page, email, password);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
     await customDefaultPipeline(page);
     await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
     await page.getByRole('button', { name: 'Go', exact: true }).click();
@@ -89,10 +90,10 @@ test.describe('Single annotation note tests', () => {
       page.waitForNavigation({ waitUntil: 'load' }),
       page.locator('#logout-button').click(),
     ]);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     await utils.loginUser(page, email, password);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     await expect(page.locator('.note-label').first()).toHaveText('persisted label');
   });

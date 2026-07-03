@@ -1,4 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
+import { PipelineEditor } from '../pages/pipeline-editor.page';
 import * as utils from '../utils';
 
 
@@ -136,7 +137,7 @@ test.describe('Quota changes', () => {
       const initialMonthlyAttributes = await getMonthlyCurrentValue(page, 'attributes');
 
       await page.getByRole('link', { name: 'Single Annotation' }).click();
-      await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+      await PipelineEditor.waitForLoaded(page);
       await utils.customDefaultPipeline(page);
       await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
       await page.getByRole('button', { name: 'Go', exact: true }).click();
@@ -161,7 +162,7 @@ test.describe('Quota changes', () => {
       const initialMonthlyAttributes = await getMonthlyCurrentValue(page, 'attributes');
 
       await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-      await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+      await PipelineEditor.waitForLoaded(page);
       await utils.customDefaultPipeline(page);
       await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
       await page.locator('#create-button').click();
@@ -208,7 +209,7 @@ test.describe('Quota changes', () => {
       const initialMonthlyAttributes = await getMonthlyCurrentValue(page, 'attributes');
 
       await page.getByRole('link', { name: 'Single Annotation' }).click();
-      await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+      await PipelineEditor.waitForLoaded(page);
       await utils.customDefaultPipeline(page);
       await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
       await page.getByRole('button', { name: 'Go', exact: true }).click();
@@ -231,7 +232,7 @@ test.describe('Quota changes', () => {
       const initialMonthlyAttributes = await getMonthlyCurrentValue(page, 'attributes');
 
       await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-      await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+      await PipelineEditor.waitForLoaded(page);
       await utils.customDefaultPipeline(page);
       await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
       await page.locator('#create-button').click();
@@ -263,7 +264,7 @@ test.describe('Quota limit', () => {
       await utils.setCurrentQuota(page, email, 'daily_variants', 0);
 
       await page.getByRole('link', { name: 'Single Annotation' }).click();
-      await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+      await PipelineEditor.waitForLoaded(page);
       await utils.customDefaultPipeline(page);
       await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
 
@@ -281,7 +282,7 @@ test.describe('Quota limit', () => {
       await utils.setCurrentQuota(page, email, 'daily_jobs', 0);
 
       await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-      await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+      await PipelineEditor.waitForLoaded(page);
       await utils.customDefaultPipeline(page);
       await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
       await page.locator('#create-button').click();
@@ -302,7 +303,7 @@ test.describe('Quota limit', () => {
       await utils.setCurrentQuota(page, email, 'monthly_variants', 0);
 
       await page.getByRole('link', { name: 'Single Annotation' }).click();
-      await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+      await PipelineEditor.waitForLoaded(page);
       await utils.customDefaultPipeline(page);
       await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
 
@@ -320,7 +321,7 @@ test.describe('Quota limit', () => {
       await utils.setCurrentQuota(page, email, 'monthly_jobs', 0);
 
       await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-      await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+      await PipelineEditor.waitForLoaded(page);
       await utils.customDefaultPipeline(page);
       await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
       await page.locator('#create-button').click();
@@ -352,7 +353,7 @@ test.describe('Quota limit', () => {
 
       await page.getByRole('link', { name: 'Single Annotation' }).click();
 
-      await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+      await PipelineEditor.waitForLoaded(page);
       await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
 
       const quotaResponse = page.waitForResponse(
@@ -375,7 +376,7 @@ test.describe('Quota limit', () => {
       expect(await getDailyCurrentValue(page, 'jobs')).toBe(0);
 
       await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-      await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+      await PipelineEditor.waitForLoaded(page);
       await utils.customDefaultPipeline(page);
       await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
       await page.locator('#create-button').click();
@@ -398,7 +399,7 @@ test.describe('User quotas - extra units consumption', () => {
     await utils.navigateToQuotas(page);
 
     await page.getByRole('link', { name: 'Single Annotation' }).click();
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
     await utils.customDefaultPipeline(page);
     await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
     await page.getByRole('button', { name: 'Go', exact: true }).click();
@@ -425,7 +426,7 @@ test.describe('User quotas - extra units consumption', () => {
     await utils.navigateToQuotas(page);
 
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
     await utils.customDefaultPipeline(page);
     await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
     await page.locator('#create-button').click();
@@ -447,7 +448,7 @@ test.describe('User quotas - extra units consumption', () => {
     const initialMonthlyAttributes = await getMonthlyCurrentValue(page, 'attributes');
 
     await page.getByRole('link', { name: 'Single Annotation' }).click();
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
     await utils.customDefaultPipeline(page);
     await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
     await page.getByRole('button', { name: 'Go', exact: true }).click();

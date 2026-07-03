@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { PipelineEditor } from '../../pages/pipeline-editor.page';
 import * as utils from '../../utils';
 import {
   strTypePipeline,
@@ -16,7 +17,7 @@ test.describe('Single annotation value type rendering', () => {
     const password = 'aaabbb';
     await utils.registerUser(page, email, password);
     await utils.loginUser(page, email, password);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
   });
 
   test('should render str value as inline scalar in compact and full report', async({ page }) => {

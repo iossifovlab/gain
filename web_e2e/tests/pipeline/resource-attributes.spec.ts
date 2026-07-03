@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { PipelineEditor } from '../../pages/pipeline-editor.page';
 import * as utils from '../../utils';
 import { ResourceDialog } from '../../pages/annotator.dialog';
 
@@ -12,7 +13,7 @@ test.describe('New resource modal attribute tests', () => {
 
     await utils.loginUser(page, email, password);
     // wait for default pipeline to load
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
   });
 
   test('should show duplicate attribute error, allow rename to fix it', async({ page }) => {

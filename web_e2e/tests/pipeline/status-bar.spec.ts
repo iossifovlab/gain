@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import * as utils from '../../utils';
 import { customDefaultPipeline } from './helpers';
 import { AnnotatorDialog } from '../../pages/annotator.dialog';
+import { PipelineEditor } from '../../pages/pipeline-editor.page';
 
 test.describe('Pipeline status bar tests', () => {
   test.beforeEach(async({ page }) => {
@@ -10,13 +11,14 @@ test.describe('Pipeline status bar tests', () => {
     const password = 'aaabbb';
     await utils.registerUser(page, email, password);
     await utils.loginUser(page, email, password);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
   });
 
   test('should show annotatable count in status bar', async({ page }) => {
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
-    await expect(page.locator('#pipelines-input')).toBeEmpty();
-    await expect(page.locator('.monaco-editor').nth(0)).toBeEmpty();
+    const editor = new PipelineEditor(page);
+    await editor.newPipeline();
+    await expect(editor.pipelineInput).toBeEmpty();
+    await expect(editor.monacoEditor.nth(0)).toBeEmpty();
 
     const saveResponse = page.waitForResponse(
       resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
@@ -34,12 +36,13 @@ test.describe('Pipeline status bar tests', () => {
 
     await saveResponse;
 
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
-    await expect(page.locator('#status-bar .status-item').nth(2)).toContainText('1 annotatables');
+    await PipelineEditor.waitForLoaded(page);
+    await expect(editor.statusItem(2)).toContainText('1 annotatables');
   });
 
   test('should show gene list count in status bar for pipeline with gene list attribute', async({ page }) => {
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+    const editor = new PipelineEditor(page);
+    await editor.newPipeline();
 
     const saveResponse = page.waitForResponse(
       resp => resp.url().includes('api/pipelines/user'), { timeout: 30000 }
@@ -58,17 +61,18 @@ test.describe('Pipeline status bar tests', () => {
       '      internal: true\n'
     );
     await saveResponse;
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
-    await expect(page.locator('#status-bar .status-item').nth(3)).toContainText('1 gene list');
+    await expect(editor.statusItem(3)).toContainText('1 gene list');
   });
 
   test('should update annotator and attribute counts in status bar after adding annotator', async({ page }) => {
+    const editor = new PipelineEditor(page);
     const annotatorModal = new AnnotatorDialog(page);
     await customDefaultPipeline(page);
 
-    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu1 annotators');
-    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open2 attributes');
+    await expect(editor.statusItem(0)).toHaveText('menu1 annotators');
+    await expect(editor.statusItem(1)).toHaveText('menu_open2 attributes');
 
     // add simple_effect_annotator which contributes 3 attributes
     await annotatorModal.open();
@@ -83,20 +87,20 @@ test.describe('Pipeline status bar tests', () => {
       page.waitForResponse(resp => resp.url().includes('api/editor/pipeline_status')),
     ]);
 
-    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu2 annotators');
-    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open5 attributes');
+    await expect(editor.statusItem(0)).toHaveText('menu2 annotators');
+    await expect(editor.statusItem(1)).toHaveText('menu_open5 attributes');
   });
 
   test('should update status bar counts when editing YAML directly', async({ page }) => {
+    const editor = new PipelineEditor(page);
     await customDefaultPipeline(page);
 
     // Initial state: 1 annotator, 2 attributes
-    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu1 annotators');
-    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open2 attributes');
+    await expect(editor.statusItem(0)).toHaveText('menu1 annotators');
+    await expect(editor.statusItem(1)).toHaveText('menu_open2 attributes');
 
     // Add another annotator to the existing YAML (append, not replace)
-    const editor = page.locator('.monaco-editor');
-    await editor.click();
+    await editor.monacoEditor.click();
     // Move cursor to end of file
     await page.keyboard.press('Control+End');
     // Add new annotator
@@ -105,12 +109,13 @@ test.describe('Pipeline status bar tests', () => {
     await page.waitForResponse(resp => resp.url().includes('api/editor/pipeline_status'));
 
     // Verify counts updated: 2 annotators, 3 attributes
-    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu2 annotators');
-    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open3 attributes');
+    await expect(editor.statusItem(0)).toHaveText('menu2 annotators');
+    await expect(editor.statusItem(1)).toHaveText('menu_open3 attributes');
   });
 
   test('should show all status bar items together with correct values', async({ page }) => {
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+    const editor = new PipelineEditor(page);
+    await editor.newPipeline();
 
     const saveResponse = page.waitForResponse(
       resp => resp.url().includes('api/pipelines/user'), { timeout: 30000 }
@@ -136,20 +141,21 @@ test.describe('Pipeline status bar tests', () => {
     );
 
     await saveResponse;
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     // Verify all status bar items
-    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu2 annotators');
-    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open6 attributes');
-    await expect(page.locator('#status-bar .status-item').nth(2)).toHaveText('edit_note0 annotatables');
-    await expect(page.locator('#status-bar .status-item').nth(3)).toHaveText('grain1 gene list');
+    await expect(editor.statusItem(0)).toHaveText('menu2 annotators');
+    await expect(editor.statusItem(1)).toHaveText('menu_open6 attributes');
+    await expect(editor.statusItem(2)).toHaveText('edit_note0 annotatables');
+    await expect(editor.statusItem(3)).toHaveText('grain1 gene list');
   });
 
   test('should update counts when removing annotators from YAML', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
+    const editor = new PipelineEditor(page);
+    await editor.selectPipeline('pipeline/hg38_clinical_annotation');
 
-    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu13 annotators');
-    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open23 attributes');
+    await expect(editor.statusItem(0)).toHaveText('menu13 annotators');
+    await expect(editor.statusItem(1)).toHaveText('menu_open23 attributes');
 
     /* eslint-disable */
     await page.evaluate(() => {
@@ -167,28 +173,30 @@ test.describe('Pipeline status bar tests', () => {
 
     await page.waitForResponse(resp => resp.url().includes('api/editor/pipeline_status'));
 
-    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu3 annotators');
-    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open8 attributes');
-    await expect(page.locator('#status-bar .status-item').nth(2)).toHaveText('edit_note0 annotatables');
-    await expect(page.locator('#status-bar .status-item').nth(3)).toHaveText('grain1 gene list');
+    await expect(editor.statusItem(0)).toHaveText('menu3 annotators');
+    await expect(editor.statusItem(1)).toHaveText('menu_open8 attributes');
+    await expect(editor.statusItem(2)).toHaveText('edit_note0 annotatables');
+    await expect(editor.statusItem(3)).toHaveText('grain1 gene list');
   });
 
   test('should show all zeros for an empty new pipeline', async({ page }) => {
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
-    await expect(page.locator('#pipelines-input')).toBeEmpty();
-    await expect(page.locator('.monaco-editor').nth(0)).toBeEmpty();
+    const editor = new PipelineEditor(page);
+    await editor.newPipeline();
+    await expect(editor.pipelineInput).toBeEmpty();
+    await expect(editor.monacoEditor.nth(0)).toBeEmpty();
 
-    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu0 annotators');
-    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open0 attributes');
-    await expect(page.locator('#status-bar .status-item').nth(2)).toHaveText('edit_note0 annotatables');
-    await expect(page.locator('#status-bar .status-item').nth(3)).toHaveText('grain0 gene list');
+    await expect(editor.statusItem(0)).toHaveText('menu0 annotators');
+    await expect(editor.statusItem(1)).toHaveText('menu_open0 attributes');
+    await expect(editor.statusItem(2)).toHaveText('edit_note0 annotatables');
+    await expect(editor.statusItem(3)).toHaveText('grain0 gene list');
   });
 
   test('should keep the last valid counts in the status bar when config becomes invalid', async({ page }) => {
+    const editor = new PipelineEditor(page);
     // Start from a valid pipeline so the status bar holds non-zero counts.
     await customDefaultPipeline(page);
-    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu1 annotators');
-    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open2 attributes');
+    await expect(editor.statusItem(0)).toHaveText('menu1 annotators');
+    await expect(editor.statusItem(1)).toHaveText('menu_open2 attributes');
 
     // Make the config invalid (preamble only, no annotators). The status is only
     // refreshed on a successful validation, so the bar retains the last valid
@@ -204,7 +212,7 @@ test.describe('Pipeline status bar tests', () => {
     await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
     await expect(page.getByText('Invalid configuration')).toBeVisible();
 
-    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu1 annotators');
-    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open2 attributes');
+    await expect(editor.statusItem(0)).toHaveText('menu1 annotators');
+    await expect(editor.statusItem(1)).toHaveText('menu_open2 attributes');
   });
 });

@@ -1,4 +1,5 @@
 import { expect, Page } from '@playwright/test';
+import { PipelineEditor } from '../../pages/pipeline-editor.page';
 import * as utils from '../../utils';
 
 export async function customDefaultPipeline(page: Page): Promise<void> {
@@ -21,5 +22,5 @@ export async function customDefaultPipeline(page: Page): Promise<void> {
 
   await saveResponse;
 
-  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  await PipelineEditor.waitForLoaded(page);
 }

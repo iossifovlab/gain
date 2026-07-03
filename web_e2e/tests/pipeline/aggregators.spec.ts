@@ -1,4 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
+import { PipelineEditor } from '../../pages/pipeline-editor.page';
 import * as utils from '../../utils';
 import { customDefaultPipeline } from './helpers';
 import { AnnotatorDialog } from '../../pages/annotator.dialog';
@@ -10,7 +11,7 @@ test.describe('Pipeline aggregators tests', () => {
     const password = 'aaabbb';
     await utils.registerUser(page, email, password);
     await utils.loginUser(page, email, password);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
   });
 
   // Walk the New annotator dialog for a score resource up to the

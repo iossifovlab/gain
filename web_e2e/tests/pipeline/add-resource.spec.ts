@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { PipelineEditor } from '../../pages/pipeline-editor.page';
 import * as utils from '../../utils';
 import { customDefaultPipeline } from './helpers';
 import { ResourceDialog } from '../../pages/annotator.dialog';
@@ -12,7 +13,7 @@ test.describe('Add resource to pipeline tests', () => {
     await utils.registerUser(page, email, password);
 
     await utils.loginUser(page, email, password);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
   });
 
   test('should open New resource dialog with correct header and first step', async({ page }) => {

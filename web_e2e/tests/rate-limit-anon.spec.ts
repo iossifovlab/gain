@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { PipelineEditor } from '../pages/pipeline-editor.page';
 import * as utils from '../utils';
 
 // Runs after all main tests via the 'rate-limit-anon' project dependency in
@@ -10,7 +11,7 @@ import * as utils from '../utils';
 test.describe('Single annotation rate limit tests - anonymous user', () => {
   test.beforeEach(async({ page }) => {
     await page.goto('/', { waitUntil: 'load' });
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
     await utils.waitForSession(page);
     // Keep quota well above the throttle limit so quota exhaustion never
     // masks the throttle response.

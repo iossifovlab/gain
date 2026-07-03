@@ -1,5 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 import * as utils from '../../utils';
+import { PipelineEditor } from '../../pages/pipeline-editor.page';
 
 const VALID_PIPELINE =
   'preamble:\n' +
@@ -34,24 +35,24 @@ async function goToSingleAnnotation(page: Page): Promise<void> {
 }
 
 async function createTempPipeline(page: Page): Promise<void> {
-  await page.locator('#pipeline-actions').getByRole('button', {
-    name: 'draft New pipeline', exact: true
-  }).click();
+  const editor = new PipelineEditor(page);
+  await editor.newPipeline();
 
   const saveResponse = page.waitForResponse(
     resp => resp.url().includes('api/pipelines/user'), { timeout: 30000 }
   );
   await utils.typeInPipelineEditor(page, VALID_PIPELINE);
   await saveResponse;
-  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  await PipelineEditor.waitForLoaded(page);
 }
 
 async function createAndSaveUserPipeline(page: Page, name: string): Promise<void> {
+  const editor = new PipelineEditor(page);
   await createTempPipeline(page);
 
-  await page.getByRole('button', { name: 'Save as' }).click();
-  await expect(page.locator('#name-modal')).toBeVisible();
-  await page.locator('#name-modal input').fill(name);
+  await editor.saveAs();
+  await expect(editor.nameModal).toBeVisible();
+  await editor.nameInput.fill(name);
 
   // Click and wait for the saveAs's POST specifically (not /pipelines/load).
   // /pipelines/load is fired by an effect on selectedPipelineId change AND
@@ -63,7 +64,7 @@ async function createAndSaveUserPipeline(page: Page, name: string): Promise<void
   // subsequent Monaco edit fires (no `*` is added because
   // displayUnsavedPipelineIndication early-returns on null selectedPipeline).
   await Promise.all([
-    page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
+    editor.saveNameButton.click(),
     page.waitForResponse(
       resp => resp.url().includes('api/pipelines/user') && resp.request().method() === 'POST'
     ),
@@ -71,8 +72,8 @@ async function createAndSaveUserPipeline(page: Page, name: string): Promise<void
 
   // Wait for the post-save selectPipelineAfterSave to finish: dropdown
   // carries the saved pipeline name, and the editor is in 'loaded'.
-  await expect(page.locator('#pipelines-input')).toHaveValue(name, { timeout: 30000 });
-  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  await expect(editor.pipelineInput).toHaveValue(name, { timeout: 30000 });
+  await PipelineEditor.waitForLoaded(page);
 }
 
 test.describe('Annotation pipeline state persistence across navigation', () => {
@@ -82,36 +83,39 @@ test.describe('Annotation pipeline state persistence across navigation', () => {
     const password = 'aaabbb';
     await utils.registerUser(page, email, password);
     await utils.loginUser(page, email, password);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
   });
 
   test('selected pipeline is restored on Annotation Jobs after navigating from Single Annotation', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
-    await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/hg38_clinical_annotation');
+    const editor = new PipelineEditor(page);
+    await editor.selectPipeline('pipeline/hg38_clinical_annotation');
+    await expect(editor.pipelineInput).toHaveValue('pipeline/hg38_clinical_annotation');
 
     await goToAnnotationJobs(page);
 
-    await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/hg38_clinical_annotation');
+    await expect(editor.pipelineInput).toHaveValue('pipeline/hg38_clinical_annotation');
     await expect(page.locator('#pipeline-editor')).toHaveClass(/loaded-editor/);
   });
 
   test('selected pipeline is restored on Single Annotation after round-trip navigation', async({ page }) => {
-    await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
+    const editor = new PipelineEditor(page);
+    await editor.selectPipeline('pipeline/hg38_clinical_annotation');
 
     await goToAnnotationJobs(page);
     await goToSingleAnnotation(page);
 
-    await expect(page.locator('#pipelines-input')).toHaveValue('pipeline/hg38_clinical_annotation');
+    await expect(editor.pipelineInput).toHaveValue('pipeline/hg38_clinical_annotation');
     await expect(page.locator('#pipeline-editor')).toHaveClass(/loaded-editor/);
   });
 
   test('temp pipeline content is restored on Annotation Jobs', async({ page }) => {
+    const editor = new PipelineEditor(page);
     await createTempPipeline(page);
 
     await goToAnnotationJobs(page);
 
     // No named pipeline is selected (input is empty).
-    await expect(page.locator('#pipelines-input')).toBeEmpty();
+    await expect(editor.pipelineInput).toBeEmpty();
     // Editor still shows the pipeline content.
     /* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any,
                       @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call */
@@ -127,12 +131,13 @@ test.describe('Annotation pipeline state persistence across navigation', () => {
   });
 
   test('temp pipeline content is restored on Single Annotation after round-trip navigation', async({ page }) => {
+    const editor = new PipelineEditor(page);
     await createTempPipeline(page);
 
     await goToAnnotationJobs(page);
     await goToSingleAnnotation(page);
 
-    await expect(page.locator('#pipelines-input')).toBeEmpty();
+    await expect(editor.pipelineInput).toBeEmpty();
     /* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any,
                       @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call */
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -145,6 +150,7 @@ test.describe('Annotation pipeline state persistence across navigation', () => {
   });
 
   test('unsaved-changes indicator (*) is preserved on Annotation Jobs', async({ page }) => {
+    const editor = new PipelineEditor(page);
     await createAndSaveUserPipeline(page, 'My Pipeline');
 
     // Edit the saved pipeline to trigger the * indicator.
@@ -157,18 +163,17 @@ test.describe('Annotation pipeline state persistence across navigation', () => {
     });
     /* eslint-enable */
 
-    await expect(page.locator('#pipelines-input')).toHaveValue('My Pipeline *');
+    await expect(editor.pipelineInput).toHaveValue('My Pipeline *');
 
     await goToAnnotationJobs(page);
 
     // restoreState() recomputes isPipelineChanged() from the stored text — * should reappear.
-    await expect(page.locator('#pipelines-input')).toHaveValue('My Pipeline *');
+    await expect(editor.pipelineInput).toHaveValue('My Pipeline *');
   });
 
   test('invalid pipeline config is preserved when navigating to Annotation Jobs', async({ page }) => {
-    await page.locator('#pipeline-actions').getByRole('button', {
-      name: 'draft New pipeline', exact: true
-    }).click();
+    const editor = new PipelineEditor(page);
+    await editor.newPipeline();
     await utils.typeInPipelineEditor(page, 'preamble:\n input_reference_genome: hg38/genomes/GRCh38-hg38');
     await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
     await expect(page.getByText('Invalid configuration, reason: \'annotators\'')).toBeVisible();
@@ -234,51 +239,53 @@ test.describe('Annotation pipeline state on browser refresh', () => {
     const password = 'aaabbb';
     await utils.registerUser(page, email, password);
     await utils.loginUser(page, email, password);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
   });
 
   test('reloads the default pipeline name and content, not the unsaved temporary one', async({ page }) => {
+    const editor = new PipelineEditor(page);
     // Capture the default pipeline the app loads on start.
-    const defaultName = await page.locator('#pipelines-input').inputValue();
+    const defaultName = await editor.pipelineInput.inputValue();
     expect(defaultName).not.toBe('');
     const defaultContent = await readEditorContent(page);
 
     // Create an unsaved temporary pipeline (dropdown empties; editor shows the temp).
     await createTempPipeline(page);
-    await expect(page.locator('#pipelines-input')).toBeEmpty();
+    await expect(editor.pipelineInput).toBeEmpty();
     expect(await readEditorContent(page)).toContain('hg38/scores/CADD_v1.7');
 
     // Refresh the browser. The state signals are wiped; the backend still holds
     // the session temp pipeline and resyncs its status over the socket on
     // reconnect, but the editor must reselect and load the default pipeline.
     await page.reload({ waitUntil: 'load' });
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
-    await expect(page.locator('#pipelines-input')).toHaveValue(defaultName);
+    await expect(editor.pipelineInput).toHaveValue(defaultName);
     // Editor shows the default content again, not the temporary pipeline's.
     expect(await readEditorContent(page)).toBe(defaultContent);
   });
 
   test('drives the status bar from the default pipeline, not the temporary one', async({ page }) => {
-    const defaultName = await page.locator('#pipelines-input').inputValue();
+    const editor = new PipelineEditor(page);
+    const defaultName = await editor.pipelineInput.inputValue();
     // Wait for the default pipeline info to populate the status bar, then capture it.
-    await expect(page.locator('#status-bar .status-item').nth(0)).not.toHaveText('menu0 annotators');
-    const defaultAnnotators = await page.locator('#status-bar .status-item').nth(0).textContent() ?? '';
-    const defaultAttributes = await page.locator('#status-bar .status-item').nth(1).textContent() ?? '';
+    await expect(editor.statusItem(0)).not.toHaveText('menu0 annotators');
+    const defaultAnnotators = await editor.statusItem(0).textContent() ?? '';
+    const defaultAttributes = await editor.statusItem(1).textContent() ?? '';
 
     // Create an unsaved temporary pipeline whose status bar shows a single annotator.
     await createTempPipeline(page);
-    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu1 annotators');
+    await expect(editor.statusItem(0)).toHaveText('menu1 annotators');
 
     // Refresh: the status bar must reflect the reloaded default pipeline, not the
     // stale temp resynced over the socket. That resync previously fired a second
     // pipeline_status request for the temp that overrode the default's counts.
     await page.reload({ waitUntil: 'load' });
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
-    await expect(page.locator('#pipelines-input')).toHaveValue(defaultName);
-    await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText(defaultAnnotators);
-    await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText(defaultAttributes);
+    await expect(editor.pipelineInput).toHaveValue(defaultName);
+    await expect(editor.statusItem(0)).toHaveText(defaultAnnotators);
+    await expect(editor.statusItem(1)).toHaveText(defaultAttributes);
   });
 });
 
@@ -291,7 +298,7 @@ test.describe('Single annotation report state persistence across navigation', ()
     const password = 'aaabbb';
     await utils.registerUser(page, email, password);
     await utils.loginUser(page, email, password);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
     await createTempPipeline(page);
     await page.getByPlaceholder('Type annotatable...').fill(ANNOTATABLE);
     await page.getByRole('button', { name: 'Go', exact: true }).click();
@@ -351,7 +358,7 @@ test.describe('Single annotation report state reset on authentication change', (
     const password = 'aaabbb';
     await utils.registerUser(page, email, password);
     await utils.loginUser(page, email, password);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     await page.getByPlaceholder('Type annotatable...').fill(ANNOTATABLE);
     await page.getByRole('button', { name: 'Go', exact: true }).click();
@@ -363,10 +370,10 @@ test.describe('Single annotation report state reset on authentication change', (
       page.waitForNavigation({ waitUntil: 'load' }),
       page.locator('#logout-button').click(),
     ]);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     await utils.loginUser(page, email, password);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     await page.getByPlaceholder('Type annotatable...').fill(ANNOTATABLE);
     await page.getByRole('button', { name: 'Go', exact: true }).click();
@@ -378,7 +385,7 @@ test.describe('Single annotation report state reset on authentication change', (
 
   test('report state resets to compact when anonymous user with full mode logs in', async({ page }) => {
     await page.goto('/', { waitUntil: 'load' });
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     await page.getByPlaceholder('Type annotatable...').fill(ANNOTATABLE);
     await page.getByRole('button', { name: 'Go', exact: true }).click();
@@ -391,7 +398,7 @@ test.describe('Single annotation report state reset on authentication change', (
     const password = 'aaabbb';
     await utils.registerUser(page, email, password);
     await utils.loginUser(page, email, password);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     await page.getByPlaceholder('Type annotatable...').fill(ANNOTATABLE);
     await page.getByRole('button', { name: 'Go', exact: true }).click();
@@ -406,7 +413,8 @@ test.describe('Pipeline list updates on authentication change', () => {
   const USER_PIPELINE_NAME = 'auth-change-test-pipeline';
 
   async function getPipelineOptions(page: Page): Promise<string[]> {
-    await page.locator('.dropdown-icon').click();
+    const editor = new PipelineEditor(page);
+    await editor.dropdownIcon.click();
     await page.waitForSelector('mat-option', { state: 'visible', timeout: 10000 });
     const options = await page.getByRole('option').allTextContents();
     await page.keyboard.press('Escape');
@@ -418,7 +426,7 @@ test.describe('Pipeline list updates on authentication change', () => {
     const password = 'aaabbb';
     await utils.registerUser(page, email, password);
     await utils.loginUser(page, email, password);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
     await createAndSaveUserPipeline(page, USER_PIPELINE_NAME);
 
     // User pipeline is present before logout.
@@ -430,7 +438,7 @@ test.describe('Pipeline list updates on authentication change', () => {
       page.waitForNavigation({ waitUntil: 'load' }),
       page.locator('#logout-button').click(),
     ]);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     const optionsAfter = await getPipelineOptions(page);
     expect(optionsAfter.some(o => o.includes(USER_PIPELINE_NAME))).toBe(false);
@@ -444,7 +452,7 @@ test.describe('Pipeline list updates on authentication change', () => {
     // Create the user pipeline while logged in via full-page login.
     await utils.registerUser(page, email, password);
     await utils.loginUser(page, email, password);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
     await createAndSaveUserPipeline(page, USER_PIPELINE_NAME);
 
     // Logout (full page reload) — now anonymous.
@@ -452,16 +460,16 @@ test.describe('Pipeline list updates on authentication change', () => {
       page.waitForNavigation({ waitUntil: 'load' }),
       page.locator('#logout-button').click(),
     ]);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     // Populate the state with anonymous (default-only) pipelines by navigating
     // between tabs. Both directions load getPipelines() and cache the result.
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
     await page.waitForSelector('app-annotation-jobs-wrapper', { timeout: 30000 });
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
     await page.getByRole('link', { name: 'Single Annotation' }).click();
     await page.waitForSelector('app-single-annotation-wrapper', { timeout: 30000 });
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     // Login via the in-app button — this is a client-side router.navigate(['/login']),
     // so the AnnotationPipelineStateService singleton is preserved with the stale
@@ -472,13 +480,13 @@ test.describe('Pipeline list updates on authentication change', () => {
     await page.locator('#password').pressSequentially(password);
     await page.locator('#login-container').getByRole('button', { name: 'Login' }).click();
     await page.waitForSelector('app-single-annotation-wrapper', { timeout: 120000 });
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     // Navigate to Annotation Jobs — triggers getPipelines() with isUserLoggedIn=true
     // against a state where loadedWhileLoggedIn=false, so a fresh fetch must fire.
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
     await page.waitForSelector('app-annotation-jobs-wrapper', { timeout: 30000 });
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     const options = await getPipelineOptions(page);
     expect(options.some(o => o.includes(USER_PIPELINE_NAME))).toBe(true);

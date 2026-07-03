@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { PipelineEditor } from '../pages/pipeline-editor.page';
 import { scanCSV } from 'nodejs-polars';
 import * as utils from '../utils';
 import { AnnotatorDialog } from '../pages/annotator.dialog';
@@ -7,7 +8,7 @@ test.describe('Anonymous user tests', () => {
   test.beforeEach(async({ page }) => {
     await page.goto('/', {waitUntil: 'load'});
     // wait for default pipeline to load
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
     await utils.waitForSession(page);
     await utils.setAnonymousUserIpQuota(page, 'daily_jobs', 100_000);
     await utils.setAnonymousUserSessionQuota(page, 'daily_jobs', 1_000);
@@ -114,7 +115,7 @@ test.describe('Anonymous user tests', () => {
   });
 
   test('should download single annotation report', async({ page }) => {
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
     await page.locator('.dropdown-icon').click();
     await page.locator('mat-option').getByText('pipeline/T2T_clinical_annotation').click();
 
@@ -148,7 +149,7 @@ test.describe('Anonymous user tests', () => {
 
   test('should use anonymous pipeline for job annotation', async({ page }) => {
     await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
     await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
     await expect(page.locator('#pipelines-input')).toBeEmpty();
     await expect(page.locator('.monaco-editor').nth(0)).toBeEmpty();
@@ -236,7 +237,7 @@ test.describe('Web socket tests', () => {
   test.beforeEach(async({ page }) => {
     await page.goto('/', {waitUntil: 'load'});
     // wait for default pipeline to load
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
   });
 
   test('should download job result by link copy', async({ page }) => {

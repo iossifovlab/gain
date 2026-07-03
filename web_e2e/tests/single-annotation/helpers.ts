@@ -1,4 +1,5 @@
 import { expect, Page } from '@playwright/test';
+import { PipelineEditor } from '../../pages/pipeline-editor.page';
 import * as utils from '../../utils';
 
 export async function effectAnnotatorPipeline(page: Page): Promise<void> {
@@ -29,7 +30,7 @@ export async function effectAnnotatorPipeline(page: Page): Promise<void> {
 
   await saveResponse;
 
-  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  await PipelineEditor.waitForLoaded(page);
 }
 
 export async function customDefaultPipeline(page: Page): Promise<void> {
@@ -65,7 +66,7 @@ export async function customDefaultPipeline(page: Page): Promise<void> {
 
   await saveResponse;
 
-  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  await PipelineEditor.waitForLoaded(page);
 }
 
 export async function strTypePipeline(page: Page): Promise<void> {
@@ -84,7 +85,7 @@ export async function strTypePipeline(page: Page): Promise<void> {
     '      internal: false\n'
   );
   await saveResponse;
-  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  await PipelineEditor.waitForLoaded(page);
 }
 
 export async function floatTypePipeline(page: Page): Promise<void> {
@@ -102,7 +103,7 @@ export async function floatTypePipeline(page: Page): Promise<void> {
     '    input_annotatable: normalized_allele\n'
   );
   await saveResponse;
-  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  await PipelineEditor.waitForLoaded(page);
 }
 
 export async function annotatableTypePipeline(page: Page): Promise<void> {
@@ -120,7 +121,7 @@ export async function annotatableTypePipeline(page: Page): Promise<void> {
     '      internal: false\n'
   );
   await saveResponse;
-  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  await PipelineEditor.waitForLoaded(page);
 }
 
 
@@ -146,7 +147,7 @@ export async function objectTypePipeline(page: Page): Promise<void> {
     '     source: SFARI Gene Score\n'
   );
   await saveResponse;
-  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  await PipelineEditor.waitForLoaded(page);
 }
 
 
@@ -170,7 +171,7 @@ export async function clinvarListPipeline(page: Page): Promise<void> {
     '      aggregator: list\n'
   );
   await saveResponse;
-  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  await PipelineEditor.waitForLoaded(page);
 }
 
 export async function caddListPipeline(page: Page): Promise<void> {
@@ -192,5 +193,5 @@ export async function caddListPipeline(page: Page): Promise<void> {
     '      aggregator: list\n'
   );
   await saveResponse;
-  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  await PipelineEditor.waitForLoaded(page);
 }

@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import { test, expect, Page } from '@playwright/test';
+import { PipelineEditor } from '../../pages/pipeline-editor.page';
 import * as utils from '../../utils';
 const VALID_PIPELINE_DOC =
   'preamble:\n' +
@@ -29,7 +30,7 @@ async function createTempPipelineDoc(page: Page): Promise<void> {
   );
   await utils.typeInPipelineEditor(page, VALID_PIPELINE_DOC);
   await saveResponse;
-  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  await PipelineEditor.waitForLoaded(page);
 }
 
 test.describe('Pipeline documentation download', () => {
@@ -38,7 +39,7 @@ test.describe('Pipeline documentation download', () => {
     const password = 'aaabbb';
     await utils.registerUser(page, email, password);
     await utils.loginUser(page, email, password);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     await expect(page.locator('#download-pipeline-documentation')).toBeVisible();
     const { content } = await downloadDoc(page);
@@ -50,7 +51,7 @@ test.describe('Pipeline documentation download', () => {
     const password = 'aaabbb';
     await utils.registerUser(page, email, password);
     await utils.loginUser(page, email, password);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     await createTempPipelineDoc(page);
     await page.getByRole('button', { name: 'Save as' }).click();
@@ -62,7 +63,7 @@ test.describe('Pipeline documentation download', () => {
       ),
     ]);
     await expect(page.locator('#pipelines-input')).toHaveValue('doc-test-pipeline', { timeout: 30000 });
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     await expect(page.locator('#download-pipeline-documentation')).toBeVisible();
     const { suggestedFilename, content } = await downloadDoc(page);
@@ -74,7 +75,7 @@ test.describe('Pipeline documentation download', () => {
 
   test('anonymous user cannot download documentation', async({ page }) => {
     await page.goto('/', { waitUntil: 'load' });
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
     await expect(page.locator('#download-pipeline-documentation')).not.toBeVisible();
     await createTempPipelineDoc(page);
     await expect(page.locator('#download-pipeline-documentation')).not.toBeVisible();
@@ -85,7 +86,7 @@ test.describe('Pipeline documentation download', () => {
     const password = 'aaabbb';
     await utils.registerUser(page, email, password);
     await utils.loginUser(page, email, password);
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     // Create and save a user pipeline.
     await createTempPipelineDoc(page);
@@ -98,7 +99,7 @@ test.describe('Pipeline documentation download', () => {
       ),
     ]);
     await expect(page.locator('#pipelines-input')).toHaveValue('edit-test-pipeline', { timeout: 30000 });
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     // Edit the saved pipeline — adds * and triggers autosave to a temp pipeline.
     const autoSaveResponse = page.waitForResponse(
@@ -115,7 +116,7 @@ test.describe('Pipeline documentation download', () => {
     /* eslint-enable */
     await autoSaveResponse;
     await expect(page.locator('#pipelines-input')).toHaveValue('edit-test-pipeline *', { timeout: 30000 });
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     await expect(page.locator('#download-pipeline-documentation')).toBeVisible();
     const { content } = await downloadDoc(page);
@@ -126,7 +127,7 @@ test.describe('Pipeline documentation download', () => {
 
   test('download link is hidden when no pipeline is selected', async({ page }) => {
     await page.goto('/', { waitUntil: 'load' });
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await PipelineEditor.waitForLoaded(page);
 
     await page.locator('#pipeline-actions').getByRole('button', {
       name: 'draft New pipeline', exact: true
