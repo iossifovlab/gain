@@ -408,6 +408,11 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     this.disableActions = false;
   }
 
+  private currentPipelineInfoId(): string {
+    return this.pipelineStateService.currentTemporaryPipelineId()
+      || this.pipelineStateService.selectedPipelineId();
+  }
+
   private getPipelineInfo(): void {
     this.pipelineInfo = null;
     this.pipelineStateService.pipelineInfo.set(null);
@@ -421,6 +426,14 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
       take(1)
     ).subscribe({
       next: res => {
+        // Ignore a stale response for a pipeline that is no longer current. The
+        // pipeline_status endpoint blocks until the GRR build finishes, so a
+        // request can still be in flight when the user clears (New pipeline) or
+        // switches pipelines. Without this guard the late response overwrites
+        // the freshly-cleared status bar, leaving stale counts (e.g. 13->0->13).
+        if (this.currentPipelineInfoId() !== id) {
+          return;
+        }
         this.pipelineInfo = res;
         this.pipelineStateService.pipelineInfo.set(res);
         // A 200 from the blocking pipeline_status endpoint means the GRR build
@@ -438,6 +451,11 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
         }
       },
       error: () => {
+        // Same staleness guard: a late failure for a superseded pipeline must
+        // not wipe the current pipeline's info.
+        if (this.currentPipelineInfoId() !== id) {
+          return;
+        }
         this.pipelineInfo = null;
         this.pipelineStateService.pipelineInfo.set(null);
       }

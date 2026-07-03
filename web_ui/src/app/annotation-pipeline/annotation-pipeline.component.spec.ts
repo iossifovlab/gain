@@ -1184,6 +1184,28 @@ describe('AnnotationPipelineComponent', () => {
     expect(pipelineStateService.pipelineInfo()).toBeNull();
   });
 
+  it('ignores a stale getPipelineInfo response after the pipeline is cleared', () => {
+    // The pipeline_status endpoint blocks until the GRR build finishes, so a
+    // request can still be in flight when the user clicks New pipeline. Its late
+    // response must not repopulate the status bar that doClear() just zeroed.
+    const info$ = new Subject<PipelineInfo>();
+    jest.spyOn(annotationPipelineServiceMock, 'getPipelineInfo')
+      .mockReturnValueOnce(info$.asObservable());
+    pipelineStateService.currentTemporaryPipelineId.set('');
+    pipelineStateService.selectedPipelineId.set('id1');
+
+    component['getPipelineInfo'](); // request in flight for 'id1'
+
+    // User clears the pipeline while the blocking request is still pending.
+    pipelineStateService.selectedPipelineId.set('');
+
+    // The late response for the now-stale 'id1' must be ignored.
+    info$.next(new PipelineInfo(13, 23, [], []));
+
+    expect(component.pipelineInfo).toBeNull();
+    expect(pipelineStateService.pipelineInfo()).toBeNull();
+  });
+
   it('marks the temporary pipeline loaded when the status fetch succeeds even if the WS frame was missed', () => {
     // Simulate: temp pipeline saved, GRR build pending, and the one-shot WS
     // 'pipeline_status: loaded' frame was missed (#160) -- the editor is stuck
