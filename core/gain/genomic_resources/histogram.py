@@ -224,6 +224,9 @@ class NullHistogramConfig:
         )
 
 
+HISTOGRAM_LABELS_FONT_SIZE = 20
+
+
 class NumberHistogram(Statistic):
     """Class to represent a histogram."""
 
@@ -445,12 +448,13 @@ class NumberHistogram(Statistic):
                 wrap=True,
                 color="gray",
                 style="italic",
-                fontsize=18,
+                fontsize=HISTOGRAM_LABELS_FONT_SIZE,
             )
 
-        ax.set_xlabel(f"\n{score_id}", fontsize=18)
+        ax.set_xlabel(f"\n{score_id}", fontsize=HISTOGRAM_LABELS_FONT_SIZE)
         ax.set_ylabel(
-            "count" if y_axis_label is None else y_axis_label, fontsize=18)
+            "count" if y_axis_label is None else y_axis_label,
+            fontsize=HISTOGRAM_LABELS_FONT_SIZE)
 
         ax.grid(axis="y")
         ax.grid(axis="x")
@@ -736,12 +740,13 @@ class CategoricalHistogram(Statistic):
                 wrap=True,
                 color="gray",
                 style="italic",
-                fontsize=18,
+                fontsize=HISTOGRAM_LABELS_FONT_SIZE,
             )
 
-        ax.set_xlabel(f"\n{score_id}", fontsize=18)
+        ax.set_xlabel(f"\n{score_id}", fontsize=HISTOGRAM_LABELS_FONT_SIZE)
         ax.set_ylabel(
-            "count" if y_axis_label is None else y_axis_label, fontsize=18)
+            "count" if y_axis_label is None else y_axis_label,
+            fontsize=HISTOGRAM_LABELS_FONT_SIZE)
 
         label_angle = self.config.label_rotation % 360
         if self.config.label_rotation < 0:
@@ -754,6 +759,7 @@ class CategoricalHistogram(Statistic):
                 ha="center",
                 va="top",
                 rotation_mode="default",
+                fontsize=HISTOGRAM_LABELS_FONT_SIZE,
             )
 
         fig.savefig(outfile)
