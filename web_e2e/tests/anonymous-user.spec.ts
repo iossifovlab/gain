@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { scanCSV } from 'nodejs-polars';
 import * as utils from '../utils';
+import { AnnotatorDialog } from '../pages/annotator.dialog';
 
 test.describe('Anonymous user tests', () => {
   test.beforeEach(async({ page }) => {
@@ -23,23 +24,21 @@ test.describe('Anonymous user tests', () => {
   });
 
   test('should append gene set annotator', async({ page }) => {
+    const annotatorModal = new AnnotatorDialog(page);
     await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    await annotatorModal.open();
 
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('gene_set_annotator').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectAnnotator('gene_set_annotator');
+    await annotatorModal.next();
 
-    await page.locator('[id="resource_id-dropdown"]').click();
-    await page.locator('mat-option').getByText('gene_properties/gene_sets/autism').click();
-    await page.locator('[id="input_gene_list-dropdown"]').click();
-    await page.locator('mat-option').getByText('gene_list').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectParameter('resource_id', 'gene_properties/gene_sets/autism');
+    await annotatorModal.selectParameter('input_gene_list', 'gene_list');
+    await annotatorModal.next();
 
-    await expect(page.locator('.attribute-source')).toHaveCount(1);
+    await expect(annotatorModal.attributeSources).toHaveCount(1);
 
     await Promise.all([
-      page.getByRole('button', { name: 'Finish' }).click(),
+      annotatorModal.finish(),
       page.waitForResponse(
         resp => resp.url().includes('api/pipelines/validate')
       ),

@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import * as utils from '../../utils';
+import { ResourceDialog } from '../../pages/annotator.dialog';
 
 test.describe('New resource modal attribute tests', () => {
   test.beforeEach(async({ page }) => {
@@ -15,37 +16,22 @@ test.describe('New resource modal attribute tests', () => {
   });
 
   test('should show duplicate attribute error, allow rename to fix it', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-resource-button').click();
+    const resourceModal = new ResourceDialog(page);
+    await resourceModal.open();
 
-    // Search for and select AlphaMissense resource
-    await Promise.all([
-      page.locator('#resource-search-input').fill('"hg19/scores/AlphaMissense"'),
-      page.locator('#resource-search-input').dispatchEvent('keyup'),
-      page.waitForResponse(
-        resp => resp.url().includes('api/resources/search?search=%22hg19/scores/AlphaMissense%22'), {timeout: 30000}
-      )
-    ]);
+    await resourceModal.searchResource('"hg19/scores/AlphaMissense"');
 
-    await page.waitForSelector(
-      '[id="hg19/scores/AlphaMissense-continue-button"]',
-      { state: 'visible', timeout: 15000 }
-    );
-    await page.locator('[id="hg19/scores/AlphaMissense-continue-button"]').click();
+    await resourceModal.getResourceContinueButton('hg19/scores/AlphaMissense').click();
 
     // Configure and navigate to attributes step
-    await expect(page.locator('#resources-form')).toBeVisible({ timeout: 15000 });
-    await expect(page.getByRole('button', { name: 'Next' })).toBeEnabled();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await expect(resourceModal.resourcesContent).toBeVisible({ timeout: 15000 });
+    await expect(resourceModal.nextButton).toBeEnabled();
+    await resourceModal.next();
 
     // Wait for attributes to load
-    await expect(page.locator('#attributes-dropdown')).toBeVisible({ timeout: 15000 });
+    await expect(resourceModal.attributeDropdown).toBeVisible({ timeout: 15000 });
 
-    // Type to search for am_pathogenicity attribute
-    await page.locator('#attributes-dropdown input').fill('am_pathogenicity');
-    await page.waitForTimeout(300);
-
-    // Select the am_pathogenicity attribute
-    await page.locator('.attribute-option', { hasText: 'am_pathogenicity' }).first().click();
+    await resourceModal.addAttribute('am_pathogenicity');
 
     // Verify attribute was selected
     await expect(page.locator('.attribute-name .editable-name').first()).toHaveValue('am_pathogenicity');
@@ -54,8 +40,7 @@ test.describe('New resource modal attribute tests', () => {
     await expect(page.locator('.error-message').filter({ hasText: 'Attribute with this name already exists' }))
       .toBeVisible();
 
-    // Verify Finish button is disabled
-    await expect(page.getByRole('button', { name: 'Finish' })).toBeDisabled();
+    await expect(resourceModal.finishButton).toBeDisabled();
 
     // Rename the second attribute to make names unique
     const secondAttribute = page.locator('.attribute-name .editable-name').nth(2);
@@ -70,8 +55,7 @@ test.describe('New resource modal attribute tests', () => {
     await expect(page.locator('.error-message').filter({ hasText: 'Attribute with this name already exists' }))
       .not.toBeVisible();
 
-    // Finish button should be enabled
-    await expect(page.getByRole('button', { name: 'Finish' })).toBeEnabled();
+    await expect(resourceModal.finishButton).toBeEnabled();
 
     // Verify both attributes are in the table with correct names
     const firstAttributeInput = page.locator('.attribute-name .editable-name').nth(0);
@@ -81,37 +65,22 @@ test.describe('New resource modal attribute tests', () => {
   });
 
   test('should allow deleting duplicate attribute without renaming', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-resource-button').click();
+    const resourceModal = new ResourceDialog(page);
+    await resourceModal.open();
 
-    // Search for and select AlphaMissense resource
-    await Promise.all([
-      page.locator('#resource-search-input').fill('"hg19/scores/AlphaMissense"'),
-      page.locator('#resource-search-input').dispatchEvent('keyup'),
-      page.waitForResponse(
-        resp => resp.url().includes('api/resources/search?search=%22hg19/scores/AlphaMissense%22'), {timeout: 30000}
-      )
-    ]);
+    await resourceModal.searchResource('"hg19/scores/AlphaMissense"');
 
-    await page.waitForSelector(
-      '[id="hg19/scores/AlphaMissense-continue-button"]',
-      { state: 'visible', timeout: 15000 }
-    );
-    await page.locator('[id="hg19/scores/AlphaMissense-continue-button"]').click();
+    await resourceModal.getResourceContinueButton('hg19/scores/AlphaMissense').click();
 
     // Configure and navigate to attributes step
-    await expect(page.locator('#resources-form')).toBeVisible({ timeout: 15000 });
-    await expect(page.getByRole('button', { name: 'Next' })).toBeEnabled();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await expect(resourceModal.resourcesContent).toBeVisible({ timeout: 15000 });
+    await expect(resourceModal.nextButton).toBeEnabled();
+    await resourceModal.next();
 
     // Wait for attributes to load
-    await expect(page.locator('#attributes-dropdown')).toBeVisible({ timeout: 15000 });
+    await expect(resourceModal.attributeDropdown).toBeVisible({ timeout: 15000 });
 
-    // Type to search for am_pathogenicity attribute
-    await page.locator('#attributes-dropdown input').fill('am_pathogenicity');
-    await page.waitForTimeout(300);
-
-    // Select the am_pathogenicity attribute again
-    await page.locator('.attribute-option', { hasText: 'am_pathogenicity' }).first().click();
+    await resourceModal.addAttribute('am_pathogenicity');
 
     // Verify error message is visible
     await expect(page.locator('.error-message').filter({ hasText: 'Attribute with this name already exists' }))
@@ -132,30 +101,20 @@ test.describe('New resource modal attribute tests', () => {
   });
 
   test('should preserve original attribute name after renaming and deletion', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-resource-button').click();
+    const resourceModal = new ResourceDialog(page);
+    await resourceModal.open();
 
-    // Search for and select AlphaMissense resource
-    await Promise.all([
-      page.locator('#resource-search-input').fill('"hg19/scores/AlphaMissense"'),
-      page.locator('#resource-search-input').dispatchEvent('keyup'),
-      page.waitForResponse(
-        resp => resp.url().includes('api/resources/search?search=%22hg19/scores/AlphaMissense%22'), {timeout: 30000}
-      )
-    ]);
+    await resourceModal.searchResource('"hg19/scores/AlphaMissense"');
 
-    await page.waitForSelector(
-      '[id="hg19/scores/AlphaMissense-continue-button"]',
-      { state: 'visible', timeout: 15000 }
-    );
-    await page.locator('[id="hg19/scores/AlphaMissense-continue-button"]').click();
+    await resourceModal.getResourceContinueButton('hg19/scores/AlphaMissense').click();
 
     // Configure and navigate to attributes step
-    await expect(page.locator('#resources-form')).toBeVisible({ timeout: 15000 });
-    await expect(page.getByRole('button', { name: 'Next' })).toBeEnabled();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await expect(resourceModal.resourcesContent).toBeVisible({ timeout: 15000 });
+    await expect(resourceModal.nextButton).toBeEnabled();
+    await resourceModal.next();
 
     // Wait for attributes to load
-    await expect(page.locator('#attributes-dropdown')).toBeVisible({ timeout: 15000 });
+    await expect(resourceModal.attributeDropdown).toBeVisible({ timeout: 15000 });
 
 
     // Rename the attribute
@@ -174,15 +133,13 @@ test.describe('New resource modal attribute tests', () => {
     await expect(page.locator('.editable-name')).toHaveCount(1);
 
     // Open dropdown and select the same attribute again
-    await page.locator('#attributes-dropdown input').fill('am_pathogenicity');
-    await page.waitForTimeout(300);
-    await page.locator('.attribute-option', { hasText: 'am_pathogenicity' }).first().click();
+    await resourceModal.addAttribute('am_pathogenicity');
 
     // Verify the attribute has the original name (not the renamed one)
     const newAttributeInput = page.locator('.editable-name').nth(1);
     await expect(newAttributeInput).toHaveValue('am_pathogenicity');
 
     // Finish button should be enabled
-    await expect(page.getByRole('button', { name: 'Finish' })).toBeEnabled();
+    await expect(resourceModal.finishButton).toBeEnabled();
   });
 });

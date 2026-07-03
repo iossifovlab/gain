@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import * as utils from '../../utils';
 import { customDefaultPipeline } from './helpers';
+import { AnnotatorDialog } from '../../pages/annotator.dialog';
 
 test.describe('Pipeline status bar tests', () => {
   test.beforeEach(async({ page }) => {
@@ -63,23 +64,22 @@ test.describe('Pipeline status bar tests', () => {
   });
 
   test('should update annotator and attribute counts in status bar after adding annotator', async({ page }) => {
+    const annotatorModal = new AnnotatorDialog(page);
     await customDefaultPipeline(page);
 
     await expect(page.locator('#status-bar .status-item').nth(0)).toHaveText('menu1 annotators');
     await expect(page.locator('#status-bar .status-item').nth(1)).toHaveText('menu_open2 attributes');
 
     // add simple_effect_annotator which contributes 3 attributes
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('simple_effect_annotator').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.open();
+    await annotatorModal.selectAnnotator('simple_effect_annotator');
+    await annotatorModal.next();
 
-    await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectParameter('gene_models', 'hg38/gene_models/GENCODE/46/basic/PRI');
+    await annotatorModal.next();
 
     await Promise.all([
-      page.getByRole('button', { name: 'Finish' }).click(),
+      annotatorModal.finish(),
       page.waitForResponse(resp => resp.url().includes('api/editor/pipeline_status')),
     ]);
 

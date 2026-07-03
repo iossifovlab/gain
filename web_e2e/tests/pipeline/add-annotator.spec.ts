@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import * as utils from '../../utils';
 import { customDefaultPipeline } from './helpers';
+import { AnnotatorDialog } from '../../pages/annotator.dialog';
 
 test.describe('Add annotator to pipeline tests', () => {
   test.beforeEach(async({ page }) => {
@@ -16,31 +17,30 @@ test.describe('Add annotator to pipeline tests', () => {
   });
 
   test('should open new annotator dialog with correct header and first step', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    const annotatorModal = new AnnotatorDialog(page);
+    await annotatorModal.open();
 
-    await expect(page.locator('mat-dialog-container')).toBeVisible();
-    await expect(page.locator('#modal-header')).toHaveText('New annotator');
-    await expect(page.getByRole('combobox', { name: 'Select annotator' })).toBeVisible();
+    await expect(annotatorModal.container).toBeVisible();
+    await expect(annotatorModal.header).toHaveText('New annotator');
+    await expect(annotatorModal.annotatorDropdown).toBeVisible();
   });
 
   test('should append gene set annotator', async({ page }) => {
+    const annotatorModal = new AnnotatorDialog(page);
     await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    await annotatorModal.open();
 
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('gene_set_annotator').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectAnnotator('gene_set_annotator');
+    await annotatorModal.next();
 
-    await page.locator('[id="resource_id-dropdown"]').click();
-    await page.locator('mat-option').getByText('gene_properties/gene_sets/autism').click();
-    await page.locator('[id="input_gene_list-dropdown"]').click();
-    await page.locator('mat-option').getByText('gene_list').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectParameter('resource_id', 'gene_properties/gene_sets/autism');
+    await annotatorModal.selectParameter('input_gene_list', 'gene_list');
+    await annotatorModal.next();
 
-    await expect(page.locator('.attribute-source')).toHaveCount(1);
+    await expect(annotatorModal.attributeSources).toHaveCount(1);
 
     await Promise.all([
-      page.getByRole('button', { name: 'Finish' }).click(),
+      annotatorModal.finish(),
       page.waitForResponse(
         resp => resp.url().includes('api/pipelines/validate')
       ),
@@ -65,25 +65,20 @@ test.describe('Add annotator to pipeline tests', () => {
   });
 
   test('should append two annotators', async({ page }) => {
+    const annotatorModal = new AnnotatorDialog(page);
     await customDefaultPipeline(page);
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    await annotatorModal.open();
 
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('liftover_annotator').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectAnnotator('liftover_annotator');
+    await annotatorModal.next();
 
-    await page.locator('[id="chain-dropdown"]').click();
-    await page.locator('mat-option').getByText('liftover/hg19_to_T2T').click();
-
-    await page.locator('[id="source_genome-dropdown"]').click();
-    await page.locator('mat-option').getByText('t2t/genomes/t2t-chm13v2.0').click();
-
-    await page.locator('[id="target_genome-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg38/genomes/GRCh38.p14').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectParameter('chain', 'liftover/hg19_to_T2T');
+    await annotatorModal.selectParameter('source_genome', 't2t/genomes/t2t-chm13v2.0');
+    await annotatorModal.selectParameter('target_genome', 'hg38/genomes/GRCh38.p14');
+    await annotatorModal.next();
 
     await Promise.all([
-      page.getByRole('button', { name: 'Finish' }).click(),
+      annotatorModal.finish(),
       page.waitForResponse(
         resp => resp.url().includes('api/pipelines/validate')
       ),
@@ -95,20 +90,18 @@ test.describe('Add annotator to pipeline tests', () => {
 
     await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
 
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    await annotatorModal.open();
 
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('position_score_annotator').click();
+    await annotatorModal.selectAnnotator('position_score_annotator');
     await page.waitForTimeout(3000);
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.next();
 
-    await page.locator('[id="resource_id-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg19/scores/FitCons2/E050').click();
+    await annotatorModal.selectParameter('resource_id', 'hg19/scores/FitCons2/E050');
 
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.next();
 
     await Promise.all([
-      page.getByRole('button', { name: 'Finish' }).click(),
+      annotatorModal.finish(),
       page.waitForResponse(
         resp => resp.url().includes('api/pipelines/validate')
       ),
@@ -141,6 +134,7 @@ test.describe('Add annotator to pipeline tests', () => {
   });
 
   test('should append annotator to user pipeline', async({ page }) => {
+    const annotatorModal = new AnnotatorDialog(page);
     await customDefaultPipeline(page);
 
     await page.getByRole('button', { name: 'Save as' }).click();
@@ -161,19 +155,17 @@ test.describe('Add annotator to pipeline tests', () => {
 
     await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
     // append new annotator
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    await annotatorModal.open();
 
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('simple_effect_annotator').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectAnnotator('simple_effect_annotator');
+    await annotatorModal.next();
 
-    await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
+    await annotatorModal.selectParameter('gene_models', 'hg38/gene_models/GENCODE/46/basic/PRI');
 
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.next();
 
     await Promise.all([
-      page.getByRole('button', { name: 'Finish' }).click(),
+      annotatorModal.finish(),
       page.waitForResponse(
         resp => resp.url().includes('api/pipelines/validate')
       ),
@@ -210,20 +202,21 @@ test.describe('Add annotator to pipeline tests', () => {
   });
 
   test('should disable Next button when no annotator is selected and enable it after selection', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    const annotatorModal = new AnnotatorDialog(page);
+    await annotatorModal.open();
 
-    await expect(page.getByRole('button', { name: 'Next' })).toBeDisabled();
+    await expect(annotatorModal.nextButton).toBeDisabled();
 
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('allele_score').click();
+    await annotatorModal.selectAnnotator('allele_score');
 
-    await expect(page.getByRole('button', { name: 'Next' })).toBeEnabled();
+    await expect(annotatorModal.nextButton).toBeEnabled();
   });
 
   test('should filter annotators in dropdown by search text', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    const annotatorModal = new AnnotatorDialog(page);
+    await annotatorModal.open();
 
-    await page.getByRole('combobox', { name: 'Select annotator' }).fill('allele');
+    await annotatorModal.annotatorDropdown.fill('allele');
     await page.getByRole('combobox', { name: 'allele' }).dispatchEvent('input');
 
     await expect(page.locator('.annotator-option')).toHaveCount(2);
@@ -232,34 +225,33 @@ test.describe('Add annotator to pipeline tests', () => {
   });
 
   test('should navigate back from configure step to annotator selection step', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    const annotatorModal = new AnnotatorDialog(page);
+    await annotatorModal.open();
 
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('allele_score').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectAnnotator('allele_score');
+    await annotatorModal.next();
 
     await expect(page.locator('[id="resource_id-dropdown"]')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Back' }).click();
+    await annotatorModal.back();
 
     await expect(page.getByRole('combobox', { name: 'allele_score_annotator' })).toBeVisible();
   });
 
   test('should check selected data in summary panel', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    const annotatorModal = new AnnotatorDialog(page);
+    await annotatorModal.open();
 
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('allele_score').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectAnnotator('allele_score');
+    await annotatorModal.next();
 
     // configure step: summary shows the selected annotator
     const configureSummary = page.locator('.mat-horizontal-stepper-content-current');
     await expect(configureSummary.locator('.annotator-display-text')).toContainText('annotator');
     await expect(configureSummary.locator('.annotator-display-text')).toContainText('allele_score_annotator');
 
-    await page.locator('[id="resource_id-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg38/scores/CADD_v1.7').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectParameter('resource_id', 'hg38/scores/CADD_v1.7');
+    await annotatorModal.next();
 
     // attribute step: summary adds the configured resource_id beneath the annotator
     const attributeSummary = page.locator('.mat-horizontal-stepper-content-current');
@@ -269,40 +261,38 @@ test.describe('Add annotator to pipeline tests', () => {
   });
 
   test('should remove a default attribute in the attribute step', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    const annotatorModal = new AnnotatorDialog(page);
+    await annotatorModal.open();
 
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('simple_effect_annotator').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectAnnotator('simple_effect_annotator');
+    await annotatorModal.next();
 
-    await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectParameter('gene_models', 'hg38/gene_models/GENCODE/46/basic/PRI');
+    await annotatorModal.next();
 
-    await expect(page.locator('.attribute-source')).toHaveCount(3);
+    await expect(annotatorModal.attributeSources).toHaveCount(3);
 
     await page.locator('#gene_list-remove-button').click();
 
-    await expect(page.locator('.attribute-source')).toHaveCount(2);
+    await expect(annotatorModal.attributeSources).toHaveCount(2);
   });
 
   test('should rename attribute and reflect new name in finished YAML', async({ page }) => {
+    const annotatorModal = new AnnotatorDialog(page);
     await customDefaultPipeline(page);
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    await annotatorModal.open();
 
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('simple_effect_annotator').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectAnnotator('simple_effect_annotator');
+    await annotatorModal.next();
 
-    await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectParameter('gene_models', 'hg38/gene_models/GENCODE/46/basic/PRI');
+    await annotatorModal.next();
 
     await page.locator('.editable-name').first().fill('my_worst_effect');
     await page.locator('.editable-name').first().blur();
 
     await Promise.all([
-      page.getByRole('button', { name: 'Finish' }).click(),
+      annotatorModal.finish(),
       page.waitForResponse(resp => resp.url().includes('api/pipelines/validate')),
     ]);
 
@@ -318,92 +308,87 @@ test.describe('Add annotator to pipeline tests', () => {
   });
 
   test('should show duplicate attribute name error and disable Finish button', async({ page }) => {
+    const annotatorModal = new AnnotatorDialog(page);
     await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    await annotatorModal.open();
 
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('simple_effect_annotator').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectAnnotator('simple_effect_annotator');
+    await annotatorModal.next();
 
-    await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectParameter('gene_models', 'hg38/gene_models/GENCODE/46/basic/PRI');
+    await annotatorModal.next();
 
-    await expect(page.locator('.attribute-source')).toHaveCount(3);
+    await expect(annotatorModal.attributeSources).toHaveCount(3);
 
     await page.locator('.editable-name').first().fill('worst_effect_genes');
     await page.locator('.editable-name').first().blur();
 
     await expect(page.locator('.error-message')).toContainText('Attribute with this name already exists');
-    await expect(page.getByRole('button', { name: 'Finish' })).toBeDisabled();
+    await expect(annotatorModal.finishButton).toBeDisabled();
   });
 
   test('should disable New annotator button when pipeline config is invalid', async({ page }) => {
+    const annotatorModal = new AnnotatorDialog(page);
     await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
     await utils.typeInPipelineEditor(page, 'preamble:\n input_reference_genome: hg38/genomes/GRCh38-hg38');
     await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
 
-    await expect(page.locator('#pipeline-actions').locator('#add-annotator-button')).toBeDisabled();
+    await expect(annotatorModal.addAnnotatorButton).toBeDisabled();
   });
 
   test('should enable Next button on configure step only after all required fields are filled', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('liftover_annotator').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    const annotatorModal = new AnnotatorDialog(page);
+    await annotatorModal.open();
+    await annotatorModal.selectAnnotator('liftover_annotator');
+    await annotatorModal.next();
 
-    await page.locator('[id="chain-dropdown"]').click();
-    await page.locator('mat-option').getByText('liftover/hg19_to_T2T').click();
-    await expect(page.getByRole('button', { name: 'Next' })).toBeDisabled();
+    await annotatorModal.selectParameter('chain', 'liftover/hg19_to_T2T');
+    await expect(annotatorModal.nextButton).toBeDisabled();
 
-    await page.locator('[id="source_genome-dropdown"]').click();
-    await page.locator('mat-option').getByText('t2t/genomes/t2t-chm13v2.0').click();
-    await expect(page.getByRole('button', { name: 'Next' })).toBeDisabled();
+    await annotatorModal.selectParameter('source_genome', 't2t/genomes/t2t-chm13v2.0');
+    await expect(annotatorModal.nextButton).toBeDisabled();
 
-    await page.locator('[id="target_genome-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg38/genomes/GRCh38.p14').click();
-    await expect(page.getByRole('button', { name: 'Next' })).toBeEnabled();
+    await annotatorModal.selectParameter('target_genome', 'hg38/genomes/GRCh38.p14');
+    await expect(annotatorModal.nextButton).toBeEnabled();
   });
 
   test('should enable Next when only required field is filled', async({ page }) => {
+    const annotatorModal = new AnnotatorDialog(page);
     // effect_annotator has gene_models (required) and genome (optional resource)
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('effect_annotator', { exact: true }).click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.open();
+    await annotatorModal.selectAnnotator('effect_annotator', { exact: true });
+    await annotatorModal.next();
 
     await expect(page.locator('[id="gene_models-dropdown"]')).toBeVisible();
     await expect(page.locator('[id="genome-dropdown"]')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Next' })).toBeDisabled();
+    await expect(annotatorModal.nextButton).toBeDisabled();
 
-    await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
+    await annotatorModal.selectParameter('gene_models', 'hg38/gene_models/GENCODE/46/basic/PRI');
 
     // Next is enabled without filling optional genome field
-    await expect(page.getByRole('button', { name: 'Next' })).toBeEnabled();
+    await expect(annotatorModal.nextButton).toBeEnabled();
   });
 
   test('should keep Next enabled after filling an optional resource field', async({ page }) => {
+    const annotatorModal = new AnnotatorDialog(page);
     // effect_annotator: fill required gene_models then also fill optional genome
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('effect_annotator', { exact: true }).click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.open();
+    await annotatorModal.selectAnnotator('effect_annotator', { exact: true });
+    await annotatorModal.next();
 
-    await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
-    await expect(page.getByRole('button', { name: 'Next' })).toBeEnabled();
+    await annotatorModal.selectParameter('gene_models', 'hg38/gene_models/GENCODE/46/basic/PRI');
+    await expect(annotatorModal.nextButton).toBeEnabled();
 
     await page.locator('[id="genome-dropdown"]').click();
     await page.locator('mat-option.resource-option').first().click();
-    await expect(page.getByRole('button', { name: 'Next' })).toBeEnabled();
+    await expect(annotatorModal.nextButton).toBeEnabled();
   });
 
   test('should filter chain options by search text in configure step', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('liftover_annotator').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    const annotatorModal = new AnnotatorDialog(page);
+    await annotatorModal.open();
+    await annotatorModal.selectAnnotator('liftover_annotator');
+    await annotatorModal.next();
 
     await page.locator('[id="chain-dropdown"]').locator('.dropdown-icon').click();
 
@@ -414,10 +399,10 @@ test.describe('Add annotator to pipeline tests', () => {
   });
 
   test('should filter source_genome options by search text in configure step', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('liftover_annotator').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    const annotatorModal = new AnnotatorDialog(page);
+    await annotatorModal.open();
+    await annotatorModal.selectAnnotator('liftover_annotator');
+    await annotatorModal.next();
 
     await page.locator('[id="source_genome-dropdown"]').locator('.dropdown-icon').click();
 
@@ -428,38 +413,34 @@ test.describe('Add annotator to pipeline tests', () => {
   });
 
   test('should disable Next button in configure step when a filled required field is cleared', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('liftover_annotator').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    const annotatorModal = new AnnotatorDialog(page);
+    await annotatorModal.open();
+    await annotatorModal.selectAnnotator('liftover_annotator');
+    await annotatorModal.next();
 
-    await page.locator('[id="chain-dropdown"]').click();
-    await page.locator('mat-option').getByText('liftover/hg19_to_T2T').click();
-    await page.locator('[id="source_genome-dropdown"]').click();
-    await page.locator('mat-option').getByText('t2t/genomes/t2t-chm13v2.0').click();
-    await page.locator('[id="target_genome-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg38/genomes/GRCh38.p14').click();
+    await annotatorModal.selectParameter('chain', 'liftover/hg19_to_T2T');
+    await annotatorModal.selectParameter('source_genome', 't2t/genomes/t2t-chm13v2.0');
+    await annotatorModal.selectParameter('target_genome', 'hg38/genomes/GRCh38.p14');
 
-    await expect(page.getByRole('button', { name: 'Next' })).toBeEnabled();
+    await expect(annotatorModal.nextButton).toBeEnabled();
 
     // clicking the dropdown icon clears the field and opens the panel
     await page.locator('[id="chain-dropdown"]').locator('.dropdown-icon').click();
     await page.keyboard.press('Escape');
 
-    await expect(page.getByRole('button', { name: 'Next' })).toBeDisabled();
+    await expect(annotatorModal.nextButton).toBeDisabled();
   });
 
   test('should toggle attribute internal flag and reflect it in finished YAML', async({ page }) => {
+    const annotatorModal = new AnnotatorDialog(page);
     await customDefaultPipeline(page);
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    await annotatorModal.open();
 
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('simple_effect_annotator').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectAnnotator('simple_effect_annotator');
+    await annotatorModal.next();
 
-    await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectParameter('gene_models', 'hg38/gene_models/GENCODE/46/basic/PRI');
+    await annotatorModal.next();
 
     // gene_list is the 3rd attribute (index 2) and internal: true by default
     const geneListCheckbox = page.locator('.attribute-internal input[type="checkbox"]').nth(2);
@@ -468,7 +449,7 @@ test.describe('Add annotator to pipeline tests', () => {
     await expect(geneListCheckbox).not.toBeChecked();
 
     await Promise.all([
-      page.getByRole('button', { name: 'Finish' }).click(),
+      annotatorModal.finish(),
       page.waitForResponse(resp => resp.url().includes('api/pipelines/validate')),
     ]);
 
@@ -483,17 +464,16 @@ test.describe('Add annotator to pipeline tests', () => {
 
   // eslint-disable-next-line max-len
   test('should select all attributes, remove all, then select one from dropdown as the only selected', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
+    const annotatorModal = new AnnotatorDialog(page);
+    await annotatorModal.open();
 
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('simple_effect_annotator').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectAnnotator('simple_effect_annotator');
+    await annotatorModal.next();
 
-    await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectParameter('gene_models', 'hg38/gene_models/GENCODE/46/basic/PRI');
+    await annotatorModal.next();
 
-    await expect(page.locator('.attribute-source')).toHaveCount(3);
+    await expect(annotatorModal.attributeSources).toHaveCount(3);
 
     await page.getByRole('button', { name: 'Select all' }).click();
     await expect(page.locator('.attributes-section-label')).toContainText('(15)');
@@ -501,34 +481,33 @@ test.describe('Add annotator to pipeline tests', () => {
     await page.getByRole('button', { name: 'Remove all' }).click();
     await expect(page.locator('.attributes-section-label')).not.toBeVisible();
 
-    await page.locator('#attributes-dropdown .dropdown-icon').click();
-    await page.locator('mat-option.attribute-option').first().click();
+    await annotatorModal.openAttributeDropdown();
+    await annotatorModal.attributeOptions.first().click();
 
-    await expect(page.locator('.attribute-source')).toHaveCount(1);
-    await expect(page.locator('.attribute-source').first()).toHaveText('worst_effect');
+    await expect(annotatorModal.attributeSources).toHaveCount(1);
+    await expect(annotatorModal.attributeSources.first()).toHaveText('worst_effect');
   });
 
   test('should filter attributes in the dropdown by search text', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('simple_effect_annotator').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    const annotatorModal = new AnnotatorDialog(page);
+    await annotatorModal.open();
+    await annotatorModal.selectAnnotator('simple_effect_annotator');
+    await annotatorModal.next();
 
-    await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectParameter('gene_models', 'hg38/gene_models/GENCODE/46/basic/PRI');
+    await annotatorModal.next();
 
     // simple_effect_annotator exposes 15 attributes in the dropdown.
-    await page.locator('#attributes-dropdown .dropdown-icon').click();
-    await expect(page.locator('mat-option.attribute-option')).toHaveCount(15);
+    await annotatorModal.openAttributeDropdown();
+    await expect(annotatorModal.attributeOptions).toHaveCount(15);
 
     // Typing runs a server-side search that narrows the option list.
     await Promise.all([
-      page.locator('#attributes-dropdown input').fill('worst'),
+      annotatorModal.attributeInput.fill('worst'),
       page.waitForResponse(resp => resp.url().includes('editor/annotator_attributes')),
     ]);
 
-    const options = page.locator('mat-option.attribute-option');
+    const options = annotatorModal.attributeOptions;
     await expect(options).toHaveCount(3);
     // Options render as "<source> - <description>"; anchor on the " -" separator
     // so each source name matches exactly one option (they share the "worst_effect"
@@ -541,19 +520,18 @@ test.describe('Add annotator to pipeline tests', () => {
   });
 
   test('should trim a whitespace-only attribute name to empty and flag empty duplicates', async({ page }) => {
+    const annotatorModal = new AnnotatorDialog(page);
     // Start from a clean pipeline so simple_effect's gene_list does not collide
     // with an existing pipeline attribute and pollute the validation state.
     await customDefaultPipeline(page);
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('simple_effect_annotator').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.open();
+    await annotatorModal.selectAnnotator('simple_effect_annotator');
+    await annotatorModal.next();
 
-    await page.locator('[id="gene_models-dropdown"]').click();
-    await page.locator('mat-option').getByText('hg38/gene_models/GENCODE/46/basic/PRI').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectParameter('gene_models', 'hg38/gene_models/GENCODE/46/basic/PRI');
+    await annotatorModal.next();
 
-    await expect(page.locator('.attribute-source')).toHaveCount(3);
+    await expect(annotatorModal.attributeSources).toHaveCount(3);
 
     // A whitespace-only name is trimmed to empty; a single empty name is accepted
     // (only duplicates are rejected), so Finish stays enabled.
@@ -562,7 +540,7 @@ test.describe('Add annotator to pipeline tests', () => {
     await firstName.blur();
     await expect(firstName).toHaveValue('');
     await expect(page.locator('mat-dialog-container .error-message')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Finish' })).toBeEnabled();
+    await expect(annotatorModal.finishButton).toBeEnabled();
 
     // Emptying a second name collides with the first (both ''): duplicate error.
     const secondName = page.locator('.editable-name').nth(1);
@@ -570,23 +548,24 @@ test.describe('Add annotator to pipeline tests', () => {
     await secondName.blur();
     await expect(page.locator('mat-dialog-container .error-message'))
       .toContainText('Attribute with this name already exists');
-    await expect(page.getByRole('button', { name: 'Finish' })).toBeDisabled();
+    await expect(annotatorModal.finishButton).toBeDisabled();
   });
 
   test('should warn instead of selecting all when a resource has over 1000 attributes', async({ page }) => {
+    const annotatorModal = new AnnotatorDialog(page);
     // gene_set_annotator needs an input_gene_list; the default clinical pipeline
     // provides gene_list. The GO release exposes >1000 gene-set attributes.
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('gene_set_annotator').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.open();
+    await annotatorModal.selectAnnotator('gene_set_annotator');
+    await annotatorModal.next();
 
-    await page.locator('[id="resource_id-dropdown"]').click();
-    await page.locator('[id="resource_id-dropdown"] input').fill('GO_2024-06-17_release');
-    await page.locator('mat-option', { hasText: 'gene_properties/gene_sets/GO_2024-06-17_release' }).first().click();
-    await page.locator('[id="input_gene_list-dropdown"]').click();
-    await page.locator('mat-option').getByText('gene_list').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectParameter(
+      'resource_id',
+      'gene_properties/gene_sets/GO_2024-06-17_release',
+      { search: 'GO_2024-06-17_release' }
+    );
+    await annotatorModal.selectParameter('input_gene_list', 'gene_list');
+    await annotatorModal.next();
 
     await expect(page.locator('.attributes-section-label')).toContainText('(1)');
 
@@ -597,22 +576,23 @@ test.describe('Add annotator to pipeline tests', () => {
   });
 
   test('should load more attributes when scrolling the attribute dropdown panel', async({ page }) => {
+    const annotatorModal = new AnnotatorDialog(page);
     // The GO release exposes >1000 attributes, so the attribute autocomplete
     // panel is paginated and loads more as it is scrolled.
-    await page.locator('#pipeline-actions').locator('#add-annotator-button').click();
-    await page.getByRole('combobox', { name: 'Select annotator' }).click();
-    await page.locator('mat-option').getByText('gene_set_annotator').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.open();
+    await annotatorModal.selectAnnotator('gene_set_annotator');
+    await annotatorModal.next();
 
-    await page.locator('[id="resource_id-dropdown"]').click();
-    await page.locator('[id="resource_id-dropdown"] input').fill('GO_2024-06-17_release');
-    await page.locator('mat-option', { hasText: 'gene_properties/gene_sets/GO_2024-06-17_release' }).first().click();
-    await page.locator('[id="input_gene_list-dropdown"]').click();
-    await page.locator('mat-option').getByText('gene_list').click();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await annotatorModal.selectParameter(
+      'resource_id',
+      'gene_properties/gene_sets/GO_2024-06-17_release',
+      { search: 'GO_2024-06-17_release' }
+    );
+    await annotatorModal.selectParameter('input_gene_list', 'gene_list');
+    await annotatorModal.next();
 
     // Open the attribute autocomplete panel and record the first page.
-    await page.locator('#attributes-dropdown input').click();
+    await annotatorModal.attributeInput.click();
     const options = page.locator('.mat-mdc-autocomplete-panel mat-option.attribute-option');
     await expect(options.first()).toBeVisible();
     const initialCount = await options.count();

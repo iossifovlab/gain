@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import * as utils from '../../utils';
 import { customDefaultPipeline } from './helpers';
+import { ResourceDialog } from '../../pages/annotator.dialog';
 
 test.describe('Add resource to pipeline tests', () => {
   test.beforeEach(async({ page }) => {
@@ -15,59 +16,47 @@ test.describe('Add resource to pipeline tests', () => {
   });
 
   test('should open New resource dialog with correct header and first step', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-resource-button').click();
+    const resourceModal = new ResourceDialog(page);
+    await resourceModal.open();
 
-    await expect(page.locator('mat-dialog-container')).toBeVisible();
-    await expect(page.locator('#modal-header')).toHaveText('New resource');
-    await expect(page.locator('#resource-type')).toBeVisible();
-    await expect(page.locator('#resource-search-input')).toBeVisible();
-    await expect(page.locator('#resource-count')).toBeVisible();
+    await expect(resourceModal.container).toBeVisible();
+    await expect(resourceModal.header).toHaveText('New resource');
+    await expect(resourceModal.resourceTable).toBeVisible();
+    await expect(resourceModal.resourceSearch).toBeVisible();
+    await expect(resourceModal.resourceCount).toBeVisible();
   });
 
   test('should display matching resources after typing in search input', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-resource-button').click();
+    const resourceModal = new ResourceDialog(page);
+    await resourceModal.open();
 
-    await Promise.all([
-      page.locator('#resource-search-input').fill('CADD'),
-      page.locator('#resource-search-input').dispatchEvent('keyup'), // trigger search
-      page.waitForResponse(
-        resp => resp.url().includes('api/resources/search?search=CADD'), {timeout: 30000}
-      )
-    ]);
+    await resourceModal.searchResource('CADD');
 
-    await expect(page.locator('#resource-count')).toHaveText('2 resources');
+    await expect(resourceModal.resourceCount).toHaveText('2 resources');
     await expect(page.getByTitle('hg38/scores/CADD_v1.7')).toBeVisible();
     await expect(page.getByTitle('hg38/scores/dbNSFP4.9a')).toBeVisible();
   });
 
   test('should keep searching resources after an invalid search value', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-resource-button').click();
+    const resourceModal = new ResourceDialog(page);
+    await resourceModal.open();
 
     // An invalid search value returns a 500 and surfaces an error.
-    await Promise.all([
-      page.locator('#resource-search-input').fill('"unclosed'),
-      page.waitForResponse(
-        resp => resp.url().includes('api/resources/search') && resp.status() === 500, {timeout: 30000}
-      )
-    ]);
-    await expect(page.locator('#resource-input-form .error-message').nth(0)).toHaveText('Invalid search value');
+    await resourceModal.searchResource('"unclosed');
+    await expect(resourceModal.resourceSearchError).toHaveText('Invalid search value');
 
     // Typing a valid value must still trigger a search. Regression: the search
     // stream used to terminate on the first error, so later searches never fired.
-    await Promise.all([
-      page.locator('#resource-search-input').fill('CADD'),
-      page.waitForResponse(
-        resp => resp.url().includes('api/resources/search?search=CADD') && resp.status() === 200, {timeout: 30000}
-      )
-    ]);
+    await resourceModal.searchResource('CADD');
 
-    await expect(page.locator('#resource-input-form .error-message').nth(0)).toHaveText('');
-    await expect(page.locator('#resource-count')).toHaveText('2 resources');
+    await expect(resourceModal.resourceSearchError).toHaveText('');
+    await expect(resourceModal.resourceCount).toHaveText('2 resources');
     await expect(page.getByTitle('hg38/scores/CADD_v1.7')).toBeVisible();
   });
 
   test('should load more resources when scrolling to the bottom of the list', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-resource-button').click();
+    const resourceModal = new ResourceDialog(page);
+    await resourceModal.open();
 
     // The unfiltered list is paginated; the first page renders on open.
     const rows = page.locator('#resource-list .resource-full-id');
@@ -82,71 +71,49 @@ test.describe('Add resource to pipeline tests', () => {
   });
 
   test('should filter resources by resource type', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-resource-button').click();
-    await expect(page.locator('#resource-count')).toHaveText('259 resources');
-    await page.locator('#resource-type mat-select').click();
-    await page.locator('mat-option').filter({ hasText: 'gene_score' }).click();
-    await expect(page.locator('#resource-count')).toHaveText('10 resources');
+    const resourceModal = new ResourceDialog(page);
+    await resourceModal.open();
+    await expect(resourceModal.resourceCount).toHaveText('259 resources');
+    await resourceModal.selectResourceType('gene_score');
+    await expect(resourceModal.resourceCount).toHaveText('10 resources');
   });
 
   test('should navigate past select annotator step after clicking continue', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-resource-button').click();
+    const resourceModal = new ResourceDialog(page);
+    await resourceModal.open();
 
-    await Promise.all([
-      page.locator('#resource-search-input').fill('"CADD_v1.7"'),
-      page.locator('#resource-search-input').dispatchEvent('keyup'), // trigger search
-      page.waitForResponse(
-        resp => resp.url().includes('api/resources/search?search=%22CADD_v1.7%22'), {timeout: 30000}
-      )
-    ]);
+    await resourceModal.searchResource('"CADD_v1.7"');
 
-    await page.waitForSelector('[id="hg38/scores/CADD_v1.7-continue-button"]', { state: 'visible', timeout: 15000 });
-    await page.locator('[id$="-continue-button"]').first().click();
+    await resourceModal.getResourceContinueButton('hg38/scores/CADD_v1.7').click();
 
-    await expect(page.locator('#resources-form')).toBeVisible({ timeout: 15000 });
+    await expect(resourceModal.resourcesContent).toBeVisible({ timeout: 15000 });
     await expect(
       page.locator('.mat-horizontal-stepper-content-current').locator('.annotator-display-text')
     ).toContainText('allele_score_annotator');
   });
 
   test('should navigate back to previous step', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-resource-button').click();
+    const resourceModal = new ResourceDialog(page);
+    await resourceModal.open();
 
-    await Promise.all([
-      page.locator('#resource-search-input').fill('"CADD_v1.7"'),
-      page.locator('#resource-search-input').dispatchEvent('keyup'), // trigger search
-      page.waitForResponse(
-        resp => resp.url().includes('api/resources/search?search=%22CADD_v1.7%22'), {timeout: 30000}
-      )
-    ]);
+    await resourceModal.searchResource('"CADD_v1.7"');
 
-    await page.waitForSelector('[id="hg38/scores/CADD_v1.7-continue-button"]', { state: 'visible', timeout: 15000 });
-    await page.locator('[id$="-continue-button"]').first().click();
+    await resourceModal.getResourceContinueButton('hg38/scores/CADD_v1.7').click();
 
-    await expect(page.locator('#resources-form')).toBeVisible({ timeout: 15000 });
+    await expect(resourceModal.resourcesContent).toBeVisible({ timeout: 15000 });
 
-    await page.getByRole('button', { name: 'Back' }).click();
+    await resourceModal.backButton.click();
 
     await expect(page.locator('#annotator-input-form')).toBeVisible();
   });
 
   test('should check selected data in summary panel', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-resource-button').click();
+    const resourceModal = new ResourceDialog(page);
+    await resourceModal.open();
 
-    await page.locator('#resource-search-input').fill('"gene_properties/gene_scores/GTEx_V11_RNAexpression"');
-    await Promise.all([
-      page.locator('#resource-search-input').dispatchEvent('keyup'), // trigger search query
-      page.waitForResponse(
-        resp => resp.url().includes(
-          'api/resources/search?search=%22gene_properties/gene_scores/GTEx_V11_RNAexpression%22'
-        ), {timeout: 30000}
-      )
-    ]);
-    await page.waitForSelector(
-      '[id="gene_properties/gene_scores/GTEx_V11_RNAexpression-continue-button"]',
-      { state: 'visible', timeout: 15000 }
-    );
-    await page.locator('[id="gene_properties/gene_scores/GTEx_V11_RNAexpression-continue-button"]').click();
+    await resourceModal.searchResource('"gene_properties/gene_scores/GTEx_V11_RNAexpression"');
+
+    await resourceModal.getResourceContinueButton('gene_properties/gene_scores/GTEx_V11_RNAexpression').click();
 
     const summary = page.locator('.mat-horizontal-stepper-content-current');
     // configure annotator step
@@ -158,8 +125,8 @@ test.describe('Add resource to pipeline tests', () => {
     await expect(summary.locator('.annotator-display-text')).toHaveText('annotatorgene_score_annotator');
 
     // advance to attribute step
-    await expect(page.getByRole('button', { name: 'Next' })).toBeEnabled();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await expect(resourceModal.nextButton).toBeEnabled();
+    await resourceModal.next();
 
     // // attribute step
     await expect(summary.locator('.resource-type-display-text').nth(0))
@@ -173,20 +140,13 @@ test.describe('Add resource to pipeline tests', () => {
   test('should complete workflow via finish with defaults and append YAML to editor', async({ page }) => {
     await customDefaultPipeline(page);
 
-    await page.locator('#pipeline-actions').locator('#add-resource-button').click();
+    const resourceModal = new ResourceDialog(page);
+    await resourceModal.open();
+
+    await resourceModal.searchResource('"hg19/scores/AlphaMissense"');
 
     await Promise.all([
-      page.locator('#resource-search-input').fill('"hg19/scores/AlphaMissense"'),
-      page.locator('#resource-search-input').dispatchEvent('keyup'), // trigger search
-      page.waitForResponse(
-        resp => resp.url().includes('api/resources/search?search=%22hg19/scores/AlphaMissense%22'), {timeout: 30000}
-      )
-    ]);
-
-    await page.waitForSelector('[id="hg19/scores/AlphaMissense-finish-button"]', { state: 'visible', timeout: 15000 });
-
-    await Promise.all([
-      page.locator('[id="hg19/scores/AlphaMissense-finish-button"]').click(),
+      resourceModal.getResourceFinishButton('hg19/scores/AlphaMissense').click(),
       page.waitForResponse(resp => resp.url().includes('api/pipelines/validate')),
     ]);
 
@@ -202,32 +162,23 @@ test.describe('Add resource to pipeline tests', () => {
   test('should complete full workflow via continue and append YAML to editor', async({ page }) => {
     await customDefaultPipeline(page);
 
-    await page.locator('#pipeline-actions').locator('#add-resource-button').click();
+    const resourceModal = new ResourceDialog(page);
+    await resourceModal.open();
 
-    await Promise.all([
-      page.locator('#resource-search-input').fill('"hg19/scores/AlphaMissense"'),
-      page.locator('#resource-search-input').dispatchEvent('keyup'), // trigger search
-      page.waitForResponse(
-        resp => resp.url().includes('api/resources/search?search=%22hg19/scores/AlphaMissense%22'), {timeout: 30000}
-      )
-    ]);
+    await resourceModal.searchResource('"hg19/scores/AlphaMissense"');
 
-    await page.waitForSelector(
-      '[id="hg19/scores/AlphaMissense-continue-button"]',
-      { state: 'visible', timeout: 15000 }
-    );
-    await page.locator('[id="hg19/scores/AlphaMissense-continue-button"]').click();
+    await resourceModal.getResourceContinueButton('hg19/scores/AlphaMissense').click();
 
     // resource workflow auto-selects the annotator and navigates to configure step
-    await expect(page.locator('#resources-form')).toBeVisible({ timeout: 15000 });
+    await expect(resourceModal.resourcesContent).toBeVisible({ timeout: 15000 });
     // resource_id is pre-filled from the selected resource, so Next is enabled immediately
-    await expect(page.getByRole('button', { name: 'Next' })).toBeEnabled();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await expect(resourceModal.nextButton).toBeEnabled();
+    await resourceModal.next();
 
-    await expect(page.getByRole('button', { name: 'Finish' })).toBeVisible({ timeout: 10000 });
+    await expect(resourceModal.finishButton).toBeVisible({ timeout: 10000 });
 
     await Promise.all([
-      page.getByRole('button', { name: 'Finish' }).click(),
+      resourceModal.finish(),
       page.waitForResponse(resp => resp.url().includes('api/editor/annotator_yaml')),
     ]);
 
@@ -245,28 +196,19 @@ test.describe('Add resource to pipeline tests', () => {
     await utils.typeInPipelineEditor(page, 'preamble:\n input_reference_genome: hg38/genomes/GRCh38-hg38');
     await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
 
-    await expect(page.locator('#pipeline-actions').locator('#add-resource-button')).toBeDisabled();
+    const resourceModal = new ResourceDialog(page);
+    await expect(resourceModal.addResourceButton).toBeDisabled();
   });
 
   test('should open resource details in new tab', async({ page }) => {
-    await page.locator('#pipeline-actions').locator('#add-resource-button').click();
+    const resourceModal = new ResourceDialog(page);
+    await resourceModal.open();
 
-    await Promise.all([
-      page.locator('#resource-search-input').fill('"CADD_v1.7"'),
-      page.locator('#resource-search-input').dispatchEvent('keyup'), // trigger search
-      page.waitForResponse(
-        resp => resp.url().includes('api/resources/search?search=%22CADD_v1.7%22'), {timeout: 30000}
-      )
-    ]);
-
-    await page.waitForSelector(
-      '[id="hg38/scores/CADD_v1.7-resource-details-button"]',
-      { state: 'visible', timeout: 15000 }
-    );
+    await resourceModal.searchResource('"CADD_v1.7"');
 
     const [popup] = await Promise.all([
       page.context().waitForEvent('page'),
-      page.locator('[id="hg38/scores/CADD_v1.7-resource-details-button"] a').click(),
+      resourceModal.getResourceDetailsButton('hg38/scores/CADD_v1.7').locator('a').click(),
     ]);
 
     await popup.waitForLoadState('domcontentloaded');
