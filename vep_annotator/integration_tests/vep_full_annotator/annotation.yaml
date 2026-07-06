@@ -1,3 +1,9 @@
+# cache_dir must stay in lockstep with VEP_CACHE_DIR in
+# vep_annotator/Jenkinsfile.integration: it is the host docker volume source
+# for the nested ensembl-vep container, so the same absolute path has to exist
+# on the host, in the CI test container, and here. On the pooh agent this is the
+# agent home (${HOME}/vep_cache = /var/lib/jenkins/vep_cache, symlinked to ZFS).
+# See gain#188.
 - vep_full_annotator:
-    cache_dir: /data/jenkins/vep_cache
+    cache_dir: /var/lib/jenkins/vep_cache
     vep_version: "113.4"
