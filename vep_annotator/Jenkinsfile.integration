@@ -1,9 +1,9 @@
 // Dedicated Jenkins pipeline for the gain-vep-annotator integration
 // test suite. Builds the regular vep_annotator CI image, provisions a
-// persistent VEP cache on the agent (/data/jenkins/vep_cache), and runs
-// pytest against the real VEP stack — `VEPCacheAnnotator.run` spawns
-// `ensemblorg/ensembl-vep:<version>` containers via the host docker
-// daemon.
+// persistent VEP cache on the agent (under the agent home,
+// ${HOME}/vep_cache), and runs pytest against the real VEP stack —
+// `VEPCacheAnnotator.run` spawns `ensemblorg/ensembl-vep:<version>`
+// containers via the host docker daemon.
 //
 // Expected Jenkins job setup:
 //   - Script path: vep_annotator/Jenkinsfile.integration
@@ -14,7 +14,7 @@
 // absolute path in the CI test container and on the host.
 
 pipeline {
-    // Pinned to `pooh`: the multi-GB VEP cache under /data/jenkins/vep_cache
+    // Pinned to `pooh`: the multi-GB VEP cache under ${HOME}/vep_cache
     // is maintained on that agent and reused across builds.
     agent { label 'pooh' }
 
@@ -35,8 +35,20 @@ pipeline {
 
     environment {
         // Persistent across builds — the VEP cache is multi-GB and
-        // mostly reused (`install_vep_cache --continue`).
-        VEP_CACHE_DIR = '/data/jenkins/vep_cache'
+        // mostly reused (`install_vep_cache --continue`). Anchored to the
+        // agent home (on pooh, /var/lib/jenkins/vep_cache -> ZFS via the
+        // home symlink) rather than a hardcoded /data mount, which was
+        // remounted read-only and is destroyed by the pooh /data->ZFS
+        // migration (seqpipe/infra Phase 2). See gain#188.
+        //
+        // DinD path alignment: this same absolute path is the docker
+        // volume *source* for the nested ensembl-vep container spawned by
+        // the host daemon (VEPCacheAnnotator, via cache_dir), so it must
+        // be identical on the host, inside the CI test container, and in
+        // the integration fixture's `cache_dir`. Keep
+        // integration_tests/vep_full_annotator/annotation.yaml in lockstep
+        // with this value.
+        VEP_CACHE_DIR = "${env.HOME}/vep_cache"
         IMAGE_TAG = "gain-vep-annotator-ci:${env.BUILD_NUMBER}"
     }
 
@@ -68,11 +80,24 @@ pipeline {
         stage('Provision VEP cache') {
             steps {
                 sh '''
-                    mkdir -p ${VEP_CACHE_DIR}
+                    # DinD path alignment (gain#188): the integration fixture's
+                    # cache_dir is the host docker volume *source* for the nested
+                    # ensembl-vep container, so it must equal VEP_CACHE_DIR. Fail
+                    # fast with a clear message if the two ever drift, instead of
+                    # a cryptic read-only/wget error deep in the VEP run.
+                    fixture=vep_annotator/integration_tests/vep_full_annotator/annotation.yaml
+                    fixture_cache_dir=$(sed -n 's/^[[:space:]]*cache_dir:[[:space:]]*//p' "${fixture}")
+                    if [ "${fixture_cache_dir}" != "${VEP_CACHE_DIR}" ]; then
+                        echo "cache_dir mismatch: ${fixture} has '${fixture_cache_dir}', expected '${VEP_CACHE_DIR}'" >&2
+                        echo "Keep ${fixture} in lockstep with VEP_CACHE_DIR (see gain#188)." >&2
+                        exit 1
+                    fi
+
+                    mkdir -p "${VEP_CACHE_DIR}"
                     docker run --rm \
-                        -v ${VEP_CACHE_DIR}:${VEP_CACHE_DIR} \
+                        -v "${VEP_CACHE_DIR}:${VEP_CACHE_DIR}" \
                         ${IMAGE_TAG} \
-                        install_vep_cache ${VEP_CACHE_DIR} --force --continue
+                        install_vep_cache "${VEP_CACHE_DIR}" --force --continue
                 '''
             }
         }
