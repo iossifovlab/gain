@@ -498,9 +498,10 @@ def test_bare_gene_score_is_readable_minimal(
     gene_score = build_gene_score_from_resource(res)
     assert len(gene_score.get_all_scores()) == 1
     score_id = gene_score.get_all_scores()[0]
-    assert gene_score.get_min(score_id) == pytest.approx(
-        gene_score.get_min(score_id))
-    assert gene_score.get_max(score_id) >= gene_score.get_min(score_id)
+    # The bare builder's default data block is G1 0.1 / G2 0.2 / G3 0.3,
+    # so min/max are the actual extremes of those rows.
+    assert gene_score.get_min(score_id) == pytest.approx(0.1)
+    assert gene_score.get_max(score_id) == pytest.approx(0.3)
 
 
 def test_gene_score_reads_back_authored_values(
