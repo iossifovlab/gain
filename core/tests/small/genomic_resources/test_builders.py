@@ -1248,6 +1248,65 @@ def test_grr_composes_np_and_allele_scores(
     assert allele_score.fetch_scores("1", 10, "A", "C") == {"freq": 0.03}
 
 
+def test_np_score_builder_no_cross_variation_leak(
+    tmp_path: pathlib.Path,
+) -> None:
+    # From one shared np-score base, two siblings declare DIFFERENT scores
+    # AND author DIFFERENT typed rows; BOTH are realized and each must read
+    # back ONLY its own score and values through AlleleScore.  If the
+    # builder accumulated scores/rows into a shared mutable field (append in
+    # place) instead of a fresh tuple per with_score/with_score_line, the
+    # siblings would carry each other's declarations and this would fail.
+    base = a_np_score()
+    sibling_a = (
+        base
+        .with_score("sa", "float")
+        .with_score_line(
+            chrom="1", pos_begin=10, reference="A", alternative="G", sa=0.11)
+    )
+    sibling_b = (
+        base
+        .with_score("sb", "float")
+        .with_score_line(
+            chrom="1", pos_begin=10, reference="A", alternative="G", sb=0.99)
+    )
+
+    score_a = AlleleScore(sibling_a.build_resource(tmp_path / "a")).open()
+    score_b = AlleleScore(sibling_b.build_resource(tmp_path / "b")).open()
+
+    assert score_a.get_all_scores() == ["sa"]
+    assert score_a.fetch_scores("1", 10, "A", "G") == {"sa": 0.11}
+    assert score_b.get_all_scores() == ["sb"]
+    assert score_b.fetch_scores("1", 10, "A", "G") == {"sb": 0.99}
+    # the shared base is untouched by either derivation
+    assert base.scores == ()
+    assert base.rows == ()
+
+
+def test_allele_score_builder_no_cross_variation_leak(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The allele-score counterpart: two siblings off a shared base author
+    # different data blocks; each reads back only its own values.
+    base = an_allele_score().with_score("freq", "float")
+    sibling_a = base.with_data("""
+        chrom  pos_begin  reference  alternative  freq
+        1      10         A          G            0.11
+    """)
+    sibling_b = base.with_data("""
+        chrom  pos_begin  reference  alternative  freq
+        1      10         A          G            0.99
+    """)
+
+    score_a = AlleleScore(sibling_a.build_resource(tmp_path / "a")).open()
+    score_b = AlleleScore(sibling_b.build_resource(tmp_path / "b")).open()
+
+    assert score_a.fetch_scores("1", 10, "A", "G") == {"freq": 0.11}
+    assert score_b.fetch_scores("1", 10, "A", "G") == {"freq": 0.99}
+    # the shared base carries neither sibling's data
+    assert base.data is None
+
+
 # ---------------------------------------------------------------------------
 # sub-feature 5: polish -- multi-line desc renders as valid YAML
 # ---------------------------------------------------------------------------
