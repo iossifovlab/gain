@@ -934,3 +934,68 @@ def test_grr_mixes_gene_score_position_score_and_genome(
 
     gene_score = build_gene_score_from_resource(repo.get_resource("genes/pli"))
     assert gene_score.get_gene_value("pli", "GENE2") == pytest.approx(0.9)
+
+
+# ---------------------------------------------------------------------------
+# sub-feature 1: typed-row helper with_score_line
+# ---------------------------------------------------------------------------
+
+def test_position_score_line_matches_with_data(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Typed rows must realize to the SAME read-back as the equivalent
+    # with_data string.
+    string_res = (
+        a_position_score()
+        .with_score("phastCons", "float")
+        .with_data("""
+            chrom  pos_begin  phastCons
+            1      10         0.02
+            1      11         0.03
+            2      8          0.01
+        """)
+        .build_resource(tmp_path / "s")
+    )
+    typed_res = (
+        a_position_score()
+        .with_score("phastCons", "float")
+        .with_score_line(chrom="1", pos_begin=10, phastCons=0.02)
+        .with_score_line(chrom="1", pos_begin=11, phastCons=0.03)
+        .with_score_line(chrom="2", pos_begin=8, phastCons=0.01)
+        .build_resource(tmp_path / "t")
+    )
+    string_score = PositionScore(string_res).open()
+    typed_score = PositionScore(typed_res).open()
+    for chrom, pos in [("1", 10), ("1", 11), ("2", 8)]:
+        assert (
+            typed_score.fetch_scores(chrom, pos)
+            == string_score.fetch_scores(chrom, pos))
+    assert typed_score.fetch_scores("1", 99) is None
+
+
+def test_position_score_line_with_pos_end(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_position_score()
+        .with_score("sc", "float")
+        .with_score_line(chrom="1", pos_begin=10, pos_end=15, sc=0.02)
+        .with_score_line(chrom="1", pos_begin=17, pos_end=19, sc=0.03)
+        .build_resource(tmp_path)
+    )
+    score = PositionScore(res).open()
+    assert score.fetch_scores("1", 12) == [0.02]
+    assert score.fetch_scores("1", 18) == [0.03]
+
+
+def test_with_data_and_with_score_line_mutually_exclusive(
+    tmp_path: pathlib.Path,
+) -> None:
+    builder = (
+        a_position_score()
+        .with_score("sc", "float")
+        .with_data("chrom pos_begin sc\n1 10 0.1\n")
+        .with_score_line(chrom="1", pos_begin=11, sc=0.2)
+    )
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        builder.build_resource(tmp_path)
