@@ -157,6 +157,65 @@ def test_validation_error_names_resource_id(
         a_grr().with_resource("scores/broken", builder).build_repo(tmp_path)
 
 
+def test_hash_prefixed_header_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The builder owns the data format; a conventional '#'-prefixed header
+    # is rejected explicitly instead of being silently skipped.
+    builder = (
+        a_position_score()
+        .with_score("sc", "float")
+        .with_data("""
+            #chrom  pos_begin  sc
+            1       10         0.1
+        """)
+    )
+    with pytest.raises(ValueError, match="must not start with '#'"):
+        builder.build_resource(tmp_path)
+
+
+def test_hash_prefixed_header_names_resource_id(
+    tmp_path: pathlib.Path,
+) -> None:
+    builder = (
+        a_position_score()
+        .with_score("sc", "float")
+        .with_data("#chrom pos_begin sc\n1 10 0.1\n")
+    )
+    with pytest.raises(ValueError, match="scores/hashed"):
+        a_grr().with_resource("scores/hashed", builder).build_repo(tmp_path)
+
+
+def test_duplicate_column_name_across_scores_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Two scores mapped to the same column_name must not silently collapse.
+    builder = (
+        a_position_score()
+        .with_score("sc1", "float", column_name="shared")
+        .with_score("sc2", "float", column_name="shared")
+        .with_data("chrom pos_begin shared\n1 10 0.1\n")
+    )
+    with pytest.raises(ValueError, match="shared") as excinfo:
+        builder.build_resource(tmp_path)
+    assert "column_name" in str(excinfo.value)
+
+
+def test_duplicate_score_id_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The same score id declared twice must not silently collapse.
+    builder = (
+        a_position_score()
+        .with_score("sc", "float")
+        .with_score("sc", "float")
+        .with_data("chrom pos_begin sc\n1 10 0.1\n")
+    )
+    with pytest.raises(ValueError, match="sc") as excinfo:
+        builder.build_resource(tmp_path)
+    assert "duplicate" in str(excinfo.value).lower()
+
+
 def test_range_rows_with_pos_end(
     tmp_path: pathlib.Path,
 ) -> None:
