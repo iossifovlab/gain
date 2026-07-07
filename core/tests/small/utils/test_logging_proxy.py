@@ -12,6 +12,14 @@ def test_common_stdlib_names_present() -> None:
         assert hasattr(logging, name), f"missing stdlib name: {name}"
 
 
+def test_non_all_stdlib_names_present() -> None:
+    # These are not in stdlib ``logging.__all__``, so the star import does not
+    # re-export them; they must be explicitly re-imported for the drop-in
+    # replacement to keep working (``logging.root`` especially is common).
+    for name in ("root", "RootLogger", "Filterer"):
+        assert hasattr(logging, name), f"missing stdlib name: {name}"
+
+
 def test_custom_levels_present() -> None:
     assert logging.TRACE == 5
     assert logging.USER_INFO == 25

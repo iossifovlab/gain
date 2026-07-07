@@ -34,7 +34,7 @@ methods.
 from __future__ import annotations
 
 import logging as _logging
-from logging import config, handlers  # noqa: F401
+from logging import Filterer, RootLogger, config, handlers, root  # noqa: F401
 from typing import TYPE_CHECKING, Any
 
 import gain.utils.log_levels  # noqa: F401
