@@ -157,3 +157,53 @@ def test_validation_error_names_resource_id(
     )
     with pytest.raises(ValueError, match="scores/broken"):
         a_grr().with_resource("scores/broken", builder).build_repo(tmp_path)
+
+
+def test_range_rows_with_pos_end(
+    tmp_path: pathlib.Path,
+) -> None:
+    # pos_end is an allowed optional position column for range rows.
+    res = (
+        a_position_score()
+        .with_score("sc", "float")
+        .with_data("""
+            chrom  pos_begin  pos_end  sc
+            1      10         15       0.02
+            1      17         19       0.03
+        """)
+        .build_resource(tmp_path)
+    )
+    score = PositionScore(res).open()
+    assert score.table is not None
+    assert score.table.pos_end_key == 2
+    assert score.fetch_scores("1", 12) == [0.02]
+    assert score.fetch_scores("1", 18) == [0.03]
+
+
+def test_realized_table_is_plain_txt(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The position table realizes as a plain .txt file (no tabix/.gz on
+    # the table itself).
+    a_position_score().build_resource(tmp_path)
+    assert (tmp_path / "data.txt").is_file()
+    assert not (tmp_path / "data.txt.gz").exists()
+    assert not list(tmp_path.glob("data.txt*.tbi"))
+
+
+def test_multiple_scores_in_one_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_position_score()
+        .with_score("s_float", "float")
+        .with_score("s_int", "int")
+        .with_data("""
+            chrom  pos_begin  s_float  s_int
+            1      10         0.02     5
+        """)
+        .build_resource(tmp_path)
+    )
+    score = PositionScore(res).open()
+    assert score.get_all_scores() == ["s_float", "s_int"]
+    assert score.fetch_scores("1", 10) == [0.02, 5]
