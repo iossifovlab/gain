@@ -1,6 +1,6 @@
 """Custom logging levels for the GAIn package.
 
-TRACE (15): between DEBUG and INFO, for fine-grained diagnostic output.
+TRACE (5): below DEBUG, for the finest-grained diagnostic output.
 USER_INFO (25): between INFO and WARNING, for messages directed at end users.
 """
 from __future__ import annotations
@@ -22,7 +22,9 @@ def _trace(
     **kwargs: Any,
 ) -> None:
     if self.isEnabledFor(TRACE):
-        self._log(TRACE, msg, args, **kwargs)
+        self._log(
+            TRACE, msg, args,
+            stacklevel=kwargs.pop("stacklevel", 1) + 1, **kwargs)
 
 
 def _user_info(
@@ -32,7 +34,9 @@ def _user_info(
     **kwargs: Any,
 ) -> None:
     if self.isEnabledFor(USER_INFO):
-        self._log(USER_INFO, msg, args, **kwargs)
+        self._log(
+            USER_INFO, msg, args,
+            stacklevel=kwargs.pop("stacklevel", 1) + 1, **kwargs)
 
 
 logging.Logger.trace = _trace  # type: ignore[attr-defined]

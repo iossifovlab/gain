@@ -17,7 +17,7 @@ class StopLossEffectChecker(EffectChecker):
             request.variant.reference,
         )
 
-        logger.trace(  # type: ignore[attr-defined]
+        logger.trace(
             "position check %d <= %d-%d <= %d",
             request.transcript_model.cds[1] - 2,
             request.variant.position,
@@ -33,7 +33,7 @@ class StopLossEffectChecker(EffectChecker):
                         alt_aa[ref_aa.index("End")] == "End":
                     return None
 
-                logger.trace("ref aa=%s, alt aa=%s", ref_aa, alt_aa)  # type: ignore[attr-defined]
+                logger.trace("ref aa=%s, alt aa=%s", ref_aa, alt_aa)
 
             except IndexError:
                 pass

@@ -64,6 +64,7 @@ from gain.genomic_resources.testing import (
 from gain.task_graph.cli_tools import TaskGraphCli
 from gain.task_graph.graph import TaskGraph
 from gain.task_graph.logging import FsspecHandler
+from gain.utils.log_levels import TRACE
 from gain.utils.regions import Region as GenomicRegion
 
 pytestmark = pytest.mark.usefixtures("clean_genomic_context")
@@ -1802,8 +1803,8 @@ def test_annotate_tabular_keep_parts(
     ("", logging.WARNING),
     ("-v", logging.INFO),
     ("-vv", logging.DEBUG),
-    ("-vvv", logging.DEBUG),
-    ("-vvvv", logging.DEBUG),
+    ("-vvv", TRACE),
+    ("-vvvv", TRACE),
 ])
 def test_annotate_tabular_logging_level(
     annotate_directory_fixture: pathlib.Path,
