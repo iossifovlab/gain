@@ -2,12 +2,14 @@
 import pathlib
 
 import pytest
+from gain.gene_scores.gene_scores import build_gene_score_from_resource
 from gain.genomic_resources.genomic_scores import PositionScore
 from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
 )
 from gain.genomic_resources.repository import GenomicResourceProtocolRepo
 from gain.genomic_resources.testing.builders import (
+    a_gene_score,
     a_grr,
     a_position_score,
     a_reference_genome,
@@ -478,3 +480,359 @@ def test_grr_mixes_genome_and_position_score(
 
     score = PositionScore(repo.get_resource("scores/pos")).open()
     assert score.fetch_scores("1", 10) == [0.5]
+
+
+# ---------------------------------------------------------------------------
+# gene-score builder
+# ---------------------------------------------------------------------------
+
+def test_bare_gene_score_is_readable_minimal(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A bare gene score (one float score, no histogram) must realize and
+    # read back through GeneScore with working get_min/get_max -- the
+    # numeric default histogram is auto-built by gene_scores.py.
+    res = a_gene_score().build_resource(tmp_path)
+
+    assert res.get_type() == "gene_score"
+    gene_score = build_gene_score_from_resource(res)
+    assert len(gene_score.get_all_scores()) == 1
+    score_id = gene_score.get_all_scores()[0]
+    assert gene_score.get_min(score_id) == pytest.approx(
+        gene_score.get_min(score_id))
+    assert gene_score.get_max(score_id) >= gene_score.get_min(score_id)
+
+
+def test_gene_score_reads_back_authored_values(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_gene_score()
+        .with_score("pli", "float")
+        .with_data("""
+            gene   pli
+            GENE1  0.5
+            GENE2  0.9
+            GENE3  0.1
+        """)
+        .build_resource(tmp_path)
+    )
+    gene_score = build_gene_score_from_resource(res)
+    assert gene_score.get_all_scores() == ["pli"]
+    assert gene_score.get_gene_value("pli", "GENE1") == pytest.approx(0.5)
+    assert gene_score.get_gene_value("pli", "GENE2") == pytest.approx(0.9)
+    assert gene_score.get_min("pli") == pytest.approx(0.1)
+    assert gene_score.get_max("pli") == pytest.approx(0.9)
+
+
+def test_gene_score_column_name_defaults_to_id(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_gene_score()
+        .with_score("pli")
+        .with_data("""
+            gene   pli
+            GENE1  0.5
+        """)
+        .build_resource(tmp_path)
+    )
+    gene_score = build_gene_score_from_resource(res)
+    assert gene_score.get_all_scores() == ["pli"]
+    assert gene_score.get_gene_value("pli", "GENE1") == pytest.approx(0.5)
+
+
+def test_gene_score_explicit_column_name_override(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_gene_score()
+        .with_score("pli", column_name="raw_pli")
+        .with_data("""
+            gene   raw_pli
+            GENE1  0.5
+        """)
+        .build_resource(tmp_path)
+    )
+    gene_score = build_gene_score_from_resource(res)
+    assert gene_score.get_all_scores() == ["pli"]
+    assert gene_score.get_gene_value("pli", "GENE1") == pytest.approx(0.5)
+
+
+def test_gene_score_custom_gene_column(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_gene_score()
+        .with_gene_column("symbol")
+        .with_score("pli", "float")
+        .with_data("""
+            symbol  pli
+            GENE1   0.5
+            GENE2   0.9
+        """)
+        .build_resource(tmp_path)
+    )
+    gene_score = build_gene_score_from_resource(res)
+    assert gene_score.get_gene_value("pli", "GENE1") == pytest.approx(0.5)
+    assert gene_score.get_gene_value("pli", "GENE2") == pytest.approx(0.9)
+
+
+def test_gene_score_missing_declared_column_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    builder = (
+        a_gene_score()
+        .with_score("pli", "float")
+        .with_data("""
+            gene   wrong_name
+            GENE1  0.5
+        """)
+    )
+    with pytest.raises(ValueError, match="pli") as excinfo:
+        builder.build_resource(tmp_path)
+    assert "missing" in str(excinfo.value)
+
+
+def test_gene_score_undeclared_extra_column_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    builder = (
+        a_gene_score()
+        .with_score("pli", "float")
+        .with_data("""
+            gene   pli   bonus
+            GENE1  0.5   9.9
+        """)
+    )
+    with pytest.raises(ValueError, match="bonus") as excinfo:
+        builder.build_resource(tmp_path)
+    assert "undeclared" in str(excinfo.value)
+
+
+def test_gene_score_validation_error_names_resource_id(
+    tmp_path: pathlib.Path,
+) -> None:
+    builder = (
+        a_gene_score()
+        .with_score("pli", "float")
+        .with_data("gene extra\nGENE1 0.1\n")
+    )
+    with pytest.raises(ValueError, match="genes/broken"):
+        a_grr().with_resource("genes/broken", builder).build_repo(tmp_path)
+
+
+def test_gene_score_realizes_plain_tsv(
+    tmp_path: pathlib.Path,
+) -> None:
+    a_gene_score().build_resource(tmp_path)
+    assert (tmp_path / "data.tsv").is_file()
+    assert not (tmp_path / "data.tsv.gz").exists()
+    assert not list(tmp_path.glob("data.tsv*.tbi"))
+
+
+def test_gene_score_multiple_scores_in_one_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_gene_score()
+        .with_score("pli", "float")
+        .with_score("mis_z", "float")
+        .with_data("""
+            gene   pli   mis_z
+            GENE1  0.5   1.2
+            GENE2  0.9   2.4
+        """)
+        .build_resource(tmp_path)
+    )
+    gene_score = build_gene_score_from_resource(res)
+    assert set(gene_score.get_all_scores()) == {"pli", "mis_z"}
+    assert gene_score.get_gene_value("pli", "GENE1") == pytest.approx(0.5)
+    assert gene_score.get_gene_value("mis_z", "GENE2") == pytest.approx(2.4)
+
+
+def test_gene_score_omits_histogram_by_default(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A numeric gene score with no declared histogram emits NO histogram
+    # block; gene_scores.py auto-builds the default numeric histogram.
+    res = a_gene_score().with_score("pli", "float").with_data("""
+        gene   pli
+        GENE1  0.5
+    """).build_resource(tmp_path)
+    config = res.get_config()
+    assert config is not None
+    assert "histogram" not in config["scores"][0]
+
+
+def test_gene_score_with_histogram_reads_back(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A declared histogram is emitted and parsed: x_log_scale drives the
+    # score's x-scale, which is read from hist_conf (not a statistics file).
+    res = (
+        a_gene_score()
+        .with_score("pli", "float")
+        .with_histogram({
+            "type": "number",
+            "number_of_bins": 5,
+            "view_range": {"min": 0.0, "max": 1.0},
+            "x_min_log": 0.001,
+            "x_log_scale": True,
+            "y_log_scale": False,
+        })
+        .with_data("""
+            gene   pli
+            GENE1  0.001
+            GENE2  0.5
+            GENE3  1.0
+        """)
+        .build_resource(tmp_path)
+    )
+    config = res.get_config()
+    assert config is not None
+    assert config["scores"][0]["histogram"]["number_of_bins"] == 5
+    gene_score = build_gene_score_from_resource(res)
+    assert gene_score.get_x_scale("pli") == "log"
+    assert gene_score.get_y_scale("pli") == "linear"
+
+
+def test_gene_score_with_histogram_targets_named_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_gene_score()
+        .with_score("pli", "float")
+        .with_score("mis_z", "float")
+        .with_histogram(
+            {"type": "number", "number_of_bins": 3,
+             "x_log_scale": True, "y_log_scale": False},
+            score_id="pli")
+        .with_data("""
+            gene   pli   mis_z
+            GENE1  0.001 1.0
+            GENE2  1.0   2.0
+        """)
+        .build_resource(tmp_path)
+    )
+    gene_score = build_gene_score_from_resource(res)
+    # only the targeted score got the log histogram
+    assert gene_score.get_x_scale("pli") == "log"
+    assert gene_score.get_x_scale("mis_z") == "linear"
+
+
+def test_position_score_with_histogram_emits_block(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_position_score()
+        .with_score("phastCons", "float")
+        .with_histogram({
+            "type": "number",
+            "number_of_bins": 4,
+            "x_log_scale": False,
+            "y_log_scale": False,
+        })
+        .with_data("chrom pos_begin phastCons\n1 10 0.5\n")
+        .build_resource(tmp_path)
+    )
+    config = res.get_config()
+    assert config is not None
+    assert config["scores"][0]["histogram"]["number_of_bins"] == 4
+    # the score still reads back
+    score = PositionScore(res).open()
+    assert score.fetch_scores("1", 10) == [0.5]
+
+
+def test_with_histogram_before_any_score_raises() -> None:
+    with pytest.raises(ValueError, match="call with_score first"):
+        a_gene_score().with_histogram({"type": "number"})
+    with pytest.raises(ValueError, match="call with_score first"):
+        a_position_score().with_histogram({"type": "number"})
+
+
+def test_with_histogram_unknown_score_raises() -> None:
+    with pytest.raises(ValueError, match="no score 'nope'"):
+        (
+            a_gene_score()
+            .with_score("pli", "float")
+            .with_histogram({"type": "number"}, score_id="nope")
+        )
+
+
+def test_gene_score_builder_is_immutable() -> None:
+    base = a_gene_score()
+    extended = base.with_score("pli", "float")
+    with_col = base.with_gene_column("symbol")
+    assert base.scores == ()
+    assert base.gene_column == "gene"
+    assert [s.score_id for s in extended.scores] == ["pli"]
+    assert with_col.gene_column == "symbol"
+    assert base is not extended
+
+
+def test_gene_score_builder_no_cross_variation_leak(
+    tmp_path: pathlib.Path,
+) -> None:
+    # From one shared base, two siblings declare DIFFERENT scores and are
+    # BOTH realized; each gene score must read back ONLY its own score.
+    base = a_gene_score().with_data("""
+        gene   sa    sb
+        GENE1  0.1   0.9
+        GENE2  0.2   0.8
+    """)
+    sibling_a = base.with_score("sa", "float")
+    sibling_b = base.with_score("sb", "float")
+
+    res_a = sibling_a.with_data("""
+        gene   sa
+        GENE1  0.1
+        GENE2  0.2
+    """).build_resource(tmp_path / "a")
+    res_b = sibling_b.with_data("""
+        gene   sb
+        GENE1  0.9
+        GENE2  0.8
+    """).build_resource(tmp_path / "b")
+
+    gs_a = build_gene_score_from_resource(res_a)
+    gs_b = build_gene_score_from_resource(res_b)
+    assert gs_a.get_all_scores() == ["sa"]
+    assert gs_b.get_all_scores() == ["sb"]
+    # the shared base is untouched by either derivation
+    assert base.scores == ()
+
+
+def test_grr_mixes_gene_score_position_score_and_genome(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = (
+        a_grr()
+        .with_resource(
+            "genomes/g",
+            a_reference_genome().with_chromosome("1", "ACGTACGTAC"))
+        .with_resource(
+            "scores/pos",
+            a_position_score()
+            .with_score("sc", "float")
+            .with_data("chrom pos_begin sc\n1 10 0.5\n"))
+        .with_resource(
+            "genes/pli",
+            a_gene_score()
+            .with_score("pli", "float")
+            .with_data("""
+                gene   pli
+                GENE1  0.5
+                GENE2  0.9
+            """))
+        .build_repo(tmp_path)
+    )
+    with build_reference_genome_from_resource(
+            repo.get_resource("genomes/g")).open() as ref:
+        assert ref.get_sequence("1", 1, 10) == "ACGTACGTAC"
+
+    score = PositionScore(repo.get_resource("scores/pos")).open()
+    assert score.fetch_scores("1", 10) == [0.5]
+
+    gene_score = build_gene_score_from_resource(repo.get_resource("genes/pli"))
+    assert gene_score.get_gene_value("pli", "GENE2") == pytest.approx(0.9)

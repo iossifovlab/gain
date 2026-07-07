@@ -255,6 +255,89 @@ class PositionScoreBuilder:
         return _build_single_resource(self, tmp_path)
 
 
+_GENE_DATA_FILENAME = "data.tsv"
+_DEFAULT_GENE_COLUMN = "gene"
+
+
+@dataclasses.dataclass(frozen=True)
+class GeneScoreBuilder:
+    """Immutable builder for a single ``gene_score`` resource.
+
+    Built on the shared score-declaration base (:class:`_ScoreSpec`): scores
+    are declared with :meth:`with_score` (``column_name`` defaults to the
+    score id) and validated for duplicate ids / column names exactly like a
+    position score.  The gene→value table is authored with :meth:`with_data`
+    as a whitespace block whose header must be ``{gene_column}`` plus each
+    declared score's ``column_name``.
+
+    Realizes as a PLAIN (non-gzipped) tab-separated ``data.tsv`` table with a
+    top-level ``filename:`` config -- mirroring the simplest working
+    ``gene_score`` fixture.  A bare builder realizes a valid minimal readable
+    gene score: one ``float`` score and a few gene rows, with NO histogram
+    (the numeric default histogram is auto-built when the score is read).
+    """
+
+    scores: tuple[_ScoreSpec, ...] = ()
+    data: str | None = None
+    gene_column: str = _DEFAULT_GENE_COLUMN
+
+    def with_score(
+        self, score_id: str, value_type: str = "float", *,
+        column_name: str | None = None, desc: str | None = None,
+    ) -> GeneScoreBuilder:
+        """Declare a gene score; ``column_name`` defaults to ``score_id``."""
+        return dataclasses.replace(
+            self,
+            scores=_append_score(
+                self.scores, score_id, value_type,
+                column_name=column_name, desc=desc),
+        )
+
+    def with_histogram(
+        self, histogram: dict[str, Any], *, score_id: str | None = None,
+    ) -> GeneScoreBuilder:
+        """Attach a histogram block to a declared score.
+
+        With ``score_id`` omitted the histogram is attached to the
+        most-recently-declared score; passing ``score_id`` targets that
+        score.  Omitted by default: a numeric score relies on the resource's
+        auto-built default histogram, so no ``histogram:`` block is emitted
+        unless one is declared here.
+        """
+        return dataclasses.replace(
+            self,
+            scores=_set_histogram(
+                self.scores, histogram, score_id=score_id),
+        )
+
+    def with_gene_column(self, name: str) -> GeneScoreBuilder:
+        """Set the gene-id column name (default ``"gene"``)."""
+        return dataclasses.replace(self, gene_column=name)
+
+    def with_data(self, data: str) -> GeneScoreBuilder:
+        """Author the gene→value table as a whitespace-separated block.
+
+        Validated at the header level only: it must contain the gene column
+        plus each declared score's ``column_name``; a missing declared column
+        or an undeclared extra column raises ``ResourceValidationError``.
+        """
+        return dataclasses.replace(self, data=data)
+
+    def realize_into(self, resource_dir: pathlib.Path) -> None:
+        """Write this gene-score resource into ``resource_dir``.
+
+        Raises a ``ResourceValidationError`` on invalid content;
+        ``GRRBuilder`` annotates it with the resource id.
+        """
+        setup_directories(resource_dir, _build_gene_score_content(self))
+
+    def build_resource(
+        self, tmp_path: pathlib.Path,
+    ) -> GenomicResource:
+        """Realize this single resource (repo id ``""``) into ``tmp_path``."""
+        return _build_single_resource(self, tmp_path)
+
+
 @dataclasses.dataclass(frozen=True)
 class GRRBuilder:
     """Immutable builder composing resources into a filesystem GRR.
@@ -446,6 +529,53 @@ def _validate_data_header(
             f"{sorted(declared)}")
 
 
+def _effective_gene_scores(
+    builder: GeneScoreBuilder,
+) -> tuple[_ScoreSpec, ...]:
+    if builder.scores:
+        return builder.scores
+    return (_ScoreSpec("score", "float", "score"),)
+
+
+def _effective_gene_data(builder: GeneScoreBuilder) -> str:
+    if builder.data is not None:
+        return builder.data
+    return """
+        gene  score
+        G1    0.1
+        G2    0.2
+        G3    0.3
+    """
+
+
+def _build_gene_score_content(
+    builder: GeneScoreBuilder,
+) -> dict[str, Any]:
+    """Build the pure filesystem content dict for one gene-score resource.
+
+    Validation raises a ``ResourceValidationError``; the caller
+    (``GRRBuilder``) annotates it with the resource id, so messages here
+    stay id-free.
+    """
+    scores = _effective_gene_scores(builder)
+    data = _effective_gene_data(builder)
+    _validate_score_specs(scores)
+    _validate_data_header(
+        data, scores, base_required=(builder.gene_column,))
+
+    config = textwrap.dedent(f"""\
+        type: gene_score
+        filename: {_GENE_DATA_FILENAME}
+        """)
+    if builder.gene_column != _DEFAULT_GENE_COLUMN:
+        config += f"gene_column: {builder.gene_column}\n"
+    config += "scores:\n" + _render_score_specs_yaml(scores)
+    return {
+        GR_CONF_FILE_NAME: config,
+        _GENE_DATA_FILENAME: convert_to_tab_separated(data),
+    }
+
+
 _GENOME_BASENAME = "chr"
 
 # A deterministic, valid minimal sequence for a bare genome (24 bases).
@@ -577,6 +707,11 @@ def a_reference_genome() -> ReferenceGenomeBuilder:
 def a_position_score() -> PositionScoreBuilder:
     """Return an immutable position-score builder."""
     return PositionScoreBuilder()
+
+
+def a_gene_score() -> GeneScoreBuilder:
+    """Return an immutable gene-score builder."""
+    return GeneScoreBuilder()
 
 
 def a_grr() -> GRRBuilder:
