@@ -200,13 +200,19 @@ _CREDENTIAL_KEYS = frozenset({"user", "password"})
 
 
 def _redact_url_userinfo(value: str) -> str:
-    """Mask ``user:pass`` embedded in a ``scheme://user:pass@host`` URL.
+    """Mask credentials embedded in a ``scheme://userinfo@host`` URL.
 
     Only touches strings that parse as a URL whose ``netloc`` carries userinfo
-    (``@``); plain paths and other strings are returned unchanged. The password
-    component is replaced with ``***`` (and the username preserved for
-    diagnostics — it is not itself masked in a URL, mirroring how the ``user``
-    key is only masked as a top-level credential field).
+    (``@``); plain paths and other strings are returned unchanged. Two shapes
+    of userinfo carry secrets:
+
+    * ``user:pass@host`` — the password after the colon is the secret, so only
+      it is replaced with ``***`` (``user:***@host``); the username is kept for
+      diagnostics.
+    * ``token@host`` — a bearer token / PAT embedded as the SOLE userinfo
+      component (no colon) IS itself the secret, so the whole userinfo is
+      masked (``***@host``). We must never fabricate a ``token:***`` here — that
+      would leave the token fully visible.
     """
     try:
         parsed = urlparse(value)
@@ -217,8 +223,8 @@ def _redact_url_userinfo(value: str) -> str:
     userinfo, _, hostinfo = parsed.netloc.rpartition("@")
     if not userinfo:
         return value
-    username = userinfo.split(":", 1)[0]
-    redacted_netloc = f"{username}:***@{hostinfo}"
+    username, sep, _password = userinfo.partition(":")
+    redacted_netloc = f"{username}:***@{hostinfo}" if sep else f"***@{hostinfo}"
     return parsed._replace(netloc=redacted_netloc).geturl()
 
 
@@ -397,20 +403,27 @@ def build_genomic_resource_repository(
     if definition is None:
         raise ValueError("can't find GRR definition")
 
+    # ``hide_input_in_errors=True`` already keeps the raw input out of
+    # ``str(exc)`` and the traceback, but ``ValidationError.errors()`` and
+    # ``.json()`` still echo it verbatim — including a plaintext password.
+    # Capture only the secret-free ``str(exc)`` (which retains the useful
+    # which-field-is-wrong detail) inside the ``except``, then raise a plain
+    # ``ValueError`` (the type this factory already uses for bad definitions)
+    # OUTSIDE the ``except`` block. Raising outside leaves the ValidationError
+    # entirely off the new exception's chain — ``__context__`` is ``None`` —
+    # so no code path (including error-aggregation tooling that walks
+    # ``__context__`` regardless of ``__suppress_context__``) can reach its
+    # leaky ``.errors()``/``.json()`` input. ``from None`` alone would only
+    # clear ``__cause__``, leaving the secret on ``__context__``.
+    validation_error_msg: str | None = None
     try:
         _REPO_DEFINITION_ADAPTER.validate_python(definition)
     except ValidationError as exc:
-        # ``hide_input_in_errors=True`` already keeps the raw input out of
-        # ``str(exc)`` and the traceback, but ``ValidationError.errors()`` and
-        # ``.json()`` still echo it verbatim — including a plaintext password.
-        # Re-raise a plain ``ValueError`` (the type this factory already uses
-        # for bad definitions) whose message is built only from the redacted
-        # definition and the secret-free ``str(exc)`` (which retains the
-        # useful which-field-is-wrong detail). ``from None`` drops the leaky
-        # ValidationError from the chain so no code path can reach its input.
+        validation_error_msg = str(exc)
+    if validation_error_msg is not None:
         raise ValueError(
             f"invalid GRR definition {redact_definition(definition)}: "
-            f"{exc}") from None
+            f"{validation_error_msg}")
 
     logger.info("GRR definition in use: %s", redact_definition(definition))
 
