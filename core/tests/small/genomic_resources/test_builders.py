@@ -413,6 +413,23 @@ def test_grr_duplicate_resource_id_raises() -> None:
     assert "duplicate" in str(excinfo.value).lower()
 
 
+def test_build_repo_passes_through_non_validation_value_error(
+    tmp_path: pathlib.Path,
+) -> None:
+    # build_repo annotates only its OWN validation errors with the resource
+    # id.  A plain ValueError raised during realize (not a builder
+    # validation error) must pass through un-relabeled -- no
+    # "resource '<id>':" prefix.
+    class _Exploding:
+        def realize_into(self, resource_dir: pathlib.Path) -> None:
+            raise ValueError("boom from realize")
+
+    with pytest.raises(ValueError, match="boom from realize") as excinfo:
+        a_grr().with_resource("scores/x", _Exploding()).build_repo(tmp_path)
+    assert "scores/x" not in str(excinfo.value)
+    assert "resource" not in str(excinfo.value)
+
+
 def test_reference_genome_empty_chromosome_sequence_raises() -> None:
     # An empty (or whitespace-only) sequence would fail deep inside pysam
     # faidx with a cryptic SamtoolsError; fail fast at the call site with a

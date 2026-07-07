@@ -53,6 +53,18 @@ from gain.genomic_resources.testing import (
 )
 
 
+class ResourceValidationError(ValueError):
+    """Raised for a builder-owned validation error.
+
+    Subclasses ``ValueError`` so existing ``pytest.raises(ValueError, ...)``
+    call sites keep matching.  ``GRRBuilder.build_repo`` catches only this
+    type when annotating an error with the resource id, so a genuine,
+    non-validation ``ValueError`` surfacing from ``realize_into`` (e.g. a
+    lower-level failure inside a ``setup_*`` helper) passes through
+    un-relabeled instead of being silently recast as a validation error.
+    """
+
+
 @runtime_checkable
 class ResourceBuilder(Protocol):
     """Structural interface for a single-resource test builder.
@@ -120,8 +132,8 @@ class PositionScoreBuilder:
     def realize_into(self, resource_dir: pathlib.Path) -> None:
         """Write this position-score resource into ``resource_dir``.
 
-        Raises a plain ``ValueError`` on invalid content; ``GRRBuilder``
-        annotates it with the resource id.
+        Raises a ``ResourceValidationError`` on invalid content;
+        ``GRRBuilder`` annotates it with the resource id.
         """
         setup_directories(resource_dir, _build_resource_content(self))
 
@@ -158,7 +170,7 @@ class GRRBuilder:
         silently winning.
         """
         if any(rid == resource_id for rid, _ in self.resources):
-            raise ValueError(
+            raise ResourceValidationError(
                 f"duplicate resource id {resource_id!r} declared "
                 f"more than once")
         return dataclasses.replace(
@@ -174,8 +186,8 @@ class GRRBuilder:
             resource_dir = tmp_path / resource_id
             try:
                 builder.realize_into(resource_dir)
-            except ValueError as exc:
-                raise ValueError(
+            except ResourceValidationError as exc:
+                raise ResourceValidationError(
                     f"resource {resource_id!r}: {exc}") from exc
         return build_filesystem_test_repository(tmp_path)
 
@@ -220,8 +232,9 @@ def _build_resource_content(
 ) -> dict[str, Any]:
     """Build the pure filesystem content dict for one resource.
 
-    Validation raises a plain ``ValueError``; the caller (``GRRBuilder``)
-    annotates it with the resource id, so messages here stay id-free.
+    Validation raises a ``ResourceValidationError``; the caller
+    (``GRRBuilder``) annotates it with the resource id, so messages here
+    stay id-free.
     """
     scores = _effective_scores(builder)
     data = _effective_data(builder)
@@ -268,7 +281,7 @@ def _validate_scores(
     seen_ids: set[str] = set()
     for spec in scores:
         if spec.score_id in seen_ids:
-            raise ValueError(
+            raise ResourceValidationError(
                 f"duplicate score id "
                 f"{spec.score_id!r} declared more than once")
         seen_ids.add(spec.score_id)
@@ -276,7 +289,7 @@ def _validate_scores(
     seen_columns: set[str] = set()
     for spec in scores:
         if spec.column_name in seen_columns:
-            raise ValueError(
+            raise ResourceValidationError(
                 f"duplicate column_name "
                 f"{spec.column_name!r} shared by more than one score")
         seen_columns.add(spec.column_name)
@@ -298,7 +311,7 @@ def _validate_data_header(
         if not stripped:
             continue
         if stripped.startswith("#"):
-            raise ValueError(
+            raise ResourceValidationError(
                 f"the data header must not start "
                 f"with '#'; write the column names as a plain "
                 f"whitespace-separated line (got {stripped!r})")
@@ -313,13 +326,13 @@ def _validate_data_header(
 
     missing = required - header_set
     if missing:
-        raise ValueError(
+        raise ResourceValidationError(
             f"data header is missing required "
             f"column(s) {sorted(missing)}; header has {header}")
 
     extra = header_set - allowed
     if extra:
-        raise ValueError(
+        raise ResourceValidationError(
             f"data header has undeclared "
             f"column(s) {sorted(extra)}; declared scores are "
             f"{sorted(declared)}")
@@ -375,7 +388,7 @@ class ReferenceGenomeBuilder:
         deep inside faidx), mirroring the ``with_chromosome`` guard.
         """
         if not raw.strip():
-            raise ValueError(
+            raise ResourceValidationError(
                 "reference genome: FASTA content must be non-empty")
         return dataclasses.replace(self, fasta=raw)
 
@@ -389,7 +402,7 @@ class ReferenceGenomeBuilder:
         context deep inside faidx).
         """
         if not sequence.strip():
-            raise ValueError(
+            raise ResourceValidationError(
                 f"chromosome {chrom_id!r}: sequence must be non-empty")
         return dataclasses.replace(
             self, chromosomes=(*self.chromosomes, (chrom_id, sequence)))
@@ -397,7 +410,8 @@ class ReferenceGenomeBuilder:
     def with_line_width(self, n: int) -> ReferenceGenomeBuilder:
         """Set the FASTA wrapping width for the synthesized-FASTA path."""
         if n <= 0:
-            raise ValueError(f"line width must be positive, got {n}")
+            raise ResourceValidationError(
+                f"line width must be positive, got {n}")
         return dataclasses.replace(self, line_width=n)
 
     def as_plain(self) -> ReferenceGenomeBuilder:
@@ -425,7 +439,7 @@ class ReferenceGenomeBuilder:
 
     def _effective_fasta(self) -> str:
         if self.fasta is not None and self.chromosomes:
-            raise ValueError(
+            raise ResourceValidationError(
                 "reference genome: with_fasta and with_chromosome are "
                 "mutually exclusive; set only one authoring mode")
         if self.fasta is not None:
