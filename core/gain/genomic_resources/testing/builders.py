@@ -189,7 +189,12 @@ def _render_score_specs_yaml(scores: tuple[_ScoreSpec, ...]) -> str:
                 {"desc": spec.desc}, default_flow_style=False,
                 sort_keys=False)
             lines.extend(
-                f"  {desc_line}"
+                # An otherwise-empty continuation line (a blank line inside a
+                # multi-line desc) is emitted empty rather than as bare
+                # indentation, so no line carries trailing whitespace; YAML
+                # ignores the indentation of blank scalar-continuation lines,
+                # so this still round-trips.
+                f"  {desc_line}" if desc_line else ""
                 for desc_line in desc_yaml.rstrip("\n").split("\n")
             )
         if spec.histogram is not None:
