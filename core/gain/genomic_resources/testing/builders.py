@@ -34,6 +34,7 @@ Example::
 """
 from __future__ import annotations
 
+import copy
 import dataclasses
 import pathlib
 import textwrap
@@ -145,6 +146,9 @@ def _set_histogram(
         raise ResourceValidationError(
             "with_histogram requires a declared score; "
             "call with_score first")
+    # Defensive copy: capture the histogram by value so a caller mutating
+    # their dict afterward cannot leak into this immutable builder.
+    histogram = copy.deepcopy(histogram)
     if score_id is None:
         target_index = len(scores) - 1
     else:
