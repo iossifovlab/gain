@@ -2,7 +2,6 @@
 import pathlib
 
 import pytest
-
 from gain.genomic_resources.genomic_scores import PositionScore
 from gain.genomic_resources.repository import GenomicResourceProtocolRepo
 from gain.genomic_resources.testing.builders import (
@@ -19,7 +18,6 @@ def test_bare_default_is_a_readable_minimal_score(
     assert res.get_type() == "position_score"
     score = PositionScore(res).open()
     assert len(score.get_all_scores()) == 1
-    (score_id,) = score.get_all_scores()
     values = score.fetch_scores("1", 10)
     assert values is not None
     assert isinstance(values[0], float)
@@ -60,7 +58,7 @@ def test_builders_are_immutable_no_cross_variation_leak() -> None:
     variant_b = base.with_score("bbb", "int")
 
     # The shared base is untouched by either derivation.
-    assert base.scores == ()
+    assert len(base.scores) == 0
     assert [s.score_id for s in variant_a.scores] == ["aaa"]
     assert [s.score_id for s in variant_b.scores] == ["bbb"]
 
@@ -74,7 +72,7 @@ def test_builders_are_immutable_no_cross_variation_leak() -> None:
 def test_grr_builder_is_immutable() -> None:
     base = a_grr()
     extended = base.with_resource("x", a_position_score())
-    assert base.resources == ()
+    assert len(base.resources) == 0
     assert len(extended.resources) == 1
     assert base is not extended
 
