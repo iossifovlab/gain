@@ -311,6 +311,10 @@ class _TableScoreBuilder:
         from the accumulated calls -- that the equivalent ``with_data`` string
         would produce, so both authoring modes read back identically.
 
+        Each value is stringified via ``str(value)`` to form the cell text, so
+        pass values whose ``str()`` is the intended cell content (e.g. avoid
+        relying on float ``repr`` for exotic values).
+
         Mutually exclusive with :meth:`with_data`.
         """
         row = tuple((str(key), str(value)) for key, value in columns.items())
