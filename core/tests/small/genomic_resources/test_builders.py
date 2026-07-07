@@ -204,12 +204,14 @@ def test_duplicate_column_name_across_scores_raises(
 def test_duplicate_score_id_raises(
     tmp_path: pathlib.Path,
 ) -> None:
-    # The same score id declared twice must not silently collapse.
+    # The same score id declared twice must not silently collapse.  The two
+    # scores map to DISTINCT column_names, so the duplicate-column_name check
+    # cannot fire -- only the duplicate-id check can -- which isolates it.
     builder = (
         a_position_score()
-        .with_score("sc", "float")
-        .with_score("sc", "float")
-        .with_data("chrom pos_begin sc\n1 10 0.1\n")
+        .with_score("sc", "float", column_name="a")
+        .with_score("sc", "float", column_name="b")
+        .with_data("chrom pos_begin a b\n1 10 0.1 0.2\n")
     )
     with pytest.raises(ValueError, match="sc") as excinfo:
         builder.build_resource(tmp_path)
