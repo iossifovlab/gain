@@ -999,3 +999,72 @@ def test_with_data_and_with_score_line_mutually_exclusive(
     )
     with pytest.raises(ValueError, match="mutually exclusive"):
         builder.build_resource(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# sub-feature 2: with_tabix / gene with_gzip realize toggles
+# ---------------------------------------------------------------------------
+
+def test_position_score_with_tabix_realizes_gz_and_reads_back(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_position_score()
+        .with_score("phastCons", "float")
+        .with_tabix()
+        .with_data("""
+            chrom  pos_begin  phastCons
+            1      10         0.02
+            1      11         0.03
+        """)
+        .build_resource(tmp_path)
+    )
+    assert (tmp_path / "data.txt.gz").is_file()
+    assert (tmp_path / "data.txt.gz.tbi").is_file()
+    assert not (tmp_path / "data.txt").exists()
+
+    score = PositionScore(res).open()
+    assert score.fetch_scores("1", 10) == [0.02]
+    assert score.fetch_scores("1", 11) == [0.03]
+
+
+def test_position_score_tabix_matches_plain_readback(
+    tmp_path: pathlib.Path,
+) -> None:
+    def build(tabix: bool) -> PositionScore:
+        builder = a_position_score().with_score("sc", "float").with_data("""
+            chrom  pos_begin  pos_end  sc
+            1      10         15       0.02
+            1      17         19       0.03
+        """)
+        if tabix:
+            builder = builder.with_tabix()
+        sub = "t" if tabix else "p"
+        return PositionScore(builder.build_resource(tmp_path / sub)).open()
+
+    plain = build(tabix=False)
+    tabix = build(tabix=True)
+    assert tabix.fetch_scores("1", 12) == plain.fetch_scores("1", 12)
+    assert tabix.fetch_scores("1", 18) == plain.fetch_scores("1", 18)
+
+
+def test_gene_score_with_gzip_realizes_gz_and_reads_back(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_gene_score()
+        .with_score("pli", "float")
+        .with_gzip()
+        .with_data("""
+            gene   pli
+            GENE1  0.5
+            GENE2  0.9
+        """)
+        .build_resource(tmp_path)
+    )
+    assert (tmp_path / "data.tsv.gz").is_file()
+    assert not (tmp_path / "data.tsv").exists()
+
+    gene_score = build_gene_score_from_resource(res)
+    assert gene_score.get_gene_value("pli", "GENE1") == pytest.approx(0.5)
+    assert gene_score.get_gene_value("pli", "GENE2") == pytest.approx(0.9)
