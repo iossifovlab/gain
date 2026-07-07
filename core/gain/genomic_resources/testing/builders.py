@@ -318,6 +318,12 @@ class _TableScoreBuilder:
         realize path to :func:`setup_tabix` and points ``table.filename`` at
         the ``.txt.gz`` with ``format: tabix``.  The resource reads back
         identically to the plain form.
+
+        Precondition: the authored rows (via :meth:`with_data` or
+        :meth:`with_score_line`) must be position-sorted -- ascending by
+        chrom then pos_begin -- when ``with_tabix`` is used, because
+        ``pysam.tabix_index`` requires sorted input and otherwise fails
+        loudly with an ``OSError`` un-annotated by the resource id.
         """
         return dataclasses.replace(self, tabix=True)
 
