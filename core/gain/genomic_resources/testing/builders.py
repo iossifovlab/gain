@@ -508,7 +508,7 @@ class GeneScoreBuilder:
     scores: tuple[_ScoreSpec, ...] = ()
     data: str | None = None
     gene_column: str = _DEFAULT_GENE_COLUMN
-    gzip: bool = False
+    gzipped: bool = False
 
     def with_score(
         self, score_id: str, value_type: str = "float", *,
@@ -550,7 +550,7 @@ class GeneScoreBuilder:
         ``data.tsv.gz`` and points ``filename:`` at it.  The resource reads
         back identically to the plain form.
         """
-        return dataclasses.replace(self, gzip=True)
+        return dataclasses.replace(self, gzipped=True)
 
     def with_data(self, data: str) -> GeneScoreBuilder:
         """Author the gene→value table as a whitespace-separated block.
@@ -790,7 +790,8 @@ def _build_gene_score_content(
         data, scores, base_required=(builder.gene_column,))
 
     filename = (
-        f"{_GENE_DATA_FILENAME}.gz" if builder.gzip else _GENE_DATA_FILENAME)
+        f"{_GENE_DATA_FILENAME}.gz" if builder.gzipped
+        else _GENE_DATA_FILENAME)
     config = textwrap.dedent(f"""\
         type: gene_score
         filename: {filename}
@@ -799,8 +800,8 @@ def _build_gene_score_content(
         config += f"gene_column: {builder.gene_column}\n"
     config += "scores:\n" + _render_score_specs_yaml(scores)
     tsv = convert_to_tab_separated(data)
-    table_content: str | bytes = gzip.compress(tsv.encode()) if builder.gzip \
-        else tsv
+    table_content: str | bytes = (
+        gzip.compress(tsv.encode()) if builder.gzipped else tsv)
     return {
         GR_CONF_FILE_NAME: config,
         filename: table_content,
