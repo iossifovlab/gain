@@ -3,7 +3,7 @@ import pathlib
 
 import pytest
 from gain.gene_scores.gene_scores import build_gene_score_from_resource
-from gain.genomic_resources.genomic_scores import PositionScore
+from gain.genomic_resources.genomic_scores import AlleleScore, PositionScore
 from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
 )
@@ -11,8 +11,10 @@ from gain.genomic_resources.repository import GenomicResourceProtocolRepo
 from gain.genomic_resources.testing.builders import (
     a_gene_score,
     a_grr,
+    a_np_score,
     a_position_score,
     a_reference_genome,
+    an_allele_score,
     build_repo_tempdir,
     build_resource_tempdir,
 )
@@ -1106,3 +1108,135 @@ def test_build_resource_tempdir_reads_back_and_cleans_up() -> None:
         assert PositionScore(res).open().fetch_scores("1", 10) == [0.7]
 
     assert not root.exists()
+
+
+# ---------------------------------------------------------------------------
+# sub-feature 4: a_np_score / an_allele_score builders
+# ---------------------------------------------------------------------------
+
+def test_bare_np_score_is_readable_minimal(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = a_np_score().build_resource(tmp_path)
+    assert res.get_type() == "np_score"
+    score = AlleleScore(res).open()
+    assert len(score.get_all_scores()) == 1
+
+
+def test_bare_allele_score_is_readable_minimal(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = an_allele_score().build_resource(tmp_path)
+    assert res.get_type() == "allele_score"
+    score = AlleleScore(res).open()
+    assert len(score.get_all_scores()) == 1
+
+
+def test_np_score_reads_back_by_ref_alt(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_np_score()
+        .with_score("cadd_raw", "float")
+        .with_data("""
+            chrom  pos_begin  reference  alternative  cadd_raw
+            1      10         A          G            0.02
+            1      10         A          C            0.03
+            1      16         C          T            0.04
+        """)
+        .build_resource(tmp_path)
+    )
+    score = AlleleScore(res).open()
+    assert score.get_all_scores() == ["cadd_raw"]
+    assert score.fetch_scores("1", 10, "A", "C") == {"cadd_raw": 0.03}
+    assert score.fetch_scores("1", 10, "A", "G") == {"cadd_raw": 0.02}
+    assert score.fetch_scores("1", 16, "C", "T") == {"cadd_raw": 0.04}
+
+
+def test_allele_score_reads_back_by_ref_alt(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        an_allele_score()
+        .with_score("freq", "float")
+        .with_data("""
+            chrom  pos_begin  reference  alternative  freq
+            1      10         A          G            0.02
+            1      10         A          C            0.03
+            1      16         C          A            0.05
+        """)
+        .build_resource(tmp_path)
+    )
+    score = AlleleScore(res).open()
+    assert score.get_all_scores() == ["freq"]
+    assert score.fetch_scores("1", 10, "A", "C") == {"freq": 0.03}
+    assert score.fetch_scores("1", 16, "C", "A") == {"freq": 0.05}
+
+
+def test_np_score_with_score_line_matches_with_data(
+    tmp_path: pathlib.Path,
+) -> None:
+    typed = (
+        a_np_score()
+        .with_score("cadd_raw", "float")
+        .with_score_line(
+            chrom="1", pos_begin=10, reference="A", alternative="G",
+            cadd_raw=0.02)
+        .with_score_line(
+            chrom="1", pos_begin=10, reference="A", alternative="C",
+            cadd_raw=0.03)
+        .build_resource(tmp_path)
+    )
+    score = AlleleScore(typed).open()
+    assert score.fetch_scores("1", 10, "A", "G") == {"cadd_raw": 0.02}
+    assert score.fetch_scores("1", 10, "A", "C") == {"cadd_raw": 0.03}
+
+
+def test_np_score_with_tabix_reads_back(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_np_score()
+        .with_score("cadd_raw", "float")
+        .with_tabix()
+        .with_data("""
+            chrom  pos_begin  reference  alternative  cadd_raw
+            1      10         A          G            0.02
+            1      16         C          T            0.04
+        """)
+        .build_resource(tmp_path)
+    )
+    assert (tmp_path / "data.txt.gz").is_file()
+    assert (tmp_path / "data.txt.gz.tbi").is_file()
+    score = AlleleScore(res).open()
+    assert score.fetch_scores("1", 10, "A", "G") == {"cadd_raw": 0.02}
+    assert score.fetch_scores("1", 16, "C", "T") == {"cadd_raw": 0.04}
+
+
+def test_grr_composes_np_and_allele_scores(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = (
+        a_grr()
+        .with_resource(
+            "scores/np",
+            a_np_score()
+            .with_score("cadd", "float")
+            .with_data("""
+                chrom  pos_begin  reference  alternative  cadd
+                1      10         A          G            0.02
+            """))
+        .with_resource(
+            "scores/allele",
+            an_allele_score()
+            .with_score("freq", "float")
+            .with_data("""
+                chrom  pos_begin  reference  alternative  freq
+                1      10         A          C            0.03
+            """))
+        .build_repo(tmp_path)
+    )
+    np_score = AlleleScore(repo.get_resource("scores/np")).open()
+    assert np_score.fetch_scores("1", 10, "A", "G") == {"cadd": 0.02}
+    allele_score = AlleleScore(repo.get_resource("scores/allele")).open()
+    assert allele_score.fetch_scores("1", 10, "A", "C") == {"freq": 0.03}
