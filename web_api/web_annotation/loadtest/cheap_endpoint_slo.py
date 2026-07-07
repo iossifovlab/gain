@@ -169,11 +169,11 @@ async def _sample_cheap_endpoint(
                     samples.latencies_ms.append(elapsed_ms)
                 else:
                     samples.errors += 1
-        except asyncio.TimeoutError:
+        except TimeoutError:
             samples.timeouts += 1
         except aiohttp.ClientError:
             samples.errors += 1
-        with contextlib.suppress(asyncio.TimeoutError):
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=interval)
 
 
@@ -216,7 +216,7 @@ async def _fire_annotate(
                 "status": resp.status,
                 "elapsed_ms": round((time.monotonic() - start) * 1000.0, 2),
             }
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {"status": "timeout", "elapsed_ms": round(timeout * 1000.0, 2)}
     except aiohttp.ClientError as exc:
         return {"status": f"error:{type(exc).__name__}", "elapsed_ms": None}

@@ -81,7 +81,7 @@ mypy gain --exclude core/docs/ \
 pylint --rcfile=pylintrc gain
 ```
 
-Config: `ruff.toml` (line-length: 80, target: py310),
+Config: `ruff.toml` (line-length: 80, target: py312),
 `mypy.ini`, `pylintrc`.
 
 **CI runs three Python linters, not two.** The `Jenkinsfile`
