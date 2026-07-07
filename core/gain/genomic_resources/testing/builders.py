@@ -151,7 +151,16 @@ class GRRBuilder:
     def with_resource(
         self, resource_id: str, resource_builder: ResourceBuilder,
     ) -> GRRBuilder:
-        """Attach a resource, assigning its repo id here."""
+        """Attach a resource, assigning its repo id here.
+
+        Rejects a duplicate id fast at the call site: two resources sharing
+        an id would realize into the same directory with the second
+        silently winning.
+        """
+        if any(rid == resource_id for rid, _ in self.resources):
+            raise ValueError(
+                f"duplicate resource id {resource_id!r} declared "
+                f"more than once")
         return dataclasses.replace(
             self,
             resources=(*self.resources, (resource_id, resource_builder)),
