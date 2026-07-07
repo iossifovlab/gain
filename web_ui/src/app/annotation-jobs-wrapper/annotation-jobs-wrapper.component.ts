@@ -108,9 +108,11 @@ export class AnnotationJobsWrapperComponent implements OnInit, OnDestroy {
       },
       error: err => {
         console.error('Socket notifications error:', err);
-        // Event-type errors are retried inside SocketNotificationsService and
-        // never reach here; only a CloseEvent means the socket is gone.
-        if (err instanceof CloseEvent) {
+        // Every disconnect signal now surfaces here: a CloseEvent (unclean
+        // drop or graceful close resurfaced by the service) or an Event (the
+        // common abnormal-drop path). Both mean the socket is gone -- drive the
+        // single consumer-owned reconnect.
+        if (err instanceof CloseEvent || err instanceof Event) {
           this.socketNotificationSubscription.unsubscribe();
           // Subscribe to reopenConnection to wait for it to complete
           this.reconnectionSubscription.unsubscribe();

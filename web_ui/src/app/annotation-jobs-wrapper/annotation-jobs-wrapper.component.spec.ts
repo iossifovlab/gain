@@ -229,11 +229,10 @@ describe('AnnotationJobsWrapperComponent', () => {
     expect(setupSpy).toHaveBeenCalledTimes(2);
   });
 
-  it('does not treat a raw Event as a reconnect trigger (Event recovery is owned by the service)', () => {
-    // Event-type errors are retried internally by
-    // SocketNotificationsService.retryAfterError and never surface to this
-    // consumer. The component must therefore only reconnect on CloseEvent;
-    // a stray Event reaching the error handler must NOT drive a reopen.
+  it('reconnects on an Event error (unified single reconnect path)', () => {
+    // The service no longer swallows Event errors: every disconnect signal
+    // (Event abnormal drop, CloseEvent, graceful close) surfaces here and
+    // drives the one consumer-owned reconnect.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const setupSpy = jest.spyOn(component as any, 'setupJobWebSocketConnection');
     // reopenConnection lives on a module-level shared mock; clear history
@@ -241,13 +240,14 @@ describe('AnnotationJobsWrapperComponent', () => {
     const reopenSpy = jest.spyOn(socketNotificationsServiceMock, 'reopenConnection').mockClear();
     const unsubSpy = jest.spyOn(component.socketNotificationSubscription, 'unsubscribe');
     jest.spyOn(socketNotificationsServiceMock, 'getJobNotifications')
-      .mockReturnValueOnce(throwError(new Event('network error')));
+      .mockReturnValueOnce(throwError(() => new Event('network error')))
+      .mockReturnValueOnce(of(new JobNotification(1, 'success')));
 
     component.ngOnInit();
 
-    expect(unsubSpy).not.toHaveBeenCalled();
-    expect(reopenSpy).not.toHaveBeenCalled();
-    expect(setupSpy).toHaveBeenCalledTimes(1);
+    expect(unsubSpy).toHaveBeenCalledWith();
+    expect(reopenSpy).toHaveBeenCalledWith();
+    expect(setupSpy).toHaveBeenCalledTimes(2);
   });
 
   it('should disable Create button if no file is uploaded', () => {

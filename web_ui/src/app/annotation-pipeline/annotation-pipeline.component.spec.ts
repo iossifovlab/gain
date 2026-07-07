@@ -123,6 +123,10 @@ class SocketNotificationsServiceMock {
   public getPipelineNotifications(): Observable<PipelineNotification> {
     return of(new PipelineNotification('id1', 'unloaded'));
   }
+
+  public reopenConnection(): Observable<void> {
+    return of(undefined);
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
@@ -306,7 +310,7 @@ describe('AnnotationPipelineComponent', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const setupSpy = jest.spyOn(component as any, 'setupPipelineWebSocketConnection');
     jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
-      .mockReturnValueOnce(throwError({ type: 'other' }));
+      .mockReturnValueOnce(throwError(() => ({ type: 'other' })));
 
     component.ngOnInit();
     expect(setupSpy).toHaveBeenCalledTimes(1);
@@ -315,6 +319,25 @@ describe('AnnotationPipelineComponent', () => {
 
     expect(unsubSpy).not.toHaveBeenCalled();
     expect(setupSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('reconnects on an Event error (unified single reconnect path)', () => {
+    // The service no longer swallows Event errors; the abnormal-drop Event
+    // surfaces here and must drive the one consumer-owned reconnect, same as a
+    // CloseEvent.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const setupSpy = jest.spyOn(component as any, 'setupPipelineWebSocketConnection');
+    const reopenSpy = jest.spyOn(socketNotificationsServiceMock, 'reopenConnection').mockClear();
+    const unsubSpy = jest.spyOn(component.socketNotificationSubscription, 'unsubscribe');
+    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
+      .mockReturnValueOnce(throwError(() => new Event('network error')))
+      .mockReturnValueOnce(of(new PipelineNotification('id1', 'unloaded')));
+
+    component.ngOnInit();
+
+    expect(unsubSpy).toHaveBeenCalledWith();
+    expect(reopenSpy).toHaveBeenCalledWith();
+    expect(setupSpy).toHaveBeenCalledTimes(2);
   });
 
   it('should check if user is logged in on component init', () => {

@@ -127,32 +127,92 @@ describe('SocketNotificationsService', () => {
       expect(errorSpy).toHaveBeenCalledWith(closeEvent);
     });
 
-    it('should not propagate Event error and retry after 2000ms', () => {
-      jest.useFakeTimers();
+    it('propagates an Event error to the consumer instead of retrying internally', () => {
       const { subjects } = makeMultiSubscriptionWs();
       const errorSpy = jest.fn();
 
       service.getJobNotifications().subscribe({ error: errorSpy });
-      subjects[0].error(new Event('error'));
+      const event = new Event('error');
+      subjects[0].error(event);
 
-      expect(errorSpy).not.toHaveBeenCalled();
+      // The service no longer swallows Event errors: a single consumer-driven
+      // backoff owns reconnection, so the Event surfaces to the consumer and
+      // no internal re-subscribe happens.
+      expect(errorSpy).toHaveBeenCalledWith(event);
       expect(subjects).toHaveLength(1);
+    });
 
-      jest.advanceTimersByTime(2000);
+    it('turns a clean socket completion into a reconnect trigger', () => {
+      const { subjects } = makeMultiSubscriptionWs();
+      jest.spyOn(JobNotification, 'fromJson')
+        .mockReturnValue(new JobNotification(1, 'success'));
+      const nextSpy = jest.fn();
+      const errorSpy = jest.fn();
 
-      expect(subjects).toHaveLength(2);
+      service.getJobNotifications().subscribe({ next: nextSpy, error: errorSpy });
+
+      // eslint-disable-next-line camelcase
+      subjects[0].next({ type: 'job_status', job_id: 1, status: 3 });
+      expect(nextSpy).toHaveBeenCalledWith(expect.any(JobNotification));
+
+      // A graceful server close completes the inner socket. switchMap would
+      // swallow that completion, silently stopping notifications. The service
+      // must convert it into the same close signal the error path emits so the
+      // consumer drives a reconnect.
+      subjects[0].complete();
+      expect(errorSpy).toHaveBeenCalledWith(expect.any(CloseEvent));
+    });
+
+    it('does not treat a consumer unsubscribe as a reconnect trigger', () => {
+      const { subjects } = makeMultiSubscriptionWs();
+      const errorSpy = jest.fn();
+
+      const sub = service.getJobNotifications().subscribe({ error: errorSpy });
+      sub.unsubscribe();
+      // A late completion after teardown must not resurface as a reconnect.
+      subjects[0].complete();
+
       expect(errorSpy).not.toHaveBeenCalled();
     });
 
-    it('should not retry Event error before 2000ms have elapsed', () => {
+    it('recovers on its own once the server returns after exceeding the cap', () => {
       jest.useFakeTimers();
-      const { subjects } = makeMultiSubscriptionWs();
+      // Server down: every socket subscription drops with a CloseEvent.
+      const serverDown = (): Observable<object> =>
+        new Observable<object>(subscriber => subscriber.error(new CloseEvent('close')));
+      // Server up: a subscription confirms a real open (resets the backoff).
+      const serverBack = (config: { openObserver: { next: () => void } }): Observable<object> =>
+        new Observable<object>(() => config.openObserver.next());
+      (webSocket as unknown as jest.Mock).mockImplementation(serverDown);
+      service = new SocketNotificationsService();
 
-      service.getJobNotifications().subscribe();
-      subjects[0].error(new Event('error'));
+      // A consumer that reconnects on every close, exactly like the real
+      // components -- no manual openObserver call anywhere.
+      const resubscribe = (): void => {
+        service.getJobNotifications().subscribe({
+          error: () => {
+            service.reopenConnection().subscribe({ next: () => resubscribe() });
+          }
+        });
+      };
+      resubscribe();
 
-      jest.advanceTimersByTime(1999);
-      expect(subjects).toHaveLength(1);
+      // Server stays down long past maxReconnectionAttempts.
+      jest.advanceTimersByTime(200000);
+
+      // Server returns: the next scheduled reconnect opens a live socket.
+      (webSocket as unknown as jest.Mock).mockImplementation(serverBack);
+      jest.advanceTimersByTime(60000);
+
+      // A confirmed open reset the backoff: the next reconnect uses the 200ms
+      // fast path again -- the system recovered without a page reload and
+      // without ever manually invoking openObserver.
+      const before = (webSocket as unknown as jest.Mock).mock.calls.length;
+      service.reopenConnection().subscribe();
+      jest.advanceTimersByTime(199);
+      expect((webSocket as unknown as jest.Mock).mock.calls).toHaveLength(before);
+      jest.advanceTimersByTime(1);
+      expect((webSocket as unknown as jest.Mock).mock.calls).toHaveLength(before + 1);
     });
 
     it('uses increasing backoff delays across reconnect attempts without a successful open', () => {
@@ -188,7 +248,7 @@ describe('SocketNotificationsService', () => {
       expect(calls()).toBe(before + 1);
     });
 
-    it('errors after maxReconnectionAttempts failures without a successful open', () => {
+    it('keeps retrying at a capped cooldown after the cap instead of refusing', () => {
       jest.useFakeTimers();
       (webSocket as unknown as jest.Mock).mockReturnValue(new Subject<object>());
       service = new SocketNotificationsService();
@@ -196,12 +256,18 @@ describe('SocketNotificationsService', () => {
 
       for (let i = 0; i < 5; i++) {
         service.reopenConnection().subscribe({ error: () => { /* ignore */ } });
-        jest.advanceTimersByTime(10000);
+        jest.advanceTimersByTime(30000);
       }
 
+      // Past the cap the service must NOT permanently refuse (old behavior:
+      // throwError). It keeps retrying on a longer cooldown so a real open can
+      // still reset the backoff. The next reconnect fires after the cooldown.
       const errorSpy = jest.fn();
+      const before = (webSocket as unknown as jest.Mock).mock.calls.length;
       service.reopenConnection().subscribe({ error: errorSpy });
-      expect(errorSpy).toHaveBeenCalledWith(expect.any(Error));
+      jest.advanceTimersByTime(30000);
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect((webSocket as unknown as jest.Mock).mock.calls).toHaveLength(before + 1);
     });
 
     it('shares a single reconnection across concurrent callers', () => {
@@ -223,7 +289,7 @@ describe('SocketNotificationsService', () => {
       expect((webSocket as unknown as jest.Mock).mock.calls).toHaveLength(before + 1);
     });
 
-    it('resets the backoff and recovers after the server comes back and a socket opens', () => {
+    it('resets the backoff to the 200ms branch once a socket confirms open', () => {
       jest.useFakeTimers();
       let openObserver: { next: () => void } = { next: () => { /* replaced on socket creation */ } };
       (webSocket as unknown as jest.Mock).mockImplementation(
@@ -235,25 +301,22 @@ describe('SocketNotificationsService', () => {
       service = new SocketNotificationsService();
       service.ensureConnected();
 
-      // Server down: exhaust every reconnection attempt.
-      for (let i = 0; i < 5; i++) {
-        service.reopenConnection().subscribe({ error: () => { /* ignore */ } });
+      // A few failed attempts advance the backoff off the 200ms branch.
+      for (let i = 0; i < 3; i++) {
+        service.reopenConnection().subscribe();
         jest.advanceTimersByTime(10000);
       }
-      const errorSpy = jest.fn();
-      service.reopenConnection().subscribe({ error: errorSpy });
-      expect(errorSpy).toHaveBeenCalledWith(expect.any(Error));
 
       // Server comes back: the live socket confirms it has opened.
       openObserver.next();
 
-      // Reconnection works again from the 200ms branch, no error.
-      const nextSpy = jest.fn();
-      const errorSpy2 = jest.fn();
-      service.reopenConnection().subscribe({ next: nextSpy, error: errorSpy2 });
-      jest.advanceTimersByTime(200);
-      expect(errorSpy2).not.toHaveBeenCalled();
-      expect(nextSpy).toHaveBeenCalledWith(undefined);
+      // Reconnection works again from the 200ms branch.
+      const before = (webSocket as unknown as jest.Mock).mock.calls.length;
+      service.reopenConnection().subscribe();
+      jest.advanceTimersByTime(199);
+      expect((webSocket as unknown as jest.Mock).mock.calls).toHaveLength(before);
+      jest.advanceTimersByTime(1);
+      expect((webSocket as unknown as jest.Mock).mock.calls).toHaveLength(before + 1);
     });
 
     it('should allow manual reconnection after CloseEvent', () => {

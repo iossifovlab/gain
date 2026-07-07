@@ -37,8 +37,9 @@ export class AppComponent implements DoCheck, OnInit, OnDestroy {
           error: (e) => console.error('Failed to reopen socket:', e)
         });
       } else {
-        // On first user load, ensure WebSocket is connected
-        // Session is established via HTTP middleware before this point
+        // On the first user load, make sure the socket is (lazily) connected.
+        // Consumers also open it on route mount, so this is a best-effort
+        // early connect, not an auth/session precondition.
         this.socketNotificationsService.ensureConnected();
       }
       this.currentUserData = userData;

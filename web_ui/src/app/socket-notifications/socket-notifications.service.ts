@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import {
   BehaviorSubject,
-  catchError,
+  concatWith,
   filter,
   map,
   Observable,
@@ -26,7 +26,12 @@ export class SocketNotificationsService {
   private socketNotifications: WebSocketSubject<object> | null = null;
   private readonly socket$ = new BehaviorSubject<WebSocketSubject<object> | null>(null);
   private reconnectionAttempts = 0;
-  private maxReconnectionAttempts = 5;
+  // Attempts up to this many ramp through exponential backoff; beyond it the
+  // service keeps retrying on a longer cooldown (never permanently refuses) so
+  // a server that eventually returns still triggers a real open that resets
+  // the counter -- no page reload required.
+  private readonly maxReconnectionAttempts = 5;
+  private readonly reconnectionCooldownMs = 30000;
   private isReconnecting = false;
   private pendingReconnection$: Observable<void> | null = null;
 
@@ -47,17 +52,17 @@ export class SocketNotificationsService {
     }
   }
 
-  private retryAfterError<T>(): (source: Observable<T>) => Observable<T> {
+  private reconnectOnClose<T>(): (source: Observable<T>) => Observable<T> {
     return source => source.pipe(
-      catchError((err: unknown, caught) => {
-        if (err instanceof CloseEvent) {
-          return throwError(() => err);
-        }
-        if (err instanceof Event) {
-          return timer(2000).pipe(switchMap(() => caught));
-        }
-        return throwError(() => err as Error);
-      })
+      // Every disconnect signal is routed to the single consumer-driven
+      // reconnect backoff. Error closes (CloseEvent for an unclean drop, Event
+      // for the common abnormal-drop path) propagate untouched. A GRACEFUL
+      // server close instead completes the inner socket -- switchMap over the
+      // socket$ BehaviorSubject would swallow that completion and silently stop
+      // notifications, so convert it into the same CloseEvent the error path
+      // emits. A genuine consumer unsubscribe tears the source down without
+      // completing, so concatWith does not fire spuriously.
+      concatWith(throwError(() => new CloseEvent('close')))
     );
   }
 
@@ -68,7 +73,7 @@ export class SocketNotificationsService {
       switchMap(ws => ws.pipe(
         filter(n => n['type'] === 'job_status'),
         map((n: object) => JobNotification.fromJson(n)),
-        this.retryAfterError()
+        this.reconnectOnClose()
       ))
     );
   }
@@ -80,7 +85,7 @@ export class SocketNotificationsService {
       switchMap(ws => ws.pipe(
         filter(n => n['type'] === 'pipeline_status'),
         map((n: object) => PipelineNotification.fromJson(n)),
-        this.retryAfterError()
+        this.reconnectOnClose()
       ))
     );
   }
@@ -92,19 +97,7 @@ export class SocketNotificationsService {
       return this.pendingReconnection$ || of(undefined);
     }
 
-    // Give up after too many consecutive attempts with no confirmed open.
-    // The counter is reset by ensureConnected's openObserver, so once the
-    // server comes back and a socket actually opens, reconnection recovers.
-    if (this.reconnectionAttempts >= this.maxReconnectionAttempts) {
-      console.error('Max reconnection attempts reached.');
-      return throwError(() => new Error('Max reconnection attempts reached'));
-    }
-
-    // First reconnection attempt: 200ms (allow session sync in CI). Then
-    // exponential backoff: 1s, 2s, 4s, etc. (max 10s).
-    const delayMs = this.reconnectionAttempts === 0
-      ? 200
-      : Math.min(1000 * Math.pow(2, this.reconnectionAttempts - 1), 10000);
+    const delayMs = this.nextReconnectDelayMs();
     this.reconnectionAttempts++;
 
     const reconnectObservable = timer(delayMs).pipe(
@@ -120,11 +113,6 @@ export class SocketNotificationsService {
         this.pendingReconnection$ = null;
       }),
       map(() => undefined as void), // Convert timer output to void
-      catchError((err: unknown) => {
-        this.isReconnecting = false;
-        this.pendingReconnection$ = null;
-        return throwError(() => err);
-      }),
       shareReplay(1) // Share the observable across multiple subscribers
     );
 
@@ -132,5 +120,19 @@ export class SocketNotificationsService {
     this.isReconnecting = true;
 
     return reconnectObservable;
+  }
+
+  private nextReconnectDelayMs(): number {
+    // First reconnection attempt: 200ms (allow session sync in CI). Then
+    // exponential backoff: 1s, 2s, 4s, 8s (max 10s). Past the cap, keep
+    // retrying on a longer cooldown rather than refusing, so a server that
+    // eventually returns still yields a real open that resets the counter.
+    if (this.reconnectionAttempts === 0) {
+      return 200;
+    }
+    if (this.reconnectionAttempts >= this.maxReconnectionAttempts) {
+      return this.reconnectionCooldownMs;
+    }
+    return Math.min(1000 * Math.pow(2, this.reconnectionAttempts - 1), 10000);
   }
 }
