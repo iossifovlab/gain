@@ -355,7 +355,15 @@ class ReferenceGenomeBuilder:
     def with_chromosome(
         self, chrom_id: str, sequence: str,
     ) -> ReferenceGenomeBuilder:
-        """Accumulate one chromosome; FASTA is synthesized on realize."""
+        """Accumulate one chromosome; FASTA is synthesized on realize.
+
+        Rejects an empty or whitespace-only sequence fast at the call site
+        (a pysam ``SamtoolsError`` otherwise surfaces with no resource
+        context deep inside faidx).
+        """
+        if not sequence.strip():
+            raise ValueError(
+                f"chromosome {chrom_id!r}: sequence must be non-empty")
         return dataclasses.replace(
             self, chromosomes=(*self.chromosomes, (chrom_id, sequence)))
 

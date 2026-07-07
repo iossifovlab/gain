@@ -381,6 +381,18 @@ def test_reference_genome_fasta_and_chromosome_are_exclusive(
         builder.build_resource(tmp_path)
 
 
+def test_reference_genome_empty_chromosome_sequence_raises() -> None:
+    # An empty (or whitespace-only) sequence would fail deep inside pysam
+    # faidx with a cryptic SamtoolsError; fail fast at the call site with a
+    # clear ValueError naming the chromosome.
+    with pytest.raises(ValueError, match="chromosome '1'") as excinfo:
+        a_reference_genome().with_chromosome("1", "")
+    assert "non-empty" in str(excinfo.value)
+
+    with pytest.raises(ValueError, match="chromosome 'chrX'"):
+        a_reference_genome().with_chromosome("chrX", "   ")
+
+
 def test_grr_mixes_genome_and_position_score(
     tmp_path: pathlib.Path,
 ) -> None:
