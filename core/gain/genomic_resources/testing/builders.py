@@ -250,6 +250,11 @@ class _TableScoreBuilder:
     SCORE_TYPE: ClassVar[str] = ""
     LEADING_COLUMNS: ClassVar[tuple[str, ...]] = ("chrom", "pos_begin")
     TRAILING_COLUMNS: ClassVar[tuple[str, ...]] = ()
+    # ``pos_end`` is an allowed optional column for EVERY table score type,
+    # np/allele included: they realize onto the same genomic_position_table
+    # backend, which derives ``pos_end_key`` from the header and range-matches
+    # a query position inside a record's [pos_begin, pos_end] span.  Shared,
+    # not position-only -- so it stays on the base and is inherited.
     OPTIONAL_COLUMNS: ClassVar[tuple[str, ...]] = ("pos_end",)
     TABLE_EXTRA_CONFIG: ClassVar[str] = ""
     DEFAULT_DATA: ClassVar[str] = ""

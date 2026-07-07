@@ -1179,6 +1179,29 @@ def test_allele_score_reads_back_by_ref_alt(
     assert score.fetch_scores("1", 16, "C", "A") == {"freq": 0.05}
 
 
+def test_np_score_with_pos_end_range_reads_back(
+    tmp_path: pathlib.Path,
+) -> None:
+    # np/allele scores realize onto the shared genomic_position_table backend,
+    # which supports an optional pos_end column: a record spanning
+    # [pos_begin, pos_end] range-matches a query at any position inside it.
+    res = (
+        a_np_score()
+        .with_score("cadd_raw", "float")
+        .with_data("""
+            chrom  pos_begin  pos_end  reference  alternative  cadd_raw
+            1      10         15       A          G            0.02
+        """)
+        .build_resource(tmp_path)
+    )
+    score = AlleleScore(res).open()
+    assert score.table is not None
+    assert score.table.pos_end_key == 2
+    # a position inside the [10, 15] span matches the record
+    assert score.fetch_scores("1", 12, "A", "G") == {"cadd_raw": 0.02}
+    assert score.fetch_scores("1", 10, "A", "G") == {"cadd_raw": 0.02}
+
+
 def test_np_score_with_score_line_matches_with_data(
     tmp_path: pathlib.Path,
 ) -> None:
