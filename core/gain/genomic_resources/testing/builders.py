@@ -566,6 +566,16 @@ def _build_gene_score_content(
     scores = _effective_gene_scores(builder)
     data = _effective_gene_data(builder)
     _validate_score_specs(scores)
+    colliding = [
+        spec.score_id for spec in scores
+        if spec.column_name == builder.gene_column
+    ]
+    if colliding:
+        raise ResourceValidationError(
+            f"score(s) {sorted(colliding)} declare column_name "
+            f"{builder.gene_column!r}, which is the gene column; a score "
+            f"cannot read from the gene column -- give it a distinct "
+            f"column_name")
     _validate_data_header(
         data, scores, base_required=(builder.gene_column,))
 

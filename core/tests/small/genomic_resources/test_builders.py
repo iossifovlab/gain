@@ -662,6 +662,25 @@ def test_gene_score_validation_error_names_resource_id(
         a_grr().with_resource("genes/broken", builder).build_repo(tmp_path)
 
 
+def test_gene_score_column_name_colliding_with_gene_column_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A score whose column_name equals the gene column passes header
+    # validation but dies cryptically at read ("could not convert string to
+    # float"); fail fast naming the collision.
+    builder = (
+        a_gene_score()
+        .with_score("g", "float", column_name="gene")
+        .with_data("""
+            gene
+            G1
+        """)
+    )
+    with pytest.raises(ValueError, match="gene") as excinfo:
+        builder.build_resource(tmp_path)
+    assert "gene column" in str(excinfo.value)
+
+
 def test_gene_score_realizes_plain_tsv(
     tmp_path: pathlib.Path,
 ) -> None:
