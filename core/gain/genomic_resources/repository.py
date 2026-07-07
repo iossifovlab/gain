@@ -49,7 +49,6 @@ import abc
 import copy
 import enum
 import hashlib
-import logging
 import os
 import re
 from collections.abc import Generator, Iterator
@@ -59,6 +58,8 @@ from typing import IO, Any, cast
 import apsw
 import pysam
 import yaml
+
+from gain import logging
 
 logger = logging.getLogger(__name__)
 

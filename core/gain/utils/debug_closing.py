@@ -1,7 +1,7 @@
 # pylint: disable=W0603
 from contextlib import AbstractContextManager
 from types import TracebackType
-from typing import Generic, Protocol, TypeVar
+from typing import Protocol
 
 from gain import logging
 
@@ -18,10 +18,7 @@ class HasClose(Protocol):
         """Close the object."""
 
 
-T = TypeVar("T", bound=HasClose)
-
-
-class closing(AbstractContextManager, Generic[T]):  # pylint: disable=C0103
+class closing[T: HasClose](AbstractContextManager):  # pylint: disable=C0103
     """Context to automatically close something at the end of a block.
 
     Code like this:

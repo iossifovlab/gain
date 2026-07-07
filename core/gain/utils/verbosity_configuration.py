@@ -35,8 +35,10 @@ class VerbosityConfiguration:
         """Get verbosity level from loglevel."""
         if verbosity == 1:
             loglevel = logging.INFO
-        elif verbosity >= 2:
+        elif verbosity == 2:
             loglevel = logging.DEBUG
+        elif verbosity >= 3:
+            loglevel = logging.TRACE
         else:
             loglevel = logging.WARNING
         return loglevel

@@ -17,7 +17,7 @@ class StartLossEffectChecker(EffectChecker):
             request.variant.reference,
         )
 
-        logger.trace(  # type: ignore[attr-defined]
+        logger.trace(
             "position check %d <= %d-%d <= %d",
             request.transcript_model.cds[0],
             request.variant.position,
