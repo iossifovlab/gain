@@ -305,8 +305,11 @@ def _build_real_repository(
         if not os.path.isabs(root_url):
             logger.error(
                 "for directory/file resources repository we expects an "
-                "absolute directory name: %s", root_url)
-            raise ValueError(f"not an absolute directory name: {root_url}")
+                "absolute directory name: %s",
+                _redact_url_userinfo(root_url))
+            raise ValueError(
+                "not an absolute directory name: "
+                f"{_redact_url_userinfo(root_url)}")
         root_url = f"file://{root_url}"
         protocol = build_fsspec_protocol(repo_id, root_url, **kwargs)
         repo = GenomicResourceProtocolRepo(protocol)
@@ -315,7 +318,9 @@ def _build_real_repository(
         root_url = kwargs.pop("url")
         parsed = urlparse(root_url)
         if parsed.scheme not in {"http", "https", "s3"}:
-            raise ValueError(f"unexpected GRR protocol scheme {root_url}")
+            raise ValueError(
+                "unexpected GRR protocol scheme "
+                f"{_redact_url_userinfo(root_url)}")
         protocol = build_fsspec_protocol(repo_id, root_url, **kwargs)
         repo = GenomicResourceProtocolRepo(protocol)
 
@@ -323,7 +328,9 @@ def _build_real_repository(
         root_url = kwargs.pop("url")
 
         if urlparse(root_url).scheme not in {"http", "https"}:
-            raise ValueError(f"not an http(s) root url: {root_url}")
+            raise ValueError(
+                "not an http(s) root url: "
+                f"{_redact_url_userinfo(root_url)}")
         protocol = build_fsspec_protocol(repo_id, root_url, **kwargs)
         repo = GenomicResourceProtocolRepo(protocol)
 
@@ -331,7 +338,9 @@ def _build_real_repository(
         root_url = kwargs.pop("url")
 
         if urlparse(root_url).scheme != "s3":
-            raise ValueError(f"not an s3 root url: {root_url}")
+            raise ValueError(
+                "not an s3 root url: "
+                f"{_redact_url_userinfo(root_url)}")
         protocol = build_fsspec_protocol(repo_id, root_url, **kwargs)
         repo = GenomicResourceProtocolRepo(protocol)
 

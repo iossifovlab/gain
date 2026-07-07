@@ -363,3 +363,43 @@ def test_redact_definition_plain_url_unchanged() -> None:
 def test_redact_definition_non_url_string_unchanged() -> None:
     definition = {"type": "directory", "directory": "/data/grr@archive"}
     assert redact_definition(definition)["directory"] == "/data/grr@archive"
+
+
+# ---------------------------------------------------------------------------
+# Finding 10 — a definition whose ``url`` carries userinfo credentials but whose
+# scheme does NOT match the declared repo ``type`` passes schema validation
+# (``url`` is a bare ``str``; the scheme is only checked in the builder) and
+# then reaches the scheme-mismatch ``raise ValueError`` branches in
+# ``_build_real_repository``. Those messages interpolate the RAW ``root_url``,
+# leaking the embedded password in ``str(exc)`` AND the traceback. The message
+# must be redacted (``user:***@host``) while still naming the scheme problem
+# and keeping the host for debuggability.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(("repo_type", "needle"), [
+    ("http", "not an http(s) root url"),
+    ("url", "unexpected GRR protocol scheme"),
+    ("s3", "not an s3 root url"),
+])
+def test_build_scheme_mismatch_does_not_leak_url_credential(
+    repo_type: str, needle: str,
+) -> None:
+    definition = {
+        "type": repo_type,
+        "url": f"ftp://alice:{_SECRET}@grr.example.com/path",
+    }
+    with pytest.raises(ValueError) as excinfo:
+        build_genomic_resource_repository(definition)
+    exc = excinfo.value
+    tb = "".join(traceback.format_exception(exc))
+    # The secret must not appear in the message or anywhere in the traceback.
+    assert _SECRET not in str(exc)
+    assert _SECRET not in tb
+    # No linked exception (context/cause) may surface the secret either.
+    for linked in _walk_exception_chain(exc):
+        assert _SECRET not in str(linked)
+    # The message still names the scheme problem (debuggability preserved).
+    assert needle in str(exc)
+    # ...and still shows the redacted host, so the error stays useful.
+    assert "grr.example.com" in str(exc)
+    assert "alice:***@grr.example.com" in str(exc)
