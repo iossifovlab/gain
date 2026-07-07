@@ -98,10 +98,15 @@ def test_http_only_user_is_rejected() -> None:
 
 
 def test_http_only_password_is_rejected() -> None:
+    secret = "s3cr3t-schema"  # noqa: S105
     err = _invalid({"type": "http", "url": "https://x.com",
-                    "password": "s3cr3t"})
+                    "password": secret})
     assert err.error_count() == 1
     assert "together" in str(err)
+    # the plaintext password must not be echoed back in str()/traceback
+    # (hide_input_in_errors=True). Full .errors()/.json() protection is
+    # covered on the build path in test_http_auth_credential_leak.py.
+    assert secret not in str(err)
 
 
 # ---------------------------------------------------------------------------
@@ -169,13 +174,16 @@ def test_unknown_type_is_rejected() -> None:
 # Integration — validation fires inside build_genomic_resource_repository
 # ---------------------------------------------------------------------------
 
+# build_genomic_resource_repository re-raises validation failures as a plain
+# ValueError (with a redacted message) to close the .errors()/.json() leak;
+# ValidationError is itself a ValueError, so ValueError is the correct guard.
 def test_build_raises_on_credential_mismatch() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValueError):
         build_genomic_resource_repository(
             {"type": "http", "url": "https://x.com", "user": "alice"})
 
 
 def test_build_raises_on_unknown_field() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValueError):
         build_genomic_resource_repository(
             {"type": "http", "url": "https://x.com", "pasword": "oops"})
