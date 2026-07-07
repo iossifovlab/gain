@@ -1,4 +1,4 @@
-import { Component, ViewChild, OnInit, HostListener, effect, inject } from '@angular/core';
+import { Component, ViewChild, OnInit, OnDestroy, HostListener, effect, inject } from '@angular/core';
 import { JobsTableComponent } from '../jobs-table/jobs-table.component';
 import { filter, Observable, Subscription, take } from 'rxjs';
 import { JobsService } from '../job-creation/jobs.service';
@@ -24,7 +24,7 @@ import { AnnotationPipelineStateService } from '../annotation-pipeline/annotatio
   styleUrl: './annotation-jobs-wrapper.component.css'
 })
 
-export class AnnotationJobsWrapperComponent implements OnInit {
+export class AnnotationJobsWrapperComponent implements OnInit, OnDestroy {
   public file: File = null;
   public fileSeparator: string = null;
   public fileHeader: Map<string, string> = null;
@@ -48,6 +48,7 @@ export class AnnotationJobsWrapperComponent implements OnInit {
   public isUserLoggedIn = false;
   public blockCreate: boolean = false;
   public socketNotificationSubscription: Subscription = new Subscription();
+  private reconnectionSubscription: Subscription = new Subscription();
 
   private readonly jobsService = inject(JobsService);
   private readonly userService = inject(UsersService);
@@ -106,10 +107,26 @@ export class AnnotationJobsWrapperComponent implements OnInit {
         }
       },
       error: err => {
-        console.error(err);
-        if (err instanceof CloseEvent && err.type === 'close') {
+        console.error('Socket notifications error:', err);
+        // Event-type errors are retried inside SocketNotificationsService and
+        // never reach here; only a CloseEvent means the socket is gone.
+        if (err instanceof CloseEvent) {
           this.socketNotificationSubscription.unsubscribe();
-          this.setupJobWebSocketConnection();
+          // Subscribe to reopenConnection to wait for it to complete
+          this.reconnectionSubscription.unsubscribe();
+          this.reconnectionSubscription = this.socketNotificationsService.reopenConnection().subscribe({
+            next: () => {
+              // Reconnected - refetch jobs to catch up on missed notifications
+              if (this.jobsTableComponent) {
+                this.jobsTableComponent.refreshTable();
+              }
+              if (this.currentJobId) {
+                this.getCurrentJobDetails(this.currentJobId);
+              }
+              this.setupJobWebSocketConnection();
+            },
+            error: (e) => console.error('Reconnection failed:', e)
+          });
         }
       }
     });
@@ -250,6 +267,11 @@ export class AnnotationJobsWrapperComponent implements OnInit {
 
   public refreshUserQuota(): void {
     this.userService.refreshUserData();
+  }
+
+  public ngOnDestroy(): void {
+    this.socketNotificationSubscription.unsubscribe();
+    this.reconnectionSubscription.unsubscribe();
   }
 }
 

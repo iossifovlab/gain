@@ -77,16 +77,6 @@ describe('SocketNotificationsService', () => {
     expect(result).toBe(converted);
   });
 
-  it('calls complete on the underlying WebSocketSubject when closeConnection is called', () => {
-    const completeSpy = jest.spyOn(subject, 'complete');
-
-    service.getJobNotifications();
-    service.closeConnection();
-
-    expect(service['socketNotifications']).toBeNull();
-    expect(completeSpy).toHaveBeenCalledWith();
-  });
-
   it('should propagate non-retryable errors for job notifications', async() => {
     const error = new Error('connection error');
     const resultPromise = firstValueFrom(service.getJobNotifications());
@@ -115,26 +105,26 @@ describe('SocketNotificationsService', () => {
       return { subjects: subjects };
     }
 
-    it('should not propagate CloseEvent and retry immediately for job notifications', () => {
+    it('should propagate CloseEvent for job notifications', () => {
       const { subjects } = makeMultiSubscriptionWs();
       const errorSpy = jest.fn();
 
       service.getJobNotifications().subscribe({ error: errorSpy });
-      subjects[0].error(new CloseEvent('error'));
+      const closeEvent = new CloseEvent('close');
+      subjects[0].error(closeEvent);
 
-      expect(errorSpy).not.toHaveBeenCalled();
-      expect(subjects).toHaveLength(2);
+      expect(errorSpy).toHaveBeenCalledWith(closeEvent);
     });
 
-    it('should not propagate CloseEvent and retry immediately for pipeline notifications', () => {
+    it('should propagate CloseEvent for pipeline notifications', () => {
       const { subjects } = makeMultiSubscriptionWs();
       const errorSpy = jest.fn();
 
       service.getPipelineNotifications().subscribe({ error: errorSpy });
-      subjects[0].error(new CloseEvent('error'));
+      const closeEvent = new CloseEvent('close');
+      subjects[0].error(closeEvent);
 
-      expect(errorSpy).not.toHaveBeenCalled();
-      expect(subjects).toHaveLength(2);
+      expect(errorSpy).toHaveBeenCalledWith(closeEvent);
     });
 
     it('should not propagate Event error and retry after 2000ms', () => {
@@ -165,24 +155,127 @@ describe('SocketNotificationsService', () => {
       expect(subjects).toHaveLength(1);
     });
 
-    it('should receive messages after recovery from CloseEvent', () => {
+    it('uses increasing backoff delays across reconnect attempts without a successful open', () => {
+      jest.useFakeTimers();
+      (webSocket as unknown as jest.Mock).mockReturnValue(new Subject<object>());
+      service = new SocketNotificationsService();
+      service.ensureConnected();
+
+      const calls = (): number => (webSocket as unknown as jest.Mock).mock.calls.length;
+
+      // Attempt 1: 200ms (fast first retry for CI session sync).
+      service.reopenConnection().subscribe();
+      let before = calls();
+      jest.advanceTimersByTime(199);
+      expect(calls()).toBe(before);
+      jest.advanceTimersByTime(1);
+      expect(calls()).toBe(before + 1);
+
+      // Attempt 2: exponential backoff -> 1000ms.
+      service.reopenConnection().subscribe();
+      before = calls();
+      jest.advanceTimersByTime(999);
+      expect(calls()).toBe(before);
+      jest.advanceTimersByTime(1);
+      expect(calls()).toBe(before + 1);
+
+      // Attempt 3: 2000ms.
+      service.reopenConnection().subscribe();
+      before = calls();
+      jest.advanceTimersByTime(1999);
+      expect(calls()).toBe(before);
+      jest.advanceTimersByTime(1);
+      expect(calls()).toBe(before + 1);
+    });
+
+    it('errors after maxReconnectionAttempts failures without a successful open', () => {
+      jest.useFakeTimers();
+      (webSocket as unknown as jest.Mock).mockReturnValue(new Subject<object>());
+      service = new SocketNotificationsService();
+      service.ensureConnected();
+
+      for (let i = 0; i < 5; i++) {
+        service.reopenConnection().subscribe({ error: () => { /* ignore */ } });
+        jest.advanceTimersByTime(10000);
+      }
+
+      const errorSpy = jest.fn();
+      service.reopenConnection().subscribe({ error: errorSpy });
+      expect(errorSpy).toHaveBeenCalledWith(expect.any(Error));
+    });
+
+    it('shares a single reconnection across concurrent callers', () => {
+      jest.useFakeTimers();
+      (webSocket as unknown as jest.Mock).mockReturnValue(new Subject<object>());
+      service = new SocketNotificationsService();
+      service.ensureConnected();
+
+      const before = (webSocket as unknown as jest.Mock).mock.calls.length;
+      const obs1 = service.reopenConnection();
+      const obs2 = service.reopenConnection();
+      expect(obs2).toBe(obs1);
+
+      obs1.subscribe();
+      obs2.subscribe();
+      jest.advanceTimersByTime(200);
+
+      // Only one socket recreation despite two concurrent callers.
+      expect((webSocket as unknown as jest.Mock).mock.calls).toHaveLength(before + 1);
+    });
+
+    it('resets the backoff and recovers after the server comes back and a socket opens', () => {
+      jest.useFakeTimers();
+      let openObserver: { next: () => void } = { next: () => { /* replaced on socket creation */ } };
+      (webSocket as unknown as jest.Mock).mockImplementation(
+        (config: { openObserver: { next: () => void } }) => {
+          openObserver = config.openObserver;
+          return new Subject<object>();
+        }
+      );
+      service = new SocketNotificationsService();
+      service.ensureConnected();
+
+      // Server down: exhaust every reconnection attempt.
+      for (let i = 0; i < 5; i++) {
+        service.reopenConnection().subscribe({ error: () => { /* ignore */ } });
+        jest.advanceTimersByTime(10000);
+      }
+      const errorSpy = jest.fn();
+      service.reopenConnection().subscribe({ error: errorSpy });
+      expect(errorSpy).toHaveBeenCalledWith(expect.any(Error));
+
+      // Server comes back: the live socket confirms it has opened.
+      openObserver.next();
+
+      // Reconnection works again from the 200ms branch, no error.
+      const nextSpy = jest.fn();
+      const errorSpy2 = jest.fn();
+      service.reopenConnection().subscribe({ next: nextSpy, error: errorSpy2 });
+      jest.advanceTimersByTime(200);
+      expect(errorSpy2).not.toHaveBeenCalled();
+      expect(nextSpy).toHaveBeenCalledWith(undefined);
+    });
+
+    it('should allow manual reconnection after CloseEvent', () => {
       const { subjects } = makeMultiSubscriptionWs();
       const job1 = new JobNotification(1, 'success');
-      const job2 = new JobNotification(2, 'failed');
       jest.spyOn(JobNotification, 'fromJson')
-        .mockReturnValueOnce(job1)
-        .mockReturnValueOnce(job2);
+        .mockReturnValueOnce(job1);
 
       const values: JobNotification[] = [];
-      service.getJobNotifications().subscribe({ next: v => values.push(v) });
+      const errorSpy = jest.fn();
+      service.getJobNotifications().subscribe({
+        next: v => values.push(v),
+        error: errorSpy
+      });
 
       // eslint-disable-next-line camelcase
       subjects[0].next({ type: 'job_status', job_id: 1, status: 3 });
-      subjects[0].error(new CloseEvent('error'));
-      // eslint-disable-next-line camelcase
-      subjects[1].next({ type: 'job_status', job_id: 2, status: 4 });
+      const closeEvent = new CloseEvent('close');
+      subjects[0].error(closeEvent);
 
-      expect(values).toStrictEqual([job1, job2]);
+      expect(values).toStrictEqual([job1]);
+      expect(errorSpy).toHaveBeenCalledWith(closeEvent);
     });
   });
 });

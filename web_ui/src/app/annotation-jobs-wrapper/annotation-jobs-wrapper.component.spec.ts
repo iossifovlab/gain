@@ -82,8 +82,6 @@ class JobsServiceMock {
   public getSocketNotifications(): Observable<object> {
     return of({});
   }
-
-  public closeConnection(): void { }
 }
 
 class SocketNotificationsServiceMock {
@@ -95,7 +93,9 @@ class SocketNotificationsServiceMock {
     return of(new JobNotification(1, 'failed'));
   }
 
-  public closeConnection(): void { }
+  public reopenConnection(): Observable<void> {
+    return of(undefined);
+  }
 }
 
 class AnnotationPipelineServiceMock {
@@ -213,31 +213,40 @@ describe('AnnotationJobsWrapperComponent', () => {
     expect(component.downloadLink).toBe('url/1');
   });
 
-  it('should reconnects to socket notifications on close event', () => {
+  it('should reconnect on any socket error', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const setupSpy = jest.spyOn(component as any, 'setupJobWebSocketConnection');
+    const reopenSpy = jest.spyOn(socketNotificationsServiceMock, 'reopenConnection');
     jest.spyOn(socketNotificationsServiceMock, 'getJobNotifications')
-      .mockReturnValueOnce(throwError(new CloseEvent('close')));
+      .mockReturnValueOnce(throwError(new CloseEvent('close')))
+      .mockReturnValueOnce(of(new JobNotification(1, 'success')));
     const unsubSpy = jest.spyOn(component.socketNotificationSubscription, 'unsubscribe');
 
     component.ngOnInit();
 
     expect(unsubSpy).toHaveBeenCalledWith();
+    expect(reopenSpy).toHaveBeenCalledWith();
     expect(setupSpy).toHaveBeenCalledTimes(2);
   });
 
-  it('does not reconnect for non-close events', () => {
+  it('does not treat a raw Event as a reconnect trigger (Event recovery is owned by the service)', () => {
+    // Event-type errors are retried internally by
+    // SocketNotificationsService.retryAfterError and never surface to this
+    // consumer. The component must therefore only reconnect on CloseEvent;
+    // a stray Event reaching the error handler must NOT drive a reopen.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const setupSpy = jest.spyOn(component as any, 'setupJobWebSocketConnection');
+    // reopenConnection lives on a module-level shared mock; clear history
+    // carried over from earlier tests in this suite (no global clearMocks).
+    const reopenSpy = jest.spyOn(socketNotificationsServiceMock, 'reopenConnection').mockClear();
+    const unsubSpy = jest.spyOn(component.socketNotificationSubscription, 'unsubscribe');
     jest.spyOn(socketNotificationsServiceMock, 'getJobNotifications')
-      .mockReturnValueOnce(throwError({ type: 'other' }));
+      .mockReturnValueOnce(throwError(new Event('network error')));
 
     component.ngOnInit();
-    expect(setupSpy).toHaveBeenCalledTimes(1);
-
-    const unsubSpy = jest.spyOn(component.socketNotificationSubscription, 'unsubscribe');
 
     expect(unsubSpy).not.toHaveBeenCalled();
+    expect(reopenSpy).not.toHaveBeenCalled();
     expect(setupSpy).toHaveBeenCalledTimes(1);
   });
 

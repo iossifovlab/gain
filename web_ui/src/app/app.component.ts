@@ -1,9 +1,8 @@
-
-import { ChangeDetectorRef, Component, DoCheck, inject, OnInit } from '@angular/core';
+import { ChangeDetectorRef, Component, DoCheck, inject, OnDestroy, OnInit } from '@angular/core';
 import { Router, RouterModule, RouterOutlet } from '@angular/router';
 import { UsersService } from './users.service';
 import { UserData } from './users';
-import { filter, takeWhile } from 'rxjs';
+import { filter, distinctUntilChanged, Subscription } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { MarkdownModule } from 'ngx-markdown';
 import { SocketNotificationsService } from './socket-notifications/socket-notifications.service';
@@ -14,10 +13,12 @@ import { SocketNotificationsService } from './socket-notifications/socket-notifi
   templateUrl: './app.component.html',
   styleUrl: './app.component.css',
 })
-export class AppComponent implements DoCheck, OnInit {
+export class AppComponent implements DoCheck, OnInit, OnDestroy {
   public currentUserData: UserData = null;
   public readonly environment = environment;
   public menuOpen = false;
+  private userDataSubscription: Subscription = new Subscription();
+  private firstUserDataLoad = true;
 
   private readonly usersService = inject(UsersService);
   private readonly changeDetectorRef = inject(ChangeDetectorRef);
@@ -26,17 +27,31 @@ export class AppComponent implements DoCheck, OnInit {
 
   public ngOnInit(): void {
     this.usersService.refreshUserData();
+    this.userDataSubscription = this.usersService.userData.pipe(
+      filter(userData => userData !== null),
+      distinctUntilChanged((a, b) => a?.email === b?.email),
+    ).subscribe((userData) => {
+      if (!this.firstUserDataLoad) {
+        this.socketNotificationsService.reopenConnection().subscribe({
+          next: () => { /* socket reopened */ },
+          error: (e) => console.error('Failed to reopen socket:', e)
+        });
+      } else {
+        // On first user load, ensure WebSocket is connected
+        // Session is established via HTTP middleware before this point
+        this.socketNotificationsService.ensureConnected();
+      }
+      this.currentUserData = userData;
+      this.firstUserDataLoad = false;
+    });
   }
 
   public ngDoCheck(): void {
-    this.usersService.userData.pipe(
-      filter(userData => userData !== null),
-      takeWhile(user => user?.email !== this.currentUserData?.email),
-    ).subscribe((userData) => {
-      this.currentUserData = userData;
-      this.socketNotificationsService.reopenConnection();
-    });
     this.changeDetectorRef.detectChanges();
+  }
+
+  public ngOnDestroy(): void {
+    this.userDataSubscription.unsubscribe();
   }
 
   public logout(): void {

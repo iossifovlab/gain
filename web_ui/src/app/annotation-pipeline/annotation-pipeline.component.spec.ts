@@ -123,8 +123,6 @@ class SocketNotificationsServiceMock {
   public getPipelineNotifications(): Observable<PipelineNotification> {
     return of(new PipelineNotification('id1', 'unloaded'));
   }
-
-  public closeConnection(): void { }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
