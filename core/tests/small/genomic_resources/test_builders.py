@@ -803,6 +803,44 @@ def test_position_score_with_histogram_emits_block(
     assert score.fetch_scores("1", 10) == [0.5]
 
 
+def test_gene_score_with_histogram_defends_against_later_mutation(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Mutating the dict AFTER with_histogram must not leak into the
+    # immutable builder: the realized config reflects the original.
+    hist = {"type": "number", "number_of_bins": 5,
+            "x_log_scale": False, "y_log_scale": False}
+    builder = (
+        a_gene_score()
+        .with_score("pli", "float")
+        .with_histogram(hist)
+        .with_data("gene pli\nG1 0.5\n")
+    )
+    hist["number_of_bins"] = 999  # mutate after capture
+    res = builder.build_resource(tmp_path)
+    config = res.get_config()
+    assert config is not None
+    assert config["scores"][0]["histogram"]["number_of_bins"] == 5
+
+
+def test_position_score_with_histogram_defends_against_later_mutation(
+    tmp_path: pathlib.Path,
+) -> None:
+    hist = {"type": "number", "number_of_bins": 4,
+            "x_log_scale": False, "y_log_scale": False}
+    builder = (
+        a_position_score()
+        .with_score("sc", "float")
+        .with_histogram(hist)
+        .with_data("chrom pos_begin sc\n1 10 0.5\n")
+    )
+    hist["number_of_bins"] = 999  # mutate after capture
+    res = builder.build_resource(tmp_path)
+    config = res.get_config()
+    assert config is not None
+    assert config["scores"][0]["histogram"]["number_of_bins"] == 4
+
+
 def test_with_histogram_before_any_score_raises() -> None:
     with pytest.raises(ValueError, match="call with_score first"):
         a_gene_score().with_histogram({"type": "number"})
