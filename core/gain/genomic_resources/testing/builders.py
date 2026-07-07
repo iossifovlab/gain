@@ -181,13 +181,17 @@ def _render_score_specs_yaml(scores: tuple[_ScoreSpec, ...]) -> str:
             f"  column_name: {spec.column_name}",
         ]
         if spec.desc is not None:
-            # Emit desc through yaml so a colon/special char stays valid;
-            # safe_dump of a single-key mapping yields one "desc: <scalar>"
-            # line we splice at the same 2-space indent as histogram.
-            desc_line = yaml.safe_dump(
+            # Emit desc through yaml so a colon/special char stays valid.
+            # A multi-line desc renders as several physical lines; indent
+            # EVERY line at the 2-space score-entry level (like histogram),
+            # not just the first, so continuation lines never land at col 0.
+            desc_yaml = yaml.safe_dump(
                 {"desc": spec.desc}, default_flow_style=False,
-                sort_keys=False).rstrip("\n")
-            lines.append(f"  {desc_line}")
+                sort_keys=False)
+            lines.extend(
+                f"  {desc_line}"
+                for desc_line in desc_yaml.rstrip("\n").split("\n")
+            )
         if spec.histogram is not None:
             lines.append("  histogram:")
             hist_yaml = yaml.safe_dump(
@@ -705,9 +709,9 @@ def _validate_data_header(
     The header must contain the ``base_required`` columns (the position
     columns for a position score, or the gene column for a gene score) plus
     each declared score's ``column_name``.  A missing declared column or an
-    undeclared extra column raises ``ValueError``.  Because the builder owns
-    the data format, a conventional ``#``-prefixed header line is rejected
-    explicitly rather than silently skipped.
+    undeclared extra column raises ``ResourceValidationError``.  Because the
+    builder owns the data format, a conventional ``#``-prefixed header line is
+    rejected explicitly rather than silently skipped.
     """
     for line in data.split("\n"):
         stripped = line.strip()

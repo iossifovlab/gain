@@ -1240,3 +1240,30 @@ def test_grr_composes_np_and_allele_scores(
     assert np_score.fetch_scores("1", 10, "A", "G") == {"cadd": 0.02}
     allele_score = AlleleScore(repo.get_resource("scores/allele")).open()
     assert allele_score.fetch_scores("1", 10, "A", "C") == {"freq": 0.03}
+
+
+# ---------------------------------------------------------------------------
+# sub-feature 5: polish -- multi-line desc renders as valid YAML
+# ---------------------------------------------------------------------------
+
+def test_gene_score_multiline_desc_renders_valid_yaml(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A multi-line desc must have EVERY line indented under the score entry,
+    # not just the first -- otherwise the continuation lines land at column 0
+    # and corrupt the YAML (or silently drop the tail).
+    desc = "line one\nline two\nline three"
+    res = (
+        a_gene_score()
+        .with_score("pli", "float", desc=desc)
+        .with_data("""
+            gene   pli
+            GENE1  0.5
+        """)
+        .build_resource(tmp_path)
+    )
+    config = res.get_config()
+    assert config is not None
+    assert config["scores"][0]["desc"] == desc
+    gene_score = build_gene_score_from_resource(res)
+    assert gene_score.score_definitions["pli"].description == desc
