@@ -37,7 +37,7 @@ from __future__ import annotations
 import dataclasses
 import pathlib
 import textwrap
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
@@ -49,6 +49,23 @@ from gain.genomic_resources.testing import (
     convert_to_tab_separated,
     setup_directories,
 )
+
+
+@runtime_checkable
+class ResourceBuilder(Protocol):
+    """Structural interface for a single-resource test builder.
+
+    Every resource builder knows how to realize exactly one resource --
+    its config plus data/index files -- into a directory.  ``GRRBuilder``
+    composes heterogeneous builders through this one seam; each
+    implementation delegates to the appropriate ``setup_*`` helper from
+    :mod:`gain.genomic_resources.testing`.
+    """
+
+    def realize_into(self, resource_dir: pathlib.Path) -> None:
+        """Write this resource's directory into ``resource_dir``."""
+        ...
+
 
 _DATA_FILENAME = "data.txt"
 
@@ -98,6 +115,14 @@ class PositionScoreBuilder:
         """
         return dataclasses.replace(self, data=data)
 
+    def realize_into(self, resource_dir: pathlib.Path) -> None:
+        """Write this position-score resource into ``resource_dir``.
+
+        Raises a plain ``ValueError`` on invalid content; ``GRRBuilder``
+        annotates it with the resource id.
+        """
+        setup_directories(resource_dir, _build_resource_content(self))
+
     def build_resource(
         self, tmp_path: pathlib.Path,
     ) -> GenomicResource:
@@ -115,15 +140,19 @@ class PositionScoreBuilder:
 
 @dataclasses.dataclass(frozen=True)
 class GRRBuilder:
-    """Immutable builder composing resources into a filesystem GRR."""
+    """Immutable builder composing resources into a filesystem GRR.
 
-    # The position-score-specific typing here is intentional (YAGNI).  It
-    # will be generalized to a shared resource-builder Protocol/base when
-    # the gene-score slice lands (iossifovlab/gain#193).
-    resources: tuple[tuple[str, PositionScoreBuilder], ...] = ()
+    Resources are held behind the shared :class:`ResourceBuilder` seam, so
+    a single GRR can compose heterogeneous resource types (e.g. a genome
+    plus a position score).  ``build_repo`` realizes each builder into its
+    own ``root / resource_id`` directory; the id is known here, so any
+    ``ValueError`` a builder raises is annotated with it centrally.
+    """
+
+    resources: tuple[tuple[str, ResourceBuilder], ...] = ()
 
     def with_resource(
-        self, resource_id: str, resource_builder: PositionScoreBuilder,
+        self, resource_id: str, resource_builder: ResourceBuilder,
     ) -> GRRBuilder:
         """Attach a resource, assigning its repo id here."""
         return dataclasses.replace(
@@ -135,11 +164,13 @@ class GRRBuilder:
         self, tmp_path: pathlib.Path,
     ) -> GenomicResourceProtocolRepo:
         """Realize a filesystem GRR into ``tmp_path``."""
-        content: dict[str, Any] = {
-            resource_id: _build_resource_content(builder, resource_id)
-            for resource_id, builder in self.resources
-        }
-        setup_directories(tmp_path, content)
+        for resource_id, builder in self.resources:
+            resource_dir = tmp_path / resource_id
+            try:
+                builder.realize_into(resource_dir)
+            except ValueError as exc:
+                raise ValueError(
+                    f"resource {resource_id!r}: {exc}") from exc
         return build_filesystem_test_repository(tmp_path)
 
 
@@ -163,13 +194,17 @@ def _effective_data(builder: PositionScoreBuilder) -> str:
 
 
 def _build_resource_content(
-    builder: PositionScoreBuilder, resource_id: str,
+    builder: PositionScoreBuilder,
 ) -> dict[str, Any]:
-    """Build the pure filesystem content dict for one resource."""
+    """Build the pure filesystem content dict for one resource.
+
+    Validation raises a plain ``ValueError``; the caller (``GRRBuilder``)
+    annotates it with the resource id, so messages here stay id-free.
+    """
     scores = _effective_scores(builder)
     data = _effective_data(builder)
-    _validate_scores(resource_id, scores)
-    _validate_data_header(resource_id, data, scores)
+    _validate_scores(scores)
+    _validate_data_header(data, scores)
 
     scores_yaml = "".join(
         f"                - id: {spec.score_id}\n"
@@ -200,7 +235,7 @@ def _parse_header(data: str) -> list[str]:
 
 
 def _validate_scores(
-    resource_id: str, scores: tuple[_ScoreSpec, ...],
+    scores: tuple[_ScoreSpec, ...],
 ) -> None:
     """Validate the declared scores for duplicate ids or column names.
 
@@ -212,7 +247,7 @@ def _validate_scores(
     for spec in scores:
         if spec.score_id in seen_ids:
             raise ValueError(
-                f"resource {resource_id!r}: duplicate score id "
+                f"duplicate score id "
                 f"{spec.score_id!r} declared more than once")
         seen_ids.add(spec.score_id)
 
@@ -220,13 +255,13 @@ def _validate_scores(
     for spec in scores:
         if spec.column_name in seen_columns:
             raise ValueError(
-                f"resource {resource_id!r}: duplicate column_name "
+                f"duplicate column_name "
                 f"{spec.column_name!r} shared by more than one score")
         seen_columns.add(spec.column_name)
 
 
 def _validate_data_header(
-    resource_id: str, data: str, scores: tuple[_ScoreSpec, ...],
+    data: str, scores: tuple[_ScoreSpec, ...],
 ) -> None:
     """Validate the data header against the declared scores.
 
@@ -242,7 +277,7 @@ def _validate_data_header(
             continue
         if stripped.startswith("#"):
             raise ValueError(
-                f"resource {resource_id!r}: the data header must not start "
+                f"the data header must not start "
                 f"with '#'; write the column names as a plain "
                 f"whitespace-separated line (got {stripped!r})")
         break
@@ -257,13 +292,13 @@ def _validate_data_header(
     missing = required - header_set
     if missing:
         raise ValueError(
-            f"resource {resource_id!r}: data header is missing required "
+            f"data header is missing required "
             f"column(s) {sorted(missing)}; header has {header}")
 
     extra = header_set - allowed
     if extra:
         raise ValueError(
-            f"resource {resource_id!r}: data header has undeclared "
+            f"data header has undeclared "
             f"column(s) {sorted(extra)}; declared scores are "
             f"{sorted(declared)}")
 
