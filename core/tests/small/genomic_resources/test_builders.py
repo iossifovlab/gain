@@ -1049,6 +1049,11 @@ def test_position_score_tabix_matches_plain_readback(
 
     plain = build(tabix=False)
     tabix = build(tabix=True)
+    # Pin the concrete authored range values on the tabix path so the test
+    # cannot pass vacuously (both sides None): pos 12 falls in range 10-15
+    # (0.02) and pos 18 in range 17-19 (0.03).
+    assert tabix.fetch_scores("1", 12) == [0.02]
+    assert tabix.fetch_scores("1", 18) == [0.03]
     assert tabix.fetch_scores("1", 12) == plain.fetch_scores("1", 12)
     assert tabix.fetch_scores("1", 18) == plain.fetch_scores("1", 18)
 
@@ -1384,6 +1389,11 @@ def test_score_line_with_tabix_composes_and_matches_plain(
     plain_score = build(tabix=False)
     assert (tmp_path / "t" / "data.txt.gz").is_file()
     assert (tmp_path / "t" / "data.txt.gz.tbi").is_file()
+    # Pin the concrete authored values on the tabix path so the test cannot
+    # pass vacuously (both sides None).
+    assert tabix_score.fetch_scores("1", 10) == [0.02]
+    assert tabix_score.fetch_scores("1", 11) == [0.03]
+    assert tabix_score.fetch_scores("2", 8) == [0.01]
     for chrom, pos in [("1", 10), ("1", 11), ("2", 8)]:
         assert (
             tabix_score.fetch_scores(chrom, pos)
