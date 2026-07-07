@@ -178,7 +178,13 @@ def _render_score_specs_yaml(scores: tuple[_ScoreSpec, ...]) -> str:
             f"  column_name: {spec.column_name}",
         ]
         if spec.desc is not None:
-            lines.append(f"  desc: {spec.desc}")
+            # Emit desc through yaml so a colon/special char stays valid;
+            # safe_dump of a single-key mapping yields one "desc: <scalar>"
+            # line we splice at the same 2-space indent as histogram.
+            desc_line = yaml.safe_dump(
+                {"desc": spec.desc}, default_flow_style=False,
+                sort_keys=False).rstrip("\n")
+            lines.append(f"  {desc_line}")
         if spec.histogram is not None:
             lines.append("  histogram:")
             hist_yaml = yaml.safe_dump(

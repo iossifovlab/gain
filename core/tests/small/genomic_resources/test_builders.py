@@ -525,6 +525,46 @@ def test_gene_score_reads_back_authored_values(
     assert gene_score.get_max("pli") == pytest.approx(0.9)
 
 
+def test_gene_score_desc_reads_back(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A plain desc is emitted and read back on the score's ScoreDef.
+    res = (
+        a_gene_score()
+        .with_score("pli", "float", desc="pLI probability")
+        .with_data("""
+            gene   pli
+            GENE1  0.5
+        """)
+        .build_resource(tmp_path)
+    )
+    gene_score = build_gene_score_from_resource(res)
+    assert gene_score.score_definitions["pli"].description == (
+        "pLI probability")
+
+
+def test_gene_score_desc_with_colon_renders_valid_yaml(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A desc containing a YAML-special character (a colon) must not corrupt
+    # the emitted config: it must parse AND read back verbatim.
+    desc = "pLI: prob of intolerance"
+    res = (
+        a_gene_score()
+        .with_score("pli", "float", desc=desc)
+        .with_data("""
+            gene   pli
+            GENE1  0.5
+        """)
+        .build_resource(tmp_path)
+    )
+    config = res.get_config()
+    assert config is not None
+    assert config["scores"][0]["desc"] == desc
+    gene_score = build_gene_score_from_resource(res)
+    assert gene_score.score_definitions["pli"].description == desc
+
+
 def test_gene_score_column_name_defaults_to_id(
     tmp_path: pathlib.Path,
 ) -> None:
