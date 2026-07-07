@@ -34,11 +34,15 @@ Example::
 """
 from __future__ import annotations
 
+import contextlib
 import copy
 import dataclasses
+import gzip
 import pathlib
+import tempfile
 import textwrap
-from typing import Any, Protocol, runtime_checkable
+from collections.abc import Generator
+from typing import Any, ClassVar, Protocol, Self, runtime_checkable
 
 import yaml
 
@@ -53,6 +57,7 @@ from gain.genomic_resources.testing import (
     setup_directories,
     setup_genome,
     setup_genome_bgz,
+    setup_tabix,
 )
 
 
@@ -85,12 +90,6 @@ class ResourceBuilder(Protocol):
 
 
 _DATA_FILENAME = "data.txt"
-
-# Position columns understood by a position-score table.  ``chrom`` and
-# ``pos_begin`` are always required; ``pos_end`` is optional (present only
-# for range rows).
-_REQUIRED_POSITION_COLUMNS = ("chrom", "pos_begin")
-_OPTIONAL_POSITION_COLUMNS = ("pos_end",)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -201,17 +200,60 @@ def _render_score_specs_yaml(scores: tuple[_ScoreSpec, ...]) -> str:
     return "\n".join(blocks) + "\n"
 
 
+# The tabix table filename used when a table score is realized as tabix
+# (``.txt.gz`` + ``.tbi``) instead of the plain ``.txt`` default.
+_TABIX_FILENAME = "data.txt.gz"
+
+
+def _scores_or_default(
+    scores: tuple[_ScoreSpec, ...],
+) -> tuple[_ScoreSpec, ...]:
+    """Return ``scores`` or, when empty, a single default ``float`` score.
+
+    Shared fallback for every score builder (position/np/allele/gene): a bare
+    builder with no declared score realizes one ``"score"`` float column.
+    """
+    if scores:
+        return scores
+    return (_ScoreSpec("score", "float", "score"),)
+
+
 @dataclasses.dataclass(frozen=True)
-class PositionScoreBuilder:
-    """Immutable builder for a single ``position_score`` resource."""
+class _TableScoreBuilder:
+    """Immutable base for the tabular position/np/allele score builders.
+
+    The three table-score resource types share nearly everything: score
+    declaration (:class:`_ScoreSpec`), header validation, YAML rendering,
+    the ``with_data`` / typed ``with_score_line`` authoring modes and the
+    plain-``.txt`` / tabix realize paths.  They differ only in a handful of
+    class-level knobs supplied by each subclass:
+
+    * ``SCORE_TYPE`` -- the ``type:`` config value.
+    * ``TRAILING_COLUMNS`` -- extra required base columns after the position
+      columns (``reference``/``alternative`` for np/allele; none for
+      position).
+    * ``TABLE_EXTRA_CONFIG`` -- extra lines spliced into the ``table:`` block
+      (the ``reference``/``alternative`` name mapping for np/allele).
+    * ``DEFAULT_DATA`` -- the bare-builder default data block.
+    """
 
     scores: tuple[_ScoreSpec, ...] = ()
     data: str | None = None
+    rows: tuple[tuple[tuple[str, str], ...], ...] = ()
+    tabix: bool = False
+
+    # Subclass-provided knobs.
+    SCORE_TYPE: ClassVar[str] = ""
+    LEADING_COLUMNS: ClassVar[tuple[str, ...]] = ("chrom", "pos_begin")
+    TRAILING_COLUMNS: ClassVar[tuple[str, ...]] = ()
+    OPTIONAL_COLUMNS: ClassVar[tuple[str, ...]] = ("pos_end",)
+    TABLE_EXTRA_CONFIG: ClassVar[str] = ""
+    DEFAULT_DATA: ClassVar[str] = ""
 
     def with_score(
         self, score_id: str, value_type: str, *,
         column_name: str | None = None, desc: str | None = None,
-    ) -> PositionScoreBuilder:
+    ) -> Self:
         """Declare a score once; ``column_name`` defaults to ``score_id``."""
         return dataclasses.replace(
             self,
@@ -222,7 +264,7 @@ class PositionScoreBuilder:
 
     def with_histogram(
         self, histogram: dict[str, Any], *, score_id: str | None = None,
-    ) -> PositionScoreBuilder:
+    ) -> Self:
         """Attach a histogram block to a declared score.
 
         With ``score_id`` omitted the histogram is attached to the
@@ -236,24 +278,69 @@ class PositionScoreBuilder:
                 self.scores, histogram, score_id=score_id),
         )
 
-    def with_data(self, data: str) -> PositionScoreBuilder:
+    def with_data(self, data: str) -> Self:
         """Author the score table as a whitespace-separated block.
 
         The block is validated at the header level only: it must contain
         at least the declared columns (required position columns plus each
         score's ``column_name``). Row-level completeness is not checked, so
         a header-only block validates and realizes -- reading it back then
-        surfaces a lower-level ``PositionScore`` error, not a builder one.
+        surfaces a lower-level score error, not a builder one.
+
+        Mutually exclusive with :meth:`with_score_line`; setting both raises
+        ``ResourceValidationError`` when the resource is realized.
         """
         return dataclasses.replace(self, data=data)
 
+    def with_score_line(self, **columns: Any) -> Self:
+        """Append one typed data row; multiple calls accumulate.
+
+        A typed alternative to the free-form :meth:`with_data` string: each
+        call contributes one row as ``column=value`` keyword pairs (position
+        columns plus each declared score's ``column_name``).  The builder
+        synthesizes the SAME table -- header from the declared columns, rows
+        from the accumulated calls -- that the equivalent ``with_data`` string
+        would produce, so both authoring modes read back identically.
+
+        Mutually exclusive with :meth:`with_data`.
+        """
+        row = tuple((str(key), str(value)) for key, value in columns.items())
+        return dataclasses.replace(self, rows=(*self.rows, row))
+
+    def with_tabix(self) -> Self:
+        """Realize the score table as tabix (``.txt.gz`` + ``.tbi``).
+
+        The default is a plain ``.txt`` table; ``with_tabix`` switches the
+        realize path to :func:`setup_tabix` and points ``table.filename`` at
+        the ``.txt.gz`` with ``format: tabix``.  The resource reads back
+        identically to the plain form.
+        """
+        return dataclasses.replace(self, tabix=True)
+
     def realize_into(self, resource_dir: pathlib.Path) -> None:
-        """Write this position-score resource into ``resource_dir``.
+        """Write this table-score resource into ``resource_dir``.
 
         Raises a ``ResourceValidationError`` on invalid content;
         ``GRRBuilder`` annotates it with the resource id.
         """
-        setup_directories(resource_dir, _build_resource_content(self))
+        scores = _scores_or_default(self.scores)
+        data = self._effective_data(scores)
+        _validate_score_specs(scores)
+        _validate_data_header(
+            data, scores,
+            base_required=self.LEADING_COLUMNS + self.TRAILING_COLUMNS,
+            base_optional=self.OPTIONAL_COLUMNS)
+        if self.tabix:
+            setup_directories(
+                resource_dir,
+                {GR_CONF_FILE_NAME: self._render_config(
+                    scores, _TABIX_FILENAME)})
+            _realize_tabix_table(resource_dir / _TABIX_FILENAME, data)
+        else:
+            setup_directories(resource_dir, {
+                GR_CONF_FILE_NAME: self._render_config(scores, _DATA_FILENAME),
+                _DATA_FILENAME: convert_to_tab_separated(data),
+            })
 
     def build_resource(
         self, tmp_path: pathlib.Path,
@@ -263,6 +350,127 @@ class PositionScoreBuilder:
         Delegates to the GRR builder so there is a single realize path.
         """
         return _build_single_resource(self, tmp_path)
+
+    def _effective_data(self, scores: tuple[_ScoreSpec, ...]) -> str:
+        if self.data is not None and self.rows:
+            raise ResourceValidationError(
+                "with_data and with_score_line are mutually exclusive; "
+                "author the table with only one of them")
+        if self.data is not None:
+            return self.data
+        if self.rows:
+            return self._synthesize_rows(scores)
+        return self.DEFAULT_DATA
+
+    def _synthesize_rows(self, scores: tuple[_ScoreSpec, ...]) -> str:
+        """Render the accumulated typed rows as a whitespace data block."""
+        row_dicts = [dict(row) for row in self.rows]
+        uses_pos_end = any("pos_end" in rd for rd in row_dicts)
+        if uses_pos_end and not all("pos_end" in rd for rd in row_dicts):
+            raise ResourceValidationError(
+                "with_score_line: 'pos_end' must be given on every row "
+                "or on none")
+        header = list(self.LEADING_COLUMNS)
+        if uses_pos_end:
+            header.append("pos_end")
+        header.extend(self.TRAILING_COLUMNS)
+        header.extend(spec.column_name for spec in scores)
+
+        lines = ["  ".join(header)]
+        header_set = set(header)
+        for rd in row_dicts:
+            missing = header_set - set(rd)
+            if missing:
+                raise ResourceValidationError(
+                    f"with_score_line row is missing column(s) "
+                    f"{sorted(missing)}; expected {header}")
+            extra = set(rd) - header_set
+            if extra:
+                raise ResourceValidationError(
+                    f"with_score_line row has unexpected column(s) "
+                    f"{sorted(extra)}; expected {header}")
+            lines.append("  ".join(rd[col] for col in header))
+        return "\n".join(lines) + "\n"
+
+    def _render_config(
+        self, scores: tuple[_ScoreSpec, ...], filename: str,
+    ) -> str:
+        lines = [
+            f"type: {self.SCORE_TYPE}",
+            "table:",
+            f"    filename: {filename}",
+        ]
+        if self.tabix:
+            lines.append("    format: tabix")
+        config = "\n".join(lines) + "\n"
+        config += self.TABLE_EXTRA_CONFIG
+        config += "scores:\n"
+        return config + _render_score_specs_yaml(scores)
+
+
+@dataclasses.dataclass(frozen=True)
+class PositionScoreBuilder(_TableScoreBuilder):
+    """Immutable builder for a single ``position_score`` resource."""
+
+    SCORE_TYPE: ClassVar[str] = "position_score"
+    DEFAULT_DATA: ClassVar[str] = """
+        chrom  pos_begin  score
+        1      10         0.1
+        1      11         0.2
+        1      15         0.3
+    """
+
+
+# The ``reference``/``alternative`` column mapping spliced into the ``table:``
+# block of an np/allele score config; both types locate their ref/alt columns
+# by name (matching the ``reference``/``alternative`` data columns).
+_REF_ALT_TABLE_CONFIG = (
+    "    reference:\n"
+    "      name: reference\n"
+    "    alternative:\n"
+    "      name: alternative\n"
+)
+
+# np/allele default data: chrom/pos_begin plus the ref/alt columns and one
+# default float score.
+_NP_ALLELE_DEFAULT_DATA = """
+    chrom  pos_begin  reference  alternative  score
+    1      10         A          G            0.1
+    1      10         A          C            0.2
+    1      16         C          T            0.3
+"""
+
+
+@dataclasses.dataclass(frozen=True)
+class NPScoreBuilder(_TableScoreBuilder):
+    """Immutable builder for a single ``np_score`` resource.
+
+    Shares the whole tabular-score machinery with the position and allele
+    builders (see :class:`_TableScoreBuilder`); it differs only in the
+    ``np_score`` type, the required ``reference``/``alternative`` base columns
+    and the ``table:`` ref/alt name mapping.  Reads back through
+    ``AlleleScore``.
+    """
+
+    SCORE_TYPE: ClassVar[str] = "np_score"
+    TRAILING_COLUMNS: ClassVar[tuple[str, ...]] = ("reference", "alternative")
+    TABLE_EXTRA_CONFIG: ClassVar[str] = _REF_ALT_TABLE_CONFIG
+    DEFAULT_DATA: ClassVar[str] = _NP_ALLELE_DEFAULT_DATA
+
+
+@dataclasses.dataclass(frozen=True)
+class AlleleScoreBuilder(_TableScoreBuilder):
+    """Immutable builder for a single ``allele_score`` resource.
+
+    Identical to :class:`NPScoreBuilder` apart from the ``allele_score``
+    type value; both require ``reference``/``alternative`` columns and read
+    back through ``AlleleScore``.
+    """
+
+    SCORE_TYPE: ClassVar[str] = "allele_score"
+    TRAILING_COLUMNS: ClassVar[tuple[str, ...]] = ("reference", "alternative")
+    TABLE_EXTRA_CONFIG: ClassVar[str] = _REF_ALT_TABLE_CONFIG
+    DEFAULT_DATA: ClassVar[str] = _NP_ALLELE_DEFAULT_DATA
 
 
 _GENE_DATA_FILENAME = "data.tsv"
@@ -290,6 +498,7 @@ class GeneScoreBuilder:
     scores: tuple[_ScoreSpec, ...] = ()
     data: str | None = None
     gene_column: str = _DEFAULT_GENE_COLUMN
+    gzip: bool = False
 
     def with_score(
         self, score_id: str, value_type: str = "float", *,
@@ -323,6 +532,15 @@ class GeneScoreBuilder:
     def with_gene_column(self, name: str) -> GeneScoreBuilder:
         """Set the gene-id column name (default ``"gene"``)."""
         return dataclasses.replace(self, gene_column=name)
+
+    def with_gzip(self) -> GeneScoreBuilder:
+        """Realize the gene table gzipped (``.tsv.gz``) instead of plain.
+
+        The default is a plain ``.tsv`` table; ``with_gzip`` gzips the TSV to
+        ``data.tsv.gz`` and points ``filename:`` at it.  The resource reads
+        back identically to the plain form.
+        """
+        return dataclasses.replace(self, gzip=True)
 
     def with_data(self, data: str) -> GeneScoreBuilder:
         """Author the gene→value table as a whitespace-separated block.
@@ -409,52 +627,36 @@ def _build_single_resource(
     )
 
 
-def _effective_scores(
-    builder: PositionScoreBuilder,
-) -> tuple[_ScoreSpec, ...]:
-    if builder.scores:
-        return builder.scores
-    return (_ScoreSpec("score", "float", "score"),)
+def _realize_tabix_table(
+    tabix_path: pathlib.Path, data: str,
+) -> None:
+    """Realize ``data`` as a tabix table (``.txt.gz`` + ``.tbi``).
 
-
-def _effective_data(builder: PositionScoreBuilder) -> str:
-    if builder.data is not None:
-        return builder.data
-    return """
-        chrom  pos_begin  score
-        1      10         0.1
-        1      11         0.2
-        1      15         0.3
+    The header line is emitted as a ``#`` comment so the tabix table reads
+    its column names from the file (``header_mode: file``); the seq/start/end
+    column indices are derived from the header so an arbitrary column order
+    still indexes correctly.
     """
+    header = _parse_header(data)
+    chrom_col = header.index("chrom")
+    start_col = header.index("pos_begin")
+    end_col = header.index("pos_end") if "pos_end" in header else start_col
+    setup_tabix(
+        tabix_path, _comment_header(data),
+        seq_col=chrom_col, start_col=start_col, end_col=end_col)
 
 
-def _build_resource_content(
-    builder: PositionScoreBuilder,
-) -> dict[str, Any]:
-    """Build the pure filesystem content dict for one resource.
-
-    Validation raises a ``ResourceValidationError``; the caller
-    (``GRRBuilder``) annotates it with the resource id, so messages here
-    stay id-free.
-    """
-    scores = _effective_scores(builder)
-    data = _effective_data(builder)
-    _validate_score_specs(scores)
-    _validate_data_header(
-        data, scores,
-        base_required=_REQUIRED_POSITION_COLUMNS,
-        base_optional=_OPTIONAL_POSITION_COLUMNS)
-
-    config = textwrap.dedent(f"""\
-        type: position_score
-        table:
-            filename: {_DATA_FILENAME}
-        scores:
-        """) + _render_score_specs_yaml(scores)
-    return {
-        GR_CONF_FILE_NAME: config,
-        _DATA_FILENAME: convert_to_tab_separated(data),
-    }
+def _comment_header(data: str) -> str:
+    """Return ``data`` with a ``#`` prefixed onto its first header line."""
+    lines = data.split("\n")
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = line[:len(line) - len(line.lstrip())]
+        lines[index] = f"{indent}#{line.lstrip()}"
+        break
+    return "\n".join(lines)
 
 
 def _parse_header(data: str) -> list[str]:
@@ -539,14 +741,6 @@ def _validate_data_header(
             f"{sorted(declared)}")
 
 
-def _effective_gene_scores(
-    builder: GeneScoreBuilder,
-) -> tuple[_ScoreSpec, ...]:
-    if builder.scores:
-        return builder.scores
-    return (_ScoreSpec("score", "float", "score"),)
-
-
 def _effective_gene_data(builder: GeneScoreBuilder) -> str:
     if builder.data is not None:
         return builder.data
@@ -567,7 +761,7 @@ def _build_gene_score_content(
     (``GRRBuilder``) annotates it with the resource id, so messages here
     stay id-free.
     """
-    scores = _effective_gene_scores(builder)
+    scores = _scores_or_default(builder.scores)
     data = _effective_gene_data(builder)
     _validate_score_specs(scores)
     colliding = [
@@ -583,16 +777,21 @@ def _build_gene_score_content(
     _validate_data_header(
         data, scores, base_required=(builder.gene_column,))
 
+    filename = (
+        f"{_GENE_DATA_FILENAME}.gz" if builder.gzip else _GENE_DATA_FILENAME)
     config = textwrap.dedent(f"""\
         type: gene_score
-        filename: {_GENE_DATA_FILENAME}
+        filename: {filename}
         """)
     if builder.gene_column != _DEFAULT_GENE_COLUMN:
         config += f"gene_column: {builder.gene_column}\n"
     config += "scores:\n" + _render_score_specs_yaml(scores)
+    tsv = convert_to_tab_separated(data)
+    table_content: str | bytes = gzip.compress(tsv.encode()) if builder.gzip \
+        else tsv
     return {
         GR_CONF_FILE_NAME: config,
-        _GENE_DATA_FILENAME: convert_to_tab_separated(data),
+        filename: table_content,
     }
 
 
@@ -729,6 +928,16 @@ def a_position_score() -> PositionScoreBuilder:
     return PositionScoreBuilder()
 
 
+def a_np_score() -> NPScoreBuilder:
+    """Return an immutable np-score builder."""
+    return NPScoreBuilder()
+
+
+def an_allele_score() -> AlleleScoreBuilder:
+    """Return an immutable allele-score builder."""
+    return AlleleScoreBuilder()
+
+
 def a_gene_score() -> GeneScoreBuilder:
     """Return an immutable gene-score builder."""
     return GeneScoreBuilder()
@@ -737,3 +946,30 @@ def a_gene_score() -> GeneScoreBuilder:
 def a_grr() -> GRRBuilder:
     """Return an immutable GRR-composition builder."""
     return GRRBuilder()
+
+
+@contextlib.contextmanager
+def build_repo_tempdir(
+    grr_builder: GRRBuilder,
+) -> Generator[GenomicResourceProtocolRepo, None, None]:
+    """Realize ``grr_builder`` into a self-managed temporary directory.
+
+    A ``tmp_path``-free realize form for non-pytest callers: the GRR is
+    realized into a fresh :class:`tempfile.TemporaryDirectory`, yielded as an
+    open repository, and the directory is removed on exit.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        yield grr_builder.build_repo(pathlib.Path(tmp_dir))
+
+
+@contextlib.contextmanager
+def build_resource_tempdir(
+    builder: ResourceBuilder,
+) -> Generator[GenomicResource, None, None]:
+    """Realize one ``builder`` into a self-managed temporary directory.
+
+    The single-resource counterpart of :func:`build_repo_tempdir`: yields the
+    sole realized resource and cleans the temporary directory up on exit.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        yield _build_single_resource(builder, pathlib.Path(tmp_dir))
