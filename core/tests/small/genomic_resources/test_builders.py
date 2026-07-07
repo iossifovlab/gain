@@ -1357,6 +1357,35 @@ def test_gene_score_multiline_desc_renders_valid_yaml(
     assert gene_score.score_definitions["pli"].description == desc
 
 
+def test_multiline_desc_blank_line_has_no_trailing_whitespace(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A multi-line desc containing a BLANK line must not emit continuation
+    # lines carrying trailing whitespace ("  \n"): otherwise-empty lines are
+    # written empty.  The desc must still round-trip through the config.
+    desc = "line one\n\nline three"
+    res = (
+        a_gene_score()
+        .with_score("pli", "float", desc=desc)
+        .with_data("""
+            gene   pli
+            GENE1  0.5
+        """)
+        .build_resource(tmp_path)
+    )
+    raw = (tmp_path / "genomic_resource.yaml").read_text()
+    offenders = [
+        ln for ln in raw.split("\n") if ln != ln.rstrip()
+    ]
+    assert offenders == [], f"lines with trailing whitespace: {offenders!r}"
+
+    config = res.get_config()
+    assert config is not None
+    assert config["scores"][0]["desc"] == desc
+    gene_score = build_gene_score_from_resource(res)
+    assert gene_score.score_definitions["pli"].description == desc
+
+
 # ---------------------------------------------------------------------------
 # Finding 3: validation coverage for typed rows / base-required columns
 # ---------------------------------------------------------------------------
