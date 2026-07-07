@@ -369,6 +369,29 @@ def test_reference_genome_builder_is_immutable() -> None:
     assert base is not extended
 
 
+def test_reference_genome_builder_no_cross_variation_leak(
+    tmp_path: pathlib.Path,
+) -> None:
+    # From one shared base, two siblings set DIFFERENT chromosomes and are
+    # BOTH realized; each genome must read back ONLY its own chromosome.
+    # If the builder accumulated chromosomes into a shared mutable list
+    # (append in place) instead of a fresh tuple per with_chromosome, both
+    # siblings would carry both chromosomes and this would fail.
+    base = a_reference_genome()
+    sibling_a = base.with_chromosome("1", "ACGT")
+    sibling_b = base.with_chromosome("2", "TTTT")
+
+    res_a = sibling_a.build_resource(tmp_path / "a")
+    res_b = sibling_b.build_resource(tmp_path / "b")
+
+    with build_reference_genome_from_resource(res_a).open() as ref_a:
+        assert set(ref_a.get_all_chrom_lengths()) == {"1"}
+        assert ref_a.get_sequence("1", 1, 4) == "ACGT"
+    with build_reference_genome_from_resource(res_b).open() as ref_b:
+        assert set(ref_b.get_all_chrom_lengths()) == {"2"}
+        assert ref_b.get_sequence("2", 1, 4) == "TTTT"
+
+
 def test_reference_genome_fasta_and_chromosome_are_exclusive(
     tmp_path: pathlib.Path,
 ) -> None:
