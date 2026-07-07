@@ -88,7 +88,14 @@ class PositionScoreBuilder:
         return dataclasses.replace(self, scores=(*self.scores, spec))
 
     def with_data(self, data: str) -> PositionScoreBuilder:
-        """Author the score table as a whitespace-separated block."""
+        """Author the score table as a whitespace-separated block.
+
+        The block is validated at the header level only: it must contain
+        at least the declared columns (required position columns plus each
+        score's ``column_name``). Row-level completeness is not checked, so
+        a header-only block validates and realizes -- reading it back then
+        surfaces a lower-level ``PositionScore`` error, not a builder one.
+        """
         return dataclasses.replace(self, data=data)
 
     def build_resource(
