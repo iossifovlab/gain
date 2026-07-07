@@ -94,11 +94,16 @@ class PositionScoreBuilder:
     def build_resource(
         self, tmp_path: pathlib.Path,
     ) -> GenomicResource:
-        """Realize this single resource (repo id ``""``) into ``tmp_path``."""
-        content = _build_resource_content(self, "")
-        setup_directories(tmp_path, content)
-        repo = build_filesystem_test_repository(tmp_path)
-        return repo.get_resource("")
+        """Realize this single resource (repo id ``""``) into ``tmp_path``.
+
+        Delegates to the GRR builder so there is a single realize path.
+        """
+        return (
+            a_grr()
+            .with_resource("", self)
+            .build_repo(tmp_path)
+            .get_resource("")
+        )
 
 
 @dataclasses.dataclass(frozen=True)
