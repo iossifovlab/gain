@@ -39,6 +39,8 @@ import pathlib
 import textwrap
 from typing import Any, Protocol, runtime_checkable
 
+import yaml
+
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GenomicResource,
@@ -92,11 +94,101 @@ _OPTIONAL_POSITION_COLUMNS = ("pos_end",)
 
 @dataclasses.dataclass(frozen=True)
 class _ScoreSpec:
-    """A single declared score column."""
+    """A single declared score column.
+
+    The shared score-declaration representation used by BOTH the
+    position-score and the gene-score builders: an ``id``, a ``column_name``
+    (defaulting to the id), a value ``type``, an optional ``desc`` and an
+    optional ``histogram`` block.  The two builders differ only in the base
+    (non-score) columns their data tables require; the score declarations,
+    their ``column_name`` defaulting, duplicate-id / duplicate-column_name
+    validation and YAML rendering are all shared through this type.
+    """
 
     score_id: str
     value_type: str
     column_name: str
+    desc: str | None = None
+    histogram: dict[str, Any] | None = None
+
+
+def _append_score(
+    scores: tuple[_ScoreSpec, ...], score_id: str, value_type: str, *,
+    column_name: str | None = None, desc: str | None = None,
+) -> tuple[_ScoreSpec, ...]:
+    """Return ``scores`` with one more declared score appended.
+
+    Shared by both builders' ``with_score``; ``column_name`` defaults to
+    ``score_id``.
+    """
+    spec = _ScoreSpec(
+        score_id=score_id,
+        value_type=value_type,
+        column_name=column_name if column_name is not None else score_id,
+        desc=desc,
+    )
+    return (*scores, spec)
+
+
+def _set_histogram(
+    scores: tuple[_ScoreSpec, ...], histogram: dict[str, Any], *,
+    score_id: str | None = None,
+) -> tuple[_ScoreSpec, ...]:
+    """Return ``scores`` with ``histogram`` set on one declared score.
+
+    Shared by both builders' ``with_histogram``.  With ``score_id`` omitted
+    the histogram is attached to the most-recently-declared score; passing
+    ``score_id`` targets that specific score.  Declaring a histogram before
+    any score, or for an unknown score id, is a validation error.
+    """
+    if not scores:
+        raise ResourceValidationError(
+            "with_histogram requires a declared score; "
+            "call with_score first")
+    if score_id is None:
+        target_index = len(scores) - 1
+    else:
+        indexes = [
+            i for i, spec in enumerate(scores)
+            if spec.score_id == score_id
+        ]
+        if not indexes:
+            raise ResourceValidationError(
+                f"with_histogram: no score {score_id!r} declared")
+        target_index = indexes[-1]
+    return tuple(
+        dataclasses.replace(spec, histogram=histogram)
+        if i == target_index else spec
+        for i, spec in enumerate(scores)
+    )
+
+
+def _render_score_specs_yaml(scores: tuple[_ScoreSpec, ...]) -> str:
+    """Render declared scores as a YAML ``scores:`` list body (0-indent).
+
+    Optional ``desc``/``histogram`` are emitted only when set, so a score
+    with neither renders exactly the three ``id``/``type``/``column_name``
+    lines the position-score builder emitted before the shared base.
+    """
+    blocks: list[str] = []
+    for spec in scores:
+        lines = [
+            f"- id: {spec.score_id}",
+            f"  type: {spec.value_type}",
+            f"  column_name: {spec.column_name}",
+        ]
+        if spec.desc is not None:
+            lines.append(f"  desc: {spec.desc}")
+        if spec.histogram is not None:
+            lines.append("  histogram:")
+            hist_yaml = yaml.safe_dump(
+                spec.histogram, default_flow_style=False, sort_keys=False)
+            lines.extend(
+                f"    {hist_line}"
+                for hist_line in hist_yaml.rstrip("\n").split("\n")
+            )
+        blocks.append("\n".join(lines))
+    return "\n".join(blocks) + "\n"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -108,15 +200,31 @@ class PositionScoreBuilder:
 
     def with_score(
         self, score_id: str, value_type: str, *,
-        column_name: str | None = None,
+        column_name: str | None = None, desc: str | None = None,
     ) -> PositionScoreBuilder:
         """Declare a score once; ``column_name`` defaults to ``score_id``."""
-        spec = _ScoreSpec(
-            score_id=score_id,
-            value_type=value_type,
-            column_name=column_name if column_name is not None else score_id,
+        return dataclasses.replace(
+            self,
+            scores=_append_score(
+                self.scores, score_id, value_type,
+                column_name=column_name, desc=desc),
         )
-        return dataclasses.replace(self, scores=(*self.scores, spec))
+
+    def with_histogram(
+        self, histogram: dict[str, Any], *, score_id: str | None = None,
+    ) -> PositionScoreBuilder:
+        """Attach a histogram block to a declared score.
+
+        With ``score_id`` omitted the histogram is attached to the
+        most-recently-declared score; passing ``score_id`` targets that
+        score.  The block is emitted verbatim under ``histogram:`` in the
+        resource config.
+        """
+        return dataclasses.replace(
+            self,
+            scores=_set_histogram(
+                self.scores, histogram, score_id=score_id),
+        )
 
     def with_data(self, data: str) -> PositionScoreBuilder:
         """Author the score table as a whitespace-separated block.
@@ -238,21 +346,18 @@ def _build_resource_content(
     """
     scores = _effective_scores(builder)
     data = _effective_data(builder)
-    _validate_scores(scores)
-    _validate_data_header(data, scores)
+    _validate_score_specs(scores)
+    _validate_data_header(
+        data, scores,
+        base_required=_REQUIRED_POSITION_COLUMNS,
+        base_optional=_OPTIONAL_POSITION_COLUMNS)
 
-    scores_yaml = "".join(
-        f"                - id: {spec.score_id}\n"
-        f"                  type: {spec.value_type}\n"
-        f"                  column_name: {spec.column_name}\n"
-        for spec in scores
-    )
     config = textwrap.dedent(f"""\
         type: position_score
         table:
             filename: {_DATA_FILENAME}
         scores:
-        """) + textwrap.dedent(scores_yaml)
+        """) + _render_score_specs_yaml(scores)
     return {
         GR_CONF_FILE_NAME: config,
         _DATA_FILENAME: convert_to_tab_separated(data),
@@ -269,7 +374,7 @@ def _parse_header(data: str) -> list[str]:
     return []
 
 
-def _validate_scores(
+def _validate_score_specs(
     scores: tuple[_ScoreSpec, ...],
 ) -> None:
     """Validate the declared scores for duplicate ids or column names.
@@ -296,15 +401,18 @@ def _validate_scores(
 
 
 def _validate_data_header(
-    data: str, scores: tuple[_ScoreSpec, ...],
+    data: str, scores: tuple[_ScoreSpec, ...], *,
+    base_required: tuple[str, ...],
+    base_optional: tuple[str, ...] = (),
 ) -> None:
     """Validate the data header against the declared scores.
 
-    The header must contain the required position columns plus each
-    declared score's ``column_name``.  A missing declared column or an
-    undeclared extra column raises ``ValueError``.  Because the builder
-    owns the data format, a conventional ``#``-prefixed header line is
-    rejected explicitly rather than silently skipped.
+    The header must contain the ``base_required`` columns (the position
+    columns for a position score, or the gene column for a gene score) plus
+    each declared score's ``column_name``.  A missing declared column or an
+    undeclared extra column raises ``ValueError``.  Because the builder owns
+    the data format, a conventional ``#``-prefixed header line is rejected
+    explicitly rather than silently skipped.
     """
     for line in data.split("\n"):
         stripped = line.strip()
@@ -321,8 +429,8 @@ def _validate_data_header(
     header_set = set(header)
 
     declared = {spec.column_name for spec in scores}
-    required = set(_REQUIRED_POSITION_COLUMNS) | declared
-    allowed = required | set(_OPTIONAL_POSITION_COLUMNS)
+    required = set(base_required) | declared
+    allowed = required | set(base_optional)
 
     missing = required - header_set
     if missing:
