@@ -1,8 +1,10 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pathlib
 
-from gain.genomic_resources.repository import GenomicResourceProtocolRepo
+import pytest
+
 from gain.genomic_resources.genomic_scores import PositionScore
+from gain.genomic_resources.repository import GenomicResourceProtocolRepo
 from gain.genomic_resources.testing.builders import (
     a_grr,
     a_position_score,
@@ -111,3 +113,47 @@ def test_explicit_column_name_override(
     score = PositionScore(res).open()
     assert score.get_all_scores() == ["myscore"]
     assert score.fetch_scores("1", 10) == [0.7]
+
+
+def test_data_missing_declared_score_column_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    builder = (
+        a_position_score()
+        .with_score("phastCons100way", "float")
+        .with_data("""
+            chrom  pos_begin  wrong_name
+            1      10         0.02
+        """)
+    )
+    with pytest.raises(ValueError, match="phastCons100way") as excinfo:
+        builder.build_resource(tmp_path)
+    assert "missing" in str(excinfo.value)
+
+
+def test_data_with_undeclared_extra_column_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    builder = (
+        a_position_score()
+        .with_score("phastCons100way", "float")
+        .with_data("""
+            chrom  pos_begin  phastCons100way  bonus
+            1      10         0.02             9.9
+        """)
+    )
+    with pytest.raises(ValueError, match="bonus") as excinfo:
+        builder.build_resource(tmp_path)
+    assert "undeclared" in str(excinfo.value)
+
+
+def test_validation_error_names_resource_id(
+    tmp_path: pathlib.Path,
+) -> None:
+    builder = (
+        a_position_score()
+        .with_score("sc", "float")
+        .with_data("chrom pos_begin extra\n1 10 0.1\n")
+    )
+    with pytest.raises(ValueError, match="scores/broken"):
+        a_grr().with_resource("scores/broken", builder).build_repo(tmp_path)
