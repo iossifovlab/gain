@@ -42,7 +42,7 @@ exclude = [
 line-length = 80
 indent-width = 4
 
-target-version = "py310"
+target-version = "py312"
 
 [lint]
 select = ["E", "F", "W", "C90", "I", "UP", "ASYNC", "S", "BLE", "FBT", "B", "A", "COM", "C4", "T10", "EXE", "ISC", "LOG", "G", "INP", "PIE", "T20", "PT", "Q", "RSE", "RET", "SLF", "SIM", "ARG", "PTH", "FIX", "ERA", "PD", "TRY", "PERF", "FURB", "RUF"]
@@ -57,6 +57,10 @@ ignore = [
     "B019",
     "FURB192",
     "S301",
+    # ASYNC109: our async `timeout` params are forwarded to the library that
+    # owns the timeout (aiohttp.ClientTimeout, asyncio.wait_for, the Channels
+    # test communicator) — asyncio.timeout() is not the right tool for them.
+    "ASYNC109",
 ]
 fixable = ["ALL"]
 preview = true

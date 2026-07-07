@@ -44,7 +44,7 @@ def test_get_jobs(
     job = result[0]
     assert "created" in job
     created = datetime.datetime.fromisoformat(job["created"])
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     assert abs(now - created) < datetime.timedelta(minutes=1)
     assert job["id"] == 1
     assert job["status"] == "waiting"
@@ -60,7 +60,7 @@ def test_get_jobs(
     job = result[0]
     assert "created" in job
     created = datetime.datetime.fromisoformat(job["created"])
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     assert abs(now - created) < datetime.timedelta(minutes=1)
     assert job["id"] == 2
     assert job["status"] == "waiting"
@@ -82,7 +82,7 @@ def test_get_all_jobs_admin_user(admin_client: Client) -> None:
     job = result[0]
     assert "created" in job
     created = datetime.datetime.fromisoformat(job["created"])
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     assert abs(now - created) < datetime.timedelta(minutes=1)
     assert job["id"] == 1
     assert job["name"] == 1
@@ -92,7 +92,7 @@ def test_get_all_jobs_admin_user(admin_client: Client) -> None:
     job = result[1]
     assert "created" in job
     created = datetime.datetime.fromisoformat(job["created"])
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     assert abs(now - created) < datetime.timedelta(minutes=1)
     assert job["id"] == 2
     assert job["name"] == 2
@@ -108,7 +108,7 @@ def test_annotate_vcf_job_details(user_client: Client) -> None:
     result = response.json()
     assert "created" in result
     created = datetime.datetime.fromisoformat(result["created"])
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     assert abs(now - created) < datetime.timedelta(minutes=1)
     assert result["id"] == 1
     assert result["status"] == "waiting"
@@ -149,7 +149,7 @@ def test_annotate_tabular_job_details(user_client: Client) -> None:
     result = details_response.json()
     assert "created" in result
     created = datetime.datetime.fromisoformat(result["created"])
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     assert abs(now - created) < datetime.timedelta(minutes=1)
     assert result["id"] == 3
     assert result["name"] == 2

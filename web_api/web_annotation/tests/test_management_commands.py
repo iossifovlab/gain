@@ -209,7 +209,7 @@ def test_refreshdaily_uses_configured_timezone_for_day_boundary(
     same UTC calendar day -- must still reset.
     """
     settings.QUOTA_RESET_TIMEZONE = "America/New_York"
-    utc = datetime.timezone.utc
+    utc = datetime.UTC
     DailyQuotaRefreshLog.objects.create(
         executed_at=datetime.datetime(2026, 1, 15, 2, 0, tzinfo=utc))
     user_quota.daily_jobs = 0
@@ -236,7 +236,7 @@ def test_refreshdaily_timezone_ahead_of_utc_stays_aligned(
     UTC calendar day. This is the case the old UTC-only guard got wrong.
     """
     settings.QUOTA_RESET_TIMEZONE = "Asia/Tokyo"
-    utc = datetime.timezone.utc
+    utc = datetime.UTC
     DailyQuotaRefreshLog.objects.create(
         executed_at=datetime.datetime(2026, 1, 15, 10, 0, tzinfo=utc))
     user_quota.daily_jobs = 0
@@ -259,7 +259,7 @@ def test_refreshdaily_defaults_to_utc_day_boundary(
 
     Two runs within the same UTC calendar day: the second is skipped.
     """
-    utc = datetime.timezone.utc
+    utc = datetime.UTC
     DailyQuotaRefreshLog.objects.create(
         executed_at=datetime.datetime(2026, 1, 15, 2, 0, tzinfo=utc))
     user_quota.daily_jobs = 0
@@ -398,7 +398,7 @@ def test_refreshmonthly_uses_configured_timezone_for_month_boundary(
     new NY month, but the same UTC calendar month -- must still reset.
     """
     settings.QUOTA_RESET_TIMEZONE = "America/New_York"
-    utc = datetime.timezone.utc
+    utc = datetime.UTC
     MonthlyQuotaRefreshLog.objects.create(
         executed_at=datetime.datetime(2026, 2, 1, 2, 0, tzinfo=utc))
     user_quota.monthly_jobs = 0
@@ -425,7 +425,7 @@ def test_refreshmonthly_timezone_ahead_of_utc_stays_aligned(
     UTC calendar month.
     """
     settings.QUOTA_RESET_TIMEZONE = "Asia/Tokyo"
-    utc = datetime.timezone.utc
+    utc = datetime.UTC
     MonthlyQuotaRefreshLog.objects.create(
         executed_at=datetime.datetime(2026, 1, 31, 10, 0, tzinfo=utc))
     user_quota.monthly_jobs = 0
@@ -448,7 +448,7 @@ def test_refreshmonthly_defaults_to_utc_month_boundary(
 
     Two runs within the same UTC calendar month: the second is skipped.
     """
-    utc = datetime.timezone.utc
+    utc = datetime.UTC
     MonthlyQuotaRefreshLog.objects.create(
         executed_at=datetime.datetime(2026, 2, 1, 2, 0, tzinfo=utc))
     user_quota.monthly_jobs = 0
