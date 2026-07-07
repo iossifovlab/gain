@@ -381,6 +381,15 @@ def test_reference_genome_fasta_and_chromosome_are_exclusive(
         builder.build_resource(tmp_path)
 
 
+def test_grr_duplicate_resource_id_raises() -> None:
+    # Declaring the same resource id twice would silently last-win (both
+    # realize into the same dir); reject it at the call site naming the id.
+    grr = a_grr().with_resource("scores/g", a_position_score())
+    with pytest.raises(ValueError, match="scores/g") as excinfo:
+        grr.with_resource("scores/g", a_position_score())
+    assert "duplicate" in str(excinfo.value).lower()
+
+
 def test_reference_genome_empty_chromosome_sequence_raises() -> None:
     # An empty (or whitespace-only) sequence would fail deep inside pysam
     # faidx with a cryptic SamtoolsError; fail fast at the call site with a
