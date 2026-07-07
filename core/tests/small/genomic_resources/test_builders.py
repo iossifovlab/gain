@@ -9,6 +9,7 @@ from gain.genomic_resources.reference_genome import (
 )
 from gain.genomic_resources.repository import GenomicResourceProtocolRepo
 from gain.genomic_resources.testing.builders import (
+    ResourceValidationError,
     a_gene_score,
     a_grr,
     a_np_score,
@@ -1267,3 +1268,123 @@ def test_gene_score_multiline_desc_renders_valid_yaml(
     assert config["scores"][0]["desc"] == desc
     gene_score = build_gene_score_from_resource(res)
     assert gene_score.score_definitions["pli"].description == desc
+
+
+# ---------------------------------------------------------------------------
+# Finding 3: validation coverage for typed rows / base-required columns
+# ---------------------------------------------------------------------------
+
+def test_score_line_row_missing_declared_column_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A typed row omitting a declared column would KeyError deep in row
+    # synthesis without the guard; instead it fails fast naming the column.
+    builder = (
+        a_position_score()
+        .with_score("phastCons", "float")
+        .with_score_line(chrom="1", pos_begin=10, phastCons=0.02)
+        .with_score_line(chrom="1", pos_begin=11)  # missing phastCons
+    )
+    with pytest.raises(
+            ResourceValidationError, match="missing column") as excinfo:
+        builder.build_resource(tmp_path)
+    assert "phastCons" in str(excinfo.value)
+
+
+def test_score_line_row_with_undeclared_column_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A typed row carrying a column the header does not declare would be
+    # silently dropped without the guard; instead it fails fast naming it.
+    builder = (
+        a_position_score()
+        .with_score("phastCons", "float")
+        .with_score_line(
+            chrom="1", pos_begin=10, phastCons=0.02, bonus=9.9)
+    )
+    with pytest.raises(
+            ResourceValidationError, match="unexpected column") as excinfo:
+        builder.build_resource(tmp_path)
+    assert "bonus" in str(excinfo.value)
+
+
+def test_score_line_partial_pos_end_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    # pos_end must be present on every typed row or on none; a mix would
+    # produce a ragged table, so the builder rejects it explicitly.
+    builder = (
+        a_position_score()
+        .with_score("sc", "float")
+        .with_score_line(chrom="1", pos_begin=10, pos_end=15, sc=0.02)
+        .with_score_line(chrom="1", pos_begin=17, sc=0.03)  # no pos_end
+    )
+    with pytest.raises(
+            ResourceValidationError,
+            match="'pos_end' must be given on every row"):
+        builder.build_resource(tmp_path)
+
+
+def test_np_score_data_missing_reference_column_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    # np/allele scores require reference + alternative base columns; a data
+    # block missing one is rejected by the base_required header check.
+    builder = (
+        a_np_score()
+        .with_score("cadd_raw", "float")
+        .with_data("""
+            chrom  pos_begin  alternative  cadd_raw
+            1      10         G            0.02
+        """)
+    )
+    with pytest.raises(
+            ResourceValidationError, match="missing required") as excinfo:
+        builder.build_resource(tmp_path)
+    assert "reference" in str(excinfo.value)
+
+
+def test_allele_score_data_missing_alternative_column_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    builder = (
+        an_allele_score()
+        .with_score("freq", "float")
+        .with_data("""
+            chrom  pos_begin  reference  freq
+            1      10         A          0.02
+        """)
+    )
+    with pytest.raises(
+            ResourceValidationError, match="missing required") as excinfo:
+        builder.build_resource(tmp_path)
+    assert "alternative" in str(excinfo.value)
+
+
+def test_score_line_with_tabix_composes_and_matches_plain(
+    tmp_path: pathlib.Path,
+) -> None:
+    # with_tabix() + with_score_line() compose: the typed rows realize a
+    # tabix .txt.gz + .tbi that reads back the same values as the plain
+    # form.  Rows are position-sorted (tabix indexing requires it).
+    def build(tabix: bool) -> PositionScore:
+        builder = (
+            a_position_score()
+            .with_score("phastCons", "float")
+            .with_score_line(chrom="1", pos_begin=10, phastCons=0.02)
+            .with_score_line(chrom="1", pos_begin=11, phastCons=0.03)
+            .with_score_line(chrom="2", pos_begin=8, phastCons=0.01)
+        )
+        if tabix:
+            builder = builder.with_tabix()
+        sub = "t" if tabix else "p"
+        return PositionScore(builder.build_resource(tmp_path / sub)).open()
+
+    tabix_score = build(tabix=True)
+    plain_score = build(tabix=False)
+    assert (tmp_path / "t" / "data.txt.gz").is_file()
+    assert (tmp_path / "t" / "data.txt.gz.tbi").is_file()
+    for chrom, pos in [("1", 10), ("1", 11), ("2", 8)]:
+        assert (
+            tabix_score.fetch_scores(chrom, pos)
+            == plain_score.fetch_scores(chrom, pos))
