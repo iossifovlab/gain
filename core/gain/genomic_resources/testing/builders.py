@@ -317,7 +317,11 @@ class ReferenceGenomeBuilder:
 
     Two authoring modes:
 
-    * ``with_fasta(raw)`` -- author the exact FASTA text.
+    * ``with_fasta(raw)`` -- author the FASTA text.  The content is
+      normalized via ``convert_to_tab_separated`` (leading indentation and
+      blank lines are stripped, internal whitespace within a line becomes a
+      TAB), so write single-token headers and put each chromosome's
+      sequence on its own line(s) with no internal spaces.
     * ``with_chromosome(id, seq)`` -- accumulate chromosomes; the FASTA is
       synthesized (``>id`` header + the sequence wrapped at
       ``with_line_width``).
@@ -337,7 +341,15 @@ class ReferenceGenomeBuilder:
     bgzip: bool = True
 
     def with_fasta(self, raw: str) -> ReferenceGenomeBuilder:
-        """Author the genome as exact FASTA text (primary mode)."""
+        """Author the genome as FASTA text (primary mode).
+
+        The content is not byte-exact: it is normalized via
+        ``convert_to_tab_separated`` (leading indentation and blank lines
+        are stripped; internal whitespace within a line becomes a TAB).
+        Write single-token headers (``>1``, not ``>1 description``) and put
+        each chromosome's sequence on its own line(s) with no internal
+        spaces.
+        """
         return dataclasses.replace(self, fasta=raw)
 
     def with_chromosome(
