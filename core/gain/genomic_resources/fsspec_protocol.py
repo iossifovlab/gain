@@ -672,7 +672,7 @@ class FsspecReadWriteProtocol(
     def _get_filepath_timestamp(self, filepath: str) -> float:
         try:
             modification = self.filesystem.modified(filepath)
-            modification = modification.replace(tzinfo=datetime.UTC)
+            modification = modification.replace(tzinfo=datetime.timezone.utc)
             return cast(float, round(modification.timestamp(), 2))
         except NotImplementedError:
             info = self.filesystem.info(filepath)
