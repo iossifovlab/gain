@@ -15,6 +15,7 @@ from pydantic import (
     ConfigDict,
     Field,
     TypeAdapter,
+    ValidationError,
     field_serializer,
     model_validator,
 )
@@ -43,7 +44,13 @@ _LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 class _RepoDefinitionBase(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # ``hide_input_in_errors=True`` keeps the raw input dict — which may carry
+    # a plaintext ``password`` — out of ``str(ValidationError)`` and the
+    # traceback. It is inherited by every definition type in the discriminated
+    # union. NOTE: it does NOT scrub ``ValidationError.errors()``/``.json()``;
+    # ``build_genomic_resource_repository`` additionally wraps validation in a
+    # redacted ``ValueError`` to close those paths (see below).
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     id: str | None = None
     public_url: str | None = None
 
@@ -172,8 +179,13 @@ RepoDefinition = Annotated[
 
 GroupRepoDefinition.model_rebuild()
 
+# ``hide_input_in_errors`` must be set on the adapter itself: a member model's
+# ``model_config`` is NOT honoured for this flag when validating through a
+# discriminated-union TypeAdapter, so without this the raw input dict (with a
+# plaintext password) would still be echoed in ``str(ValidationError)`` and the
+# traceback.
 _REPO_DEFINITION_ADAPTER: TypeAdapter[RepoDefinition] = TypeAdapter(
-    RepoDefinition)
+    RepoDefinition, config=ConfigDict(hide_input_in_errors=True))
 
 
 DEFAULT_DEFINITION = {
@@ -187,12 +199,37 @@ DEFAULT_DEFINITION = {
 _CREDENTIAL_KEYS = frozenset({"user", "password"})
 
 
+def _redact_url_userinfo(value: str) -> str:
+    """Mask ``user:pass`` embedded in a ``scheme://user:pass@host`` URL.
+
+    Only touches strings that parse as a URL whose ``netloc`` carries userinfo
+    (``@``); plain paths and other strings are returned unchanged. The password
+    component is replaced with ``***`` (and the username preserved for
+    diagnostics — it is not itself masked in a URL, mirroring how the ``user``
+    key is only masked as a top-level credential field).
+    """
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return value
+    if not parsed.netloc or "@" not in parsed.netloc:
+        return value
+    userinfo, _, hostinfo = parsed.netloc.rpartition("@")
+    if not userinfo:
+        return value
+    username = userinfo.split(":", 1)[0]
+    redacted_netloc = f"{username}:***@{hostinfo}"
+    return parsed._replace(netloc=redacted_netloc).geturl()
+
+
 def redact_definition(definition: Any) -> Any:
     """Return a deep copy of a GRR definition with credentials masked.
 
     ``user``/``password`` values are replaced with ``"***"`` recursively
     (including inside a group repository's ``children``) so that a definition
     can be logged or embedded in an error message without leaking secrets.
+    Credentials embedded in a URL's userinfo (``scheme://user:pass@host``) are
+    also scrubbed.
     """
     if isinstance(definition, dict):
         return {
@@ -202,6 +239,8 @@ def redact_definition(definition: Any) -> Any:
         }
     if isinstance(definition, (list, tuple)):
         return type(definition)(redact_definition(v) for v in definition)
+    if isinstance(definition, str):
+        return _redact_url_userinfo(definition)
     return definition
 
 
@@ -358,7 +397,20 @@ def build_genomic_resource_repository(
     if definition is None:
         raise ValueError("can't find GRR definition")
 
-    _REPO_DEFINITION_ADAPTER.validate_python(definition)
+    try:
+        _REPO_DEFINITION_ADAPTER.validate_python(definition)
+    except ValidationError as exc:
+        # ``hide_input_in_errors=True`` already keeps the raw input out of
+        # ``str(exc)`` and the traceback, but ``ValidationError.errors()`` and
+        # ``.json()`` still echo it verbatim — including a plaintext password.
+        # Re-raise a plain ``ValueError`` (the type this factory already uses
+        # for bad definitions) whose message is built only from the redacted
+        # definition and the secret-free ``str(exc)`` (which retains the
+        # useful which-field-is-wrong detail). ``from None`` drops the leaky
+        # ValidationError from the chain so no code path can reach its input.
+        raise ValueError(
+            f"invalid GRR definition {redact_definition(definition)}: "
+            f"{exc}") from None
 
     logger.info("GRR definition in use: %s", redact_definition(definition))
 
@@ -368,6 +420,10 @@ def build_genomic_resource_repository(
     repo_id = definition_copy.pop("id", None)
 
     if repo_type == "group":
+        # ``validate_python`` above rejects a group whose ``children`` is
+        # missing or not a list, so these guards are defensive/unreachable in
+        # the normal flow; kept as belt-and-braces for callers that might one
+        # day reach this with a pre-validated-but-mutated dict.
         if "children" not in definition_copy:
             raise ValueError(
                 f"The definition for group repository "

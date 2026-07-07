@@ -2,6 +2,7 @@
 import logging
 import pathlib
 import textwrap
+import traceback
 
 import pytest
 import pytest_mock
@@ -12,6 +13,7 @@ from gain.genomic_resources.repository_factory import (
     _REPO_DEFINITION_ADAPTER,
     HttpRepoDefinition,
     build_genomic_resource_repository,
+    redact_definition,
 )
 from pydantic import ValidationError
 
@@ -253,3 +255,74 @@ def test_malformed_url_via_adapter_does_not_raise_validationerror() -> None:
     except ValidationError as exc:  # pragma: no cover - fails pre-fix
         pytest.fail(
             f"malformed URL raised ValidationError from validator: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Finding 8 — a one-sided credential (only user OR only password, a plausible
+# operator typo) trips the check_credentials_together validator. Pydantic
+# embeds the ENTIRE input dict — including the plaintext password — into the
+# ValidationError str(), traceback, .errors() and .json(). None of those code
+# paths may surface the secret.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("bad", [
+    {"password": _SECRET},          # only password
+    {"user": _SECRET},              # only user
+])
+def test_build_one_sided_credential_does_not_leak_secret(bad: dict) -> None:
+    definition = {"type": "http", "url": "https://grr.example.com", **bad}
+    with pytest.raises(ValueError) as excinfo:
+        build_genomic_resource_repository(definition)
+    exc = excinfo.value
+    tb = "".join(traceback.format_exception(exc))
+    assert _SECRET not in str(exc)
+    assert _SECRET not in tb
+    # If a ValidationError leaks through anywhere, its structured views must
+    # not carry the secret either.
+    if isinstance(exc, ValidationError):
+        assert _SECRET not in str(exc.errors())
+        assert _SECRET not in exc.json()
+    # A useful, redacted diagnostic must still name what went wrong.
+    assert "together" in str(exc)
+
+
+def test_adapter_one_sided_credential_str_and_traceback_are_clean() -> None:
+    # The bare adapter path (used directly by callers) must at least keep the
+    # secret out of str() and the traceback via hide_input_in_errors=True.
+    with pytest.raises(ValidationError) as excinfo:
+        _REPO_DEFINITION_ADAPTER.validate_python(
+            {"type": "http", "url": "https://grr.example.com",
+             "password": _SECRET})
+    exc = excinfo.value
+    assert _SECRET not in str(exc)
+    assert _SECRET not in "".join(traceback.format_exception(exc))
+
+
+# ---------------------------------------------------------------------------
+# Finding 9 — credentials embedded in a URL's userinfo (scheme://user:pass@host)
+# must be scrubbed by redact_definition; plain URLs are left untouched.
+# ---------------------------------------------------------------------------
+
+def test_redact_definition_scrubs_url_userinfo() -> None:
+    definition = {"type": "url", "url": f"http://alice:{_SECRET}@host/path"}
+    redacted = redact_definition(definition)
+    assert _SECRET not in redacted["url"]
+    # original definition is not mutated
+    assert _SECRET in definition["url"]
+
+
+def test_redact_definition_scrubs_path_userinfo() -> None:
+    redacted = redact_definition(
+        {"type": "http", "url": f"https://bob:{_SECRET}@grr.example.com"})
+    assert _SECRET not in redacted["url"]
+
+
+def test_redact_definition_plain_url_unchanged() -> None:
+    definition = {"type": "url", "url": "https://grr.example.com/path"}
+    assert redact_definition(definition)["url"] == \
+        "https://grr.example.com/path"
+
+
+def test_redact_definition_non_url_string_unchanged() -> None:
+    definition = {"type": "directory", "directory": "/data/grr@archive"}
+    assert redact_definition(definition)["directory"] == "/data/grr@archive"
