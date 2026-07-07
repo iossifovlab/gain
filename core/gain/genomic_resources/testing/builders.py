@@ -105,6 +105,9 @@ class PositionScoreBuilder:
 class GRRBuilder:
     """Immutable builder composing resources into a filesystem GRR."""
 
+    # The position-score-specific typing here is intentional (YAGNI).  It
+    # will be generalized to a shared resource-builder Protocol/base when
+    # the gene-score slice lands (iossifovlab/gain#193).
     resources: tuple[tuple[str, PositionScoreBuilder], ...] = ()
 
     def with_resource(
@@ -153,6 +156,7 @@ def _build_resource_content(
     """Build the pure filesystem content dict for one resource."""
     scores = _effective_scores(builder)
     data = _effective_data(builder)
+    _validate_scores(resource_id, scores)
     _validate_data_header(resource_id, data, scores)
 
     scores_yaml = "".join(
@@ -183,6 +187,32 @@ def _parse_header(data: str) -> list[str]:
     return []
 
 
+def _validate_scores(
+    resource_id: str, scores: tuple[_ScoreSpec, ...],
+) -> None:
+    """Validate the declared scores for duplicate ids or column names.
+
+    A set-based check silently collapses duplicates, so two scores that
+    share a ``score_id`` or a ``column_name`` would validate cleanly and
+    read the same value.  Reject both explicitly.
+    """
+    seen_ids: set[str] = set()
+    for spec in scores:
+        if spec.score_id in seen_ids:
+            raise ValueError(
+                f"resource {resource_id!r}: duplicate score id "
+                f"{spec.score_id!r} declared more than once")
+        seen_ids.add(spec.score_id)
+
+    seen_columns: set[str] = set()
+    for spec in scores:
+        if spec.column_name in seen_columns:
+            raise ValueError(
+                f"resource {resource_id!r}: duplicate column_name "
+                f"{spec.column_name!r} shared by more than one score")
+        seen_columns.add(spec.column_name)
+
+
 def _validate_data_header(
     resource_id: str, data: str, scores: tuple[_ScoreSpec, ...],
 ) -> None:
@@ -190,8 +220,21 @@ def _validate_data_header(
 
     The header must contain the required position columns plus each
     declared score's ``column_name``.  A missing declared column or an
-    undeclared extra column raises ``ValueError``.
+    undeclared extra column raises ``ValueError``.  Because the builder
+    owns the data format, a conventional ``#``-prefixed header line is
+    rejected explicitly rather than silently skipped.
     """
+    for line in data.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            raise ValueError(
+                f"resource {resource_id!r}: the data header must not start "
+                f"with '#'; write the column names as a plain "
+                f"whitespace-separated line (got {stripped!r})")
+        break
+
     header = _parse_header(data)
     header_set = set(header)
 
