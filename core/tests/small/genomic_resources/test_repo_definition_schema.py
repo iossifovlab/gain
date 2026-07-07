@@ -104,8 +104,12 @@ def test_http_only_password_is_rejected() -> None:
     assert err.error_count() == 1
     assert "together" in str(err)
     # the plaintext password must not be echoed back in str()/traceback
-    # (hide_input_in_errors=True). Full .errors()/.json() protection is
-    # covered on the build path in test_http_auth_credential_leak.py.
+    # (hide_input_in_errors=True). The bare adapter's .errors()/.json() are
+    # NOT scrubbed by that flag and still carry the secret here; the build path
+    # closes that leak by discarding the ValidationError entirely (it raises a
+    # redacted ValueError with no ValidationError on its chain), asserted by
+    # test_build_one_sided_credential_does_not_leak_secret in
+    # test_http_auth_credential_leak.py.
     assert secret not in str(err)
 
 

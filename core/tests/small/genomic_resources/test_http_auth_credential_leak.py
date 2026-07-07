@@ -265,6 +265,19 @@ def test_malformed_url_via_adapter_does_not_raise_validationerror() -> None:
 # paths may surface the secret.
 # ---------------------------------------------------------------------------
 
+def _walk_exception_chain(exc: BaseException) -> list[BaseException]:
+    """Return exc plus every exception linked via __cause__/__context__."""
+    seen: list[BaseException] = []
+    stack: list[BaseException | None] = [exc]
+    while stack:
+        current = stack.pop()
+        if current is None or current in seen:
+            continue
+        seen.append(current)
+        stack.extend((current.__cause__, current.__context__))
+    return seen
+
+
 @pytest.mark.parametrize("bad", [
     {"password": _SECRET},          # only password
     {"user": _SECRET},              # only user
@@ -277,11 +290,20 @@ def test_build_one_sided_credential_does_not_leak_secret(bad: dict) -> None:
     tb = "".join(traceback.format_exception(exc))
     assert _SECRET not in str(exc)
     assert _SECRET not in tb
-    # If a ValidationError leaks through anywhere, its structured views must
-    # not carry the secret either.
-    if isinstance(exc, ValidationError):
-        assert _SECRET not in str(exc.errors())
-        assert _SECRET not in exc.json()
+    # The re-raised ValueError must carry NO attached ValidationError as
+    # context: pydantic's ``.errors()``/``.json()`` still echo the plaintext
+    # password, and error-aggregation tooling walks ``__context__`` regardless
+    # of ``__suppress_context__``. Raising outside the ``except`` block leaves
+    # the chain empty.
+    assert exc.__context__ is None
+    assert exc.__cause__ is None
+    # Defense-in-depth: no exception reachable through the chain (should be
+    # only ``exc`` itself) may surface the secret in any of its views.
+    for linked in _walk_exception_chain(exc):
+        assert _SECRET not in str(linked)
+        if isinstance(linked, ValidationError):
+            assert _SECRET not in str(linked.errors())
+            assert _SECRET not in linked.json()
     # A useful, redacted diagnostic must still name what went wrong.
     assert "together" in str(exc)
 
@@ -307,8 +329,23 @@ def test_redact_definition_scrubs_url_userinfo() -> None:
     definition = {"type": "url", "url": f"http://alice:{_SECRET}@host/path"}
     redacted = redact_definition(definition)
     assert _SECRET not in redacted["url"]
+    # the username is preserved for diagnostics, only the password is masked
+    assert redacted["url"] == "http://alice:***@host/path"
     # original definition is not mutated
     assert _SECRET in definition["url"]
+
+
+def test_redact_definition_scrubs_url_token_only_userinfo() -> None:
+    # A bearer token / PAT embedded as the SOLE userinfo component (no colon):
+    # scheme://<token>@host. The whole userinfo is the secret, so it must be
+    # fully masked (***@host), never split into a fake ``token:***``.
+    token = "ghp_SUPERSECRETTOKEN123"  # noqa: S105
+    definition = {"type": "url", "url": f"https://{token}@grr.example.com/path"}
+    redacted = redact_definition(definition)
+    assert token not in redacted["url"]
+    assert redacted["url"] == "https://***@grr.example.com/path"
+    # original definition is not mutated
+    assert token in definition["url"]
 
 
 def test_redact_definition_scrubs_path_userinfo() -> None:
