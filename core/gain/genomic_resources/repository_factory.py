@@ -10,7 +10,14 @@ from typing import Annotated, Any, Literal, cast
 from urllib.parse import urlparse
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    field_serializer,
+    model_validator,
+)
 
 from gain import logging
 
@@ -61,6 +68,15 @@ class HttpRepoDefinition(_RepoDefinitionBase):
             else:
                 yield key, value
 
+    @field_serializer("user", "password")
+    def _mask_credential(self, value: str | None) -> str | None:
+        # Defense-in-depth: mask credentials in model_dump()/model_dump_json()
+        # too (``__repr_args__`` only covers repr/str). The field stays a plain
+        # ``str`` so attribute access (``.password``) and the raw definition
+        # dict — which is what the auth build path in fsspec_protocol.py reads
+        # to construct ``aiohttp.BasicAuth`` — still see the real value.
+        return "***" if value is not None else None
+
     @model_validator(mode="after")
     def check_credentials_together(self) -> HttpRepoDefinition:
         if (self.user is None) != (self.password is None):
@@ -79,10 +95,19 @@ class HttpRepoDefinition(_RepoDefinitionBase):
         """
         if self.user is None or self.password is None:
             return self
-        parsed = urlparse(self.url)
-        if parsed.scheme == "https":
+        try:
+            parsed = urlparse(self.url)
+            scheme = parsed.scheme
+            host = (parsed.hostname or "").lower()
+        except ValueError:
+            # A malformed URL (e.g. an unterminated IPv6 bracket) makes
+            # urlparse/.hostname raise. Don't turn that into a confusing
+            # ValidationError here — let the definition parse and fail later
+            # with the clearer downstream error it produced before this check
+            # existed. The credentials never appear in this warning path.
             return self
-        host = (parsed.hostname or "").lower()
+        if scheme == "https":
+            return self
         if host in _LOCALHOST_HOSTS:
             return self
         logger.warning(

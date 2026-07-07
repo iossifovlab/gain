@@ -40,6 +40,7 @@ from gain.genomic_resources.repository_factory import (
     get_default_grr_definition,
     get_default_grr_definition_path,
     load_definition_file,
+    redact_definition,
 )
 from gain.genomic_resources.resource_implementation import (
     GenomicResourceImplementation,
@@ -1065,7 +1066,7 @@ def cli_browse(cli_args: list[str] | None = None) -> None:
         print("Working with GRR definition:", definition_path)
     else:
         print("No GRR definition found, using the DEFAULT_DEFINITION")
-    print(yaml.safe_dump(definition, sort_keys=False))
+    print(yaml.safe_dump(redact_definition(definition), sort_keys=False))
 
     repo = build_genomic_resource_repository(definition=definition)
     _run_list_command(repo, args)
