@@ -95,48 +95,10 @@ class PositionScoreBuilder:
         self, tmp_path: pathlib.Path,
     ) -> GenomicResource:
         """Realize this single resource (repo id ``""``) into ``tmp_path``."""
-        content = self._build_content("")
+        content = _build_resource_content(self, "")
         setup_directories(tmp_path, content)
         repo = build_filesystem_test_repository(tmp_path)
         return repo.get_resource("")
-
-    def _effective_scores(self) -> tuple[_ScoreSpec, ...]:
-        if self.scores:
-            return self.scores
-        return (_ScoreSpec("score", "float", "score"),)
-
-    def _effective_data(self) -> str:
-        if self.data is not None:
-            return self.data
-        return """
-            chrom  pos_begin  score
-            1      10         0.1
-            1      11         0.2
-            1      15         0.3
-        """
-
-    def _build_content(self, resource_id: str) -> dict[str, Any]:
-        """Build the pure filesystem content dict for this resource."""
-        scores = self._effective_scores()
-        data = self._effective_data()
-        _validate_data_header(resource_id, data, scores)
-
-        scores_yaml = "".join(
-            f"                - id: {spec.score_id}\n"
-            f"                  type: {spec.value_type}\n"
-            f"                  column_name: {spec.column_name}\n"
-            for spec in scores
-        )
-        config = textwrap.dedent(f"""\
-            type: position_score
-            table:
-                filename: {_DATA_FILENAME}
-            scores:
-            """) + textwrap.dedent(scores_yaml)
-        return {
-            GR_CONF_FILE_NAME: config,
-            _DATA_FILENAME: convert_to_tab_separated(data),
-        }
 
 
 @dataclasses.dataclass(frozen=True)
@@ -158,12 +120,57 @@ class GRRBuilder:
         self, tmp_path: pathlib.Path,
     ) -> GenomicResourceProtocolRepo:
         """Realize a filesystem GRR into ``tmp_path``."""
-        content: dict[str, Any] = {}
-        for resource_id, resource_builder in self.resources:
-            content[resource_id] = \
-                resource_builder._build_content(resource_id)
+        content: dict[str, Any] = {
+            resource_id: _build_resource_content(builder, resource_id)
+            for resource_id, builder in self.resources
+        }
         setup_directories(tmp_path, content)
         return build_filesystem_test_repository(tmp_path)
+
+
+def _effective_scores(
+    builder: PositionScoreBuilder,
+) -> tuple[_ScoreSpec, ...]:
+    if builder.scores:
+        return builder.scores
+    return (_ScoreSpec("score", "float", "score"),)
+
+
+def _effective_data(builder: PositionScoreBuilder) -> str:
+    if builder.data is not None:
+        return builder.data
+    return """
+        chrom  pos_begin  score
+        1      10         0.1
+        1      11         0.2
+        1      15         0.3
+    """
+
+
+def _build_resource_content(
+    builder: PositionScoreBuilder, resource_id: str,
+) -> dict[str, Any]:
+    """Build the pure filesystem content dict for one resource."""
+    scores = _effective_scores(builder)
+    data = _effective_data(builder)
+    _validate_data_header(resource_id, data, scores)
+
+    scores_yaml = "".join(
+        f"                - id: {spec.score_id}\n"
+        f"                  type: {spec.value_type}\n"
+        f"                  column_name: {spec.column_name}\n"
+        for spec in scores
+    )
+    config = textwrap.dedent(f"""\
+        type: position_score
+        table:
+            filename: {_DATA_FILENAME}
+        scores:
+        """) + textwrap.dedent(scores_yaml)
+    return {
+        GR_CONF_FILE_NAME: config,
+        _DATA_FILENAME: convert_to_tab_separated(data),
+    }
 
 
 def _parse_header(data: str) -> list[str]:
