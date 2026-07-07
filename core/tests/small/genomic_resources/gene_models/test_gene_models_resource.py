@@ -80,13 +80,10 @@ def test_gene_models_resource_with_inferred_format_and_gene_mapping() -> None:
     assert len(gene_models.transcript_models) == 3
 
 
-@pytest.mark.parametrize("scheme", [
-    "file",
-    # "s3",
-    "http",
-])
-def test_against_against_different_repo_types(scheme: str) -> None:
-    with resource_builder(scheme, {
+# grr_tabix parametrizes over file/s3/http (resource_builder has no inmemory)
+@pytest.mark.grr_tabix
+def test_against_against_different_repo_types(grr_scheme: str) -> None:
+    with resource_builder(grr_scheme, {
             "genomic_resource.yaml":
             "{type: gene_models, filename: genes.txt, format: refflat}",
             "genes.txt": convert_to_tab_separated(GMM_CONTENT)}) as res:
