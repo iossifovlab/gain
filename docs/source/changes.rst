@@ -2,6 +2,22 @@ Release Notes
 =============
 
 * 2026.7.0
+    * Hardened HTTP basic-auth credential handling for GRR definitions.
+      The plaintext ``password`` (and ``user``) of an authed ``http``
+      repository is no longer written to the logs when a repository is
+      built, and the credential-bearing definition model masks ``user`` /
+      ``password`` in its ``repr()`` / ``str()`` so secrets cannot leak
+      through diagnostic dumps or f-string logging. Configuring basic-auth
+      credentials on a plain ``http://`` URL to a non-local host now emits
+      a loud warning (the credentials would travel unencrypted); the
+      request still works, and ``https://`` and ``localhost`` stay quiet.
+    * **Behavior change:** repository definitions are now strictly
+      validated — unknown keys in *any* repository definition (in
+      ``~/.grr_definition.yaml`` or a group's ``children``) are rejected
+      rather than silently ignored. This guards against auth typos (e.g.
+      ``pasword`` or ``username``) but can reject a previously-accepted
+      deployed definition that carried a stray/extra key; remove any such
+      keys to upgrade.
     * Untyped genomic resources now resolve to a dedicated ``basic``
       resource type with its own implementation (#185). A resource whose
       config carries no ``type`` previously had no implementation at all;
