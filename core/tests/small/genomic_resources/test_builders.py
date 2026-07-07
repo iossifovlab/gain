@@ -75,3 +75,39 @@ def test_grr_builder_is_immutable() -> None:
     assert base.resources == ()
     assert len(extended.resources) == 1
     assert base is not extended
+
+
+def test_column_name_defaults_to_score_id(
+    tmp_path: pathlib.Path,
+) -> None:
+    # No column_name given: the data column is named after the score id.
+    res = (
+        a_position_score()
+        .with_score("myscore", "float")
+        .with_data("""
+            chrom  pos_begin  myscore
+            1      10         0.7
+        """)
+        .build_resource(tmp_path)
+    )
+    score = PositionScore(res).open()
+    assert score.get_all_scores() == ["myscore"]
+    assert score.fetch_scores("1", 10) == [0.7]
+
+
+def test_explicit_column_name_override(
+    tmp_path: pathlib.Path,
+) -> None:
+    # column_name differs from the score id; the data uses the column name.
+    res = (
+        a_position_score()
+        .with_score("myscore", "float", column_name="raw_col")
+        .with_data("""
+            chrom  pos_begin  raw_col
+            1      10         0.7
+        """)
+        .build_resource(tmp_path)
+    )
+    score = PositionScore(res).open()
+    assert score.get_all_scores() == ["myscore"]
+    assert score.fetch_scores("1", 10) == [0.7]
