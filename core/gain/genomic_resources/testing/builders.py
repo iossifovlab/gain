@@ -132,12 +132,7 @@ class PositionScoreBuilder:
 
         Delegates to the GRR builder so there is a single realize path.
         """
-        return (
-            a_grr()
-            .with_resource("", self)
-            .build_repo(tmp_path)
-            .get_resource("")
-        )
+        return _build_single_resource(self, tmp_path)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -174,6 +169,22 @@ class GRRBuilder:
                 raise ValueError(
                     f"resource {resource_id!r}: {exc}") from exc
         return build_filesystem_test_repository(tmp_path)
+
+
+def _build_single_resource(
+    builder: ResourceBuilder, tmp_path: pathlib.Path,
+) -> GenomicResource:
+    """Realize one builder as the sole resource (repo id ``""``).
+
+    Shared single-realize path for every ``ResourceBuilder.build_resource``,
+    so all resource types route through the same GRR-builder seam.
+    """
+    return (
+        a_grr()
+        .with_resource("", builder)
+        .build_repo(tmp_path)
+        .get_resource("")
+    )
 
 
 def _effective_scores(
@@ -394,12 +405,7 @@ class ReferenceGenomeBuilder:
         self, tmp_path: pathlib.Path,
     ) -> GenomicResource:
         """Realize this single resource (repo id ``""``) into ``tmp_path``."""
-        return (
-            a_grr()
-            .with_resource("", self)
-            .build_repo(tmp_path)
-            .get_resource("")
-        )
+        return _build_single_resource(self, tmp_path)
 
     def _effective_fasta(self) -> str:
         if self.fasta is not None and self.chromosomes:
