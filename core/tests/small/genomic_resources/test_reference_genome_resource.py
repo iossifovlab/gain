@@ -74,9 +74,31 @@ def genome_fixture(tmp_path: pathlib.Path) -> pathlib.Path:
     return root_path
 
 
-def test_basic_sequence_resource_file(genome_fixture: pathlib.Path) -> None:
-    res = build_filesystem_test_resource(genome_fixture)
-    reference_genome = build_reference_genome_from_resource(res)
+@pytest.fixture
+def basic_genome_resource(
+    genome_fixture: pathlib.Path,
+    grr_scheme: str,
+    mocker: pytest_mock.MockerFixture,
+) -> Generator[Any, None, None]:
+    mocker.patch.dict(os.environ, {
+        "AWS_SECRET_ACCESS_KEY": "minioadmin",
+        "AWS_ACCESS_KEY_ID": "minioadmin",
+    })
+    if grr_scheme == "http":
+        with build_http_test_protocol(genome_fixture) as proto:
+            yield proto.get_resource("")
+    elif grr_scheme == "s3":
+        with build_s3_test_protocol(genome_fixture) as proto:
+            yield proto.get_resource("")
+    else:  # file
+        yield build_filesystem_test_resource(genome_fixture)
+
+
+# grr_tabix parametrizes over file/s3/http (pysam cannot read inmemory)
+@pytest.mark.grr_tabix
+def test_basic_sequence_resource(basic_genome_resource: Any) -> None:
+    reference_genome = build_reference_genome_from_resource(
+        basic_genome_resource)
     with reference_genome.open() as ref:
         assert len(ref.get_all_chrom_lengths()) == 2
 
@@ -85,20 +107,6 @@ def test_basic_sequence_resource_file(genome_fixture: pathlib.Path) -> None:
 
         assert ref.get_chrom_length("gosho") == 20
         assert ref.get_sequence("gosho", 11, 20) == "TTGGCCAANN"
-
-
-def test_basic_sequence_resource_http(genome_fixture: pathlib.Path) -> None:
-    with build_http_test_protocol(genome_fixture) as proto:
-        res = proto.get_resource("")
-        reference_genome = build_reference_genome_from_resource(res)
-        with reference_genome.open() as ref:
-            assert len(ref.get_all_chrom_lengths()) == 2
-
-            assert ref.get_chrom_length("pesho") == 24
-            assert ref.get_sequence("pesho", 1, 12) == "NNACCCAAACGG"
-
-            assert ref.get_chrom_length("gosho") == 20
-            assert ref.get_sequence("gosho", 11, 20) == "TTGGCCAANN"
 
 
 def test_filesystem_genomic_sequence(genome_fixture: pathlib.Path) -> None:
