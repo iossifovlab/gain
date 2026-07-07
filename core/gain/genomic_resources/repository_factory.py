@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 _PathOrStr = str | pathlib.Path
 
+# Hosts for which HTTP basic auth over plain http:// is not flagged: a
+# credential never leaves the local machine, so cleartext is harmless (and
+# localhost/dev GRRs legitimately use it).
+_LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
 
 class _RepoDefinitionBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -45,11 +50,46 @@ class HttpRepoDefinition(_RepoDefinitionBase):
     password: str | None = None
     cache_dir: _PathOrStr | None = None
 
+    def __repr_args__(self) -> Any:
+        # Mask credentials in repr()/str()/f-string interpolation so a
+        # diagnostic dump of a definition can never reveal the secret. The
+        # real values still travel with the pickled protocol (see
+        # fsspec_protocol.py) so dask workers can authenticate.
+        for key, value in super().__repr_args__():
+            if key in _CREDENTIAL_KEYS and value is not None:
+                yield key, "***"
+            else:
+                yield key, value
+
     @model_validator(mode="after")
     def check_credentials_together(self) -> HttpRepoDefinition:
         if (self.user is None) != (self.password is None):
             raise ValueError(
                 "user and password must be provided together or not at all")
+        return self
+
+    @model_validator(mode="after")
+    def warn_on_insecure_credentials(self) -> HttpRepoDefinition:
+        """Warn when basic-auth credentials ride a cleartext http:// URL.
+
+        Credentials are still accepted (localhost/dev GRRs legitimately use
+        plain http), but a non-https URL to a non-local host means the
+        base64-encoded credentials travel unencrypted, so emit a loud
+        warning. The message never includes the password.
+        """
+        if self.user is None or self.password is None:
+            return self
+        parsed = urlparse(self.url)
+        if parsed.scheme == "https":
+            return self
+        host = (parsed.hostname or "").lower()
+        if host in _LOCALHOST_HOSTS:
+            return self
+        logger.warning(
+            "HTTP basic-auth credentials for GRR %r are configured on a "
+            "non-HTTPS URL (host %r); the credentials will be sent "
+            "unencrypted. Use an https:// URL for a remote repository.",
+            self.id or host, host)
         return self
 
 
@@ -116,6 +156,28 @@ DEFAULT_DEFINITION = {
     "type": "http",
     "url": "https://grr.iossifovlab.com",
 }
+
+# Keys in a repository definition whose values are secrets and must never be
+# written to logs or echoed in diagnostics/exceptions.
+_CREDENTIAL_KEYS = frozenset({"user", "password"})
+
+
+def redact_definition(definition: Any) -> Any:
+    """Return a deep copy of a GRR definition with credentials masked.
+
+    ``user``/``password`` values are replaced with ``"***"`` recursively
+    (including inside a group repository's ``children``) so that a definition
+    can be logged or embedded in an error message without leaking secrets.
+    """
+    if isinstance(definition, dict):
+        return {
+            key: ("***" if key in _CREDENTIAL_KEYS and value is not None
+                  else redact_definition(value))
+            for key, value in definition.items()
+        }
+    if isinstance(definition, (list, tuple)):
+        return type(definition)(redact_definition(v) for v in definition)
+    return definition
 
 
 def load_definition_file(filename: str) -> Any:
@@ -273,7 +335,7 @@ def build_genomic_resource_repository(
 
     _REPO_DEFINITION_ADAPTER.validate_python(definition)
 
-    logger.info("GRR definition in use: %s", definition)
+    logger.info("GRR definition in use: %s", redact_definition(definition))
 
     definition_copy = copy.deepcopy(definition)
 
@@ -283,7 +345,8 @@ def build_genomic_resource_repository(
     if repo_type == "group":
         if "children" not in definition_copy:
             raise ValueError(
-                f"The definition for group repository {definition_copy} "
+                f"The definition for group repository "
+                f"{redact_definition(definition_copy)} "
                 "has no children attiribute.")
         if not isinstance(definition_copy["children"], list) and \
                 not isinstance(definition_copy["children"], tuple):

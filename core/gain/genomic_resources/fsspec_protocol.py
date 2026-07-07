@@ -208,6 +208,11 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
 
     def __getnewargs_ex__(self) -> tuple[tuple, dict]:
         # pylint: disable=invalid-getnewargs-ex-returned
+        # self.kwargs may hold HTTP basic-auth credentials (user/password).
+        # They are INTENTIONALLY pickled with the protocol so a dask worker
+        # deserializing this protocol can rebuild an authenticated
+        # filesystem and read the remote GRR. Do not strip them here — that
+        # would break distributed reads of an authed http repository.
         args = (self.proto_id, self.url)
         kwargs: dict[str, Any] = copy.copy(self.kwargs)
         kwargs["public_url"] = self.public_url
@@ -250,6 +255,10 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
             self.public_url = public_url
 
         self.filesystem = filesystem
+        # kwargs may carry HTTP basic-auth credentials (user/password). They
+        # are kept so the filesystem can be rebuilt after unpickling on a
+        # dask worker (see __getnewargs_ex__/__setstate__); they are never
+        # logged and are masked in the definition model's repr.
         self.kwargs: dict[str, Any] = kwargs
         self._all_resources_lock = Lock()
         self._all_resources: dict[str, GenomicResource] | None = None
