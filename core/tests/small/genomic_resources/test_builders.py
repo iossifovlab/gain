@@ -13,6 +13,8 @@ from gain.genomic_resources.testing.builders import (
     a_grr,
     a_position_score,
     a_reference_genome,
+    build_repo_tempdir,
+    build_resource_tempdir,
 )
 
 
@@ -1068,3 +1070,39 @@ def test_gene_score_with_gzip_realizes_gz_and_reads_back(
     gene_score = build_gene_score_from_resource(res)
     assert gene_score.get_gene_value("pli", "GENE1") == pytest.approx(0.5)
     assert gene_score.get_gene_value("pli", "GENE2") == pytest.approx(0.9)
+
+
+# ---------------------------------------------------------------------------
+# sub-feature 3: context-manager realize form (no pytest tmp_path)
+# ---------------------------------------------------------------------------
+
+def test_build_repo_tempdir_reads_back_and_cleans_up() -> None:
+    # No pytest tmp_path: the context manager self-manages the temp dir.
+    grr = a_grr().with_resource(
+        "scores/pos",
+        a_position_score()
+        .with_score("sc", "float")
+        .with_data("chrom pos_begin sc\n1 10 0.5\n"))
+
+    with build_repo_tempdir(grr) as repo:
+        root = pathlib.Path(repo.proto.get_url().removeprefix("file://"))
+        assert root.exists()
+        score = PositionScore(repo.get_resource("scores/pos")).open()
+        assert score.fetch_scores("1", 10) == [0.5]
+
+    # The temp dir is gone once the context exits.
+    assert not root.exists()
+
+
+def test_build_resource_tempdir_reads_back_and_cleans_up() -> None:
+    builder = (
+        a_position_score()
+        .with_score("sc", "float")
+        .with_data("chrom pos_begin sc\n1 10 0.7\n")
+    )
+    with build_resource_tempdir(builder) as res:
+        root = pathlib.Path(res.proto.get_url().removeprefix("file://"))
+        assert root.exists()
+        assert PositionScore(res).open().fetch_scores("1", 10) == [0.7]
+
+    assert not root.exists()
