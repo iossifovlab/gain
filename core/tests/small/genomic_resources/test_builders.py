@@ -3,10 +3,14 @@ import pathlib
 
 import pytest
 from gain.genomic_resources.genomic_scores import PositionScore
+from gain.genomic_resources.reference_genome import (
+    build_reference_genome_from_resource,
+)
 from gain.genomic_resources.repository import GenomicResourceProtocolRepo
 from gain.genomic_resources.testing.builders import (
     a_grr,
     a_position_score,
+    a_reference_genome,
 )
 
 
@@ -266,3 +270,137 @@ def test_multiple_scores_in_one_resource(
     score = PositionScore(res).open()
     assert score.get_all_scores() == ["s_float", "s_int"]
     assert score.fetch_scores("1", 10) == [0.02, 5]
+
+
+def test_bare_reference_genome_is_readable_minimal(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = a_reference_genome().build_resource(tmp_path)
+
+    assert res.get_type() == "genome"
+    with build_reference_genome_from_resource(res).open() as ref:
+        assert "1" in ref.get_all_chrom_lengths()
+        seq = ref.get_sequence("1", 1, ref.get_chrom_length("1"))
+        assert set(seq) <= set("ACGTN")
+        assert len(seq) >= 12
+
+
+def test_reference_genome_with_fasta_reads_back_exact_bases(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_reference_genome()
+        .with_fasta(">1\nACGTACGTAC\nTTGGCCAANN")
+        .build_resource(tmp_path)
+    )
+    with build_reference_genome_from_resource(res).open() as ref:
+        assert ref.get_chrom_length("1") == 20
+        assert ref.get_sequence("1", 1, 20) == "ACGTACGTACTTGGCCAANN"
+
+
+def test_reference_genome_with_chromosome_reads_back(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_reference_genome()
+        .with_chromosome("chrA", "ACGTACGTAC")
+        .with_chromosome("chrB", "TTTTGGGGCC")
+        .build_resource(tmp_path)
+    )
+    with build_reference_genome_from_resource(res).open() as ref:
+        assert ref.get_all_chrom_lengths() == {"chrA": 10, "chrB": 10}
+        assert ref.get_sequence("chrA", 1, 10) == "ACGTACGTAC"
+        assert ref.get_sequence("chrB", 1, 10) == "TTTTGGGGCC"
+
+
+def test_reference_genome_default_is_bgzipped(
+    tmp_path: pathlib.Path,
+) -> None:
+    a_reference_genome().with_chromosome("1", "ACGTACGTAC").build_resource(
+        tmp_path)
+    assert (tmp_path / "chr.fa.gz").is_file()
+    assert (tmp_path / "chr.fa.gz.fai").is_file()
+    assert (tmp_path / "chr.fa.gz.gzi").is_file()
+    assert not (tmp_path / "chr.fa").exists()
+
+
+def test_reference_genome_as_plain_realizes_plain_fa(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_reference_genome()
+        .as_plain()
+        .with_chromosome("1", "ACGTACGTAC")
+        .build_resource(tmp_path)
+    )
+    assert (tmp_path / "chr.fa").is_file()
+    assert (tmp_path / "chr.fa.fai").is_file()
+    assert not (tmp_path / "chr.fa.gz").exists()
+    with build_reference_genome_from_resource(res).open() as ref:
+        assert ref.get_sequence("1", 1, 10) == "ACGTACGTAC"
+
+
+def test_reference_genome_line_width_controls_wrapping(
+    tmp_path: pathlib.Path,
+) -> None:
+    seq = "ACGT" * 10  # 40 bases
+    (
+        a_reference_genome()
+        .as_plain()
+        .with_line_width(8)
+        .with_chromosome("1", seq)
+        .build_resource(tmp_path)
+    )
+    fasta_lines = (tmp_path / "chr.fa").read_text().splitlines()
+    seq_lines = [ln for ln in fasta_lines if not ln.startswith(">")]
+    assert seq_lines[0] == "ACGTACGT"
+    assert all(len(ln) <= 8 for ln in seq_lines)
+    assert "".join(seq_lines) == seq
+
+
+def test_reference_genome_builder_is_immutable() -> None:
+    base = a_reference_genome()
+    extended = base.with_chromosome("1", "ACGT")
+    plain = base.as_plain()
+    assert base.chromosomes == ()
+    assert base.bgzip is True
+    assert extended.chromosomes == (("1", "ACGT"),)
+    assert plain.bgzip is False
+    assert base is not extended
+
+
+def test_reference_genome_fasta_and_chromosome_are_exclusive(
+    tmp_path: pathlib.Path,
+) -> None:
+    builder = (
+        a_reference_genome()
+        .with_fasta(">1\nACGT")
+        .with_chromosome("1", "ACGT")
+    )
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        builder.build_resource(tmp_path)
+
+
+def test_grr_mixes_genome_and_position_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = (
+        a_grr()
+        .with_resource(
+            "genomes/g", a_reference_genome().with_chromosome(
+                "1", "ACGTACGTAC"))
+        .with_resource(
+            "scores/pos",
+            a_position_score()
+            .with_score("sc", "float")
+            .with_data("chrom pos_begin sc\n1 10 0.5\n"),
+        )
+        .build_repo(tmp_path)
+    )
+    genome_res = repo.get_resource("genomes/g")
+    assert genome_res.get_type() == "genome"
+    with build_reference_genome_from_resource(genome_res).open() as ref:
+        assert ref.get_sequence("1", 1, 10) == "ACGTACGTAC"
+
+    score = PositionScore(repo.get_resource("scores/pos")).open()
+    assert score.fetch_scores("1", 10) == [0.5]

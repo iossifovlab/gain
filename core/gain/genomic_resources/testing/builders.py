@@ -48,6 +48,8 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     convert_to_tab_separated,
     setup_directories,
+    setup_genome,
+    setup_genome_bgz,
 )
 
 
@@ -301,6 +303,111 @@ def _validate_data_header(
             f"data header has undeclared "
             f"column(s) {sorted(extra)}; declared scores are "
             f"{sorted(declared)}")
+
+
+_GENOME_BASENAME = "chr"
+
+# A deterministic, valid minimal sequence for a bare genome (24 bases).
+_MINIMAL_GENOME_SEQUENCE = "ACGTACGTACGTACGTACGTACGT"
+
+
+@dataclasses.dataclass(frozen=True)
+class ReferenceGenomeBuilder:
+    """Immutable builder for a single ``genome`` resource.
+
+    Two authoring modes:
+
+    * ``with_fasta(raw)`` -- author the exact FASTA text.
+    * ``with_chromosome(id, seq)`` -- accumulate chromosomes; the FASTA is
+      synthesized (``>id`` header + the sequence wrapped at
+      ``with_line_width``).
+
+    The two modes are mutually exclusive: setting both raises when the
+    genome is realized.  A bare builder (neither set) realizes a valid
+    minimal genome -- one chromosome ``"1"`` with a short deterministic
+    sequence.
+
+    Realization is bgzipped by default (``.fa.gz`` + ``.fai`` + ``.gzi``);
+    ``as_plain()`` switches to a plain ``.fa`` + ``.fai``.
+    """
+
+    fasta: str | None = None
+    chromosomes: tuple[tuple[str, str], ...] = ()
+    line_width: int = 60
+    bgzip: bool = True
+
+    def with_fasta(self, raw: str) -> ReferenceGenomeBuilder:
+        """Author the genome as exact FASTA text (primary mode)."""
+        return dataclasses.replace(self, fasta=raw)
+
+    def with_chromosome(
+        self, chrom_id: str, sequence: str,
+    ) -> ReferenceGenomeBuilder:
+        """Accumulate one chromosome; FASTA is synthesized on realize."""
+        return dataclasses.replace(
+            self, chromosomes=(*self.chromosomes, (chrom_id, sequence)))
+
+    def with_line_width(self, n: int) -> ReferenceGenomeBuilder:
+        """Set the FASTA wrapping width for the synthesized-FASTA path."""
+        if n <= 0:
+            raise ValueError(f"line width must be positive, got {n}")
+        return dataclasses.replace(self, line_width=n)
+
+    def as_plain(self) -> ReferenceGenomeBuilder:
+        """Realize a plain (uncompressed) ``.fa`` genome instead of bgz."""
+        return dataclasses.replace(self, bgzip=False)
+
+    def realize_into(self, resource_dir: pathlib.Path) -> None:
+        """Write this genome resource into ``resource_dir``.
+
+        Delegates compression/indexing and the ``genomic_resource.yaml``
+        to the existing ``setup_genome``/``setup_genome_bgz`` helpers.
+        """
+        content = self._effective_fasta()
+        if self.bgzip:
+            setup_genome_bgz(
+                resource_dir / f"{_GENOME_BASENAME}.fa.gz", content)
+        else:
+            setup_genome(resource_dir / f"{_GENOME_BASENAME}.fa", content)
+
+    def build_resource(
+        self, tmp_path: pathlib.Path,
+    ) -> GenomicResource:
+        """Realize this single resource (repo id ``""``) into ``tmp_path``."""
+        return (
+            a_grr()
+            .with_resource("", self)
+            .build_repo(tmp_path)
+            .get_resource("")
+        )
+
+    def _effective_fasta(self) -> str:
+        if self.fasta is not None and self.chromosomes:
+            raise ValueError(
+                "reference genome: with_fasta and with_chromosome are "
+                "mutually exclusive; set only one authoring mode")
+        if self.fasta is not None:
+            return self.fasta
+        chromosomes = self.chromosomes or (("1", _MINIMAL_GENOME_SEQUENCE),)
+        return _synthesize_fasta(chromosomes, self.line_width)
+
+
+def _synthesize_fasta(
+    chromosomes: tuple[tuple[str, str], ...], line_width: int,
+) -> str:
+    """Render chromosomes as FASTA, wrapping each sequence at line_width."""
+    lines: list[str] = []
+    for chrom_id, sequence in chromosomes:
+        lines.append(f">{chrom_id}")
+        lines.extend(
+            sequence[i:i + line_width]
+            for i in range(0, len(sequence), line_width))
+    return "\n".join(lines)
+
+
+def a_reference_genome() -> ReferenceGenomeBuilder:
+    """Return an immutable reference-genome builder."""
+    return ReferenceGenomeBuilder()
 
 
 def a_position_score() -> PositionScoreBuilder:
