@@ -109,6 +109,8 @@ Repository types
     Like ``url`` but restricted to ``http`` / ``https`` URLs.
 
     | **url** (string, required): Base URL of the remote repository.
+    | **user** (string, optional): User for basic http authentication
+    | **password** (string, optional): password for basic http authentication
 
 ``s3`` — a remote S3 repository
     Like ``url`` but restricted to ``s3`` URLs.
