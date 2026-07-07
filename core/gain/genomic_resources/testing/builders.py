@@ -643,7 +643,9 @@ def _realize_tabix_table(
     """Realize ``data`` as a tabix table (``.txt.gz`` + ``.tbi``).
 
     The header line is emitted as a ``#`` comment so the tabix table reads
-    its column names from the file (``header_mode: file``); the seq/start/end
+    its column names from the file.  ``_render_config`` does not emit a
+    ``header_mode`` key, so this relies on the tabix backend's default
+    ``header_mode`` rather than setting it explicitly; the seq/start/end
     column indices are derived from the header so an arbitrary column order
     still indexes correctly.
     """
