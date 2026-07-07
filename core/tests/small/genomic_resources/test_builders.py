@@ -402,6 +402,19 @@ def test_reference_genome_empty_chromosome_sequence_raises() -> None:
         a_reference_genome().with_chromosome("chrX", "   ")
 
 
+def test_reference_genome_empty_fasta_raises() -> None:
+    # An empty (or whitespace-only) FASTA would fail deep inside pysam
+    # faidx with a cryptic SamtoolsError ("Could not build fai index");
+    # fail fast at the call site with a clear ValueError, mirroring the
+    # with_chromosome empty-sequence guard.
+    with pytest.raises(ValueError, match="non-empty") as excinfo:
+        a_reference_genome().with_fasta("")
+    assert "FASTA" in str(excinfo.value)
+
+    with pytest.raises(ValueError, match="non-empty"):
+        a_reference_genome().with_fasta("   \n\t  ")
+
+
 def test_grr_mixes_genome_and_position_score(
     tmp_path: pathlib.Path,
 ) -> None:

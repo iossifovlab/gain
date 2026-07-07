@@ -369,7 +369,14 @@ class ReferenceGenomeBuilder:
         Write single-token headers (``>1``, not ``>1 description``) and put
         each chromosome's sequence on its own line(s) with no internal
         spaces.
+
+        Rejects empty or whitespace-only content fast at the call site (a
+        pysam ``SamtoolsError`` otherwise surfaces with no resource context
+        deep inside faidx), mirroring the ``with_chromosome`` guard.
         """
+        if not raw.strip():
+            raise ValueError(
+                "reference genome: FASTA content must be non-empty")
         return dataclasses.replace(self, fasta=raw)
 
     def with_chromosome(
