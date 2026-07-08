@@ -27,6 +27,11 @@ def gene_models_2013() -> GeneModels:
 
 @pytest.fixture(scope="session")
 def genome_2013() -> ReferenceGenome:
+    pytest.skip(
+        "hg19/genomes/GATK_ResourceBundle_5777_b37_phiX174 is no longer "
+        "resolvable from the default GRR; tests using it are skipped "
+        "pending restore/migration (see iossifovlab/gain#212)",
+    )
     return build_reference_genome_from_resource_id(
         "hg19/genomes/GATK_ResourceBundle_5777_b37_phiX174").open()
 
@@ -41,5 +46,10 @@ def gene_models_2019() -> GeneModels:
 
 @pytest.fixture(scope="session")
 def genome_2019() -> ReferenceGenome:
+    pytest.skip(
+        "hg19/genomes/GATK_ResourceBundle_5777_b37_phiX174 is no longer "
+        "resolvable from the default GRR; tests using it are skipped "
+        "pending restore/migration (see iossifovlab/gain#212)",
+    )
     return build_reference_genome_from_resource_id(
         "hg19/genomes/GATK_ResourceBundle_5777_b37_phiX174").open()
