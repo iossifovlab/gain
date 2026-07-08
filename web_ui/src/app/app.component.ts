@@ -74,17 +74,22 @@ export class AppComponent implements DoCheck, OnInit, OnDestroy {
     this.socketKeepAliveSubscription = this.socketNotificationsService.getJobNotifications().subscribe({
       error: (err) => {
         // A dropped socket surfaces here (CloseEvent for a graceful/unclean
-        // close, Event for the abnormal-drop path). Reconnect and re-hold so
-        // the connection is not left closed while sitting on a route with no
-        // other consumer.
-        if (err instanceof CloseEvent || err instanceof Event) {
-          this.socketKeepAliveSubscription.unsubscribe();
-          this.reconnectionSubscription.unsubscribe();
-          this.reconnectionSubscription = this.socketNotificationsService.reopenConnection().subscribe({
-            next: () => this.keepSocketAlive(),
-            error: (e) => console.error('Failed to reopen socket:', e)
-          });
-        }
+        // close, Event for the abnormal-drop path -- but any error type is
+        // possible). On ANY error, log it and re-establish so the connection is
+        // never left closed while sitting on a route with no other consumer;
+        // scoping the reconnect to CloseEvent/Event would let any other error
+        // permanently detach the keep-alive and silently reintroduce #215 until
+        // the next identity change. We rely on the service's already-deduped,
+        // backed-off reopenConnection() (its isReconnecting/shareReplay dedup +
+        // cooldown) rather than hand-rolling backoff, so this cannot become a
+        // hot reconnect loop.
+        console.error('Notifications socket keep-alive errored; reconnecting:', err);
+        this.socketKeepAliveSubscription.unsubscribe();
+        this.reconnectionSubscription.unsubscribe();
+        this.reconnectionSubscription = this.socketNotificationsService.reopenConnection().subscribe({
+          next: () => this.keepSocketAlive(),
+          error: (e) => console.error('Failed to reopen socket:', e)
+        });
       }
     });
   }
