@@ -650,15 +650,23 @@ class FsspecReadWriteProtocol(
         # sibling `<file>.dvc` pointer; the real data file must stay in the
         # manifest. Exempt any gitignored leaf that has such a pointer in
         # this directory. DVC is used per-file only, so no subtree handling.
-        dvc_managed = {
-            name[:-len(".dvc")] for name in raw_names if name.endswith(".dvc")
-        }
+        # The exemption keys on a genuine PARSED DVC output (not merely a
+        # name ending in `.dvc`), so a non-pointer data file called
+        # `<x>.dvc` never resurrects a deliberately gitignored sibling
+        # `<x>` (gain#209).
+        dvc_managed = self._collect_dvc_output_names(url, raw_names)
 
         content = []
         for name in raw_names:
             if self._is_gitignored(name, path_array, current_specs):
-                # A gitignored leaf with a sibling `<name>.dvc` is a
-                # `dvc add <file>` data file and must stay in the manifest.
+                # A gitignored leaf named by a genuine sibling `<name>.dvc`
+                # pointer is a `dvc add <file>` data file and must stay in
+                # the manifest -- regardless of WHICH gitignore rule ignored
+                # it. Being ignored by a coincidental ancestor pattern (e.g.
+                # root `*.tmp` matching `sub/x.tmp`) instead of the `/x.tmp`
+                # line dvc itself writes is still exactly the DVC situation:
+                # the pointer proves the data is DVC-managed, so keeping it
+                # is correct (gain#209).
                 # Only per-file `dvc add` is the supported mode: a gitignored
                 # *directory* with a sibling `<dir>.dvc` (a `dvc add <dir>`)
                 # is intentionally NOT exempted. Recursing into it would
@@ -674,6 +682,33 @@ class FsspecReadWriteProtocol(
         for name in content:
             yield from self._scan_resource_for_files(
                 resource_path, [*path_array, name], current_specs)
+
+    def _collect_dvc_output_names(
+        self, url: str, raw_names: list[str],
+    ) -> set[str]:
+        """Return data-file basenames declared as outputs by sibling `.dvc`s.
+
+        `dvc add <file>` drops a sibling `<file>.dvc` YAML pointer whose
+        ``outs[*].path`` names the tracked data file. Only genuine, parsed
+        DVC outputs are returned, so a non-pointer file that merely ends in
+        ``.dvc`` never exempts a gitignored sibling (gain#209). A `.dvc`
+        that does not parse as a well-formed pointer (a dict with an ``outs``
+        list of dicts carrying a ``path``) is skipped silently -- the scan
+        must never crash on stray/malformed content.
+        """
+        managed: set[str] = set()
+        for name in raw_names:
+            if not name.endswith(".dvc"):
+                continue
+            dvc_url = os.path.join(url, name)
+            try:
+                with self.filesystem.open(dvc_url, "rt") as infile:
+                    dvc = yaml.safe_load(cast(str, infile.read()))
+                managed.update(out["path"] for out in dvc["outs"])
+            except (yaml.YAMLError, TypeError, KeyError) as error:
+                logger.debug(
+                    "ignoring malformed .dvc pointer %s: %s", dvc_url, error)
+        return managed
 
     @staticmethod
     def _is_gitignored(

@@ -754,14 +754,27 @@ def test_gitignore_dvc_managed_leaf_in_subdirectory_is_kept() -> None:
 
 def test_gitignore_multiple_dvc_managed_leaves_in_one_directory() -> None:
     # Several `dvc add`ed files in the same directory are each exempted from
-    # a shared gitignore rule, while a plain gitignored sibling is not.
+    # a shared gitignore rule, while a plain gitignored sibling is not. Each
+    # pointer declares its own matching `outs.path`, as real `dvc add` does.
+    one_dvc = (
+        "outs:\n"
+        "- md5: 0123456789abcdef0123456789abcdef\n"
+        "  size: 12\n"
+        "  path: one.bw\n"
+    )
+    two_dvc = (
+        "outs:\n"
+        "- md5: 0123456789abcdef0123456789abcdef\n"
+        "  size: 12\n"
+        "  path: two.bw\n"
+    )
     proto = build_inmemory_test_protocol({
         "res": {
             GR_CONF_FILE_NAME: "",
             "one.bw": "score data.",
-            "one.bw.dvc": SCORES_DVC_CONTENT,
+            "one.bw.dvc": one_dvc,
             "two.bw": "score data.",
-            "two.bw.dvc": SCORES_DVC_CONTENT,
+            "two.bw.dvc": two_dvc,
             "debug.log": "log",
             ".gitignore": "*.bw\n*.log\n",
         },
@@ -787,3 +800,91 @@ def test_build_manifest_keeps_dvc_pointer_only_file() -> None:
     prebuild_entries = collect_dvc_entries(proto, res)
     manifest = proto.build_manifest(res, prebuild_entries)
     assert "scores.bw" in manifest
+
+
+def test_gitignore_non_pointer_dvc_file_does_not_exempt_sibling() -> None:
+    # A real data file literally named `model.dvc` that is NOT a DVC pointer
+    # must not be mistaken for one: exemption keys on a genuine PARSED DVC
+    # output, so the deliberately gitignored sibling `model` stays excluded
+    # (gain#209 adversarial review, finding #2).
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "model": "the real ignored data",
+            "model.dvc": "This is a real model file, not a DVC pointer.",
+            ".gitignore": "/model\n",
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "model" not in entries
+    # `model.dvc` is itself a normal, non-gitignored file and still appears.
+    assert "model.dvc" in entries
+
+
+def test_gitignore_malformed_dvc_pointer_does_not_raise_or_exempt() -> None:
+    # A `.dvc` sibling that does not parse as a well-formed DVC pointer
+    # (here: invalid YAML) must neither crash the scan nor exempt its
+    # would-be data file `scores.bw` from the gitignore rule (gain#209).
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "scores.bw": "score data.",
+            "scores.bw.dvc": "not: a: valid: dvc",
+            ".gitignore": "/scores.bw\n",
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)  # must not raise
+    assert "scores.bw" not in entries
+
+
+def test_gitignore_dvc_pointer_without_outs_does_not_exempt() -> None:
+    # A well-formed YAML that lacks an `outs` list is not a usable DVC
+    # pointer; it must not exempt its would-be sibling (gain#209).
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "scores.bw": "score data.",
+            "scores.bw.dvc": "meta:\n  foo: bar\n",
+            ".gitignore": "/scores.bw\n",
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "scores.bw" not in entries
+
+
+# A genuine per-file DVC pointer for `x.tmp`.
+XTMP_DVC_CONTENT = (
+    "outs:\n"
+    "- md5: 0123456789abcdef0123456789abcdef\n"
+    "  size: 12\n"
+    "  path: x.tmp\n"
+)
+
+
+def test_gitignore_dvc_managed_leaf_under_ancestor_rule_is_kept() -> None:
+    # A genuine per-file DVC pointer keeps its data file in the manifest even
+    # when the rule that gitignores the leaf is an unrelated ANCESTOR pattern
+    # (root `*.tmp`) rather than the `/x.tmp` line `dvc add` writes locally.
+    # This is correct-by-design (gain#209 review finding #3): if
+    # `sub/x.tmp.dvc` is a real pointer for `sub/x.tmp`, then `x.tmp` is
+    # legitimately DVC-managed data that MUST appear -- the coincidental
+    # ancestor `*.tmp` rule ignoring it is exactly the DVC situation. Because
+    # exemption now requires a genuine parsed pointer whose `outs.path` names
+    # the leaf, no extra narrowing on WHICH rule ignored it is needed.
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            ".gitignore": "*.tmp\n",
+            "sub": {
+                "x.tmp": "score data.",
+                "x.tmp.dvc": XTMP_DVC_CONTENT,
+            },
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "sub/x.tmp" in entries
+    assert "sub/x.tmp.dvc" in entries
