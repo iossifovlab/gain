@@ -143,11 +143,14 @@ def _configure_list_subparser(subparsers: argparse._SubParsersAction) -> None:
 def _run_list_command(
         proto: ReadOnlyRepositoryProtocol | GenomicResourceRepo,
         args: argparse.Namespace) -> None:
+    search_term = getattr(args, "search", None)
+    resource_type = getattr(args, "type", None)
+    long_format = getattr(args, "summary", False)
     repos: list = [proto]
     if isinstance(proto, GenomicResourceGroupRepo):
         repos = proto.children
     for repo in repos:
-        for res in repo.get_all_resources():
+        for res in repo.search_resources(search_term, resource_type):
             res_size = sum(fs for _, fs in res.get_manifest().get_files())
 
             files_msg = f"{len(list(res.get_manifest().get_files())):2d}"
@@ -165,6 +168,10 @@ def _run_list_command(
                 f"{files_msg} {res_size_msg:12} "
                 f"{repo_id} "
                 f"{res.get_id()}")
+            if long_format:
+                summary = res.get_summary()
+                if summary:
+                    print(f"  {summary.strip()}")
 
 
 def _configure_repo_init_subparser(
@@ -1039,6 +1046,15 @@ def cli_browse(cli_args: list[str] | None = None) -> None:
         "-g", "--grr", type=str,
         default=None,
         help="path to GRR definition file.")
+    group.add_argument(
+        "-s", "--search", type=str, default=None,
+        help="FTS search term to filter resources.")
+    group.add_argument(
+        "-t", "--type", type=str, default=None,
+        help="Filter resources by type.")
+    group.add_argument(
+        "--summary", default=False, action="store_true",
+        help="Print a summary for each resource below its listing line.")
 
     parser.add_argument(
         "--bytes",
