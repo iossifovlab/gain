@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from web_annotation.authentication import WebAnnotationAuthentication
 from web_annotation.models import (
+    AnonymousJob,
     AnonymousUserQuota,
     Quota,
     QuotaSnapshot,
@@ -232,3 +233,36 @@ class SetIpQuotaView(AdminPanelView):
         quota.save()
 
         return _quota_snapshot_response(quota)
+
+
+class DeleteAnonymousJobsView(AdminPanelView):
+    """E2E-only reset endpoint: delete all anonymous jobs for an IP.
+
+    #216 stopped reaping completed anonymous jobs on WebSocket disconnect, so
+    ``AnonymousJob`` rows now accumulate across tests on the shared CI IP and
+    trip ``can_create()``'s hard per-IP daily-jobs cap. This lets each e2e
+    test reset its IP's rows back to zero. It is a full test reset: ALL rows
+    for the IP are deleted, including active (WAITING/IN_PROGRESS) ones -- the
+    production janitor spares active jobs, but a test reset wants a clean
+    slate. Only reachable in e2e (admin_panel is in INSTALLED_APPS only via
+    settings_e2e), never in production.
+    """
+
+    def get(self, request: Request) -> Response:
+        """Delete the caller's anonymous jobs, resolving the IP like SetIp."""
+        ip = request.query_params.get("ip")
+        if not ip:
+            if request.user.is_authenticated:
+                return Response(
+                    "ip parameter is required for authenticated users.",
+                    status=status.HTTP_400_BAD_REQUEST)
+            ip = request.user.ip
+        if not ip:
+            return Response("Missing ip.", status=status.HTTP_400_BAD_REQUEST)
+
+        # Per-row delete() so each job's _cleanup_files() runs (it is now
+        # idempotent to already-missing files, #216).
+        for job in AnonymousJob.objects.filter(ip=ip):
+            job.delete()
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
