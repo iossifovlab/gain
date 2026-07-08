@@ -4,9 +4,10 @@ import { UsersService } from './users.service';
 import { UserData } from './users';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { provideHttpClient } from '@angular/common/http';
-import { BehaviorSubject, Observable, of } from 'rxjs';
+import { BehaviorSubject, Observable, of, Subject, throwError } from 'rxjs';
 import { provideRouter, Router } from '@angular/router';
 import { SocketNotificationsService } from './socket-notifications/socket-notifications.service';
+import { JobNotification } from './socket-notifications/socket-notifications';
 
 class UsersServiceMock {
   public userData = new BehaviorSubject<UserData>(null);
@@ -143,6 +144,49 @@ describe('AppComponent', () => {
     // A genuine identity change (logout + login as someone else) -> reopen.
     usersServiceMock.userData.next(userB);
     expect(reopenSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds a lifetime notifications subscription so the socket stays open across navigation (#215)', () => {
+    // Regression for #215: the shared WebSocket is ref-counted by its
+    // subscribers. If only the route components hold it, navigating to a route
+    // with no notifications consumer (e.g. About) drops the last subscriber and
+    // closes the socket; the backend then deletes an anonymous user's completed
+    // job (delete_jobs on last disconnect) and the download link 404s. The root
+    // component must actively hold (subscribe to) the socket, not merely create
+    // the subject via ensureConnected().
+    const socketService = TestBed.inject(SocketNotificationsService);
+    const notifications$ = new Subject<JobNotification>();
+    const getJobNotificationsSpy = jest.spyOn(socketService, 'getJobNotifications')
+      .mockReturnValue(notifications$);
+
+    usersServiceMock.userData.next(null);
+    component.ngOnInit();
+    usersServiceMock.userData.next(makeUser('a@example.com'));
+
+    expect(getJobNotificationsSpy).toHaveBeenCalledTimes(1);
+    // An observer is attached -> the connection is actively held open, which is
+    // what survives route changes. (`ensureConnected` alone leaves observed=false.)
+    expect(notifications$.observed).toBe(true);
+  });
+
+  it('re-establishes the keep-alive subscription after the socket drops (#215)', () => {
+    const socketService = TestBed.inject(SocketNotificationsService);
+    const reconnected$ = new Subject<JobNotification>();
+    const getJobNotificationsSpy = jest.spyOn(socketService, 'getJobNotifications')
+      .mockReturnValueOnce(throwError(() => new CloseEvent('close')))
+      .mockReturnValueOnce(reconnected$);
+    const reopenSpy = jest.spyOn(socketService, 'reopenConnection').mockReturnValue(of(undefined));
+
+    usersServiceMock.userData.next(null);
+    component.ngOnInit();
+    usersServiceMock.userData.next(makeUser('a@example.com'));
+
+    // The initial keep-alive errored with a CloseEvent -> reopen and re-hold
+    // the socket, so it is never left closed while sitting on a route with no
+    // other consumer.
+    expect(reopenSpy).toHaveBeenCalledTimes(1);
+    expect(getJobNotificationsSpy).toHaveBeenCalledTimes(2);
+    expect(reconnected$.observed).toBe(true);
   });
 
   it('should navigate to login page on login button click', () => {
