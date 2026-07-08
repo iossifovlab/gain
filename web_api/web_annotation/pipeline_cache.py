@@ -1,5 +1,6 @@
 """Module for thread-safe annotation utilities."""
 import asyncio
+import contextlib
 import os
 import threading
 import time
@@ -465,10 +466,10 @@ class LRUPipelineCache:
                 details = self._cache[pipeline_id]
                 existing_failed = False
                 if details.future.done():
-                    try:
-                        existing_failed = details.future.exception() is not None
-                    except CancelledError:
-                        pass
+                    with contextlib.suppress(CancelledError):
+                        existing_failed = (
+                            details.future.exception() is not None
+                        )
                 if (
                     details.config_hash == pipeline_config_hash
                     and not force
