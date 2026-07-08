@@ -9,9 +9,11 @@ import pytest_mock
 from gain.genomic_resources import cli as grr_cli
 from gain.genomic_resources.cli import cli_browse
 from gain.genomic_resources.fsspec_protocol import build_fsspec_protocol
+from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.repository_factory import (
     _REPO_DEFINITION_ADAPTER,
     HttpRepoDefinition,
+    UrlRepoDefinition,
     build_genomic_resource_repository,
     redact_definition,
 )
@@ -403,3 +405,126 @@ def test_build_scheme_mismatch_does_not_leak_url_credential(
     # ...and still shows the redacted host, so the error stays useful.
     assert "grr.example.com" in str(exc)
     assert "alice:***@grr.example.com" in str(exc)
+
+
+# ---------------------------------------------------------------------------
+# Finding 11 — credentials embedded in a repo url's userinfo
+# (``scheme://user:pass@host``) are a functional aiohttp BasicAuth config, but
+# they escape verbatim through the protocol's DISPLAY/IDENTITY url, which is
+# never redacted. ``get_url()``/``get_public_url()`` (and everything that
+# serializes them: the web_annotation JSON response, the persisted about.html
+# docs, the ``logger.exception`` call in ``about.html`` generation) must expose
+# a userinfo-FREE url, while the fetch path keeps the credentialed url so
+# aiohttp/htslib can still authenticate.
+# ---------------------------------------------------------------------------
+
+def test_protocol_get_public_url_strips_url_userinfo() -> None:
+    proto = build_fsspec_protocol(
+        "f11-pub", f"https://alice:{_SECRET}@grr.example.com/path")
+    pub = proto.get_public_url()
+    assert _SECRET not in pub
+    assert "alice" not in pub
+    # host and path are preserved so the url stays useful.
+    assert "grr.example.com" in pub
+    assert pub.endswith("/path")
+
+
+def test_protocol_get_url_strips_url_userinfo() -> None:
+    proto = build_fsspec_protocol(
+        "f11-url", f"https://alice:{_SECRET}@grr.example.com/path")
+    url = proto.get_url()
+    assert _SECRET not in url
+    assert "alice" not in url
+    assert "grr.example.com" in url
+    assert url.endswith("/path")
+
+
+def test_protocol_fetch_url_keeps_url_userinfo() -> None:
+    # The credential MUST still reach aiohttp: for URL-embedded userinfo the
+    # only place the credential travels is the fetched url string itself
+    # (``_build_filesystem`` reads user/password from kwargs, which are empty
+    # here). So the private fetch base — and every file url derived from it —
+    # must retain the userinfo even though the display url does not.
+    proto = build_fsspec_protocol(
+        "f11-fetch", f"https://alice:{_SECRET}@grr.example.com/path")
+    assert _SECRET in proto._fetch_url
+    resource = GenomicResource("sub/res", (1, 0), proto, {})
+    file_url = proto.get_resource_file_url(resource, "data.txt")
+    assert _SECRET in file_url
+    assert file_url.startswith(
+        f"https://alice:{_SECRET}@grr.example.com/path/")
+
+
+def test_repo_proto_public_url_strips_url_userinfo() -> None:
+    repo = build_genomic_resource_repository(
+        {"id": "f11-repo", "type": "http",
+         "url": f"https://alice:{_SECRET}@grr.example.com"})
+    pub = repo.proto.get_public_url()
+    assert _SECRET not in pub
+    assert "alice" not in pub
+    assert "grr.example.com" in pub
+
+
+def test_protocol_url_userinfo_keeps_port() -> None:
+    proto = build_fsspec_protocol(
+        "f11-port", f"https://u:{_SECRET}@grr.example.com:8443/x")
+    url = proto.get_url()
+    assert _SECRET not in url
+    assert "grr.example.com:8443" in url
+
+
+def test_protocol_url_userinfo_keeps_ipv6_host_port() -> None:
+    proto = build_fsspec_protocol(
+        "f11-ipv6", f"https://u:{_SECRET}@[::1]:9000/x")
+    url = proto.get_url()
+    assert _SECRET not in url
+    assert "[::1]:9000" in url
+
+
+def test_protocol_url_without_userinfo_is_unchanged() -> None:
+    proto = build_fsspec_protocol(
+        "f11-plain", "https://grr.example.com/path")
+    assert proto.get_url() == "https://grr.example.com/path"
+    assert proto.get_public_url() == "https://grr.example.com/path"
+
+
+def test_protocol_canonical_credentials_public_url_is_clean() -> None:
+    # Regression lock-in: the canonical user/password-kwargs path (no userinfo
+    # in the url) already yields a clean public url — keep it that way.
+    proto = build_fsspec_protocol(
+        "f11-canon", "https://grr.example.com",
+        user="alice", password=_SECRET)
+    assert _SECRET not in proto.get_public_url()
+    assert proto.get_public_url() == "https://grr.example.com"
+
+
+def test_httprepodefinition_url_userinfo_masked_in_repr_and_dump() -> None:
+    definition = HttpRepoDefinition(
+        type="http", url=f"https://alice:{_SECRET}@grr.example.com/path")
+    assert _SECRET not in repr(definition)
+    assert _SECRET not in str(definition)
+    assert _SECRET not in f"{definition}"
+    assert _SECRET not in str(definition.model_dump())
+    assert _SECRET not in definition.model_dump_json()
+    # host is preserved; only the password userinfo is masked.
+    assert "grr.example.com" in definition.model_dump_json()
+    assert "alice:***@grr.example.com" in definition.model_dump_json()
+
+
+def test_httprepodefinition_url_attribute_returns_real_value() -> None:
+    # Masking is display/dump-only: the real ``.url`` must still carry the
+    # credential so the build path (which reads the raw dict / attribute) can
+    # authenticate.
+    real = f"https://alice:{_SECRET}@grr.example.com/path"
+    definition = HttpRepoDefinition(type="http", url=real)
+    assert definition.url == real
+
+
+def test_urlrepodefinition_url_userinfo_masked_in_dump() -> None:
+    definition = UrlRepoDefinition(
+        type="url", url=f"https://alice:{_SECRET}@grr.example.com/path")
+    assert _SECRET not in repr(definition)
+    assert _SECRET not in definition.model_dump_json()
+    assert _SECRET not in str(definition.model_dump())
+    # real attribute intact for the fetch path
+    assert definition.url == f"https://alice:{_SECRET}@grr.example.com/path"

@@ -102,3 +102,36 @@ def test_http_basic_auth_wrong_credentials(auth_server: str) -> None:
     with pytest.raises(Exception), proto.filesystem.open(  # noqa: B017
             f"{auth_server}/{_TEST_FILE}", "rt") as f:
         f.read()
+
+
+def _userinfo_url(base_url: str, user: str, password: str) -> str:
+    scheme, _, hostinfo = base_url.partition("://")
+    return f"{scheme}://{user}:{password}@{hostinfo}"
+
+
+def test_http_url_userinfo_auth_still_reads(auth_server: str) -> None:
+    """URL-embedded userinfo (no user/password kwargs) still authenticates.
+
+    This is the end-to-end proof that stripping userinfo from the DISPLAY url
+    does not break auth: the credential travels only in the credential-bearing
+    fetch base (``_fetch_url``), and aiohttp extracts Basic auth from it.
+    """
+    url = _userinfo_url(auth_server, _TEST_USER, _TEST_PASSWORD)
+    proto = build_fsspec_protocol(f"auth-userinfo:{url}", url)
+    # Reading through the protocol's own credential-bearing fetch base succeeds.
+    with proto.filesystem.open(
+            f"{proto._fetch_url}/{_TEST_FILE}", "rt") as f:
+        assert f.read() == _TEST_CONTENT
+    # ...while the display url exposes no credential.
+    assert _TEST_PASSWORD not in proto.get_public_url()
+    assert _TEST_USER not in proto.get_public_url()
+    assert _TEST_PASSWORD not in proto.get_url()
+
+
+def test_http_url_userinfo_wrong_password_401(auth_server: str) -> None:
+    """A wrong URL-embedded password still reaches the server and 401s."""
+    url = _userinfo_url(auth_server, _TEST_USER, "wrongpass")
+    proto = build_fsspec_protocol(f"auth-userinfo-bad:{url}", url)
+    with pytest.raises(Exception), proto.filesystem.open(  # noqa: B017
+            f"{proto._fetch_url}/{_TEST_FILE}", "rt") as f:
+        f.read()
