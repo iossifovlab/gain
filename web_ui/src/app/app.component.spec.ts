@@ -189,6 +189,28 @@ describe('AppComponent', () => {
     expect(reconnected$.observed).toBe(true);
   });
 
+  it('re-establishes the keep-alive after a non-CloseEvent/Event error (#215)', () => {
+    // F2: a socket error that is neither a CloseEvent nor an Event (e.g. a
+    // plain Error) must still re-establish the keep-alive. Scoping the
+    // reconnect to CloseEvent/Event would leave the socket permanently closed
+    // on any other error, silently reintroducing #215 until the next identity
+    // change.
+    const socketService = TestBed.inject(SocketNotificationsService);
+    const reconnected$ = new Subject<JobNotification>();
+    const getJobNotificationsSpy = jest.spyOn(socketService, 'getJobNotifications')
+      .mockReturnValueOnce(throwError(() => new Error('unexpected socket error')))
+      .mockReturnValueOnce(reconnected$);
+    const reopenSpy = jest.spyOn(socketService, 'reopenConnection').mockReturnValue(of(undefined));
+
+    usersServiceMock.userData.next(null);
+    component.ngOnInit();
+    usersServiceMock.userData.next(makeUser('a@example.com'));
+
+    expect(reopenSpy).toHaveBeenCalledTimes(1);
+    expect(getJobNotificationsSpy).toHaveBeenCalledTimes(2);
+    expect(reconnected$.observed).toBe(true);
+  });
+
   it('should navigate to login page on login button click', () => {
     const navigateSpy = jest.spyOn(router, 'navigate');
     component.login();
