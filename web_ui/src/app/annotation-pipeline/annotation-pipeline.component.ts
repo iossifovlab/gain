@@ -72,6 +72,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   public showMobileActions = false;
   public socketNotificationSubscription: Subscription = new Subscription();
   public pipelineValidationSubscription: Subscription = new Subscription();
+  private reconnectionSubscription: Subscription = new Subscription();
   public pipelineInfo: PipelineInfo;
   public disableActions: boolean;
   public invalidPipelineName = false;
@@ -212,7 +213,26 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
           pipeline.error = notification.error;
         }
       },
-      error: err => console.error(err)
+      error: err => {
+        console.error('Pipeline socket notifications error:', err);
+        // Every disconnect signal now surfaces here: a CloseEvent (unclean
+        // drop or graceful close resurfaced by the service) or an Event (the
+        // common abnormal-drop path). Both mean the socket is gone -- drive the
+        // single consumer-owned reconnect.
+        if (err instanceof CloseEvent || err instanceof Event) {
+          this.socketNotificationSubscription.unsubscribe();
+          // Subscribe to reopenConnection to wait for it to complete
+          this.reconnectionSubscription.unsubscribe();
+          this.reconnectionSubscription = this.socketNotificationsService.reopenConnection().subscribe({
+            next: () => {
+              // Reconnected - refetch pipelines to catch up on missed notifications
+              this.getPipelines();
+              this.setupPipelineWebSocketConnection();
+            },
+            error: (e) => console.error('Reconnection failed:', e)
+          });
+        }
+      }
     });
   }
 
@@ -729,6 +749,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     }
     this.socketNotificationSubscription.unsubscribe();
     this.pipelineValidationSubscription.unsubscribe();
+    this.reconnectionSubscription.unsubscribe();
   }
 
   private updateDownloadLink(): void {
