@@ -64,12 +64,25 @@ QUERY_QUOTAS = {
 
 JOB_CLEANUP_INTERVAL_DAYS = 30
 
+
 # Age (in hours) past which a terminal anonymous job is reaped by the
 # ``cleanup_anonymous_jobs`` janitor. Anonymous jobs are no longer deleted on
 # WebSocket disconnect (iossifovlab/gain#216), so a scheduled janitor bounds
 # their result-file lifetime instead. Active (WAITING/IN_PROGRESS) jobs are
 # never reaped regardless of age.
-ANONYMOUS_JOB_TTL_HOURS = int(
+#
+# Parsed defensively: a non-numeric GPFWA_ANONYMOUS_JOB_TTL_HOURS must not
+# raise at settings import and take down the ENTIRE Django service -- only the
+# janitor cares about this value. Fall back to the 24h default instead; the
+# command re-validates it (rejecting negatives, re-coercing a bad value).
+def _parse_ttl_hours(raw: str, default: int = 24) -> int:
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+ANONYMOUS_JOB_TTL_HOURS = _parse_ttl_hours(
     os.environ.get("GPFWA_ANONYMOUS_JOB_TTL_HOURS", "24"))
 
 GRR_DEFINITION_PATH = get_default_grr_definition_path()

@@ -2,10 +2,29 @@ import datetime
 from typing import Any
 
 from django.conf import settings
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
 from web_annotation.models import AnonymousJob
+
+#: Fallback TTL (hours) when neither the CLI arg nor a parseable setting is
+#: given. Mirrors the ANONYMOUS_JOB_TTL_HOURS default in settings_default.py.
+DEFAULT_TTL_HOURS = 24
+
+
+def resolve_ttl_hours(raw: object) -> int:
+    """Coerce a TTL-hours value to an int, falling back to the default.
+
+    A garbage ``GPFWA_ANONYMOUS_JOB_TTL_HOURS`` env var is already coerced to
+    a safe int at settings-import time so app boot survives it. This second
+    guard keeps the janitor robust even if a non-integer setting reaches it
+    (e.g. a settings override in a test or a future config path): a bad value
+    falls back to ``DEFAULT_TTL_HOURS`` instead of crashing the command.
+    """
+    try:
+        return int(str(raw))
+    except (TypeError, ValueError):
+        return DEFAULT_TTL_HOURS
 
 
 class Command(BaseCommand):
@@ -30,7 +49,17 @@ class Command(BaseCommand):
     def handle(self, *_args: Any, **options: Any) -> None:
         ttl_hours = options["older_than_hours"]
         if ttl_hours is None:
-            ttl_hours = settings.ANONYMOUS_JOB_TTL_HOURS
+            ttl_hours = resolve_ttl_hours(settings.ANONYMOUS_JOB_TTL_HOURS)
+
+        # Reject a negative TTL loudly, before any deletion. cutoff would be
+        # now - (-N) = now + N, so created__lt=cutoff would match every
+        # terminal job regardless of age -- a catastrophic operator footgun.
+        # 0 is allowed and means "flush all currently-terminal jobs now".
+        if ttl_hours < 0:
+            raise CommandError(
+                f"--older-than-hours must be >= 0, got {ttl_hours}.",
+            )
+
         cutoff = timezone.now() - datetime.timedelta(hours=ttl_hours)
 
         # Never delete a job that is still WAITING or IN_PROGRESS regardless of
@@ -63,3 +92,13 @@ class Command(BaseCommand):
             f"Deleted {deleted} anonymous job(s) older than "
             f"{ttl_hours} hour(s); {failed} failed.",
         )
+
+        # Signal failure only after every selected row has been attempted, so
+        # a poison row never blocks reaping the healthy ones but cron alerting
+        # keyed on exit code still fires. Django turns a CommandError into a
+        # non-zero exit written to stderr.
+        if failed:
+            raise CommandError(
+                f"{failed} anonymous job(s) failed to delete "
+                f"(deleted {deleted}).",
+            )

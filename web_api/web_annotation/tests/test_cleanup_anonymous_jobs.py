@@ -5,9 +5,14 @@ import pathlib
 import pytest
 import pytest_mock
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.utils import timezone
 from pytest_django.fixtures import SettingsWrapper
 
+from web_annotation.management.commands.cleanup_anonymous_jobs import (
+    DEFAULT_TTL_HOURS,
+    resolve_ttl_hours,
+)
 from web_annotation.models import (
     AnonymousJob,
     Job,
@@ -233,15 +238,16 @@ def test_missing_input_file_does_not_wedge_janitor(
 
 
 @pytest.mark.django_db
-def test_one_raising_job_does_not_block_others(
+def test_one_raising_job_reaps_others_then_signals_failure(
     tmp_path: pathlib.Path,
     mocker: pytest_mock.MockerFixture,
 ) -> None:
-    """Per-job error isolation: a job whose delete() raises is skipped.
+    """A poison row is skipped, the rest reaped, then the run signals failure.
 
-    Even for a failure ``_cleanup_files`` cannot pre-empt (e.g. a permission
-    error), the janitor's try/except must let the loop reap the other rows
-    instead of aborting ``handle()`` (#216).
+    Per-job error isolation (#216): a failure ``_cleanup_files`` cannot
+    pre-empt (e.g. a permission error) must not abort the sweep of healthy
+    rows. But the run must still exit non-zero so cron alerting fires -- Django
+    turns a ``CommandError`` into a non-zero exit written to stderr.
     """
     first = _make_files(tmp_path, "first")
     second = _make_files(tmp_path, "second")
@@ -269,9 +275,121 @@ def test_one_raising_job_does_not_block_others(
 
     mocker.patch.object(AnonymousJob, "delete", flaky_delete)
 
-    # Must not raise despite the first job blowing up.
-    call_command("cleanup_anonymous_jobs", "--older-than-hours", "24")
+    with pytest.raises(CommandError):
+        call_command("cleanup_anonymous_jobs", "--older-than-hours", "24")
 
-    # The raising job is left intact; the other is still reaped.
+    # The healthy row is still reaped despite the poison row; the poison row
+    # is left intact for a later run / manual inspection.
     assert AnonymousJob.objects.filter(pk=first_job.pk).exists()
     assert not AnonymousJob.objects.filter(pk=second_job.pk).exists()
+    for path in second.values():
+        assert not path.exists()
+
+
+@pytest.mark.django_db
+def test_negative_older_than_hours_raises_and_deletes_nothing(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A negative TTL is a footgun (cutoff = now + N deletes everything).
+
+    ``--older-than-hours -1`` makes ``cutoff = now + 1h`` so every terminal
+    job matches ``created__lt=cutoff`` regardless of age. The command must
+    reject it loudly *before* any deletion (#216).
+    """
+    paths = _make_files(tmp_path, "safe")
+    job = AnonymousJob.objects.create(
+        owner="anon_sess1", ip="1.2.3.4",
+        status=AnonymousJob.Status.SUCCESS,
+        **{key: str(value) for key, value in paths.items()},
+    )
+    _age_job(job, hours=1000)  # ancient; would be nuked by a negative cutoff
+
+    with pytest.raises(CommandError):
+        call_command("cleanup_anonymous_jobs", "--older-than-hours", "-1")
+
+    assert AnonymousJob.objects.filter(pk=job.pk).exists()
+    for path in paths.values():
+        assert path.exists(), f"{path} deleted despite the negative-TTL guard"
+
+
+@pytest.mark.django_db
+def test_negative_ttl_setting_raises(
+    tmp_path: pathlib.Path,
+    settings: SettingsWrapper,
+) -> None:
+    """A negative resolved *setting* is rejected the same way as the CLI arg."""
+    settings.ANONYMOUS_JOB_TTL_HOURS = -5
+    paths = _make_files(tmp_path, "safe-setting")
+    job = AnonymousJob.objects.create(
+        owner="anon_sess1", ip="1.2.3.4",
+        status=AnonymousJob.Status.SUCCESS,
+        **{key: str(value) for key, value in paths.items()},
+    )
+    _age_job(job, hours=1000)
+
+    with pytest.raises(CommandError):
+        call_command("cleanup_anonymous_jobs")
+
+    assert AnonymousJob.objects.filter(pk=job.pk).exists()
+
+
+@pytest.mark.django_db
+def test_ttl_zero_flushes_terminal_job(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``--older-than-hours 0`` means flush all currently-terminal jobs now."""
+    paths = _make_files(tmp_path, "flush")
+    job = AnonymousJob.objects.create(
+        owner="anon_sess1", ip="1.2.3.4",
+        status=AnonymousJob.Status.SUCCESS,
+        **{key: str(value) for key, value in paths.items()},
+    )
+    _age_job(job, hours=1)  # just completed
+
+    call_command("cleanup_anonymous_jobs", "--older-than-hours", "0")
+
+    assert not AnonymousJob.objects.filter(pk=job.pk).exists()
+    for path in paths.values():
+        assert not path.exists()
+
+
+def test_resolve_ttl_hours_falls_back_on_garbage() -> None:
+    """The TTL coercion helper never raises on a non-integer value (#216)."""
+    assert resolve_ttl_hours("48") == 48
+    assert resolve_ttl_hours(48) == 48
+    assert resolve_ttl_hours("garbage") == DEFAULT_TTL_HOURS
+    assert resolve_ttl_hours(None) == DEFAULT_TTL_HOURS
+
+
+@pytest.mark.django_db
+def test_non_int_setting_falls_back_to_default(
+    tmp_path: pathlib.Path,
+    settings: SettingsWrapper,
+) -> None:
+    """A garbage ANONYMOUS_JOB_TTL_HOURS must not crash the janitor.
+
+    A non-numeric ``GPFWA_ANONYMOUS_JOB_TTL_HOURS`` env var that slipped past
+    settings parsing must not take down the command; it falls back to the
+    24h default (#216). Verified through the public reap boundary: a 25h job
+    is reaped and a 23h job survives.
+    """
+    settings.ANONYMOUS_JOB_TTL_HOURS = "not-a-number"
+    old = _make_files(tmp_path, "old")
+    recent = _make_files(tmp_path, "recent")
+    old_job = AnonymousJob.objects.create(
+        owner="anon_sess1", ip="1.2.3.4",
+        status=AnonymousJob.Status.SUCCESS,
+        **{key: str(value) for key, value in old.items()},
+    )
+    recent_job = AnonymousJob.objects.create(
+        owner="anon_sess1", ip="1.2.3.4",
+        status=AnonymousJob.Status.SUCCESS,
+        **{key: str(value) for key, value in recent.items()},
+    )
+    _age_job(old_job, hours=25)
+    _age_job(recent_job, hours=23)
+
+    call_command("cleanup_anonymous_jobs")  # no --older-than-hours
+
+    assert not AnonymousJob.objects.filter(pk=old_job.pk).exists()
+    assert AnonymousJob.objects.filter(pk=recent_job.pk).exists()
