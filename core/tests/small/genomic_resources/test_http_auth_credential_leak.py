@@ -528,3 +528,127 @@ def test_urlrepodefinition_url_userinfo_masked_in_dump() -> None:
     assert _SECRET not in str(definition.model_dump())
     # real attribute intact for the fetch path
     assert definition.url == f"https://alice:{_SECRET}@grr.example.com/path"
+
+
+# ---------------------------------------------------------------------------
+# Finding A-1 — the ``__new__`` protocol-cache-HIT DEBUG log line interpolates
+# the raw url, leaking the URL-embedded password whenever the SAME authed
+# url-userinfo protocol is built twice (per-worker / per-request re-entry) with
+# DEBUG logging on. The log line must be userinfo-free. The credentialed cache
+# KEY is retained (see the fix rationale: keying on the stripped url would let a
+# second build with DIFFERENT credentials for the same host+path reuse the
+# first protocol and authenticate with the WRONG credentials) but the cache
+# dict/key is never logged, so it cannot leak.
+# ---------------------------------------------------------------------------
+
+def test_protocol_cache_hit_debug_log_is_credential_free(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    url = f"https://alice:{_SECRET}@grr.example.com/path"
+    with caplog.at_level(logging.DEBUG):
+        first = build_fsspec_protocol("a1-cache", url)
+        second = build_fsspec_protocol("a1-cache", url)
+    # The second build must have taken the cache-HIT branch (same instance).
+    assert first is second
+    # ...and that branch's DEBUG line must not carry the credential.
+    assert _SECRET not in caplog.text
+    assert "alice" not in caplog.text
+    # the cache-hit line is still emitted (host kept for debuggability).
+    assert "already exists" in caplog.text
+    assert "grr.example.com" in caplog.text
+
+
+def test_protocol_cache_different_credentials_do_not_collide() -> None:
+    # Correctness lock-in for keeping the cache KEY credentialed: two builds
+    # that differ ONLY in credentials for the same host+path must NOT share a
+    # cached protocol, or the second would authenticate with the first's
+    # credentials. Each must carry its own fetch url.
+    first = build_fsspec_protocol(
+        "a1-diff", "https://alice:secretA@grr.example.com/path")
+    second = build_fsspec_protocol(
+        "a1-diff", "https://bob:secretB@grr.example.com/path")
+    assert first is not second
+    assert "secretA" in first._fetch_url
+    assert "secretB" in second._fetch_url
+
+
+def test_protocol_cache_non_userinfo_url_keys_identically() -> None:
+    # For a userinfo-free url the (stripped) display url == the url, so cache
+    # behavior is unchanged: a second build hits the same instance.
+    first = build_fsspec_protocol(
+        "a1-plain", "https://grr.example.com/path")
+    second = build_fsspec_protocol(
+        "a1-plain", "https://grr.example.com/path")
+    assert first is second
+
+
+# ---------------------------------------------------------------------------
+# Finding A-2 — a fetch failure on an authed url-userinfo protocol propagates
+# an exception whose message + traceback embed the credential-bearing
+# ``_fetch_url`` (e.g. ``FileNotFoundError: https://a:p@host/.CONTENTS.json``).
+# GAIn-authored fetch entry points (``load_contents``/``md5_contents``) re-raise
+# with the userinfo stripped, and the cache-run failure aggregation in
+# ``cached_repository`` must redact the interpolated error, so neither the
+# raised message nor the ERROR log leaks the secret. The credentialed
+# ``_fetch_url`` is still used for the actual fetch.
+# ---------------------------------------------------------------------------
+
+def test_load_contents_fetch_failure_does_not_leak_url_credential() -> None:
+    # Port 1 refuses immediately: a fast, network-free fetch failure.
+    proto = build_fsspec_protocol(
+        "a2-load", f"https://alice:{_SECRET}@127.0.0.1:1/path")
+    with pytest.raises(OSError) as excinfo:
+        proto.load_contents()
+    exc = excinfo.value
+    tb = "".join(traceback.format_exception(exc))
+    assert _SECRET not in str(exc)
+    assert _SECRET not in tb
+    for linked in _walk_exception_chain(exc):
+        assert _SECRET not in str(linked)
+    # host kept so the error stays diagnosable.
+    assert "127.0.0.1" in str(exc)
+
+
+def test_md5_contents_fetch_failure_does_not_leak_url_credential() -> None:
+    proto = build_fsspec_protocol(
+        "a2-md5", f"https://alice:{_SECRET}@127.0.0.1:1/path")
+    with pytest.raises(OSError) as excinfo:
+        proto.md5_contents()
+    exc = excinfo.value
+    tb = "".join(traceback.format_exception(exc))
+    assert _SECRET not in str(exc)
+    assert _SECRET not in tb
+    for linked in _walk_exception_chain(exc):
+        assert _SECRET not in str(linked)
+
+
+def test_fetch_failure_keeps_credential_in_fetch_url() -> None:
+    # Regression: the credential must still travel on the private fetch url so
+    # aiohttp can authenticate; only the surfaced error is redacted.
+    proto = build_fsspec_protocol(
+        "a2-keep", f"https://alice:{_SECRET}@127.0.0.1:1/path")
+    assert _SECRET in proto._fetch_url
+
+
+def test_cache_worklist_failure_aggregation_redacts_url_credential(
+    caplog: pytest.LogCaptureFixture,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    from gain.genomic_resources import cached_repository as cr
+
+    url = f"https://alice:{_SECRET}@grr.example.com/res/data.txt"
+    cached_proto = mocker.MagicMock()
+    cached_proto.classify_cached_resource_file.side_effect = \
+        FileNotFoundError(url)
+    resource = mocker.MagicMock()
+    resource.resource_id = "res"
+
+    with caplog.at_level(logging.ERROR):
+        _worklist, _total, _cached, failures = cr._build_cache_worklist(
+            cached_proto, resource, ["data.txt"], workers=1)
+
+    assert _SECRET not in caplog.text
+    assert "alice" not in caplog.text
+    assert all(_SECRET not in failure for failure in failures)
+    # host preserved so the failure summary stays useful.
+    assert any("grr.example.com" in failure for failure in failures)

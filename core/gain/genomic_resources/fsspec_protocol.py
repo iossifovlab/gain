@@ -10,6 +10,7 @@ import json
 import operator
 import os
 import pathlib
+import re
 import tempfile
 import time
 from collections.abc import Callable, Generator
@@ -130,6 +131,41 @@ def _strip_netloc_userinfo(netloc: str) -> str:
     return netloc[at_index + 1:]
 
 
+# Matches the ``scheme://user:pass@`` prefix of any url embedded in a string.
+# The userinfo (``[^/@\s]+``) carries the secret and is dropped, keeping the
+# scheme and everything from the host onward. Works both on a bare url and on a
+# longer diagnostic message that embeds one (e.g. an fsspec
+# ``FileNotFoundError`` whose text IS the credential-bearing fetch url).
+_URL_USERINFO_RE = re.compile(
+    r"(?P<scheme>[a-zA-Z][a-zA-Z0-9+.\-]*://)[^/@\s]+@")
+
+
+def _strip_url_userinfo(text: str) -> str:
+    """Strip ``user:pass@`` userinfo from every ``scheme://user:pass@host``.
+
+    Used to build credential-free display urls, cache-hit log lines and
+    redacted fetch-error messages. The host/port/path are preserved; only the
+    userinfo is removed. A string with no userinfo is returned unchanged.
+    """
+    return _URL_USERINFO_RE.sub(lambda match: match.group("scheme"), text)
+
+
+def _rebuild_error_without_userinfo(exc: BaseException) -> BaseException:
+    """Rebuild ``exc`` with the url userinfo stripped from its message.
+
+    fsspec/aiohttp interpolate the credential-bearing fetch url verbatim into a
+    fetch failure's message (e.g. ``FileNotFoundError(url)``). Return a fresh
+    exception of the same type carrying the userinfo-stripped message so it can
+    propagate/log without leaking the secret; fall back to ``OSError`` for a
+    type that cannot be reconstructed from a single message string.
+    """
+    redacted = _strip_url_userinfo(str(exc))
+    try:
+        return type(exc)(redacted)
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        return OSError(redacted)
+
+
 def _scan_for_resources(
     content_dict: dict, parent_id: list[str],
 ) -> Generator[tuple[str, tuple[int, ...], dict], None, None]:
@@ -241,12 +277,20 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
     def __new__(cls, *args: Any, **kwargs: Any) -> FsspecReadOnlyProtocol:
         proto_id = args[0] if len(args) > 0 else kwargs["proto_id"]
         url = args[1] if len(args) > 1 else kwargs["url"]
+        # The cache KEY is kept credentialed on purpose: keying on the
+        # userinfo-stripped url would let a second build with DIFFERENT
+        # credentials for the same host+path reuse the first protocol and
+        # authenticate with the WRONG credentials. The ``_FSSPEC_PROTOCOLS``
+        # dict/key is never logged, repr'd or serialized, so retaining the
+        # credential in the key does not leak it. The DEBUG line below, which IS
+        # a leak vector, is passed a userinfo-stripped url. For a userinfo-free
+        # url the stripped url == url, so behavior is unchanged.
         key = (proto_id, url)
         if key in _FSSPEC_PROTOCOLS:
             logger.debug(
                 "protocol with id %s and url %s already exists, "
                 "returning the existing instance",
-                proto_id, url)
+                proto_id, _strip_url_userinfo(url))
             return _FSSPEC_PROTOCOLS[key]
         instance = super().__new__(cls)
         _FSSPEC_PROTOCOLS[key] = instance
@@ -336,6 +380,30 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         """Close the genomic resource."""
         self.invalidate()
 
+    def _read_fetch_file(
+        self, filepath: str, mode: str, compression: str | None,
+    ) -> str | bytes:
+        """Open+read a fetch-url file, redacting any credential on failure.
+
+        On a fetch failure fsspec/aiohttp embed the credential-bearing
+        ``_fetch_url`` verbatim in the raised message (e.g.
+        ``FileNotFoundError(url)``). Rebuild the error with the url userinfo
+        stripped and raise it OUTSIDE the ``except`` block so no
+        credential-bearing ``__context__``/``__cause__`` survives a chain walk.
+        A failure whose message carries no userinfo (the common non-authed
+        case) is propagated unchanged.
+        """
+        reraise: BaseException | None = None
+        try:
+            with self.filesystem.open(
+                    filepath, mode, compression=compression) as infile:
+                return cast("str | bytes", infile.read())
+        except Exception as exc:
+            if _strip_url_userinfo(str(exc)) == str(exc):
+                raise
+            reraise = _rebuild_error_without_userinfo(exc)
+        raise reraise
+
     def load_contents(self) -> list[dict[str, Any]]:
         """Load the content JSON of the repository."""
         content_filename = os.path.join(
@@ -345,9 +413,7 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
             content_filename = content_filename[:-3]
             compression = None
 
-        with self.filesystem.open(
-                content_filename, "rt", compression=compression) as infile:
-            data = infile.read()
+        data = self._read_fetch_file(content_filename, "rt", compression)
 
         return cast(list[dict[str, Any]], json.loads(data))
 
@@ -358,8 +424,7 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         if not self.filesystem.exists(content_filename):
             content_filename = content_filename[:-3]
 
-        with self.filesystem.open(content_filename, "rb") as infile:
-            data = infile.read()
+        data = self._read_fetch_file(content_filename, "rb", None)
 
         assert isinstance(data, bytes)
 
