@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import pysam
 import pytest
+from gain.genomic_resources.cli import collect_dvc_entries
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
@@ -582,3 +583,75 @@ def test_gitignore_subdirectory_pattern_does_not_affect_sibling() -> None:
     assert "a/data.txt" in entries
     assert "a/drop.log" not in entries
     assert "b/also.log" in entries
+
+
+# `dvc add scores.bw` writes `/scores.bw` into .gitignore and creates a
+# `scores.bw.dvc` pointer; the real data file must stay in the manifest.
+SCORES_DVC_CONTENT = (
+    "outs:\n"
+    "- md5: 0123456789abcdef0123456789abcdef\n"
+    "  size: 12\n"
+    "  path: scores.bw\n"
+)
+
+
+def test_gitignore_dvc_managed_leaf_is_kept_in_entries() -> None:
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "scores.bw": "score data.",
+            "scores.bw.dvc": SCORES_DVC_CONTENT,
+            ".gitignore": "/scores.bw\n",
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "scores.bw" in entries
+    assert "scores.bw.dvc" in entries
+
+
+def test_gitignore_leaf_without_dvc_sibling_is_excluded() -> None:
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            "debug.log": "log content",
+            ".gitignore": "*.log\n",
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "data.txt" in entries
+    assert "debug.log" not in entries
+
+
+def test_build_manifest_keeps_dvc_managed_file_present_on_disk() -> None:
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "scores.bw": "score data.",
+            "scores.bw.dvc": SCORES_DVC_CONTENT,
+            ".gitignore": "/scores.bw\n",
+        },
+    })
+    res = proto.get_resource("res")
+    prebuild_entries = collect_dvc_entries(proto, res)
+    manifest = proto.build_manifest(res, prebuild_entries)
+    assert "scores.bw" in manifest
+    assert "scores.bw.dvc" in manifest
+
+
+def test_build_manifest_keeps_dvc_pointer_only_file() -> None:
+    # Supported workflow: the `.dvc` pointer is checked out but the big
+    # data file has NOT been `dvc pull`ed, so the scan cannot see it.
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "scores.bw.dvc": SCORES_DVC_CONTENT,
+            ".gitignore": "/scores.bw\n",
+        },
+    })
+    res = proto.get_resource("res")
+    prebuild_entries = collect_dvc_entries(proto, res)
+    manifest = proto.build_manifest(res, prebuild_entries)
+    assert "scores.bw" in manifest

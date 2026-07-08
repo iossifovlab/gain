@@ -636,7 +636,7 @@ class FsspecReadWriteProtocol(
                 spec = pathspec.PathSpec.from_lines("gitignore", lines)
                 current_specs = [*ancestor_specs, (len(path_array), spec)]
 
-        content = []
+        raw_names = []
         for direntry in self.filesystem.ls(url, detail=False):
             if self.netloc and direntry.startswith(self.netloc):
                 direntry = direntry[len(self.netloc):]
@@ -644,7 +644,20 @@ class FsspecReadWriteProtocol(
             name = os.path.relpath(direntry, path)
             if name.startswith("."):
                 continue
-            if self._is_gitignored(name, path_array, current_specs):
+            raw_names.append(name)
+
+        # `dvc add <file>` writes `/<file>` into .gitignore and drops a
+        # sibling `<file>.dvc` pointer; the real data file must stay in the
+        # manifest. Exempt any gitignored leaf that has such a pointer in
+        # this directory. DVC is used per-file only, so no subtree handling.
+        dvc_managed = {
+            name[:-len(".dvc")] for name in raw_names if name.endswith(".dvc")
+        }
+
+        content = []
+        for name in raw_names:
+            if name not in dvc_managed \
+                    and self._is_gitignored(name, path_array, current_specs):
                 continue
             content.append(name)
 
