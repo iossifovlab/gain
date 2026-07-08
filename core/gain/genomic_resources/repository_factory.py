@@ -68,10 +68,13 @@ class HttpRepoDefinition(_RepoDefinitionBase):
         # Mask credentials in repr()/str()/f-string interpolation so a
         # diagnostic dump of a definition can never reveal the secret. The
         # real values still travel with the pickled protocol (see
-        # fsspec_protocol.py) so dask workers can authenticate.
+        # fsspec_protocol.py) so dask workers can authenticate. The ``url``
+        # itself can embed ``user:pass@host`` userinfo, so redact that too.
         for key, value in super().__repr_args__():
             if key in _CREDENTIAL_KEYS and value is not None:
                 yield key, "***"
+            elif key == "url" and isinstance(value, str):
+                yield key, _redact_url_userinfo(value)
             else:
                 yield key, value
 
@@ -83,6 +86,14 @@ class HttpRepoDefinition(_RepoDefinitionBase):
         # dict — which is what the auth build path in fsspec_protocol.py reads
         # to construct ``aiohttp.BasicAuth`` — still see the real value.
         return "***" if value is not None else None
+
+    @field_serializer("url")
+    def _mask_url_userinfo(self, value: str) -> str:
+        # A ``scheme://user:pass@host`` url embeds the credential in its
+        # userinfo. Mask it in model_dump()/model_dump_json() (host/path kept)
+        # while attribute access and the raw definition dict — read by the auth
+        # build path — still return the real, credential-bearing url.
+        return _redact_url_userinfo(value)
 
     @model_validator(mode="after")
     def check_credentials_together(self) -> HttpRepoDefinition:
@@ -131,6 +142,22 @@ class UrlRepoDefinition(_RepoDefinitionBase):
     type: Literal["url"]
     url: str
     cache_dir: _PathOrStr | None = None
+
+    def __repr_args__(self) -> Any:
+        # The ``url`` can embed ``user:pass@host`` userinfo; redact it from
+        # repr()/str()/f-string interpolation.
+        for key, value in super().__repr_args__():
+            if key == "url" and isinstance(value, str):
+                yield key, _redact_url_userinfo(value)
+            else:
+                yield key, value
+
+    @field_serializer("url")
+    def _mask_url_userinfo(self, value: str) -> str:
+        # Mask any userinfo credential in model_dump()/model_dump_json(); the
+        # real, credential-bearing url is still returned by attribute access
+        # and lives in the raw definition dict read by the build path.
+        return _redact_url_userinfo(value)
 
 
 class FileRepoDefinition(_RepoDefinitionBase):

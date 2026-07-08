@@ -115,6 +115,21 @@ _RETRYABLE_COPY_ERRORS: tuple[type[BaseException], ...] = (
 )
 
 
+def _strip_netloc_userinfo(netloc: str) -> str:
+    """Return a network location with any ``user:pass@`` userinfo removed.
+
+    The authority (``host[:port]``) is kept verbatim — case, port and IPv6
+    brackets are preserved — because only the userinfo carries the secret. A
+    netloc without ``@`` is returned unchanged. Splitting on the LAST ``@`` is
+    correct for well-formed urls: the host part never contains an unencoded
+    ``@`` (a literal ``@`` inside userinfo must be percent-encoded as ``%40``).
+    """
+    at_index = netloc.rfind("@")
+    if at_index == -1:
+        return netloc
+    return netloc[at_index + 1:]
+
+
 def _scan_for_resources(
     content_dict: dict, parent_id: list[str],
 ) -> Generator[tuple[str, tuple[int, ...], dict], None, None]:
@@ -213,7 +228,12 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         # deserializing this protocol can rebuild an authenticated
         # filesystem and read the remote GRR. Do not strip them here — that
         # would break distributed reads of an authed http repository.
-        args = (self.proto_id, self.url)
+        # Pickle the credential-bearing fetch url (not the stripped display
+        # url) so a dask worker rebuilds an authenticated protocol whose cache
+        # key matches a fresh build, and ``__init__`` (were it called) would
+        # re-derive the same stripped ``self.url``. The credential
+        # re-materializes here on purpose — see the class docstring above.
+        args = (self.proto_id, self._fetch_url)
         kwargs: dict[str, Any] = copy.copy(self.kwargs)
         kwargs["public_url"] = self.public_url
         return (args, kwargs)
@@ -244,10 +264,23 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         self.scheme = parsed.scheme
         if self.scheme == "":
             self.scheme = "file"
-        self.netloc = parsed.netloc
+        # ``self.netloc``/``self.url``/``self.public_url`` are the DISPLAY /
+        # IDENTITY of this protocol — returned by ``get_url``/``get_public_url``
+        # and serialized into web responses, persisted docs and logs. They MUST
+        # NOT carry credentials, so any ``user:pass@`` userinfo embedded in a
+        # ``scheme://user:pass@host`` url is stripped from them here.
+        fetch_netloc = parsed.netloc
+        self.netloc = _strip_netloc_userinfo(fetch_netloc)
         self.root_path = parsed.path
 
         self.url = f"{self.scheme}://{self.netloc}{self.root_path}"
+        # ``self._fetch_url`` is the credential-BEARING url used only to talk to
+        # the remote filesystem. For URL-embedded userinfo, aiohttp/htslib read
+        # the basic-auth credentials straight from this url string (they are not
+        # in ``kwargs``), so every fetched file url must derive from it — see
+        # ``get_resource_url``/``load_contents``/``md5_contents``. When the url
+        # has no userinfo this is byte-identical to ``self.url``.
+        self._fetch_url = f"{self.scheme}://{fetch_netloc}{self.root_path}"
 
         if public_url is None:
             self.public_url = self.url
@@ -274,12 +307,21 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
     def __setstate__(self, state: dict[str, Any]) -> None:
         self.__dict__.update(state)
         self.filesystem = _build_filesystem(
-            self.url, **self.kwargs)
+            self._fetch_url, **self.kwargs)
         self._all_resources = None
         self._all_resources_lock = Lock()
 
     def get_url(self) -> str:
         return self.url
+
+    def get_resource_url(self, resource: GenomicResource) -> str:
+        # Fetch path: derive resource file urls from the credential-bearing
+        # ``_fetch_url`` (the base class uses ``self.url``, which is stripped of
+        # userinfo for display) so URL-embedded basic-auth still reaches
+        # aiohttp/htslib. Identical to the base for userinfo-free urls.
+        return os.path.join(
+            self._fetch_url,
+            resource.get_genomic_resource_id_version())
 
     def get_public_url(self) -> str:
         return self.public_url
@@ -297,7 +339,7 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
     def load_contents(self) -> list[dict[str, Any]]:
         """Load the content JSON of the repository."""
         content_filename = os.path.join(
-            self.url, GR_CONTENTS_FILE_NAME)
+            self._fetch_url, GR_CONTENTS_FILE_NAME)
         compression: str | None = "gzip"
         if not self.filesystem.exists(content_filename):
             content_filename = content_filename[:-3]
@@ -312,7 +354,7 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
     def md5_contents(self) -> str:
         """Calculate md5 hash of the repository content."""
         content_filename = os.path.join(
-            self.url, GR_CONTENTS_FILE_NAME)
+            self._fetch_url, GR_CONTENTS_FILE_NAME)
         if not self.filesystem.exists(content_filename):
             content_filename = content_filename[:-3]
 
@@ -395,7 +437,7 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
 
     def open_repository_sqlite3_metadata_db(self) -> apsw.Connection:
         sqlite_filepath = os.path.join(
-            self.url, GR_SQLITE_META_FILE_NAME)
+            self._fetch_url, GR_SQLITE_META_FILE_NAME)
         if not self.filesystem.exists(sqlite_filepath):
             raise ValueError(
                 "Repository contents SQLite metadata DB not found!")
