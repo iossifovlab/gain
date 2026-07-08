@@ -9,6 +9,8 @@ from __future__ import annotations
 import subprocess
 import sys
 
+import pytest
+
 
 def test_annotate_columns_module_reexports_tabular_function() -> None:
     import gain.annotation.annotate_columns as legacy
@@ -30,15 +32,17 @@ def test_importing_annotate_columns_emits_deprecation_warning() -> None:
     assert "annotate_tabular" in result.stderr
 
 
-def test_annotate_columns_cli_prints_deprecation_banner_on_stderr() -> None:
-    result = subprocess.run(
-        [
-            sys.executable, "-c",
-            "from gain.annotation.annotate_columns import cli; "
-            "cli(['--version'])",
-        ],
-        capture_output=True, text=True, check=False,
-    )
-    assert "DEPRECATION" in result.stderr
-    assert "annotate_columns" in result.stderr
-    assert "annotate_tabular" in result.stderr
+def test_annotate_columns_cli_prints_deprecation_banner_on_stderr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from gain.annotation.annotate_columns import cli
+
+    # The banner is printed to stderr before the wrapped CLI runs, so it is
+    # captured regardless of how the underlying --version handling exits.
+    with pytest.raises(SystemExit):
+        cli(["--version"])
+
+    stderr = capsys.readouterr().err
+    assert "DEPRECATION" in stderr
+    assert "annotate_columns" in stderr
+    assert "annotate_tabular" in stderr

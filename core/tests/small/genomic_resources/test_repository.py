@@ -3,7 +3,7 @@ import pathlib
 import textwrap
 
 import pytest
-from gain.genomic_resources.cli import cli_manage
+from gain.genomic_resources.cli import _create_contents_db, cli_manage
 from gain.genomic_resources.repository import (
     GenomicResourceProtocolRepo,
     GenomicResourceRepo,
@@ -137,8 +137,10 @@ def test_find_resource_with_version(
     assert resource.version == expected_version
 
 
-@pytest.fixture
-def search_grr_fixture(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
+@pytest.fixture(scope="module")
+def search_grr_fixture(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> GenomicResourceProtocolRepo:
     """GRR with four resources covering three types and varied labels.
 
     scores/res_a         — position_score, ref=ref_a, domain=domain_a
@@ -149,7 +151,12 @@ def search_grr_fixture(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
 
     The fixture uses the CLI to build manifests and the FTS index so that
     search_resources() can be exercised end-to-end.
+
+    Module-scoped: every test that consumes it only reads via
+    search_resources(), so the (relatively expensive) repo build is shared
+    across the whole module instead of rebuilt per test.
     """
+    tmp_path = tmp_path_factory.mktemp("search_grr")
     setup_directories(
         tmp_path,
         {
@@ -233,8 +240,13 @@ def search_grr_fixture(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
             },
         },
     )
-    cli_manage(["repo-stats", "-R", str(tmp_path)])
+    # search_resources() only needs the FTS index, not the resource
+    # statistics/histograms. Build the manifests + content file with
+    # repo-manifest and the FTS index directly, skipping the much more
+    # expensive statistics TaskGraph that repo-stats would also run.
+    cli_manage(["repo-manifest", "-R", str(tmp_path)])
     proto = build_filesystem_test_protocol(tmp_path, repair=False)
+    _create_contents_db(proto)
     return GenomicResourceProtocolRepo(proto)
 
 
