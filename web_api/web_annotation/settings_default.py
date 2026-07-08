@@ -251,7 +251,9 @@ RESET_PASSWORD_TIMEOUT_HOURS = 24
 USERS_ACTIVATED_BY_DEFAULT = True
 
 EMAIL_HOST = os.environ.get("GPFWA_EMAIL_HOST", "localhost")
-EMAIL_USE_TLS = os.environ.get("GPFWA_EMAIL_USE_TLS", False)
+EMAIL_USE_TLS = (
+    os.environ.get("GPFWA_EMAIL_USE_TLS", "").strip().lower() == "true"
+)
 EMAIL_HOST_USER = os.environ.get("GPFWA_EMAIL_HOST_USER", None)
 EMAIL_HOST_PASSWORD = os.environ.get("GPFWA_EMAIL_HOST_PASSWORD", None)
 
