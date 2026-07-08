@@ -218,6 +218,28 @@ def test_sequential_executor_failed_load_is_interchangeable(
         lru_cache.get_pipeline("broken")
 
 
+def test_failed_pipeline_is_retried_on_next_put(
+    test_grr: GenomicResourceRepo,
+) -> None:
+    """A failed build is replaced by a fresh build on the next put_pipeline.
+
+    Previously the same-config fast-path would re-report the failure and
+    return early, leaving the failed future cached forever. Now a failed
+    entry is treated like a config change so the next put triggers a rebuild.
+    """
+    lru_cache = LRUPipelineCache(test_grr, 2)
+    lru_cache._load_executor = cast(
+        ThreadedTaskExecutor, SequentialTaskExecutor())
+
+    lru_cache.put_pipeline("p", "- position_score: scores/NONEXISTENT")
+    assert lru_cache.get_pipeline_error("p") is not None
+
+    lru_cache.put_pipeline("p", "- position_score: scores/pos1")
+    assert lru_cache.is_pipeline_loaded("p") is True
+    assert lru_cache.get_pipeline_error("p") is None
+    assert lru_cache.get_pipeline("p") is not None
+
+
 def test_sequential_executor_successful_load_is_interchangeable(
     test_grr: GenomicResourceRepo,
 ) -> None:
