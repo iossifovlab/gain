@@ -71,10 +71,19 @@ def test_delete_jobs_preserves_waiting_anonymous_job(
     "status",
     [AnonymousJob.Status.SUCCESS, AnonymousJob.Status.FAILED],
 )
-def test_delete_jobs_removes_terminal_anonymous_job(
+def test_delete_jobs_preserves_terminal_anonymous_job(
     tmp_path: pathlib.Path,
     status: int,
 ) -> None:
+    """A completed anonymous job survives ``delete_jobs`` (iossifovlab#216).
+
+    ``delete_jobs`` runs when the last WebSocket disconnects. Deleting a
+    terminal (SUCCESS/FAILED) job there destroyed a just-finished job and its
+    result file on any last-subscriber socket drop (daphne restart, network
+    blip, proxy/idle timeout), 404-ing a captured download link. Result-file
+    lifetime is now decoupled from the socket lifecycle: terminal jobs are
+    reaped by the age-based ``cleanup_anonymous_jobs`` janitor instead.
+    """
     user = WebAnnotationAnonymousUser(session_id="sess1", ip="1.2.3.4")
     paths = _make_files(tmp_path, "done")
     job = AnonymousJob.objects.create(
@@ -86,15 +95,16 @@ def test_delete_jobs_removes_terminal_anonymous_job(
 
     user.delete_jobs()
 
-    assert not AnonymousJob.objects.filter(pk=job.pk).exists()
+    assert AnonymousJob.objects.filter(pk=job.pk).exists()
     for path in paths.values():
-        assert not path.exists(), f"{path} not cleaned up for finished job"
+        assert path.exists(), f"{path} was deleted for a completed job"
 
 
 @pytest.mark.django_db
-def test_delete_jobs_only_spares_active_jobs_of_the_same_user(
+def test_delete_jobs_preserves_all_jobs_of_the_same_user(
     tmp_path: pathlib.Path,
 ) -> None:
+    """Neither running nor completed anonymous jobs are deleted (#216)."""
     user = WebAnnotationAnonymousUser(session_id="sess1", ip="1.2.3.4")
     running = _make_files(tmp_path, "running")
     finished = _make_files(tmp_path, "finished")
@@ -112,7 +122,7 @@ def test_delete_jobs_only_spares_active_jobs_of_the_same_user(
     user.delete_jobs()
 
     assert AnonymousJob.objects.filter(pk=running_job.pk).exists()
-    assert not AnonymousJob.objects.filter(pk=finished_job.pk).exists()
+    assert AnonymousJob.objects.filter(pk=finished_job.pk).exists()
 
 
 @pytest.mark.django_db
@@ -191,4 +201,45 @@ async def test_websocket_disconnect_spares_running_anonymous_job(
     for path in paths.values():
         assert path.exists(), (
             f"{path} was deleted by the WS disconnect while the job was running"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_websocket_disconnect_spares_completed_anonymous_job(
+    anonymous_client: Client,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The literal #216 scenario, end to end through the consumer.
+
+    An anonymous user finishes a job and captures its download link, then
+    loses their last WebSocket (daphne restart / idle timeout / reconnect
+    window). The consumer's ``disconnect`` cleanup must not delete the
+    completed job or its result file, or the captured link 404s.
+    """
+    session = await anonymous_client.asession()
+    assert session.session_key is not None
+    user = WebAnnotationAnonymousUser(session.session_key, ip="test")
+
+    paths = _make_files(tmp_path, "done")
+    await sync_to_async(AnonymousJob.objects.create)(
+        owner=user.identifier,
+        ip=user.ip,
+        status=AnonymousJob.Status.SUCCESS,
+        **{key: str(value) for key, value in paths.items()},
+    )
+
+    communicator = CustomWebsocketCommunicator(
+        AnnotationStateConsumer.as_asgi(),
+        "/ws/test/", user=user, session=session,
+    )
+    connected, _ = await communicator.connect(timeout=1000)
+    assert connected
+
+    await communicator.disconnect(timeout=1000)
+
+    assert await sync_to_async(user.job_class.objects.count)() == 1
+    for path in paths.values():
+        assert path.exists(), (
+            f"{path} was deleted by the WS disconnect after the job completed"
         )

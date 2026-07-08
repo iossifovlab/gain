@@ -64,6 +64,14 @@ QUERY_QUOTAS = {
 
 JOB_CLEANUP_INTERVAL_DAYS = 30
 
+# Age (in hours) past which a terminal anonymous job is reaped by the
+# ``cleanup_anonymous_jobs`` janitor. Anonymous jobs are no longer deleted on
+# WebSocket disconnect (iossifovlab/gain#216), so a scheduled janitor bounds
+# their result-file lifetime instead. Active (WAITING/IN_PROGRESS) jobs are
+# never reaped regardless of age.
+ANONYMOUS_JOB_TTL_HOURS = int(
+    os.environ.get("GPFWA_ANONYMOUS_JOB_TTL_HOURS", "24"))
+
 GRR_DEFINITION_PATH = get_default_grr_definition_path()
 
 # Hristo kaza
