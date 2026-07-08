@@ -967,6 +967,9 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
             self._update_manifest_entry_and_state(
                 resource, entry, prebuild_entries)
             manifest.add(entry)
+        # Merge prebuild (e.g. DVC pointer-only) entries the scan cannot
+        # see, mirroring check_update_manifest.
+        manifest.update(prebuild_entries)
         return manifest
 
     def check_update_manifest(
