@@ -649,11 +649,18 @@ class BaseJob(models.Model):
     is_active = models.BooleanField(default=True)
 
     def _cleanup_files(self) -> None:
-        """Clean up job files."""
-        os.remove(self.input_path)
-        os.remove(self.config_path)
-        if pathlib.Path(self.result_path).exists():
-            os.remove(self.result_path)
+        """Clean up job files, tolerating already-missing ones.
+
+        ``unlink(missing_ok=True)`` makes ``deactivate()``/``delete()``
+        idempotent w.r.t. disk state: a job whose input/config/result file is
+        already gone (a prior cleanup interrupted by SIGTERM/OOM between the
+        unlink and the DB row delete, or manual cleanup) does not raise
+        ``FileNotFoundError``. Otherwise one such row would abort the
+        ``cleanup_anonymous_jobs`` janitor and wedge it forever (#216).
+        """
+        pathlib.Path(self.input_path).unlink(missing_ok=True)
+        pathlib.Path(self.config_path).unlink(missing_ok=True)
+        pathlib.Path(self.result_path).unlink(missing_ok=True)
 
     def deactivate(self) -> None:
         """Diactivate a job and clean its resources."""

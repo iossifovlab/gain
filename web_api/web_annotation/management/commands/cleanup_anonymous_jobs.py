@@ -43,13 +43,23 @@ class Command(BaseCommand):
         )
 
         deleted = 0
+        failed = 0
         for job in jobs:
             # job.delete() runs _cleanup_files() to remove the on-disk inputs,
-            # config and result before the row is dropped.
-            job.delete()
-            deleted += 1
+            # config and result before the row is dropped. Isolate each row:
+            # one job that raises (e.g. a permission error on its file) must
+            # never abort the loop and block reaping the rest -- that would
+            # wedge the janitor on every subsequent run (#216).
+            try:
+                job.delete()
+                deleted += 1
+            except Exception as exc:  # noqa: BLE001  pylint: disable=broad-except
+                failed += 1
+                self.stderr.write(
+                    f"Failed to delete anonymous job {job.pk}: {exc}",
+                )
 
         self.stdout.write(
             f"Deleted {deleted} anonymous job(s) older than "
-            f"{ttl_hours} hour(s).",
+            f"{ttl_hours} hour(s); {failed} failed.",
         )

@@ -2334,8 +2334,11 @@ async def test_clean_up_anonymous_jobs(
 
     await second_communicator.disconnect(timeout=1000)
 
-    # Check that pipeline and job are cleaned up after all connections closed
-    assert await sync_to_async(user.job_class.objects.count)() == 0
+    # After all connections close the completed job is preserved: its
+    # result-file lifetime is decoupled from the socket lifecycle (#216) and
+    # reaped by the cleanup_anonymous_jobs janitor by age instead of on
+    # WebSocket disconnect.
+    assert await sync_to_async(user.job_class.objects.count)() == 1
 
 
 @pytest.mark.django_db
