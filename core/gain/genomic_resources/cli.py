@@ -171,7 +171,7 @@ def _run_list_command(
             if long_format:
                 summary = res.get_summary()
                 if summary:
-                    print(f"  {summary}")
+                    print(f"  {summary.strip()}")
 
 
 def _configure_repo_init_subparser(
