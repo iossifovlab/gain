@@ -16,6 +16,7 @@ from gain import logging
 from gain.genomic_resources.fsspec_protocol import (
     FileCacheVerdict,
     FsspecReadWriteProtocol,
+    _strip_url_userinfo,
 )
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
@@ -675,14 +676,18 @@ def _build_cache_worklist(
                 # gone from the remote) must not discard the whole run; it is
                 # collected and surfaced in the end-of-run summary like a
                 # download failure. See gain#43.
+                # ``error`` may be an fsspec/aiohttp fetch failure whose message
+                # embeds the credential-bearing fetch url; strip any url
+                # userinfo before it reaches the failure summary or the logs.
+                redacted = _strip_url_userinfo(str(error))
                 failures.append(
-                    f"{resource.resource_id}: {filename} ({error})")
+                    f"{resource.resource_id}: {filename} ({redacted})")
                 # One concise line per failure; a stack trace per failed file
                 # would swamp a large run (see the gain#43 rationale in the
                 # download loop), so logger.error not logger.exception.
                 logger.error(  # noqa: TRY400
                     "failed to classify (%s: %s): %s",
-                    resource.resource_id, filename, error)
+                    resource.resource_id, filename, redacted)
                 continue
             if verdict.needs_download:
                 worklist.append((resource, filename, verdict.size))
@@ -786,12 +791,16 @@ def cache_resources(
                 # file in the run. Collect the failure and keep caching; we
                 # raise a summary at the end so the run still fails loudly.
                 # See gain#43.
-                failures.append(f"{label} ({error})")
+                # ``error`` may embed the credential-bearing fetch url (see the
+                # classify path above); redact any url userinfo before it
+                # reaches the summary or the reporter's ERROR log.
+                redacted = _strip_url_userinfo(str(error))
+                failures.append(f"{label} ({redacted})")
                 # One concise line per failure; the full summary is raised at
                 # the end. A stack trace per failed file would swamp a large
                 # run.
                 reporter.report_failure(
-                    f"failed {count}/{total_files} ({label}): {error}")
+                    f"failed {count}/{total_files} ({label}): {redacted}")
                 # Slice 1 rolls a retryable terminal failure's bytes back to
                 # net ~0, so credit the file's full size to land the byte bar
                 # at 100%, then mark the failure so the tally shows. See
