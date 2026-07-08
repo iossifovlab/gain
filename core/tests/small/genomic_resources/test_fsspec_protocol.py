@@ -888,3 +888,104 @@ def test_gitignore_dvc_managed_leaf_under_ancestor_rule_is_kept() -> None:
     entries = proto.collect_resource_entries(res)
     assert "sub/x.tmp" in entries
     assert "sub/x.tmp.dvc" in entries
+
+
+def test_gitignore_binary_dvc_sibling_does_not_crash_or_exempt() -> None:
+    # A real data file that merely happens to be named `scores.bw.dvc` and
+    # contains non-UTF-8 bytes must NOT crash the scan (gain#209 review
+    # finding #1: opening it in text mode raised UnicodeDecodeError, a
+    # ValueError outside the caught tuple, aborting the whole manifest build).
+    # It is not a well-formed DVC pointer, so the gitignored sibling
+    # `scores.bw` stays excluded; the binary `.dvc` file itself is a normal,
+    # non-gitignored file and still appears in the entries.
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "scores.bw": "score data.",
+            "scores.bw.dvc": b"\xff\xfe\x00",
+            ".gitignore": "/scores.bw\n",
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)  # must not raise
+    assert "scores.bw" not in entries
+    assert "scores.bw.dvc" in entries
+
+
+def test_directory_named_dvc_does_not_crash_scan() -> None:
+    # A *directory* whose name ends in `.dvc` must NOT crash the scan
+    # (gain#209 review finding #2: it used to be passed to `filesystem.open`
+    # unconditionally, raising IsADirectoryError, an OSError outside the
+    # caught tuple). Nothing here is gitignored, so no `.dvc` is opened at
+    # all and the directory is scanned like any other, its child yielded.
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            "weird.dvc": {
+                "inner.txt": "inner",
+            },
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)  # must not raise
+    assert "data.txt" in entries
+    assert "weird.dvc/inner.txt" in entries
+
+
+# A well-formed DVC pointer whose `outs[].path` carries a directory prefix
+# (`sub/scores.bw`) rather than the bare `scores.bw`.
+PREFIXED_SCORES_DVC_CONTENT = (
+    "outs:\n"
+    "- md5: 0123456789abcdef0123456789abcdef\n"
+    "  size: 12\n"
+    "  path: sub/scores.bw\n"
+)
+
+
+def test_gitignore_dvc_pointer_with_prefixed_out_path_matches_cli() -> None:
+    # A `.dvc` whose `outs[].path` is directory-prefixed (`sub/scores.bw`)
+    # must be classified IDENTICALLY by the scanner and by
+    # `cli.collect_dvc_entries` (gain#209 review finding #3). cli matches
+    # `out["path"] == os.path.basename(<datafile-stem>)`, i.e.
+    # `"sub/scores.bw" == "scores.bw"` -> False, so cli does NOT treat this
+    # as a DVC data file. The scanner therefore must NOT exempt the bare
+    # gitignored `scores.bw` either; the two DVC code paths agree.
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "scores.bw": "score data.",
+            "scores.bw.dvc": PREFIXED_SCORES_DVC_CONTENT,
+            ".gitignore": "/scores.bw\n",
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "scores.bw" not in entries
+    # cli would not match the prefixed out path either -> consistent.
+    assert "scores.bw" not in collect_dvc_entries(proto, res)
+
+
+def test_scan_does_not_open_dvc_when_nothing_gitignored(
+    mocker: MockerFixture,
+) -> None:
+    # Laziness (gain#209 review finding #4): when NOTHING in a directory is
+    # gitignored, the scanner must not open any sibling `.dvc` at all (those
+    # opens are pure network round-trips on http/s3). A resource with a
+    # `data.txt`, its `data.txt.dvc` pointer and no `.gitignore` scans
+    # correctly, and no `.dvc` file is ever opened.
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            "data.txt.dvc": SCORES_DVC_CONTENT,
+        },
+    })
+    res = proto.get_resource("res")
+    spy = mocker.patch.object(
+        proto.filesystem, "open", wraps=proto.filesystem.open)
+    entries = proto.collect_resource_entries(res)
+    assert "data.txt" in entries
+    assert "data.txt.dvc" in entries
+    opened = [call.args[0] for call in spy.call_args_list if call.args]
+    assert not any(str(p).endswith(".dvc") for p in opened), opened
