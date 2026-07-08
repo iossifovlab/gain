@@ -656,8 +656,18 @@ class FsspecReadWriteProtocol(
 
         content = []
         for name in raw_names:
-            if name not in dvc_managed \
-                    and self._is_gitignored(name, path_array, current_specs):
+            if self._is_gitignored(name, path_array, current_specs):
+                # A gitignored leaf with a sibling `<name>.dvc` is a
+                # `dvc add <file>` data file and must stay in the manifest.
+                # Only per-file `dvc add` is the supported mode: a gitignored
+                # *directory* with a sibling `<dir>.dvc` (a `dvc add <dir>`)
+                # is intentionally NOT exempted. Recursing into it would
+                # re-skip every child under the inherited ancestor gitignore
+                # spec and silently yield a half-populated subtree, so it
+                # stays skipped whole, exactly like any other gitignored dir.
+                if name in dvc_managed and not self.filesystem.isdir(
+                        os.path.join(url, name)):
+                    content.append(name)
                 continue
             content.append(name)
 

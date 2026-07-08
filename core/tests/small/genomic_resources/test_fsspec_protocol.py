@@ -625,20 +625,152 @@ def test_gitignore_leaf_without_dvc_sibling_is_excluded() -> None:
     assert "debug.log" not in entries
 
 
-def test_build_manifest_keeps_dvc_managed_file_present_on_disk() -> None:
+def test_gitignore_dvc_managed_directory_is_not_exempted() -> None:
+    # Per-file `dvc add <file>` is the only supported DVC mode here. A stray
+    # `dvc add <dir>` writes `/<dir>` into .gitignore and drops a sibling
+    # `<dir>.dvc`; but a gitignored *directory* must NOT be exempted. If it
+    # were, the scan would recurse into it and re-skip its children under the
+    # inherited ancestor gitignore spec — silently yielding a half-populated
+    # subtree (here: `bigdir/a.bw`, which has its own nested `.dvc`, would
+    # slip in while `bigdir/b.bw` stays skipped). The directory is instead
+    # treated like any other gitignored directory: skipped whole, its files
+    # entirely absent from the entries.
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            "bigdir": {
+                "a.bw": "aaa",
+                "a.bw.dvc": SCORES_DVC_CONTENT,
+                "b.bw": "bbb",
+            },
+            "bigdir.dvc": SCORES_DVC_CONTENT,
+            ".gitignore": "/bigdir\n",
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "data.txt" in entries
+    assert "bigdir.dvc" in entries
+    # The gitignored directory is skipped whole: none of its children appear,
+    # not even the one carrying its own sibling `.dvc` pointer.
+    assert "bigdir/a.bw" not in entries
+    assert "bigdir/a.bw.dvc" not in entries
+    assert "bigdir/b.bw" not in entries
+
+
+# A `.dvc` pointer whose md5/size DELIBERATELY disagree with the real
+# on-disk `scores.bw` bytes ("score data." -> size 11, md5 below). Used to
+# tell apart "the scan supplied this value" from "the DVC pointer did".
+REAL_SCORES_BW_MD5 = "0c5a7cf3aa752666540db748364115ea"
+REAL_SCORES_BW_SIZE = 11
+WRONG_SCORES_DVC_CONTENT = (
+    "outs:\n"
+    "- md5: ffffffffffffffffffffffffffffffff\n"
+    "  size: 999\n"
+    "  path: scores.bw\n"
+)
+
+
+def test_scan_of_present_dvc_managed_file_uses_real_on_disk_size() -> None:
+    # Isolates the present-on-disk scanner path (the `.dvc`-sibling gitignore
+    # exemption). `collect_resource_entries` never consults the `.dvc`
+    # pointer, so the scanned entry must carry the REAL on-disk size even
+    # when the pointer lies. If the exemption were reverted, `scores.bw`
+    # would be gitignored out of the scan entirely and this would fail.
     proto = build_inmemory_test_protocol({
         "res": {
             GR_CONF_FILE_NAME: "",
             "scores.bw": "score data.",
-            "scores.bw.dvc": SCORES_DVC_CONTENT,
+            "scores.bw.dvc": WRONG_SCORES_DVC_CONTENT,
             ".gitignore": "/scores.bw\n",
         },
     })
     res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "scores.bw" in entries
+    assert entries["scores.bw"].size == REAL_SCORES_BW_SIZE
+
+
+def test_build_manifest_keeps_dvc_managed_file_present_on_disk() -> None:
+    # The data file is present on disk AND has a `.dvc` pointer whose md5/size
+    # are deliberately wrong. Two things are asserted:
+    #   1. The pure scan (`collect_resource_entries`) sees the real on-disk
+    #      file (size 11) — proving the gitignore exemption keeps it.
+    #   2. `build_manifest` merges the DVC pointer LAST, so the final manifest
+    #      entry carries the POINTER's md5/size (999 / all-f), NOT the scanned
+    #      value. This documents CURRENT behavior: for a present-on-disk DVC
+    #      file the pointer wins over the scan.
+    #
+    # OPEN QUESTION (flagged in review, deliberately not changed here): for a
+    # file that is present on disk, the manifest arguably should describe the
+    # bytes actually served — i.e. the SCANNED md5/size should win, so a stale
+    # `.dvc` pointer cannot produce a manifest that mismatches the real file.
+    # Reconciling that would change production behavior in `build_manifest`
+    # (and `check_update_manifest`), so it is left for a separate decision.
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "scores.bw": "score data.",
+            "scores.bw.dvc": WRONG_SCORES_DVC_CONTENT,
+            ".gitignore": "/scores.bw\n",
+        },
+    })
+    res = proto.get_resource("res")
+
+    # The scanner (no pointer involved) sees the real file.
+    scanned = proto.collect_resource_entries(res)
+    assert scanned["scores.bw"].size == REAL_SCORES_BW_SIZE
+
     prebuild_entries = collect_dvc_entries(proto, res)
     manifest = proto.build_manifest(res, prebuild_entries)
     assert "scores.bw" in manifest
     assert "scores.bw.dvc" in manifest
+    # Current behavior: the DVC pointer overrides the scanned value.
+    assert manifest["scores.bw"].size == 999
+    assert manifest["scores.bw"].md5 == "ffffffffffffffffffffffffffffffff"
+
+
+def test_gitignore_dvc_managed_leaf_in_subdirectory_is_kept() -> None:
+    # The `.dvc`-sibling exemption is applied per-directory during the
+    # recursive scan, so a `dvc add`ed file living in a subdirectory (with the
+    # subdirectory's own `.gitignore`) is kept just like one at the resource
+    # root.
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "a": {
+                "scores.bw": "score data.",
+                "scores.bw.dvc": SCORES_DVC_CONTENT,
+                ".gitignore": "/scores.bw\n",
+            },
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "a/scores.bw" in entries
+    assert "a/scores.bw.dvc" in entries
+
+
+def test_gitignore_multiple_dvc_managed_leaves_in_one_directory() -> None:
+    # Several `dvc add`ed files in the same directory are each exempted from
+    # a shared gitignore rule, while a plain gitignored sibling is not.
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "one.bw": "score data.",
+            "one.bw.dvc": SCORES_DVC_CONTENT,
+            "two.bw": "score data.",
+            "two.bw.dvc": SCORES_DVC_CONTENT,
+            "debug.log": "log",
+            ".gitignore": "*.bw\n*.log\n",
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "one.bw" in entries
+    assert "two.bw" in entries
+    assert "debug.log" not in entries
 
 
 def test_build_manifest_keeps_dvc_pointer_only_file() -> None:
