@@ -595,6 +595,34 @@ SCORES_DVC_CONTENT = (
 )
 
 
+# `dvc add bigdir` (a directory add) writes `/bigdir` into .gitignore and
+# drops a sibling `bigdir.dvc` whose single out declares the directory itself:
+# a `.dir`-suffixed md5, the total tree size, an `nfiles` count, and
+# `path: bigdir`. Crucially `out["path"] == "bigdir"`, so the parse guard
+# matches — only the `isdir` guard keeps a directory from being exempted.
+BIGDIR_DVC_CONTENT = (
+    "outs:\n"
+    "- md5: 1234567890abcdef1234567890abcdef.dir\n"
+    "  size: 246\n"
+    "  nfiles: 2\n"
+    "  path: bigdir\n"
+)
+
+
+# A genuine per-file pointer for `bigdir/a.bw` (`path: a.bw`). It lives INSIDE
+# the gitignored directory. If the directory were wrongly exempted and the
+# scan recursed into it, this pointer would exempt `a.bw` under the inherited
+# `/bigdir` ancestor rule — the exact half-populated-subtree leak guard #1
+# prevents. Its path must equal `a.bw` (not `scores.bw`) or the leak the test
+# guards against could never occur, leaving guard #1 untested.
+A_BW_DVC_CONTENT = (
+    "outs:\n"
+    "- md5: fedcba9876543210fedcba9876543210\n"
+    "  size: 3\n"
+    "  path: a.bw\n"
+)
+
+
 def test_gitignore_dvc_managed_leaf_is_kept_in_entries() -> None:
     proto = build_inmemory_test_protocol({
         "res": {
@@ -635,16 +663,24 @@ def test_gitignore_dvc_managed_directory_is_not_exempted() -> None:
     # slip in while `bigdir/b.bw` stays skipped). The directory is instead
     # treated like any other gitignored directory: skipped whole, its files
     # entirely absent from the entries.
+    #
+    # `bigdir.dvc` is a REALISTIC `dvc add <dir>` pointer whose single out has
+    # `path: bigdir` (a `.dir` md5 + total size), exactly as DVC writes for a
+    # directory add. This is deliberate: with `path == "bigdir"`, the parse
+    # guard (out["path"] == name) MATCHES, so only the `isdir` guard #1 stands
+    # between the directory and a wrongful exemption. Using a `path: scores.bw`
+    # pointer here would let the parse guard reject the directory on its own
+    # and leave guard #1 untested (see #209 review).
     proto = build_inmemory_test_protocol({
         "res": {
             GR_CONF_FILE_NAME: "",
             "data.txt": "data",
             "bigdir": {
                 "a.bw": "aaa",
-                "a.bw.dvc": SCORES_DVC_CONTENT,
+                "a.bw.dvc": A_BW_DVC_CONTENT,
                 "b.bw": "bbb",
             },
-            "bigdir.dvc": SCORES_DVC_CONTENT,
+            "bigdir.dvc": BIGDIR_DVC_CONTENT,
             ".gitignore": "/bigdir\n",
         },
     })
