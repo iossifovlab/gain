@@ -184,6 +184,7 @@ test.describe('Quota changes', () => {
     test.beforeEach(async({ page }) => {
       await page.goto('/', { waitUntil: 'load' });
       await utils.waitForSession(page);
+      await utils.deleteAnonymousJobs(page);
       // IP quota is shared across parallel workers — keep it far above the
       // session value so min(session, ip) == session always, making exact
       // toBe assertions independent of what other workers consume.
@@ -334,6 +335,11 @@ test.describe('Quota limit', () => {
     test.beforeEach(async({ page }) => {
       await page.goto('/single-annotation', { waitUntil: 'load' });
       await utils.waitForSession(page);
+      // Reset accumulated anonymous jobs so this IP is below can_create()'s
+      // hard per-IP daily-jobs cap (2); otherwise the job-quota-exhausted test
+      // below trips "Daily job limit reached!" instead of the intended
+      // "Job quota exceeded!" (iossifovlab/gain#216).
+      await utils.deleteAnonymousJobs(page);
       // IP stays high so the initial "> 0" check always passes;
       // tests set only the session quota to 0 to avoid blocking parallel workers.
       await utils.setAnonymousUserIpQuota(page, 'daily_variants', 100_000);

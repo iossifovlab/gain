@@ -1,9 +1,11 @@
 # pylint: disable=W0621,C0114,C0116
+import pathlib
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 from admin_panel.views import (
+    DeleteAnonymousJobsView,
     ResetDailyQuotaView,
     ResetMonthlyQuotaView,
     SetCurrentQuotaView,
@@ -15,6 +17,7 @@ from rest_framework.response import Response
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from web_annotation.models import (
+    AnonymousJob,
     AnonymousUserQuota,
     DailyQuotaRefreshLog,
     MonthlyQuotaRefreshLog,
@@ -766,4 +769,123 @@ def test_set_ip_quota_invalid_amount(
     })
     force_authenticate(request, user=_anon())
     response = SetIpQuotaView.as_view()(request)
+    assert response.status_code == 400
+
+
+# --- delete_anonymous_jobs ---
+
+def _make_anon_job(
+    tmp_path: pathlib.Path,
+    ip: str,
+    tag: str,
+    status: int = AnonymousJob.Status.SUCCESS,
+) -> tuple[AnonymousJob, dict[str, pathlib.Path]]:
+    paths = {
+        "input_path": tmp_path / f"input-{tag}.vcf",
+        "config_path": tmp_path / f"config-{tag}.yaml",
+        "result_path": tmp_path / f"result-{tag}.vcf",
+    }
+    for path in paths.values():
+        path.write_text("mock data")
+    job = AnonymousJob.objects.create(
+        owner=f"anon_{tag}",
+        ip=ip,
+        status=status,
+        **{key: str(value) for key, value in paths.items()},
+    )
+    return job, paths
+
+
+def test_delete_anonymous_jobs_returns_204(
+    factory: APIRequestFactory,
+) -> None:
+    request = factory.get("/admin-panel/delete-anonymous-jobs")
+    force_authenticate(request, user=_anon())
+    response = DeleteAnonymousJobsView.as_view()(request)
+    assert response.status_code == 204
+
+
+def test_delete_anonymous_jobs_removes_rows_and_files(
+    factory: APIRequestFactory,
+    tmp_path: pathlib.Path,
+) -> None:
+    job1, paths1 = _make_anon_job(tmp_path, "127.0.0.1", "one")
+    job2, paths2 = _make_anon_job(tmp_path, "127.0.0.1", "two")
+
+    request = factory.get("/admin-panel/delete-anonymous-jobs")
+    force_authenticate(request, user=_anon())  # anon ip is 127.0.0.1
+    response = DeleteAnonymousJobsView.as_view()(request)
+
+    assert response.status_code == 204
+    assert not AnonymousJob.objects.filter(pk=job1.pk).exists()
+    assert not AnonymousJob.objects.filter(pk=job2.pk).exists()
+    for path in (*paths1.values(), *paths2.values()):
+        assert not path.exists(), f"{path} not cleaned up"
+
+
+def test_delete_anonymous_jobs_leaves_other_ip_untouched(
+    factory: APIRequestFactory,
+    tmp_path: pathlib.Path,
+) -> None:
+    mine, _ = _make_anon_job(tmp_path, "127.0.0.1", "mine")
+    other, other_paths = _make_anon_job(tmp_path, "9.9.9.9", "other")
+
+    request = factory.get("/admin-panel/delete-anonymous-jobs")
+    force_authenticate(request, user=_anon())
+    DeleteAnonymousJobsView.as_view()(request)
+
+    assert not AnonymousJob.objects.filter(pk=mine.pk).exists()
+    assert AnonymousJob.objects.filter(pk=other.pk).exists()
+    for path in other_paths.values():
+        assert path.exists(), f"{path} for a different ip was deleted"
+
+
+def test_delete_anonymous_jobs_deletes_active_too(
+    factory: APIRequestFactory,
+    tmp_path: pathlib.Path,
+) -> None:
+    # Full test reset: unlike the production janitor, this endpoint also
+    # deletes active (WAITING/IN_PROGRESS) jobs for a clean slate.
+    active, active_paths = _make_anon_job(
+        tmp_path, "127.0.0.1", "active",
+        status=AnonymousJob.Status.IN_PROGRESS,
+    )
+
+    request = factory.get("/admin-panel/delete-anonymous-jobs")
+    force_authenticate(request, user=_anon())
+    DeleteAnonymousJobsView.as_view()(request)
+
+    assert not AnonymousJob.objects.filter(pk=active.pk).exists()
+    for path in active_paths.values():
+        assert not path.exists()
+
+
+def test_delete_anonymous_jobs_respects_ip_param(
+    factory: APIRequestFactory,
+    tmp_path: pathlib.Path,
+) -> None:
+    target, target_paths = _make_anon_job(tmp_path, "5.5.5.5", "target")
+    mine, mine_paths = _make_anon_job(tmp_path, "127.0.0.1", "mine")
+
+    request = factory.get(
+        "/admin-panel/delete-anonymous-jobs", {"ip": "5.5.5.5"})
+    force_authenticate(request, user=_anon())
+    DeleteAnonymousJobsView.as_view()(request)
+
+    assert not AnonymousJob.objects.filter(pk=target.pk).exists()
+    for path in target_paths.values():
+        assert not path.exists()
+    # The explicit ip param wins; the caller's own ip is left alone.
+    assert AnonymousJob.objects.filter(pk=mine.pk).exists()
+    for path in mine_paths.values():
+        assert path.exists()
+
+
+def test_delete_anonymous_jobs_returns_400_for_authenticated_user(
+    factory: APIRequestFactory,
+) -> None:
+    request = factory.get("/admin-panel/delete-anonymous-jobs")
+    force_authenticate(
+        request, user=User.objects.get(email="user@example.com"))
+    response = DeleteAnonymousJobsView.as_view()(request)
     assert response.status_code == 400

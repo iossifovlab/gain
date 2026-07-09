@@ -144,6 +144,16 @@ export async function setAnonymousUserIpQuota(
   expect(response.status()).toBe(200);
 }
 
+// Reset the accumulated anonymous jobs for the caller's IP. Completed anonymous
+// jobs are no longer reaped on WebSocket disconnect (iossifovlab/gain#216), so
+// they pile up across tests on the shared CI IP and trip can_create()'s hard
+// per-IP daily-jobs cap. Call this in beforeEach (after waitForSession) so each
+// job-creating anonymous test starts from zero rows.
+export async function deleteAnonymousJobs(page: Page): Promise<void> {
+  const response = await page.request.get(`${backendUrl}/admin-panel/delete-anonymous-jobs`);
+  expect(response.status()).toBe(204);
+}
+
 export async function waitForSession(page: Page): Promise<void> {
   await expect.poll(async() => {
     const cookies = await page.context().cookies();

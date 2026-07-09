@@ -454,21 +454,22 @@ class WebAnnotationAnonymousUser(BaseUser, AnonymousUser):
         return list(jobs)
 
     def delete_jobs(self) -> None:
-        """Delete the user's jobs, sparing any that are still running.
+        """Anonymous jobs are never deleted on WebSocket lifecycle (#216).
 
         Called when an anonymous user's last WebSocket disconnects
-        (see ``AnnotationStateConsumer.disconnect``). A job that is still
-        ``WAITING`` or ``IN_PROGRESS`` is left untouched so its result file is
-        not unlinked out from under an in-flight annotation task, which would
-        make the job's ``on_success`` ``stat`` fail with ``[Errno 2]``.
+        (see ``AnnotationStateConsumer.disconnect``). gain#147 already spared
+        active (``WAITING``/``IN_PROGRESS``) jobs so their result files were
+        not unlinked out from under an in-flight annotation task (its
+        ``on_success`` ``stat`` would fail with ``[Errno 2]``). #216 spares
+        terminal (``SUCCESS``/``FAILED``) jobs too: destroying a just-completed
+        job and its result file on any last-subscriber socket drop (daphne
+        restart, network blip, proxy/idle timeout, reconnect-backoff window)
+        404s a captured download link.
+
+        Result-file lifetime is therefore decoupled from the socket lifecycle;
+        stale anonymous jobs are reaped by age instead, via the
+        ``cleanup_anonymous_jobs`` management command. Nothing is deleted here.
         """
-        jobs = self.job_class.objects.filter(
-            owner=self.as_owner,
-        ).exclude(
-            status__in=self.job_class.ACTIVE_STATUSES,
-        )
-        for job in jobs:
-            job.delete()
 
     def can_create(self) -> bool:
         """Check if a anonymous user is not limited by the daily quota."""
@@ -648,11 +649,18 @@ class BaseJob(models.Model):
     is_active = models.BooleanField(default=True)
 
     def _cleanup_files(self) -> None:
-        """Clean up job files."""
-        os.remove(self.input_path)
-        os.remove(self.config_path)
-        if pathlib.Path(self.result_path).exists():
-            os.remove(self.result_path)
+        """Clean up job files, tolerating already-missing ones.
+
+        ``unlink(missing_ok=True)`` makes ``deactivate()``/``delete()``
+        idempotent w.r.t. disk state: a job whose input/config/result file is
+        already gone (a prior cleanup interrupted by SIGTERM/OOM between the
+        unlink and the DB row delete, or manual cleanup) does not raise
+        ``FileNotFoundError``. Otherwise one such row would abort the
+        ``cleanup_anonymous_jobs`` janitor and wedge it forever (#216).
+        """
+        pathlib.Path(self.input_path).unlink(missing_ok=True)
+        pathlib.Path(self.config_path).unlink(missing_ok=True)
+        pathlib.Path(self.result_path).unlink(missing_ok=True)
 
     def deactivate(self) -> None:
         """Diactivate a job and clean its resources."""

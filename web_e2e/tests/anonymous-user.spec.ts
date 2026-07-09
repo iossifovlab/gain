@@ -10,6 +10,7 @@ test.describe('Anonymous user tests', () => {
     // wait for default pipeline to load
     await PipelineEditor.waitForLoaded(page);
     await utils.waitForSession(page);
+    await utils.deleteAnonymousJobs(page);
     await utils.setAnonymousUserIpQuota(page, 'daily_jobs', 100_000);
     await utils.setAnonymousUserSessionQuota(page, 'daily_jobs', 1_000);
     await utils.setAnonymousUserIpQuota(page, 'daily_variants', 100_000);
@@ -238,6 +239,8 @@ test.describe('Web socket tests', () => {
     await page.goto('/', {waitUntil: 'load'});
     // wait for default pipeline to load
     await PipelineEditor.waitForLoaded(page);
+    await utils.waitForSession(page);
+    await utils.deleteAnonymousJobs(page);
   });
 
   test('should download job result by link copy', async({ page }) => {
