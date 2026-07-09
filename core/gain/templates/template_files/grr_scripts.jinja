@@ -291,6 +291,191 @@
 
     </script>
     <script type="module">
+        // ---- Hierarchical (tree) view ----
+        // Builds a folder tree from the '/'-separated resource full ids in
+        // window.rowData (populated synchronously by the script above) and
+        // renders it as an alternative to the flat table.
+        (function () {
+            const rowData = window.rowData || {};
+
+            // Mirror gain.utils.helpers.convert_size so aggregated folder
+            // sizes are formatted the same way as the per-resource sizes.
+            function formatSize(bytes) {
+                if (!bytes) return "0B";
+                const suffix = ["B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
+                const exp = Math.floor(Math.log(bytes) / Math.log(1024));
+                const size = Math.round(bytes / Math.pow(1024, exp) * 100) / 100;
+                return size + " " + suffix[exp];
+            }
+
+            function escapeHtml(value) {
+                return String(value == null ? "" : value).replace(/[&<>"']/g, (c) => ({
+                    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+                }[c]));
+            }
+
+            function makeNode(name, path) {
+                return { name, path, children: {}, resources: [], count: 0, bytes: 0 };
+            }
+
+            const root = makeNode("All resources", []);
+            for (const fullId of Object.keys(rowData)) {
+                const parts = fullId.split("/");
+                let node = root;
+                for (let i = 0; i < parts.length - 1; i++) {
+                    const seg = parts[i];
+                    if (!node.children[seg]) {
+                        node.children[seg] = makeNode(seg, parts.slice(0, i + 1));
+                    }
+                    node = node.children[seg];
+                }
+                node.resources.push({
+                    name: parts[parts.length - 1], fullId, data: rowData[fullId],
+                });
+            }
+
+            // Precompute recursive resource count + total size for every folder.
+            (function aggregate(node) {
+                let count = node.resources.length;
+                let bytes = node.resources.reduce((s, r) => s + (r.data.sizeInBytes || 0), 0);
+                for (const key of Object.keys(node.children)) {
+                    aggregate(node.children[key]);
+                    count += node.children[key].count;
+                    bytes += node.children[key].bytes;
+                }
+                node.count = count;
+                node.bytes = bytes;
+            })(root);
+
+            function getNode(path) {
+                let node = root;
+                for (const seg of path) {
+                    if (!node.children[seg]) return null;
+                    node = node.children[seg];
+                }
+                return node;
+            }
+
+            const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+
+            const breadcrumbEl = document.getElementById("breadcrumb");
+            const listEl = document.getElementById("hierarchical-list");
+            let currentPath = [];
+
+            function renderBreadcrumb() {
+                breadcrumbEl.innerHTML = "";
+                const crumbs = [{ name: "All resources", path: [] }];
+                currentPath.forEach((seg, i) => {
+                    crumbs.push({ name: seg, path: currentPath.slice(0, i + 1) });
+                });
+                crumbs.forEach((crumb, i) => {
+                    if (i > 0) {
+                        const sep = document.createElement("span");
+                        sep.className = "breadcrumb-sep";
+                        sep.textContent = "/";
+                        breadcrumbEl.appendChild(sep);
+                    }
+                    const isLast = i === crumbs.length - 1;
+                    const el = document.createElement(isLast ? "span" : "a");
+                    el.textContent = crumb.name;
+                    el.className = "breadcrumb-item" + (isLast ? " current" : "");
+                    if (!isLast) {
+                        el.href = "#";
+                        el.addEventListener("click", (e) => {
+                            e.preventDefault();
+                            navigateTo(crumb.path);
+                        });
+                    }
+                    breadcrumbEl.appendChild(el);
+                });
+            }
+
+            function renderList() {
+                const node = getNode(currentPath);
+                listEl.innerHTML = "";
+                if (!node) return;
+
+                for (const folder of Object.values(node.children).sort(byName)) {
+                    const row = document.createElement("div");
+                    row.className = "hv-row hv-folder";
+                    row.innerHTML =
+                        '<span class="material-symbols-outlined hv-icon">folder</span>'
+                        + '<div class="hv-main">'
+                        + '<span class="hv-name">' + escapeHtml(folder.name) + "</span>"
+                        + '<span class="hv-count">(' + folder.count + ")</span>"
+                        + "</div>"
+                        + '<span class="hv-size">' + escapeHtml(formatSize(folder.bytes)) + "</span>";
+                    row.addEventListener("click", () => navigateTo(folder.path));
+                    listEl.appendChild(row);
+                }
+
+                for (const res of [...node.resources].sort(byName)) {
+                    const d = res.data;
+                    const meta = [
+                        d.type,
+                        d.version ? "v" + d.version : null,
+                        d.summary,
+                    ].filter(Boolean).join(" · ");
+                    const row = document.createElement("div");
+                    row.className = "hv-row hv-resource";
+                    row.innerHTML =
+                        '<span class="material-symbols-outlined hv-icon">description</span>'
+                        + '<div class="hv-main">'
+                        + '<a class="hv-name hv-link" href="' + escapeHtml(d.url) + '">'
+                        + escapeHtml(res.name) + "</a>"
+                        + '<span class="hv-meta" title="' + escapeHtml(meta) + '">' + escapeHtml(meta) + "</span>"
+                        + "</div>"
+                        + '<span class="hv-size">' + escapeHtml(d.size) + "</span>";
+                    listEl.appendChild(row);
+                }
+
+                if (!Object.keys(node.children).length && !node.resources.length) {
+                    const empty = document.createElement("div");
+                    empty.className = "hv-empty";
+                    empty.textContent = "No resources";
+                    listEl.appendChild(empty);
+                }
+            }
+
+            function navigateTo(path) {
+                currentPath = path;
+                renderBreadcrumb();
+                renderList();
+            }
+
+            // ---- View toggle ----
+            const tableBtn = document.getElementById("table-view-btn");
+            const hierBtn = document.getElementById("hierarchical-view-btn");
+            const tableWrapper = document.getElementById("table-wrapper");
+            const hierWrapper = document.getElementById("hierarchical-wrapper");
+            const searchContainer = document.getElementById("search-container");
+            const searchField = document.getElementById("search-field");
+            const typeFilter = document.getElementById("type-filter");
+            const statusEl = document.getElementById("status");
+
+            function setView(view) {
+                const isHier = view === "hierarchical";
+                hierBtn.classList.toggle("active", isHier);
+                tableBtn.classList.toggle("active", !isHier);
+                tableWrapper.style.display = isHier ? "none" : "";
+                hierWrapper.style.display = isHier ? "" : "none";
+                if (statusEl) statusEl.style.display = isHier ? "none" : "";
+                // Search + type filter are table-view only.
+                searchField.disabled = isHier;
+                typeFilter.disabled = isHier;
+                searchContainer.classList.toggle("disabled", isHier);
+                if (isHier) navigateTo(currentPath);
+            }
+
+            tableBtn.addEventListener("click", () => setView("table"));
+            hierBtn.addEventListener("click", () => setView("hierarchical"));
+
+            // Pre-render the tree so switching views is instant. Table stays default.
+            renderBreadcrumb();
+            renderList();
+        })();
+    </script>
+    <script type="module">
         const table = document.getElementById('resource-table');
         const cols = Array.from(table.querySelectorAll('colgroup col'));
         const ths = Array.from(table.querySelectorAll('thead th'));

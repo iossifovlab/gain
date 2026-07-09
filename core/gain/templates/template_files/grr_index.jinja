@@ -221,6 +221,168 @@
         pointer-events: none;
         will-change: transform;
       }
+
+      /* ---- View toggle + hierarchical view ---- */
+      #view-toggle-row {
+        margin: 10px 10% 0;
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      #view-toggle {
+        display: inline-flex;
+        border: 1px solid #85a2b9;
+        border-radius: 6px;
+        overflow: hidden;
+      }
+
+      .view-btn {
+        border: none;
+        background: white;
+        color: #24699E;
+        font-size: 15px;
+        font-family: inherit;
+        padding: 8px 16px;
+        cursor: pointer;
+      }
+
+      .view-btn + .view-btn {
+        border-left: 1px solid #85a2b9;
+      }
+
+      .view-btn.active {
+        background: #5b778c;
+        color: white;
+        cursor: default;
+      }
+
+      #search-container.disabled {
+        opacity: 0.5;
+      }
+
+      #search-container.disabled #type-filter,
+      #search-container.disabled #search-field {
+        cursor: not-allowed;
+      }
+
+      #hierarchical-wrapper {
+        margin: 10px 10%;
+      }
+
+      #breadcrumb {
+        margin-bottom: 8px;
+        font-size: 15px;
+      }
+
+      .breadcrumb-item {
+        color: #252e34;
+      }
+
+      a.breadcrumb-item:hover {
+        color: #4C93C9;
+        text-decoration: underline;
+        cursor: pointer;
+      }
+
+      .breadcrumb-item.current {
+        color: #24699E;
+      }
+
+      .breadcrumb-sep {
+        color: #85a2b9;
+        margin: 0 2px;
+      }
+
+      #hierarchical-list {
+        border: 1px solid #cfd8df;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .hv-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 16px;
+        border-bottom: 1px solid #eef2f5;
+      }
+
+      .hv-row:last-child {
+        border-bottom: none;
+      }
+
+      .hv-folder {
+        cursor: pointer;
+      }
+
+      .hv-row:hover {
+        background: #f5f8fb;
+      }
+
+      .hv-icon {
+        font-size: 22px;
+        color: #85a2b9;
+        flex-shrink: 0;
+      }
+
+      .hv-main {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        flex: 1;
+      }
+
+      .hv-folder .hv-main {
+        flex-direction: row;
+        align-items: baseline;
+        gap: 8px;
+      }
+
+      .hv-name {
+        color: #252e34;
+        font-size: 15px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .hv-link {
+        color: #24699E;
+      }
+
+      .hv-link:hover {
+        color: #4C93C9;
+        text-decoration: underline;
+      }
+
+      .hv-count {
+        color: #85a2b9;
+        font-size: 13px;
+        flex-shrink: 0;
+      }
+
+      .hv-meta {
+        color: #8a9aa8;
+        font-size: 12px;
+        margin-top: 2px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .hv-size {
+        color: #aebccb;
+        font-size: 14px;
+        flex-shrink: 0;
+        margin-left: auto;
+        white-space: nowrap;
+      }
+
+      .hv-empty {
+        padding: 16px;
+        text-align: center;
+        color: #8a9aa8;
+      }
     </style>
  </head>
 {% include "grr_scripts.jinja" %}
@@ -255,6 +417,12 @@
             SQLite's FTS syntax.</a>
         </div>
         <p id="status-error"></p>
+        <div id="view-toggle-row">
+          <div id="view-toggle">
+            <button type="button" id="table-view-btn" class="view-btn active">Table view</button>
+            <button type="button" id="hierarchical-view-btn" class="view-btn">Hierarchical view</button>
+          </div>
+        </div>
         <div id="status"></div>
         <div id="table-wrapper">
         <table id="resource-table" class="contents">
@@ -297,6 +465,10 @@
             {%- endfor %}
           </tbody>
         </table>
+        </div>
+        <div id="hierarchical-wrapper" style="display: none;">
+          <nav id="breadcrumb"></nav>
+          <div id="hierarchical-list"></div>
         </div>
         <p class="searching" style="display: none;">Searching</p>
      </div>
