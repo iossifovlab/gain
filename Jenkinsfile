@@ -82,7 +82,26 @@ def runProject(Map args) {
 }
 
 def publishReports(String name) {
-    junit allowEmptyResults: true, testResults: "reports/${name}/*.xml"
+    // Test failures must FAIL the build; lint/type findings only mark it
+    // UNSTABLE.
+    //
+    // `exit $pytest_exit` in runProject was meant to FAIL on test failures, but
+    // in practice the shell exit never failed the Jenkins step, so builds only
+    // ever went UNSTABLE (via junit marking the test failures) and kept going
+    // — e.g. still pushing images. So gate explicitly here: publish the test
+    // report with skipMarkingBuildUnstable (junit doesn't touch the result),
+    // capture its failure count, and error() -> FAILURE if anything failed.
+    // Publish the lint/type reports separately with the default marking so
+    // ruff/mypy/pylint findings still surface as UNSTABLE (non-gating).
+    def testResults = junit(
+        allowEmptyResults: true,
+        skipMarkingBuildUnstable: true,
+        testResults: "reports/${name}/pytest.xml,reports/${name}/jest.xml",
+    )
+    junit allowEmptyResults: true,
+          testResults: "reports/${name}/ruff.xml," +
+                       "reports/${name}/mypy.xml," +
+                       "reports/${name}/pylint.xml"
     // `id` gives each sub-project its own coverage URL + sidebar action
     // and `name` the chart title — otherwise every report collides at
     // `/coverage` and is labelled "Code Coverage Trend".
@@ -93,6 +112,9 @@ def publishReports(String name) {
         skipPublishingChecks: true,
         failOnError: false,
     )
+    if (testResults != null && testResults.failCount > 0) {
+        error("${name}: ${testResults.failCount} test(s) failed")
+    }
 }
 
 pipeline {
