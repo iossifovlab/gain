@@ -71,6 +71,7 @@ export class AppComponent implements DoCheck, OnInit, OnDestroy {
    */
   private keepSocketAlive(): void {
     this.socketKeepAliveSubscription.unsubscribe();
+    this.socketNotificationsService.ensureConnected();
     this.socketKeepAliveSubscription = this.socketNotificationsService.getJobNotifications().subscribe({
       error: (err) => {
         // A dropped socket surfaces here (CloseEvent for a graceful/unclean

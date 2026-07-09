@@ -16,6 +16,7 @@ describe('SocketNotificationsService', () => {
     subject = new Subject<object>();
     (webSocket as unknown as jest.Mock).mockReturnValue(subject);
     service = new SocketNotificationsService();
+    service.ensureConnected();
   });
 
   afterEach(() => {
@@ -102,6 +103,7 @@ describe('SocketNotificationsService', () => {
       });
       (webSocket as unknown as jest.Mock).mockReturnValue(mockWs);
       service = new SocketNotificationsService();
+      service.ensureConnected();
       return { subjects: subjects };
     }
 
