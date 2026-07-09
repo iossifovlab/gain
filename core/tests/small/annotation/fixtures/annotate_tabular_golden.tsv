@@ -1,7 +1,7 @@
-chrom	pos	ref	alt	mem_float	mem_int	mem_str	mem_by_index	mem_big	tbx_float	tbx_by_index	bw_value	VCF_FLOAT	VCF_INT	VCF_AF	VCF_STR	VCF_STR_MULTI
-chr1	10	A	T	0.1	1	alpha	100	12345.7	0.75	7	0.11	0.5	11	0.05	benign	a|b
-chr1	11	A	T	0.2	2	beta	200	100		8	0.22	0.6	12	0.06	likely_pathogenic	
-chr1	12	A	T		3	gamma	300	100			0.22					
-chr1	99	A	T													
-chr2	20	C	G	0.123	4	delta	400	1e+05	0.25	9	0.33	0.7	13	0.07		x|y|z
-chr2	21	C	G	-0.0015	5	eps	500	0			0.33					
+chrom	pos	ref	alt	mem_float	mem_int	mem_str	mem_by_index	mem_big	tbx_float	tbx_by_index	a_score	a_label	bw_value	VCF_FLOAT	VCF_INT	VCF_AF	VCF_STR	VCF_STR_MULTI
+chr1	10	A	T	0.1	1	alpha	100	12345.7	0.75	7	0.9	hit	0.11	0.5	11	0.05	benign	a|b
+chr1	11	A	T	0.2	2	beta	200	100		8		na_row	0.22	0.6	12	0.06	likely_pathogenic	
+chr1	12	A	T		3	gamma	300	100					0.22					
+chr1	99	A	T															
+chr2	20	C	G	0.123	4	delta	400	1e+05	0.25	9	0.7	two	0.33	0.7	13	0.07		x|y|z
+chr2	21	C	G	-0.0015	5	eps	500	0					0.33					

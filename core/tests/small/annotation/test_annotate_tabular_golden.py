@@ -20,12 +20,14 @@ import textwrap
 
 import pytest
 from gain.annotation.annotate_tabular import cli
-from gain.genomic_resources.testing import (
-    setup_bigwig,
-    setup_denovo,
-    setup_directories,
-    setup_tabix,
-    setup_vcf,
+from gain.genomic_resources.testing import setup_denovo, setup_directories
+from gain.genomic_resources.testing.builders import (
+    GRRBuilder,
+    a_bigwig_score,
+    a_grr,
+    a_position_score,
+    a_vcf_info_score,
+    an_allele_score,
 )
 
 GOLDEN_PATH = (
@@ -66,13 +68,30 @@ MEM_DATA = """
     chr2   21         -1.5e-3                5      eps    500      0.0
 """
 
-# tabix: '#'-prefixed header, chrom_mapping add_prefix, an explicit
-# pos_end column, and an NA in the middle of the file.
+# tabix: the builder comments the header line and derives the seq/start/
+# end columns from it.  Contigs are unprefixed and mapped with
+# add_prefix, and an NA sits mid-file.
 TABIX_DATA = """
-    #chrom  pos_begin  pos_end  tbx_float  tbx_extra
-    1       10         10       0.75       7
-    1       11         11       NA         8
-    2       20         20       0.25       9
+    chrom  pos_begin  pos_end  tbx_float  tbx_extra
+    1      10         10       0.75       7
+    1      11         11       NA         8
+    2      20         20       0.25       9
+"""
+
+# tabix allele score: the only resource here that reads reference and
+# alternative as TABLE COLUMNS through Line, rather than off VCFLine's
+# attributes -- so it is what pins ref_key/alt_key resolution and the
+# ref/alt carried on a tabix record.
+#
+# chr1:10 carries two rows differing only in `alternative`.  The input
+# asks for A>T, so a_score must be 0.9 and never 0.8; picking the wrong
+# allele is otherwise a silent, plausible-looking value.
+ALLELE_DATA = """
+    chrom  pos_begin  pos_end  reference  alternative  a_score  a_label
+    1      10         10       A          T            0.9      hit
+    1      10         10       A          C            0.8      wrong_alt
+    1      11         11       A          T            NA       na_row
+    2      20         20       C          G            0.7      two
 """
 
 # bigWig: bedGraph intervals are 0-based half-open, so 1-based position
@@ -118,6 +137,11 @@ ANNOTATION = """
         attributes:
         - source: tbx_float
         - source: tbx_by_index
+    - allele_score:
+        resource_id: allele_score
+        attributes:
+        - source: a_score
+        - source: a_label
     - position_score:
         resource_id: bigwig_score
         attributes:
@@ -132,98 +156,60 @@ ANNOTATION = """
         - source: VCF_STR_MULTI
 """
 
-MEM_RESOURCE = """
-    type: position_score
-    table:
-        filename: data.txt
-    scores:
-    - id: mem_float
-      type: float
-      name: s_float
-    - id: mem_int
-      type: int
-      name: s_int
-    - id: mem_str
-      type: str
-      name: s_str
-    - id: mem_by_index
-      type: int
-      column_index: 5
-    - id: mem_big
-      type: float
-      name: s_big
-"""
 
-TABIX_RESOURCE = """
-    type: position_score
-    table:
-        filename: data.txt.gz
-        format: tabix
-        chrom_mapping:
-            add_prefix: chr
-    scores:
-    - id: tbx_float
-      type: float
-      name: tbx_float
-    - id: tbx_by_index
-      type: int
-      column_index: 4
-"""
-
-BIGWIG_RESOURCE = """
-    type: position_score
-    table:
-        filename: data.bw
-    scores:
-    - id: bw_value
-      type: float
-      index: 3
-"""
-
-VCF_RESOURCE = """
-    type: allele_score
-    table:
-        filename: data.vcf.gz
-"""
+def _golden_grr_builder() -> GRRBuilder:
+    """Compose the four-backend GRR used by the golden run."""
+    return (
+        a_grr()
+        .with_resource(
+            "mem_score",
+            a_position_score()
+            .with_score("mem_float", "float", column_name="s_float")
+            .with_score("mem_int", "int", column_name="s_int")
+            .with_score("mem_str", "str", column_name="s_str")
+            .with_score("mem_by_index", "int", column_index=5)
+            .with_score("mem_big", "float", column_name="s_big")
+            .with_data(MEM_DATA),
+        )
+        .with_resource(
+            "tabix_score",
+            a_position_score()
+            .with_tabix()
+            .with_chrom_mapping(add_prefix="chr")
+            .with_score("tbx_float", "float", column_name="tbx_float")
+            .with_score("tbx_by_index", "int", column_index=4)
+            .with_data(TABIX_DATA),
+        )
+        .with_resource(
+            "allele_score",
+            an_allele_score()
+            .with_tabix()
+            .with_chrom_mapping(add_prefix="chr")
+            .with_score("a_score", "float", column_name="a_score")
+            .with_score("a_label", "str", column_index=6)
+            .with_data(ALLELE_DATA),
+        )
+        .with_resource(
+            "bigwig_score",
+            a_bigwig_score()
+            .with_score("bw_value", "float")
+            .with_data(BIGWIG_DATA)
+            .with_chrom_lens({"chr1": 1000, "chr2": 2000}),
+        )
+        .with_resource(
+            "vcf_score",
+            a_vcf_info_score().with_data(VCF_DATA),
+        )
+    )
 
 
 @pytest.fixture(scope="module")
 def golden_grr(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
     """Build a four-backend GRR and pipeline config on the filesystem."""
     root_path = tmp_path_factory.mktemp("annotate_tabular_golden")
+    _golden_grr_builder().build_definition(root_path, grr_id="golden")
     setup_directories(
-        root_path,
-        {
-            "annotation.yaml": textwrap.dedent(ANNOTATION),
-            "grr.yaml": textwrap.dedent(f"""
-                id: golden
-                type: dir
-                directory: "{root_path}/grr"
-            """),
-            "grr": {
-                "mem_score": {
-                    "genomic_resource.yaml": textwrap.dedent(MEM_RESOURCE),
-                },
-                "tabix_score": {
-                    "genomic_resource.yaml": textwrap.dedent(TABIX_RESOURCE),
-                },
-                "bigwig_score": {
-                    "genomic_resource.yaml": textwrap.dedent(BIGWIG_RESOURCE),
-                },
-                "vcf_score": {
-                    "genomic_resource.yaml": textwrap.dedent(VCF_RESOURCE),
-                },
-            },
-        },
-    )
-    setup_denovo(root_path / "grr" / "mem_score" / "data.txt", MEM_DATA)
-    setup_tabix(
-        root_path / "grr" / "tabix_score" / "data.txt.gz", TABIX_DATA,
-        seq_col=0, start_col=1, end_col=2)
-    setup_bigwig(
-        root_path / "grr" / "bigwig_score" / "data.bw", BIGWIG_DATA,
-        {"chr1": 1000, "chr2": 2000})
-    setup_vcf(root_path / "grr" / "vcf_score" / "data.vcf.gz", VCF_DATA)
+        root_path, {"annotation.yaml": textwrap.dedent(ANNOTATION)})
     return root_path
 
 
