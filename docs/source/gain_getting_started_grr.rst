@@ -189,10 +189,10 @@ lists the pseudoautosomal regions on chromosomes X and Y.
     chrom_prefix: "chr"
 
     PARS:
-    "X":
+      "X":
         - "chrX:10000-2781479"
         - "chrX:155701382-156030895"
-    "Y":
+      "Y":
         - "chrY:10000-2781479"
         - "chrY:56887902-57217415"
 
@@ -271,17 +271,17 @@ in chromosome 1. In your ``my_GRR`` directory, create a directory called ``my_mi
 
 
 
-Create a new text file with the content below and save it as ``mini_positionscore.tsv``.
-The first column is the chromosome name, the second column is the 0-based position, and the third column is the score value.
+Run the following command to create a tab-separated file called ``mini_positionscore.tsv``. The file has three columns: the first column is the chromosome name, the second column is the 0-based position, and the third column is the score value.
 
+.. code-block:: bash
 
-.. code-block:: text
-
+    cat > mini_positionscore.tsv <<'EOF'
     chr1	0	0
     chr1	1	0.1
     chr1	2	0.2
     chr1	3	0.3
     chr1	4	0.4
+    EOF
 
 
 Next, create a ``genomic_resource.yaml`` file in the ``my_miniposition`` directory with the following content:
@@ -291,14 +291,13 @@ Next, create a ``genomic_resource.yaml`` file in the ``my_miniposition`` directo
     type: position_score
 
     table:
-    filename: mini_positionscore.tsv
-    zero_based: True
-
-    chrom:
+      filename: mini_positionscore.tsv
+      zero_based: True
+      chrom:
         index: 0
-    pos_begin:
+      pos_begin:
         index: 1
-    pos_end:
+      pos_end:
         index: 1
 
     scores:
@@ -385,12 +384,11 @@ Next, let's create a toy allele score resource. In ``my_GRR``, create a new dire
     cd my_miniallele
 
 
-Create a new text file with the content below and save it as ``mini_allelescore.tsv``.
-The first column is the chromosome name, the second column is the 0-based position. Third and fourth columns show the reference and alternate alleles. 
-Last two columns are two allele scores, one is a numerical score and the second is a class represented by strings.
+Run the following command to create a tab-separated allele score file called ``mini_allelescore.tsv``. The file has six columns: chromosome name, 0-based position, reference allele, alternate allele, a numerical allele score, and an allele class represented by strings.
 
-.. code-block:: text
+.. code-block:: bash
 
+    cat > mini_allelescore.tsv <<'EOF'
     #chrom	pos	ref	alt	allele_score	allele_class
     chr1	0	T	A	1	good
     chr1	0	T	C	1.1	bad
@@ -398,6 +396,7 @@ Last two columns are two allele scores, one is a numerical score and the second 
     chr2	4	A	T	2	good
     chr2	4	A	C	2.1	bad
     chr2	4	A	G	2.2	bad
+    EOF
 
 
 
