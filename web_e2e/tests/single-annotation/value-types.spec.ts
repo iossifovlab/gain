@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { PipelineEditor } from '../../pages/pipeline-editor.page';
+import { SingleAnnotation } from '../../pages/single-annotation.page';
 import * as utils from '../../utils';
 import {
   strTypePipeline,
@@ -21,54 +22,50 @@ test.describe('Single annotation value type rendering', () => {
   });
 
   test('should render str value as inline scalar in compact and full report', async({ page }) => {
+    const singleAnnotation = new SingleAnnotation(page);
     await strTypePipeline(page);
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    await singleAnnotation.annotate('chr1 11796321 G A');
 
-    await expect(page.locator('.compact-value-result').first()).toHaveText('missense');
+    await expect(singleAnnotation.compactValueResults.first()).toHaveText('missense');
 
-    await page.locator('.switch').click();
-    await expect(page.locator('.value-result').first()).toHaveText('missense');
+    await singleAnnotation.toggleFullReport();
+    await expect(singleAnnotation.valueResults.first()).toHaveText('missense');
     await expect(page.locator('.value-grid-container')).not.toBeVisible();
   });
 
   test('should render float value as formatted scalar in compact and full report', async({ page }) => {
+    const singleAnnotation = new SingleAnnotation(page);
     await floatTypePipeline(page);
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    await singleAnnotation.annotate('chr1 11796321 G A');
 
-    await expect(page.locator('.compact-value-result').first()).toHaveText('0.323');
+    await expect(singleAnnotation.compactValueResults.first()).toHaveText('0.323');
 
-    await page.locator('.switch').click();
-    await expect(page.locator('.value-result').first()).toHaveText('0.323');
+    await singleAnnotation.toggleFullReport();
+    await expect(singleAnnotation.valueResults.first()).toHaveText('0.323');
     await expect(page.locator('.value-grid-container')).not.toBeVisible();
   });
 
   test('should render annotatable value as its string form in compact and full report', async({ page }) => {
+    const singleAnnotation = new SingleAnnotation(page);
     await annotatableTypePipeline(page);
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    await singleAnnotation.annotate('chr1 11796321 G A');
 
-    await expect(page.locator('.compact-value-result').first()).toHaveText('chr1:11796321 G>A');
+    await expect(singleAnnotation.compactValueResults.first()).toHaveText('chr1:11796321 G>A');
 
-    await page.locator('.switch').click();
-    await expect(page.locator('.value-result').first()).toHaveText('chr1:11796321 G>A');
+    await singleAnnotation.toggleFullReport();
+    await expect(singleAnnotation.valueResults.first()).toHaveText('chr1:11796321 G>A');
     await expect(page.locator('.value-grid-container')).not.toBeVisible();
   });
 
   test('should render gene list object array value as single-column grid in full report', async({ page }) => {
+    const singleAnnotation = new SingleAnnotation(page);
     await effectAnnotatorPipeline(page);
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    await singleAnnotation.annotate('chr1 11796321 G A');
 
-    await expect(page.locator('.compact-value-result').nth(2)).toHaveText('MTHFR');
+    await expect(singleAnnotation.compactValueResults.nth(2)).toHaveText('MTHFR');
 
-    await page.locator('.switch').click();
-    const valueGrid = page.locator('.attribute-result').nth(2).locator('.value-grid-container');
+    await singleAnnotation.toggleFullReport();
+    const valueGrid = singleAnnotation.attributeResults.nth(2).locator('.value-grid-container');
     await expect(valueGrid).toBeVisible();
     await expect(valueGrid.locator('.value-grid-header')).toHaveCount(1);
     await expect(valueGrid.locator('.value-grid-header').first()).toContainText('Value');
@@ -76,15 +73,14 @@ test.describe('Single annotation value type rendering', () => {
   });
 
   test('should render gene effect object map value as two-column grid in full report', async({ page }) => {
+    const singleAnnotation = new SingleAnnotation(page);
     await effectAnnotatorPipeline(page);
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    await singleAnnotation.annotate('chr1 11796321 G A');
 
-    await expect(page.locator('.compact-value-result').nth(0)).toHaveText('MTHFR:missense');
+    await expect(singleAnnotation.compactValueResults.nth(0)).toHaveText('MTHFR:missense');
 
-    await page.locator('.switch').click();
-    const valueGrid = page.locator('.attribute-result').nth(0).locator('.grid-container');
+    await singleAnnotation.toggleFullReport();
+    const valueGrid = singleAnnotation.attributeResults.nth(0).locator('.grid-container');
     await expect(valueGrid).toBeVisible();
     await expect(valueGrid.locator('.grid-header')).toHaveCount(2);
     await expect(valueGrid.locator('.grid-header').first()).toContainText('Gene');
@@ -94,17 +90,16 @@ test.describe('Single annotation value type rendering', () => {
   });
 
   test('should render effect details object map value as four-column grid in full report', async({ page }) => {
+    const singleAnnotation = new SingleAnnotation(page);
     await effectAnnotatorPipeline(page);
 
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    await singleAnnotation.annotate('chr1 11796321 G A');
 
-    await expect(page.locator('.compact-value-result').nth(1))
+    await expect(singleAnnotation.compactValueResults.nth(1))
       .toHaveText('ENST00000376590.9:MTHFR:missense:222/656(Ala->Val)');
 
-    await page.locator('.switch').click();
-    const valueGrid = page.locator('.attribute-result').nth(1).locator('.grid-container');
+    await singleAnnotation.toggleFullReport();
+    const valueGrid = singleAnnotation.attributeResults.nth(1).locator('.grid-container');
     await expect(valueGrid).toBeVisible();
     await expect(valueGrid.locator('.grid-header')).toHaveCount(4);
     await expect(valueGrid.locator('.grid-header').first()).toContainText('Gene');
@@ -118,17 +113,16 @@ test.describe('Single annotation value type rendering', () => {
   });
 
   test('should render object map value as two-column grid in full report', async({ page }) => {
+    const singleAnnotation = new SingleAnnotation(page);
     await objectTypePipeline(page);
 
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    await singleAnnotation.annotate('chr1 11796321 G A');
 
-    await expect(page.locator('.compact-value-result').nth(1))
+    await expect(singleAnnotation.compactValueResults.nth(1))
       .toHaveText('MTHFR:2');
 
-    await page.locator('.switch').click();
-    const valueGrid = page.locator('.attribute-result').nth(1).locator('.value-grid-container');
+    await singleAnnotation.toggleFullReport();
+    const valueGrid = singleAnnotation.attributeResults.nth(1).locator('.value-grid-container');
     await expect(valueGrid).toBeVisible();
     await expect(valueGrid.locator('.value-grid-header')).toHaveCount(2);
     await expect(valueGrid.locator('.value-grid-header').first()).toContainText('Key');
@@ -138,16 +132,13 @@ test.describe('Single annotation value type rendering', () => {
   });
 
   test('should sort the value grid ascending then descending when clicking the Value header', async({ page }) => {
+    const singleAnnotation = new SingleAnnotation(page);
     // A region-mode list aggregator yields a multi-item array value grid.
     await clinvarListPipeline(page);
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796000 11800000');
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
-    await page.locator('.switch').click();
+    await singleAnnotation.annotate('chr1 11796000 11800000');
+    await singleAnnotation.toggleFullReport();
 
-    const container = page.locator('.attribute-container').filter({
-      has: page.locator('.attribute-header', { hasText: 'clnsig_list' })
-    });
+    const container = singleAnnotation.attributeContainer('clnsig_list');
     const cells = container.locator('.value-grid-cell');
     await expect(cells.first()).toBeVisible();
     expect(await cells.count()).toBeGreaterThan(1);

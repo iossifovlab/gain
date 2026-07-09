@@ -1,5 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
-import { PipelineEditor } from '../pages/pipeline-editor.page';
+import { SingleAnnotation } from '../pages/single-annotation.page';
+import { AnnotationJobs } from '../pages/annotation-jobs.page';
 import * as utils from '../utils';
 
 
@@ -136,12 +137,9 @@ test.describe('Quota changes', () => {
       const initialMonthlyVariants = await getMonthlyCurrentValue(page, 'variants');
       const initialMonthlyAttributes = await getMonthlyCurrentValue(page, 'attributes');
 
-      await page.getByRole('link', { name: 'Single Annotation' }).click();
-      await PipelineEditor.waitForLoaded(page);
+      await SingleAnnotation.open(page);
       await utils.customDefaultPipeline(page);
-      await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
-      await page.getByRole('button', { name: 'Go', exact: true }).click();
-      await page.waitForSelector('#report', { timeout: 120000 });
+      await new SingleAnnotation(page).annotate('chr1 1265232 G A');
 
       await utils.navigateToQuotas(page);
       expect(await getDailyCurrentValue(page, 'variants')).toBe(initialDailyVariants - 1);
@@ -161,11 +159,11 @@ test.describe('Quota changes', () => {
       const initialMonthlyVariants = await getMonthlyCurrentValue(page, 'variants');
       const initialMonthlyAttributes = await getMonthlyCurrentValue(page, 'attributes');
 
-      await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-      await PipelineEditor.waitForLoaded(page);
+      await AnnotationJobs.open(page);
       await utils.customDefaultPipeline(page);
-      await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
-      await page.locator('#create-button').click();
+      const jobs = new AnnotationJobs(page);
+      await jobs.uploadFile('./fixtures/input-vcf-file-reduced.vcf');
+      await jobs.create();
       await page.waitForSelector('.success-status', { timeout: 120000 });
 
       await utils.navigateToQuotas(page);
@@ -209,12 +207,9 @@ test.describe('Quota changes', () => {
       const initialMonthlyVariants = await getMonthlyCurrentValue(page, 'variants');
       const initialMonthlyAttributes = await getMonthlyCurrentValue(page, 'attributes');
 
-      await page.getByRole('link', { name: 'Single Annotation' }).click();
-      await PipelineEditor.waitForLoaded(page);
+      await SingleAnnotation.open(page);
       await utils.customDefaultPipeline(page);
-      await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
-      await page.getByRole('button', { name: 'Go', exact: true }).click();
-      await page.waitForSelector('#report', { timeout: 120000 });
+      await new SingleAnnotation(page).annotate('chr1 1265232 G A');
 
       await utils.navigateToQuotas(page);
       expect(await getDailyCurrentValue(page, 'variants')).toBe(initialDailyVariants - 1);
@@ -232,11 +227,11 @@ test.describe('Quota changes', () => {
       const initialMonthlyVariants = await getMonthlyCurrentValue(page, 'variants');
       const initialMonthlyAttributes = await getMonthlyCurrentValue(page, 'attributes');
 
-      await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-      await PipelineEditor.waitForLoaded(page);
+      await AnnotationJobs.open(page);
       await utils.customDefaultPipeline(page);
-      await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
-      await page.locator('#create-button').click();
+      const jobs = new AnnotationJobs(page);
+      await jobs.uploadFile('./fixtures/input-vcf-file-reduced.vcf');
+      await jobs.create();
       await page.waitForSelector('.success-status', { timeout: 120000 });
 
       await utils.navigateToQuotas(page);
@@ -264,29 +259,29 @@ test.describe('Quota limit', () => {
     test('single annotation is blocked when daily variant quota is exhausted', async({ page }) => {
       await utils.setCurrentQuota(page, email, 'daily_variants', 0);
 
-      await page.getByRole('link', { name: 'Single Annotation' }).click();
-      await PipelineEditor.waitForLoaded(page);
+      await SingleAnnotation.open(page);
       await utils.customDefaultPipeline(page);
-      await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
+      const singleAnnotation = new SingleAnnotation(page);
+      await singleAnnotation.annotatableInput.fill('chr1 1265232 G A');
 
       const quotaResponse = page.waitForResponse(
         resp => resp.url().includes('/api/single_allele/annotate') && resp.status() === 429
       );
-      await page.getByRole('button', { name: 'Go', exact: true }).click();
+      await singleAnnotation.goButton.click();
       await quotaResponse;
 
       await expect(page.locator('.error-message')).toHaveText('Single allele query quota exceeded!');
-      await expect(page.locator('#report')).not.toBeVisible();
+      await expect(singleAnnotation.report).not.toBeVisible();
     });
 
     test('job annotation shows error message when daily job quota is exhausted', async({ page }) => {
       await utils.setCurrentQuota(page, email, 'daily_jobs', 0);
 
-      await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-      await PipelineEditor.waitForLoaded(page);
+      await AnnotationJobs.open(page);
       await utils.customDefaultPipeline(page);
-      await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
-      await page.locator('#create-button').click();
+      const jobs = new AnnotationJobs(page);
+      await jobs.uploadFile('./fixtures/input-vcf-file-reduced.vcf');
+      await jobs.create();
 
       await expect(page.locator('#creation-error')).toHaveText('Job quota exceeded!');
     });
@@ -303,29 +298,29 @@ test.describe('Quota limit', () => {
     test('single annotation is blocked when monthly variant quota is exhausted', async({ page }) => {
       await utils.setCurrentQuota(page, email, 'monthly_variants', 0);
 
-      await page.getByRole('link', { name: 'Single Annotation' }).click();
-      await PipelineEditor.waitForLoaded(page);
+      await SingleAnnotation.open(page);
       await utils.customDefaultPipeline(page);
-      await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
+      const singleAnnotation = new SingleAnnotation(page);
+      await singleAnnotation.annotatableInput.fill('chr1 1265232 G A');
 
       const quotaResponse = page.waitForResponse(
         resp => resp.url().includes('/api/single_allele/annotate') && resp.status() === 429
       );
-      await page.getByRole('button', { name: 'Go', exact: true }).click();
+      await singleAnnotation.goButton.click();
       await quotaResponse;
 
       await expect(page.locator('.error-message')).toHaveText('Single allele query quota exceeded!');
-      await expect(page.locator('#report')).not.toBeVisible();
+      await expect(singleAnnotation.report).not.toBeVisible();
     });
 
     test('job annotation shows error message when monthly job quota is exhausted', async({ page }) => {
       await utils.setCurrentQuota(page, email, 'monthly_jobs', 0);
 
-      await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-      await PipelineEditor.waitForLoaded(page);
+      await AnnotationJobs.open(page);
       await utils.customDefaultPipeline(page);
-      await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
-      await page.locator('#create-button').click();
+      const jobs = new AnnotationJobs(page);
+      await jobs.uploadFile('./fixtures/input-vcf-file-reduced.vcf');
+      await jobs.create();
 
       await expect(page.locator('#creation-error')).toHaveText('Job quota exceeded!');
     });
@@ -357,19 +352,18 @@ test.describe('Quota limit', () => {
       await page.reload({ waitUntil: 'load' });
       expect(await getDailyCurrentValue(page, 'variants')).toBe(0);
 
-      await page.getByRole('link', { name: 'Single Annotation' }).click();
-
-      await PipelineEditor.waitForLoaded(page);
-      await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
+      const singleAnnotation = new SingleAnnotation(page);
+      await SingleAnnotation.open(page);
+      await singleAnnotation.annotatableInput.fill('chr1 1265232 G A');
 
       const quotaResponse = page.waitForResponse(
         resp => resp.url().includes('/api/single_allele/annotate') && resp.status() === 429
       );
-      await page.getByRole('button', { name: 'Go', exact: true }).click();
+      await singleAnnotation.goButton.click();
       await quotaResponse;
 
       await expect(page.locator('.error-message')).toHaveText('Single allele query quota exceeded!');
-      await expect(page.locator('#report')).not.toBeVisible();
+      await expect(singleAnnotation.report).not.toBeVisible();
     });
 
     test('job annotation shows error message when job quota is exhausted', async({ page }) => {
@@ -381,11 +375,11 @@ test.describe('Quota limit', () => {
       await page.reload({ waitUntil: 'load' });
       expect(await getDailyCurrentValue(page, 'jobs')).toBe(0);
 
-      await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-      await PipelineEditor.waitForLoaded(page);
+      await AnnotationJobs.open(page);
       await utils.customDefaultPipeline(page);
-      await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
-      await page.locator('#create-button').click();
+      const jobs = new AnnotationJobs(page);
+      await jobs.uploadFile('./fixtures/input-vcf-file-reduced.vcf');
+      await jobs.create();
 
       await expect(page.locator('#creation-error')).toHaveText('Job quota exceeded!');
     });
@@ -404,12 +398,9 @@ test.describe('User quotas - extra units consumption', () => {
 
     await utils.navigateToQuotas(page);
 
-    await page.getByRole('link', { name: 'Single Annotation' }).click();
-    await PipelineEditor.waitForLoaded(page);
+    await SingleAnnotation.open(page);
     await utils.customDefaultPipeline(page);
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    await new SingleAnnotation(page).annotate('chr1 1265232 G A');
 
     await utils.navigateToQuotas(page);
     expect(await getExtraValue(page, 'variants')).toBe(99);
@@ -431,11 +422,11 @@ test.describe('User quotas - extra units consumption', () => {
 
     await utils.navigateToQuotas(page);
 
-    await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-    await PipelineEditor.waitForLoaded(page);
+    await AnnotationJobs.open(page);
     await utils.customDefaultPipeline(page);
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
-    await page.locator('#create-button').click();
+    const jobs = new AnnotationJobs(page);
+    await jobs.uploadFile('./fixtures/input-vcf-file-reduced.vcf');
+    await jobs.create();
     await page.waitForSelector('.success-status', { timeout: 120000 });
 
     await utils.navigateToQuotas(page);
@@ -453,12 +444,9 @@ test.describe('User quotas - extra units consumption', () => {
     const initialMonthlyVariants = await getMonthlyCurrentValue(page, 'variants');
     const initialMonthlyAttributes = await getMonthlyCurrentValue(page, 'attributes');
 
-    await page.getByRole('link', { name: 'Single Annotation' }).click();
-    await PipelineEditor.waitForLoaded(page);
+    await SingleAnnotation.open(page);
     await utils.customDefaultPipeline(page);
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    await new SingleAnnotation(page).annotate('chr1 1265232 G A');
 
     await utils.navigateToQuotas(page);
     expect(await getExtraValue(page, 'variants')).toBe(initialExtraVariants);
@@ -467,4 +455,3 @@ test.describe('User quotas - extra units consumption', () => {
     expect(await getMonthlyCurrentValue(page, 'attributes')).toBe(initialMonthlyAttributes - 3);
   });
 });
-

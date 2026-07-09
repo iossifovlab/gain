@@ -330,7 +330,7 @@ test.describe('Add annotator to pipeline tests', () => {
 
   test('should disable New annotator button when pipeline config is invalid', async({ page }) => {
     const annotatorModal = new AnnotatorDialog(page);
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+    await new PipelineEditor(page).newPipeline();
     await utils.typeInPipelineEditor(page, 'preamble:\n input_reference_genome: hg38/genomes/GRCh38-hg38');
     await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
 

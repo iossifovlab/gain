@@ -1,6 +1,8 @@
 import { test, expect, Page } from '@playwright/test';
 import * as utils from '../../utils';
 import { PipelineEditor } from '../../pages/pipeline-editor.page';
+import { SingleAnnotation } from '../../pages/single-annotation.page';
+import { AnnotationJobs } from '../../pages/annotation-jobs.page';
 
 const VALID_PIPELINE =
   'preamble:\n' +
@@ -181,7 +183,7 @@ test.describe('Annotation pipeline state persistence across navigation', () => {
     await goToAnnotationJobs(page);
 
     // isConfigValid signal (false) persists via the state service — button is disabled immediately.
-    await expect(page.locator('#create-button')).toBeDisabled();
+    await expect(new AnnotationJobs(page).createButton).toBeDisabled();
     // The new component instance restores the text, ngModelChange fires, re-validation runs.
     await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
     await expect(page.getByText('Invalid configuration, reason: \'annotators\'')).toBeVisible();
@@ -213,15 +215,15 @@ test.describe('Annotation pipeline state persistence across navigation', () => {
 
 
   test('sidebar hidden state is not preserved when navigating between pages', async({ page }) => {
+    const jobs = new AnnotationJobs(page);
+    const singleAnnotation = new SingleAnnotation(page);
     await goToAnnotationJobs(page);
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
-    await page.locator('#create-button').click();
+    await jobs.uploadFile('./fixtures/input-vcf-file.vcf');
+    await jobs.create();
     await expect(page.locator('app-jobs-table')).toBeVisible();
 
     await goToSingleAnnotation(page);
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    await singleAnnotation.annotate('chr1 1265232 G A');
     await expect(page.locator('app-annotatables-table')).toBeVisible();
 
     await page.locator('#toggle-history').click();
@@ -300,47 +302,43 @@ test.describe('Single annotation report state persistence across navigation', ()
     await utils.loginUser(page, email, password);
     await PipelineEditor.waitForLoaded(page);
     await createTempPipeline(page);
-    await page.getByPlaceholder('Type annotatable...').fill(ANNOTATABLE);
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    await new SingleAnnotation(page).annotate(ANNOTATABLE);
   });
 
   test('full report mode is preserved after navigating to Annotation Jobs and back', async({ page }) => {
+    const singleAnnotation = new SingleAnnotation(page);
     // Default is compact — descriptions are hidden.
-    await expect(page.locator('.attribute-container .attribute-description').first()).not.toBeVisible();
+    await expect(singleAnnotation.attributeDescriptions.first()).not.toBeVisible();
 
-    await page.locator('.switch').click();
-    await expect(page.locator('.attribute-container .attribute-description').first()).toBeVisible();
+    await singleAnnotation.toggleFullReport();
+    await expect(singleAnnotation.attributeDescriptions.first()).toBeVisible();
 
     await goToAnnotationJobs(page);
     await goToSingleAnnotation(page);
 
-    await page.getByPlaceholder('Type annotatable...').fill(ANNOTATABLE);
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    await singleAnnotation.annotate(ANNOTATABLE);
 
     // isFullReport signal in the root state service persisted — full mode should be restored.
-    await expect(page.locator('.attribute-container .attribute-description').first()).toBeVisible();
+    await expect(singleAnnotation.attributeDescriptions.first()).toBeVisible();
   });
 
   // eslint-disable-next-line max-len
   test('compact report mode is preserved after switching from full and navigating to Annotation Jobs and back', async({ page }) => {
-    await page.locator('.switch').click();
-    await expect(page.locator('.attribute-container .attribute-description').first()).toBeVisible();
+    const singleAnnotation = new SingleAnnotation(page);
+    await singleAnnotation.toggleFullReport();
+    await expect(singleAnnotation.attributeDescriptions.first()).toBeVisible();
 
     // Switch back to compact.
-    await page.locator('.switch').click();
-    await expect(page.locator('.attribute-container .attribute-description').first()).not.toBeVisible();
+    await singleAnnotation.toggleFullReport();
+    await expect(singleAnnotation.attributeDescriptions.first()).not.toBeVisible();
 
     await goToAnnotationJobs(page);
     await goToSingleAnnotation(page);
 
-    await page.getByPlaceholder('Type annotatable...').fill(ANNOTATABLE);
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    await singleAnnotation.annotate(ANNOTATABLE);
 
     // isFullReport=false was preserved in the root state service — compact mode should be restored.
-    await expect(page.locator('.attribute-container .attribute-description').first()).not.toBeVisible();
+    await expect(singleAnnotation.attributeDescriptions.first()).not.toBeVisible();
   });
 });
 
@@ -349,20 +347,20 @@ test.describe('Single annotation report state reset on authentication change', (
   const ANNOTATABLE = 'chr1 1265232 G A';
 
   async function switchToFullMode(page: Page): Promise<void> {
-    await page.locator('.switch').click();
-    await expect(page.locator('.attribute-container .attribute-description').first()).toBeVisible();
+    const singleAnnotation = new SingleAnnotation(page);
+    await singleAnnotation.toggleFullReport();
+    await expect(singleAnnotation.attributeDescriptions.first()).toBeVisible();
   }
 
   test('report state resets to compact after logout and re-login', async({ page }) => {
+    const singleAnnotation = new SingleAnnotation(page);
     const email = utils.getRandomString() + '@email.com';
     const password = 'aaabbb';
     await utils.registerUser(page, email, password);
     await utils.loginUser(page, email, password);
     await PipelineEditor.waitForLoaded(page);
 
-    await page.getByPlaceholder('Type annotatable...').fill(ANNOTATABLE);
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    await singleAnnotation.annotate(ANNOTATABLE);
     await switchToFullMode(page);
 
     // Logout triggers window.location.reload(), which re-initialises all Angular services.
@@ -375,21 +373,18 @@ test.describe('Single annotation report state reset on authentication change', (
     await utils.loginUser(page, email, password);
     await PipelineEditor.waitForLoaded(page);
 
-    await page.getByPlaceholder('Type annotatable...').fill(ANNOTATABLE);
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    await singleAnnotation.annotate(ANNOTATABLE);
 
     // isFullReport is reset to false on page reload — compact mode should be the default.
-    await expect(page.locator('.attribute-container .attribute-description').first()).not.toBeVisible();
+    await expect(singleAnnotation.attributeDescriptions.first()).not.toBeVisible();
   });
 
   test('report state resets to compact when anonymous user with full mode logs in', async({ page }) => {
+    const singleAnnotation = new SingleAnnotation(page);
     await page.goto('/', { waitUntil: 'load' });
     await PipelineEditor.waitForLoaded(page);
 
-    await page.getByPlaceholder('Type annotatable...').fill(ANNOTATABLE);
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    await singleAnnotation.annotate(ANNOTATABLE);
     await switchToFullMode(page);
 
     // Registering navigates to /register then to the confirmation link — full page reloads
@@ -400,12 +395,10 @@ test.describe('Single annotation report state reset on authentication change', (
     await utils.loginUser(page, email, password);
     await PipelineEditor.waitForLoaded(page);
 
-    await page.getByPlaceholder('Type annotatable...').fill(ANNOTATABLE);
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    await singleAnnotation.annotate(ANNOTATABLE);
 
     // isFullReport is reset to false on page reload — compact mode should be the default.
-    await expect(page.locator('.attribute-container .attribute-description').first()).not.toBeVisible();
+    await expect(singleAnnotation.attributeDescriptions.first()).not.toBeVisible();
   });
 });
 

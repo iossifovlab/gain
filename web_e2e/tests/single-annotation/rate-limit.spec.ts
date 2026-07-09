@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { SingleAnnotation } from '../../pages/single-annotation.page';
 import * as utils from '../../utils';
 
 test.describe('Single annotation rate limit tests - logged in user', () => {
@@ -16,12 +17,13 @@ test.describe('Single annotation rate limit tests - logged in user', () => {
     await utils.setCurrentQuota(page, email, 'daily_variants', 10_000);
     await utils.setCurrentQuota(page, email, 'daily_attributes', 100_000);
 
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
+    const singleAnnotation = new SingleAnnotation(page);
+    await singleAnnotation.annotatableInput.fill('chr1 11796321 G A');
 
     /* eslint-disable no-await-in-loop */
     for (let i = 0; i < 10; i++) {
       await Promise.all([
-        page.getByRole('button', { name: 'Go', exact: true }).click(),
+        singleAnnotation.goButton.click(),
         page.waitForResponse(
           resp => resp.url().includes('api/single_allele/annotate') && resp.status() === 200, {timeout: 30000}
         )
@@ -32,7 +34,7 @@ test.describe('Single annotation rate limit tests - logged in user', () => {
     // 11th click should fail
     let annotateResponse;
     await Promise.all([
-      page.getByRole('button', { name: 'Go', exact: true }).click(),
+      singleAnnotation.goButton.click(),
       annotateResponse = page.waitForResponse(
         resp => resp.url().includes('api/single_allele/annotate')
       )

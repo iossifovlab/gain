@@ -22,9 +22,7 @@ async function downloadDoc(page: Page): Promise<{ suggestedFilename: string; con
 }
 
 async function createTempPipelineDoc(page: Page): Promise<void> {
-  await page.locator('#pipeline-actions').getByRole('button', {
-    name: 'draft New pipeline', exact: true
-  }).click();
+  await new PipelineEditor(page).newPipeline();
   const saveResponse = page.waitForResponse(
     resp => resp.url().includes('api/pipelines/user'), { timeout: 30000 }
   );
@@ -47,6 +45,7 @@ test.describe('Pipeline documentation download', () => {
   });
 
   test('logged-in user can download documentation for saved user pipeline', async({ page }) => {
+    const editor = new PipelineEditor(page);
     const email = utils.getRandomString() + '@email.com';
     const password = 'aaabbb';
     await utils.registerUser(page, email, password);
@@ -54,15 +53,15 @@ test.describe('Pipeline documentation download', () => {
     await PipelineEditor.waitForLoaded(page);
 
     await createTempPipelineDoc(page);
-    await page.getByRole('button', { name: 'Save as' }).click();
-    await page.locator('#name-modal input').fill('doc-test-pipeline');
+    await editor.saveAs();
+    await editor.nameInput.fill('doc-test-pipeline');
     await Promise.all([
-      page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
+      editor.saveNameButton.click(),
       page.waitForResponse(
         resp => resp.url().includes('api/pipelines/user') && resp.request().method() === 'POST'
       ),
     ]);
-    await expect(page.locator('#pipelines-input')).toHaveValue('doc-test-pipeline', { timeout: 30000 });
+    await expect(editor.pipelineInput).toHaveValue('doc-test-pipeline', { timeout: 30000 });
     await PipelineEditor.waitForLoaded(page);
 
     await expect(page.locator('#download-pipeline-documentation')).toBeVisible();
@@ -82,6 +81,7 @@ test.describe('Pipeline documentation download', () => {
   });
 
   test('logged-in user can download documentation for unsaved edits on a named pipeline', async({ page }) => {
+    const editor = new PipelineEditor(page);
     const email = utils.getRandomString() + '@email.com';
     const password = 'aaabbb';
     await utils.registerUser(page, email, password);
@@ -90,15 +90,15 @@ test.describe('Pipeline documentation download', () => {
 
     // Create and save a user pipeline.
     await createTempPipelineDoc(page);
-    await page.getByRole('button', { name: 'Save as' }).click();
-    await page.locator('#name-modal input').fill('edit-test-pipeline');
+    await editor.saveAs();
+    await editor.nameInput.fill('edit-test-pipeline');
     await Promise.all([
-      page.locator('#name-modal').getByRole('button', { name: 'Save' }).click(),
+      editor.saveNameButton.click(),
       page.waitForResponse(
         resp => resp.url().includes('api/pipelines/user') && resp.request().method() === 'POST'
       ),
     ]);
-    await expect(page.locator('#pipelines-input')).toHaveValue('edit-test-pipeline', { timeout: 30000 });
+    await expect(editor.pipelineInput).toHaveValue('edit-test-pipeline', { timeout: 30000 });
     await PipelineEditor.waitForLoaded(page);
 
     // Edit the saved pipeline — adds * and triggers autosave to a temp pipeline.
@@ -115,7 +115,7 @@ test.describe('Pipeline documentation download', () => {
     });
     /* eslint-enable */
     await autoSaveResponse;
-    await expect(page.locator('#pipelines-input')).toHaveValue('edit-test-pipeline *', { timeout: 30000 });
+    await expect(editor.pipelineInput).toHaveValue('edit-test-pipeline *', { timeout: 30000 });
     await PipelineEditor.waitForLoaded(page);
 
     await expect(page.locator('#download-pipeline-documentation')).toBeVisible();
@@ -129,9 +129,7 @@ test.describe('Pipeline documentation download', () => {
     await page.goto('/', { waitUntil: 'load' });
     await PipelineEditor.waitForLoaded(page);
 
-    await page.locator('#pipeline-actions').getByRole('button', {
-      name: 'draft New pipeline', exact: true
-    }).click();
+    await new PipelineEditor(page).newPipeline();
 
     await expect(page.locator('#download-pipeline-documentation')).not.toBeVisible();
   });

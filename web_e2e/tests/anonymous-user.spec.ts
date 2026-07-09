@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { PipelineEditor } from '../pages/pipeline-editor.page';
+import { SingleAnnotation } from '../pages/single-annotation.page';
+import { AnnotationJobs } from '../pages/annotation-jobs.page';
 import { scanCSV } from 'nodejs-polars';
 import * as utils from '../utils';
 import { AnnotatorDialog } from '../pages/annotator.dialog';
@@ -65,9 +67,11 @@ test.describe('Anonymous user tests', () => {
   });
 
   test('should use anonynmous pipeline for single annotation', async({ page }) => {
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
-    await expect(page.locator('#pipelines-input')).toBeEmpty();
-    await expect(page.locator('.monaco-editor').nth(0)).toBeEmpty();
+    const editor = new PipelineEditor(page);
+    const singleAnnotation = new SingleAnnotation(page);
+    await editor.newPipeline();
+    await expect(editor.pipelineInput).toBeEmpty();
+    await expect(editor.monacoEditor.nth(0)).toBeEmpty();
 
     const saveResponse = page.waitForResponse(
       resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}
@@ -97,36 +101,35 @@ test.describe('Anonymous user tests', () => {
 
     await saveResponse;
 
-    await page.locator('#examples-button').click();
-    await page.getByRole('menuitem', {name: 'chr1 11796321 G A', exact: true}).click();
-    await page.waitForSelector('#report', {timeout: 120000});
-    await expect(page.locator('#report')).toBeVisible();
+    await singleAnnotation.selectExample('chr1 11796321 G A');
+    await singleAnnotation.waitForReport();
+    await expect(singleAnnotation.report).toBeVisible();
 
-    await expect(page.locator('#history-table')).not.toBeVisible();
+    await expect(singleAnnotation.historyTable).not.toBeVisible();
   });
 
   test('should use public pipeline for single annotation', async({ page }) => {
-    await page.locator('#pipelines-input').click();
+    const editor = new PipelineEditor(page);
+    const singleAnnotation = new SingleAnnotation(page);
+    await editor.pipelineInput.click();
     await page.locator('mat-option').getByText('pipeline/T2T_clinical_annotation').click();
 
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
-    await page.getByRole('button', {name: 'Go'}).click();
-    await page.waitForSelector('#report', {timeout: 120000});
-    await expect(page.locator('#report')).toBeVisible();
+    await singleAnnotation.annotate('chr1 1265232 G A');
+    await expect(singleAnnotation.report).toBeVisible();
   });
 
   test('should download single annotation report', async({ page }) => {
+    const editor = new PipelineEditor(page);
+    const singleAnnotation = new SingleAnnotation(page);
     await PipelineEditor.waitForLoaded(page);
-    await page.locator('.dropdown-icon').click();
+    await editor.dropdownIcon.click();
     await page.locator('mat-option').getByText('pipeline/T2T_clinical_annotation').click();
 
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
-    await page.getByRole('button', {name: 'Go'}).click();
-    await page.waitForSelector('#report', {timeout: 120000});
-    await expect(page.locator('#download-report-button')).toBeVisible();
+    await singleAnnotation.annotate('chr1 1265232 G A');
+    await expect(singleAnnotation.downloadReportButton).toBeVisible();
 
     const downloadPromise = page.waitForEvent('download');
-    await page.locator('#download-report-button').click();
+    await singleAnnotation.downloadReportButton.click();
     const downloadedFile = await downloadPromise;
 
     const fixtureData = scanCSV(await downloadedFile.path(), {truncateRaggedLines: true, sep: '\t'});
@@ -137,10 +140,11 @@ test.describe('Anonymous user tests', () => {
   });
 
   test('should use public pipeline for job annotation', async({ page }) => {
-    await page.getByRole('link', { name: 'Annotation Jobs' }).click();
+    const jobs = new AnnotationJobs(page);
+    await AnnotationJobs.open(page);
     await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
-    await page.locator('#create-button').click();
+    await jobs.uploadFile('./fixtures/input-vcf-file-reduced.vcf');
+    await jobs.create();
 
     await expect(page.getByText('Job name: anonymous_job')).toBeVisible({timeout: 120000});
     await page.waitForSelector('.success-status', {timeout: 120000});
@@ -149,11 +153,12 @@ test.describe('Anonymous user tests', () => {
   });
 
   test('should use anonymous pipeline for job annotation', async({ page }) => {
-    await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-    await PipelineEditor.waitForLoaded(page);
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
-    await expect(page.locator('#pipelines-input')).toBeEmpty();
-    await expect(page.locator('.monaco-editor').nth(0)).toBeEmpty();
+    const editor = new PipelineEditor(page);
+    const jobs = new AnnotationJobs(page);
+    await AnnotationJobs.open(page);
+    await editor.newPipeline();
+    await expect(editor.pipelineInput).toBeEmpty();
+    await expect(editor.monacoEditor.nth(0)).toBeEmpty();
 
 
     const saveResponse = page.waitForResponse(
@@ -177,41 +182,44 @@ test.describe('Anonymous user tests', () => {
 
     await saveResponse;
 
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
-    await page.locator('#create-button').click();
+    await jobs.uploadFile('./fixtures/input-vcf-file.vcf');
+    await jobs.create();
 
-    await expect(page.locator('#result')).toBeVisible({ timeout: 120000 });
-    await expect(page.locator('#new-job-section')).toBeVisible();
+    await expect(jobs.result).toBeVisible({ timeout: 120000 });
+    await expect(jobs.newJobSection).toBeVisible();
   });
 
   test('should annotate with tsv file', async({ page }) => {
-    await page.getByRole('link', { name: 'Annotation Jobs' }).click();
+    const jobs = new AnnotationJobs(page);
+    await AnnotationJobs.open(page);
     await utils.customDefaultPipeline(page);
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-tsv-file.tsv');
-    await page.locator('#create-button').click();
+    await jobs.uploadFile('./fixtures/input-tsv-file.tsv');
+    await jobs.create();
     await page.waitForSelector('.success-status', {timeout: 120000});
   });
 
   test('should annotate with csv file', async({ page }) => {
-    await page.getByRole('link', { name: 'Annotation Jobs' }).click();
+    const jobs = new AnnotationJobs(page);
+    await AnnotationJobs.open(page);
 
     await utils.customDefaultPipeline(page);
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-csv-file.csv');
-    await page.locator('#create-button').click();
+    await jobs.uploadFile('./fixtures/input-csv-file.csv');
+    await jobs.create();
     await page.waitForSelector('.success-status', {timeout: 120000});
   });
 
   test('should download job result', async({ page }) => {
-    await page.getByRole('link', { name: 'Annotation Jobs' }).click();
+    const jobs = new AnnotationJobs(page);
+    await AnnotationJobs.open(page);
     await utils.customDefaultPipeline(page);
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
-    await page.locator('#create-button').click();
+    await jobs.uploadFile('./fixtures/input-vcf-file.vcf');
+    await jobs.create();
 
     await expect(page.getByText('Job name: anonymous_job')).toBeVisible();
     await page.waitForSelector('.success-status', {timeout: 120000});
 
     const downloadPromise = page.waitForEvent('download');
-    await page.locator('#download-result').click();
+    await jobs.downloadResult.click();
     const downloadedFile = await downloadPromise;
 
     const fixtureData = scanCSV(await downloadedFile.path(), {truncateRaggedLines: true});
@@ -222,15 +230,16 @@ test.describe('Anonymous user tests', () => {
   });
 
   test('should be able to create new job after the previous one', async({ page }) => {
-    await page.getByRole('link', { name: 'Annotation Jobs' }).click();
+    const jobs = new AnnotationJobs(page);
+    await AnnotationJobs.open(page);
     await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
-    await page.locator('#create-button').click();
+    await jobs.uploadFile('./fixtures/input-vcf-file.vcf');
+    await jobs.create();
 
-    await expect(page.locator('#new-job-section')).toBeVisible();
-    await page.locator('#new-job-button').click();
-    await expect(page.locator('#result')).not.toBeVisible();
-    await expect(page.locator('#file-upload-field')).toBeVisible();
+    await expect(jobs.newJobSection).toBeVisible();
+    await jobs.newJobButton.click();
+    await expect(jobs.result).not.toBeVisible();
+    await expect(jobs.fileUploadField).toBeVisible();
   });
 });
 
@@ -244,14 +253,15 @@ test.describe('Web socket tests', () => {
   });
 
   test('should download job result by link copy', async({ page }) => {
-    await page.getByRole('link', { name: 'Annotation Jobs' }).click();
+    const jobs = new AnnotationJobs(page);
+    await AnnotationJobs.open(page);
     await utils.customDefaultPipeline(page);
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
-    await page.locator('#create-button').click();
+    await jobs.uploadFile('./fixtures/input-vcf-file.vcf');
+    await jobs.create();
 
     await page.waitForSelector('.success-status', {timeout: 120000});
 
-    const downloadUrl = await page.locator('#download-result').getAttribute('href');
+    const downloadUrl = await jobs.downloadResult.getAttribute('href');
 
     await page.getByRole('link', { name: 'About' }).click();
 
@@ -267,4 +277,3 @@ test.describe('Web socket tests', () => {
     expect(fixtureFrame.toString()).toEqual(downloadFrame.toString());
   });
 });
-

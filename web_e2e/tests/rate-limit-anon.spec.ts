@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { PipelineEditor } from '../pages/pipeline-editor.page';
+import { SingleAnnotation } from '../pages/single-annotation.page';
 import * as utils from '../utils';
 
 // Runs after all main tests via the 'rate-limit-anon' project dependency in
@@ -22,14 +23,15 @@ test.describe('Single annotation rate limit tests - anonymous user', () => {
   });
 
   test('should return 429 when rate limit is exceeded', async({ page }) => {
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
+    const singleAnnotation = new SingleAnnotation(page);
+    await singleAnnotation.annotatableInput.fill('chr1 11796321 G A');
 
     // UserRateThrottle is configured at 10/minute for anonymous users; exhaust
     // the budget then verify the 11th request is rejected.
     /* eslint-disable no-await-in-loop */
     for (let i = 0; i < 10; i++) {
       await Promise.all([
-        page.getByRole('button', { name: 'Go', exact: true }).click(),
+        singleAnnotation.goButton.click(),
         page.waitForResponse(
           resp => resp.url().includes('api/single_allele/annotate') && resp.status() === 200, {timeout: 30000}
         )
@@ -39,7 +41,7 @@ test.describe('Single annotation rate limit tests - anonymous user', () => {
 
     let annotateResponse;
     await Promise.all([
-      page.getByRole('button', { name: 'Go', exact: true }).click(),
+      singleAnnotation.goButton.click(),
       annotateResponse = page.waitForResponse(
         resp => resp.url().includes('api/single_allele/annotate')
       )

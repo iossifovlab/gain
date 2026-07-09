@@ -3,9 +3,10 @@ import { PipelineEditor } from '../../pages/pipeline-editor.page';
 import * as utils from '../../utils';
 
 export async function customDefaultPipeline(page: Page): Promise<void> {
-  await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
-  await expect(page.locator('#pipelines-input')).toBeEmpty();
-  await expect(page.locator('.monaco-editor').nth(0)).toBeEmpty();
+  const editor = new PipelineEditor(page);
+  await editor.newPipeline();
+  await expect(editor.pipelineInput).toBeEmpty();
+  await expect(editor.monacoEditor.nth(0)).toBeEmpty();
 
   const saveResponse = page.waitForResponse(
     resp => resp.url().includes('api/pipelines/user'), {timeout: 30000}

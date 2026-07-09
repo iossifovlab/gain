@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import * as utils from '../../utils';
 import { customDefaultPipeline } from './helpers';
 import { PipelineEditor } from '../../pages/pipeline-editor.page';
+import { SingleAnnotation } from '../../pages/single-annotation.page';
 
 test.describe('Pipeline tests', () => {
   test.beforeEach(async({ page }) => {
@@ -73,10 +74,10 @@ test.describe('Pipeline tests', () => {
 
     await saveResponse;
 
-    await page.locator('#examples-button').click();
-    await page.getByRole('menuitem', {name: 'chr1 11796321 G A', exact: true}).click();
+    const singleAnnotation = new SingleAnnotation(page);
+    await singleAnnotation.selectExample('chr1 11796321 G A');
     await expect(editor.pipelineInput).toBeEmpty();
-    await expect(page.locator('#report')).toBeVisible({timeout: 120000});
+    await expect(singleAnnotation.report).toBeVisible({timeout: 120000});
   });
 
   test('should not be able to save pipeline if invalid', async({ page }) => {
@@ -115,9 +116,9 @@ test.describe('Pipeline tests', () => {
     await PipelineEditor.waitForLoaded(page);
     await expect(editor.pipelineInput).toBeEmpty();
 
-    await page.locator('#examples-button').click();
-    await page.getByRole('menuitem', {name: 'chr1 11796321 G A', exact: true}).click();
-    await expect(page.locator('#report')).toBeVisible({timeout: 120000});
+    const singleAnnotation = new SingleAnnotation(page);
+    await singleAnnotation.selectExample('chr1 11796321 G A');
+    await expect(singleAnnotation.report).toBeVisible({timeout: 120000});
   });
 
   test('should edit user pipeline and save it', async({ page }) => {

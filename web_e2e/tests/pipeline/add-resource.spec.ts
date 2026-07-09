@@ -193,7 +193,7 @@ test.describe('Add resource to pipeline tests', () => {
   });
 
   test('should disable New resource button when pipeline config is invalid', async({ page }) => {
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
+    await new PipelineEditor(page).newPipeline();
     await utils.typeInPipelineEditor(page, 'preamble:\n input_reference_genome: hg38/genomes/GRCh38-hg38');
     await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
 

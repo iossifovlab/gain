@@ -1,5 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 import { PipelineEditor } from '../pages/pipeline-editor.page';
+import { AnnotationJobs } from '../pages/annotation-jobs.page';
 import * as utils from '../utils';
 import { scanCSV } from 'nodejs-polars';
 import * as fs from 'fs';
@@ -13,82 +14,89 @@ test.describe('Create job tests', () => {
     await utils.registerUser(page, email, password);
 
     await utils.loginUser(page, email, password);
-    await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-    await PipelineEditor.waitForLoaded(page); // wait for default pipeline to load
+    await AnnotationJobs.open(page);
   });
 
   test('should create job with vcf file', async({ page }) => {
+    const jobs = new AnnotationJobs(page);
     await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
-    await page.locator('#create-button').click();
+    await jobs.uploadFile('./fixtures/input-vcf-file.vcf');
+    await jobs.create();
 
-    await expect(page.locator('#result')).toBeVisible({timeout: 15000});
-    await expect(page.locator('#new-job-section')).toBeVisible();
-    await expect(page.locator('app-job-creation')).not.toBeVisible();
+    await expect(jobs.result).toBeVisible({timeout: 15000});
+    await expect(jobs.newJobSection).toBeVisible();
+    await expect(jobs.jobCreation).not.toBeVisible();
   });
 
   test('should check if create button is disabled when no file is uploaded', async({ page }) => {
-    await expect(page.locator('#create-button')).toBeDisabled();
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
-    await expect(page.locator('#create-button')).toBeEnabled();
+    const jobs = new AnnotationJobs(page);
+    await expect(jobs.createButton).toBeDisabled();
+    await jobs.uploadFile('./fixtures/input-vcf-file.vcf');
+    await expect(jobs.createButton).toBeEnabled();
   });
 
   test('should check if create button is enabled when no pipeline is selected', async({ page }) => {
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
-    await expect(page.locator('#create-button')).toBeEnabled();
+    const jobs = new AnnotationJobs(page);
+    await jobs.uploadFile('./fixtures/input-vcf-file.vcf');
+    await expect(jobs.createButton).toBeEnabled();
 
-    await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
-    await expect(page.locator('#create-button')).toBeEnabled();
+    await new PipelineEditor(page).newPipeline();
+    await expect(jobs.createButton).toBeEnabled();
   });
 
   test('should check if create button is disabled when pipeline is invalid', async({ page }) => {
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
-    await expect(page.locator('#create-button')).toBeEnabled();
+    const jobs = new AnnotationJobs(page);
+    await jobs.uploadFile('./fixtures/input-vcf-file.vcf');
+    await expect(jobs.createButton).toBeEnabled();
 
     await utils.typeInPipelineEditor(page, 'invalid content');
     await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
 
-    await expect(page.locator('#create-button')).toBeDisabled();
+    await expect(jobs.createButton).toBeDisabled();
   });
 
   test('should check if create button is disabled when uploaded file is removed', async({ page }) => {
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
-    await expect(page.locator('#create-button')).toBeEnabled();
-    await page.locator('#delete-uploaded-file').click();
-    await expect(page.locator('#create-button')).toBeDisabled();
+    const jobs = new AnnotationJobs(page);
+    await jobs.uploadFile('./fixtures/input-vcf-file.vcf');
+    await expect(jobs.createButton).toBeEnabled();
+    await jobs.deleteUploadedFile.click();
+    await expect(jobs.createButton).toBeDisabled();
   });
 
   test('should create job and then delete it', async({ page }) => {
+    const jobs = new AnnotationJobs(page);
     await customDefaultPipeline(page);
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
-    await page.locator('#create-button').click();
+    await jobs.uploadFile('./fixtures/input-vcf-file.vcf');
+    await jobs.create();
 
-    const lastJobId = await page.locator('app-jobs-table').locator('.job-name').evaluate(el => el.textContent);
+    const lastJobId = await jobs.jobsTable.locator('.job-name').evaluate(el => el.textContent);
     await expect(page.getByText(lastJobId)).toBeVisible();
 
-    await page.locator('.delete-icon').nth(0).click();
+    await jobs.deleteIcons.nth(0).click();
     await expect(page.getByText(lastJobId)).not.toBeVisible();
   });
 
   test('should create job with tsv file and columns selected by default', async({ page }) => {
+    const jobs = new AnnotationJobs(page);
     await customDefaultPipeline(page);
 
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-tsv-file.tsv');
+    await jobs.uploadFile('./fixtures/input-tsv-file.tsv');
 
-    await expect(page.locator('app-column-specifying')).toBeVisible();
+    await expect(jobs.columnSpecifying).toBeVisible();
 
-    await page.locator('#create-button').click();
-    await waitForJobStatus(page, utils.successBackgroundColor);
+    await jobs.create();
+    await jobs.waitForJobStatus(utils.successBackgroundColor);
   });
 
   test('should create job with csv file and columns selected by default', async({ page }) => {
+    const jobs = new AnnotationJobs(page);
     await customDefaultPipeline(page);
 
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-csv-file.csv');
+    await jobs.uploadFile('./fixtures/input-csv-file.csv');
     await page.waitForSelector('#table');
 
-    await page.locator('#create-button').click();
-    await waitForJobStatus(page, utils.successBackgroundColor);
+    await jobs.create();
+    await jobs.waitForJobStatus(utils.successBackgroundColor);
   });
 });
 
@@ -101,42 +109,43 @@ test.describe('Job details tests', () => {
     await utils.registerUser(page, email, password);
 
     await utils.loginUser(page, email, password);
-    await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-    await PipelineEditor.waitForLoaded(page); // wait for default pipeline to load
+    await AnnotationJobs.open(page);
   });
 
   test('should check job details of the first job', async({ page }) => {
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
-    await page.locator('#create-button').click();
+    const jobs = new AnnotationJobs(page);
+    await jobs.uploadFile('./fixtures/input-vcf-file.vcf');
+    await jobs.create();
 
-    await waitForJobStatus(page, utils.successBackgroundColor);
+    await jobs.waitForJobStatus(utils.successBackgroundColor);
 
-    await page.locator('.job-name').getByText('info').nth(0).click();
-    await expect(page.locator('app-job-details')).toBeVisible();
-    await expect(page.locator('app-job-details').locator('.owner')).not.toBeEmpty();
-    await expect(page.locator('app-job-details').locator('.name')).not.toBeEmpty();
-    await expect(page.locator('app-job-details').locator('.date')).not.toBeEmpty();
-    await expect(page.locator('app-job-details').locator('.time')).not.toBeEmpty();
-    await expect(page.locator('app-job-details').locator('.started')).not.toBeEmpty();
-    await expect(page.locator('app-job-details').locator('.duration')).not.toBeEmpty();
-    await expect(page.locator('app-job-details').locator('.status-label')).not.toBeEmpty();
-    await expect(page.locator('app-job-details').locator('#download-input')).toBeVisible();
-    await expect(page.locator('app-job-details').locator('#download-config')).toBeVisible();
-    await expect(page.locator('app-job-details').locator('#download-annotated')).toBeVisible();
-    await expect(page.locator('app-job-details').locator('#data-size')).toBeVisible();
+    await jobs.openJobDetails();
+    await expect(jobs.jobDetails).toBeVisible();
+    await expect(jobs.jobDetails.locator('.owner')).not.toBeEmpty();
+    await expect(jobs.jobDetails.locator('.name')).not.toBeEmpty();
+    await expect(jobs.jobDetails.locator('.date')).not.toBeEmpty();
+    await expect(jobs.jobDetails.locator('.time')).not.toBeEmpty();
+    await expect(jobs.jobDetails.locator('.started')).not.toBeEmpty();
+    await expect(jobs.jobDetails.locator('.duration')).not.toBeEmpty();
+    await expect(jobs.jobStatusLabel).not.toBeEmpty();
+    await expect(jobs.downloadInput).toBeVisible();
+    await expect(jobs.downloadConfig).toBeVisible();
+    await expect(jobs.downloadAnnotated).toBeVisible();
+    await expect(jobs.jobDetails.locator('#data-size')).toBeVisible();
   });
 
   test('should download uploaded file from job details modal', async({ page }) => {
+    const jobs = new AnnotationJobs(page);
     await customDefaultPipeline(page);
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file-reduced.vcf');
-    await page.locator('#create-button').click();
+    await jobs.uploadFile('./fixtures/input-vcf-file-reduced.vcf');
+    await jobs.create();
 
-    await waitForJobStatus(page, utils.successBackgroundColor);
+    await jobs.waitForJobStatus(utils.successBackgroundColor);
 
-    await page.locator('.job-name').getByText('info').nth(0).click();
+    await jobs.openJobDetails();
 
     const downloadPromise = page.waitForEvent('download');
-    await page.locator('app-job-details').locator('#download-input').click();
+    await jobs.downloadInput.click();
     const downloadedFile = await downloadPromise;
 
     const fixtureData = scanCSV(await downloadedFile.path(), {truncateRaggedLines: true});
@@ -147,15 +156,16 @@ test.describe('Job details tests', () => {
   });
 
   test('should download pipeline config file', async({ page }) => {
+    const jobs = new AnnotationJobs(page);
     await customDefaultPipeline(page);
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
-    await page.locator('#create-button').click();
-    await waitForJobStatus(page, utils.successBackgroundColor);
+    await jobs.uploadFile('./fixtures/input-vcf-file.vcf');
+    await jobs.create();
+    await jobs.waitForJobStatus(utils.successBackgroundColor);
 
-    await page.locator('.job-name').getByText('info').nth(0).click();
+    await jobs.openJobDetails();
 
     const downloadPromise = page.waitForEvent('download');
-    await page.locator('app-job-details').locator('#download-config').click();
+    await jobs.downloadConfig.click();
     const downloadedFile = await downloadPromise;
 
     const downloadData = scanCSV(await downloadedFile.path());
@@ -166,15 +176,16 @@ test.describe('Job details tests', () => {
   });
 
   test('should download annotated file', async({ page }) => {
+    const jobs = new AnnotationJobs(page);
     await customDefaultPipeline(page);
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
-    await page.locator('#create-button').click();
-    await waitForJobStatus(page, utils.successBackgroundColor);
+    await jobs.uploadFile('./fixtures/input-vcf-file.vcf');
+    await jobs.create();
+    await jobs.waitForJobStatus(utils.successBackgroundColor);
 
-    await page.locator('.job-name').getByText('info').nth(0).click();
+    await jobs.openJobDetails();
 
     const downloadPromise = page.waitForEvent('download');
-    await page.locator('app-job-details').locator('#download-annotated').click();
+    await jobs.downloadAnnotated.click();
     const downloadedFile = await downloadPromise;
 
     const fixtureData = scanCSV(await downloadedFile.path(), {truncateRaggedLines: true});
@@ -185,21 +196,21 @@ test.describe('Job details tests', () => {
   });
 
   test('should check job details modal of failed job', async({ page }) => {
+    const jobs = new AnnotationJobs(page);
     await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-csv-file.csv');
+    await jobs.uploadFile('./fixtures/input-csv-file.csv');
 
-    await expect(page.locator('app-column-specifying')).toBeVisible();
-    await page.locator('[id="POS-header"]').locator('mat-select').click();
-    await page.getByRole('option', { name: 'vcf_like', exact: true }).click();
+    await expect(jobs.columnSpecifying).toBeVisible();
+    await jobs.selectColumnType('POS', 'vcf_like');
 
-    await page.locator('#create-button').click();
-    await waitForJobStatus(page, utils.failedBackgroundColor);
+    await jobs.create();
+    await jobs.waitForJobStatus(utils.failedBackgroundColor);
 
-    await page.locator('.job-name').getByText('info').nth(0).click();
-    await expect(page.locator('app-job-details').locator('.status-label')).toHaveText('failed');
-    await expect(page.locator('app-job-details').locator('#download-input')).toBeVisible();
-    await expect(page.locator('app-job-details').locator('#download-config')).toBeVisible();
-    await expect(page.locator('app-job-details').locator('#download-annotated')).not.toBeVisible();
+    await jobs.openJobDetails();
+    await expect(jobs.jobStatusLabel).toHaveText('failed');
+    await expect(jobs.downloadInput).toBeVisible();
+    await expect(jobs.downloadConfig).toBeVisible();
+    await expect(jobs.downloadAnnotated).not.toBeVisible();
   });
 });
 
@@ -212,28 +223,29 @@ test.describe('Jobs table tests', () => {
     await utils.registerUser(page, email, password);
 
     await utils.loginUser(page, email, password);
-    await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-    await PipelineEditor.waitForLoaded(page); // wait for default pipeline to load
+    await AnnotationJobs.open(page);
   });
 
   test('should create job and check first row', async({ page }) => {
+    const jobs = new AnnotationJobs(page);
     await customDefaultPipeline(page);
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
-    await page.locator('#create-button').click();
+    await jobs.uploadFile('./fixtures/input-vcf-file.vcf');
+    await jobs.create();
 
-    await waitForJobStatus(page, utils.successBackgroundColor);
-    await expect(page.locator('.job-name').nth(0)).not.toBeEmpty();
-    await expect(page.locator('.actions').nth(0)).not.toBeEmpty();
+    await jobs.waitForJobStatus(utils.successBackgroundColor);
+    await expect(jobs.jobNames.nth(0)).not.toBeEmpty();
+    await expect(jobs.actions.nth(0)).not.toBeEmpty();
   });
 
   test('should download from table when annotation is success', async({ page }) => {
+    const jobs = new AnnotationJobs(page);
     await customDefaultPipeline(page);
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-vcf-file.vcf');
-    await page.locator('#create-button').click();
-    await waitForJobStatus(page, utils.successBackgroundColor);
+    await jobs.uploadFile('./fixtures/input-vcf-file.vcf');
+    await jobs.create();
+    await jobs.waitForJobStatus(utils.successBackgroundColor);
 
     const downloadPromise = page.waitForEvent('download');
-    await page.locator('app-jobs-table .download-icon').nth(0).click();
+    await jobs.downloadIcons.nth(0).click();
     const downloadedFile = await downloadPromise;
 
     const fixtureData = scanCSV(await downloadedFile.path(), {truncateRaggedLines: true});
@@ -244,34 +256,35 @@ test.describe('Jobs table tests', () => {
   });
 
   test('should upload tsv file and check specify columns component content', async({ page }) => {
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-tsv-file.tsv');
+    const jobs = new AnnotationJobs(page);
+    await jobs.uploadFile('./fixtures/input-tsv-file.tsv');
 
-    await expect(page.locator('app-column-specifying')).toBeVisible();
-    await expect(page.locator('[id="CHROM-header"]').locator('mat-select')).toHaveText('chrom');
-    await expect(page.locator('[id="POS-header"]').locator('mat-select')).toHaveText('pos');
-    await expect(page.locator('[id="REF-header"]').locator('mat-select')).toHaveText('ref');
-    await expect(page.locator('[id="ALT-header"]').locator('mat-select')).toHaveText('alt');
+    await expect(jobs.columnSpecifying).toBeVisible();
+    await expect(jobs.columnHeaderSelect('CHROM')).toHaveText('chrom');
+    await expect(jobs.columnHeaderSelect('POS')).toHaveText('pos');
+    await expect(jobs.columnHeaderSelect('REF')).toHaveText('ref');
+    await expect(jobs.columnHeaderSelect('ALT')).toHaveText('alt');
 
-    await expect(page.locator('#instructions')).toBeVisible();
+    await expect(jobs.instructions).toBeVisible();
 
     // row 1 of input file
-    await expect(page.locator('.cell').nth(0)).toHaveText('chr1');
-    await expect(page.locator('.cell').nth(1)).toHaveText('85827');
-    await expect(page.locator('.cell').nth(2)).toHaveText('T');
-    await expect(page.locator('.cell').nth(3)).toHaveText('C');
+    await expect(jobs.cells.nth(0)).toHaveText('chr1');
+    await expect(jobs.cells.nth(1)).toHaveText('85827');
+    await expect(jobs.cells.nth(2)).toHaveText('T');
+    await expect(jobs.cells.nth(3)).toHaveText('C');
 
     //row 2 of input file
-    await expect(page.locator('.cell').nth(4)).toHaveText('chr1');
-    await expect(page.locator('.cell').nth(5)).toHaveText('183733');
-    await expect(page.locator('.cell').nth(6)).toHaveText('C');
-    await expect(page.locator('.cell').nth(7)).toHaveText('T');
+    await expect(jobs.cells.nth(4)).toHaveText('chr1');
+    await expect(jobs.cells.nth(5)).toHaveText('183733');
+    await expect(jobs.cells.nth(6)).toHaveText('C');
+    await expect(jobs.cells.nth(7)).toHaveText('T');
   });
 
   test('should show error message when specifying invalid combination of columns', async({ page }) => {
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-csv-file.csv');
+    const jobs = new AnnotationJobs(page);
+    await jobs.uploadFile('./fixtures/input-csv-file.csv');
 
-    await page.locator('[id="CHROM-header"]').locator('mat-select').click();
-    await page.getByRole('option', { name: 'variant', exact: true }).click();
+    await jobs.selectColumnType('CHROM', 'variant');
 
     await expect(page.getByText('Cannot build annotatable from selected columns!')).toBeVisible();
   });
@@ -286,51 +299,54 @@ test.describe('Jobs validation tests', () => {
     await utils.registerUser(page, email, password);
 
     await utils.loginUser(page, email, password);
-    await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-    await PipelineEditor.waitForLoaded(page); // wait for default pipeline to load
+    await AnnotationJobs.open(page);
   });
 
   test('should check if create button is disabled when invalid file is uploaded', async({ page }) => {
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/invalid-input-file-format.yaml');
+    const jobs = new AnnotationJobs(page);
+    await jobs.uploadFile('./fixtures/invalid-input-file-format.yaml');
     await expect(page.getByText('Unsupported format!')).toBeVisible();
-    await expect(page.locator('#create-button')).toBeDisabled();
-    await expect(page.locator('app-column-specifying')).not.toBeVisible();
-    await expect(page.locator('.separator-list')).not.toBeVisible();
+    await expect(jobs.createButton).toBeDisabled();
+    await expect(jobs.columnSpecifying).not.toBeVisible();
+    await expect(jobs.separatorList).not.toBeVisible();
   });
 
   test('should upload invalid vcf file', async({ page }) => {
+    const jobs = new AnnotationJobs(page);
     await utils.selectPipeline(page, 'pipeline/hg38_clinical_annotation');
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/invalid-vcf-input-file.vcf');
+    await jobs.uploadFile('./fixtures/invalid-vcf-input-file.vcf');
 
-    await page.locator('#create-button').click();
+    await jobs.create();
     await expect(page.getByText('does not have valid header')).toBeVisible();
   });
 
   test('should expect error message file with invalid separator is uploaded', async({ page }) => {
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/invalid-separator.csv');
-    await page.locator('[id="CHROM+POS+REF+ALT-header"]').locator('mat-select').click();
-    await page.getByRole('option', { name: 'chrom', exact: true }).click();
+    const jobs = new AnnotationJobs(page);
+    await jobs.uploadFile('./fixtures/invalid-separator.csv');
+    await jobs.selectColumnType('CHROM+POS+REF+ALT', 'chrom');
     await expect(page.getByText('Cannot build annotatable from selected columns!')).toBeVisible();
-    await expect(page.locator('#create-button')).toBeDisabled();
+    await expect(jobs.createButton).toBeDisabled();
   });
 
   test('should expect error message if file content is not separeted correctly', async({ page }) => {
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/wrongly-separated-row.csv');
-    await page.locator('[id="CHROM,POS,REF,ALT-header"]').locator('mat-select').click();
-    await page.getByRole('option', { name: 'chrom', exact: true }).click();
+    const jobs = new AnnotationJobs(page);
+    await jobs.uploadFile('./fixtures/wrongly-separated-row.csv');
+    await jobs.selectColumnType('CHROM,POS,REF,ALT', 'chrom');
     await expect(page.getByText('Cannot build annotatable from selected columns!')).toBeVisible();
-    await expect(page.locator('#create-button')).toBeDisabled();
+    await expect(jobs.createButton).toBeDisabled();
   });
 
   test('should expect error message when no columns are specified', async({ page }) => {
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/wrongly-separated-row.csv');
+    const jobs = new AnnotationJobs(page);
+    await jobs.uploadFile('./fixtures/wrongly-separated-row.csv');
     await expect(page.getByText('No columns selected!')).toBeVisible();
-    await expect(page.locator('#create-button')).toBeDisabled();
+    await expect(jobs.createButton).toBeDisabled();
   });
 
   test.skip('should upload file with more than 1000 variants', async({ page }) => {
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/more-than-1000.vcf');
-    await page.locator('#create-button').click();
+    const jobs = new AnnotationJobs(page);
+    await jobs.uploadFile('./fixtures/more-than-1000.vcf');
+    await jobs.create();
     await expect(page.getByText('Upload limit reached!')).toBeVisible();
   });
 });
@@ -342,100 +358,82 @@ test.describe('Job file upload tests', () => {
     const password = 'aaabbb';
     await utils.registerUser(page, email, password);
     await utils.loginUser(page, email, password);
-    await page.getByRole('link', { name: 'Annotation Jobs' }).click();
-    await PipelineEditor.waitForLoaded(page);
+    await AnnotationJobs.open(page);
   });
 
   test('should upload VCF file via drag-and-drop', async({ page }) => {
-    const fileBuffer = fs.readFileSync('./fixtures/input-vcf-file.vcf');
-    const dataTransfer = await page.evaluateHandle((data) => {
-      const dt = new DataTransfer();
-      const file = new File([new Uint8Array(data)], 'input-vcf-file.vcf', { type: 'text/vcard' });
-      dt.items.add(file);
-      return dt;
-    }, [...fileBuffer]);
+    const jobs = new AnnotationJobs(page);
+    await jobs.dropFile(fs.readFileSync('./fixtures/input-vcf-file.vcf'), 'input-vcf-file.vcf', 'text/vcard');
 
-    await page.locator('#file-upload-field').dispatchEvent('drop', { dataTransfer });
-
-    await expect(page.locator('#uploaded-file-container')).toBeVisible();
-    await expect(page.locator('#file-info')).toContainText('input-vcf-file.vcf');
-    await expect(page.locator('#create-button')).toBeEnabled();
+    await expect(jobs.uploadedFileContainer).toBeVisible();
+    await expect(jobs.fileInfo).toContainText('input-vcf-file.vcf');
+    await expect(jobs.createButton).toBeEnabled();
   });
 
   test('should reject unsupported format via drag-and-drop', async({ page }) => {
-    const fileBuffer = fs.readFileSync('./fixtures/invalid-input-file-format.yaml');
-    const dataTransfer = await page.evaluateHandle((data) => {
-      const dt = new DataTransfer();
-      const file = new File([new Uint8Array(data)], 'invalid-file.yaml');
-      dt.items.add(file);
-      return dt;
-    }, [...fileBuffer]);
+    const jobs = new AnnotationJobs(page);
+    await jobs.dropFile(fs.readFileSync('./fixtures/invalid-input-file-format.yaml'), 'invalid-file.yaml');
 
-    await page.locator('#file-upload-field').dispatchEvent('drop', { dataTransfer });
-
-    await expect(page.locator('#uploaded-file-container')).toBeVisible();
+    await expect(jobs.uploadedFileContainer).toBeVisible();
     await expect(page.getByText('Unsupported format!')).toBeVisible();
-    await expect(page.locator('#create-button')).toBeDisabled();
+    await expect(jobs.createButton).toBeDisabled();
   });
 
   test('should switch separator from tab to comma for TSV file', async({ page }) => {
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-tsv-file.tsv');
+    const jobs = new AnnotationJobs(page);
+    await jobs.uploadFile('./fixtures/input-tsv-file.tsv');
     await page.waitForSelector('#table');
 
-    await expect(page.locator('#tab-separtor-radio')).toBeChecked();
-    await expect(page.locator('#comma-separtor-radio')).not.toBeChecked();
+    await expect(jobs.tabSeparatorRadio).toBeChecked();
+    await expect(jobs.commaSeparatorRadio).not.toBeChecked();
 
     const separatorResponse = page.waitForResponse(
       resp => resp.url().includes('api/jobs/preview')
     );
-    await page.locator('#comma-separtor-radio').click();
+    await jobs.commaSeparatorRadio.click();
     await separatorResponse;
 
-    await expect(page.locator('#comma-separtor-radio')).toBeChecked();
-    await expect(page.locator('#tab-separtor-radio')).not.toBeChecked();
+    await expect(jobs.commaSeparatorRadio).toBeChecked();
+    await expect(jobs.tabSeparatorRadio).not.toBeChecked();
   });
 
   test('should switch separator from comma to tab for CSV file', async({ page }) => {
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-csv-file.csv');
+    const jobs = new AnnotationJobs(page);
+    await jobs.uploadFile('./fixtures/input-csv-file.csv');
     await page.waitForSelector('#table');
 
-    await expect(page.locator('#comma-separtor-radio')).toBeChecked();
-    await expect(page.locator('#tab-separtor-radio')).not.toBeChecked();
+    await expect(jobs.commaSeparatorRadio).toBeChecked();
+    await expect(jobs.tabSeparatorRadio).not.toBeChecked();
 
     const separatorResponse = page.waitForResponse(
       resp => resp.url().includes('api/jobs/preview')
     );
-    await page.locator('#tab-separtor-radio').click();
+    await jobs.tabSeparatorRadio.click();
     await separatorResponse;
 
-    await expect(page.locator('#tab-separtor-radio')).toBeChecked();
-    await expect(page.locator('#comma-separtor-radio')).not.toBeChecked();
+    await expect(jobs.tabSeparatorRadio).toBeChecked();
+    await expect(jobs.commaSeparatorRadio).not.toBeChecked();
   });
 
   test('should show genome selector when location column is auto-mapped', async({ page }) => {
-    await page.locator('input[id="file-upload"]').setInputFiles('./fixtures/input-location-column-file.tsv');
+    const jobs = new AnnotationJobs(page);
+    await jobs.uploadFile('./fixtures/input-location-column-file.tsv');
     await page.waitForSelector('#table');
 
-    await expect(page.locator('#select-genome')).toBeVisible();
+    await expect(jobs.selectGenome).toBeVisible();
     await expect(page.locator('label[for="select-genome"]')).toHaveText('Select genome:');
 
-    const options = await page.locator('#select-genome option').allTextContents();
+    const options = await jobs.selectGenome.locator('option').allTextContents();
     expect(options.length).toBe(5);
   });
 });
 
 
-async function waitForJobStatus(page: Page, color: string): Promise<void> {
-  await expect(async() => {
-    await expect(page.locator('.grid-cell').nth(0)).toHaveCSS('background-color', color);
-    await page.reload();
-  }).toPass({intervals: [2000, 3000, 5000], timeout: 120000});
-}
-
 async function customDefaultPipeline(page: Page): Promise<void> {
-  await page.locator('#pipeline-actions').getByRole('button', { name: 'draft New pipeline', exact: true }).click();
-  await expect(page.locator('#pipelines-input')).toBeEmpty();
-  await expect(page.locator('.monaco-editor').nth(0)).toBeEmpty();
+  const editor = new PipelineEditor(page);
+  await editor.newPipeline();
+  await expect(editor.pipelineInput).toBeEmpty();
+  await expect(editor.monacoEditor.nth(0)).toBeEmpty();
 
   const saveResponse = page.waitForResponse(
     resp => resp.url().includes('api/pipelines/user') && resp.status() === 200, {timeout: 30000}

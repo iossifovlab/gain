@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { PipelineEditor } from '../../pages/pipeline-editor.page';
+import { SingleAnnotation } from '../../pages/single-annotation.page';
 import * as utils from '../../utils';
 import { customDefaultPipeline } from './helpers';
 
@@ -15,57 +16,49 @@ test.describe('Single annotation history tests', () => {
   });
 
   test('should show annotatable in history after annotation', async({ page }) => {
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    const singleAnnotation = new SingleAnnotation(page);
+    await singleAnnotation.annotate('chr1 1265232 G A');
 
-    await expect(page.locator('.annotatable-link').getByText('chr1:1265232 G>A')).toBeVisible();
+    await expect(singleAnnotation.annotatableLinks.getByText('chr1:1265232 G>A')).toBeVisible();
   });
 
   test('should annotate when clicking annotatable from history', async({ page }) => {
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    const singleAnnotation = new SingleAnnotation(page);
+    await singleAnnotation.annotate('chr1 1265232 G A');
 
-    await page.getByPlaceholder('Type annotatable...').fill('');
-    await expect(page.locator('#report')).not.toBeVisible();
+    await singleAnnotation.annotatableInput.fill('');
+    await expect(singleAnnotation.report).not.toBeVisible();
 
-    await page.locator('.annotatable-link').first().click();
-    await page.waitForSelector('#report', { timeout: 120000 });
-    await expect(page.locator('#report')).toBeVisible();
+    await singleAnnotation.annotatableLinks.first().click();
+    await singleAnnotation.waitForReport();
+    await expect(singleAnnotation.report).toBeVisible();
   });
 
   test('should delete annotatable from history', async({ page }) => {
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    const singleAnnotation = new SingleAnnotation(page);
+    await singleAnnotation.annotate('chr1 1265232 G A');
 
-    await expect(page.locator('.annotatable-cell')).toHaveCount(1);
-    await page.locator('.delete-btn').first().click();
-    await expect(page.locator('.annotatable-cell')).toHaveCount(0);
+    await expect(singleAnnotation.annotatableCells).toHaveCount(1);
+    await singleAnnotation.deleteButtons.first().click();
+    await expect(singleAnnotation.annotatableCells).toHaveCount(0);
   });
 
   test('should accumulate multiple annotatable in history', async({ page }) => {
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    const singleAnnotation = new SingleAnnotation(page);
+    await singleAnnotation.annotate('chr1 1265232 G A');
+    await singleAnnotation.annotate('chr1 11796321 G A');
 
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 11796321 G A');
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
-
-    await expect(page.locator('.annotatable-cell')).toHaveCount(2);
+    await expect(singleAnnotation.annotatableCells).toHaveCount(2);
   });
 
   test('should not duplicate annotatable in history when annotating '+
     'the same annotatable multiple times', async({ page }) => {
-    await page.getByPlaceholder('Type annotatable...').fill('chr1 1265232 G A');
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    const singleAnnotation = new SingleAnnotation(page);
+    await singleAnnotation.annotate('chr1 1265232 G A');
 
-    await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await page.waitForSelector('#report', { timeout: 120000 });
+    await singleAnnotation.goButton.click();
+    await singleAnnotation.waitForReport();
 
-    await expect(page.locator('.annotatable-cell')).toHaveCount(1);
+    await expect(singleAnnotation.annotatableCells).toHaveCount(1);
   });
 });
