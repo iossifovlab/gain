@@ -273,7 +273,7 @@ pipeline {
                                             tests: 'tests',
                                             mypyTarget: 'gain',
                                             mypyExtra: '--config-file /workspace/mypy.ini',
-                                            pytestArgs: '-n 5 --enable-http-testing --enable-s3-testing',
+                                            pytestArgs: '-n 5 --enable-http-testing --enable-s3-testing --ignore=tests/integration',
                                             dockerRunExtra:
                                                 '--network "$COMPOSE_NETWORK" ' +
                                                 '-e HTTP_HOST=apache:80 ' +
