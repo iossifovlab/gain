@@ -64,7 +64,7 @@ GAIn is installed with access to the default IossifovLab GRR. You can confirm wh
 
 .. code-block:: bash
 
-    grr_browse
+    grr_browse | less
 
 This shows that you have access to the IossifovLab's main GRR and lists all the resources available from that server.
 
@@ -153,7 +153,7 @@ You can open the generated HTML summary (doc.html) in your local folder. To anno
 
     annotate_tabular small_input.csv custom_pipeline.yaml -o small_input_custom.annotated.csv
 
-This command applies the local ``custom_pipeline.yaml`` file to the variants in ``small_input.csv``. To avoid overwriting the output from the previous section, we write the result to (:download:`small_input_custom.annotated.csv <files/small_input_custom.annotated.csv>`), whose content is shown below.
+This command applies the local ``custom_pipeline.yaml`` file to the variants in ``small_input.csv``. To avoid overwriting the output from the previous section, we write the result to :download:`small_input_custom.annotated.csv <files/small_input_custom.annotated.csv>`, whose content is shown below.
 
 .. csv-table::
     :file: files/small_input_custom.annotated.csv
@@ -220,14 +220,14 @@ Parallelizing large annotation jobs
 
 Annotation can be computationally intensive, especially for large input files or pipelines with many steps. Because GAIn annotates each annotatable independently, these jobs can be accelerated by splitting the input into genomic regions and processing those regions in parallel across multiple CPU cores or cluster workers. Users could do this manually by splitting an input file into chunks, annotating each chunk separately, and merging the results. To avoid this extra workflow management, GAIn provides built-in parallelization support for indexed input files.
 
-To use GAIn's parallelization features, the input file must be sorted by genomic coordinates and indexed with tabix, a widely used genomic indexing tool. This requirement applies to both input formats supported by GAIn: tabular files and VCF files. VCF files can be sorted and indexed with bcftools, while tabular files can be sorted, compressed with bgzip, and indexed with tabix. See the “Preparing annotation input files for parallelization”[] section for details and examples.
+To use GAIn's parallelization features, the input file must be sorted by genomic coordinates and indexed with tabix, a widely used genomic indexing tool. This requirement applies to both input formats supported by GAIn: tabular files and VCF files. VCF files can be sorted and indexed with bcftools, while tabular files can be sorted, compressed with bgzip, and indexed with tabix.
 
 When GAIn detects an indexed input file, it splits the annotation job into smaller tasks and executes them in parallel using a computation cluster. By default, GAIn uses local cluster that uses the available CPU cores on the host where the annotation command is run. For larger jobs, users can control both how the input is split and how many workers are used.
 
 The degree of parallelization can be controlled with the ``-j`` option, which specifies the number of workers. The optimal value depends on the input size, pipeline complexity, available CPU cores, memory, and storage performance.
 
 
-For example, download the example input file (:download:`SSC_WES_variants_select.tsv.gz <files/SSC_WES_variants_select.tsv.gz>`), which contains all 1,413,298  variants on canonical chromosomes detected by WES in the SSC project. You can annotate this large variant collection with the ``pipeline/hg38_clinical_annotation`` pipeline by running the following command. However, even with cached resources, this annotation took approximately 17 minutes in our test:
+For example, download the example input file (:download:`SSC_WES_variants_select.tsv.gz <files/SSC_WES_variants_select.tsv.gz>`), which contains all 1,413,298  variants on canonical chromosomes detected by WES in the SSC project. You can annotate this large variant collection with the ``pipeline/hg38_clinical_annotation`` pipeline by running the following command. However, even with cached resources, this annotation took approximately 50 minutes in our test:
 
 
 .. code-block:: bash
@@ -243,13 +243,13 @@ To take advantage of parallel computation, first prepare the input file for inde
 
 When run successfully, this command produces two files: ``SSC_WES_variants_select.sorted.tsv.bgz``, which contains the sorted and compressed version of the input file, and ``SSC_WES_variants_select.sorted.tsv.bgz.tbi``, its associated tabix index. These two files enable parallelization and fast genomic-region access in GAIn.
 
-The following command uses parallelization, and with the required resources already cached, annotating the sorted file with ``pipeline/hg38_clinical_annotation`` took approximately 1 minute and 15 seconds in our test.
+The following command uses parallelization, and with the required resources already cached, annotating the sorted file with ``pipeline/hg38_clinical_annotation`` took approximately 10 minutes in our test.
 
 .. code-block:: bash
 
     annotate_tabular SSC_WES_variants_select.sorted.tsv.bgz pipeline/hg38_clinical_annotation
 
-By default, GAIn splits indexed inputs by chromosome. For human genomes, this creates up to 24 chromosome-level tasks, which is already enough to use all available cores on our local test machine with 10 CPU cores. Therefore, splitting the input further with the ``-r`` option provides only a modest additional benefit on this computer. However, on larger compute systems or clusters with many more cores, chromosome-level splitting may not create enough tasks to fully use the available parallelism. In those cases, the ``-r`` option can split the input into smaller genomic regions and improve scaling. In our test, using the ``-r`` option reduced the annotation time to approximately 1 minute.
+By default, GAIn splits indexed inputs by chromosome. For human genomes, this creates up to 24 chromosome-level tasks, which is already enough to use all available cores on our local test machine with 10 CPU cores. Therefore, splitting the input further with the ``-r`` option provides only a modest additional benefit on this computer. However, on larger compute systems or clusters with many more cores, chromosome-level splitting may not create enough tasks to fully use the available parallelism. In those cases, the ``-r`` option can split the input into smaller genomic regions and improve scaling.
 
 .. code-block:: bash
 
@@ -261,7 +261,7 @@ GAIn can also use a configured cluster that creates workers on a larger compute 
 
     annotate_tabular SSC_WES_variants_select.sorted.tsv.bgz pipeline/hg38_clinical_annotation -r 30_000_000 -N my_sge_cluster -j 100
 
-This runs the annotation across up to 100 workers on the configured cluster. See the “Configuring parallelization”[] and “Configuring Dask clusters”[] sections for more details on region splitting, worker configuration, and cluster setup.
+This runs the annotation across up to 100 workers on the configured cluster. 
 
 
 Annotating VCF input

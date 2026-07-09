@@ -1,5 +1,5 @@
 preamble:
-   input_reference_genome: hg38/genomes/GRCh38-hg38
+   input_reference_genome: hg38/genomes/ucsc-hg38
    summary: Clinical Annotation Pipeline for hg38
    description: This pipeline annotates hg38 variants with clinical resources.
    
@@ -16,7 +16,7 @@ annotators:
       source: gene_effects 
       
 - normalize_allele_annotator:
-    genome: hg38/genomes/GRCh38-hg38
+    genome: hg38/genomes/ucsc-hg38
 
 - allele_score_annotator:
     resource_id: hg38/scores/dbSNP
@@ -59,8 +59,8 @@ annotators:
 
 - liftover_annotator:
     chain: liftover/hg38_to_hg19
-    source_genome: hg38/genomes/GRCh38-hg38
-    target_genome: hg19/genomes/GATK_ResourceBundle_5777_b37_phiX174
+    source_genome: hg38/genomes/ucsc-hg38
+    target_genome: hg19/genomes/ucsc-hg19
     attributes:
     - source: liftover_annotatable
       name: hg19_annotatable
@@ -75,7 +75,7 @@ annotators:
 
 - effect_annotator:
     gene_models: hg38/gene_models/GENCODE/49/basic/ALL
-    genome: hg38/genomes/GRCh38-hg38
+    genome: hg38/genomes/GRCh38.p14
     attributes:
     - name: worst_effect_GENCODE_49
       source: worst_effect 
