@@ -19,6 +19,13 @@ export default defineConfig({
   // to 2 if the historical race resurfaces.
   // Locally Playwright defaults to ~half-CPU.
   workers: process.env.CI ? 4 : undefined,
+  /* One retry on CI so a failing test reruns once. Combined with the
+   * on-first-retry video/trace below, every failure captures a video (and
+   * trace) of the retry attempt, and a flaky-but-passing test surfaces as
+   * `flaky` in the JUnit report instead of failing the build. Local stays at
+   * 0 retries for a fast fail signal (on-first-retry records nothing without a
+   * retry). Mirrors gpf-web-e2e. */
+  retries: process.env.CI ? 1 : 0,
   timeout: 300000,
   expect: {
     // Sync DRF views serialize on daphne's single thread_sensitive thread
@@ -41,7 +48,11 @@ export default defineConfig({
   use: {
     /* Base URL to use in actions like `await page.goto('/')`. */
     baseURL: process.env.CI === '1' ? 'http://frontend' : 'http://localhost:4200',
-    trace: process.env.CI ? 'on' : 'on-first-retry',
+    /* on-first-retry (was 'on' for CI): with retries=1 above this captures a
+     * trace for exactly the tests that failed once — the only ones anyone
+     * opens a trace for — instead of a full trace.zip per green test (a
+     * multi-GB bundle). Matches gpf-web-e2e. */
+    trace: 'on-first-retry',
     /* tb-84q: CI mode 'on-first-retry' instead of 'retain-on-failure'.
      * 'retain-on-failure' starts ffmpeg at the beginning of every test
      * and deletes the file on pass — that means 16 concurrent 1080p
