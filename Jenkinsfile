@@ -919,6 +919,35 @@ pipeline {
                     }
                 }
         
+                stage('Trigger core integration') {
+                    when { not { environment name: 'DOCS_ONLY', value: 'true' } }
+                    // Downstream gate for the gain-core-integration job (DSL at
+                    // core/jenkins-jobs/integration.groovy). Runs on every
+                    // branch — the job checks out the same branch / commit and
+                    // runs core/tests/integration against grr-seqpipe.
+                    // `wait: false, propagate: false` matches the web_e2e / VEP
+                    // integration shape: the parent build moves on while the
+                    // integration suite runs separately, and an integration
+                    // regression doesn't FAILURE the parent.
+                    steps {
+                        build(
+                            job: '/gain-core-integration',
+                            parameters: [
+                                string(
+                                    name: 'BRANCH_NAME',
+                                    value: env.BRANCH_NAME,
+                                ),
+                                string(
+                                    name: 'COMMIT_SHA',
+                                    value: env.GIT_COMMIT ?: '',
+                                ),
+                            ],
+                            wait: false,
+                            propagate: false,
+                        )
+                    }
+                }
+
                 stage('Trigger VEP integration') {
                     // Downstream gate for the gain-vep-integration job (DSL
                     // at vep_annotator/jenkins-jobs/integration.groovy). Runs
