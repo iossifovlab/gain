@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pathlib
+from collections.abc import Iterator
 
 import pytest
 from gain.genomic_resources.gene_models.gene_models import (
@@ -39,10 +40,13 @@ def gene_models_2013(grr_seqpipe: GenomicResourceRepo) -> GeneModels:
 
 
 @pytest.fixture(scope="session")
-def genome_2013(grr_seqpipe: GenomicResourceRepo) -> ReferenceGenome:
-    return build_reference_genome_from_resource_id(
+def genome_2013(
+    grr_seqpipe: GenomicResourceRepo,
+) -> Iterator[ReferenceGenome]:
+    with build_reference_genome_from_resource_id(
         "hg19/genomes/GATK_ResourceBundle_5777_b37_phiX174",
-        grr=grr_seqpipe).open()
+        grr=grr_seqpipe).open() as genome:
+        yield genome
 
 
 @pytest.fixture(scope="session")
@@ -54,7 +58,10 @@ def gene_models_2019(grr_seqpipe: GenomicResourceRepo) -> GeneModels:
 
 
 @pytest.fixture(scope="session")
-def genome_2019(grr_seqpipe: GenomicResourceRepo) -> ReferenceGenome:
-    return build_reference_genome_from_resource_id(
+def genome_2019(
+    grr_seqpipe: GenomicResourceRepo,
+) -> Iterator[ReferenceGenome]:
+    with build_reference_genome_from_resource_id(
         "hg19/genomes/GATK_ResourceBundle_5777_b37_phiX174",
-        grr=grr_seqpipe).open()
+        grr=grr_seqpipe).open() as genome:
+        yield genome
