@@ -84,16 +84,25 @@ BIGWIG_DATA = """
 """
 
 # VCF: VCF_AF is Number=A, exercising the allele-indexed INFO path.
+#
+# VCF_STR is a plain string.  VCF_STR_MULTI is Number=. Type=String,
+# which ``VCFLine.get`` alone collapses to a '|'-joined string -- that
+# join lives in the VCF backend, not in the shared stringify(), and is
+# the sort of backend-local behaviour a record migration can silently
+# drop.  Each string field is absent from one record, so the
+# missing-value path is covered for both shapes.
 VCF_DATA = """
 ##fileformat=VCFv4.1
 ##INFO=<ID=VCF_FLOAT,Number=1,Type=Float,Description="a float">
 ##INFO=<ID=VCF_INT,Number=1,Type=Integer,Description="an int">
 ##INFO=<ID=VCF_AF,Number=A,Type=Float,Description="per-allele float">
+##INFO=<ID=VCF_STR,Number=1,Type=String,Description="a string">
+##INFO=<ID=VCF_STR_MULTI,Number=.,Type=String,Description="strings">
 #CHROM POS ID REF ALT QUAL FILTER INFO
-chr1   10  .  A   T   .    .      VCF_FLOAT=0.5;VCF_INT=11;VCF_AF=0.05
-chr1   11  .  A   T   .    .      VCF_FLOAT=0.6;VCF_INT=12;VCF_AF=0.06
-chr2   20  .  C   G   .    .      VCF_FLOAT=0.7;VCF_INT=13;VCF_AF=0.07
-"""
+chr1   10  .  A   T   .    .      VCF_FLOAT=0.5;VCF_INT=11;VCF_AF=0.05;VCF_STR=benign;VCF_STR_MULTI=a,b
+chr1   11  .  A   T   .    .      VCF_FLOAT=0.6;VCF_INT=12;VCF_AF=0.06;VCF_STR=likely_pathogenic
+chr2   20  .  C   G   .    .      VCF_FLOAT=0.7;VCF_INT=13;VCF_AF=0.07;VCF_STR_MULTI=x,y,z
+"""  # noqa: E501
 
 ANNOTATION = """
     - position_score:
@@ -119,6 +128,8 @@ ANNOTATION = """
         - source: VCF_FLOAT
         - source: VCF_INT
         - source: VCF_AF
+        - source: VCF_STR
+        - source: VCF_STR_MULTI
 """
 
 MEM_RESOURCE = """
