@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import os
 import pathlib
 from collections.abc import Iterator
 
@@ -16,6 +17,7 @@ from gain.genomic_resources.reference_genome import (
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
+    load_definition_file,
 )
 
 # Checked-in ``type: http`` GRR definition pointing at grr-seqpipe. Building
@@ -25,10 +27,21 @@ from gain.genomic_resources.repository_factory import (
 GRR_SEQPIPE_DEFINITION = str(
     pathlib.Path(__file__).parent / "grr-seqpipe-definition.yaml")
 
+# When set, resources are resolved through a local cache wrapped around the
+# http repo (GenomicResourceCachedRepo). The dedicated integration CI job
+# (iossifovlab/gain#223) points this at a persistent cache dir on the agent so
+# the ~787MB genome is downloaded once and reused across builds. Unset (the
+# default for local runs) means plain http with range reads — no full download.
+GRR_INTEGRATION_CACHE_DIR_ENV = "GRR_INTEGRATION_CACHE_DIR"
+
 
 @pytest.fixture(scope="session")
 def grr_seqpipe() -> GenomicResourceRepo:
-    return build_genomic_resource_repository(file_name=GRR_SEQPIPE_DEFINITION)
+    definition = load_definition_file(GRR_SEQPIPE_DEFINITION)
+    cache_dir = os.environ.get(GRR_INTEGRATION_CACHE_DIR_ENV)
+    if cache_dir:
+        definition = {**definition, "cache_dir": cache_dir}
+    return build_genomic_resource_repository(definition=definition)
 
 
 @pytest.fixture(scope="session")

@@ -1,0 +1,157 @@
+// Dedicated Jenkins pipeline for the gain-core integration test suite
+// (core/tests/integration). Builds the regular gain-core CI image and runs
+// pytest against the effect-annotation integration tests, which resolve the
+// hg19 genome + refGene gene models from the grr-seqpipe http GRR
+// (https://grr-seqpipe.seqpipe.org).
+//
+// Expected Jenkins job setup:
+//   - Script path: core/Jenkinsfile.integration
+//   - Job DSL: core/jenkins-jobs/integration.groovy (pipelineJob
+//     'gain-core-integration'), seeded by gain-seed.
+//   - Triggered downstream from iossifovlab/gain/<branch> on every branch
+//     (see the 'Trigger core integration' stage in the root Jenkinsfile),
+//     and safe to run manually.
+
+pipeline {
+    // Pinned to `pooh`: the persistent GRR cache under ${HOME}/grr_seqpipe_cache
+    // is maintained on that agent and reused across builds (the ~787MB genome
+    // is downloaded once, then range-read from the local copy).
+    agent { label 'pooh' }
+
+    options {
+        timeout(time: 2, unit: 'HOURS')
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        // The shared cache dir fills lazily on the first (cold) build; the
+        // suite runs single-threaded so concurrent workers never race to
+        // download the same resource. Serialise builds on the agent too.
+        disableConcurrentBuilds()
+    }
+
+    parameters {
+        string(
+            name: 'BRANCH_NAME',
+            defaultValue: 'master',
+            description: 'Branch the upstream gain build was triggered from. ' +
+                'The pipeline checks out this branch unless COMMIT_SHA is set.',
+        )
+        string(
+            name: 'COMMIT_SHA',
+            defaultValue: '',
+            description: 'Specific commit SHA to test (takes precedence over ' +
+                'BRANCH_NAME). Empty = use BRANCH_NAME HEAD.',
+        )
+    }
+
+    environment {
+        IMAGE_TAG = "gain-core-integration-ci:${env.BUILD_NUMBER}"
+        // Persistent across builds. Anchored to the agent home (on pooh,
+        // /var/lib/jenkins -> ZFS via the home symlink) rather than a
+        // hardcoded /data mount. The same absolute path is bind-mounted into
+        // the test container and passed as GRR_INTEGRATION_CACHE_DIR so the
+        // grr_seqpipe fixture wraps the http repo in a cache at this location.
+        GRR_CACHE_DIR = "${env.HOME}/grr_seqpipe_cache"
+    }
+
+    stages {
+        stage('Start') {
+            steps {
+                zulipSend(
+                    message: "Started build #${env.BUILD_NUMBER} of project ${env.JOB_NAME} (${env.BUILD_URL})",
+                    topic: "${env.JOB_NAME}",
+                )
+            }
+        }
+
+        stage('Checkout') {
+            // The job definition (this Jenkinsfile) is loaded from master by
+            // the Job DSL, but the source under test is the branch/commit the
+            // parent build triggered from.
+            steps {
+                script {
+                    String ref = params.COMMIT_SHA?.trim() ?: params.BRANCH_NAME
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: ref]],
+                        userRemoteConfigs: [[
+                            url: 'https://github.com/iossifovlab/gain.git',
+                        ]],
+                        extensions: [[$class: 'CloneOption',
+                                      shallow: true,
+                                      noTags: true,
+                                      depth: 1]],
+                    ])
+                }
+            }
+        }
+
+        stage('Prepare workspace') {
+            steps {
+                sh 'rm -rf reports && mkdir -p reports/integration'
+            }
+        }
+
+        stage('Build image') {
+            steps {
+                // Build from the repo root so the workspace manifests and
+                // uv.lock are in the build context (see core/Dockerfile).
+                sh 'docker build -f core/Dockerfile -t ${IMAGE_TAG} .'
+            }
+        }
+
+        stage('Integration tests') {
+            steps {
+                sh '''
+                    mkdir -p "${GRR_CACHE_DIR}"
+                    # The image WORKDIR is /workspace/core, so tests/integration
+                    # resolves and the checked-in grr-seqpipe definition is found
+                    # relative to the test file.
+                    #
+                    # CURL_CA_BUNDLE: pysam/libcurl needs a CA bundle it can find
+                    # to open the genome over https; point it at the image's
+                    # system bundle.
+                    #
+                    # Single-threaded (no -n): the first cold build populates the
+                    # shared cache, and parallel workers would race to write the
+                    # same resource.
+                    docker run --rm \
+                        -v "${GRR_CACHE_DIR}:${GRR_CACHE_DIR}" \
+                        -v "$PWD/reports/integration:/reports" \
+                        -e GRR_INTEGRATION_CACHE_DIR="${GRR_CACHE_DIR}" \
+                        -e CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
+                        ${IMAGE_TAG} \
+                        sh -c '
+                            set +e
+                            pytest -v tests/integration \
+                                --junitxml=/reports/pytest.xml
+                            pytest_exit=$?
+                            chmod -R a+rw /reports
+                            exit $pytest_exit
+                        '
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                try {
+                    junit(
+                        allowEmptyResults: true,
+                        testResults: 'reports/integration/*.xml',
+                    )
+                    archiveArtifacts(
+                        artifacts: 'reports/integration/*.xml',
+                        allowEmptyArchive: true,
+                        fingerprint: false,
+                    )
+                } finally {
+                    zulipNotification(topic: "${env.JOB_NAME}")
+                }
+            }
+        }
+        cleanup {
+            sh 'docker rmi ${IMAGE_TAG} 2>/dev/null || true'
+        }
+    }
+}
