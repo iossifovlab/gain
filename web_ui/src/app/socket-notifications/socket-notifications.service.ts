@@ -67,7 +67,6 @@ export class SocketNotificationsService {
   }
 
   public getJobNotifications(): Observable<JobNotification> {
-    this.ensureConnected();
     return this.socket$.pipe(
       filter((ws): ws is WebSocketSubject<object> => ws !== null),
       switchMap(ws => ws.pipe(
@@ -79,7 +78,6 @@ export class SocketNotificationsService {
   }
 
   public getPipelineNotifications(): Observable<PipelineNotification> {
-    this.ensureConnected();
     return this.socket$.pipe(
       filter((ws): ws is WebSocketSubject<object> => ws !== null),
       switchMap(ws => ws.pipe(
