@@ -7,6 +7,15 @@ out of the per-line loop.  These tests pin it to the single-score
 *exactly* what looping ``get_score`` returns -- including ``None`` for an
 absent key, ``None`` for a configured NA value, and ``None`` (plus a logged
 parse failure) for an unparseable value.
+
+The value-extraction logic (``_extract_value``) is shared by both score line
+classes, but each reads its raw value through a per-instance ``_get_raw``
+bound to a *different* lookup: ``ScoreLine`` (the tabix/VCF/bigWig adapter
+backends) binds it to ``line.get``; ``RecordScoreLine`` (the in-memory
+backend) binds it to the record payload's ``__getitem__``.  The NA and parse
+tests therefore run against **both** backends -- a tabular ``.txt`` resource
+(``RecordScoreLine``) and a tabix resource (``ScoreLine``) -- so a broken
+binding on either class fails, not just the shared branch logic.
 """
 from __future__ import annotations
 
@@ -16,6 +25,7 @@ import pytest
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     PositionScore,
+    RecordScoreLine,
     ScoreLine,
     _ScoreDef,
 )
@@ -25,6 +35,15 @@ from gain.genomic_resources.testing.builders import (
     a_vcf_info_score,
 )
 
+# The two tabular backends the shared _extract_value runs on, and the
+# concrete score line class each one yields.  A tabular ``.txt`` resource is
+# read by the in-memory backend (RecordScoreLine); ``with_tabix`` realizes
+# the same data as a tabix table read by the adapter backend (ScoreLine).
+_TABULAR_BACKENDS = [
+    pytest.param(False, RecordScoreLine, id="inmemory"),
+    pytest.param(True, ScoreLine, id="tabix"),
+]
+
 
 def _defs(score: PositionScore | AlleleScore) -> list[_ScoreDef]:
     return [
@@ -33,13 +52,17 @@ def _defs(score: PositionScore | AlleleScore) -> list[_ScoreDef]:
     ]
 
 
-def _open_position(tmp_path, data: str) -> PositionScore:
+def _open_position(
+    tmp_path, data: str, *, tabix: bool = False,
+) -> PositionScore:
     builder = (
         a_position_score()
         .with_score("s_float", "float")
         .with_score("s_str", "str")
         .with_data(data)
     )
+    if tabix:
+        builder = builder.with_tabix()
     repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
     score = PositionScore(repo.get_resource("pos")).open()
     assert isinstance(score, PositionScore)
@@ -61,19 +84,25 @@ def test_bulk_matches_per_score_on_tabular(tmp_path) -> None:
         assert line.get_values(_defs(score)) == [0.5, "hello"]
 
 
-def test_bulk_na_value_yields_none(tmp_path) -> None:
+@pytest.mark.parametrize(("tabix", "line_cls"), _TABULAR_BACKENDS)
+def test_bulk_na_value_yields_none(tmp_path, tabix, line_cls) -> None:
     # The NA token must *parse successfully* so this test actually exercises
     # the na_values branch: ``"nan"`` is a configured NA value for a float
     # score AND ``float("nan")`` returns ``nan`` (it does not raise).  A
     # token like ``"."`` would be masking -- it also fails to parse, so the
     # value would come back ``None`` via the except path even if the NA
     # check were deleted, and the test could not tell the difference.
+    #
+    # Run on both backends (RecordScoreLine and ScoreLine): each reads the
+    # raw "nan" through its own _get_raw binding, so a broken binding on
+    # either class -- not just the shared na_values branch -- fails here.
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
         1      10         nan      hello
-    """)
+    """, tabix=tabix)
     with score:
         line = next(iter(score.fetch_lines("1", 10, 10)))
+        assert isinstance(line, line_cls)
         # "nan" is a configured NA value for a float score, and float("nan")
         # does not raise -- so only the na_values check makes this None.
         assert "nan" in score.score_definitions["s_float"].na_values
@@ -92,15 +121,19 @@ def test_bulk_na_value_yields_none(tmp_path) -> None:
         assert bulk == per_score
 
 
+@pytest.mark.parametrize(("tabix", "line_cls"), _TABULAR_BACKENDS)
 def test_bulk_unparseable_value_logs_and_yields_none(
-    tmp_path, caplog: pytest.LogCaptureFixture,
+    tmp_path, tabix, line_cls, caplog: pytest.LogCaptureFixture,
 ) -> None:
+    # Runs on both backends so the parse-failure branch (with its
+    # logger.exception) is proven for RecordScoreLine and ScoreLine alike.
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
         1      10         not_a_number  hello
-    """)
+    """, tabix=tabix)
     with score:
         line = next(iter(score.fetch_lines("1", 10, 10)))
+        assert isinstance(line, line_cls)
         defs = _defs(score)
 
         with caplog.at_level(logging.ERROR):
@@ -145,7 +178,8 @@ def test_get_values_returns_new_ordered_list(tmp_path) -> None:
     with score:
         line = next(iter(score.fetch_lines("1", 10, 10)))
         reversed_defs = list(reversed(_defs(score)))
-        assert isinstance(line, ScoreLine)
+        # tabular .txt -> in-memory backend -> RecordScoreLine
+        assert isinstance(line, RecordScoreLine)
         assert line.get_values(reversed_defs) == ["hello", 0.5]
 
 

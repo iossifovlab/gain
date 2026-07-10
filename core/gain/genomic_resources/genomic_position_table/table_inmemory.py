@@ -79,7 +79,12 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
 
         # First read the raw rows so the file contigs are known; the
         # chromosome map -- and hence the parser -- can only be built once we
-        # have them.
+        # have them (a del_prefix/add_prefix chrom_mapping derives the
+        # reference contigs from the observed file contigs).  This buffers all
+        # N raw rows transiently: it is a single extra list of row pointers
+        # that is freed when this method returns, leaving only records_by_chr
+        # live.  A one-pass alternative is not available -- the parser cannot
+        # be built before its inputs are known.
         raw_rows: list[tuple[str, ...]] = []
         file_chromosomes: list[str] = []
         seen_chromosomes: set[str] = set()

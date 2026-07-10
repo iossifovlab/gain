@@ -100,6 +100,39 @@ def test_zero_based_end_bump_when_it_would_collapse_onto_begin() -> None:
     assert record[POS_END] == 11
 
 
+def test_zero_based_end_one_past_begin_maps_to_the_same_point() -> None:
+    # A zero-based half-open [begin, begin+1) covers exactly one base.  begin
+    # shifts up by one and end is already begin+1, so both land on the same
+    # 1-based coordinate: (begin+1, begin+1) -- the same point as the
+    # begin == end row above.  This nails down the second of the two inputs
+    # that collapse onto begin+1.
+    parse = _parser(zero_based=True)
+    record = parse(["1", "10", "11"])
+    assert record is not None
+    assert record[POS_BEGIN] == 11
+    assert record[POS_END] == 11
+
+
+def test_zero_based_end_before_begin_is_left_unrepaired() -> None:
+    # An invalid zero-based row whose end is below begin.  The parser bumps
+    # end ONLY when begin == end (matching the tabix backend's
+    # ``adjust_zero_based_line`` in table.py, a deliberate convergence), so
+    # here end is left untouched: begin shifts to begin+1 and end stays end.
+    #
+    # This is the one behaviour change from the removed ``zero_based_adjust``
+    # helper, which bumped end whenever ``end < begin + 1`` and so would have
+    # produced POS_END == 4 for this row.  No golden can see the difference:
+    # the row is invalid either way (POS_END < POS_BEGIN), and the score
+    # layer's ``GenomicScore._line_to_begin_end`` rejects it with OSError
+    # before any value is read (pinned at the score layer in
+    # test_builders.py::test_zero_based_invalid_row_rejected_by_score_layer).
+    parse = _parser(zero_based=True)
+    record = parse(["1", "5", "3"])
+    assert record is not None
+    assert record[POS_BEGIN] == 6
+    assert record[POS_END] == 3
+
+
 # --- specialisation 3: chromosome-mapping --------------------------------
 
 def test_chrom_mapping_remaps_contig() -> None:

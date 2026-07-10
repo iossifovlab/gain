@@ -165,16 +165,24 @@ class ScoreLine:
     plain record tuples, uses :class:`RecordScoreLine`; the concrete class is
     selected per backend when the score is opened.  The value-extraction
     logic (:meth:`_extract_value`, :meth:`get_values`, :meth:`get_score`) is
-    shared through :meth:`_get_raw`.
+    shared between the two: :meth:`_extract_value` reads the raw value through
+    ``self._get_raw``, a per-instance callable *bound once* in ``__init__`` to
+    the right raw-value lookup (the adapter's ``line.get`` here, the payload's
+    ``__getitem__`` in :class:`RecordScoreLine`).  Binding it once keeps the
+    per-score inner loop to a single call -- the same instruction count as
+    reading ``self.line.get(key)`` directly -- so sharing the NA/parse/log
+    logic costs the hot adapter path nothing.
     """
+
+    # Bound once per instance to the raw-value lookup (see class docstring);
+    # not a method, so subclasses rebind it in their own ``__init__``.
+    _get_raw: Callable[[str | int], Any]
 
     def __init__(self, line: LineBase, score_defs: dict[str, _ScoreDef]):
         assert isinstance(line, (Line, VCFLine, BigWigLine))
         self.line = line
         self.score_defs = score_defs
-
-    def _get_raw(self, key: str | int) -> Any:
-        return self.line.get(key)
+        self._get_raw = line.get
 
     @property
     def chrom(self) -> str:
@@ -254,7 +262,9 @@ class RecordScoreLine(ScoreLine):
     The core fields are read from the record's named slots; a raw score
     column is read from the opaque payload (the raw row) on demand, so a wide
     table decodes only the columns a caller asks for.  Value extraction,
-    NA handling and parsing are inherited unchanged from :class:`ScoreLine`.
+    NA handling and parsing are inherited unchanged from :class:`ScoreLine`:
+    the only per-backend difference is where the raw value comes from, and
+    that is captured by rebinding ``self._get_raw`` to the payload's indexer.
     """
 
     def __init__(  # pylint: disable=super-init-not-called
@@ -262,12 +272,13 @@ class RecordScoreLine(ScoreLine):
     ):
         # Intentionally does not call ScoreLine.__init__: there is no line
         # adapter to wrap and no isinstance guard to run -- a record is a
-        # plain tuple.
+        # plain tuple.  Bind the raw-value lookup to the payload's __getitem__
+        # (the score columns are addressed by resolved integer index), the
+        # record-backed counterpart of ScoreLine's ``line.get``.
         self.record = record
         self.score_defs = score_defs
-
-    def _get_raw(self, key: str | int) -> Any:
-        return self.record[PAYLOAD][key]
+        self._get_raw = cast(
+            "Callable[[str | int], Any]", record[PAYLOAD].__getitem__)
 
     @property
     def chrom(self) -> str:
