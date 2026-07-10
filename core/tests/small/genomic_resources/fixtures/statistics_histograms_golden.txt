@@ -38,7 +38,7 @@
     "type": "number",
     "view_range": {
       "min": 0.0,
-      "max": 4.0
+      "max": 8.0
     },
     "number_of_bins": 4,
     "x_log_scale": false,
@@ -47,23 +47,23 @@
   },
   "bins": [
     0.0,
-    1.0,
     2.0,
-    3.0,
-    4.0
+    4.0,
+    6.0,
+    8.0
   ],
   "bars": [
-    1,
-    0,
     2,
-    3
+    4,
+    0,
+    4
   ],
   "out_of_range_bins": [
     0,
     0
   ],
   "min_value": 0.0,
-  "max_value": 4.0
+  "max_value": 8.0
 }
 
 # mem_score/statistics/histogram_mem_label.json
@@ -75,8 +75,8 @@
     "label_rotation": 0
   },
   "values": {
-    "alpha": 4,
-    "beta": 2
+    "alpha": 3,
+    "beta": 7
   }
 }
 

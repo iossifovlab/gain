@@ -53,14 +53,24 @@ UPDATE_ENV = "GAIN_UPDATE_GOLDEN"
 
 # In-memory, 0-based.  Rows are [begin, end) half-open, so a record's base
 # span -- the weight each value carries into the histogram -- is end - begin
-# after the +1 begin shift: 1, 2 and 3 bases respectively.
+# after the +1 begin shift.
 #   mem_auto is auto-ranged (no view range) -> two-pass scan.
 #   mem_label is a str score -> categorical histogram.
+#
+# The score spans two contigs, and the two-pass auto-range builds a per-contig
+# min/max statistic that is then *merged* into the global view range.  The
+# global minimum (0.0) lives on contig 2 and the global maximum (8.0) on
+# contig 1 -- deliberately on different contigs -- so the merge is
+# load-bearing: a broken merge that kept only one region's extrema (e.g. the
+# last-processed contig's) would drop either the 0.0 or the 8.0, shrink the
+# view range, and shift every mem_auto bar.  Spans are 1/3 (contig 1) and 2/4
+# (contig 2) bases, so the histogram weights are span-weighted, not row-counts.
 MEM_DATA = """
     chrom  pos_begin  pos_end  mem_auto  mem_label
-    1      10         11       0.0       alpha
-    1      20         22       2.0       beta
-    1      30         33       4.0       alpha
+    1      10         11       8.0       alpha
+    1      20         23       6.0       beta
+    2      10         12       0.0       alpha
+    2      20         24       2.0       beta
 """
 
 # Tabix, contigs unprefixed and mapped with add_prefix=chr.  Single-base rows
@@ -157,7 +167,11 @@ def _collect_histograms(repo_root: pathlib.Path) -> str:
     hist_files = sorted(
         repo_root.glob("*/statistics/histogram_*.json"),
         key=lambda p: p.relative_to(repo_root).as_posix())
-    assert hist_files, "no histogram files were produced"
+    # Not a bare ``assert`` -- that is stripped under ``python -O``, which would
+    # let a statistics build that emitted no histograms pass this test
+    # vacuously.  Fail unconditionally instead.
+    if not hist_files:
+        pytest.fail("statistics build produced no histogram files")
     for path in hist_files:
         rel = path.relative_to(repo_root).as_posix()
         parts.append(f"# {rel}\n{path.read_text()}")
@@ -212,4 +226,12 @@ def test_statistics_histograms_golden(built_statistics: pathlib.Path) -> None:
 
 
 def test_statistics_min_max_golden(built_statistics: pathlib.Path) -> None:
+    # Issue #232 explicitly requires the min/max statistics to be asserted
+    # against checked-in expected values, so this golden exists as a
+    # human-readable restatement of them.  It carries no independent detection
+    # power, though: min_value, max_value and view_range for every number
+    # histogram already appear verbatim inside the histogram JSON that
+    # test_statistics_histograms_golden compares byte-for-byte, so this test
+    # cannot fail unless that one fails first.  Treat it as documentation, not
+    # as a second, independent check.
     _assert_golden(MIN_MAX_GOLDEN, _collect_min_max(built_statistics))

@@ -8,10 +8,10 @@
     }
   },
   "mem_score/statistics/histogram_mem_auto.json": {
-    "max_value": 4.0,
+    "max_value": 8.0,
     "min_value": 0.0,
     "view_range": {
-      "max": 4.0,
+      "max": 8.0,
       "min": 0.0
     }
   },
