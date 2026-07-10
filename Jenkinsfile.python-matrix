@@ -68,6 +68,79 @@ def publishCellReports(String project, String py) {
           testResults: "reports/${project}-py${py}/*.xml"
 }
 
+// Free-threading (Py_GIL_DISABLED) readiness probe — see the
+// `Free-threading probe` stage below for the failure semantics.
+def runFreeThreadedProbe(Map args) {
+    String project        = args.project                       // workspace dir
+    String pkg            = args.pkg                           // uv package name
+    String stackModule    = args.stackModule                   // import to assert on
+    String tests          = args.tests                         // pytest target
+    String pytestArgs     = args.pytestArgs ?: ''
+    String dockerRunExtra = args.dockerRunExtra ?: ''
+    String reportDir      = "ft-${project}"
+    String imageTag       = "gain-${project.replace('_', '-')}-ft:${env.BUILD_NUMBER}"
+
+    sh label: "Build ${project} free-threaded image", script: """
+        docker build -f Dockerfile.freethreaded \\
+            --build-arg PACKAGE=${pkg} \\
+            -t ${imageTag} .
+    """
+
+    // `returnStatus` on both: the probe exits non-zero whenever an
+    // extension re-enables the GIL, which is the expected state
+    // today (pysam). Letting that throw would skip the pytest run
+    // below and we would lose the compatibility half of the signal.
+    // The statuses are folded into one `error()` at the end, which
+    // the stage's catchError turns into stage-UNSTABLE / build-OK.
+    int probeStatus = sh(
+        label: "Probe GIL offenders (${project})",
+        returnStatus: true,
+        script: """
+            mkdir -p reports/${reportDir}
+            docker run --rm \\
+                -v \$PWD/reports/${reportDir}:/reports \\
+                ${dockerRunExtra} \\
+                ${imageTag} \\
+                sh -c '
+                    python scripts/ft_gil_probe.py \\
+                        --require-freethreaded \\
+                        --stack-module ${stackModule} \\
+                        --junit-xml /reports/ft-gil.xml
+                    probe_exit=\$?
+                    chmod -R a+rw /reports
+                    exit \$probe_exit
+                '
+        """,
+    )
+
+    int pytestStatus = sh(
+        label: "Run ${project} pytest (3.14t)",
+        returnStatus: true,
+        script: """
+            docker run --rm \\
+                -v \$PWD/reports/${reportDir}:/reports \\
+                ${dockerRunExtra} \\
+                ${imageTag} \\
+                sh -c '
+                    cd /workspace/${project}
+                    pytest ${pytestArgs} \\
+                        --junitxml=/reports/pytest.xml \\
+                        ${tests}
+                    pytest_exit=\$?
+                    chmod -R a+rw /reports
+                    exit \$pytest_exit
+                '
+        """,
+    )
+
+    if (probeStatus != 0 || pytestStatus != 0) {
+        error(
+            "free-threading probe (${project}): " +
+            "gil-probe exit=${probeStatus}, pytest exit=${pytestStatus}",
+        )
+    }
+}
+
 pipeline {
     agent { label '!dory' }
 
@@ -209,6 +282,77 @@ pipeline {
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // Free-threading readiness signal (#151). Strictly
+        // informational: `catchError(buildResult: 'SUCCESS')` keeps
+        // the *build* green while colouring the *stage* yellow, and
+        // the junit call below sets `skipMarkingBuildUnstable` for
+        // the same reason.
+        //
+        // Why not just let it go UNSTABLE: pysam and pyBigWig ship
+        // no cp314t wheels today, so they compile from sdist without
+        // declaring `Py_mod_gil = Py_MOD_GIL_NOT_USED` and CPython
+        // re-enables the GIL on import. A naive wiring is therefore
+        // permanently yellow from day one, which would train us to
+        // ignore the colour and would mask a genuine UNSTABLE in the
+        // 12 matrix cells above. The offenders are still recorded as
+        // junit failures, so the trend graph shows the day they
+        // disappear.
+        stage('Free-threading probe (3.14t)') {
+            steps {
+                script {
+                    catchError(buildResult: 'SUCCESS',
+                               stageResult: 'UNSTABLE',
+                               message: 'free-threading probe is informational') {
+                        parallel(
+                            'core': {
+                                runFreeThreadedProbe(
+                                    project: 'core',
+                                    pkg: 'gain-core',
+                                    stackModule: 'gain.annotation.annotate_tabular',
+                                    // tests/small only: the GRR
+                                    // protocol matrix (http/s3) is
+                                    // already covered by the 3.12-3.14
+                                    // cells and would need a second
+                                    // compose stack here for no extra
+                                    // free-threading signal.
+                                    tests: 'tests/small',
+                                    pytestArgs: '-n 5',
+                                )
+                            },
+                            'web_api': {
+                                runFreeThreadedProbe(
+                                    project: 'web_api',
+                                    pkg: 'gain-web-api',
+                                    // Not `web_annotation.tasks` (the
+                                    // module that actually drives
+                                    // annotation): importing it boots
+                                    // the Django app registry, and a
+                                    // failed import is recorded as a
+                                    // skip, silently voiding the
+                                    // assertion. The stack it pulls in
+                                    // is this one either way.
+                                    stackModule: 'gain.annotation.annotate_tabular',
+                                    tests: 'web_annotation/tests',
+                                    dockerRunExtra:
+                                        '-e DJANGO_SETTINGS_MODULE=' +
+                                        'web_annotation.test_settings',
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true,
+                          skipMarkingBuildUnstable: true,
+                          testResults: 'reports/ft-*/*.xml'
+                    archiveArtifacts allowEmptyArchive: true,
+                                     artifacts: 'reports/ft-*/*.xml'
                 }
             }
         }

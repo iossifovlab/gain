@@ -1,0 +1,86 @@
+# Free-threaded (Py_GIL_DISABLED) CI image for the GAIn workspace.
+#
+# Used only by the nightly `Free-threading probe` stage in
+# Jenkinsfile.python-matrix. Nothing on the PR / master path builds
+# this file.
+#
+# Why this is not just `--build-arg PYTHON_IMAGE=python:3.14t-slim`
+# like the rest of the Python matrix: Docker Hub's official `python`
+# image publishes no free-threaded variant — there is no `3.14t`
+# tag (nor `3.13t`). The interpreter therefore comes from uv's
+# python-build-standalone downloads instead of the base image.
+#
+# Build from the repo root:
+#     docker build -f Dockerfile.freethreaded \
+#         --build-arg PACKAGE=gain-core -t gain-core-ft .
+
+# syntax=docker/dockerfile:1.7
+ARG PYTHON_IMAGE=python:3.14-slim
+FROM ${PYTHON_IMAGE}
+
+# Workspace member to sync: gain-core or gain-web-api.
+ARG PACKAGE=gain-core
+# uv's name for the free-threaded interpreter.
+ARG PYTHON_VERSION=3.14t
+
+COPY --from=ghcr.io/astral-sh/uv:0.11.3 /uv /uvx /usr/local/bin/
+
+# Wider than the per-project Dockerfiles on purpose. Those install
+# pysam from a prebuilt cp312/cp313/cp314 wheel; no cp314t wheel is
+# published, so under the free-threaded interpreter pysam and
+# pyBigWig are both compiled from sdist and need htslib's codec
+# headers (zlib / bzip2 / lzma / openssl) on top of libcurl.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        libcurl4-openssl-dev \
+        libbz2-dev \
+        liblzma-dev \
+        libssl-dev \
+        zlib1g-dev \
+        libmagic1 \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+# `manual` (not `never`) so the explicit `uv python install` below is
+# allowed while implicit fetches during sync stay disabled.
+ENV UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_PYTHON_DOWNLOADS=manual \
+    PYTHONHASHSEED=0
+
+RUN uv python install ${PYTHON_VERSION}
+
+WORKDIR /workspace
+
+COPY pyproject.toml uv.lock ruff.toml mypy.ini pylintrc ./
+COPY core/pyproject.toml core/README.md ./core/
+COPY demo_annotator/pyproject.toml ./demo_annotator/
+COPY vep_annotator/pyproject.toml ./vep_annotator/
+COPY spliceai_annotator/pyproject.toml ./spliceai_annotator/
+COPY web_api/pyproject.toml ./web_api/
+
+# gain-core is imported at Django boot via the GRR providers, so
+# web_api needs its source present before the dependency sync.
+COPY core/gain/ ./core/gain/
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --package ${PACKAGE} --group dev --frozen \
+        --python ${PYTHON_VERSION} --no-install-project
+
+COPY core/ ./core/
+COPY web_api/ ./web_api/
+COPY scripts/ ./scripts/
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --package ${PACKAGE} --group dev --frozen \
+        --python ${PYTHON_VERSION}
+
+ENV PATH="/workspace/.venv/bin:$PATH"
+
+# Fail the image build rather than emit a misleading all-green probe
+# if uv ever resolves a GIL-ed interpreter here.
+RUN python -c "import sysconfig, sys; \
+    assert sysconfig.get_config_var('Py_GIL_DISABLED'), \
+    f'not a free-threaded build: {sys.version}'"
+
+CMD ["python", "scripts/ft_gil_probe.py", "--require-freethreaded"]
