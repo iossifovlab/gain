@@ -1672,6 +1672,103 @@ chr1   10  .  A   T   .    .      .
         builder.build_resource(tmp_path)
 
 
+def test_position_score_zero_based_shifts_positions(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A 0-based row authored at pos_begin is queried at pos_begin + 1: the
+    # single-base record at 10 reads back at 11, not 10.
+    res = (
+        a_position_score()
+        .with_score("v", "float")
+        .with_zero_based()
+        .with_data("""
+            chrom  pos_begin  pos_end  v
+            1      10         10       0.5
+        """)
+        .build_resource(tmp_path)
+    )
+    config = res.get_config()
+    assert config is not None
+    assert config["table"]["zero_based"] is True
+    score = PositionScore(res).open()
+    assert score.fetch_scores("1", 10) is None
+    assert score.fetch_scores("1", 11) == [0.5]
+
+
+def test_zero_based_tabix_matches_inmemory(tmp_path: pathlib.Path) -> None:
+    # The 0-based shift is applied identically on both realize paths.
+    def build(tabix: bool) -> PositionScore:
+        builder = (
+            a_position_score()
+            .with_score("v", "float")
+            .with_zero_based()
+            .with_data("""
+                chrom  pos_begin  pos_end  v
+                1      20         22       0.7
+            """)
+        )
+        if tabix:
+            builder = builder.with_tabix()
+        sub = "t" if tabix else "p"
+        return PositionScore(builder.build_resource(tmp_path / sub)).open()
+
+    plain = build(tabix=False)
+    tabix = build(tabix=True)
+    # 0-based half-open [20, 22) -> 1-based positions 21 and 22.
+    assert tabix.fetch_scores("1", 21) == [0.7]
+    assert tabix.fetch_scores("1", 22) == [0.7]
+    assert tabix.fetch_scores("1", 20) is None
+    assert tabix.fetch_scores("1", 21) == plain.fetch_scores("1", 21)
+    assert tabix.fetch_scores("1", 22) == plain.fetch_scores("1", 22)
+    assert tabix.fetch_scores("1", 20) == plain.fetch_scores("1", 20)
+
+
+def test_bigwig_score_with_histogram_emits_block(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_bigwig_score()
+        .with_score("bw", "float")
+        .with_histogram({
+            "type": "number",
+            "number_of_bins": 4,
+            "view_range": {"min": 0.0, "max": 1.0},
+        })
+        .with_data("chr1  0  10  0.5")
+        .with_chrom_lens({"chr1": 1000})
+        .build_resource(tmp_path)
+    )
+    config = res.get_config()
+    assert config is not None
+    hist = config["scores"][0]["histogram"]
+    assert hist["number_of_bins"] == 4
+    assert hist["view_range"] == {"min": 0.0, "max": 1.0}
+    # the score still reads back
+    score = PositionScore(res).open()
+    value = score.fetch_scores("chr1", 5)
+    assert value is not None
+    assert value[0] == pytest.approx(0.5)
+
+
+def test_bigwig_histogram_defends_against_later_mutation(
+    tmp_path: pathlib.Path,
+) -> None:
+    hist = {"type": "number", "number_of_bins": 5,
+            "view_range": {"min": 0.0, "max": 1.0}}
+    builder = (
+        a_bigwig_score()
+        .with_score("bw", "float")
+        .with_histogram(hist)
+        .with_data("chr1  0  10  0.5")
+        .with_chrom_lens({"chr1": 1000})
+    )
+    hist["number_of_bins"] = 999  # mutate after capture
+    res = builder.build_resource(tmp_path)
+    config = res.get_config()
+    assert config is not None
+    assert config["scores"][0]["histogram"]["number_of_bins"] == 5
+
+
 def test_build_definition_writes_a_usable_grr_yaml(
     tmp_path: pathlib.Path,
 ) -> None:

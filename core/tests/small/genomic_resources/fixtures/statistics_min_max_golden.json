@@ -1,0 +1,42 @@
+{
+  "bigwig_score/statistics/histogram_bw_val.json": {
+    "max_value": 4.0,
+    "min_value": 0.0,
+    "view_range": {
+      "max": 4.0,
+      "min": 0.0
+    }
+  },
+  "mem_score/statistics/histogram_mem_auto.json": {
+    "max_value": 8.0,
+    "min_value": 0.0,
+    "view_range": {
+      "max": 8.0,
+      "min": 0.0
+    }
+  },
+  "tabix_score/statistics/histogram_tbx_val.json": {
+    "max_value": 0.9,
+    "min_value": 0.1,
+    "view_range": {
+      "max": 1.0,
+      "min": 0.0
+    }
+  },
+  "vcf_score/statistics/histogram_vcf_af.json": {
+    "max_value": 6.25,
+    "min_value": 0.0,
+    "view_range": {
+      "max": 6.25,
+      "min": 0.0
+    }
+  },
+  "vcf_score/statistics/histogram_vcf_ar.json": {
+    "max_value": 6.25,
+    "min_value": 0.0,
+    "view_range": {
+      "max": 6.25,
+      "min": 0.0
+    }
+  }
+}
