@@ -1,67 +1,150 @@
 Release Notes
 =============
 
+* 2026.7.1
+    * **Behavior change:** a completed anonymous annotation job and its
+      result file are no longer deleted when the user's last WebSocket
+      disconnects (#216), so a captured download link no longer 404s
+      after a socket drop. Stale anonymous jobs are reaped by age
+      instead, by the new ``cleanup_anonymous_jobs`` management command
+      (``ANONYMOUS_JOB_TTL_HOURS``, environment variable
+      ``GPFWA_ANONYMOUS_JOB_TTL_HOURS``, default 24; overridden per run
+      by ``--older-than-hours``), which never touches a ``WAITING`` or
+      ``IN_PROGRESS`` job. **Nothing in gain schedules the command** — a
+      deployment that does not run it periodically will accumulate
+      anonymous jobs and result files without bound.
+    * Closed the GRR credential-leak paths the 2026.7.0 redaction missed
+      (#202): ``grr_browse`` no longer prints the raw definition, the
+      definition models mask ``user`` / ``password`` in ``model_dump()``
+      and ``model_dump_json()`` as well as ``repr()``, and a credential
+      embedded in a repository URL (``scheme://user:pass@host``) is
+      stripped from log lines, fetch failures and scheme-mismatch errors.
+    * **Behavior change:** ``get_url()`` and ``get_public_url()`` no
+      longer return a credential embedded in a repository URL (#202).
+      The credential-bearing URL is kept privately and still drives the
+      fetch, so authentication is unaffected.
+    * **Behavior change:** an invalid GRR definition now raises a plain
+      ``ValueError`` with a redacted message, instead of a pydantic
+      ``ValidationError`` that embedded the plaintext password (#202).
+      Code catching ``ValidationError`` around
+      ``build_genomic_resource_repository`` must catch ``ValueError``.
+    * **Behavior change:** ``GPFWA_EMAIL_USE_TLS`` is now parsed as a
+      string rather than tested for truthiness, so setting it to
+      ``False`` no longer *enables* STARTTLS. Only a literal ``true``
+      (case-insensitive) enables TLS; a deployment that relied on the old
+      truthiness to keep TLS on must set the variable to ``true``.
+    * Fixed the 2026.7.0 ``.gitignore``-aware resource scan silently
+      dropping the data files of a DVC-managed GRR (#209/#211):
+      ``dvc add`` gitignores exactly those files, so they vanished from
+      the resource manifest and from caching. A gitignored file is now
+      re-included when a sibling ``<name>.dvc`` declares it an output.
+    * ``grr_browse`` can now filter its listing through the GRR full-text
+      search index: ``-s``/``--search`` runs an SQLite FTS5 match against
+      the repository's ``.CONTENTS.sqlite3.gz`` metadata database,
+      ``-t``/``--type`` restricts the listing to one resource type, and
+      ``--summary`` prints each resource's summary beneath its line.
+    * Reworked the notifications WebSocket reconnection (#204). It now
+      retries with exponential backoff (200 ms, doubling to a 10 s cap,
+      then a 30 s cooldown) and never gives up, where it previously died
+      permanently after five attempts. A graceful server close, an
+      abnormal drop delivered as a bare ``Event``, and a sign-in or
+      sign-out no longer leave notifications dead or churn the socket.
+      This supersedes the flat 2 s transport-error retry of 2026.5.6.
+    * Fixed the notifications WebSocket being closed by navigating to a
+      page with no notification consumer, such as About (#215). For an
+      anonymous user the backend read that close as "left the site" and
+      deleted the completed jobs (the backend half is #216, above). The
+      socket is now held open across route changes.
+    * A pipeline whose build failed is now rebuilt on the next save,
+      instead of re-reporting the cached failure indefinitely:
+      ``LRUPipelineCache.put_pipeline`` returned the existing — possibly
+      failed — build future whenever the config hash matched, so an
+      unchanged config kept surfacing the ``failed`` load status added in
+      2026.6.9 even after a transient GRR problem had cleared.
+    * Added ``gain.logging``, a drop-in proxy for the standard library's
+      ``logging`` module. ``from gain import logging`` guarantees the
+      ``TRACE`` and ``USER_INFO`` levels added in 2026.7.0 are installed
+      before any logger is created, so ``logger.trace()`` /
+      ``logger.user_info()`` are always available and type-check. gain's
+      own modules were migrated onto it.
+    * **Behavior change:** ``-vvv`` now selects the ``TRACE`` level
+      rather than ``DEBUG``, and the effect checkers' diagnostics moved
+      from ``DEBUG`` to ``TRACE``. ``-v`` (INFO) and ``-vv`` (DEBUG) are
+      unchanged, but a run at ``-vv`` no longer prints the effect-checker
+      trace — pass ``-vvv`` for it.
+    * The single-allele annotation response now reports
+      ``preserves_domain: true``, rather than ``null``, for an attribute
+      that is not aggregated at all, so the flag added in 2026.7.0 is
+      always an explicit boolean. The Web UI already treated ``null`` as
+      domain-preserving, so the rendered histogram is unchanged.
+    * Web UI: fixed three annotation-pipeline editor bugs — a late
+      ``pipeline_status`` response no longer overwrites the status bar
+      with stale annotator and attribute counts, a browser refresh no
+      longer resurrects the stale temporary pipeline over the default
+      one, and the annotatables table tracks its rows by their stable id,
+      so a history refresh no longer trips Angular's ``NG0956``
+      duplicate-key warning.
+    * ``gain.genomic_resources.testing`` became a package and gained a
+      ``builders`` module: a fluent DSL for authoring test GRRs —
+      ``a_grr()``, ``a_position_score()``, ``a_np_score()``,
+      ``an_allele_score()``, ``a_gene_score()`` and
+      ``a_reference_genome()``. Every name previously importable from
+      ``gain.genomic_resources.testing`` still is.
+    * Documented the ``user`` and ``password`` basic-authentication keys
+      of an ``http`` repository on the GRR configuration page.
+    * CI: ``tests/integration`` moved out of the ``core`` build into a
+      dedicated ``gain-core-integration`` downstream job, which resolves
+      real resources against the ``grr-seqpipe`` GRR and runs on every
+      branch without failing the parent build (#222).
+
 * 2026.7.0
     * Hardened HTTP basic-auth credential handling for GRR definitions.
-      The plaintext ``password`` (and ``user``) of an authed ``http``
-      repository is no longer written to the logs when a repository is
-      built, and the credential-bearing definition model masks ``user`` /
-      ``password`` in its ``repr()`` / ``str()`` so secrets cannot leak
-      through diagnostic dumps or f-string logging. Configuring basic-auth
-      credentials on a plain ``http://`` URL to a non-local host now emits
-      a loud warning (the credentials would travel unencrypted); the
-      request still works, and ``https://`` and ``localhost`` stay quiet.
+      The ``user`` / ``password`` of an authed ``http`` repository are no
+      longer written to the logs when a repository is built, and are
+      masked in the definition model's ``repr()`` / ``str()``.
+      Configuring basic-auth credentials on a plain ``http://`` URL to a
+      non-local host now emits a loud warning (the credentials would
+      travel unencrypted); the request still works, and ``https://`` and
+      ``localhost`` stay quiet.
     * **Behavior change:** repository definitions are now strictly
-      validated — unknown keys in *any* repository definition (in
-      ``~/.grr_definition.yaml`` or a group's ``children``) are rejected
+      validated — an unknown key in *any* repository definition (in
+      ``~/.grr_definition.yaml`` or a group's ``children``) is rejected
       rather than silently ignored. This guards against auth typos (e.g.
       ``pasword`` or ``username``) but can reject a previously-accepted
-      deployed definition that carried a stray/extra key; remove any such
-      keys to upgrade.
+      deployed definition that carried a stray key; remove any such keys
+      to upgrade.
     * Untyped genomic resources now resolve to a dedicated ``basic``
       resource type with its own implementation (#185). A resource whose
       config carries no ``type`` previously had no implementation at all;
-      it now renders a minimal info page and, crucially, exposes every
-      data file through the implementation's ``files`` set so repository
-      caching again covers the whole resource (gain#78).
+      it now renders a minimal info page and exposes every data file, so
+      repository caching again covers the whole resource (gain#78).
       ``GenomicResource.get_type`` returns the lower-case ``basic`` (was
       ``Basic``) so the entry-point lookup resolves.
-    * The GRR resource file scan now honors ``.gitignore`` files. When a
-      repository directory contains a ``.gitignore``, its patterns are
-      applied — accumulated across nested directories, each matched
-      relative to its own ``.gitignore`` root — so ignored files are
-      excluded from the resource manifest and from caching. ``pathspec``
-      is now a runtime dependency of ``gain-core`` (added to both the
-      pyproject and the conda recipe, #184).
+    * The GRR resource file scan now honors ``.gitignore`` files,
+      accumulated across nested directories and each matched relative to
+      its own ``.gitignore`` root, so ignored files are excluded from the
+      resource manifest and from caching. ``pathspec`` is now a runtime
+      dependency of ``gain-core`` (#184).
     * Score aggregators now declare whether they preserve the source
-      value domain. A new ``Aggregator.preserves_domain(value_type=…)``
+      value domain: a new ``Aggregator.preserves_domain(value_type=…)``
       returns ``True`` for ``min``/``max``/``mean``/``median``/``mode``
-      (whose aggregated result stays within the range of the input
-      values) and ``False`` otherwise. The editor's aggregator-list
-      endpoint and the single-allele annotation response now carry this
-      flag per attribute.
+      and ``False`` otherwise. The editor's aggregator-list endpoint and
+      the single-allele annotation response carry this flag per
+      attribute.
     * Web UI: the single-annotation report now hides the score histogram
       for an attribute whose chosen aggregator does not preserve the
       score domain, since the resource's own histogram no longer
       describes the aggregated value.
     * Fixed the annotation-pipeline editor still getting stuck on
       "loading" after a WebSocket reconnect in a case the 2026.6.9 fix
-      (#160) missed. The front end shares one rxjs ``webSocket()`` subject
-      across the ``job_status`` and ``pipeline_status`` streams, so the
-      backend's connect-time re-sync ``loaded`` frame could be multicast
-      to — and discarded by — the ``job_status`` filter, leaving the
-      editor's stream attached to an already-open socket that never
-      re-connects. The editor already issues a blocking
-      ``GET /api/editor/pipeline_status``; a successful (200) response
-      means the GRR build finished, so it is now treated as the
-      authoritative ``loaded`` signal and the editor converges regardless
-      of WebSocket attach order or churn.
+      (#160) missed. A successful (200) response from the blocking
+      ``GET /api/editor/pipeline_status`` means the GRR build finished,
+      so it is now treated as the authoritative ``loaded`` signal and the
+      editor converges regardless of WebSocket attach order or churn.
     * Fixed a flaky ``FileExistsError`` when creating the task-graph log
-      directory under concurrency (#186). ``ensure_log_dir`` did a
-      check-then-create with an ineffective ``exists_ok`` kwarg (fsspec's
-      ``mkdir`` ignores it); under pytest-xdist all workers share a
-      cwd-relative ``.task-log`` and raced the creation window. It now
-      uses the atomic, idempotent ``makedirs(exist_ok=True)``.
+      directory under concurrency (#186): ``ensure_log_dir`` now uses the
+      atomic, idempotent ``makedirs(exist_ok=True)`` instead of a
+      check-then-create with an ineffective ``exists_ok`` kwarg.
     * Added two custom logging levels, ``TRACE`` and ``USER_INFO``, and
       the matching ``logger.trace()`` / ``logger.user_info()`` helper
       methods, installed when the ``gain`` package is imported.
