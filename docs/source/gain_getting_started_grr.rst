@@ -275,12 +275,12 @@ Run the following command to create a tab-separated file called ``mini_positions
 
 .. code-block:: bash
 
-    cat > mini_positionscore.tsv <<'EOF'
-    chr1	0	0
-    chr1	1	0.1
-    chr1	2	0.2
-    chr1	3	0.3
-    chr1	4	0.4
+    cat <<'EOF' | awk 'BEGIN{OFS="\t"} {print $1,$2,$3}' > mini_positionscore.tsv
+    chr1        0       0
+    chr1        1       0.1
+    chr1        2       0.2
+    chr1        3       0.3
+    chr1        4       0.4
     EOF
 
 
@@ -361,7 +361,7 @@ Next, create a ``genomic_resource.yaml`` file in the ``my_miniposition`` directo
       summary: Conservation score based on the multiple alignment of 7 species
 
 The resource is ready for use by GAIn. To check it and produce an HTML summary with basic statistics, 
-execute ``grr_manage resource-repair`` in this directory (this will take around one hour as GAIn processes the 
+execute ``grr_manage resource-repair`` in this directory (this will take around 30 minutes as GAIn processes the 
 large file to create summary statistics).
 
 
@@ -388,17 +388,15 @@ Run the following command to create a tab-separated allele score file called ``m
 
 .. code-block:: bash
 
-    cat > mini_allelescore.tsv <<'EOF'
-    #chrom	pos	ref	alt	allele_score	allele_class
-    chr1	0	T	A	1	good
-    chr1	0	T	C	1.1	bad
-    chr1	0	T	G	1.2	bad
-    chr2	4	A	T	2	good
-    chr2	4	A	C	2.1	bad
-    chr2	4	A	G	2.2	bad
+    cat <<'EOF' | awk 'BEGIN{OFS="\t"} {print $1,$2,$3,$4,$5,$6}' > mini_allelescore.tsv
+    #chrom      pos     ref     alt     allele_score    allele_class
+    chr1        0       T       A       1       good
+    chr1        0       T       C       1.1     bad
+    chr1        0       T       G       1.2     bad
+    chr2        4       A       T       2       good
+    chr2        4       A       C       2.1     bad
+    chr2        4       A       G       2.2     bad
     EOF
-
-
 
 To prepare this allele score file for fast random access in GAIn, first compress and index it with:
 
@@ -684,33 +682,35 @@ Create a new folder for the resource and move into it:
     mkdir my_genescore
     cd my_genescore
 
-At https://www.nature.com/articles/nature19057#Sec16, download the ZIP file containing the Supplementary Tables and unzip it. 
-We focus on Supplementary Table 13, specifically the “Gene Constraint” sheet, which reports pLI scores and related constraint 
-metrics for human genes. You may manually copy the gene and pLI columns into a new CSV file named pLI.csv, or 
-generate this file automatically using the script below (before running the script, install ``openpyxl`` by ``mamba install openpyxl``).
+At https://www.nature.com/articles/nature19057#Sec16, download the ZIP file containing the Supplementary Tables and unzip it. We focus on Supplementary Table 13, specifically the “Gene Constraint” sheet, which reports pLI scores and related constraint metrics for human genes. Run the following command to create a CSV file called pLI.csv. The file has two columns: the gene name and the corresponding pLI score. Before running the command, install ``openpyxl`` with ``mamba install openpyxl`` if it is not already installed.
 
 .. code-block:: bash
 
+    python - <<'PY'
     import pandas as pd
-    # Load the Excel file
-    df = pd.read_excel("nature19057-SI Table 13.xlsx", sheet_name="Gene Constraint")
-    # Extract only 'gene' and 'pLI'
-    df_subset = df[['gene', 'pLI']].copy()
-    # Write to CSV
-    df_subset.to_csv("pLI.csv", index=False)
+
+    df = pd.read_excel(
+        "nature19057-SI Table 13.xlsx",
+        sheet_name="Gene Constraint",
+        engine="openpyxl",
+    )
+
+    out = df[["gene", "pLI"]].copy()
+    out.to_csv("pLI.csv", index=False)
+    PY
 
 The first few lines of pLI.csv will look like this:
 
 .. code-block:: text
 
-    gene	pLI
-    AGRN	0.17335234
-    NOC2L	1.33E-19
-    B3GALT6	0.048104466
-    C1orf159	0.090877636
-    ISG15	0.009847813
-    KLHL17	2.52E-07
-    PLEKHN1	2.02E-08
+    gene,pLI
+    AGRN,0.17335234
+    NOC2L,1.33E-19
+    B3GALT6,0.048104466
+    C1orf159,0.090877636
+    ISG15,0.009847813
+    KLHL17,2.52E-07
+    PLEKHN1,2.02E-08
 
 Next, create a ``genomic_resource.yaml`` file in the same directory with this content:
 
@@ -809,8 +809,7 @@ an HTML summary file with basic descriptions and histograms for the ``my_minigen
 11: Gene sets (MSigDB)
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
-As a real-world example of a gene set resource, we will create a MSigDB (Molecular Signatures Database) gene sets derived from a variety of curated sources
-The Curated (C2) collection in MSigDB includes gene sets from canonical pathway databases (e.g., KEGG, Reactome, BioCarta) and from published gene expression studies, capturing well-defined pathways and perturbation signatures.
+As a real-world example of a gene set resource, we will create a MSigDB (Molecular Signatures Database) gene sets derived from a variety of curated sources. The Curated (C2) collection in MSigDB includes gene sets from canonical pathway databases (e.g., KEGG, Reactome, BioCarta) and from published gene expression studies, capturing well-defined pathways and perturbation signatures.
 
 To create a gene sets resource for MSigDB, make a new folder for the resource and move into it:
 
@@ -820,7 +819,7 @@ To create a gene sets resource for MSigDB, make a new folder for the resource an
     cd my_genesets
 
 
-Grab the latest MSigDB gene sets in GMT format from the Broad Institute website:
+Grab MSigDB gene sets in GMT format from the Broad Institute website:
 
 .. code-block:: bash
 
@@ -862,7 +861,7 @@ This validates the resource for annotation and generates an HTML summary page wi
 
 
 12: Toy CNV collection
-^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^
 
 Copy-number variants (CNVs) are deletions or duplications of genomic segments. 
 In practice, CNV resources summarize previously observed gains and losses so you can contextualize a query locus by 
@@ -876,20 +875,17 @@ Create a new folder for the resource and move into it:
     mkdir my_miniCNVcollection
     cd my_miniCNVcollection
 
+Run the following command to create a tab-separated CNV collection file called my_miniCNVcollection.txt. The file has six columns: chromosome name, start position, end position, CNV name, deletion/duplication class, and frequency.
 
-Create a tab-separated file called my_miniCNVcollection.txt with the following content:
+.. code-block:: bash
 
-.. csv-table::
-    :header-rows: 1
+    cat <<'EOF' | awk 'BEGIN{OFS="\t"} {print $1,$2,$3,$4,$5,$6}' > my_miniCNVcollection.txt
+    chrom   pos_beg pos_end CNV_name          deletion_duplication frequency
+    chr1    3       15      Chr1_duplication  Duplication           0.1
+    chr2    5       15      Chr2_duplication  Deletion              0.2
+    EOF
 
-    chrom,pos_beg,pos_end,CNV_name,deletion_duplication,frequency
-    chr1,3,15,Chr1_duplication,Duplication,0.1
-    chr2,5,15,Chr2_duplication,Deletion,0.2
-
-
-
-This file defines two example CNVs. Each row specifies an interval (``chrom``, ``pos_beg``, ``pos_end``), a CNV identifier (``CNV_name``), 
-the CNV type (``deletion_duplication``) and ``frequency``.
+This file defines two example CNVs. Each row specifies an interval (``chrom``, ``pos_beg``, ``pos_end``), a CNV identifier (``CNV_name``), the CNV type (``deletion_duplication``) and ``frequency``.
 
 Next, create a ``genomic_resource.yaml`` file in the same directory with this content:
 
@@ -933,7 +929,7 @@ This command checks that the resource is usable for annotation and produces an H
 
 
 13: CNV collection (Iossifov 2021)
-^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 As a real-world example, we will build a CNV collection resource from Supplementary Data 4 of `Yoon et al.` (2021), which lists the `de novo` CNVs 
 included in their analysis from WGS of SSC (simplex) and AGRE (multiplex) families.
 
@@ -1093,17 +1089,17 @@ Run the following command to annotate your variants using this pipeline:
 
 .. code-block:: bash
 
-    annotate_tabular small_input.csv annotation_pipeline_local.yaml -variants_local_annotated.txt
+    annotate_tabular small_input.csv annotation_pipeline_local.yaml -o variants_local_annotated.csv
 
-This command creates a file named ``small_input.annotated.csv`` with the following content:
+This command creates a file named ``variants_local_annotated.csv`` with the following content:
 
 .. csv-table::
     :header-rows: 1
 
-    chrom,pos,ref,alt,worst_effect,genes,phyloP7way,am_pathogenicity,am_class,my_genescore
-    chr14,21415880,G,A,nonsense,CHD8,0.917,,,"{'CHD8': 9}"
-    chr17,7674904,TCT,T,frame-shift,TP53,-0.12,0.151,likely_benignlikely_benignlikely_benignlikely_benignlikely_benignlikely_benignlikely_benignlikely_benignlikely_benign,"{'TP53': 3}"
-    chr7,117587806,G,A,missense,CFTR,0.917,0.99,likely_pathogenic,"{'CFTR': 7}"
+    chrom,pos,ref,alt,worst_effect,genes,phyloP7way,am_pathogenicity,am_class,pLI
+    chr14,21415880,G,A,nonsense,CHD8,0.917,,,CHD8:1
+    chr17,7674904,TCT,T,frame-shift,TP53,-0.12,,,TP53:0.912
+    chr7,117587806,G,A,missense,CFTR,0.917,0.99,likely_pathogenic,CFTR:2.96e-36
 
 
 mini-GRR: a template GRR
