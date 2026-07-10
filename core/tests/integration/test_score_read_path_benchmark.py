@@ -18,6 +18,21 @@ optimisations help them very differently:
 * a **wide** many-score resource (the per-column score-definition lookup
   dominates).
 
+Every timed pass is measured **cold**
+--------------------------------------
+``TabixGenomicPositionTable`` keeps a ``LineBuffer`` (``BUFFER_MAXSIZE``
+= 20000 records) that a repeated same-region fetch replays *without*
+re-reading the tabix file or rebuilding a single ``Line``.  Both fixtures
+fit entirely in that buffer, so a naive "warm up once, then time N passes
+over the same region" would time buffer replay -- pysam decode and ``Line``
+construction happen only in the untimed warmup and the ``Line``->tuple
+optimisation would be invisible in the fetch number.  To keep the fetch
+symmetric with the always-cold raw scan (``get_all_records`` clears the
+buffer and re-runs ``pysam.fetch`` every pass), :func:`_cold_reset` clears
+the table's ``LineBuffer`` and its ``_last_call`` short-circuit state
+*before* each pass, outside the timed region, forcing a real tabix read
+and fresh ``Line`` objects every time.
+
 Why this test never asserts a wall-clock threshold
 --------------------------------------------------
 The Jenkins agents in this project differ in raw speed by up to ~2.7x
@@ -28,20 +43,39 @@ same-build baseline this benchmark does not have.  So correctness gates CI
 and the timing only *informs* the reviewer: the numbers are printed into
 the build log for a human to compare across commits, and the assertions
 below check only that the benchmark actually did the work it claims to
-time -- the right record count, and real (non-``None``) parsed values --
-so it can never silently report a fast number for an empty loop.
+time -- the exact record count, the exact parsed ``pos_begin`` sum, and
+real (non-``None``) parsed values -- so it can never silently report a
+fast number for an empty loop.
 
+The reported figure is the **median** over :data:`_TIMED_PASSES` passes,
+with the observed ``min`` and ``max`` printed alongside so a reader can
+judge whether a cross-commit difference is signal or noise.  Median (not
+"best of N") is used because best-of-N is biased toward the luckiest pass
+and so is the wrong statistic for comparing two commits; the median is
+robust to the occasional scheduler/GC spike (which surfaces in ``max``).
+
+Output visibility (``-s`` and ``-n``)
+-------------------------------------
 The report is emitted through ``capsys.disabled()`` so it is visible in a
 passing run under ``pytest -v`` (the integration job runs without ``-s``,
-which would otherwise capture and hide a plain ``print``).
+which would otherwise capture and hide a plain ``print``).  Note that under
+``pytest -n`` (xdist) the xdist workers swallow this output entirely and
+the numbers will NOT appear, even though the test still passes -- run this
+benchmark single-threaded (as ``core/Jenkinsfile.integration`` does) to see
+the report.
 """
 from __future__ import annotations
 
 import pathlib
+import statistics
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import pytest
+from gain.genomic_resources.genomic_position_table.table_tabix import (
+    TabixGenomicPositionTable,
+)
 from gain.genomic_resources.genomic_scores import (
     GenomicScore,
     build_score_from_resource,
@@ -52,19 +86,33 @@ from gain.genomic_resources.testing.builders import (
     a_position_score,
 )
 
-# Sizes are chosen so the whole benchmark runs in a couple of seconds while
-# still timing enough records that microseconds-per-record is stable to a
-# couple of significant figures.
+# Fixture sizes.  The wide shape carries ~454 scores to mirror the real
+# resource the ``Line``->tuple and score-def-hoist optimisations target
+# (dbNSFP, ~454 scores); the hoist's payoff scales with the score count, so
+# a 60-score fixture would understate it.  Row counts are set so each timed
+# pass runs long enough (tens to ~200 ms) that its microseconds-per-record
+# is stable to a couple of significant figures -- the earlier tiny fixtures
+# were noisy (~24% spread) because a pass was too short to average out
+# scheduler/GC jitter.  The whole test (both shapes, build + all passes)
+# runs in a handful of seconds, well inside the integration tier's budget.
 _NARROW_ROWS = 4000
-_WIDE_ROWS = 1500
-_WIDE_SCORES = 60
+_WIDE_ROWS = 1000
+_WIDE_SCORES = 454
 
-# Timed passes per measurement; the reported figure is the fastest pass
-# (least perturbed by scheduler/GC noise), after one un-timed warmup pass.
-_WARMUP_PASSES = 1
-_TIMED_PASSES = 3
+# Untimed warmup passes, then timed passes whose median is reported.
+_WARMUP_PASSES = 2
+_TIMED_PASSES = 9
 
 _CHROM = "1"
+
+
+@dataclass(frozen=True)
+class _Timing:
+    """Per-record timing summary over the timed passes, in microseconds."""
+
+    median_us: float
+    min_us: float
+    max_us: float
 
 
 def _narrow_data(n_rows: int) -> str:
@@ -124,41 +172,78 @@ def wide_score(
     return _open_score(tmp_path, "wide", builder)
 
 
-def _best_us_per_record(
-    work: Callable[[], int], expected_records: int,
-) -> float:
-    """Run ``work`` warmup+timed passes; return best microseconds/record.
+def _cold_reset(score: GenomicScore) -> Callable[[], None]:
+    """Return a callable that forces the next read to hit the tabix file.
 
-    ``work`` performs one full pass and returns the number of records it
-    consumed; every pass must consume ``expected_records`` or the benchmark
-    is timing something other than what it claims to.
+    Clears the table's ``LineBuffer`` and its ``_last_call`` short-circuit
+    so ``get_records_in_region`` cannot replay a warm buffer -- every timed
+    fetch pass then pays the real pysam decode + ``Line`` construction cost,
+    symmetric with the always-cold raw scan.  The raw scan does not touch
+    the buffer, so for it this is a cheap no-op; either way it runs *outside*
+    the timed region.
+    """
+    table = score.table
+    assert isinstance(table, TabixGenomicPositionTable)
+
+    def reset() -> None:
+        table.buffer.clear()
+        table._last_call = "", -1, -1
+
+    return reset
+
+
+def _measure(
+    work: Callable[[], int],
+    reset: Callable[[], None],
+    expected_records: int,
+) -> _Timing:
+    """Time ``work`` over warmup + timed passes; return the timing summary.
+
+    ``reset`` runs before every pass, outside the timed region, to put the
+    table back in a cold state.  ``work`` performs one full pass and returns
+    the number of records it consumed; every pass must consume
+    ``expected_records`` or the benchmark is timing something other than
+    what it claims to.
     """
     for _ in range(_WARMUP_PASSES):
+        reset()
         assert work() == expected_records
-    best = float("inf")
+    samples: list[float] = []
     for _ in range(_TIMED_PASSES):
+        reset()
         start = time.perf_counter()
         consumed = work()
         elapsed = time.perf_counter() - start
         assert consumed == expected_records
-        best = min(best, elapsed / expected_records * 1e6)
-    return best
+        samples.append(elapsed / expected_records * 1e6)
+    return _Timing(
+        median_us=statistics.median(samples),
+        min_us=min(samples),
+        max_us=max(samples),
+    )
 
 
-def _scan_pass(score: GenomicScore) -> Callable[[], int]:
+def _scan_pass(score: GenomicScore, n_rows: int) -> Callable[[], int]:
     """A raw table scan: iterate records straight off the table.
 
-    Touches ``pos_begin`` on every record so the parse is not dead code the
-    interpreter could skip.
+    Sums ``pos_begin`` over every record and checks it against the exact
+    arithmetic-series total for positions ``1..n_rows``.  That both keeps
+    the parse from being dead code the interpreter could skip AND acts as a
+    real guard: it fails unless ``pos_begin`` was actually parsed correctly
+    on every record, so the benchmark cannot time a loop that skips the
+    parse or drops rows.
     """
+    expected_checksum = n_rows * (n_rows + 1) // 2
+
     def run() -> int:
         count = 0
         checksum = 0
         for record in score.table.get_all_records():
             count += 1
             checksum += record.pos_begin
-        assert checksum > 0
+        assert checksum == expected_checksum
         return count
+
     return run
 
 
@@ -195,22 +280,24 @@ def test_score_read_path_benchmark(
 
     Reports only -- see the module docstring for why this benchmark never
     asserts a timing threshold.  It does assert the correctness invariants
-    (record counts and non-``None`` values) that keep the reported number
-    honest.
+    (exact record counts, exact ``pos_begin`` sum, and non-``None`` values)
+    that keep the reported number honest.
     """
     if shape == "narrow":
         score, n_rows, n_scores = narrow_score, _NARROW_ROWS, 1
     else:
         score, n_rows, n_scores = wide_score, _WIDE_ROWS, _WIDE_SCORES
 
-    scan_us = _best_us_per_record(_scan_pass(score), n_rows)
-    fetch_us = _best_us_per_record(
-        _fetch_pass(score, n_rows, n_scores), n_rows)
+    reset = _cold_reset(score)
+    scan = _measure(_scan_pass(score, n_rows), reset, n_rows)
+    fetch = _measure(_fetch_pass(score, n_rows, n_scores), reset, n_rows)
 
     with capsys.disabled():
         print(
             f"\n[score-read-path benchmark] {shape:<6} "
-            f"({n_rows} rows x {n_scores} score(s)): "
-            f"raw table scan = {scan_us:7.3f} us/record | "
-            f"score-layer region fetch = {fetch_us:7.3f} us/record",
+            f"({n_rows} rows x {n_scores} score(s)):\n"
+            f"    raw table scan           = {scan.median_us:8.3f} us/record"
+            f"  (min {scan.min_us:7.3f}, max {scan.max_us:7.3f})\n"
+            f"    score-layer region fetch = {fetch.median_us:8.3f} us/record"
+            f"  (min {fetch.min_us:7.3f}, max {fetch.max_us:7.3f})",
         )
