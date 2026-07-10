@@ -12,6 +12,12 @@ from gain.genomic_resources.genomic_position_table import (
     build_genomic_position_table,
 )
 from gain.genomic_resources.genomic_position_table.line import VCFLine
+from gain.genomic_resources.genomic_position_table.record import (
+    CHROM,
+    PAYLOAD,
+    POS_BEGIN,
+    POS_END,
+)
 from gain.genomic_resources.genomic_position_table.table import (
     GenomicPositionTable,
 )
@@ -123,14 +129,16 @@ def test_regions() -> None:
     assert res.config is not None
 
     with build_genomic_position_table(res, res.config["table"]) as mem_tab:
-        assert [r.row() for r in mem_tab.get_all_records()] == [
+        # The in-memory backend yields records; its payload slot carries the
+        # raw row.
+        assert [r[PAYLOAD] for r in mem_tab.get_all_records()] == [
             ("1", "10", "12", "3.14"),
             ("1", "15", "20", "4.14"),
             ("1", "21", "30", "5.14"),
         ]
 
         assert [
-            r.row() for r in mem_tab.get_records_in_region("1", 11, 11)
+            r[PAYLOAD] for r in mem_tab.get_records_in_region("1", 11, 11)
         ] == [
             ("1", "10", "12", "3.14"),
         ]
@@ -138,7 +146,7 @@ def test_regions() -> None:
         assert not list(mem_tab.get_records_in_region("1", 13, 14))
 
         assert [
-            r.row() for r in mem_tab.get_records_in_region("1", 18, 21)
+            r[PAYLOAD] for r in mem_tab.get_records_in_region("1", 18, 21)
         ] == [
             ("1", "15", "20", "4.14"),
             ("1", "21", "30", "5.14"),
@@ -310,14 +318,19 @@ def test_chrom_mapping_file() -> None:
 
     with build_genomic_position_table(res, res.config["table"]) as tab:
         assert tab.get_chromosomes() == ["gosho", "pesho"]
+        # Chromosome mapping now lands in the record's core CHROM slot; the
+        # payload keeps the raw (file) contig, so assert the core fields.
         assert [
-            r.row() for r in tab.get_all_records()
+            (r[CHROM], r[POS_BEGIN], r[POS_END]) for r in tab.get_all_records()
         ] == [
-            ("gosho", "10", "12", "3.14"),
-            ("pesho", "11", "11", "4.14"),
+            ("gosho", 10, 12),
+            ("pesho", 11, 11),
         ]
-        assert [r.row() for r in tab.get_records_in_region("pesho")] == [
-            ("pesho", "11", "11", "4.14"),
+        assert [
+            (r[CHROM], r[POS_BEGIN], r[POS_END])
+            for r in tab.get_records_in_region("pesho")
+        ] == [
+            ("pesho", 11, 11),
         ]
 
 
@@ -419,7 +432,9 @@ def test_column_with_name() -> None:
     assert res.config is not None
 
     with build_genomic_position_table(res, res.config["table"]) as tab:
-        assert [r.row() for r in tab.get_records_in_region("1", 12, 12)] == [
+        assert [
+            r[PAYLOAD] for r in tab.get_records_in_region("1", 12, 12)
+        ] == [
             ("1", "10", "12", "3.14"),
         ]
 
@@ -444,7 +459,9 @@ def test_column_with_index() -> None:
     assert res.config is not None
 
     with build_genomic_position_table(res, res.config["table"]) as tab:
-        assert [r.row() for r in tab.get_records_in_region("1", 12, 12)] == [
+        assert [
+            r[PAYLOAD] for r in tab.get_records_in_region("1", 12, 12)
+        ] == [
             ("1", "10", "12", "3.14"),
         ]
 
@@ -472,7 +489,9 @@ def test_no_header() -> None:
     assert res.config is not None
 
     with build_genomic_position_table(res, res.config["table"]) as tab:
-        assert [r.row() for r in tab.get_records_in_region("1", 12, 12)] == [
+        assert [
+            r[PAYLOAD] for r in tab.get_records_in_region("1", 12, 12)
+        ] == [
             ("1", "10", "12", "3.14"),
         ]
 
@@ -497,7 +516,9 @@ def test_header_in_config() -> None:
     assert res.config is not None
 
     with build_genomic_position_table(res, res.config["table"]) as tab:
-        assert [r.row() for r in tab.get_records_in_region("1", 12, 12)] == [
+        assert [
+            r[PAYLOAD] for r in tab.get_records_in_region("1", 12, 12)
+        ] == [
             ("1", "10", "12", "3.14"),
         ]
 
@@ -519,7 +540,9 @@ def test_space_in_mem_table() -> None:
     assert res.config is not None
 
     with build_genomic_position_table(res, res.config["table"]) as tab:
-        assert [r.row() for r in tab.get_records_in_region("1", 11, 11)] == [
+        assert [
+            r[PAYLOAD] for r in tab.get_records_in_region("1", 11, 11)
+        ] == [
             ("1", "11", ".", "4.14"),
         ]
 
@@ -547,7 +570,7 @@ def test_text_table() -> None:
     assert res.config is not None
 
     with build_genomic_position_table(res, res.config["table"]) as table:
-        assert [r.row() for r in table.get_all_records()] == [
+        assert [r[PAYLOAD] for r in table.get_all_records()] == [
             ("1", "3", "3.14", "aa"),
             ("1", "4", "4.14", "bb"),
             ("1", "4", "5.14", "cc"),
@@ -555,27 +578,28 @@ def test_text_table() -> None:
             ("1", "8", "7.14", "ee"),
             ("2", "3", "8.14", "ff"),
         ]
-        assert [r.row() for r in table.get_records_in_region("1", 4, 5)] == [
+        assert [
+            r[PAYLOAD] for r in table.get_records_in_region("1", 4, 5)] == [
             ("1", "4", "4.14", "bb"),
             ("1", "4", "5.14", "cc"),
             ("1", "5", "6.14", "dd"),
         ]
         assert [
-            r.row() for r in table.get_records_in_region("1", 4, None)] == [
+            r[PAYLOAD] for r in table.get_records_in_region("1", 4, None)] == [
             ("1", "4", "4.14", "bb"),
             ("1", "4", "5.14", "cc"),
             ("1", "5", "6.14", "dd"),
             ("1", "8", "7.14", "ee"),
         ]
         assert [
-            r.row() for r in table.get_records_in_region("1", None, 4)] == [
+            r[PAYLOAD] for r in table.get_records_in_region("1", None, 4)] == [
             ("1", "3", "3.14", "aa"),
             ("1", "4", "4.14", "bb"),
             ("1", "4", "5.14", "cc"),
         ]
         assert not list(table.get_records_in_region("1", 20, 25))
         assert [
-            r.row() for r in table.get_records_in_region("2", None, None)
+            r[PAYLOAD] for r in table.get_records_in_region("2", None, None)
         ] == [
             ("2", "3", "8.14", "ff"),
         ]

@@ -5,6 +5,11 @@ import pathlib
 from gain.genomic_resources.genomic_position_table import (
     build_genomic_position_table,
 )
+from gain.genomic_resources.genomic_position_table.record import (
+    CHROM,
+    POS_BEGIN,
+    POS_END,
+)
 from gain.genomic_resources.testing import (
     build_filesystem_test_resource,
     convert_to_tab_separated,
@@ -162,9 +167,9 @@ def test_inmemory_genomic_position_table_zero_based_no_header(
     assert len(list(table.get_all_records())) == 6
     vs = list(table.get_records_in_region("chr1", 2, 2))
     assert len(vs) == 1
-    assert vs[0].chrom == "chr1"
-    assert vs[0].pos_begin == 2
-    assert vs[0].pos_end == 2
+    assert vs[0][CHROM] == "chr1"
+    assert vs[0][POS_BEGIN] == 2
+    assert vs[0][POS_END] == 2
 
 
 def test_get_records_in_region_without_chrom(tmp_path: pathlib.Path) -> None:

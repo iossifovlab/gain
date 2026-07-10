@@ -27,6 +27,15 @@ from gain.genomic_resources.genomic_position_table.line import (
     BigWigLine,
     LineBase,
 )
+from gain.genomic_resources.genomic_position_table.record import (
+    ALT,
+    CHROM,
+    PAYLOAD,
+    POS_BEGIN,
+    POS_END,
+    REF,
+    Record,
+)
 from gain.genomic_resources.histogram import (
     Histogram,
     HistogramConfig,
@@ -149,12 +158,23 @@ class _ScoreDef:
 
 
 class ScoreLine:
-    """Abstraction for a genomic score line. Wraps the line adapter."""
+    """Abstraction for a genomic score line. Wraps the line adapter.
+
+    This is the per-backend score line for the backends that still yield a
+    line adapter (tabix, VCF, bigWig).  The in-memory backend, which yields
+    plain record tuples, uses :class:`RecordScoreLine`; the concrete class is
+    selected per backend when the score is opened.  The value-extraction
+    logic (:meth:`_extract_value`, :meth:`get_values`, :meth:`get_score`) is
+    shared through :meth:`_get_raw`.
+    """
 
     def __init__(self, line: LineBase, score_defs: dict[str, _ScoreDef]):
         assert isinstance(line, (Line, VCFLine, BigWigLine))
         self.line = line
         self.score_defs = score_defs
+
+    def _get_raw(self, key: str | int) -> Any:
+        return self.line.get(key)
 
     @property
     def chrom(self) -> str:
@@ -186,7 +206,7 @@ class ScoreLine:
         key = score_def.score_index
         assert key is not None
 
-        value: str | int | float | None = self.line.get(key)
+        value: str | int | float | None = self._get_raw(key)
         if value is None or value in score_def.na_values:
             return None
         if score_def.value_parser is None:
@@ -226,6 +246,48 @@ class ScoreLine:
 
     def get_available_scores(self) -> tuple[Any, ...]:
         return tuple(self.score_defs.keys())
+
+
+class RecordScoreLine(ScoreLine):
+    """Score line wrapping an immutable record tuple (in-memory backend).
+
+    The core fields are read from the record's named slots; a raw score
+    column is read from the opaque payload (the raw row) on demand, so a wide
+    table decodes only the columns a caller asks for.  Value extraction,
+    NA handling and parsing are inherited unchanged from :class:`ScoreLine`.
+    """
+
+    def __init__(  # pylint: disable=super-init-not-called
+        self, record: Record, score_defs: dict[str, _ScoreDef],
+    ):
+        # Intentionally does not call ScoreLine.__init__: there is no line
+        # adapter to wrap and no isinstance guard to run -- a record is a
+        # plain tuple.
+        self.record = record
+        self.score_defs = score_defs
+
+    def _get_raw(self, key: str | int) -> Any:
+        return self.record[PAYLOAD][key]
+
+    @property
+    def chrom(self) -> str:
+        return cast(str, self.record[CHROM])
+
+    @property
+    def pos_begin(self) -> int:
+        return cast(int, self.record[POS_BEGIN])
+
+    @property
+    def pos_end(self) -> int:
+        return cast(int, self.record[POS_END])
+
+    @property
+    def ref(self) -> str | None:
+        return cast("str | None", self.record[REF])
+
+    @property
+    def alt(self) -> str | None:
+        return cast("str | None", self.record[ALT])
 
 
 @dataclass
@@ -386,6 +448,10 @@ class GenomicScore(ResourceConfigValidationMixin):
             self.resource, self.config["table"],
         )
         self.score_definitions = self._build_scoredefs()
+        # The per-backend score line class; the record-yielding backends use
+        # RecordScoreLine, the adapter-yielding ones ScoreLine.  Selected in
+        # open() once the table is open and its record shape is known.
+        self._score_line_class: type[ScoreLine] = ScoreLine
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
@@ -750,6 +816,12 @@ class GenomicScore(ResourceConfigValidationMixin):
             return self
         self.table.open()
         self.table_loaded = True
+        # Choose the score line class per backend: a table that yields records
+        # is wrapped in a RecordScoreLine, one that yields adapters in a
+        # ScoreLine.  This is decided at open time, alongside the table's own
+        # parser/transform selection.
+        self._score_line_class = (
+            RecordScoreLine if self.table.yields_records else ScoreLine)
         if "scores" in self.config:
             self._validate_scoredefs()
 
@@ -808,7 +880,7 @@ class GenomicScore(ResourceConfigValidationMixin):
             for line in self.table.get_records_in_region(
                 chrom, pos_begin, pos_end,
             ):
-                yield ScoreLine(line, self.score_definitions)
+                yield self._score_line_class(line, self.score_definitions)
         except Exception:
             logger.exception(
                 "Error fetching lines for region %s:%s-%s in resource %s",
