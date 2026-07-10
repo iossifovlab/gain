@@ -176,32 +176,72 @@ class ScoreLine:
     def alt(self) -> str | None:
         return self.line.alt
 
-    def get_score(self, score_id: str) -> ScoreValue:
-        """Get and parse configured score from line."""
-        key = self.score_defs[score_id].score_index
+    def _extract_value(self, score_def: _ScoreDef) -> ScoreValue:
+        """Get and parse one score from the line using a resolved def.
+
+        A null raw value (e.g. an absent VCF INFO key) or a configured NA
+        value yields ``None``; a value that fails to parse is logged and
+        yields ``None`` rather than aborting the scan.
+        """
+        key = score_def.score_index
         assert key is not None
 
         value: str | int | float | None = self.line.get(key)
-        if value is None:
+        if value is None or value in score_def.na_values:
             return None
-        if score_id not in self.score_defs:
-            logger.warning(
-                "unexpected score_id %s in score", score_id)
+        if score_def.value_parser is None:
+            return value
+        # pylint: disable=broad-except
+        try:  # Temporary workaround for GRR generation
+            parsed: ScoreValue = score_def.value_parser(value)
+        except Exception:
+            logger.exception(
+                "unable to parse value %s for score %s",
+                value, score_def.score_id)
             return None
+        return parsed
 
-        col_def = self.score_defs[score_id]
-        if value in col_def.na_values:
-            value = None
-        elif col_def.value_parser is not None:
-            # pylint: disable=broad-except
-            try:  # Temporary workaround for GRR generation
-                value = col_def.value_parser(value)
-            except Exception:
-                logger.exception(
-                    "unable to parse value %s for score %s",
-                    value, score_id)
-                value = None
-        return value
+    def get_values(
+        self, score_defs: list[_ScoreDef],
+    ) -> list[ScoreValue]:
+        """Extract the values for this line for already-resolved score defs.
+
+        The bulk counterpart of :meth:`get_score`: the caller resolves score
+        names to :class:`_ScoreDef` objects once per fetch, and this walks the
+        resolved defs per line, so the name->definition lookup is hoisted out
+        of the per-line loop.  Returns one value per def, in order, applying
+        the same NA handling and parsing as :meth:`get_score`.
+
+        The single-value logic is inlined here rather than delegated to
+        :meth:`_extract_value` on purpose: this is the wide-resource hot path
+        (hundreds of scores per line), where a per-score Python call frame
+        would cost more than the dict lookup this hoist removes.  The
+        equivalence tests pin it to the :meth:`get_score` path.
+        """
+        line = self.line
+        result: list[ScoreValue] = []
+        for score_def in score_defs:
+            key = score_def.score_index
+            assert key is not None
+            value: str | int | float | None = line.get(key)
+            if value is None or value in score_def.na_values:
+                result.append(None)
+            elif score_def.value_parser is not None:
+                # pylint: disable=broad-except
+                try:  # Temporary workaround for GRR generation
+                    result.append(score_def.value_parser(value))
+                except Exception:
+                    logger.exception(
+                        "unable to parse value %s for score %s",
+                        value, score_def.score_id)
+                    result.append(None)
+            else:
+                result.append(value)
+        return result
+
+    def get_score(self, score_id: str) -> ScoreValue:
+        """Get and parse configured score from line."""
+        return self._extract_value(self.score_defs[score_id])
 
     def get_available_scores(self) -> tuple[Any, ...]:
         return tuple(self.score_defs.keys())
@@ -822,13 +862,16 @@ class GenomicScore(ResourceConfigValidationMixin):
 
         if scores is None:
             scores = self.get_all_scores()
+        # Hoist the score name->definition resolution out of the per-line
+        # loop: it is fixed for the whole scan.
+        score_defs = [self.score_definitions[scr_id] for scr_id in scores]
 
         for line in self.fetch_lines(chrom, pos_begin, pos_end):
             line_chrom, line_begin, line_end = self._line_to_begin_end(line)
             if pos_begin is not None and line_end < pos_begin:
                 continue
 
-            val = [line.get_score(scr_id) for scr_id in scores]
+            val = line.get_values(score_defs)
 
             if pos_begin is not None:
                 left = max(pos_begin, line_begin)
@@ -1057,7 +1100,10 @@ class PositionScore(GenomicScore):
         line = lines[0]
 
         requested_scores = scores or self.get_all_scores()
-        return [line.get_score(scr) for scr in requested_scores]
+        # Resolve names to definitions once for this point fetch.
+        score_defs = [
+            self.score_definitions[scr] for scr in requested_scores]
+        return line.get_values(score_defs)
 
     def _build_scores_agg(
         self, scores: list[str] | list[PositionScoreQuery],
@@ -1421,7 +1467,13 @@ class AlleleScore(GenomicScore):
         if not selected_line:
             return None
         requested_scores = scores or self.get_all_scores()
-        return {sc: selected_line.get_score(sc) for sc in requested_scores}
+        # Resolve names to definitions once for this point fetch.
+        score_defs = [
+            self.score_definitions[sc] for sc in requested_scores]
+        return dict(zip(
+            requested_scores,
+            selected_line.get_values(score_defs),
+            strict=True))
 
     def build_scores_agg(
         self, score_queries: list[AlleleScoreQuery],
@@ -1606,11 +1658,14 @@ class CnvCollection(GenomicScore):
             return cnvs
 
         requested_scores = scores or self.get_all_scores()
+        # Resolve names to definitions once for this fetch.
+        score_defs = [
+            self.score_definitions[score_id]
+            for score_id in requested_scores]
 
         for line in lines:
-            attributes = {}
-            for score_id in requested_scores:
-                attributes[score_id] = line.get_score(score_id)
+            attributes = dict(zip(
+                requested_scores, line.get_values(score_defs), strict=True))
             cnvs.append(CNV(line.chrom, line.pos_begin, line.pos_end,
                             attributes))
         return cnvs
