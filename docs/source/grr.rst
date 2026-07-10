@@ -76,38 +76,53 @@ A repository configuration is a YAML mapping that describes a single repository.
 Common fields
 ^^^^^^^^^^^^^
 
-    | **id** (string, required): Identifier for the repository.
-    | **type** (string, required): directory, http, url, s3, embedded, or group.
-    | **cache_dir** (string, optional): Directory used to cache downloaded resources locally. May be added to any repository type, including a ``group``.
+.. list-table::
+   :header-rows: 1
+   :widths: 20 20 60
+
+   * - Field
+     - Requirement
+     - Description
+   * - ``id``
+     - Required string
+     - Identifier for the repository.
+   * - ``type``
+     - Required string
+     - Repository type. Allowed values are ``directory``, ``http``, ``url``, ``s3``, ``embedded``, and ``group``.
+   * - ``cache_dir``
+     - Optional string
+     - Directory used to cache downloaded resources locally. May be added to any repository type, including a ``group``.
+
 
 Repository types
 ^^^^^^^^^^^^^^^^
 
-**directory** — a local repository on disk: A GRR stored in a local directory. The aliases ``dir`` and ``file`` are accepted as synonyms of ``directory``.
+.. list-table::
+   :header-rows: 1
+   :widths: 15 25 60
 
-    | **directory** (string, required): Absolute path to a local directory containing the resources. A relative path is rejected.
+   * - Type
+     - Required field
+     - Description
+   * - ``directory``
+     - ``directory``
+     - A GRR stored in a local directory on disk. The ``directory`` field must be an absolute path; relative paths are rejected. The aliases ``dir`` and ``file`` are accepted as synonyms of ``directory``.
+   * - ``url``
+     - ``url``
+     - A general-purpose remote repository. The URL scheme selects the protocol; ``http``, ``https``, and ``s3`` are supported.
+   * - ``http``
+     - ``url``
+     - A remote HTTP(S) repository. This is like ``url`` but restricted to ``http`` and ``https`` URLs.
+   * - ``s3``
+     - ``url``
+     - A remote S3 repository. This is like ``url`` but restricted to ``s3://`` URLs.
+   * - ``embedded``
+     - ``content``
+     - An in-memory repository whose resources are defined inline in the configuration. The ``content`` field is a nested mapping describing files and directories. Directory values are nested mappings; file values are file contents. The alias ``memory`` is accepted as a synonym of ``embedded``.
+   * - ``group``
+     - ``children``
+     - A collection of repositories. The ``children`` field is a list of repository configurations. Each child can be a concrete repository or another ``group``. Groups can be nested.
 
-**url** — a remote repository: The general-purpose remote repository type. The scheme of the URL selects
-the protocol; ``http``, ``https``, and ``s3`` are supported.
-
-    | **url** (string, required): Base URL of the remote repository.
-
-**http** — a remote HTTP(S) repository: Like ``url`` but restricted to ``http`` and ``https`` URLs.
-
-    | **url** (string, required): Base URL of the remote repository.
-
-**s3** — a remote S3 repository: Like ``url`` but restricted to ``s3`` URLs.
-
-    | **url** (string, required): ``s3://`` URL of the remote repository.
-
-**embedded** — an in-memory repository: A repository whose resources are defined inline in the configuration. This
-is used mainly for testing and small examples. The alias ``memory`` is accepted as a synonym of ``embedded``.
-
-    | **content** (mapping, required): Nested dictionary describing files and directories. Directory values are nested mappings; file values are file contents.
-
-**group** — a collection of repositories: Combines several repositories and searches them in the order they appear in ``children``. When a resource ID is requested, the group queries each child in turn and returns the first match. Groups can be nested.
-
-    | **children** (list, required): A list of repository configurations. Each child can be a concrete repository or another ``group``.
 
 Within a ``group``, the first repository that contains the requested resource wins. Order ``children`` accordingly: list a local directory before a remote repository if local resources should take precedence, or after it if the remote repository should be authoritative.
 
@@ -115,23 +130,44 @@ Within a ``group``, the first repository that contains the requested resource wi
 Repository caching
 -----------------------
 
-When a repository is configured with a ``cache_dir`` option, GAIn caches
-resources locally before using them. This matters because many genomic
-resources are large (often hundreds of MB to many GB), and repeatedly downloading
-or streaming them from a remote GRR can be slow and network-dependent.
+When a repository is configured with a ``cache_dir`` option, GAIn caches resources locally before using them. This matters because many genomic resources are large (often hundreds of MB to many GB), and repeatedly downloading or streaming them from a remote GRR can be slow and network-dependent.
 
-With caching enabled, the first use of a resource may take longer while GAIn
-downloads it into ``cache_dir``. After that, GAIn reuses the cached copy, which is
-typically much faster and avoids repeated network transfers. This is especially useful for
-resources you access frequently (for example, common reference genomes, gene models, or widely used scores).
+With caching enabled, the first use of a resource may take longer while GAIn downloads it into ``cache_dir``. After that, GAIn reuses the cached copy, which is typically much faster and avoids repeated network transfers. This is especially useful for resources you access frequently (for example, common reference genomes, gene models, or widely used scores).
 
-``cache_dir`` can be attached to any repository, including a ``group``. When
-attached to a ``group``, it caches resources served through that group, which
-provides a convenient way to use a single cache in front of several repositories.
+``cache_dir`` can be attached to any repository, including a ``group``. When attached to a ``group``, it caches resources served through that group, which provides a convenient way to use a single cache in front of several repositories.
 
-The tradeoff is disk usage: cached resources can occupy substantial space,
-so choose a ``cache_dir`` location with enough capacity (and keep in mind that
-the cache may grow over time as you use more resources).
+The tradeoff is disk usage: cached resources can occupy substantial space, so choose a ``cache_dir`` location with enough capacity (and keep in mind that the cache may grow over time as you use more resources).
+
+For example, to cache resources from a single remote repository, add ``cache_dir`` directly to that repository entry. Replace ``<path_to_grr_cache>`` with the full path to the directory where cached resources should be stored.
+
+.. code-block:: yaml
+
+    id: main-GRR
+    type: url
+    url: https://grr.iossifovlab.com
+    cache_dir: <path_to_grr_cache>/main-GRR
+
+In this configuration, resources loaded from ``main-GRR`` are cached under ``<path_to_grr_cache>/main-GRR``.
+
+To use one cache for a group of remote repositories, add ``cache_dir`` to the ``group`` entry:
+
+.. code-block:: yaml
+
+    id: development
+    type: group
+    cache_dir: <path_to_grr_cache>/remote_grrs
+    children:
+
+    - id: main-GRR
+      type: url
+      url: https://grr.iossifovlab.com
+
+    - id: GRR-ENCODE
+      type: url
+      url: https://grr-encode.iossifovlab.com
+
+In this configuration, resources resolved through the ``development`` group are cached under ``<path_to_grr_cache>/remote_grrs``.
+
 
 
 Complete GRR definition example
@@ -175,66 +211,126 @@ To use this configuration, save it as ``~/.grr_definition.yaml``, point
 
 
 Repository management
--------------------------------------------------------
+---------------------
 
 GAIn provides two command-line tools for working with genomic resources and repositories. Their usage is outlined below.
 
-    | **grr_manage**: create, inspect, and maintain GRRs (manifests, stats, info pages, repair).
-    | **grr_browse**: browse the resources available through a GRR definition file.
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Command
+     - Description
+   * - ``grr_manage``
+     - Create, inspect, and maintain GRRs, including manifests, statistics, information pages, and repair operations.
+   * - ``grr_browse``
+     - Browse the resources available through a GRR definition file.
+
+grr_manage
+^^^^^^^^^^
+
+``grr_manage`` is the Genomic Resource Repository Management Tool. It is used to create, inspect, and maintain GRRs.
+
+Usage:
+
+.. code-block:: text
+
+    grr_manage [-h] [--version] [--verbose] [--logfile LOGFILE]
+               {list,repo-init,repo-manifest,resource-manifest,repo-stats,resource-stats,repo-info,resource-info,repo-repair,resource-repair} ...
+
+Commands:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Command
+     - Description
+   * - ``list``
+     - List a GR Repo.
+   * - ``repo-init``
+     - Initialize a directory to turn it into a GRR.
+   * - ``repo-manifest``
+     - Create/update manifests for whole GRR.
+   * - ``resource-manifest``
+     - Create/update manifests for a resource.
+   * - ``repo-stats``
+     - Build the statistics for a resource.
+   * - ``resource-stats``
+     - Build the statistics for a resource.
+   * - ``repo-info``
+     - Build the ``index.html`` for the whole GRR.
+   * - ``resource-info``
+     - Build the ``index.html`` for the specific resource.
+   * - ``repo-repair``
+     - Update/rebuild manifest and histograms whole GRR.
+   * - ``resource-repair``
+     - Update/rebuild manifest and histograms for a resource.
+
+Options:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Option
+     - Description
+   * - ``-h, --help``
+     - Show this help message and exit.
+   * - ``--version``
+     - Prints the GAIn version and exits.
+   * - ``--verbose, -v, -V``
+     - Enable verbose output.
+   * - ``--logfile LOGFILE``
+     - File to log output to. If not set, logs to console.
 
 
+grr_browse
+^^^^^^^^^^
 
-**grr_manage**
+``grr_browse`` is the Genomic Resource Repository Browse Tool. It is used to browse and filter the resources available through a GRR definition file.
 
-.. code-block:: bash
+Usage:
 
-    $ grr_manage --help
-    usage: grr_manage [-h] [--version] [--verbose] [--logfile LOGFILE]
-                    {list,repo-init,repo-manifest,resource-manifest,repo-stats,resource-stats,repo-info,resource-info,repo-repair,resource-repair}
-                    ...
+.. code-block:: text
 
-    Genomic Resource Repository Management Tool
+    grr_browse [-h] [--version] [--verbose] [--logfile LOGFILE] [-g GRR] [-s SEARCH] [-t TYPE] [--summary] [--bytes]
 
-    positional arguments:
-    {list,repo-init,repo-manifest,resource-manifest,repo-stats,resource-stats,repo-info,resource-info,repo-repair,resource-repair}
-                            Command to execute
-        list                List a GR Repo
-        repo-init           Initialize a directory to turn it into a GRR
-        repo-manifest       Create/update manifests for whole GRR
-        resource-manifest   Create/update manifests for a resource
-        repo-stats          Build the statistics for a resource
-        resource-stats      Build the statistics for a resource
-        repo-info           Build the index.html for the whole GRR
-        resource-info       Build the index.html for the specific resource
-        repo-repair         Update/rebuild manifest and histograms whole GRR
-        resource-repair     Update/rebuild manifest and histograms for a resource
+Options:
 
-    options:
-    -h, --help            show this help message and exit
-    --version             Prints GAIn version and exists.
-    --verbose, -v, -V
-    --logfile LOGFILE     File to log output to. If not set, logs to console.
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
 
+   * - Option
+     - Description
+   * - ``-h, --help``
+     - Show this help message and exit.
+   * - ``--version``
+     - Prints the GAIn version and exits.
+   * - ``--verbose, -v, -V``
+     - Enable verbose output.
+   * - ``--logfile LOGFILE``
+     - File to log output to. If not set, logs to console.
+   * - ``--bytes``
+     - Print the resource size in bytes.
 
-**grr_browse**
+Repository/Resource options:
 
-.. code-block:: bash
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
 
-    $ grr_browse --help
-    usage: grr_browse [-h] [--version] [--verbose] [--logfile LOGFILE] [-g GRR]
-                    [--bytes]
-
-    Genomic Resource Repository Browse Tool
-
-    options:
-    -h, --help         show this help message and exit
-    --version          Prints GAIn version and exists.
-    --verbose, -v, -V
-    --logfile LOGFILE  File to log output to. If not set, logs to console.
-    --bytes            Print the resource size in bytes
-
-    Repository/Resource:
-    -g GRR, --grr GRR  path to GRR definition file.
+   * - Option
+     - Description
+   * - ``-g, --grr GRR``
+     - Path to GRR definition file.
+   * - ``-s, --search SEARCH``
+     - FTS search term to filter resources.
+   * - ``-t, --type TYPE``
+     - Filter resources by type.
+   * - ``--summary``
+     - Print a summary for each resource below its listing line.
 
 
 
@@ -247,15 +343,15 @@ This organization makes it possible to track both the structure and content of a
 
 Initializing version control
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-A version-controlled GRR starts as a directory-based GRR. In the `Adding local GRRs <https://iossifovlab.com/gaindocs/gain_getting_started_cli.html#adding-local-grrs>`_ section of the "Getting started on CLI" page, we created a local GRR named ``My_First_GRR`` and initialized it with ``grr_manage repo-init``. We can now place that GRR directory under Git and DVC control. 
+A version-controlled GRR starts as a directory-based GRR. In the `Create your first GRR <https://iossifovlab.com/gaindocs/gain_getting_started_grr.html#create-your-first-grr>`_ section of the "Getting started with GRR" page, we created a local GRR named ``my_GRR`` and initialized it with ``grr_manage repo-init``. We can now place that GRR directory under Git and DVC control. 
 
 Git is used for small files, such as ``genomic_resource.yaml``, ``.MANIFEST``, histogram metadata, and ``.dvc`` pointer files. DVC is used for large genomic resource files.
 
-From the directory that contains ``My_First_GRR``, enter the GRR root directory and initialize Git and DVC:
+From the directory that contains ``my_GRR``, enter the GRR root directory and initialize Git and DVC:
 
 .. code-block:: bash
 
-    cd My_First_GRR
+    cd my_GRR
     git init
     dvc init
 
@@ -288,29 +384,29 @@ approach.
 
 Adding a resource to version control
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-In the `Adding local GRRs <https://iossifovlab.com/gaindocs/gain_getting_started_cli.html#adding-local-grrs>`_ section of “Getting started on CLI” page, we added a gene score resource named ``my_score`` to ``My_First_GRR``. The resource directory contains the downloaded score file and its ``genomic_resource.yaml`` configuration file:
+In the `Add new resources to the local <https://iossifovlab.com/gaindocs/gain_getting_started_grr.html#add-new-resources-to-the-local-grr>`_ section of “Getting started with GRR” page, we added a large (>5Gb) position score resource (PhyloP7) named ``my_positionscore`` to ``my_GRR``. The resource directory contains the score file and its ``genomic_resource.yaml`` configuration file:
 
 .. code-block:: text
 
-    My_First_GRR/
-    └── my_score/
-        ├── Collins_rCNV_2022.dosage_sensitivity_scores.tsv.gz
+    my_GRR/
+    └── my_positionscore/
+        ├── hg38.phyloP7way.bw
         └── genomic_resource.yaml
 
-In a version-controlled GRR, the large resource file should be added to DVC, while the small configuration file should be added to Git. From the root of ``My_First_GRR``:
+In a version-controlled GRR, the large resource file should be added to DVC, while the small configuration file should be added to Git. From the root of ``my_GRR``:
 
 .. code-block:: bash
 
-    cd my_score
-    dvc add Collins_rCNV_2022.dosage_sensitivity_scores.tsv.gz
+    cd my_positionscore
+    dvc add hg38.phyloP7way.bw
 
 This creates a ``.dvc`` pointer file for the large resource file. The ``.dvc`` file and the resource configuration should be added to Git:
 
 .. code-block:: bash
 
-    git add Collins_rCNV_2022.dosage_sensitivity_scores.tsv.gz.dvc
+    git add hg38.phyloP7way.bw.dvc
     git add genomic_resource.yaml
-    git commit -m "Add my_score resource"
+    git commit -m "Add my_positionscore resource"
 
 The large resource file itself should be pushed to the configured DVC remote:
 
@@ -331,9 +427,9 @@ The generated files should also be added to Git:
 
 .. code-block:: bash
 
-    git add my_score/.MANIFEST
-    git add my_score/histograms/
-    git commit -m "Add my_score generated metadata"
+    git add my_positionscore/.MANIFEST
+    git add my_positionscore/histograms/
+    git commit -m "Add my_positionscore generated metadata"
     git push
 
 In this workflow, Git tracks the resource structure, configuration, DVC pointer files, manifests, and histogram outputs, while DVC stores the large resource data file itself.
@@ -352,31 +448,26 @@ Edit the resource configuration file:
 
 .. code-block:: bash
 
-    cd My_First_GRR
-    vi my_score/genomic_resource.yaml
+    cd my_GRR
+    vi my_positionscore/genomic_resource.yaml
 
-After editing genomic_resource.yaml, run the repair command from the GRR root
+After editing ``genomic_resource.yaml``, run the repair command from the GRR root
 directory:
 
 .. code-block:: bash
 
     grr_manage resource-repair
 
-This updates the resource manifest and any derived metadata that depend on the
-configuration. Then add the changed files to Git:
+This updates the resource manifest and any derived metadata that depend on the configuration. Then add the changed files to Git:
 
 .. code-block:: bash
 
-    git add my_score/genomic_resource.yaml
-    git add my_score/.MANIFEST
-    git commit -m "Update my_score metadata"
+    git add my_positionscore/genomic_resource.yaml
+    git add my_positionscore/.MANIFEST
+    git commit -m "Update my_positionscore metadata"
     git push
 
-This workflow is efficient because metadata files are small and stored directly
-in Git, while large genomic resource files remain in DVC and do not need to be
-downloaded or modified for metadata-only updates.
-
-
+This workflow is efficient because metadata files are small and stored directly in Git, while large genomic resource files remain in DVC and do not need to be downloaded or modified for metadata-only updates.
 
 
 Genomic resource configuration
@@ -418,30 +509,43 @@ Genomes
 Genome resources use a reference assembly FASTA and (optionally) provide assembly-specific
 metadata such as chromosome naming conventions and pseudoautosomal regions.
 
-Resource-specific fields in ``genomic_resource.yaml`` for genome resources (**type**: genome) are:
+Resource-specific fields in ``genomic_resource.yaml`` for genome resources (``type: genome``) are:
 
-    | **filename** (string): Path to the genome FASTA file, relative to the resource directory.
-    | **index_file** (string, optional): Path to the FASTA ``.fai`` index, relative to the resource directory. Default: ``<filename>.fai``.
-    | **chrom_prefix** (string, optional): Prefix expected in contig names (e.g., chr). Default: no prefix.
-    | **PARS** (subsection, optional): Pseudoautosomal regions for the assembly.
+.. list-table::
+   :header-rows: 1
+   :widths: 25 25 50
 
-The genome FASTA may be either a plain ``.fa`` file or a **bgzipped** FASTA
-(``.fa.gz`` or ``.bgz``). GAIn selects how to read the sequence from the file
-extension — a bgzipped genome is read with random access via ``pysam.FastaFile``
-— so no extra configuration is required. A plain ``.fa`` genome needs only its
-``.fai`` index; a bgzipped genome must be accompanied by **two** index files in
-the resource directory: a ``.fai`` FASTA index and a ``.gzi`` bgzip block index.
-Both are produced together by ``samtools faidx``:
+   * - Field
+     - Requirement
+     - Description
+   * - ``filename``
+     - Required string
+     - Path to the genome FASTA file, relative to the resource directory.
+   * - ``index_file``
+     - Optional string
+     - Path to the FASTA ``.fai`` index, relative to the resource directory. Default: ``<filename>.fai``.
+   * - ``chrom_prefix``
+     - Optional string
+     - Prefix expected in contig names, for example ``chr``. Default: no prefix.
+   * - ``PARS``
+     - Optional subsection
+     - Pseudoautosomal regions for the assembly.
+
+The genome FASTA may be either a plain ``.fa`` file or a **bgzipped** FASTA (``.fa.gz`` or ``.bgz``). GAIn selects how to read the sequence from the file extension — a bgzipped genome is read with random access via ``pysam.FastaFile`` — so no extra configuration is required. A plain ``.fa`` genome needs only its ``.fai`` index; a bgzipped genome must be accompanied by **two** index files in the resource directory: a ``.fai`` FASTA index and a ``.gzi`` bgzip block index. We use samtools to create these index files. If samtools is not already available in your environment, install it with:
+
+.. code-block:: bash
+
+    mamba install -c bioconda -c conda-forge samtools
+
+Both index files are produced together by samtools faidx:
 
 .. code-block:: bash
 
     samtools faidx GRCh38.p14.genome.fa.gz
 
-which writes ``GRCh38.p14.genome.fa.gz.fai`` and ``GRCh38.p14.genome.fa.gz.gzi``
-next to the FASTA.
+which writes ``GRCh38.p14.genome.fa.gz.fai`` and ``GRCh38.p14.genome.fa.gz.gzi`` next to the FASTA.
 
-A bgzipped genome is configured exactly like a plain one — only the ``filename``
-extension differs:
+A bgzipped genome is configured exactly like a plain one — only the ``filename`` extension differs:
 
 .. code-block:: yaml
 
@@ -453,7 +557,7 @@ extension differs:
       summary: Nucleotide sequence of the GRCh38.p14 genome assembly (bgzipped)
 
 Let's revisit the example ``genomic_resource.yaml`` from the `Getting started with GRR genome section <https://iossifovlab.com/gaindocs/gain_getting_started_grr.html#genome-grch38-p14>`_.
-As before, filename points to the downloaded FASTA file and contig names use the ``chr`` prefix. We now also include
+As before, filename points to the downloaded FASTA file and contig names use the ``chr`` prefix. We also include
 ``PARS``, which defines the pseudoautosomal regions on chromosomes X and Y.
 
 .. code-block:: yaml
@@ -477,15 +581,25 @@ As before, filename points to the downloaded FASTA file and contig names use the
 Gene models
 ^^^^^^^^^^^
 
-For gene model resources, the ``genomic_resource.yaml`` file has a minimal resource-specific
-section with only filename and format.
+For gene model resources, the ``genomic_resource.yaml`` file has a minimal resource-specific section with only filename and format.
 
 Resource-specific fields (**type**: gene_models):
-    | **filename** (string): Path to the gene model file, relative to the resource directory.
-    | **format** (string): Gene model format. Supported values include default, refflat, refseq, ccds, knowngene, gtf, and ucscgenepred.
 
-In the `Getting started with GRR gene models <https://iossifovlab.com/gaindocs/gain_getting_started_grr.html#gene-models-mane-v1-4>`_ example,
-the gene model file is a GTF, so we set ``format: gtf``.
+.. list-table::
+   :header-rows: 1
+   :widths: 25 25 50
+
+   * - Field
+     - Type
+     - Description
+   * - **filename**
+     - string
+     - Path to the gene model file, relative to the resource directory.
+   * - **format**
+     - string
+     - Gene model format. Supported values include default, refflat, refseq, ccds, knowngene, gtf, and ucscgenepred.
+
+In the `Getting started with GRR gene models <https://iossifovlab.com/gaindocs/gain_getting_started_grr.html#gene-models-mane-v1-4>`_ example, the gene model file is a GTF, so we set ``format: gtf``.
 
 
 .. code-block:: yaml
@@ -504,7 +618,17 @@ Liftover chains
 For liftover chain resources, the ``genomic_resource.yaml`` file has a minimal resource-specific section with only filename.
 
 Resource-specific fields (**type**: liftover_chain):
-  | **filename** (string): Path to the chain file, relative to the resource directory.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 25 50
+
+   * - Field
+     - Type
+     - Description
+   * - **filename**
+     - string
+     - Path to the chain file, relative to the resource directory.
 
 .. code-block:: yaml
 
@@ -520,7 +644,17 @@ Annotation pipelines
 For annotation pipeline resources, the ``genomic_resource.yaml`` file has a minimal resource-specific section with only filename.
 
 Resource-specific fields (**type**: annotation_pipeline):
-    | **filename** (string): Path to the pipeline YAML file, relative to the resource directory.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 25 50
+
+   * - Field
+     - Type
+     - Description
+   * - **filename**
+     - string
+     - Path to the pipeline YAML file, relative to the resource directory.
 
 .. code-block:: yaml
 
@@ -534,8 +668,7 @@ Resource-specific fields (**type**: annotation_pipeline):
 Position scores
 ^^^^^^^^^^^^^^^
 
-Position score resources (**type**: position_score) use a ``genomic_resource.yaml`` file with three resource-specific sections:
-``table``, ``scores``, and (optionally) ``default_annotation``.
+Position score resources (**type**: position_score) use a ``genomic_resource.yaml`` file with three resource-specific sections: ``table``, ``scores``, and (optionally) ``default_annotation``.
 
 **table**
 """""""""""""""
@@ -544,10 +677,20 @@ The ``table`` section specifies the data file (**filename**), its **format**, an
 
 Currently supported formats are ``tabix``, ``vcf_info``, ``tsv``, ``csv``, and ``bw``.
 
-The header_mode setting controls how column names (the header) are determined:
-    | **file**: Extract the header from the file (default).
-    | **list**: Use the explicit header provided via header.
-    | **none**: No header is used; columns can only be referenced by index.
+The ``header_mode`` setting controls how column names (the header) are determined:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Value
+     - Description
+   * - ``file``
+     - Extract the header from the file (default).
+   * - ``list``
+     - Use the explicit header provided via ``header``.
+   * - ``none``
+     - No header is used; columns can only be referenced by index.
 
 The **header** field is used only when ``header_mode`` is set to list. Example:
 
@@ -595,15 +738,23 @@ The table section also supports **chrom_mapping**, which can be used to reconcil
 naming differences between the resource file and the reference genome. This is useful, for example,
 when the resource uses contig names like chr1 but the genome uses only numbers.
 
-Three options are available under chrom_mapping:
+Three options are available under ``chrom_mapping``:
 
-    | **add_prefix**: Takes a string value and adds it as a prefix.
-    | **del_prefix**: Takes a string value and removes it from the start of each chromosome name.
-    | **filename**: Takes a filepath (relative to the genomic resource directory).
-    The file must contain two whitespace-delimited columns.
-    The first line must be a header with the column names ``chrom`` and ``file_chrom``.
-    Values in ``file_chrom`` are what appear in the resource file, and values in ``chrom`` are what
-    they will be mapped to. For example:
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Option
+     - Description
+   * - ``add_prefix``
+     - Takes a string value and adds it as a prefix.
+   * - ``del_prefix``
+     - Takes a string value and removes it from the start of each chromosome name.
+   * - ``filename``
+     - Takes a filepath, relative to the genomic resource directory, containing the chromosome mapping table.
+
+When ``filename`` is used, the file must contain two whitespace-delimited columns. The first line must be a header with the column names ``chrom`` and ``file_chrom``. Values in ``file_chrom`` are what appear in the resource file, and values in ``chrom`` are what they will be mapped to. For example:
+
 
 .. code-block:: yaml
 
@@ -741,8 +892,7 @@ The optional ``meta`` field is omitted for conciseness.
 Allele scores
 ^^^^^^^^^^^^^
 
-`genomic_resource.yaml` files for allele score resources are almost exactly the same
-as for position score resources, with three differences:
+``genomic_resource.yaml`` files for allele score resources are almost exactly the same as for position score resources, with three differences:
 
 1. **type**: allele_score
 
@@ -993,8 +1143,16 @@ per bin.
 
 A number histogram configuration supports two options.
 
-  | **number_of_bins**: number of bins used to partition the score values (default: 100).
-  | **view_range**: the visible range on the x-axis using min and max values, which is useful for bounded scores (for example, 0-1) or for focusing on the region of interest without being dominated by extreme outliers. Default is showing all values.
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Option
+     - Description
+   * - ``number_of_bins``
+     - Number of bins used to partition the score values. Default: ``100``.
+   * - ``view_range``
+     - Visible range on the x-axis using ``min`` and ``max`` values. This is useful for bounded scores, for example 0-1, or for focusing on the region of interest without being dominated by extreme outliers. Default: show all values.
 
 The example below shows a number histogram configuration with an explicit bin count and visible range.
 
@@ -1018,11 +1176,22 @@ observations fall into each unique value and displaying those counts.
 
 A categorical histogram configuration supports five options.
 
-  | **displayed_values_count**: the number of unique values that will be displayed in the histogram (default: 20). The remaining values are grouped into the Other category.
-  | **displayed_values_percent**: the percentage of total mass of unique values that will be displayed. The remaining values are grouped into the Other category. Only one of displayed_values_count and displayed_values_percent can be set.
-  | **label_rotation**: rotation angle for x-axis category labels in degrees (default: 0).
-  | **value_order**: the order in which the unique values are displayed in the histogram.
-  | **plot_function**: optional custom plotting function used instead of the default categorical histogram rendering. This is useful when the default plot and the available options are not sufficient, for example to reorder, filter, or relabel categories. The value should be provided as <python module>:<python function>, where the Python module path is relative to the resource directory. When plot_function is set, GAIn uses the custom function to render the histogram and ignores built-in categorical histogram options such as displayed_values_count, displayed_values_percent, and label_rotation.
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Option
+     - Description
+   * - ``displayed_values_count``
+     - The number of unique values that will be displayed in the histogram. Default: ``20``. The remaining values are grouped into the ``Other`` category.
+   * - ``displayed_values_percent``
+     - The percentage of total mass of unique values that will be displayed. The remaining values are grouped into the ``Other`` category. Only one of ``displayed_values_count`` and ``displayed_values_percent`` can be set.
+   * - ``label_rotation``
+     - Rotation angle for x-axis category labels in degrees. Default: ``0``.
+   * - ``value_order``
+     - The order in which the unique values are displayed in the histogram.
+   * - ``plot_function``
+     - Optional custom plotting function used instead of the default categorical histogram rendering. This is useful when the default plot and the available options are not sufficient, for example to reorder, filter, or relabel categories. The value should be provided as ``<python module>:<python function>``, where the Python module path is relative to the resource directory. When ``plot_function`` is set, GAIn uses the custom function to render the histogram and ignores built-in categorical histogram options such as ``displayed_values_count``, ``displayed_values_percent``, and ``label_rotation``.
 
 The examples below show two common categorical histogram setups. The first uses the built-in
 categorical histogram rendering with ``displayed_values_count`` and ``label_rotation``. The second uses
@@ -1177,13 +1346,26 @@ to avoid subtle off-by-one overlaps.
 
 **Common options:**
 
-    * **-p, --preset**: preset parser for common formats (e.g., vcf, bed, gff), which sets the expected coordinate columns automatically.
-    * **-s, --sequence**: 1-based column index for the chromosome/contig (sequence name) column.
-    * **-b, --begin**: 1-based column index for the start (begin) coordinate column.
-    * **-e, --end**: 1-based column index for the end (stop) coordinate column. If the file has no end column, set ``-e`` to the same value as ``-b`` (single-position intervals).
-    * **-0, --zero-based**: interpret coordinates as 0-based (BED-style) instead of 1-based.
-    * **-C, --csi**: generate a CSI index instead of the default TBI index (useful for very large coordinates/contigs).
-    * **-f, --force**: overwrite an existing index file.
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Option
+     - Description
+   * - ``-p, --preset``
+     - Preset parser for common formats, for example ``vcf``, ``bed``, and ``gff``. This sets the expected coordinate columns automatically.
+   * - ``-s, --sequence``
+     - 1-based column index for the chromosome/contig sequence name column.
+   * - ``-b, --begin``
+     - 1-based column index for the start/begin coordinate column.
+   * - ``-e, --end``
+     - 1-based column index for the end/stop coordinate column. If the file has no end column, set ``-e`` to the same value as ``-b`` for single-position intervals.
+   * - ``-0, --zero-based``
+     - Interpret coordinates as 0-based, BED-style, instead of 1-based.
+   * - ``-C, --csi``
+     - Generate a CSI index instead of the default TBI index. This is useful for very large coordinates or contigs.
+   * - ``-f, --force``
+     - Overwrite an existing index file.
 
 
 For a full list of options run ``tabix --help``. The examples below show how to produce Tabix indexes for
