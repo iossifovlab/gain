@@ -102,15 +102,15 @@ def publishReports(String name) {
           testResults: "reports/${name}/ruff.xml," +
                        "reports/${name}/mypy.xml," +
                        "reports/${name}/pylint.xml"
-    // Coverage is NOT recorded per-project here. The multibranch
-    // "Coverage" column (Coverage plugin's CoverageMetricColumn) shows
-    // the *first-registered* CoverageBuildAction and has no way to
-    // select among several — so six per-project actions just meant the
-    // column showed whichever stage finished first (web_ui). Instead a
-    // single aggregating recordCoverage runs once in post.always (the
-    // sole coverage action) so the column shows a true combined number;
-    // the per-project coverage.xml files it aggregates are still
-    // archived under reports/<name>/ for drill-down.
+    // Coverage is NOT recorded here. It's all recorded in the top-level
+    // post.always instead, so we control the ORDER in which the actions
+    // register: the multibranch "Coverage" column (Coverage plugin's
+    // CoverageMetricColumn) shows the *first-registered*
+    // CoverageBuildAction and has no id selector, so the combined report
+    // must register first to own the column. Recording per-project here
+    // (in parallel post blocks) would register them in stage-completion
+    // order — the fastest stage (web_ui) first — and the column would
+    // show that instead of the combined number.
     if (testResults != null && testResults.failCount > 0) {
         error("${name}: ${testResults.failCount} test(s) failed")
     }
@@ -999,26 +999,35 @@ pipeline {
         always {
             script {
                 try {
-                    // The one and only coverage action for the build.
-                    // publishReports() deliberately records NO per-project
-                    // coverage (see the note there): the multibranch "Coverage"
-                    // column shows the first-registered CoverageBuildAction and
-                    // can't be pointed at a specific one, so the combined report
-                    // must be the sole action to own the column. This call globs
-                    // all six top-level coverage.xml files — the Coverage plugin
-                    // sums their counters into one report — under the plugin's
-                    // default id `coverage`. Drill-down into each sub-project
-                    // survives as packages inside this one report.
+                    // All coverage is published here, in a controlled
+                    // ORDER, rather than in the per-project parallel post
+                    // blocks. The multibranch "Coverage" column shows the
+                    // *first-registered* CoverageBuildAction (Coverage plugin's
+                    // CoverageMetricColumn.getAction(); it has no id selector),
+                    // and parallel post blocks register in nondeterministic
+                    // stage-completion order — so if the per-project reports
+                    // were recorded there, the column would show whichever stage
+                    // finished first (web_ui), not a combined number.
                     //
-                    // Lives here (top-level post.always), not in a stage, so it
-                    // publishes on red builds too — a failing project's
-                    // publishReports error()s and skips later *stages*, but
-                    // post.always still runs after all six parallel post blocks
-                    // have written reports/*/coverage.xml. The glob matches only
-                    // the six top-level files, not the nested
+                    // Recording them all here lets us register the COMBINED
+                    // report first, so it owns the column, then the six
+                    // per-project reports for their own drill-down views + trend
+                    // charts. Order among the six is cosmetic (sidebar listing
+                    // only); it follows the Jenkinsfile stage order.
+                    //
+                    // In post.always (not a stage) so coverage publishes on red
+                    // builds too — a failing project's publishReports error()s
+                    // and skips later *stages*, but post.always still runs after
+                    // all six parallel post blocks have written
+                    // reports/*/coverage.xml. failOnError:false makes each call a
+                    // clean no-op on docs-only / tag builds where its file is
+                    // absent.
+
+                    // Combined FIRST — this is the one the column shows. The
+                    // glob sums all six top-level coverage.xml files into one
+                    // report; it matches only those, not the nested
                     // web_ui/coverage/cobertura-coverage.xml, so nothing is
-                    // double-counted. failOnError:false makes it a clean no-op
-                    // on docs-only / tag builds where no coverage.xml exists.
+                    // double-counted. Default id `coverage`.
                     recordCoverage(
                         tools: [[parser: 'COBERTURA', pattern: 'reports/*/coverage.xml']],
                         id: 'coverage',
@@ -1026,6 +1035,21 @@ pipeline {
                         skipPublishingChecks: true,
                         failOnError: false,
                     )
+                    // Per-project reports AFTER — separate id per project gives
+                    // each its own coverage URL, sidebar action, and trend
+                    // chart. Registered after the combined one, so they never
+                    // displace it in the column.
+                    for (proj in ['core', 'demo_annotator', 'vep_annotator',
+                                  'spliceai_annotator', 'web_api', 'web_ui']) {
+                        recordCoverage(
+                            tools: [[parser: 'COBERTURA',
+                                     pattern: "reports/${proj}/coverage.xml"]],
+                            id: "${proj}-coverage",
+                            name: "${proj} coverage",
+                            skipPublishingChecks: true,
+                            failOnError: false,
+                        )
+                    }
                     archiveArtifacts(
                         artifacts: 'reports/**/*.xml',
                         allowEmptyArchive: true,
