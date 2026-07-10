@@ -113,6 +113,21 @@ def test_zero_based_end_one_past_begin_maps_to_the_same_point() -> None:
     assert record[POS_END] == 11
 
 
+def test_zero_based_no_pos_end_column_bumps_from_single_column() -> None:
+    # The dominant ``position_score`` shape has no ``pos_end`` column, so
+    # ``pos_end_key == pos_begin_key`` -- begin and end are read from the SAME
+    # column.  ``begin == end`` therefore always holds, so end is bumped and
+    # begin shifted, landing both on ``begin + 1``.  This pins the (1, 1),
+    # (6, 6), (100, 100) shape the score layer relies on (it agrees exactly
+    # with master's in-place ``zero_based_adjust``, which read the column it
+    # had just overwritten).
+    parse = _parser(pos_begin_key=1, pos_end_key=1, zero_based=True)
+    for raw_begin, expected in [("0", 1), ("5", 6), ("99", 100)]:
+        record = parse(["1", raw_begin])
+        assert record is not None
+        assert (record[POS_BEGIN], record[POS_END]) == (expected, expected)
+
+
 def test_zero_based_end_before_begin_is_left_unrepaired() -> None:
     # An invalid zero-based row whose end is below begin.  The parser bumps
     # end ONLY when begin == end (matching the tabix backend's

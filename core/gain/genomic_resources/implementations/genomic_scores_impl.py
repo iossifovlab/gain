@@ -12,7 +12,6 @@ from gain.genomic_resources.genomic_position_table import (
 )
 from gain.genomic_resources.genomic_position_table.record import (
     POS_END,
-    Record,
 )
 from gain.genomic_resources.genomic_position_table.table_bigwig import (
     BigWigTable,
@@ -296,7 +295,7 @@ class GenomicScoreImplementation(
                     # The in-memory backend yields record tuples; read the end
                     # position from its named slot rather than an adapter attr.
                     chrom_length = \
-                        max(cast(Record, record)[POS_END]
+                        max(record[POS_END]
                             for record in
                             self.score.table.get_records_in_region(chrom))
                 elif isinstance(self.score.table, BigWigTable):

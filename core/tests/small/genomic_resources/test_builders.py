@@ -4,6 +4,10 @@ import pathlib
 import pytest
 import yaml
 from gain.gene_scores.gene_scores import build_gene_score_from_resource
+from gain.genomic_resources.genomic_position_table.record import (
+    POS_BEGIN,
+    POS_END,
+)
 from gain.genomic_resources.genomic_scores import AlleleScore, PositionScore
 from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
@@ -1746,8 +1750,36 @@ def test_zero_based_invalid_row_rejected_by_score_layer(
         """)
         .build_resource(tmp_path),
     ).open()
-    with pytest.raises(OSError, match="has a regions"):
+    with pytest.raises(OSError, match="has a region"):
         list(score.fetch_region_values("1", 1, 100))
+
+
+def test_zero_based_no_pos_end_column_end_to_end(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A real zero-based position_score with NO pos_end column -- the dominant
+    # position_score shape, where pos_end_key == pos_begin_key.  Each
+    # single-base zero-based row shifts to (begin+1, begin+1), and the contig
+    # length is max(pos_end)+1.  Pins the parser's behaviour end-to-end and
+    # matches master exactly: (1,1) (6,6) (100,100), length 101.
+    score = PositionScore(
+        a_position_score()
+        .with_score("v", "float")
+        .with_zero_based()
+        .with_data("""
+            chrom  pos_begin  v
+            1      0          0.1
+            1      5          0.2
+            1      99         0.3
+        """)
+        .build_resource(tmp_path),
+    ).open()
+    with score:
+        records = list(score.table.get_all_records())
+        assert [(r[POS_BEGIN], r[POS_END]) for r in records] == [
+            (1, 1), (6, 6), (100, 100),
+        ]
+        assert score.table.get_chromosome_length("1") == 101
 
 
 def test_bigwig_score_with_histogram_emits_block(

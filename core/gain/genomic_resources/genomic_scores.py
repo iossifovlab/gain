@@ -157,52 +157,75 @@ class _ScoreDef:
             self.na_values = default_na_values[self.value_type]
 
 
-class ScoreLine:
-    """Abstraction for a genomic score line. Wraps the line adapter.
+class ScoreLineBase(abc.ABC):
+    """Shared value extraction for the two per-backend score lines.
 
-    This is the per-backend score line for the backends that still yield a
-    line adapter (tabix, VCF, bigWig).  The in-memory backend, which yields
-    plain record tuples, uses :class:`RecordScoreLine`; the concrete class is
-    selected per backend when the score is opened.  The value-extraction
-    logic (:meth:`_extract_value`, :meth:`get_values`, :meth:`get_score`) is
-    shared between the two: :meth:`_extract_value` reads the raw value through
-    ``self._get_raw``, a per-instance callable *bound once* in ``__init__`` to
-    the right raw-value lookup (the adapter's ``line.get`` here, the payload's
-    ``__getitem__`` in :class:`RecordScoreLine`).  Binding it once keeps the
-    per-score inner loop to a single call -- the same instruction count as
-    reading ``self.line.get(key)`` directly -- so sharing the NA/parse/log
-    logic costs the hot adapter path nothing.
+    A genomic score is read through one of two concrete score lines, chosen
+    per backend when the score is opened: :class:`ScoreLine` wraps the line
+    adapter that the tabix/VCF/bigWig backends yield, and
+    :class:`RecordScoreLine` wraps the immutable record tuple that the
+    in-memory backend yields.  They are **siblings**, not parent/child -- the
+    only per-backend difference is where a raw score value comes from, and
+    that is captured by ``self._get_raw``, a per-instance callable each
+    subclass binds once in its own ``__init__`` (the adapter's ``line.get``
+    for :class:`ScoreLine`, the record payload's ``__getitem__`` for
+    :class:`RecordScoreLine`).
+
+    Everything downstream of that one lookup -- the five core-field
+    properties' contract, NA handling, parsing, logging and the
+    bulk/single value walks -- lives here so it cannot drift between the two.
+
+    The base declares no ``__init__`` on purpose: each subclass sets
+    ``score_defs`` and binds ``_get_raw`` in its own constructor, with no
+    ``super().__init__`` call.  A base constructor (even a trivial one) would
+    add a per-**line** Python call on the hot ``fetch_lines`` path -- ~0.055us
+    /line, doubling the narrow-table overhead below -- for no benefit, since a
+    record is not substitutable for an adapter and the two constructors share
+    no work.  The substitutability that finding 4 wanted is instead enforced
+    structurally: :attr:`GenomicScore._score_line_class` is typed as a callable
+    ``(LineBase | Record, dict) -> ScoreLineBase`` and mypy checks both
+    subclasses against it at the assignment in :meth:`GenomicScore.open`.
+
+    Reading a raw value still costs a per-line bound-method allocation
+    (``self._get_raw``).  Measured against a byte-faithful reconstruction of
+    the pre-refactor ``ScoreLine`` (construct + ``get_values``, min-of-15):
+    ~1.06x on a 1-score line, ~1.03x at 5 scores, a wash (~1.01x) by 454
+    scores -- largest on the narrow ``position_score`` shape, invisible on
+    wide tables.  In absolute terms ~0.035us/line against a ~200us/record
+    end-to-end fetch, i.e. invisible in production.  #239 removes
+    :class:`ScoreLine`, at which point this base and the split disappear.
     """
 
-    # Bound once per instance to the raw-value lookup (see class docstring);
-    # not a method, so subclasses rebind it in their own ``__init__``.
+    # Set by each subclass in its own __init__ (no shared base constructor --
+    # see the class docstring).  ``_get_raw`` is bound once per instance to the
+    # raw-value lookup; it is not a method, so each subclass binds it.
+    score_defs: dict[str, _ScoreDef]
     _get_raw: Callable[[str | int], Any]
 
-    def __init__(self, line: LineBase, score_defs: dict[str, _ScoreDef]):
-        assert isinstance(line, (Line, VCFLine, BigWigLine))
-        self.line = line
-        self.score_defs = score_defs
-        self._get_raw = line.get
-
     @property
+    @abc.abstractmethod
     def chrom(self) -> str:
-        return self.line.chrom
+        ...
 
     @property
+    @abc.abstractmethod
     def pos_begin(self) -> int:
-        return self.line.pos_begin
+        ...
 
     @property
+    @abc.abstractmethod
     def pos_end(self) -> int:
-        return self.line.pos_end
+        ...
 
     @property
+    @abc.abstractmethod
     def ref(self) -> str | None:
-        return self.line.ref
+        ...
 
     @property
+    @abc.abstractmethod
     def alt(self) -> str | None:
-        return self.line.alt
+        ...
 
     def _extract_value(self, score_def: _ScoreDef) -> ScoreValue:
         """Get and parse one score from the line using a resolved def.
@@ -256,29 +279,64 @@ class ScoreLine:
         return tuple(self.score_defs.keys())
 
 
-class RecordScoreLine(ScoreLine):
+class ScoreLine(ScoreLineBase):
+    """Score line wrapping a line adapter (tabix/VCF/bigWig backends).
+
+    Binds ``self._get_raw`` to the adapter's ``line.get`` and reads the core
+    fields straight off the adapter.  See :class:`ScoreLineBase` for the
+    shared value-extraction contract; #239 removes this class.
+    """
+
+    def __init__(
+        self, line: LineBase | Record, score_defs: dict[str, _ScoreDef],
+    ):
+        assert isinstance(line, (Line, VCFLine, BigWigLine))
+        self.line = line
+        self.score_defs = score_defs
+        self._get_raw = line.get
+
+    @property
+    def chrom(self) -> str:
+        return self.line.chrom
+
+    @property
+    def pos_begin(self) -> int:
+        return self.line.pos_begin
+
+    @property
+    def pos_end(self) -> int:
+        return self.line.pos_end
+
+    @property
+    def ref(self) -> str | None:
+        return self.line.ref
+
+    @property
+    def alt(self) -> str | None:
+        return self.line.alt
+
+
+class RecordScoreLine(ScoreLineBase):
     """Score line wrapping an immutable record tuple (in-memory backend).
 
     The core fields are read from the record's named slots; a raw score
     column is read from the opaque payload (the raw row) on demand, so a wide
-    table decodes only the columns a caller asks for.  Value extraction,
-    NA handling and parsing are inherited unchanged from :class:`ScoreLine`:
-    the only per-backend difference is where the raw value comes from, and
-    that is captured by rebinding ``self._get_raw`` to the payload's indexer.
+    table decodes only the columns a caller asks for.  Value extraction, NA
+    handling and parsing come from :class:`ScoreLineBase`; the only
+    per-backend difference is where the raw value comes from, captured by
+    binding ``self._get_raw`` to the payload's indexer.
     """
 
-    def __init__(  # pylint: disable=super-init-not-called
-        self, record: Record, score_defs: dict[str, _ScoreDef],
+    def __init__(
+        self, line: LineBase | Record, score_defs: dict[str, _ScoreDef],
     ):
-        # Intentionally does not call ScoreLine.__init__: there is no line
-        # adapter to wrap and no isinstance guard to run -- a record is a
-        # plain tuple.  Bind the raw-value lookup to the payload's __getitem__
-        # (the score columns are addressed by resolved integer index), the
-        # record-backed counterpart of ScoreLine's ``line.get``.
-        self.record = record
+        # A record is a plain tuple; bind the raw-value lookup to the
+        # payload's __getitem__ (score columns are addressed by resolved
+        # integer index), the record-backed counterpart of ``line.get``.
+        assert isinstance(line, tuple)
+        self.record = line
         self.score_defs = score_defs
-        self._get_raw = cast(
-            "Callable[[str | int], Any]", record[PAYLOAD].__getitem__)
+        self._get_raw = line[PAYLOAD].__getitem__
 
     @property
     def chrom(self) -> str:
@@ -462,7 +520,13 @@ class GenomicScore(ResourceConfigValidationMixin):
         # The per-backend score line class; the record-yielding backends use
         # RecordScoreLine, the adapter-yielding ones ScoreLine.  Selected in
         # open() once the table is open and its record shape is known.
-        self._score_line_class: type[ScoreLine] = ScoreLine
+        # A callable, not type[...], so mypy checks both ScoreLine and
+        # RecordScoreLine against the constructor signature at the assignment
+        # in open() -- the substitutability finding 4 wanted, enforced
+        # structurally.  We never call issubclass on it.
+        self._score_line_class: Callable[
+            [LineBase | Record, dict[str, _ScoreDef]], ScoreLineBase,
+        ] = ScoreLine
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
@@ -868,12 +932,12 @@ class GenomicScore(ResourceConfigValidationMixin):
         self.close()
 
     @staticmethod
-    def _line_to_begin_end(line: ScoreLine) -> tuple[str, int, int]:
+    def _line_to_begin_end(line: ScoreLineBase) -> tuple[str, int, int]:
         if line.pos_end < line.pos_begin:
             raise OSError(
-                f"The resource line {line} has a regions "
-                f" with end {line.pos_end} smaller that the "
-                f"begining {line.pos_end}.")
+                f"The resource line {line} has a region "
+                f"with end {line.pos_end} smaller than the "
+                f"beginning {line.pos_begin}.")
         return line.chrom, line.pos_begin, line.pos_end
 
     def _get_header(self) -> tuple[Any, ...] | None:
@@ -885,7 +949,7 @@ class GenomicScore(ResourceConfigValidationMixin):
         chrom: str | None,
         pos_begin: int | None,
         pos_end: int | None,
-    ) -> Iterator[ScoreLine]:
+    ) -> Iterator[ScoreLineBase]:
         """Fetch lines in a region and wrap them in ScoreLines."""
         try:
             for line in self.table.get_records_in_region(
@@ -914,7 +978,7 @@ class GenomicScore(ResourceConfigValidationMixin):
         pos_end: int | None,
         scores: list[str] | None = None,
     ) -> Generator[
-            tuple[str, int, int, list[ScoreValue] | None, ScoreLine],
+            tuple[str, int, int, list[ScoreValue] | None, ScoreLineBase],
             None, None]:
         """Return score values in a region."""
         if not self.is_open():
@@ -1506,8 +1570,8 @@ class AlleleScore(GenomicScore):
 
     def fetch_allele_line(
         self, chrom: str, pos: int, ref: str, alt: str,
-    ) -> ScoreLine | None:
-        """Fetch the exact ScoreLine matching the given allele."""
+    ) -> ScoreLineBase | None:
+        """Fetch the exact score line matching the given allele."""
         for line in self.fetch_lines(chrom, pos, pos):
             if line.ref == ref and line.alt == alt:
                 return line

@@ -170,6 +170,22 @@ chr1   11  .  A   T   .    .      scoreA=0.2;scoreB=0.5
         assert None in bulk
 
 
+def test_record_score_line_get_score_singular(tmp_path) -> None:
+    # RecordScoreLine.get_score (the singular path) is exercised directly:
+    # the other tests here go through the bulk get_values.  The in-memory
+    # backend yields RecordScoreLine, so this pins get_score reading through
+    # the record payload's __getitem__ binding, one score id at a time.
+    score = _open_position(tmp_path, """
+        chrom  pos_begin  s_float  s_str
+        1      10         0.5      hello
+    """)
+    with score:
+        line = next(iter(score.fetch_lines("1", 10, 10)))
+        assert isinstance(line, RecordScoreLine)
+        assert line.get_score("s_float") == 0.5
+        assert line.get_score("s_str") == "hello"
+
+
 def test_get_values_returns_new_ordered_list(tmp_path) -> None:
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str

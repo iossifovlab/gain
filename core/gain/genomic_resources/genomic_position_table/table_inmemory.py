@@ -6,7 +6,6 @@ from typing import IO, ClassVar, cast
 
 from gain.genomic_resources.repository import GenomicResource
 
-from .line import LineBase
 from .record import (
     ALT,
     CHROM,
@@ -27,6 +26,20 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
     built once when the table is opened, since resolving the column keys and
     the chromosome map needs the header/file contigs, which are only known
     then.
+
+    Empty/unknown-contig policy (consistent across the three read methods).
+    A contig can be in ``get_chromosomes()`` yet have no records -- e.g. a
+    ``chrom_mapping`` file that maps a reference contig onto a file contig
+    with no data rows.  Such a contig is *known* but *empty*:
+
+    * :meth:`get_all_records` skips a known-but-empty contig (yields nothing
+      for it, the other contigs still stream);
+    * :meth:`get_records_in_region` raises ``ValueError`` when the contig is
+      not in ``get_chromosomes()``, and yields nothing for a known-but-empty
+      one;
+    * :meth:`get_chromosome_length` raises ``ValueError`` when the contig is
+      unknown *or* known-but-empty (there is no maximum end position to
+      report).
     """
 
     # This backend yields and stores records rather than line adapters.
@@ -77,16 +90,18 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
 
         self._set_core_column_keys()
 
-        # First read the raw rows so the file contigs are known; the
-        # chromosome map -- and hence the parser -- can only be built once we
-        # have them (a del_prefix/add_prefix chrom_mapping derives the
-        # reference contigs from the observed file contigs).  This buffers all
-        # N raw rows transiently: it is a single extra list of row pointers
-        # that is freed when this method returns, leaving only records_by_chr
-        # live.  A one-pass alternative is not available -- the parser cannot
-        # be built before its inputs are known.
+        # Buffer the raw rows so the file contigs are known before the parser
+        # is built.  This two-pass read is needed ONLY for a del_prefix /
+        # add_prefix chrom_mapping, whose reverse map derives the reference
+        # contigs from the observed file contigs -- so the map, and hence the
+        # parser, cannot be built until the file has been scanned.  With no
+        # chrom_mapping, or a chrom_mapping.filename (both give a rev_chrom_map
+        # that does not depend on the file contigs), the parser could be built
+        # up front and applied streaming; we keep the single code path here
+        # because for an in-memory table the transient buffer is harmless (a
+        # list of row pointers, freed on return, leaving only records_by_chr
+        # live).  The tabix migration must NOT buffer -- see #236-#238.
         raw_rows: list[tuple[str, ...]] = []
-        file_chromosomes: list[str] = []
         seen_chromosomes: set[str] = set()
         for row in self.str_stream:
             row = row.strip(strip_chars)
@@ -100,12 +115,9 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
             if space_replacement:
                 columns = tuple("" if v == "EMPTY" else v for v in columns)
             raw_rows.append(columns)
-            fchrom = columns[self.chrom_key]
-            if fchrom not in seen_chromosomes:
-                seen_chromosomes.add(fchrom)
-                file_chromosomes.append(fchrom)
+            seen_chromosomes.add(columns[self.chrom_key])
 
-        self._file_chromosomes = sorted(file_chromosomes)
+        self._file_chromosomes = sorted(seen_chromosomes)
         self._build_chrom_mapping()
 
         parser = build_tabular_parser(
@@ -141,44 +153,49 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
     def get_file_chromosomes(self) -> list[str]:
         return self._file_chromosomes
 
-    def get_all_records(self) -> Generator[LineBase, None, None]:
+    def get_all_records(self) -> Generator[Record, None, None]:
+        # A known contig with no records (e.g. mapped onto an empty file
+        # contig) is skipped -- see the class docstring's policy.
         for chrom in self.get_chromosomes():
-            for record in self.records_by_chr.get(chrom, []):
-                yield cast(LineBase, record)
+            yield from self.records_by_chr.get(chrom, [])
 
     def get_records_in_region(
         self,
         chrom: str | None = None,
         pos_begin: int | None = None,
         pos_end: int | None = None,
-    ) -> Generator[LineBase, None, None]:
+    ) -> Generator[Record, None, None]:
 
         if chrom is None:
             yield from self.get_all_records()
             return
 
-        if chrom not in self.records_by_chr:
+        # An unknown contig is an error; a known-but-empty one yields nothing.
+        if chrom not in self.get_chromosomes():
             raise ValueError(
                 f"The chromosome {chrom} is not present in the table")
 
-        for record in self.records_by_chr[chrom]:
+        for record in self.records_by_chr.get(chrom, []):
             if pos_begin and pos_begin > record[POS_END]:
                 continue
             if pos_end and pos_end < record[POS_BEGIN]:
                 continue
-            yield cast(LineBase, record)
+            yield record
 
     def get_chromosome_length(
         self, chrom: str,
         step: int = 0,  # noqa: ARG002
     ) -> int:
-        if chrom not in self.get_chromosomes():
+        # Unknown or known-but-empty contigs have no maximum end position to
+        # report -- raise a clear ValueError rather than KeyError/max() on [].
+        records = self.records_by_chr.get(chrom)
+        if not records:
             raise ValueError(
-                f"contig {chrom} not present in the table's contigs: "
+                f"contig {chrom} has no records in the table's contigs: "
                 f"{self.get_chromosomes()}")
         return cast(
             int,
-            max(record[POS_END] for record in self.records_by_chr[chrom]),
+            max(record[POS_END] for record in records),
         ) + 1
 
     def close(self) -> None:

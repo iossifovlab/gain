@@ -977,7 +977,7 @@ def test_line_to_begin_end_validates_order() -> None:
         {},
     )
 
-    with pytest.raises(OSError, match="has a regions"):
+    with pytest.raises(OSError, match="has a region"):
         GenomicScore._line_to_begin_end(bad_line)
 
 
