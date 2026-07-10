@@ -79,8 +79,17 @@ def test_bulk_na_value_yields_none(tmp_path) -> None:
         assert "nan" in score.score_definitions["s_float"].na_values
         per_score = [line.get_score(s) for s in score.get_all_scores()]
         bulk = line.get_values(_defs(score))
-        assert bulk == per_score
+        # The absolute assertions are the real guard here.  While both paths
+        # share ``_extract_value``, ``bulk == per_score`` is tautological --
+        # dropping the na_values check makes BOTH return ``nan``, and the
+        # comparison then fails only incidentally, because ``nan != nan``.
+        # Assert the absolute values first so a broken NA branch fails for
+        # the right reason.  The equivalence assertion earns its keep only
+        # if the single-value logic is ever forked again.
         assert bulk[0] is None
+        assert per_score[0] is None
+        assert bulk[1] == "hello"
+        assert bulk == per_score
 
 
 def test_bulk_unparseable_value_logs_and_yields_none(
