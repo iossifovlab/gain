@@ -283,6 +283,7 @@ class _TableScoreBuilder:
     rows: tuple[tuple[tuple[str, str], ...], ...] = ()
     tabix: bool = False
     chrom_mapping: dict[str, Any] | None = None
+    zero_based: bool = False
 
     # Subclass-provided knobs.
     SCORE_TYPE: ClassVar[str] = ""
@@ -325,6 +326,18 @@ class _TableScoreBuilder:
         ``with_chrom_mapping(add_prefix="chr")``.
         """
         return dataclasses.replace(self, chrom_mapping=dict(mapping))
+
+    def with_zero_based(self) -> Self:
+        """Emit ``zero_based: true`` in the ``table:`` config.
+
+        Declares the authored positions as 0-based half-open intervals, the
+        convention a ``.bed``-style source uses.  The backend shifts a
+        record's ``pos_begin`` up by one on read (and a single-base record's
+        ``pos_end`` with it), so a row authored at ``pos_begin`` is queried at
+        ``pos_begin + 1``.  Applies to both the plain ``.txt`` and the tabix
+        realize paths.
+        """
+        return dataclasses.replace(self, zero_based=True)
 
     def with_histogram(
         self, histogram: dict[str, Any], *, score_id: str | None = None,
@@ -485,6 +498,8 @@ class _TableScoreBuilder:
         ]
         if self.tabix:
             lines.append("    format: tabix")
+        if self.zero_based:
+            lines.append("    zero_based: true")
         if self.chrom_mapping is not None:
             lines.append("    chrom_mapping:")
             mapping_yaml = yaml.safe_dump(
@@ -610,11 +625,24 @@ class BigWigScoreBuilder:
     value_type: str = "float"
     data: str | None = None
     chrom_lens: dict[str, int] | None = None
+    histogram: dict[str, Any] | None = None
 
     def with_score(self, score_id: str, value_type: str = "float") -> Self:
         """Name the single score this bigWig exposes."""
         return dataclasses.replace(
             self, score_id=score_id, value_type=value_type)
+
+    def with_histogram(self, histogram: dict[str, Any]) -> Self:
+        """Attach a histogram block to the single bigWig score.
+
+        A bigWig exposes exactly one score, so no ``score_id`` is needed.  The
+        block is emitted verbatim under ``histogram:`` in the resource config;
+        without it a numeric bigWig score relies on the resource's auto-built
+        default histogram.
+        """
+        # Defensive copy so a caller mutating their dict afterward cannot
+        # leak into this immutable builder.
+        return dataclasses.replace(self, histogram=copy.deepcopy(histogram))
 
     def with_data(self, data: str) -> Self:
         """Author the bedGraph rows as a whitespace-separated block."""
@@ -665,7 +693,7 @@ class BigWigScoreBuilder:
                     f"declared length; call with_chrom_lens for it")
 
     def _render_config(self) -> str:
-        return (
+        config = (
             "type: position_score\n"
             "table:\n"
             f"    filename: {_BIGWIG_FILENAME}\n"
@@ -674,6 +702,15 @@ class BigWigScoreBuilder:
             f"  type: {self.value_type}\n"
             f"  index: {_BIGWIG_VALUE_INDEX}\n"
         )
+        if self.histogram is not None:
+            config += "  histogram:\n"
+            hist_yaml = yaml.safe_dump(
+                self.histogram, default_flow_style=False, sort_keys=False)
+            config += "".join(
+                f"    {hist_line}\n"
+                for hist_line in hist_yaml.rstrip("\n").split("\n")
+            )
+        return config
 
 
 _VCF_FILENAME = "data.vcf.gz"
