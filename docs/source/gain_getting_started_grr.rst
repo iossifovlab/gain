@@ -81,7 +81,7 @@ both ``main-GRR`` and ``my_GRR`` are included in the active GRR definition:
     ...
 
 Add new resources to the local GRR
-------------------------------
+----------------------------------
 
 1: Toy genome
 ^^^^^^^^^^^^^^^^^^^^^^^
@@ -1047,11 +1047,23 @@ and any available statistics for the CNV collection resource.
     Summary html page created for ``my_CNVcollection`` resource.
 
 
+Browse the local GRR
+--------------------
+
+After creating the resources above, the local GRR contains 13 resources covering several GRR resource types, including genomes, gene models, position scores, allele scores, gene scores, gene sets, and CNV collections. The main local GRR directory (``my_GRR``) includes an HTML summary page, ``index.html``, that provides a convenient way to browse the repository. This page lists the resources in a searchable table, including their type, ID, version, total size, and summary.
+
+This summary page is a useful checkpoint before running annotation. The resource IDs shown in the table are the same IDs used in annotation pipeline files, such as ``my_genome``, ``my_genemodel``, ``my_position``, ``my_allele``, and ``my_genescore``.
+
+
+.. figure:: figures/localGRRsummary.png
+    :scale: 50 %
+    :align: center
+    
+    Repository-level summary page for ``my_GRR``. The table lists the local resources and allows searching by resource type, resource ID, or summary.
 
 
 
-
-Annotation using the local GRR
+Annotate using the local GRR
 ------------------------------
 
 Your local GRR is now ready to support annotation. The examples above added several local resources, including genomes, gene models, position scores, and allele scores. Since ``my_GRR`` is listed in ``~/.grr_definition.yaml``, GAIn can use these resources during annotation. The example below uses the local resources created in this guide.
@@ -1111,20 +1123,20 @@ You can clone ``mini-GRR`` with:
 
 .. code-block:: bash
 
-    git clone https://github.com/iossifovlab/mini-grr.git
-    cd mini-grr
+    git clone git@github.com:iossifovlab/mini-GRR.git
+    cd mini-GRR
 
 ``mini-GRR`` contains a toy genome with ready-made ``genomic_resource.yaml`` descriptors, plus minimal examples of gene models, position scores, allele scores, gene scores, and gene sets. The resources span common file types, such as TSV/tabix, BedGraph/BigWig, and VCF, and include both 0-based and 1-based coordinate conventions.
 
-To use ``miniGRR`` with GAIn, add it to your ``~/.grr_definition.yaml`` file in the same way as any other local GRR:
+To use ``mini-GRR`` with GAIn, add it to your ``~/.grr_definition.yaml`` file in the same way as any other local GRR:
 
 .. code-block:: yaml
 
     id: development
     type: group
     children:
-    - id: miniGRR
+    - id: mini-GRR
       type: directory
-      directory: <path_to_mini_grr>/mini-grr
+      directory: <path_to_mini_grr>/mini-GRR
 
-Once configured, you can browse and run pipelines against ``miniGRR`` to verify that your GAIn installation and GRR configuration work as expected. After you understand how a resource is structured, you can use the corresponding ``mini-GRR`` example as a starting point for your own data by replacing the toy files and editing ``genomic_resource.yaml``. In this way, ``mini-GRR`` provides a compact reference for GRR directory layout, metadata fields, and resource configuration.
+Once configured, you can browse and run pipelines against ``mini-GRR`` to verify that your GAIn installation and GRR configuration work as expected. After you understand how a resource is structured, you can use the corresponding ``mini-GRR`` example as a starting point for your own data by replacing the toy files and editing ``genomic_resource.yaml``. In this way, ``mini-GRR`` provides a compact reference for GRR directory layout, metadata fields, and resource configuration.
