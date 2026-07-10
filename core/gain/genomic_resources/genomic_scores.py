@@ -212,32 +212,13 @@ class ScoreLine:
         of the per-line loop.  Returns one value per def, in order, applying
         the same NA handling and parsing as :meth:`get_score`.
 
-        The single-value logic is inlined here rather than delegated to
-        :meth:`_extract_value` on purpose: this is the wide-resource hot path
-        (hundreds of scores per line), where a per-score Python call frame
-        would cost more than the dict lookup this hoist removes.  The
-        equivalence tests pin it to the :meth:`get_score` path.
+        Resolving the score names to definitions is the whole win of the
+        hoist (it drops three dict lookups per score, per line); the
+        single-value logic is delegated to :meth:`_extract_value` so it
+        lives in exactly one place and cannot drift from :meth:`get_score`.
         """
-        line = self.line
-        result: list[ScoreValue] = []
-        for score_def in score_defs:
-            key = score_def.score_index
-            assert key is not None
-            value: str | int | float | None = line.get(key)
-            if value is None or value in score_def.na_values:
-                result.append(None)
-            elif score_def.value_parser is not None:
-                # pylint: disable=broad-except
-                try:  # Temporary workaround for GRR generation
-                    result.append(score_def.value_parser(value))
-                except Exception:
-                    logger.exception(
-                        "unable to parse value %s for score %s",
-                        value, score_def.score_id)
-                    result.append(None)
-            else:
-                result.append(value)
-        return result
+        extract = self._extract_value
+        return [extract(score_def) for score_def in score_defs]
 
     def get_score(self, score_id: str) -> ScoreValue:
         """Get and parse configured score from line."""
@@ -863,14 +844,20 @@ class GenomicScore(ResourceConfigValidationMixin):
         if scores is None:
             scores = self.get_all_scores()
         # Hoist the score name->definition resolution out of the per-line
-        # loop: it is fixed for the whole scan.
-        score_defs = [self.score_definitions[scr_id] for scr_id in scores]
+        # loop: it is fixed for the whole scan.  Resolve lazily on first
+        # line so that an empty region does not touch score_definitions --
+        # matching the base behaviour where an unknown score id is only
+        # rejected when there is a line to extract it from.
+        score_defs: list[_ScoreDef] | None = None
 
         for line in self.fetch_lines(chrom, pos_begin, pos_end):
             line_chrom, line_begin, line_end = self._line_to_begin_end(line)
             if pos_begin is not None and line_end < pos_begin:
                 continue
 
+            if score_defs is None:
+                score_defs = [
+                    self.score_definitions[scr_id] for scr_id in scores]
             val = line.get_values(score_defs)
 
             if pos_begin is not None:
