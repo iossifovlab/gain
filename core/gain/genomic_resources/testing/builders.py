@@ -54,10 +54,12 @@ from gain.genomic_resources.repository import (
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     convert_to_tab_separated,
+    setup_bigwig,
     setup_directories,
     setup_genome,
     setup_genome_bgz,
     setup_tabix,
+    setup_vcf,
 )
 
 
@@ -91,6 +93,11 @@ class ResourceBuilder(Protocol):
 
 _DATA_FILENAME = "data.txt"
 
+# ``build_definition`` writes the GRR definition alongside, not inside, the
+# directory it points at.
+_GRR_DEFINITION_FILENAME = "grr.yaml"
+_GRR_RESOURCES_DIRNAME = "grr"
+
 
 @dataclasses.dataclass(frozen=True)
 class _ScoreSpec:
@@ -103,28 +110,48 @@ class _ScoreSpec:
     (non-score) columns their data tables require; the score declarations,
     their ``column_name`` defaulting, duplicate-id / duplicate-column_name
     validation and YAML rendering are all shared through this type.
+
+    A score is addressed EITHER by ``column_name`` or by ``column_index``,
+    never both.  When ``column_index`` is set, ``column_name`` is ``None``
+    and the column the index points at is resolved from the data header at
+    realize time (see :func:`_resolve_column_names`).
     """
 
     score_id: str
     value_type: str
-    column_name: str
+    column_name: str | None
+    column_index: int | None = None
     desc: str | None = None
     histogram: dict[str, Any] | None = None
 
 
 def _append_score(
     scores: tuple[_ScoreSpec, ...], score_id: str, value_type: str, *,
-    column_name: str | None = None, desc: str | None = None,
+    column_name: str | None = None, column_index: int | None = None,
+    desc: str | None = None,
 ) -> tuple[_ScoreSpec, ...]:
     """Return ``scores`` with one more declared score appended.
 
-    Shared by both builders' ``with_score``; ``column_name`` defaults to
-    ``score_id``.
+    Shared by both builders' ``with_score``.  With neither addressing mode
+    given, ``column_name`` defaults to ``score_id``; the two modes are
+    mutually exclusive, matching the resource schema, which declares
+    ``column_index`` as excluding ``name``/``column_name``/``index``.
     """
+    if column_name is not None and column_index is not None:
+        raise ResourceValidationError(
+            f"score {score_id!r}: column_name and column_index are "
+            f"mutually exclusive; address the column one way or the other")
+    if column_index is not None and column_index < 0:
+        raise ResourceValidationError(
+            f"score {score_id!r}: column_index must be non-negative, "
+            f"got {column_index}")
+    if column_index is None and column_name is None:
+        column_name = score_id
     spec = _ScoreSpec(
         score_id=score_id,
         value_type=value_type,
-        column_name=column_name if column_name is not None else score_id,
+        column_name=column_name,
+        column_index=column_index,
         desc=desc,
     )
     return (*scores, spec)
@@ -175,10 +202,15 @@ def _render_score_specs_yaml(scores: tuple[_ScoreSpec, ...]) -> str:
     """
     blocks: list[str] = []
     for spec in scores:
+        addressing = (
+            f"  column_index: {spec.column_index}"
+            if spec.column_index is not None
+            else f"  column_name: {spec.column_name}"
+        )
         lines = [
             f"- id: {spec.score_id}",
             f"  type: {spec.value_type}",
-            f"  column_name: {spec.column_name}",
+            addressing,
         ]
         if spec.desc is not None:
             # Emit desc through yaml so a colon/special char stays valid.
@@ -250,6 +282,7 @@ class _TableScoreBuilder:
     data: str | None = None
     rows: tuple[tuple[tuple[str, str], ...], ...] = ()
     tabix: bool = False
+    chrom_mapping: dict[str, Any] | None = None
 
     # Subclass-provided knobs.
     SCORE_TYPE: ClassVar[str] = ""
@@ -266,15 +299,32 @@ class _TableScoreBuilder:
 
     def with_score(
         self, score_id: str, value_type: str, *,
-        column_name: str | None = None, desc: str | None = None,
+        column_name: str | None = None, column_index: int | None = None,
+        desc: str | None = None,
     ) -> Self:
-        """Declare a score once; ``column_name`` defaults to ``score_id``."""
+        """Declare a score once; ``column_name`` defaults to ``score_id``.
+
+        Pass ``column_index`` instead to address the column by its 0-based
+        position in the data header.  The two modes are mutually exclusive.
+        Index addressing requires :meth:`with_data`; the typed
+        :meth:`with_score_line` synthesizes the header from the declared
+        column names and so has no position to point at.
+        """
         return dataclasses.replace(
             self,
             scores=_append_score(
                 self.scores, score_id, value_type,
-                column_name=column_name, desc=desc),
+                column_name=column_name, column_index=column_index,
+                desc=desc),
         )
+
+    def with_chrom_mapping(self, **mapping: Any) -> Self:
+        """Emit a ``chrom_mapping:`` block in the ``table:`` config.
+
+        Keys are passed through verbatim, e.g.
+        ``with_chrom_mapping(add_prefix="chr")``.
+        """
+        return dataclasses.replace(self, chrom_mapping=dict(mapping))
 
     def with_histogram(
         self, histogram: dict[str, Any], *, score_id: str | None = None,
@@ -388,6 +438,12 @@ class _TableScoreBuilder:
 
     def _synthesize_rows(self, scores: tuple[_ScoreSpec, ...]) -> str:
         """Render the accumulated typed rows as a whitespace data block."""
+        indexed = [s.score_id for s in scores if s.column_index is not None]
+        if indexed:
+            raise ResourceValidationError(
+                f"score(s) {sorted(indexed)} address a column by "
+                f"column_index, which needs an authored header; use "
+                f"with_data instead of with_score_line")
         row_dicts = [dict(row) for row in self.rows]
         uses_pos_end = any("pos_end" in rd for rd in row_dicts)
         if uses_pos_end and not all("pos_end" in rd for rd in row_dicts):
@@ -398,7 +454,10 @@ class _TableScoreBuilder:
         if uses_pos_end:
             header.append("pos_end")
         header.extend(self.TRAILING_COLUMNS)
-        header.extend(spec.column_name for spec in scores)
+        header.extend(
+            spec.column_name for spec in scores
+            if spec.column_name is not None
+        )
 
         lines = ["  ".join(header)]
         header_set = set(header)
@@ -426,6 +485,14 @@ class _TableScoreBuilder:
         ]
         if self.tabix:
             lines.append("    format: tabix")
+        if self.chrom_mapping is not None:
+            lines.append("    chrom_mapping:")
+            mapping_yaml = yaml.safe_dump(
+                self.chrom_mapping, default_flow_style=False, sort_keys=False)
+            lines.extend(
+                f"        {mapping_line}"
+                for mapping_line in mapping_yaml.rstrip("\n").split("\n")
+            )
         config = "\n".join(lines) + "\n"
         config += self.TABLE_EXTRA_CONFIG
         config += "scores:\n"
@@ -495,6 +562,185 @@ class AlleleScoreBuilder(_TableScoreBuilder):
     TRAILING_COLUMNS: ClassVar[tuple[str, ...]] = ("reference", "alternative")
     TABLE_EXTRA_CONFIG: ClassVar[str] = _REF_ALT_TABLE_CONFIG
     DEFAULT_DATA: ClassVar[str] = _NP_ALLELE_DEFAULT_DATA
+
+
+_BIGWIG_FILENAME = "data.bw"
+
+# A bedGraph row is ``chrom start end value``, so the score column is
+# always the fourth.  The bigWig table has no header to name it, hence
+# positional ``index:`` addressing rather than ``column_name:``.
+_BIGWIG_VALUE_INDEX = 3
+
+_BIGWIG_DEFAULT_DATA = """
+    chr1  0   10  0.1
+    chr1  10  20  0.2
+    chr2  0   30  0.3
+"""
+_BIGWIG_DEFAULT_CHROM_LENS = {"chr1": 1000, "chr2": 1000}
+
+
+def _normalize_bedgraph(data: str) -> str:
+    """Strip blank and whitespace-only lines from a bedGraph block.
+
+    ``setup_bigwig`` splits on newlines and asserts four columns on every
+    line, so a whitespace-only line -- exactly what an indented closing
+    triple-quote leaves behind -- trips a bare ``AssertionError`` naming
+    neither the builder nor the row.  Authoring a block with the closing
+    quote indented is the normal case for the other builders, so normalize
+    here rather than make indentation significant for this one.
+    """
+    return "\n".join(
+        stripped
+        for line in data.split("\n")
+        if (stripped := line.strip())
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class BigWigScoreBuilder:
+    """Immutable builder for a bigWig-backed ``position_score``.
+
+    Authored as bedGraph rows (``chrom start end value``), whose intervals
+    are 0-based half-open -- 1-based position ``p`` reads the interval
+    containing ``p - 1``.  Unlike the tabular builders this one declares
+    exactly one score, because a bigWig carries a single value column.
+    """
+
+    score_id: str = "score"
+    value_type: str = "float"
+    data: str | None = None
+    chrom_lens: dict[str, int] | None = None
+
+    def with_score(self, score_id: str, value_type: str = "float") -> Self:
+        """Name the single score this bigWig exposes."""
+        return dataclasses.replace(
+            self, score_id=score_id, value_type=value_type)
+
+    def with_data(self, data: str) -> Self:
+        """Author the bedGraph rows as a whitespace-separated block."""
+        return dataclasses.replace(self, data=data)
+
+    def with_chrom_lens(self, chrom_lens: dict[str, int]) -> Self:
+        """Declare the chromosome lengths written into the bigWig header."""
+        return dataclasses.replace(self, chrom_lens=dict(chrom_lens))
+
+    def realize_into(self, resource_dir: pathlib.Path) -> None:
+        """Write the resource config and the bigWig into ``resource_dir``."""
+        data = self.data if self.data is not None else _BIGWIG_DEFAULT_DATA
+        chrom_lens = (
+            self.chrom_lens if self.chrom_lens is not None
+            else _BIGWIG_DEFAULT_CHROM_LENS
+        )
+        data = _normalize_bedgraph(data)
+        self._validate(data, chrom_lens)
+        setup_directories(
+            resource_dir, {GR_CONF_FILE_NAME: self._render_config()})
+        setup_bigwig(resource_dir / _BIGWIG_FILENAME, data, chrom_lens)
+
+    def build_resource(self, tmp_path: pathlib.Path) -> GenomicResource:
+        """Realize this single resource (repo id ``""``) into ``tmp_path``."""
+        return _build_single_resource(self, tmp_path)
+
+    @staticmethod
+    def _validate(data: str, chrom_lens: dict[str, int]) -> None:
+        """Reject a bedGraph block the bigWig writer would reject opaquely.
+
+        ``setup_bigwig`` asserts on arity and ``pyBigWig`` raises on an
+        unheadered contig; both surface without naming the builder or the
+        offending row, so check here where the row is still in hand.
+        """
+        for line in data.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            tokens = stripped.split()
+            if len(tokens) != 4:
+                raise ResourceValidationError(
+                    f"bedGraph row must have 4 columns "
+                    f"(chrom start end value), got {len(tokens)}: "
+                    f"{stripped!r}")
+            if tokens[0] not in chrom_lens:
+                raise ResourceValidationError(
+                    f"bedGraph row on contig {tokens[0]!r} which has no "
+                    f"declared length; call with_chrom_lens for it")
+
+    def _render_config(self) -> str:
+        return (
+            "type: position_score\n"
+            "table:\n"
+            f"    filename: {_BIGWIG_FILENAME}\n"
+            "scores:\n"
+            f"- id: {self.score_id}\n"
+            f"  type: {self.value_type}\n"
+            f"  index: {_BIGWIG_VALUE_INDEX}\n"
+        )
+
+
+_VCF_FILENAME = "data.vcf.gz"
+
+_VCF_DEFAULT_DATA = """
+##fileformat=VCFv4.1
+##INFO=<ID=score,Number=1,Type=Float,Description="a float">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   10  .  A   T   .    .      score=0.1
+chr1   11  .  A   T   .    .      score=0.2
+"""
+
+
+@dataclasses.dataclass(frozen=True)
+class VcfInfoScoreBuilder:
+    """Immutable builder for a VCF-backed ``allele_score`` resource.
+
+    The score definitions are derived by the resource from the VCF's
+    ``##INFO`` header rather than declared in the config, so this builder
+    has no ``with_score``: author the INFO metadata in the VCF text and the
+    scores follow.  Reads back through ``AlleleScore`` on the ``vcf_info``
+    table backend, which the ``.vcf.gz`` filename selects.
+    """
+
+    data: str | None = None
+
+    def with_data(self, data: str) -> Self:
+        """Author the whole VCF, ``##`` header lines included."""
+        return dataclasses.replace(self, data=data)
+
+    def realize_into(self, resource_dir: pathlib.Path) -> None:
+        """Write the resource config and the bgzipped VCF + index."""
+        data = self.data if self.data is not None else _VCF_DEFAULT_DATA
+        self._validate(data)
+        setup_directories(
+            resource_dir, {GR_CONF_FILE_NAME: self._render_config()})
+        setup_vcf(resource_dir / _VCF_FILENAME, data)
+
+    def build_resource(self, tmp_path: pathlib.Path) -> GenomicResource:
+        """Realize this single resource (repo id ``""``) into ``tmp_path``."""
+        return _build_single_resource(self, tmp_path)
+
+    @staticmethod
+    def _validate(data: str) -> None:
+        """Require the header lines the scores are derived from.
+
+        Without an ``##INFO`` line the resource realizes with zero scores
+        and every annotated value comes back empty -- a silent, confusing
+        failure well downstream of the builder.
+        """
+        if "##fileformat" not in data:
+            raise ResourceValidationError(
+                "VCF data must carry a '##fileformat' header line")
+        if "##INFO=" not in data:
+            raise ResourceValidationError(
+                "VCF data must declare at least one '##INFO=' field; the "
+                "score definitions are derived from them")
+        if "#CHROM" not in data:
+            raise ResourceValidationError(
+                "VCF data must carry a '#CHROM' column header line")
+
+    def _render_config(self) -> str:
+        return (
+            "type: allele_score\n"
+            "table:\n"
+            f"    filename: {_VCF_FILENAME}\n"
+        )
 
 
 _GENE_DATA_FILENAME = "data.tsv"
@@ -625,14 +871,38 @@ class GRRBuilder:
         self, tmp_path: pathlib.Path,
     ) -> GenomicResourceProtocolRepo:
         """Realize a filesystem GRR into ``tmp_path``."""
+        self._realize_all(tmp_path)
+        return build_filesystem_test_repository(tmp_path)
+
+    def build_definition(
+        self, root: pathlib.Path, *, grr_id: str = "test_grr",
+    ) -> pathlib.Path:
+        """Realize into ``root/grr`` and write a ``root/grr.yaml``.
+
+        Returns the path of the written definition file.  A CLI tool such
+        as ``annotate_tabular`` is given a ``--grr`` definition *file*, not
+        a repository object, so ``build_repo`` alone cannot drive one.  The
+        definition is written OUTSIDE the resources directory: a stray
+        ``grr.yaml`` sitting among the resources would be walked as though
+        it were one.
+        """
+        resources_dir = root / _GRR_RESOURCES_DIRNAME
+        self._realize_all(resources_dir)
+        definition_path = root / _GRR_DEFINITION_FILENAME
+        setup_directories(definition_path, yaml.safe_dump(
+            {"id": grr_id, "type": "dir", "directory": str(resources_dir)},
+            default_flow_style=False, sort_keys=False))
+        return definition_path
+
+    def _realize_all(self, root: pathlib.Path) -> None:
+        """Realize every attached resource into ``root/<resource_id>``."""
         for resource_id, builder in self.resources:
-            resource_dir = tmp_path / resource_id
+            resource_dir = root / resource_id
             try:
                 builder.realize_into(resource_dir)
             except ResourceValidationError as exc:
                 raise ResourceValidationError(
                     f"resource {resource_id!r}: {exc}") from exc
-        return build_filesystem_test_repository(tmp_path)
 
 
 def _build_single_resource(
@@ -714,11 +984,49 @@ def _validate_score_specs(
 
     seen_columns: set[str] = set()
     for spec in scores:
+        if spec.column_name is None:
+            continue
         if spec.column_name in seen_columns:
             raise ResourceValidationError(
                 f"duplicate column_name "
                 f"{spec.column_name!r} shared by more than one score")
         seen_columns.add(spec.column_name)
+
+    seen_indexes: set[int] = set()
+    for spec in scores:
+        if spec.column_index is None:
+            continue
+        if spec.column_index in seen_indexes:
+            raise ResourceValidationError(
+                f"duplicate column_index "
+                f"{spec.column_index} shared by more than one score")
+        seen_indexes.add(spec.column_index)
+
+
+def _resolve_column_names(
+    scores: tuple[_ScoreSpec, ...], header: list[str],
+) -> set[str]:
+    """Return the data-header column each declared score reads.
+
+    A name-addressed score contributes its ``column_name``; an
+    index-addressed one contributes ``header[column_index]``, which also
+    range-checks the index against the authored header.  An index pointing
+    past the header would otherwise realize cleanly and fail much later,
+    deep inside the score, with no mention of the builder.
+    """
+    resolved: set[str] = set()
+    for spec in scores:
+        if spec.column_index is None:
+            assert spec.column_name is not None
+            resolved.add(spec.column_name)
+            continue
+        if spec.column_index >= len(header):
+            raise ResourceValidationError(
+                f"score {spec.score_id!r}: column_index "
+                f"{spec.column_index} is out of range for a "
+                f"{len(header)}-column header {header}")
+        resolved.add(header[spec.column_index])
+    return resolved
 
 
 def _validate_data_header(
@@ -749,7 +1057,7 @@ def _validate_data_header(
     header = _parse_header(data)
     header_set = set(header)
 
-    declared = {spec.column_name for spec in scores}
+    declared = _resolve_column_names(scores, header)
     required = set(base_required) | declared
     allowed = required | set(base_optional)
 
@@ -963,6 +1271,16 @@ def a_np_score() -> NPScoreBuilder:
 def an_allele_score() -> AlleleScoreBuilder:
     """Return an immutable allele-score builder."""
     return AlleleScoreBuilder()
+
+
+def a_bigwig_score() -> BigWigScoreBuilder:
+    """Return an immutable bigWig-backed position-score builder."""
+    return BigWigScoreBuilder()
+
+
+def a_vcf_info_score() -> VcfInfoScoreBuilder:
+    """Return an immutable VCF-backed allele-score builder."""
+    return VcfInfoScoreBuilder()
 
 
 def a_gene_score() -> GeneScoreBuilder:

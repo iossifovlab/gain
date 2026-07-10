@@ -2,6 +2,7 @@
 import pathlib
 
 import pytest
+import yaml
 from gain.gene_scores.gene_scores import build_gene_score_from_resource
 from gain.genomic_resources.genomic_scores import AlleleScore, PositionScore
 from gain.genomic_resources.reference_genome import (
@@ -10,11 +11,13 @@ from gain.genomic_resources.reference_genome import (
 from gain.genomic_resources.repository import GenomicResourceProtocolRepo
 from gain.genomic_resources.testing.builders import (
     ResourceValidationError,
+    a_bigwig_score,
     a_gene_score,
     a_grr,
     a_np_score,
     a_position_score,
     a_reference_genome,
+    a_vcf_info_score,
     an_allele_score,
     build_repo_tempdir,
     build_resource_tempdir,
@@ -1509,3 +1512,181 @@ def test_score_line_with_tabix_composes_and_matches_plain(
         assert (
             tabix_score.fetch_scores(chrom, pos)
             == plain_score.fetch_scores(chrom, pos))
+
+
+def test_score_addressed_by_column_index_reads_back(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_position_score()
+        .with_score("named", "float", column_name="s_named")
+        .with_score("positional", "int", column_index=3)
+        .with_data("""
+            chrom  pos_begin  s_named  s_extra
+            1      10         0.1      7
+            1      11         0.2      8
+        """)
+        .build_resource(tmp_path)
+    )
+    score = PositionScore(res).open()
+    # column_index 3 addresses s_extra, which no column_name declares.
+    assert score.fetch_scores("1", 10) == [0.1, 7]
+    assert score.fetch_scores("1", 11) == [0.2, 8]
+
+
+def test_column_index_and_column_name_are_mutually_exclusive() -> None:
+    with pytest.raises(ResourceValidationError, match="mutually exclusive"):
+        a_position_score().with_score(
+            "s", "float", column_name="a", column_index=2)
+
+
+def test_column_index_out_of_range_is_rejected(
+    tmp_path: pathlib.Path,
+) -> None:
+    builder = (
+        a_position_score()
+        .with_score("s", "float", column_index=9)
+        .with_data("""
+            chrom  pos_begin  score
+            1      10         0.1
+        """)
+    )
+    with pytest.raises(ResourceValidationError, match="out of range"):
+        builder.build_resource(tmp_path)
+
+
+def test_duplicate_column_index_is_rejected(tmp_path: pathlib.Path) -> None:
+    builder = (
+        a_position_score()
+        .with_score("a", "float", column_index=2)
+        .with_score("b", "float", column_index=2)
+        .with_data("""
+            chrom  pos_begin  score
+            1      10         0.1
+        """)
+    )
+    with pytest.raises(ResourceValidationError, match="duplicate column_index"):
+        builder.build_resource(tmp_path)
+
+
+def test_column_index_rejects_with_score_line(tmp_path: pathlib.Path) -> None:
+    builder = (
+        a_position_score()
+        .with_score("s", "float", column_index=2)
+        .with_score_line(chrom="1", pos_begin=10)
+    )
+    with pytest.raises(ResourceValidationError, match="with_data"):
+        builder.build_resource(tmp_path)
+
+
+def test_negative_column_index_is_rejected() -> None:
+    with pytest.raises(ResourceValidationError, match="non-negative"):
+        a_position_score().with_score("s", "float", column_index=-1)
+
+
+def test_chrom_mapping_add_prefix_reads_back(tmp_path: pathlib.Path) -> None:
+    res = (
+        a_position_score()
+        .with_score("phastCons", "float")
+        .with_chrom_mapping(add_prefix="chr")
+        .with_data("""
+            chrom  pos_begin  phastCons
+            1      10         0.1
+        """)
+        .build_resource(tmp_path)
+    )
+    score = PositionScore(res).open()
+    assert score.fetch_scores("chr1", 10) == [0.1]
+    # The mapping is applied to the table, so the raw contig is gone.
+    with pytest.raises(ValueError, match="not among the available"):
+        score.fetch_scores("1", 10)
+
+
+def test_bigwig_score_reads_back(tmp_path: pathlib.Path) -> None:
+    res = (
+        a_bigwig_score()
+        .with_score("bw", "float")
+        .with_data("""
+            chr1  0   10  0.11
+            chr1  10  20  0.22
+        """)
+        .with_chrom_lens({"chr1": 1000})
+        .build_resource(tmp_path)
+    )
+    assert (tmp_path / "data.bw").is_file()
+    score = PositionScore(res).open()
+    # bedGraph intervals are 0-based half-open: 1-based pos 10 -> [0, 10).
+    # bigWig stores float32, so the value does not round-trip exactly.
+    first = score.fetch_scores("chr1", 10)
+    second = score.fetch_scores("chr1", 11)
+    assert first is not None
+    assert second is not None
+    assert first[0] == pytest.approx(0.11)
+    assert second[0] == pytest.approx(0.22)
+
+
+def test_bigwig_rejects_undeclared_contig(tmp_path: pathlib.Path) -> None:
+    builder = (
+        a_bigwig_score()
+        .with_data("chr9  0  10  0.1")
+        .with_chrom_lens({"chr1": 1000})
+    )
+    with pytest.raises(ResourceValidationError, match="no declared length"):
+        builder.build_resource(tmp_path)
+
+
+def test_bigwig_rejects_malformed_bedgraph_row(tmp_path: pathlib.Path) -> None:
+    builder = (
+        a_bigwig_score()
+        .with_data("chr1  0  10")
+        .with_chrom_lens({"chr1": 1000})
+    )
+    with pytest.raises(ResourceValidationError, match="4 columns"):
+        builder.build_resource(tmp_path)
+
+
+def test_vcf_info_score_reads_back(tmp_path: pathlib.Path) -> None:
+    res = (
+        a_vcf_info_score()
+        .with_data("""
+##fileformat=VCFv4.1
+##INFO=<ID=AF,Number=1,Type=Float,Description="freq">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   10  .  A   T   .    .      AF=0.25
+""")
+        .build_resource(tmp_path)
+    )
+    assert (tmp_path / "data.vcf.gz").is_file()
+    assert (tmp_path / "data.vcf.gz.tbi").is_file()
+    score = AlleleScore(res).open()
+    assert score.fetch_scores("chr1", 10, "A", "T") == {"AF": 0.25}
+
+
+def test_vcf_info_score_requires_info_header(tmp_path: pathlib.Path) -> None:
+    builder = a_vcf_info_score().with_data("""
+##fileformat=VCFv4.1
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   10  .  A   T   .    .      .
+""")
+    with pytest.raises(ResourceValidationError, match="##INFO="):
+        builder.build_resource(tmp_path)
+
+
+def test_build_definition_writes_a_usable_grr_yaml(
+    tmp_path: pathlib.Path,
+) -> None:
+    definition = (
+        a_grr()
+        .with_resource("scores/pos", a_position_score())
+        .build_definition(tmp_path, grr_id="my_grr")
+    )
+    assert definition == tmp_path / "grr.yaml"
+    parsed = yaml.safe_load(definition.read_text())
+    assert parsed["id"] == "my_grr"
+    assert parsed["type"] == "dir"
+    # The definition must live OUTSIDE the directory it points at, or the
+    # resource walker would treat grr.yaml as a resource.
+    assert parsed["directory"] == str(tmp_path / "grr")
+    assert (tmp_path / "grr" / "scores" / "pos" / "genomic_resource.yaml"
+            ).is_file()
+    assert not (tmp_path / "grr" / "grr.yaml").exists()
