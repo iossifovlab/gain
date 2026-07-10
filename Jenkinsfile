@@ -102,16 +102,15 @@ def publishReports(String name) {
           testResults: "reports/${name}/ruff.xml," +
                        "reports/${name}/mypy.xml," +
                        "reports/${name}/pylint.xml"
-    // `id` gives each sub-project its own coverage URL + sidebar action
-    // and `name` the chart title — otherwise every report collides at
-    // `/coverage` and is labelled "Code Coverage Trend".
-    recordCoverage(
-        tools: [[parser: 'COBERTURA', pattern: "reports/${name}/coverage.xml"]],
-        id: "${name}-coverage",
-        name: "${name} coverage",
-        skipPublishingChecks: true,
-        failOnError: false,
-    )
+    // Coverage is NOT recorded per-project here. The multibranch
+    // "Coverage" column (Coverage plugin's CoverageMetricColumn) shows
+    // the *first-registered* CoverageBuildAction and has no way to
+    // select among several — so six per-project actions just meant the
+    // column showed whichever stage finished first (web_ui). Instead a
+    // single aggregating recordCoverage runs once in post.always (the
+    // sole coverage action) so the column shows a true combined number;
+    // the per-project coverage.xml files it aggregates are still
+    // archived under reports/<name>/ for drill-down.
     if (testResults != null && testResults.failCount > 0) {
         error("${name}: ${testResults.failCount} test(s) failed")
     }
@@ -1000,17 +999,16 @@ pipeline {
         always {
             script {
                 try {
-                    // Combined coverage across every sub-project. Each
-                    // `publishReports(name)` above records a *per-project*
-                    // CoverageBuildAction (id "${name}-coverage") for
-                    // drill-down; none of those is an aggregate, so the
-                    // multibranch "Coverage" column just shows whichever
-                    // per-project action it finds first. This single
-                    // aggregating call globs all six top-level coverage.xml
-                    // files — the Coverage plugin sums their counters into one
-                    // report — and claims the plugin's default id `coverage`,
-                    // which the folder's Coverage column is configured to read,
-                    // so the column shows the true combined number.
+                    // The one and only coverage action for the build.
+                    // publishReports() deliberately records NO per-project
+                    // coverage (see the note there): the multibranch "Coverage"
+                    // column shows the first-registered CoverageBuildAction and
+                    // can't be pointed at a specific one, so the combined report
+                    // must be the sole action to own the column. This call globs
+                    // all six top-level coverage.xml files — the Coverage plugin
+                    // sums their counters into one report — under the plugin's
+                    // default id `coverage`. Drill-down into each sub-project
+                    // survives as packages inside this one report.
                     //
                     // Lives here (top-level post.always), not in a stage, so it
                     // publishes on red builds too — a failing project's
