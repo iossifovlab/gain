@@ -1000,6 +1000,34 @@ pipeline {
         always {
             script {
                 try {
+                    // Combined coverage across every sub-project. Each
+                    // `publishReports(name)` above records a *per-project*
+                    // CoverageBuildAction (id "${name}-coverage") for
+                    // drill-down; none of those is an aggregate, so the
+                    // multibranch "Coverage" column just shows whichever
+                    // per-project action it finds first. This single
+                    // aggregating call globs all six top-level coverage.xml
+                    // files — the Coverage plugin sums their counters into one
+                    // report — and claims the plugin's default id `coverage`,
+                    // which the folder's Coverage column is configured to read,
+                    // so the column shows the true combined number.
+                    //
+                    // Lives here (top-level post.always), not in a stage, so it
+                    // publishes on red builds too — a failing project's
+                    // publishReports error()s and skips later *stages*, but
+                    // post.always still runs after all six parallel post blocks
+                    // have written reports/*/coverage.xml. The glob matches only
+                    // the six top-level files, not the nested
+                    // web_ui/coverage/cobertura-coverage.xml, so nothing is
+                    // double-counted. failOnError:false makes it a clean no-op
+                    // on docs-only / tag builds where no coverage.xml exists.
+                    recordCoverage(
+                        tools: [[parser: 'COBERTURA', pattern: 'reports/*/coverage.xml']],
+                        id: 'coverage',
+                        name: 'Combined coverage',
+                        skipPublishingChecks: true,
+                        failOnError: false,
+                    )
                     archiveArtifacts(
                         artifacts: 'reports/**/*.xml',
                         allowEmptyArchive: true,
