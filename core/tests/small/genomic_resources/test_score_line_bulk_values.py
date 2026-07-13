@@ -23,17 +23,25 @@ binding is pinned by the two adapter-backend tests at the bottom of this file.
 
 Which class a backend is routed to is therefore load-bearing, so the routing
 itself is pinned here too: the adapter backends must yield a ``ScoreLine``,
-and ``RecordScoreLine`` must reject an adapter handed to it by mistake --
-loudly, at construction, rather than one line later inside the binding.
+and a record-yielding table that hands the record path something that is not a
+record must be rejected -- loudly, on its very first line, rather than one line
+later inside the binding.  That mis-route check lives at the routing decision
+(``GenomicScore.open`` installs it; it verifies the table's first record and
+then disarms), NOT in ``RecordScoreLine.__init__`` -- the record contract is a
+per-*table* invariant and this is the hot path, so it is not paid per line.
 """
 from __future__ import annotations
 
 import logging
+from collections.abc import Generator
+from typing import Any, NamedTuple
 
 import pytest
 from gain.genomic_resources.genomic_position_table import VCFLine
+from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
+    GenomicScore,
     PositionScore,
     RecordScoreLine,
     ScoreLine,
@@ -223,53 +231,164 @@ chr1   10  .  A   T   .    .      scoreA=0.1
         return line
 
 
-def test_record_score_line_rejects_a_line_adapter(tmp_path) -> None:
-    # The mis-route guard.  A ``VCFLine`` is a ``tuple`` subclass (it rides
-    # the record-indexed LineBuffer), so ``isinstance(line, tuple)`` no longer
-    # tells a record from an adapter -- a VCFLine would sail past such a guard
-    # and blow up one line later, deep inside the _get_raw binding, with an
-    # ``AttributeError`` about ``pysam...VariantRecord`` having no
-    # ``__getitem__``: its PAYLOAD is a VariantRecord, not an indexable raw
-    # row.  Pin that a mis-routed adapter is rejected *at construction*, and
-    # that the error says what is wrong.
-    line = _a_vcf_line(tmp_path)
-    assert isinstance(line, tuple)  # this is why the old guard stopped working
+# --- the mis-route check --------------------------------------------------
+#
+# A table that claims ``yields_records`` but does not actually yield records is
+# a mis-wired backend, and the score layer must say so on the spot instead of
+# blowing up one line later inside the ``_get_raw`` binding with an
+# ``AttributeError`` about a ``pysam...VariantRecord`` having no
+# ``__getitem__`` -- an error that names nothing that is actually wrong.
+#
+# The check is a per-TABLE invariant (a backend yields one shape of thing, for
+# every line, forever), so it is verified on the table's first record and never
+# again -- see ``test_the_record_contract_is_checked_once_per_open``.  These
+# tests drive it the way production reaches it: through ``fetch_lines`` on a
+# score whose record-yielding table has been mis-wired to yield a non-record.
 
-    with pytest.raises(TypeError, match="VCFLine") as exc_info:
-        RecordScoreLine(line, {})
+
+class _NotARecord(NamedTuple):
+    """A six-field ``NamedTuple`` -- a tuple *subclass*, so not a record."""
+
+    chrom: str
+    pos_begin: int
+    pos_end: int
+    ref: str | None
+    alt: str | None
+    payload: tuple[str, ...]
+
+
+def _mis_wire(score: GenomicScore, line: Any) -> None:
+    """Make an opened record-yielding table yield ``line`` instead of records.
+
+    The table keeps its ``yields_records = True`` claim -- which is precisely a
+    mis-wired backend: it is routed to the record path (``GenomicScore.open``
+    believed the claim) but yields something that is not a record.
+    """
+    assert score.table.yields_records is True
+
+    def get_records_in_region(
+        chrom: str | None = None,
+        pos_begin: int | None = None,
+        pos_end: int | None = None,
+    ) -> Generator[Record, None, None]:
+        yield line
+
+    score.table.get_records_in_region = get_records_in_region  # type: ignore[method-assign]
+
+
+def _fetch_one_mis_wired(
+    tmp_path, line: Any,
+) -> pytest.ExceptionInfo[TypeError]:
+    """Fetch the first line of a mis-wired table; return its TypeError."""
+    score = _open_position(tmp_path, """
+        chrom  pos_begin  s_float  s_str
+        1      10         0.5      hello
+    """)
+    with score:
+        _mis_wire(score, line)
+        with pytest.raises(TypeError) as exc_info:
+            next(iter(score.fetch_lines("1", 10, 10)))
+    return exc_info
+
+
+def test_mis_routed_line_adapter_is_rejected(tmp_path) -> None:
+    # A ``VCFLine`` is a ``tuple`` subclass (it rides the record-indexed
+    # LineBuffer), so ``isinstance(line, tuple)`` cannot tell a record from an
+    # adapter -- a VCFLine is a tuple of the right length whose PAYLOAD is a
+    # ``pysam.VariantRecord``, not an indexable raw row.  The check is an exact
+    # -type allowlist for exactly this reason; pin that the adapter is rejected
+    # on the first line, and that the message names the offender.
+    line = _a_vcf_line(tmp_path)
+    assert isinstance(line, tuple)  # this is why an isinstance check fails
+
+    exc_info = _fetch_one_mis_wired(tmp_path, line)
 
     message = str(exc_info.value)
+    assert "VCFLine" in message
     assert "record" in message
     # It must not be the downstream payload confusion.
     assert "__getitem__" not in message
 
 
-def test_record_score_line_rejects_a_mis_shaped_tuple() -> None:
-    # The other half of the record contract: six slots.  A plain tuple of the
-    # wrong length is not a record either.
-    with pytest.raises(TypeError, match="record"):
-        RecordScoreLine(("1", 10, 10), {})
+def test_mis_routed_tuple_subclass_is_rejected(tmp_path) -> None:
+    # The exact-type check is an ALLOWLIST, not a VCFLine denylist: any tuple
+    # subclass is rejected, however record-shaped it looks.  A six-field
+    # NamedTuple passes both an isinstance check and a length check, so only
+    # ``type(line) is not tuple`` catches it -- pin that claim rather than
+    # leaving it as a comment.
+    exc_info = _fetch_one_mis_wired(
+        tmp_path, _NotARecord("1", 10, 10, None, None, ("1", "10", "0.5")))
+
+    message = str(exc_info.value)
+    assert "_NotARecord" in message
+    assert "record" in message
 
 
-def test_record_score_line_accepts_a_plain_record() -> None:
-    # The guard must not reject a legitimate record: a plain six-slot tuple
-    # whose PAYLOAD is an indexable raw row.
-    raw = ("1", "10", "0.5")
-    line = RecordScoreLine(
-        ("1", 10, 10, None, None, raw),
-        {"s": _ScoreDef(
-            score_id="s", desc="", value_type="float",
-            pos_aggregator=None, allele_aggregator=None,
-            small_values_desc=None, large_values_desc=None, hist_conf=None,
-            col_name=None, col_index=2,
-            value_parser=float, na_values=None, score_index=2)},
-    )
-    assert line.chrom == "1"
-    assert line.pos_begin == 10
-    assert line.pos_end == 10
-    assert line.ref is None
-    assert line.alt is None
-    assert line.get_score("s") == 0.5
+def test_mis_routed_short_tuple_is_rejected(tmp_path) -> None:
+    # The other half of the record contract: the slot count.  A plain tuple of
+    # the wrong length is not a record.
+    exc_info = _fetch_one_mis_wired(tmp_path, ("1", 10, 10))
+    assert "record" in str(exc_info.value)
+
+
+def test_mis_routed_long_tuple_is_rejected(tmp_path) -> None:
+    # ...and the length check has two sides.  A tuple with a SEVENTH slot is
+    # the drift the record contract's own RECORD_SLOTS guards against (a slot
+    # appended after PAYLOAD), so it is the one the check most needs to catch,
+    # and it was the untested one.
+    exc_info = _fetch_one_mis_wired(
+        tmp_path, ("1", 10, 10, None, None, ("1", "10", "0.5"), "seventh"))
+    assert "record" in str(exc_info.value)
+
+
+def test_record_backend_accepts_a_plain_record(tmp_path) -> None:
+    # The check must not reject a legitimate record: the real record backend,
+    # not mis-wired, reads its values through RecordScoreLine as always.
+    score = _open_position(tmp_path, """
+        chrom  pos_begin  s_float  s_str
+        1      10         0.5      hello
+    """)
+    with score:
+        line = next(iter(score.fetch_lines("1", 10, 10)))
+        assert isinstance(line, RecordScoreLine)
+        assert line.chrom == "1"
+        assert line.pos_begin == 10
+        assert line.pos_end == 10
+        assert line.ref is None
+        assert line.alt is None
+        assert line.get_score("s_float") == 0.5
+
+
+def test_the_record_contract_is_checked_once_per_open(tmp_path) -> None:
+    # The whole point of this PR is per-line cost, and the record contract is a
+    # per-TABLE invariant: whether a backend yields records is decided by its
+    # class, not by its rows.  So it is checked where that decision is made --
+    # ``open()`` installs a checking wrapper as the score line class -- and the
+    # wrapper disarms itself once the table's first record has proved the
+    # contract, rebinding the score to the bare ``RecordScoreLine``.  Every
+    # subsequent line therefore constructs exactly what it did before the check
+    # existed: no type call, no len call, no branch.
+    #
+    # This reads a private attribute on purpose: "the hot path pays nothing" is
+    # the behaviour under test, and the class the score constructs per line is
+    # the only place it is observable.
+    score = _open_position(tmp_path, """
+        chrom  pos_begin  s_float  s_str
+        1      10         0.5      hello
+        1      11         0.25     world
+    """)
+    with score:
+        # armed: the score routes through the checking wrapper, not the
+        # bare constructor
+        assert score._score_line_class is not RecordScoreLine
+
+        lines = list(score.fetch_lines("1", 10, 11))
+
+        # disarmed: the contract is proved, the hot path is bare again
+        assert score._score_line_class is RecordScoreLine
+        assert len(lines) == 2
+        assert all(isinstance(line, RecordScoreLine) for line in lines)
+        assert [line.get_score("s_float") for line in lines] == [0.5, 0.25]
 
 
 def test_bigwig_backend_yields_the_adapter_score_line(tmp_path) -> None:

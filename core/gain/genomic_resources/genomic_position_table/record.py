@@ -13,6 +13,16 @@ reference** -- it is deliberately neither copied nor frozen, because that is
 what keeps it lazy.  A mutable raw row therefore stays mutable through the
 record's payload slot.  (Both halves are pinned in test_record_parser.py.)
 
+**Records are not orderable -- always sort them through** :func:`sort_key`.
+Because the payload sits *inside* the tuple, a plain ``sorted(records)``
+compares payloads whenever two records tie on all five decoded slots, and the
+tabular payload (a ``pysam.TupleProxy``) implements no comparison: it raises
+``NotImplementedError: op 0 isn't implemented yet``.  This is data-dependent
+and so especially treacherous -- records look sortable, and are, until two rows
+land on the same position, which real data does.  :func:`sort_key` projects the
+five decoded slots and stops before the payload; it is THE way to order
+records.
+
 This module is deliberately pure: it imports no pysam, no file handles and no
 genomic resource, so :func:`build_tabular_parser` can be unit-tested against
 plain lists of strings.
@@ -30,6 +40,16 @@ REF = 3
 ALT = 4
 PAYLOAD = 5
 
+# How many slots a record has.  Stated here, by the module that owns the
+# contract, and deliberately NOT derived as ``PAYLOAD + 1``: PAYLOAD is the
+# last slot only by convention, so a derived count would answer "where does the
+# payload sit", not "how many slots are there".  Append a seventh slot and the
+# derived count would stay 6 while every record became 7 long -- silently
+# breaking every consumer that sizes a record by it.  Adding a slot means
+# bumping this number; test_record_parser.py pins the two together against
+# what the parser actually emits.
+RECORD_SLOTS = 6
+
 # A record is a plain six-element tuple; ``tuple[Any, ...]`` keeps the slots
 # individually usable without over-constraining the payload's static type.
 Record = tuple[Any, ...]
@@ -40,6 +60,21 @@ TabularRow = Sequence[str]
 # A tabular parser maps a raw row to a record, or to ``None`` when the row's
 # contig is absent from a configured chromosome map.
 TabularParser = Callable[[TabularRow], "Record | None"]
+
+
+def sort_key(record: Record) -> tuple[Any, ...]:
+    """Return the ordering key of a record: its five decoded slots.
+
+    The one supported way to order records -- ``sorted(records, key=sort_key)``.
+    Never sort records as bare tuples: the payload rides in the last slot, so a
+    bare sort compares payloads on every tie and a ``pysam.TupleProxy`` payload
+    raises ``NotImplementedError`` when compared (see the module docstring).
+
+    The key is a slice, ``record[:PAYLOAD]``, so it spans every decoded slot
+    and stops exactly at the payload -- no slot is dropped from the ordering
+    and none of the opaque half enters it.
+    """
+    return record[:PAYLOAD]
 
 
 def build_tabular_parser(
