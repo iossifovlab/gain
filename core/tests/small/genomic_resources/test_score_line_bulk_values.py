@@ -32,7 +32,9 @@ per-*table* invariant and this is the hot path, so it is not paid per line.
 """
 from __future__ import annotations
 
+import gc
 import logging
+import weakref
 from collections.abc import Generator
 from typing import Any, NamedTuple
 
@@ -341,6 +343,37 @@ def test_mis_routed_long_tuple_is_rejected(tmp_path) -> None:
     assert "record" in str(exc_info.value)
 
 
+def test_mis_routed_non_indexable_payload_is_rejected(tmp_path) -> None:
+    # Shape is not the contract.  A plain 6-slot tuple passes both the exact
+    # -type and the slot-count test, so a mis-wired backend that fills PAYLOAD
+    # with something that is not an indexable raw row sails through a
+    # shape-only check -- and then dies one attribute-lookup later inside the
+    # ``_get_raw`` binding with ``AttributeError: 'NoneType' object has no
+    # attribute '__getitem__'``, which is verbatim the error this check exists
+    # to eliminate.  The payload is part of the record contract, so the check
+    # must look at it.
+    exc_info = _fetch_one_mis_wired(tmp_path, ("1", 10, 10, None, None, None))
+
+    message = str(exc_info.value)
+    assert "NoneType" in message
+    assert "payload" in message.lower()
+
+
+def test_mis_routed_string_payload_is_rejected(tmp_path) -> None:
+    # The nastier half: a ``str`` IS indexable, so an indexability test alone
+    # admits it -- and then nothing raises at all.  ``_get_raw(2)`` returns the
+    # third *character* of the string, which fails to parse, so every score
+    # comes back ``None`` with a logged parse failure: silently wrong values,
+    # which is worse than a crash.  A raw row is a sequence of cells; a string
+    # is a sequence of characters, and is never one.
+    exc_info = _fetch_one_mis_wired(
+        tmp_path, ("1", 10, 10, None, None, "a string is indexable"))
+
+    message = str(exc_info.value)
+    assert "str" in message
+    assert "payload" in message.lower()
+
+
 def test_record_backend_accepts_a_plain_record(tmp_path) -> None:
     # The check must not reject a legitimate record: the real record backend,
     # not mis-wired, reads its values through RecordScoreLine as always.
@@ -389,6 +422,212 @@ def test_the_record_contract_is_checked_once_per_open(tmp_path) -> None:
         assert len(lines) == 2
         assert all(isinstance(line, RecordScoreLine) for line in lines)
         assert [line.get_score("s_float") for line in lines] == [0.5, 0.25]
+
+
+def test_the_record_contract_is_rechecked_after_a_reopen(tmp_path) -> None:
+    # "Checked once" means once per OPEN, not once per lifetime.  The check
+    # disarms itself, and ``close()`` does not put it back -- what re-arms a
+    # reopened score is ``open()`` re-installing it unconditionally.  That is
+    # the load-bearing half of the disarm design and nothing pinned it: hoist
+    # the install into ``__init__``, or let the ``is_open()`` early return start
+    # covering a re-open, and every score after its first open runs unchecked
+    # for the rest of the process -- silently, with no other test failing.
+    score = _open_position(tmp_path, """
+        chrom  pos_begin  s_float  s_str
+        1      10         0.5      hello
+    """)
+    # first open: check installed, then disarmed by the first real record
+    assert score._score_line_class is not RecordScoreLine
+    line = next(iter(score.fetch_lines("1", 10, 10)))
+    assert line.get_score("s_float") == 0.5
+    assert score._score_line_class is RecordScoreLine
+
+    score.close()
+    score.open()
+    try:
+        # re-armed: a reopened score checks its table's first record again...
+        assert score._score_line_class is not RecordScoreLine
+        # ...and a mis-wire on the second open is still caught, loudly.
+        _mis_wire(score, _a_vcf_line(tmp_path))
+        with pytest.raises(TypeError) as exc_info:
+            next(iter(score.fetch_lines("1", 10, 10)))
+        assert "VCFLine" in str(exc_info.value)
+    finally:
+        score.close()
+
+
+def test_the_record_check_is_isolated_per_score(tmp_path) -> None:
+    # Disarming mutates a *callable attribute* mid-flight, which is only safe
+    # because ``_score_line_class`` is a genuine per-INSTANCE attribute: one
+    # score proving its own table's contract must not vouch for another's.  If
+    # the disarm ever wrote through to the class (a ``type(self)`` typo, or the
+    # attribute moving to a class-level default that is then mutated), the first
+    # score opened in a process would silently disarm every other score in it.
+    score_a = _open_position(tmp_path / "a", """
+        chrom  pos_begin  s_float  s_str
+        1      10         0.5      hello
+    """)
+    score_b = _open_position(tmp_path / "b", """
+        chrom  pos_begin  s_float  s_str
+        1      10         0.25     world
+    """)
+    with score_a, score_b:
+        # score_a reads a record and disarms its own check...
+        assert next(
+            iter(score_a.fetch_lines("1", 10, 10))).get_score("s_float") == 0.5
+        assert score_a._score_line_class is RecordScoreLine
+
+        # ...score_b, which has proved nothing, is still armed
+        assert score_b._score_line_class is not RecordScoreLine
+        _mis_wire(score_b, _a_vcf_line(tmp_path))
+        with pytest.raises(TypeError) as exc_info:
+            next(iter(score_b.fetch_lines("1", 10, 10)))
+        assert "VCFLine" in str(exc_info.value)
+
+
+def test_a_rejected_first_record_leaves_the_guard_armed(tmp_path) -> None:
+    # Disarming is earned, not scheduled.  A first record the check REJECTS
+    # proves nothing about the table, so the check must still be installed
+    # afterwards -- otherwise a score survives its first bad fetch unguarded,
+    # and the *next* mis-wired line (the one this check exists for) reaches the
+    # bare constructor and dies with the nameless AttributeError instead.
+    #
+    # Driven end to end: two fetches on one open score, the first rejected, the
+    # second still checked.
+    score = _open_position(tmp_path, """
+        chrom  pos_begin  s_float  s_str
+        1      10         0.5      hello
+    """)
+    with score:
+        _mis_wire(score, ("1", 10, 10, None, None, None))
+        with pytest.raises(TypeError):
+            next(iter(score.fetch_lines("1", 10, 10)))
+
+        # still armed -- nothing has been proved
+        assert score._score_line_class is not RecordScoreLine
+
+        # ...so the next mis-wire is still caught, with the clear message
+        _mis_wire(score, _a_vcf_line(tmp_path))
+        with pytest.raises(TypeError) as exc_info:
+            next(iter(score.fetch_lines("1", 10, 10)))
+        assert "VCFLine" in str(exc_info.value)
+
+
+def test_a_failed_first_score_line_leaves_the_guard_armed(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The same invariant, at the one seam the checks cannot cover: the check
+    # admits the record and then *constructing* the score line raises.  The
+    # constructor takes the payload's ``__getitem__`` binding, which is an
+    # attribute lookup on a duck-typed object and can therefore fail for reasons
+    # no once-per-table check can predict.  The rule is the same either way --
+    # the check disarms only once it has actually produced a score line -- so it
+    # must construct first and rebind after, never the other way round.
+    #
+    # The failure is injected at that seam rather than smuggled in through a
+    # hostile payload, because the point is the ORDER of the two statements,
+    # not any particular way the constructor can break.
+    score = _open_position(tmp_path, """
+        chrom  pos_begin  s_float  s_str
+        1      10         0.5      hello
+    """)
+    with score:
+        def exploding_init(
+            _self: Any, _line: Any, _score_defs: Any,
+        ) -> None:
+            raise RuntimeError("constructing the first score line failed")
+
+        monkeypatch.setattr(RecordScoreLine, "__init__", exploding_init)
+        with pytest.raises(RuntimeError):
+            next(iter(score.fetch_lines("1", 10, 10)))
+        monkeypatch.undo()
+
+        # The check never produced a score line, so it must still be installed.
+        assert score._score_line_class is not RecordScoreLine
+        # ...and it still rejects a mis-wired line rather than letting the bare
+        # constructor raise a nameless AttributeError.
+        _mis_wire(score, _a_vcf_line(tmp_path))
+        with pytest.raises(TypeError) as exc_info:
+            next(iter(score.fetch_lines("1", 10, 10)))
+        assert "VCFLine" in str(exc_info.value)
+
+
+def test_the_score_is_routed_before_it_reports_itself_open(tmp_path) -> None:
+    # ``table_loaded = True`` is the score PUBLISHING itself: from that write
+    # on, a second caller's ``open()`` takes the ``is_open()`` early return and
+    # goes straight to reading ``_score_line_class``.  So the routing must
+    # already be installed at that instant, or the second caller reads the
+    # ``__init__`` default -- ``ScoreLine`` -- and hands it a record tuple,
+    # which asserts (or under -O dies with "'tuple' object has no attribute
+    # 'get'").
+    #
+    # Scores are shared (the in-memory CNV cache hands the same instance to
+    # every caller in the process; gain-web-api serves from a thread pool), so
+    # this window is reachable.  Rather than race a thread against it, stand in
+    # the window itself: intercept the publishing write and look at what a
+    # concurrent reader would see at exactly that moment.
+    seen_at_publication: list[Any] = []
+
+    class _ObservingPositionScore(PositionScore):
+        def __setattr__(self, name: str, value: Any) -> None:
+            if name == "table_loaded" and value is True:
+                # what a thread taking the is_open() early return would use
+                seen_at_publication.append(self._score_line_class)
+            super().__setattr__(name, value)
+
+    builder = (
+        a_position_score()
+        .with_score("s_float", "float")
+        .with_data("""
+            chrom  pos_begin  s_float
+            1      10         0.5
+        """)
+    )
+    repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
+    score = _ObservingPositionScore(repo.get_resource("pos"))
+    with score.open():
+        assert score.table.yields_records is True
+        # The score never published itself as open while still routed to the
+        # adapter score line: a concurrent reader can only ever see the record
+        # routing this table actually needs -- the very check object the score
+        # is still carrying here (nothing has been fetched, so nothing has
+        # disarmed it).
+        assert seen_at_publication == [score._score_line_class]
+        assert seen_at_publication[0] is not ScoreLine
+        assert seen_at_publication[0] is not RecordScoreLine
+
+
+def test_an_opened_score_is_not_a_reference_cycle(tmp_path) -> None:
+    # The check is installed ON the score, as the score's own score line class.
+    # If it holds the score back (a bound method's ``__self__`` does), then
+    # every opened record-yielding score is a reference cycle and can only be
+    # reclaimed by a generational gc pass -- taking its table, and for the
+    # in-memory backend its whole ``records_by_chr``, with it.
+    #
+    # The disarm breaks such a cycle on the first record read, so the leak
+    # window is precisely "opened but never read from": a score whose first
+    # queried region is empty, or one closed without a read.  Pinned with the
+    # gc switched OFF, so only plain reference counting can reclaim the score.
+    def open_and_drop() -> weakref.ref[PositionScore]:
+        score = _open_position(tmp_path, """
+            chrom  pos_begin  s_float  s_str
+            1      10         0.5      hello
+        """)
+        assert score.table.yields_records is True
+        # deliberately NO fetch: an unread score is exactly the leak window
+        return weakref.ref(score)
+
+    gc_was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        ref = open_and_drop()
+        assert ref() is None, (
+            "an opened, unread genomic score survived its last strong "
+            "reference: it is in a cycle, so it (and its table) wait for a "
+            "generational gc pass instead of being reclaimed on the spot")
+    finally:
+        if gc_was_enabled:
+            gc.enable()
 
 
 def test_bigwig_backend_yields_the_adapter_score_line(tmp_path) -> None:
