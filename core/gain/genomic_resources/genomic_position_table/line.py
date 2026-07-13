@@ -455,7 +455,13 @@ class LineBuffer:
     def fetch(
         self, chrom: str, pos_begin: int, pos_end: int,
     ) -> Generator[Record, None, None]:
-        """Return a generator of records matching the region."""
+        """Return a generator of records matching the region.
+
+        ``pos_end`` is never ``None`` here: the buffer is only consulted when
+        the caller asked for a bounded region.  ``get_records_in_region``
+        turns buffering *off* when ``pos_end is None``, so an unbounded query
+        never reaches the buffer at all.
+        """
         beg_index = self.find_index(chrom, pos_begin)
         if beg_index == -1:
             return
@@ -464,6 +470,6 @@ class LineBuffer:
             record = self.deque[index]
             if record[POS_END] < pos_begin:
                 continue
-            if pos_end is not None and record[POS_BEGIN] > pos_end:
+            if record[POS_BEGIN] > pos_end:
                 break
             yield record
