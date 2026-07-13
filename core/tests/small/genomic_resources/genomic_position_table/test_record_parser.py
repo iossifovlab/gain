@@ -187,9 +187,10 @@ def test_zero_based_no_pos_end_column_bumps_from_single_column() -> None:
 
 def test_zero_based_end_before_begin_is_left_unrepaired() -> None:
     # An invalid zero-based row whose end is below begin.  The parser bumps
-    # end ONLY when begin == end (matching the tabix backend's
-    # ``adjust_zero_based_line`` in table.py, a deliberate convergence), so
-    # here end is left untouched: begin shifts to begin+1 and end stays end.
+    # end ONLY when begin == end -- as the adapter-era
+    # ``adjust_zero_based_line`` did, which is what let the tabix backend
+    # adopt this parser unchanged -- so here end is left untouched: begin
+    # shifts to begin+1 and end stays end.
     #
     # This is the one behaviour change from the removed ``zero_based_adjust``
     # helper, which bumped end whenever ``end < begin + 1`` and so would have

@@ -4,6 +4,8 @@ from typing import Any, Protocol
 
 import pysam
 
+from .record import ALT, CHROM, POS_BEGIN, POS_END, REF, Record
+
 Key = str | int
 
 
@@ -67,30 +69,68 @@ class Line:
         return tuple(self._data)
 
 
-class VCFLine:
+class VCFLine(tuple):
     """Line adapter for lines derived from a VCF file.
 
     Implements functionality for handling multi-allelic variants
     and INFO fields.
+
+    A VCF line is **record-shaped**: it subclasses ``tuple`` and lays its six
+    slots out in record order (``CHROM``, ``POS_BEGIN``, ``POS_END``, ``REF``,
+    ``ALT``, ``PAYLOAD``), so the record-indexed :class:`LineBuffer` and the
+    record read cascade in ``TabixGenomicPositionTable`` -- which the VCF
+    backend inherits -- can buffer and window it by slot, with no per-record
+    branch on which backend produced it.  The adapter attributes
+    (``chrom``, ``pos_begin``, ..., plus ``info``/``allele_index``) stay for
+    the score layer, which still wraps a VCF line in a ``ScoreLine`` and reads
+    INFO fields by name; #237 migrates the VCF backend proper and drops them.
+
+    The mapped (reference) contig is fixed at construction rather than written
+    back onto the object afterwards -- a tuple slot cannot be rebound, and the
+    buffer may already be holding the line.
     """
 
-    def __init__(
-            self, raw_line: pysam.VariantRecord, allele_index: int | None):
-        self.chrom: str = raw_line.contig
-        self.fchrom: str = raw_line.contig
-        self.pos_begin: int = raw_line.pos
-        self.pos_end: int = raw_line.stop
-
+    def __new__(
+        cls,
+        raw_line: pysam.VariantRecord,
+        allele_index: int | None,
+        chrom: str | None = None,
+    ) -> "VCFLine":
         assert raw_line.ref is not None
-        self.ref: str | None = raw_line.ref
-        self.alt: str | None = None
+        alt: str | None = None
+        if allele_index is not None:
+            assert raw_line.alts is not None
+            alt = raw_line.alts[allele_index]
+        return super().__new__(cls, (
+            chrom if chrom is not None else raw_line.contig,
+            raw_line.pos,
+            raw_line.stop,
+            raw_line.ref,
+            alt,
+            raw_line,
+        ))
+
+    def __init__(
+        self,
+        raw_line: pysam.VariantRecord,
+        allele_index: int | None,
+        chrom: str | None = None,  # noqa: ARG002  (consumed by __new__)
+    ):
+        # ``chrom`` is resolved in __new__, which is where the immutable tuple
+        # slots are laid down; __init__ receives the same arguments and reads
+        # the resolved contig back out of the CHROM slot.
+        super().__init__()
+        self.chrom: str = self[CHROM]
+        self.fchrom: str = raw_line.contig
+        self.pos_begin: int = self[POS_BEGIN]
+        self.pos_end: int = self[POS_END]
+
+        self.ref: str | None = self[REF]
         # Used to handle multiallelic variants in VCF files.
         # The allele index is None if the variant for this line
         # is missing its ALT, i.e. its value is '.'
         self.allele_index: int | None = allele_index
-        if self.allele_index is not None:
-            assert raw_line.alts is not None
-            self.alt = raw_line.alts[self.allele_index]
+        self.alt: str | None = self[ALT]
         self.info: pysam.VariantRecordInfo = raw_line.info
         self.info_meta: pysam.VariantHeaderMetadata = raw_line.header.info
 
@@ -136,10 +176,29 @@ class BigWigLine:
 
 
 class LineBuffer:
-    """Represent a line buffer for Tabix genome position table."""
+    """Buffer of records read from a Tabix genome position table.
+
+    Holds **records** -- the six-slot tuples the tabular parser builds -- and
+    reads them by slot constant (``record[CHROM]``, ``record[POS_BEGIN]``,
+    ``record[POS_END]``), never by attribute.  Records are immutable, so a
+    buffered record can be handed out and retained here at the same time
+    without any risk that a later read mutates it (which the ``Line`` adapter
+    it replaces did allow -- the zero-based/chrom-mapping transforms rewrote
+    the object in place).
+
+    The semantics are exactly those of the adapter-era buffer: it clears on a
+    chromosome change, clears when it observes a non-monotonic ordering
+    (:meth:`region`), prunes from the left, and locates a position by binary
+    search with a linear back-scan over the equal/overlapping intervals that
+    precede the hit.
+
+    The VCF backend feeds this buffer too, via :class:`VCFLine`, which is a
+    record-shaped tuple with adapter attributes bolted on; the slot reads below
+    are what make that work.
+    """
 
     def __init__(self) -> None:
-        self.deque: deque[LineBase] = deque()
+        self.deque: deque[Record] = deque()
 
     def __len__(self) -> int:
         return len(self.deque)
@@ -147,18 +206,19 @@ class LineBuffer:
     def clear(self) -> None:
         self.deque.clear()
 
-    def append(self, line: LineBase) -> None:
-        if len(self.deque) > 0 and self.peek_first().chrom != line.chrom:
+    def append(self, record: Record) -> None:
+        if len(self.deque) > 0 \
+                and self.peek_first()[CHROM] != record[CHROM]:
             self.clear()
-        self.deque.append(line)
+        self.deque.append(record)
 
-    def peek_first(self) -> LineBase:
+    def peek_first(self) -> Record:
         return self.deque[0]
 
-    def pop_first(self) -> LineBase:
+    def pop_first(self) -> Record:
         return self.deque.popleft()
 
-    def peek_last(self) -> LineBase:
+    def peek_last(self) -> Record:
         return self.deque[-1]
 
     def region(self) -> tuple[str | None, int | None, int | None]:
@@ -169,11 +229,12 @@ class LineBuffer:
         first = self.peek_first()
         last = self.peek_last()
 
-        if first.chrom != last.chrom or first.pos_end > last.pos_end:
+        if first[CHROM] != last[CHROM] \
+                or first[POS_END] > last[POS_END]:
             self.clear()
             return None, None, None
 
-        return first.chrom, first.pos_begin, last.pos_end
+        return first[CHROM], first[POS_BEGIN], last[POS_END]
 
     def prune(self, chrom: str, pos: int) -> None:
         """Prune the buffer if needed."""
@@ -182,13 +243,13 @@ class LineBuffer:
 
         first = self.peek_first()
 
-        if chrom != first.chrom:
+        if chrom != first[CHROM]:
             self.clear()
             return
 
         while len(self.deque) > 0:
             first = self.peek_first()
-            if pos <= first.pos_end:
+            if pos <= first[POS_END]:
                 break
             self.deque.popleft()
 
@@ -214,26 +275,26 @@ class LineBuffer:
                 break
 
             mid = self.deque[mid_index]
-            if mid.pos_end >= pos >= mid.pos_begin:
+            if mid[POS_END] >= pos >= mid[POS_BEGIN]:
                 break
 
-            if pos < mid.pos_begin:
+            if pos < mid[POS_BEGIN]:
                 last_index = mid_index - 1
             else:
                 first_index = mid_index + 1
 
         while mid_index > 0:
             prev = self.deque[mid_index - 1]
-            if pos > prev.pos_end:
+            if pos > prev[POS_END]:
                 break
             mid_index -= 1
 
         for index in range(mid_index, len(self.deque)):
-            line = self.deque[index]
-            if line.pos_end >= pos >= line.pos_begin:
+            record = self.deque[index]
+            if record[POS_END] >= pos >= record[POS_BEGIN]:
                 mid_index = index
                 break
-            if line.pos_begin >= pos:
+            if record[POS_BEGIN] >= pos:
                 mid_index = index
                 break
 
@@ -241,16 +302,16 @@ class LineBuffer:
 
     def fetch(
         self, chrom: str, pos_begin: int, pos_end: int,
-    ) -> Generator[LineBase, None, None]:
-        """Return a generator of rows matching the region."""
+    ) -> Generator[Record, None, None]:
+        """Return a generator of records matching the region."""
         beg_index = self.find_index(chrom, pos_begin)
         if beg_index == -1:
             return
 
         for index in range(beg_index, len(self.deque)):
-            row = self.deque[index]
-            if row.pos_end < pos_begin:
+            record = self.deque[index]
+            if record[POS_END] < pos_begin:
                 continue
-            if pos_end is not None and row.pos_begin > pos_end:
+            if pos_end is not None and record[POS_BEGIN] > pos_end:
                 break
-            yield row
+            yield record

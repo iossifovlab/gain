@@ -7,13 +7,13 @@ of the two hot read paths that two upcoming optimisations target:
 * a **raw table scan** -- iterating records straight off the tabix-backed
   ``GenomicPositionTable`` (``table.get_all_records()``), and
 * a **score-layer region fetch** -- pulling parsed score values through
-  ``GenomicScore.fetch_region_values``, which wraps every record in a
-  ``ScoreLine`` and calls ``ScoreLine.get_score`` per declared score.
+  ``GenomicScore.fetch_region_values``, which wraps every record in a score
+  line and calls ``get_score`` per declared score.
 
 Both are measured against two resource shapes, because the two follow-up
 optimisations help them very differently:
 
-* a **narrow** single-score resource (the ``ScoreLine``/tuple-adapter cost
+* a **narrow** single-score resource (the per-record construction cost
   dominates), and
 * a **wide** many-score resource (the per-column score-definition lookup
   dominates).
@@ -22,16 +22,16 @@ Every timed pass is measured **cold**
 --------------------------------------
 ``TabixGenomicPositionTable`` keeps a ``LineBuffer`` (``BUFFER_MAXSIZE``
 = 20000 records) that a repeated same-region fetch replays *without*
-re-reading the tabix file or rebuilding a single ``Line``.  Both fixtures
+re-reading the tabix file or rebuilding a single record.  Both fixtures
 fit entirely in that buffer, so a naive "warm up once, then time N passes
-over the same region" would time buffer replay -- pysam decode and ``Line``
-construction happen only in the untimed warmup and the ``Line``->tuple
-optimisation would be invisible in the fetch number.  To keep the fetch
+over the same region" would time buffer replay -- pysam decode and record
+construction happen only in the untimed warmup, and a change to how a record
+is built would be invisible in the fetch number.  To keep the fetch
 symmetric with the always-cold raw scan (``get_all_records`` clears the
 buffer and re-runs ``pysam.fetch`` every pass), :func:`_cold_reset` clears
 the table's ``LineBuffer`` and its ``_last_call`` short-circuit state
 *before* each pass, outside the timed region, forcing a real tabix read
-and fresh ``Line`` objects every time.
+and fresh records every time.
 
 Why this test never asserts a wall-clock threshold
 --------------------------------------------------
@@ -73,6 +73,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import pytest
+from gain.genomic_resources.genomic_position_table.record import POS_BEGIN
 from gain.genomic_resources.genomic_position_table.table_tabix import (
     TabixGenomicPositionTable,
 )
@@ -177,7 +178,7 @@ def _cold_reset(score: GenomicScore) -> Callable[[], None]:
 
     Clears the table's ``LineBuffer`` and its ``_last_call`` short-circuit
     so ``get_records_in_region`` cannot replay a warm buffer -- every timed
-    fetch pass then pays the real pysam decode + ``Line`` construction cost,
+    fetch pass then pays the real pysam decode + record construction cost,
     symmetric with the always-cold raw scan.  The raw scan does not touch
     the buffer, so for it this is a cheap no-op; either way it runs *outside*
     the timed region.
@@ -236,11 +237,10 @@ def _scan_pass(score: GenomicScore, n_rows: int) -> Callable[[], int]:
     expected_checksum = n_rows * (n_rows + 1) // 2
 
     # Narrow the backend: ``GenomicPositionTable.get_all_records`` yields
-    # ``LineBase | Record``, and only the tabix backend -- which this benchmark
-    # times, and which still yields line adapters -- exposes ``pos_begin`` as an
-    # attribute.  Reading it off the un-narrowed union is a type error; when
-    # tabix migrates to the record contract (#236-#238) this narrowed call flips
-    # to yielding records and mypy flags the line, which is the signal we want.
+    # ``LineBase | Record``, and reading a position off the un-narrowed union is
+    # a type error.  The tabix backend -- which this benchmark times -- is on
+    # the record contract since #236, so the position comes out of the record's
+    # named slot rather than off an adapter attribute.
     table = score.table
     assert isinstance(table, TabixGenomicPositionTable)
 
@@ -249,7 +249,7 @@ def _scan_pass(score: GenomicScore, n_rows: int) -> Callable[[], int]:
         checksum = 0
         for record in table.get_all_records():
             count += 1
-            checksum += record.pos_begin
+            checksum += record[POS_BEGIN]
         assert checksum == expected_checksum
         return count
 

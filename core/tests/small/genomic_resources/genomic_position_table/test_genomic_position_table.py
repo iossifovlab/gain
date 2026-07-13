@@ -10,13 +10,16 @@ from gain.genomic_resources.genomic_position_table import (
     TabixGenomicPositionTable,
     VCFGenomicPositionTable,
     build_genomic_position_table,
+    table_tabix,
 )
 from gain.genomic_resources.genomic_position_table.line import VCFLine
 from gain.genomic_resources.genomic_position_table.record import (
+    ALT,
     CHROM,
     PAYLOAD,
     POS_BEGIN,
     POS_END,
+    REF,
 )
 from gain.genomic_resources.genomic_position_table.table import (
     GenomicPositionTable,
@@ -30,6 +33,7 @@ from gain.genomic_resources.testing import (
     setup_tabix,
     setup_vcf,
 )
+from pysam.libctabixproxies import TupleProxy
 
 
 @pytest.fixture
@@ -186,19 +190,229 @@ def test_regions_in_tabix(
     with build_genomic_position_table(res, res.config["table"]) as tab:
         assert tab
         cast(TabixGenomicPositionTable, tab).jump_threshold = jump_threshold
-        assert [r.row() for r in tab.get_all_records()] == [
+        assert [tuple(r[PAYLOAD]) for r in tab.get_all_records()] == [
             ("1", "10", "12", "3.14"),
             ("1", "15", "20", "4.14"),
             ("1", "21", "30", "5.14"),
         ]
-        assert [r.row() for r in tab.get_records_in_region("1", 11, 11)] == [
+        assert [
+            tuple(r[PAYLOAD])
+            for r in tab.get_records_in_region("1", 11, 11)
+        ] == [
             ("1", "10", "12", "3.14"),
         ]
         assert not list(tab.get_records_in_region("1", 13, 14))
-        assert [r.row() for r in tab.get_records_in_region("1", 18, 21)] == [
+        assert [
+            tuple(r[PAYLOAD])
+            for r in tab.get_records_in_region("1", 18, 21)
+        ] == [
             ("1", "15", "20", "4.14"),
             ("1", "21", "30", "5.14"),
         ]
+
+
+@pytest.fixture
+def scores_tabix_res(tmp_path: pathlib.Path) -> GenomicResource:
+    setup_directories(
+        tmp_path, {
+            "genomic_resource.yaml": textwrap.dedent("""
+                table:
+                    format: tabix
+                    filename: data.txt.gz
+                scores:
+                - id: c2
+                  name: c2
+                  type: float"""),
+        })
+    setup_tabix(
+        tmp_path / "data.txt.gz",
+        """
+        #chrom pos_begin pos_end  c2
+        1     10        12       3.14
+        1     15        20       4.14
+        1     21        30       5.14
+        """, seq_col=0, start_col=1, end_col=2)
+    return build_filesystem_test_resource(tmp_path)
+
+
+def test_tabix_table_yields_records_with_a_lazy_payload(
+    scores_tabix_res: GenomicResource,
+) -> None:
+    # The tabix backend is on the record contract: it yields six-slot tuples,
+    # and the payload is the raw pysam row *itself* -- not a materialised
+    # tuple of its columns.  Keeping the row lazy is the whole point: a wide
+    # resource decodes only the columns a caller asks for.
+    assert scores_tabix_res.config is not None
+
+    with build_genomic_position_table(
+        scores_tabix_res, scores_tabix_res.config["table"],
+    ) as tab:
+        assert tab.yields_records
+
+        records = list(tab.get_all_records())
+        assert [(r[CHROM], r[POS_BEGIN], r[POS_END]) for r in records] == [
+            ("1", 10, 12),
+            ("1", 15, 20),
+            ("1", 21, 30),
+        ]
+
+        payload = records[0][PAYLOAD]
+        assert isinstance(payload, TupleProxy)
+        assert payload[3] == "3.14"
+
+
+def test_tabix_records_are_immutable_tuples(
+    scores_tabix_res: GenomicResource,
+) -> None:
+    # Records are plain tuples, so the chrom-mapping / zero-based transforms
+    # can no longer rewrite a record that the LineBuffer is holding at the
+    # same time -- the adapter-era in-place mutation is gone by construction.
+    assert scores_tabix_res.config is not None
+
+    with build_genomic_position_table(
+        scores_tabix_res, scores_tabix_res.config["table"],
+    ) as tab:
+        record = next(iter(tab.get_records_in_region("1", 11, 11)))
+        assert isinstance(record, tuple)
+        with pytest.raises(TypeError):
+            record[POS_BEGIN] = 42  # type: ignore[index]
+
+
+def test_tabix_parser_is_built_once_at_open_not_per_line(
+    scores_tabix_res: GenomicResource,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # The row->record parser is a function of the resolved column keys, the
+    # chromosome map and the zero-based flag -- all fixed for the life of the
+    # table.  It is therefore built exactly once, when the table is opened,
+    # and never per line.
+    assert scores_tabix_res.config is not None
+
+    spy = mocker.spy(table_tabix, "build_tabular_parser")
+
+    with build_genomic_position_table(
+        scores_tabix_res, scores_tabix_res.config["table"],
+    ) as tab:
+        assert spy.call_count == 1
+        assert len(list(tab.get_all_records())) == 3
+        assert len(list(tab.get_records_in_region("1", 11, 11))) == 1
+        assert spy.call_count == 1
+
+
+def test_tabix_buffers_the_terminating_record_before_the_end_check(
+    scores_tabix_res: GenomicResource,
+) -> None:
+    # The generator that reads from tabix appends every record it pulls to the
+    # buffer BEFORE it decides whether that record has run past the end of the
+    # query.  The record that terminates the read is therefore buffered even
+    # though it is never yielded -- and the next call's buffer window depends
+    # on it being there.
+    assert scores_tabix_res.config is not None
+
+    with build_genomic_position_table(
+        scores_tabix_res, scores_tabix_res.config["table"],
+    ) as tab:
+        assert isinstance(tab, TabixGenomicPositionTable)
+
+        fetched = list(tab.get_records_in_region("1", 11, 11))
+        assert [r[POS_BEGIN] for r in fetched] == [10]
+
+        # 15 is past the end of the query, so it was not yielded -- but it was
+        # buffered on the way out.
+        assert [r[POS_BEGIN] for r in tab.buffer.deque] == [10, 15]
+
+        # ...and that record is what stretches the buffered window over the
+        # 13-14 gap, so the next call is answered from the buffer alone: no
+        # second tabix fetch and no sequential seek.
+        assert not list(tab.get_records_in_region("1", 13, 14))
+        assert dict(tab.stats) == {
+            "calls": 2,
+            "with buffering": 2,
+            "tabix fetch": 1,
+            "yield from tabix": 1,
+        }
+
+
+@pytest.fixture
+def gapped_tabix_res(tmp_path: pathlib.Path) -> GenomicResource:
+    """A table with a wide gap between its second and third record."""
+    setup_directories(
+        tmp_path, {
+            "genomic_resource.yaml": textwrap.dedent("""
+                table:
+                    format: tabix
+                    filename: data.txt.gz
+                scores:
+                - id: c2
+                  name: c2
+                  type: float"""),
+        })
+    setup_tabix(
+        tmp_path / "data.txt.gz",
+        """
+        #chrom pos_begin pos_end  c2
+        1     10        12       3.14
+        1     15        20       4.14
+        1     100       110      5.14
+        """, seq_col=0, start_col=1, end_col=2)
+    return build_filesystem_test_resource(tmp_path)
+
+
+def test_tabix_read_cascade_stats_name_the_same_paths(
+    gapped_tabix_res: GenomicResource,
+) -> None:
+    # Walk every branch of the read cascade in one table and pin both what it
+    # yields and the counters that name the branch that served it.  The
+    # counters are the only window onto which branch ran, so their names -- and
+    # the branch each one attributes a query to -- must not drift.
+    assert gapped_tabix_res.config is not None
+
+    with build_genomic_position_table(
+        gapped_tabix_res, gapped_tabix_res.config["table"],
+    ) as tab:
+        assert isinstance(tab, TabixGenomicPositionTable)
+
+        # a fresh fetch, buffered; it also buffers the terminating record (15)
+        assert [
+            r[POS_BEGIN] for r in tab.get_records_in_region("1", 11, 11)
+        ] == [10]
+        assert [r[POS_BEGIN] for r in tab.buffer.deque] == [10, 15]
+
+        # inside the buffered window, but between two records: empty, no fetch
+        assert not list(tab.get_records_in_region("1", 13, 14))
+
+        # a buffer hit
+        assert [
+            r[POS_BEGIN] for r in tab.get_records_in_region("1", 16, 18)
+        ] == [15]
+
+        # past the buffer but within jump_threshold: seek forward sequentially
+        # rather than re-seek the file
+        assert not list(tab.get_records_in_region("1", 21, 30))
+        assert [r[POS_BEGIN] for r in tab.buffer.deque] == [100]
+
+        # the provably-empty gap: the query starts after the previous query's
+        # end and ends before the first buffered record, so it is empty without
+        # touching the file
+        assert not list(tab.get_records_in_region("1", 40, 50))
+
+        # a region wider than the buffer: served unbuffered, fresh from tabix
+        tab.BUFFER_MAXSIZE = 1
+        assert [
+            r[POS_BEGIN] for r in tab.get_records_in_region("1", 1, 110)
+        ] == [10, 15, 100]
+
+        assert dict(tab.stats) == {
+            "calls": 6,
+            "with buffering": 5,
+            "without buffering": 1,
+            "tabix fetch": 2,
+            "yield from tabix": 4,
+            "yield from buffer": 1,
+            "yield from buffer and tabix": 1,
+            "sequential seek forward": 1,
+            "not found": 1,
+        }
 
 
 def test_last_call_is_updated(tmp_path: pathlib.Path) -> None:
@@ -229,7 +443,8 @@ def test_last_call_is_updated(tmp_path: pathlib.Path) -> None:
         # pylint: disable=no-member
         assert tab_tab._last_call == ("", -1, -1)
         assert [
-            r.row() for r in tab_tab.get_records_in_region("1", 11, 11)
+            tuple(r[PAYLOAD])
+            for r in tab_tab.get_records_in_region("1", 11, 11)
         ] == [
             ("1", "10", "12", "3.14"),
         ]
@@ -237,7 +452,8 @@ def test_last_call_is_updated(tmp_path: pathlib.Path) -> None:
         assert not list(tab_tab.get_records_in_region("1", 13, 14))
         assert tab_tab._last_call == ("1", 13, 14)
         assert [
-            r.row() for r in tab_tab.get_records_in_region("1", 18, 21)
+            tuple(r[PAYLOAD])
+            for r in tab_tab.get_records_in_region("1", 18, 21)
         ] == [
             ("1", "15", "20", "4.14"),
             ("1", "21", "30", "5.14"),
@@ -444,9 +660,9 @@ def test_chrom_mapping_file_with_tabix(tmp_path: pathlib.Path) -> None:
 
     with build_genomic_position_table(res, res.config["table"]) as tab:
         assert tab.get_chromosomes() == ["gosho", "pesho"]
-        assert [line.chrom for line in tab.get_all_records()] == \
+        assert [line[CHROM] for line in tab.get_all_records()] == \
             ["gosho", "pesho"]
-        assert [line.chrom for line in tab.get_records_in_region("pesho")] == \
+        assert [line[CHROM] for line in tab.get_records_in_region("pesho")] == \
             ["pesho"]
 
 
@@ -720,7 +936,7 @@ def test_tabix_table(tmp_path: pathlib.Path, jump_threshold: int) -> None:
 
     with build_genomic_position_table(res, res.config["table"]) as table:
         cast(TabixGenomicPositionTable, table).jump_threshold = jump_threshold
-        assert [r.row() for r in table.get_all_records()] == [
+        assert [tuple(r[PAYLOAD]) for r in table.get_all_records()] == [
             ("1", "3", "3.14", "aa"),
             ("1", "4", "4.14", "bb"),
             ("1", "4", "5.14", "cc"),
@@ -728,27 +944,33 @@ def test_tabix_table(tmp_path: pathlib.Path, jump_threshold: int) -> None:
             ("1", "8", "7.14", "ee"),
             ("2", "3", "8.14", "ff"),
         ]
-        assert [r.row() for r in table.get_records_in_region("1", 4, 5)] == [
+        assert [
+            tuple(r[PAYLOAD])
+            for r in table.get_records_in_region("1", 4, 5)
+        ] == [
             ("1", "4", "4.14", "bb"),
             ("1", "4", "5.14", "cc"),
             ("1", "5", "6.14", "dd"),
         ]
         assert [
-            r.row() for r in table.get_records_in_region("1", 4, None)] == [
+            tuple(r[PAYLOAD])
+            for r in table.get_records_in_region("1", 4, None)] == [
             ("1", "4", "4.14", "bb"),
             ("1", "4", "5.14", "cc"),
             ("1", "5", "6.14", "dd"),
             ("1", "8", "7.14", "ee"),
         ]
         assert [
-            r.row() for r in table.get_records_in_region("1", None, 4)] == [
+            tuple(r[PAYLOAD])
+            for r in table.get_records_in_region("1", None, 4)] == [
             ("1", "3", "3.14", "aa"),
             ("1", "4", "4.14", "bb"),
             ("1", "4", "5.14", "cc"),
         ]
         assert not list(table.get_records_in_region("1", 20, 25))
         assert [
-            r.row() for r in table.get_records_in_region("2", None, None)
+            tuple(r[PAYLOAD])
+            for r in table.get_records_in_region("2", None, None)
         ] == [
             ("2", "3", "8.14", "ff"),
         ]
@@ -870,13 +1092,13 @@ def test_tabix_table_jumper_current_position(
     table = tabix_table
 
     for rec in table.get_records_in_region("1", 1):
-        assert rec.chrom == "1"
-        assert rec.pos_begin == 1
+        assert rec[CHROM] == "1"
+        assert rec[POS_BEGIN] == 1
         break
 
     for rec in table.get_records_in_region("1", 6):
-        assert rec.chrom == "1", rec
-        assert rec.pos_begin == 6, rec
+        assert rec[CHROM] == "1", rec
+        assert rec[POS_BEGIN] == 6, rec
         break
 
 
@@ -927,7 +1149,8 @@ def test_tabix_table_multi_get_regions(
     table = tabix_table_multiline
     assert not table._should_use_sequential_seek_forward("1", 1)
     assert [
-        r.row() for r in table.get_records_in_region("1", pos_beg, pos_end)
+        tuple(r[PAYLOAD])
+        for r in table.get_records_in_region("1", pos_beg, pos_end)
     ] == expected
 
 
@@ -944,7 +1167,7 @@ def test_tabix_table_multi_get_regions_partial(
         if index == 1:
             break
     assert [
-        r.row() for r in table.get_records_in_region("1", 3, 3)
+        tuple(r[PAYLOAD]) for r in table.get_records_in_region("1", 3, 3)
     ] == [
         ("1", "3", "4"), ("1", "3", "5"),
     ]
@@ -983,16 +1206,16 @@ def test_tabix_middle_optimization(tmp_path: pathlib.Path) -> None:
 
         row = None
         for row in table.get_records_in_region("1", 1, 1):
-            assert tuple(row.row()) == ("1", "1", "1")
+            assert tuple(row[PAYLOAD]) == ("1", "1", "1")
             break
         assert row is not None
-        assert tuple(row.row()) == ("1", "1", "1")
+        assert tuple(row[PAYLOAD]) == ("1", "1", "1")
 
         row = None
         for row in table.get_records_in_region("1", 1, 1):
-            assert tuple(row.row()) == ("1", "1", "1")
+            assert tuple(row[PAYLOAD]) == ("1", "1", "1")
         assert row is not None
-        assert tuple(row.row()) == ("1", "1", "1")
+        assert tuple(row[PAYLOAD]) == ("1", "1", "1")
 
 
 def test_tabix_middle_optimization_regions(tmp_path: pathlib.Path) -> None:
@@ -1022,30 +1245,30 @@ def test_tabix_middle_optimization_regions(tmp_path: pathlib.Path) -> None:
     with build_genomic_position_table(res, res.config["tabix_table"]) as table:
         row = None
         for row in table.get_records_in_region("1", 1, 1):
-            assert tuple(row.row()) == ("1", "1", "1", "1")
+            assert tuple(row[PAYLOAD]) == ("1", "1", "1", "1")
             break
 
         row = None
         for row in table.get_records_in_region("1", 1, 1):
-            assert tuple(row.row()) == ("1", "1", "1", "1")
+            assert tuple(row[PAYLOAD]) == ("1", "1", "1", "1")
 
         row = None
         for row in table.get_records_in_region("1", 4, 4):  # noqa: B007
             pass
         assert row is not None
-        assert tuple(row.row()) == ("1", "4", "8", "2")
+        assert tuple(row[PAYLOAD]) == ("1", "4", "8", "2")
 
         row = None
         for row in table.get_records_in_region("1", 4, 4):  # noqa: B007
             break
         assert row is not None
-        assert tuple(row.row()) == ("1", "4", "8", "2")
+        assert tuple(row[PAYLOAD]) == ("1", "4", "8", "2")
 
         row = None
         for row in table.get_records_in_region("1", 5, 5):  # noqa: B007
             break
         assert row is not None
-        assert tuple(row.row()) == ("1", "4", "8", "2")
+        assert tuple(row[PAYLOAD]) == ("1", "4", "8", "2")
 
 
 def test_tabix_middle_optimization_regions_buggy_1(
@@ -1094,7 +1317,7 @@ def test_tabix_middle_optimization_regions_buggy_1(
         # remapped
         mocker.spy(TabixGenomicPositionTable, "_gen_from_buffer_and_tabix")
         assert [
-            r.row()
+            tuple(r[PAYLOAD])
             for r in table.get_records_in_region("chr1", 505637, 505637)
         ] == [
             ("1", "505637", "505637", "0.009"),
@@ -1103,7 +1326,7 @@ def test_tabix_middle_optimization_regions_buggy_1(
             ._gen_from_buffer_and_tabix.call_count == 0  # type: ignore
 
         assert [
-            r.row()
+            tuple(r[PAYLOAD])
             for r in table.get_records_in_region("chr1", 505643, 505646)
         ] == [
             ("1", "505643", "505643", "0.012"),
@@ -1114,7 +1337,7 @@ def test_tabix_middle_optimization_regions_buggy_1(
             ._gen_from_buffer_and_tabix.call_count == 1  # type: ignore
 
         assert [
-            r.row()
+            tuple(r[PAYLOAD])
             for r in table.get_records_in_region("chr1", 505762, 505762)
         ] == [
             ("1", "505762", "505764", "0.002"),
@@ -1149,12 +1372,12 @@ def test_buggy_fitcons_e67(tmp_path: pathlib.Path) -> None:
 
     with build_genomic_position_table(res, res.config["tabix_table"]) as table:
         assert [
-            r.row()
+            tuple(r[PAYLOAD])
             for r in table.get_records_in_region("5", 180740299, 180740300)
         ] == [("5", "180739426", "180742735", "0.065122")]
 
         assert [
-            r.row()
+            tuple(r[PAYLOAD])
             for r in table.get_records_in_region("5", 180740301, 180740301)
         ] == [("5", "180739426", "180742735", "0.065122")]
 
@@ -1194,11 +1417,11 @@ def test_tabix_jump_config(
         assert cast(TabixGenomicPositionTable, table).jump_threshold == \
             expected
         assert [
-            r.row()
+            tuple(r[PAYLOAD])
             for r in table.get_records_in_region("5", 180740299, 180740300)
         ] == [("5", "180739426", "180742735", "0.065122")]
         assert [
-            r.row()
+            tuple(r[PAYLOAD])
             for r in table.get_records_in_region("5", 180740301, 180740301)
         ] == [("5", "180739426", "180742735", "0.065122")]
 
@@ -1247,15 +1470,15 @@ def test_tabix_max_buffer(
         assert buffer_maxsize == table.BUFFER_MAXSIZE
         assert table.jump_threshold == jump_threshold
         assert [
-            r.row()
+            tuple(r[PAYLOAD])
             for r in table.get_records_in_region("5", 180740299, 180740300)
         ] == [("5", "180739426", "180742735", "0.065122")]
         assert [
-            r.row()
+            tuple(r[PAYLOAD])
             for r in table.get_records_in_region("5", 180740301, 180740301)
         ] == [("5", "180739426", "180742735", "0.065122")]
         assert [
-            r.row()
+            tuple(r[PAYLOAD])
             for r in table.get_records_in_region("5", 180740301, 180742735)
         ] == [("5", "180739426", "180742735", "0.065122")]
 
@@ -1626,7 +1849,7 @@ def test_get_ref_alt_nonconfigured_missing(tmp_path: pathlib.Path) -> None:
     assert res.config is not None
     with build_genomic_position_table(res, res.config["tabix_table"]) as tab:
         results = [
-            (r.ref, r.alt)
+            (r[REF], r[ALT])
             for r in tab.get_all_records()
         ]
         assert results == [
@@ -1665,7 +1888,7 @@ def test_get_ref_alt_nonconfigured_existing(tmp_path: pathlib.Path) -> None:
 
     with build_genomic_position_table(res, res.config["tabix_table"]) as tab:
         results = [
-            (r.ref, r.alt)
+            (r[REF], r[ALT])
             for r in tab.get_all_records()
         ]
         assert results == [
@@ -1705,7 +1928,7 @@ def test_get_ref_alt_configured_existing(tmp_path: pathlib.Path) -> None:
 
     with build_genomic_position_table(res, res.config["tabix_table"]) as tab:
         results = [
-            (r.ref, r.alt)
+            (r[REF], r[ALT])
             for r in tab.get_all_records()
         ]
         assert results == [
@@ -1752,7 +1975,7 @@ def test_get_ref_alt_by_index_on_no_header(tmp_path: pathlib.Path) -> None:
 
     with build_genomic_position_table(res, res.config["tabix_table"]) as tab:
         results = [
-            (r.ref, r.alt)
+            (r[REF], r[ALT])
             for r in tab.get_all_records()
         ]
         assert results == [
@@ -1819,7 +2042,7 @@ def test_overlapping_nonattribute_columns_config(
 
     with build_genomic_position_table(res, res.config["table"]) as tab:
         results = [
-            (r.get(4), r.get(5))
+            (r[PAYLOAD][4], r[PAYLOAD][5])
             for r in tab.get_all_records()
         ]
         assert results == [
@@ -1868,7 +2091,7 @@ def test_tabix_table_zero_based(tmp_path: pathlib.Path) -> None:
 
     with build_genomic_position_table(res, res.config["table"]) as table:
         assert [
-            (r.chrom, r.pos_begin, r.pos_end, r.get(2))
+            (r[CHROM], r[POS_BEGIN], r[POS_END], r[PAYLOAD][2])
             for r in table.get_all_records()
         ] == [
             ("1", 4, 4, "3.14"),
@@ -1878,21 +2101,21 @@ def test_tabix_table_zero_based(tmp_path: pathlib.Path) -> None:
             ("1", 9, 9, "7.14"),
         ]
         assert [
-            (r.chrom, r.pos_begin, r.pos_end, r.get(2))
+            (r[CHROM], r[POS_BEGIN], r[POS_END], r[PAYLOAD][2])
             for r in table.get_records_in_region("1", 4, 5)] == [
             ("1", 4, 4, "3.14"),
             ("1", 5, 5, "4.14"),
             ("1", 5, 5, "5.14"),
         ]
         assert [
-            (r.chrom, r.pos_begin, r.pos_end, r.get(2))
+            (r[CHROM], r[POS_BEGIN], r[POS_END], r[PAYLOAD][2])
             for r in table.get_records_in_region("1", 6, None)
         ] == [
             ("1", 6, 6, "6.14"),
             ("1", 9, 9, "7.14"),
         ]
         assert [
-            (r.chrom, r.pos_begin, r.pos_end, r.get(2))
+            (r[CHROM], r[POS_BEGIN], r[POS_END], r[PAYLOAD][2])
             for r in table.get_records_in_region("1", None, 4)
         ] == [
             ("1", 4, 4, "3.14"),

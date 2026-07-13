@@ -10,12 +10,16 @@ parse failure) for an unparseable value.
 
 The value-extraction logic (``_extract_value``) is shared by both score line
 classes, but each reads its raw value through a per-instance ``_get_raw``
-bound to a *different* lookup: ``ScoreLine`` (the tabix/VCF/bigWig adapter
-backends) binds it to ``line.get``; ``RecordScoreLine`` (the in-memory
-backend) binds it to the record payload's ``__getitem__``.  The NA and parse
-tests therefore run against **both** backends -- a tabular ``.txt`` resource
-(``RecordScoreLine``) and a tabix resource (``ScoreLine``) -- so a broken
-binding on either class fails, not just the shared branch logic.
+bound to a *different* lookup: ``ScoreLine`` (the VCF/bigWig adapter backends)
+binds it to ``line.get``; ``RecordScoreLine`` (the in-memory and tabix record
+backends) binds it to the record payload's ``__getitem__``.
+
+The NA and parse tests run against **both** record backends, because their
+payloads are different objects: the in-memory backend's payload is a plain
+``tuple`` of cells, the tabix backend's is a lazily-decoding ``pysam`` row.
+``RecordScoreLine`` binds ``_get_raw`` to whichever one it is handed, so a
+binding that works on one and not the other fails here.  ``ScoreLine``'s own
+binding is pinned by the two adapter-backend tests at the bottom of this file.
 """
 from __future__ import annotations
 
@@ -38,11 +42,13 @@ from gain.genomic_resources.testing.builders import (
 
 # The two tabular backends the shared _extract_value runs on, and the
 # concrete score line class each one yields.  A tabular ``.txt`` resource is
-# read by the in-memory backend (RecordScoreLine); ``with_tabix`` realizes
-# the same data as a tabix table read by the adapter backend (ScoreLine).
+# read by the in-memory backend; ``with_tabix`` realizes the same data as a
+# tabix table.  Both are on the record contract, so both yield a
+# RecordScoreLine -- but over different payloads (a plain tuple of cells
+# vs. a lazily-decoding pysam row), which is what makes running both worth it.
 _TABULAR_BACKENDS = [
     pytest.param(False, RecordScoreLine, id="inmemory"),
-    pytest.param(True, ScoreLine, id="tabix"),
+    pytest.param(True, RecordScoreLine, id="tabix"),
 ]
 
 
@@ -94,9 +100,10 @@ def test_bulk_na_value_yields_none(tmp_path, tabix, line_cls) -> None:
     # value would come back ``None`` via the except path even if the NA
     # check were deleted, and the test could not tell the difference.
     #
-    # Run on both backends (RecordScoreLine and ScoreLine): each reads the
-    # raw "nan" through its own _get_raw binding, so a broken binding on
-    # either class -- not just the shared na_values branch -- fails here.
+    # Run on both record backends: each reads the raw "nan" through the same
+    # _get_raw binding but over a different payload (plain tuple vs. lazy pysam
+    # row), so a payload-specific break -- not just the shared na_values
+    # branch -- fails here.
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
         1      10         nan      hello
@@ -126,8 +133,8 @@ def test_bulk_na_value_yields_none(tmp_path, tabix, line_cls) -> None:
 def test_bulk_unparseable_value_logs_and_yields_none(
     tmp_path, tabix, line_cls, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    # Runs on both backends so the parse-failure branch (with its
-    # logger.exception) is proven for RecordScoreLine and ScoreLine alike.
+    # Runs on both record backends so the parse-failure branch (with its
+    # logger.exception) is proven over both record payloads.
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
         1      10         not_a_number  hello
@@ -173,9 +180,9 @@ chr1   11  .  A   T   .    .      scoreA=0.2;scoreB=0.5
 
 def test_vcf_backend_yields_the_adapter_score_line(tmp_path) -> None:
     # The VCF backend keeps its line adapter (``yields_records`` is False), so
-    # GenomicScore.open() must pick ScoreLine -- not RecordScoreLine -- for it.
-    # _TABULAR_BACKENDS pins that choice for in-memory and tabix only; this
-    # pins the third non-record backend.
+    # GenomicScore.open() must pick ScoreLine -- not RecordScoreLine -- for it,
+    # even though it now subclasses the record-yielding tabix table.
+    # _TABULAR_BACKENDS pins the record backends; this pins an adapter one.
     builder = a_vcf_info_score().with_data("""
 ##fileformat=VCFv4.1
 ##INFO=<ID=scoreA,Number=1,Type=Float,Description="score A">
