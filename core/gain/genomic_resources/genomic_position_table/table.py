@@ -4,20 +4,27 @@ import abc
 from collections.abc import Generator
 from functools import cache
 from types import TracebackType
-from typing import cast
+from typing import ClassVar, cast
 
 from box import Box
 
 from gain import logging
 from gain.genomic_resources.repository import GenomicResource
 
-from .line import Key, Line, LineBase
+from .line import Line, LineBase
+from .record import Record
 
 logger = logging.getLogger(__name__)
 
 
 class GenomicPositionTable(abc.ABC):
     """Abstraction over genomic scores table."""
+
+    # Whether get_all_records/get_records_in_region yield plain record tuples
+    # (the record contract) rather than line adapters.  A backend migrated to
+    # records overrides this to True; the score layer reads it to pick the
+    # score line class.  The remaining adapter backends leave it False.
+    yields_records: ClassVar[bool] = False
 
     CHROM = "chrom"
     POS_BEGIN = "pos_begin"
@@ -176,7 +183,7 @@ class GenomicPositionTable(abc.ABC):
         """Close the resource."""
 
     @abc.abstractmethod
-    def get_all_records(self) -> Generator[LineBase, None, None]:
+    def get_all_records(self) -> Generator[LineBase | Record, None, None]:
         """Return generator of all records in the table."""
 
     @abc.abstractmethod
@@ -185,7 +192,7 @@ class GenomicPositionTable(abc.ABC):
         chrom: str | None = None,
         pos_begin: int | None = None,
         pos_end: int | None = None,
-    ) -> Generator[LineBase, None, None]:
+    ) -> Generator[LineBase | Record, None, None]:
         """Return an iterable over the records in the specified range.
 
         The interval is closed on both sides and 1-based.
@@ -246,31 +253,6 @@ class GenomicPositionTable(abc.ABC):
         This is to be overwritten by the subclass. It should return a list of
         the chromosomes in the file in the order determinted by the file.
         """
-
-
-def get_idx(key: Key, header: tuple | None) -> int:
-    if isinstance(key, int):
-        return key
-    assert header is not None
-    return header.index(key)
-
-
-def zero_based_adjust(
-    raw: tuple,
-    pos_begin_key: Key,
-    pos_end_key: Key,
-    header: tuple | None,
-) -> tuple:
-    """Adjust a zero-based record."""
-    rec = list(raw)
-    pos_begin_key = get_idx(pos_begin_key, header)
-    pos_end_key = get_idx(pos_end_key, header)
-
-    rec[pos_begin_key] = int(rec[pos_begin_key]) + 1
-    rec[pos_end_key] = int(rec[pos_end_key])
-    if rec[pos_end_key] < rec[pos_begin_key]:
-        rec[pos_end_key] += 1
-    return tuple(map(str, rec))
 
 
 def adjust_zero_based_line(line: Line) -> Line:

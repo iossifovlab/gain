@@ -235,10 +235,19 @@ def _scan_pass(score: GenomicScore, n_rows: int) -> Callable[[], int]:
     """
     expected_checksum = n_rows * (n_rows + 1) // 2
 
+    # Narrow the backend: ``GenomicPositionTable.get_all_records`` yields
+    # ``LineBase | Record``, and only the tabix backend -- which this benchmark
+    # times, and which still yields line adapters -- exposes ``pos_begin`` as an
+    # attribute.  Reading it off the un-narrowed union is a type error; when
+    # tabix migrates to the record contract (#236-#238) this narrowed call flips
+    # to yielding records and mypy flags the line, which is the signal we want.
+    table = score.table
+    assert isinstance(table, TabixGenomicPositionTable)
+
     def run() -> int:
         count = 0
         checksum = 0
-        for record in score.table.get_all_records():
+        for record in table.get_all_records():
             count += 1
             checksum += record.pos_begin
         assert checksum == expected_checksum

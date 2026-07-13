@@ -7,6 +7,15 @@ out of the per-line loop.  These tests pin it to the single-score
 *exactly* what looping ``get_score`` returns -- including ``None`` for an
 absent key, ``None`` for a configured NA value, and ``None`` (plus a logged
 parse failure) for an unparseable value.
+
+The value-extraction logic (``_extract_value``) is shared by both score line
+classes, but each reads its raw value through a per-instance ``_get_raw``
+bound to a *different* lookup: ``ScoreLine`` (the tabix/VCF/bigWig adapter
+backends) binds it to ``line.get``; ``RecordScoreLine`` (the in-memory
+backend) binds it to the record payload's ``__getitem__``.  The NA and parse
+tests therefore run against **both** backends -- a tabular ``.txt`` resource
+(``RecordScoreLine``) and a tabix resource (``ScoreLine``) -- so a broken
+binding on either class fails, not just the shared branch logic.
 """
 from __future__ import annotations
 
@@ -16,14 +25,25 @@ import pytest
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     PositionScore,
+    RecordScoreLine,
     ScoreLine,
     _ScoreDef,
 )
 from gain.genomic_resources.testing.builders import (
+    a_bigwig_score,
     a_grr,
     a_position_score,
     a_vcf_info_score,
 )
+
+# The two tabular backends the shared _extract_value runs on, and the
+# concrete score line class each one yields.  A tabular ``.txt`` resource is
+# read by the in-memory backend (RecordScoreLine); ``with_tabix`` realizes
+# the same data as a tabix table read by the adapter backend (ScoreLine).
+_TABULAR_BACKENDS = [
+    pytest.param(False, RecordScoreLine, id="inmemory"),
+    pytest.param(True, ScoreLine, id="tabix"),
+]
 
 
 def _defs(score: PositionScore | AlleleScore) -> list[_ScoreDef]:
@@ -33,13 +53,17 @@ def _defs(score: PositionScore | AlleleScore) -> list[_ScoreDef]:
     ]
 
 
-def _open_position(tmp_path, data: str) -> PositionScore:
+def _open_position(
+    tmp_path, data: str, *, tabix: bool = False,
+) -> PositionScore:
     builder = (
         a_position_score()
         .with_score("s_float", "float")
         .with_score("s_str", "str")
         .with_data(data)
     )
+    if tabix:
+        builder = builder.with_tabix()
     repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
     score = PositionScore(repo.get_resource("pos")).open()
     assert isinstance(score, PositionScore)
@@ -61,19 +85,25 @@ def test_bulk_matches_per_score_on_tabular(tmp_path) -> None:
         assert line.get_values(_defs(score)) == [0.5, "hello"]
 
 
-def test_bulk_na_value_yields_none(tmp_path) -> None:
+@pytest.mark.parametrize(("tabix", "line_cls"), _TABULAR_BACKENDS)
+def test_bulk_na_value_yields_none(tmp_path, tabix, line_cls) -> None:
     # The NA token must *parse successfully* so this test actually exercises
     # the na_values branch: ``"nan"`` is a configured NA value for a float
     # score AND ``float("nan")`` returns ``nan`` (it does not raise).  A
     # token like ``"."`` would be masking -- it also fails to parse, so the
     # value would come back ``None`` via the except path even if the NA
     # check were deleted, and the test could not tell the difference.
+    #
+    # Run on both backends (RecordScoreLine and ScoreLine): each reads the
+    # raw "nan" through its own _get_raw binding, so a broken binding on
+    # either class -- not just the shared na_values branch -- fails here.
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
         1      10         nan      hello
-    """)
+    """, tabix=tabix)
     with score:
         line = next(iter(score.fetch_lines("1", 10, 10)))
+        assert isinstance(line, line_cls)
         # "nan" is a configured NA value for a float score, and float("nan")
         # does not raise -- so only the na_values check makes this None.
         assert "nan" in score.score_definitions["s_float"].na_values
@@ -92,15 +122,19 @@ def test_bulk_na_value_yields_none(tmp_path) -> None:
         assert bulk == per_score
 
 
+@pytest.mark.parametrize(("tabix", "line_cls"), _TABULAR_BACKENDS)
 def test_bulk_unparseable_value_logs_and_yields_none(
-    tmp_path, caplog: pytest.LogCaptureFixture,
+    tmp_path, tabix, line_cls, caplog: pytest.LogCaptureFixture,
 ) -> None:
+    # Runs on both backends so the parse-failure branch (with its
+    # logger.exception) is proven for RecordScoreLine and ScoreLine alike.
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
         1      10         not_a_number  hello
-    """)
+    """, tabix=tabix)
     with score:
         line = next(iter(score.fetch_lines("1", 10, 10)))
+        assert isinstance(line, line_cls)
         defs = _defs(score)
 
         with caplog.at_level(logging.ERROR):
@@ -137,6 +171,64 @@ chr1   11  .  A   T   .    .      scoreA=0.2;scoreB=0.5
         assert None in bulk
 
 
+def test_vcf_backend_yields_the_adapter_score_line(tmp_path) -> None:
+    # The VCF backend keeps its line adapter (``yields_records`` is False), so
+    # GenomicScore.open() must pick ScoreLine -- not RecordScoreLine -- for it.
+    # _TABULAR_BACKENDS pins that choice for in-memory and tabix only; this
+    # pins the third non-record backend.
+    builder = a_vcf_info_score().with_data("""
+##fileformat=VCFv4.1
+##INFO=<ID=scoreA,Number=1,Type=Float,Description="score A">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   10  .  A   T   .    .      scoreA=0.1
+""")
+    repo = a_grr().with_resource("vcf", builder).build_repo(tmp_path)
+    score = AlleleScore(repo.get_resource("vcf")).open()
+    with score:
+        assert score.table.yields_records is False
+        line = next(iter(score.fetch_lines("chr1", 10, 10)))
+        assert isinstance(line, ScoreLine)
+        assert not isinstance(line, RecordScoreLine)
+        assert line.get_score("scoreA") == pytest.approx(0.1)
+
+
+def test_bigwig_backend_yields_the_adapter_score_line(tmp_path) -> None:
+    # Same for the bigWig backend, the last of the three adapter backends.
+    builder = (
+        a_bigwig_score()
+        .with_score("bw", "float")
+        .with_data("""
+            chr1  0   10  0.11
+            chr1  10  20  0.22
+        """)
+        .with_chrom_lens({"chr1": 1000})
+    )
+    repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
+    score = PositionScore(repo.get_resource("bw")).open()
+    with score:
+        assert score.table.yields_records is False
+        line = next(iter(score.fetch_lines("chr1", 5, 5)))
+        assert isinstance(line, ScoreLine)
+        assert not isinstance(line, RecordScoreLine)
+        assert line.get_score("bw") == pytest.approx(0.11)
+
+
+def test_record_score_line_get_score_singular(tmp_path) -> None:
+    # RecordScoreLine.get_score (the singular path) is exercised directly:
+    # the other tests here go through the bulk get_values.  The in-memory
+    # backend yields RecordScoreLine, so this pins get_score reading through
+    # the record payload's __getitem__ binding, one score id at a time.
+    score = _open_position(tmp_path, """
+        chrom  pos_begin  s_float  s_str
+        1      10         0.5      hello
+    """)
+    with score:
+        line = next(iter(score.fetch_lines("1", 10, 10)))
+        assert isinstance(line, RecordScoreLine)
+        assert line.get_score("s_float") == 0.5
+        assert line.get_score("s_str") == "hello"
+
+
 def test_get_values_returns_new_ordered_list(tmp_path) -> None:
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
@@ -145,7 +237,8 @@ def test_get_values_returns_new_ordered_list(tmp_path) -> None:
     with score:
         line = next(iter(score.fetch_lines("1", 10, 10)))
         reversed_defs = list(reversed(_defs(score)))
-        assert isinstance(line, ScoreLine)
+        # tabular .txt -> in-memory backend -> RecordScoreLine
+        assert isinstance(line, RecordScoreLine)
         assert line.get_values(reversed_defs) == ["hello", 0.5]
 
 

@@ -193,6 +193,51 @@ def test_get_chrom_regions_region_size_zero() -> None:
     assert regions[0].stop is None
 
 
+def test_get_chrom_regions_skips_empty_mapped_contig(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A chrom_mapping.filename maps 'kept' onto a file contig with data rows
+    # and 'empty' onto one with none.  'empty' is a known-but-empty contig:
+    # the in-memory table yields no records for it, so there is no chromosome
+    # length to compute -- the contig must be warned about and SKIPPED, not
+    # blow up the statistics build.
+    res = build_inmemory_test_resource({
+        GR_CONF_FILE_NAME: """
+            type: position_score
+            table:
+                filename: data.mem
+                chrom_mapping:
+                    filename: chrom_map.txt
+            scores:
+                - id: score
+                  name: score
+                  type: float
+        """,
+        "data.mem": convert_to_tab_separated(
+            """
+            chrom pos_begin score
+            chr1  10        0.1
+            """,
+        ),
+        "chrom_map.txt": convert_to_tab_separated(
+            """
+            chrom   file_chrom
+            kept    chr1
+            empty   chr99
+            """,
+        ),
+    })
+
+    impl = build_score_implementation_from_resource(res)
+    impl.score.open()
+
+    with caplog.at_level("WARNING"):
+        regions = impl._get_chrom_regions(1000)
+
+    assert {region.chrom for region in regions} == {"kept"}
+    assert "unable to find chromosome length for empty" in caplog.text
+
+
 def test_add_statistics_build_tasks_creates_min_max_tasks() -> None:
     res = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """

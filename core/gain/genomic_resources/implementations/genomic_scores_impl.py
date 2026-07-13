@@ -10,6 +10,9 @@ from gain import logging
 from gain.genomic_resources.genomic_position_table import (
     TabixGenomicPositionTable,
 )
+from gain.genomic_resources.genomic_position_table.record import (
+    POS_END,
+)
 from gain.genomic_resources.genomic_position_table.table_bigwig import (
     BigWigTable,
 )
@@ -283,16 +286,25 @@ class GenomicScoreImplementation(
             self.resource.get_labels().get("reference_genome"),
         )
         ref_genome = self._get_reference_genome_cached(grr, ref_genome_id)
-        chrom_length: int | None = None
         for chrom in self.score.get_all_chromosomes():
+            # Resolved afresh for every contig: a contig whose length cannot be
+            # determined must be skipped, never inherit the previous contig's.
+            chrom_length: int | None = None
             if ref_genome is not None and chrom in ref_genome.chromosomes:
                 chrom_length = ref_genome.get_chrom_length(chrom)
             else:
                 if isinstance(self.score.table, InmemoryGenomicPositionTable):
+                    # The in-memory backend yields record tuples; read the end
+                    # position from its named slot rather than an adapter attr.
+                    # A known-but-empty contig (e.g. a chrom_mapping onto a file
+                    # contig with no data rows) yields no records at all: it has
+                    # no maximum end position, so ``default=None`` hands it to
+                    # the warn-and-skip below instead of raising out of max().
                     chrom_length = \
-                        max(line.pos_end
-                            for line in
-                            self.score.table.get_records_in_region(chrom))
+                        max((record[POS_END]
+                             for record in
+                             self.score.table.get_records_in_region(chrom)),
+                            default=None)
                 elif isinstance(self.score.table, BigWigTable):
                     chrom_length = \
                         self.score.table.get_chromosome_length(chrom)

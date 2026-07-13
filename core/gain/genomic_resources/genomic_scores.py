@@ -27,6 +27,15 @@ from gain.genomic_resources.genomic_position_table.line import (
     BigWigLine,
     LineBase,
 )
+from gain.genomic_resources.genomic_position_table.record import (
+    ALT,
+    CHROM,
+    PAYLOAD,
+    POS_BEGIN,
+    POS_END,
+    REF,
+    Record,
+)
 from gain.genomic_resources.histogram import (
     Histogram,
     HistogramConfig,
@@ -148,33 +157,91 @@ class _ScoreDef:
             self.na_values = default_na_values[self.value_type]
 
 
-class ScoreLine:
-    """Abstraction for a genomic score line. Wraps the line adapter."""
+class ScoreLineBase(abc.ABC):
+    """Shared value extraction for the two per-backend score lines.
 
-    def __init__(self, line: LineBase, score_defs: dict[str, _ScoreDef]):
-        assert isinstance(line, (Line, VCFLine, BigWigLine))
-        self.line = line
-        self.score_defs = score_defs
+    A genomic score is read through one of two concrete score lines, chosen
+    per backend when the score is opened: :class:`ScoreLine` wraps the line
+    adapter that the tabix/VCF/bigWig backends yield, and
+    :class:`RecordScoreLine` wraps the immutable record tuple that the
+    in-memory backend yields.  They are **siblings**, not parent/child -- the
+    only per-backend difference is where a raw score value comes from, and
+    that is captured by ``self._get_raw``, a per-instance callable each
+    subclass binds once in its own ``__init__`` (the adapter's ``line.get``
+    for :class:`ScoreLine`, the record payload's ``__getitem__`` for
+    :class:`RecordScoreLine`).
+
+    Everything downstream of that one lookup -- the five core-field
+    properties' contract, NA handling, parsing, logging and the
+    bulk/single value walks -- lives here so it cannot drift between the two.
+
+    The base declares no ``__init__`` on purpose: each subclass sets
+    ``score_defs`` and binds ``_get_raw`` in its own constructor, with no
+    ``super().__init__`` call.  A base constructor (even a trivial one) would
+    add a per-**line** Python call on the hot ``fetch_lines`` path -- ~0.055us
+    /line, doubling the narrow-table overhead below -- for no benefit, since a
+    record is not substitutable for an adapter and the two constructors share
+    no work.  The substitutability that finding 4 wanted is instead enforced
+    structurally: :attr:`GenomicScore._score_line_class` is typed as a callable
+    ``(LineBase | Record, dict) -> ScoreLineBase`` and mypy checks both
+    subclasses against it at the assignment in :meth:`GenomicScore.open`.
+
+    Reading a raw value still costs a per-line bound-method allocation
+    (``self._get_raw``).  Measured against a byte-faithful reconstruction of
+    the pre-refactor ``ScoreLine`` (construct + ``get_values``, min-of-15):
+    ~1.06x on a 1-score line, ~1.03x at 5 scores, a wash (~1.01x) by 454
+    scores -- largest on the narrow ``position_score`` shape, invisible on
+    wide tables.  In absolute terms ~0.035us/line against a ~200us/record
+    end-to-end fetch, i.e. invisible in production.  #239 removes
+    :class:`ScoreLine`, at which point this base and the split disappear.
+    """
+
+    # Set by each subclass in its own __init__ (no shared base constructor --
+    # see the class docstring).  ``_get_raw`` is bound once per instance to the
+    # raw-value lookup; it is not a method, so each subclass binds it.
+    score_defs: dict[str, _ScoreDef]
+    _get_raw: Callable[[str | int], Any]
 
     @property
+    @abc.abstractmethod
     def chrom(self) -> str:
-        return self.line.chrom
+        ...
 
     @property
+    @abc.abstractmethod
     def pos_begin(self) -> int:
-        return self.line.pos_begin
+        ...
 
     @property
+    @abc.abstractmethod
     def pos_end(self) -> int:
-        return self.line.pos_end
+        ...
 
     @property
+    @abc.abstractmethod
     def ref(self) -> str | None:
-        return self.line.ref
+        ...
 
     @property
+    @abc.abstractmethod
     def alt(self) -> str | None:
-        return self.line.alt
+        ...
+
+    def __repr__(self) -> str:
+        """Name the line by its core fields, not by its address.
+
+        Score lines are interpolated into diagnostics (e.g. the OSError in
+        ``GenomicScore._line_to_begin_end``); the default object repr would
+        print ``<...RecordScoreLine object at 0x7f...>``, which says nothing
+        about the offending row.
+        """
+        ref_alt = ""
+        if self.ref is not None or self.alt is not None:
+            ref_alt = f" {self.ref}->{self.alt}"
+        return (
+            f"{type(self).__name__}"
+            f"({self.chrom}:{self.pos_begin}-{self.pos_end}{ref_alt})"
+        )
 
     def _extract_value(self, score_def: _ScoreDef) -> ScoreValue:
         """Get and parse one score from the line using a resolved def.
@@ -186,7 +253,7 @@ class ScoreLine:
         key = score_def.score_index
         assert key is not None
 
-        value: str | int | float | None = self.line.get(key)
+        value: str | int | float | None = self._get_raw(key)
         if value is None or value in score_def.na_values:
             return None
         if score_def.value_parser is None:
@@ -226,6 +293,86 @@ class ScoreLine:
 
     def get_available_scores(self) -> tuple[Any, ...]:
         return tuple(self.score_defs.keys())
+
+
+class ScoreLine(ScoreLineBase):
+    """Score line wrapping a line adapter (tabix/VCF/bigWig backends).
+
+    Binds ``self._get_raw`` to the adapter's ``line.get`` and reads the core
+    fields straight off the adapter.  See :class:`ScoreLineBase` for the
+    shared value-extraction contract; #239 removes this class.
+    """
+
+    def __init__(
+        self, line: LineBase | Record, score_defs: dict[str, _ScoreDef],
+    ):
+        assert isinstance(line, (Line, VCFLine, BigWigLine))
+        self.line = line
+        self.score_defs = score_defs
+        self._get_raw = line.get
+
+    @property
+    def chrom(self) -> str:
+        return self.line.chrom
+
+    @property
+    def pos_begin(self) -> int:
+        return self.line.pos_begin
+
+    @property
+    def pos_end(self) -> int:
+        return self.line.pos_end
+
+    @property
+    def ref(self) -> str | None:
+        return self.line.ref
+
+    @property
+    def alt(self) -> str | None:
+        return self.line.alt
+
+
+class RecordScoreLine(ScoreLineBase):
+    """Score line wrapping an immutable record tuple (in-memory backend).
+
+    The core fields are read from the record's named slots; a raw score
+    column is read from the opaque payload (the raw row) on demand, so a wide
+    table decodes only the columns a caller asks for.  Value extraction, NA
+    handling and parsing come from :class:`ScoreLineBase`; the only
+    per-backend difference is where the raw value comes from, captured by
+    binding ``self._get_raw`` to the payload's indexer.
+    """
+
+    def __init__(
+        self, line: LineBase | Record, score_defs: dict[str, _ScoreDef],
+    ):
+        # A record is a plain tuple; bind the raw-value lookup to the
+        # payload's __getitem__ (score columns are addressed by resolved
+        # integer index), the record-backed counterpart of ``line.get``.
+        assert isinstance(line, tuple)
+        self.record = line
+        self.score_defs = score_defs
+        self._get_raw = line[PAYLOAD].__getitem__
+
+    @property
+    def chrom(self) -> str:
+        return cast(str, self.record[CHROM])
+
+    @property
+    def pos_begin(self) -> int:
+        return cast(int, self.record[POS_BEGIN])
+
+    @property
+    def pos_end(self) -> int:
+        return cast(int, self.record[POS_END])
+
+    @property
+    def ref(self) -> str | None:
+        return cast("str | None", self.record[REF])
+
+    @property
+    def alt(self) -> str | None:
+        return cast("str | None", self.record[ALT])
 
 
 @dataclass
@@ -386,6 +533,16 @@ class GenomicScore(ResourceConfigValidationMixin):
             self.resource, self.config["table"],
         )
         self.score_definitions = self._build_scoredefs()
+        # The per-backend score line class; the record-yielding backends use
+        # RecordScoreLine, the adapter-yielding ones ScoreLine.  Selected in
+        # open() once the table is open and its record shape is known.
+        # A callable, not type[...], so mypy checks both ScoreLine and
+        # RecordScoreLine against the constructor signature at the assignment
+        # in open() -- the substitutability finding 4 wanted, enforced
+        # structurally.  We never call issubclass on it.
+        self._score_line_class: Callable[
+            [LineBase | Record, dict[str, _ScoreDef]], ScoreLineBase,
+        ] = ScoreLine
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
@@ -750,6 +907,12 @@ class GenomicScore(ResourceConfigValidationMixin):
             return self
         self.table.open()
         self.table_loaded = True
+        # Choose the score line class per backend: a table that yields records
+        # is wrapped in a RecordScoreLine, one that yields adapters in a
+        # ScoreLine.  This is decided at open time, alongside the table's own
+        # parser/transform selection.
+        self._score_line_class = (
+            RecordScoreLine if self.table.yields_records else ScoreLine)
         if "scores" in self.config:
             self._validate_scoredefs()
 
@@ -785,12 +948,12 @@ class GenomicScore(ResourceConfigValidationMixin):
         self.close()
 
     @staticmethod
-    def _line_to_begin_end(line: ScoreLine) -> tuple[str, int, int]:
+    def _line_to_begin_end(line: ScoreLineBase) -> tuple[str, int, int]:
         if line.pos_end < line.pos_begin:
             raise OSError(
-                f"The resource line {line} has a regions "
-                f" with end {line.pos_end} smaller that the "
-                f"begining {line.pos_end}.")
+                f"The resource line {line} has a region "
+                f"with end {line.pos_end} smaller than the "
+                f"beginning {line.pos_begin}.")
         return line.chrom, line.pos_begin, line.pos_end
 
     def _get_header(self) -> tuple[Any, ...] | None:
@@ -802,13 +965,13 @@ class GenomicScore(ResourceConfigValidationMixin):
         chrom: str | None,
         pos_begin: int | None,
         pos_end: int | None,
-    ) -> Iterator[ScoreLine]:
+    ) -> Iterator[ScoreLineBase]:
         """Fetch lines in a region and wrap them in ScoreLines."""
         try:
             for line in self.table.get_records_in_region(
                 chrom, pos_begin, pos_end,
             ):
-                yield ScoreLine(line, self.score_definitions)
+                yield self._score_line_class(line, self.score_definitions)
         except Exception:
             logger.exception(
                 "Error fetching lines for region %s:%s-%s in resource %s",
@@ -831,7 +994,7 @@ class GenomicScore(ResourceConfigValidationMixin):
         pos_end: int | None,
         scores: list[str] | None = None,
     ) -> Generator[
-            tuple[str, int, int, list[ScoreValue] | None, ScoreLine],
+            tuple[str, int, int, list[ScoreValue] | None, ScoreLineBase],
             None, None]:
         """Return score values in a region."""
         if not self.is_open():
@@ -1423,8 +1586,8 @@ class AlleleScore(GenomicScore):
 
     def fetch_allele_line(
         self, chrom: str, pos: int, ref: str, alt: str,
-    ) -> ScoreLine | None:
-        """Fetch the exact ScoreLine matching the given allele."""
+    ) -> ScoreLineBase | None:
+        """Fetch the exact score line matching the given allele."""
         for line in self.fetch_lines(chrom, pos, pos):
             if line.ref == ref and line.alt == alt:
                 return line

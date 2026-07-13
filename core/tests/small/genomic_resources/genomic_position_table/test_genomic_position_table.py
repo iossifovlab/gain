@@ -12,6 +12,12 @@ from gain.genomic_resources.genomic_position_table import (
     build_genomic_position_table,
 )
 from gain.genomic_resources.genomic_position_table.line import VCFLine
+from gain.genomic_resources.genomic_position_table.record import (
+    CHROM,
+    PAYLOAD,
+    POS_BEGIN,
+    POS_END,
+)
 from gain.genomic_resources.genomic_position_table.table import (
     GenomicPositionTable,
 )
@@ -123,14 +129,16 @@ def test_regions() -> None:
     assert res.config is not None
 
     with build_genomic_position_table(res, res.config["table"]) as mem_tab:
-        assert [r.row() for r in mem_tab.get_all_records()] == [
+        # The in-memory backend yields records; its payload slot carries the
+        # raw row.
+        assert [r[PAYLOAD] for r in mem_tab.get_all_records()] == [
             ("1", "10", "12", "3.14"),
             ("1", "15", "20", "4.14"),
             ("1", "21", "30", "5.14"),
         ]
 
         assert [
-            r.row() for r in mem_tab.get_records_in_region("1", 11, 11)
+            r[PAYLOAD] for r in mem_tab.get_records_in_region("1", 11, 11)
         ] == [
             ("1", "10", "12", "3.14"),
         ]
@@ -138,7 +146,7 @@ def test_regions() -> None:
         assert not list(mem_tab.get_records_in_region("1", 13, 14))
 
         assert [
-            r.row() for r in mem_tab.get_records_in_region("1", 18, 21)
+            r[PAYLOAD] for r in mem_tab.get_records_in_region("1", 18, 21)
         ] == [
             ("1", "15", "20", "4.14"),
             ("1", "21", "30", "5.14"),
@@ -261,6 +269,81 @@ def test_chr_add_pref() -> None:
         assert tab.get_chromosomes() == ["chr1", "chr11", "chrX"]
 
 
+def test_chr_add_pref_records_carry_the_mapped_chrom() -> None:
+    # The file contigs are '1'/'X'/'11'; every record must come out under the
+    # PREFIXED reference contig in its CHROM slot -- the add_prefix reverse map
+    # is derived from the observed file contigs, which is the sole reason the
+    # in-memory open() buffers the raw rows before building the parser.
+    res = build_inmemory_test_resource({
+        "genomic_resource.yaml": """
+            table:
+                filename: data.mem
+                chrom_mapping:
+                    add_prefix: chr
+            scores:
+            - id: c2
+              name: c2
+              type: float""",
+        "data.mem": convert_to_tab_separated(
+            """
+            chrom pos_begin pos2  c2
+            1     10        12    3.14
+            X     11        11    4.14
+            11    12        10    5.14
+            """)})
+    assert res.config is not None
+
+    with build_genomic_position_table(res, res.config["table"]) as tab:
+        records = list(tab.get_all_records())
+        assert [record[CHROM] for record in records] == \
+            ["chr1", "chr11", "chrX"]
+        assert [record[POS_BEGIN] for record in records] == [10, 12, 11]
+
+        # a region fetch is keyed by the mapped contig too
+        fetched = list(tab.get_records_in_region("chrX"))
+        assert len(fetched) == 1
+        assert fetched[0][CHROM] == "chrX"
+        assert fetched[0][POS_BEGIN] == 11
+
+        # ...and the unmapped file contig is not a contig of the table
+        with pytest.raises(ValueError, match="chromosome X"):
+            list(tab.get_records_in_region("X"))
+
+
+def test_chr_del_pref_records_carry_the_mapped_chrom() -> None:
+    # Mirror of the add_prefix case: file contigs are 'chr1'/'chr22'/'chrX',
+    # records must come out under the DE-prefixed reference contig.
+    res = build_inmemory_test_resource({
+        "genomic_resource.yaml": """
+            table:
+                filename: data.mem
+                chrom_mapping:
+                    del_prefix: chr
+            scores:
+            - id: c2
+              name: c2
+              type: float""",
+        "data.mem": """
+            chrom    pos_begin pos2  c2
+            chr1     10        12    3.14
+            chr22    11        11    4.14
+            chrX     12        10    5.14"""})
+    assert res.config is not None
+
+    with build_genomic_position_table(res, res.config["table"]) as tab:
+        records = list(tab.get_all_records())
+        assert [record[CHROM] for record in records] == ["1", "22", "X"]
+        assert [record[POS_BEGIN] for record in records] == [10, 11, 12]
+
+        fetched = list(tab.get_records_in_region("22"))
+        assert len(fetched) == 1
+        assert fetched[0][CHROM] == "22"
+        assert fetched[0][POS_BEGIN] == 11
+
+        with pytest.raises(ValueError, match="chromosome chr22"):
+            list(tab.get_records_in_region("chr22"))
+
+
 def test_chr_del_pref() -> None:
     res = build_inmemory_test_resource({
         "genomic_resource.yaml": """
@@ -310,14 +393,19 @@ def test_chrom_mapping_file() -> None:
 
     with build_genomic_position_table(res, res.config["table"]) as tab:
         assert tab.get_chromosomes() == ["gosho", "pesho"]
+        # Chromosome mapping now lands in the record's core CHROM slot; the
+        # payload keeps the raw (file) contig, so assert the core fields.
         assert [
-            r.row() for r in tab.get_all_records()
+            (r[CHROM], r[POS_BEGIN], r[POS_END]) for r in tab.get_all_records()
         ] == [
-            ("gosho", "10", "12", "3.14"),
-            ("pesho", "11", "11", "4.14"),
+            ("gosho", 10, 12),
+            ("pesho", 11, 11),
         ]
-        assert [r.row() for r in tab.get_records_in_region("pesho")] == [
-            ("pesho", "11", "11", "4.14"),
+        assert [
+            (r[CHROM], r[POS_BEGIN], r[POS_END])
+            for r in tab.get_records_in_region("pesho")
+        ] == [
+            ("pesho", 11, 11),
         ]
 
 
@@ -419,7 +507,9 @@ def test_column_with_name() -> None:
     assert res.config is not None
 
     with build_genomic_position_table(res, res.config["table"]) as tab:
-        assert [r.row() for r in tab.get_records_in_region("1", 12, 12)] == [
+        assert [
+            r[PAYLOAD] for r in tab.get_records_in_region("1", 12, 12)
+        ] == [
             ("1", "10", "12", "3.14"),
         ]
 
@@ -444,7 +534,9 @@ def test_column_with_index() -> None:
     assert res.config is not None
 
     with build_genomic_position_table(res, res.config["table"]) as tab:
-        assert [r.row() for r in tab.get_records_in_region("1", 12, 12)] == [
+        assert [
+            r[PAYLOAD] for r in tab.get_records_in_region("1", 12, 12)
+        ] == [
             ("1", "10", "12", "3.14"),
         ]
 
@@ -472,7 +564,9 @@ def test_no_header() -> None:
     assert res.config is not None
 
     with build_genomic_position_table(res, res.config["table"]) as tab:
-        assert [r.row() for r in tab.get_records_in_region("1", 12, 12)] == [
+        assert [
+            r[PAYLOAD] for r in tab.get_records_in_region("1", 12, 12)
+        ] == [
             ("1", "10", "12", "3.14"),
         ]
 
@@ -497,7 +591,9 @@ def test_header_in_config() -> None:
     assert res.config is not None
 
     with build_genomic_position_table(res, res.config["table"]) as tab:
-        assert [r.row() for r in tab.get_records_in_region("1", 12, 12)] == [
+        assert [
+            r[PAYLOAD] for r in tab.get_records_in_region("1", 12, 12)
+        ] == [
             ("1", "10", "12", "3.14"),
         ]
 
@@ -519,7 +615,9 @@ def test_space_in_mem_table() -> None:
     assert res.config is not None
 
     with build_genomic_position_table(res, res.config["table"]) as tab:
-        assert [r.row() for r in tab.get_records_in_region("1", 11, 11)] == [
+        assert [
+            r[PAYLOAD] for r in tab.get_records_in_region("1", 11, 11)
+        ] == [
             ("1", "11", ".", "4.14"),
         ]
 
@@ -547,7 +645,7 @@ def test_text_table() -> None:
     assert res.config is not None
 
     with build_genomic_position_table(res, res.config["table"]) as table:
-        assert [r.row() for r in table.get_all_records()] == [
+        assert [r[PAYLOAD] for r in table.get_all_records()] == [
             ("1", "3", "3.14", "aa"),
             ("1", "4", "4.14", "bb"),
             ("1", "4", "5.14", "cc"),
@@ -555,27 +653,28 @@ def test_text_table() -> None:
             ("1", "8", "7.14", "ee"),
             ("2", "3", "8.14", "ff"),
         ]
-        assert [r.row() for r in table.get_records_in_region("1", 4, 5)] == [
+        assert [
+            r[PAYLOAD] for r in table.get_records_in_region("1", 4, 5)] == [
             ("1", "4", "4.14", "bb"),
             ("1", "4", "5.14", "cc"),
             ("1", "5", "6.14", "dd"),
         ]
         assert [
-            r.row() for r in table.get_records_in_region("1", 4, None)] == [
+            r[PAYLOAD] for r in table.get_records_in_region("1", 4, None)] == [
             ("1", "4", "4.14", "bb"),
             ("1", "4", "5.14", "cc"),
             ("1", "5", "6.14", "dd"),
             ("1", "8", "7.14", "ee"),
         ]
         assert [
-            r.row() for r in table.get_records_in_region("1", None, 4)] == [
+            r[PAYLOAD] for r in table.get_records_in_region("1", None, 4)] == [
             ("1", "3", "3.14", "aa"),
             ("1", "4", "4.14", "bb"),
             ("1", "4", "5.14", "cc"),
         ]
         assert not list(table.get_records_in_region("1", 20, 25))
         assert [
-            r.row() for r in table.get_records_in_region("2", None, None)
+            r[PAYLOAD] for r in table.get_records_in_region("2", None, None)
         ] == [
             ("2", "3", "8.14", "ff"),
         ]

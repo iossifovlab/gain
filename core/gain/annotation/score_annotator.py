@@ -32,7 +32,7 @@ from gain.genomic_resources.genomic_scores import (
     GenomicScore,
     PositionScore,
     ScoreDef,
-    ScoreLine,
+    ScoreLineBase,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.templates import get_template
@@ -383,9 +383,9 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
     ``allele_filter``
     -----------------
     An optional annotator-level boolean expression evaluated against each
-    ``ScoreLine`` before it is included in the result.  Supported operators:
-    ``>``, ``<``, ``==``, ``in``, ``and``, ``or``.  Variables resolve via
-    ``ScoreLine.get_score``.
+    ``ScoreLineBase`` before it is included in the result.  Supported
+    operators: ``>``, ``<``, ``==``, ``in``, ``and``, ``or``.  Variables
+    resolve via ``ScoreLineBase.get_score``.
     """
 
     ALLELE_FILTER_GRAMMAR = textwrap.dedent("""
@@ -483,8 +483,8 @@ Non-``VCFAllele`` annotatables always use region aggregation.
     @classmethod
     def _build_allele_filter_func(
         cls, tree: Tree,
-    ) -> Callable[[ScoreLine], bool]:
-        """Recursively compile a Lark parse tree into a ScoreLine predicate."""
+    ) -> Callable[[ScoreLineBase], bool]:
+        """Compile a Lark parse tree into a ScoreLineBase predicate."""
         if tree.data == "and_":
             assert isinstance(tree.children[0], Tree)
             assert isinstance(tree.children[1], Tree)
@@ -507,7 +507,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             assert isinstance(left.children[0].children[0], Token)
             left_value = left.children[0].children[0].value
 
-            def left_accessor(_score: ScoreLine) -> Any:
+            def left_accessor(_score: ScoreLineBase) -> Any:
                 return _score.get_score(left_value)
         else:
             assert isinstance(left.children[0], Tree)
@@ -519,7 +519,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
                 left_value = float(left_value)
 
             def left_accessor(
-                _score: ScoreLine,
+                _score: ScoreLineBase,
             ) -> Any:  # pylint: disable=unused-argument
                 return left_value
         assert isinstance(tree.children[1], Tree)
@@ -537,7 +537,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             assert isinstance(right.children[0].children[0], Token)
             right_value = right.children[0].children[0].value
 
-            def right_accessor(_score: ScoreLine) -> Any:
+            def right_accessor(_score: ScoreLineBase) -> Any:
                 return _score.get_score(right_value)
         else:
             assert isinstance(right.children[0], Tree)
@@ -549,7 +549,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
                 right_value = float(right_value)
 
             def right_accessor(
-                _score: ScoreLine,
+                _score: ScoreLineBase,
             ) -> Any:  # pylint: disable=unused-argument
                 return right_value
 
