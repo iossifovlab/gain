@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613,too-many-lines
+import copy
 import pathlib
 import textwrap
 from typing import cast
@@ -82,6 +83,31 @@ def vcf_res_autodetect_format(tmp_path: pathlib.Path) -> GenomicResource:
 ##INFO=<ID=A,Number=1,Type=Integer,Description="Score A">
 #CHROM POS ID REF ALT QUAL FILTER  INFO
 chr1   5   .  A   T   .    .       A=1
+    """),
+    )
+    return build_filesystem_test_resource(tmp_path)
+
+
+@pytest.fixture
+def vcf_res_chrom_mapping(tmp_path: pathlib.Path) -> GenomicResource:
+    setup_directories(
+        tmp_path, {
+            "genomic_resource.yaml": textwrap.dedent("""
+                tabix_table:
+                    filename: data.vcf.gz
+                    format: vcf_info
+                    chrom_mapping:
+                        del_prefix: chr
+            """),
+        })
+    setup_vcf(
+        tmp_path / "data.vcf.gz",
+        textwrap.dedent("""
+##fileformat=VCFv4.1
+##INFO=<ID=A,Number=1,Type=Integer,Description="Score A">
+##contig=<ID=chr1>
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      A=1
     """),
     )
     return build_filesystem_test_resource(tmp_path)
@@ -276,6 +302,46 @@ def test_tabix_records_are_immutable_tuples(
         assert isinstance(record, tuple)
         with pytest.raises(TypeError):
             record[POS_BEGIN] = 42  # type: ignore[index]
+
+
+def test_tabix_record_payload_survives_the_iterator_advancing(
+    scores_tabix_res: GenomicResource,
+) -> None:
+    # The record's PAYLOAD is the raw pysam row, held by reference and kept
+    # lazy -- and both the caller and the LineBuffer retain it while the read
+    # goes on.  That is only sound because ``pysam.asTuple()`` hands out a
+    # fresh, buffer-owning row per line; were it to reuse one row object (as
+    # some htslib iterators do), every retained record would silently start
+    # reading the *latest* line's columns.  Pin it: a record read out of the
+    # first query still decodes its own columns after the iterator has moved
+    # on, and so does the copy of it the buffer is holding.
+    assert scores_tabix_res.config is not None
+
+    with build_genomic_position_table(
+        scores_tabix_res, scores_tabix_res.config["table"],
+    ) as tab:
+        assert isinstance(tab, TabixGenomicPositionTable)
+
+        retained = next(iter(tab.get_records_in_region("1", 11, 11)))
+        assert tuple(retained[PAYLOAD]) == ("1", "10", "12", "3.14")
+
+        # advance the read well past that record: two further queries, the
+        # second of which re-fetches from the file
+        assert [r[POS_BEGIN] for r in tab.get_records_in_region("1", 15, 20)] \
+            == [15]
+        assert [r[POS_BEGIN] for r in tab.get_records_in_region("1", 21, 30)] \
+            == [21]
+
+        # the retained record still reads its own row, not the latest one
+        assert retained[CHROM] == "1"
+        assert retained[POS_BEGIN] == 10
+        assert retained[POS_END] == 12
+        assert tuple(retained[PAYLOAD]) == ("1", "10", "12", "3.14")
+
+        # ...and so does every record the buffer still holds
+        assert [tuple(r[PAYLOAD]) for r in tab.buffer.deque] == [
+            ("1", "21", "30", "5.14"),
+        ]
 
 
 def test_tabix_parser_is_built_once_at_open_not_per_line(
@@ -1557,6 +1623,107 @@ def test_vcf_get_all_records(vcf_res: GenomicResource) -> None:
         assert res2.chrom == "chr1"
         assert res2.pos_begin == 30
         assert res2.pos_end == 30
+
+
+def test_vcf_line_is_hashable(vcf_res: GenomicResource) -> None:
+    # A VCFLine is a public export of the package.  Its PAYLOAD slot holds a
+    # pysam.VariantRecord, which is unhashable -- so the inherited
+    # tuple.__hash__ cannot hash a VCFLine, and the class has to hash itself
+    # over its five decoded slots instead.  Without that, a set(lines) or a
+    # {line: ...} of the kind the adapter era supported raises TypeError.
+    assert vcf_res.config is not None
+
+    with build_genomic_position_table(
+        vcf_res, vcf_res.config["tabix_table"],
+    ) as tab:
+        lines = cast(list[VCFLine], list(tab.get_all_records()))
+
+        assert len({hash(line) for line in lines}) == 3
+        assert len(set(lines)) == 3
+        assert {line: line.pos_begin for line in lines}[lines[0]] == 5
+
+
+def test_vcf_line_equality_is_structural_and_agrees_with_its_hash(
+    vcf_res: GenomicResource,
+) -> None:
+    # A VCFLine is record-shaped, and a record is a value: two lines compare
+    # equal when their six slots do -- which for a VCF line means the same
+    # variant record (pysam.VariantRecord compares structurally too), the same
+    # allele and the same mapped contig.  The hash is taken over the five
+    # decoded slots and so agrees with that equality: equal lines hash equal,
+    # which is what makes a dict lookup by an equal-but-not-identical line
+    # work.
+    assert vcf_res.config is not None
+
+    def read_lines() -> list[VCFLine]:
+        assert vcf_res.config is not None
+        with build_genomic_position_table(
+            vcf_res, vcf_res.config["tabix_table"],
+        ) as tab:
+            return cast(list[VCFLine], list(tab.get_all_records()))
+
+    first, second = read_lines(), read_lines()
+
+    assert first[0] is not second[0]
+    assert first[0] == second[0]
+    assert hash(first[0]) == hash(second[0])
+    assert {first[0]: "value"}[second[0]] == "value"
+
+    assert first[0] != first[1]
+    assert len({*first, *second}) == 3
+
+
+def test_vcf_line_can_be_copied(vcf_res: GenomicResource) -> None:
+    # copy.copy() of a tuple subclass reconstructs it through __new__ with the
+    # arguments __getnewargs__ hands back.  The inherited tuple.__getnewargs__
+    # would hand back the six-slot record itself as ``raw_line``, so a VCFLine
+    # has to spell out its own construction arguments; otherwise copy.copy()
+    # dies with a TypeError about a missing ``allele_index``.
+    assert vcf_res.config is not None
+
+    with build_genomic_position_table(
+        vcf_res, vcf_res.config["tabix_table"],
+    ) as tab:
+        line = cast(VCFLine, next(iter(tab.get_all_records())))
+
+        clone = copy.copy(line)
+
+        assert clone is not line
+        assert isinstance(clone, VCFLine)
+        assert tuple(clone) == tuple(line)
+        assert clone == line
+        assert hash(clone) == hash(line)
+
+        assert clone.chrom == line.chrom
+        assert clone.fchrom == line.fchrom
+        assert clone.pos_begin == line.pos_begin
+        assert clone.pos_end == line.pos_end
+        assert clone.ref == line.ref
+        assert clone.alt == line.alt
+        assert clone.allele_index == line.allele_index
+        assert clone.get("A") == line.get("A")
+
+
+def test_vcf_line_copy_preserves_the_mapped_contig(
+    vcf_res_chrom_mapping: GenomicResource,
+) -> None:
+    # The mapped (reference) contig is a __new__ argument, not an attribute
+    # written back afterwards -- so a copy has to carry it, or the clone falls
+    # back to the file contig.
+    assert vcf_res_chrom_mapping.config is not None
+
+    with build_genomic_position_table(
+        vcf_res_chrom_mapping, vcf_res_chrom_mapping.config["tabix_table"],
+    ) as tab:
+        line = cast(VCFLine, next(iter(tab.get_all_records())))
+        assert line.chrom == "1"
+        assert line.fchrom == "chr1"
+
+        clone = copy.copy(line)
+
+        assert clone[CHROM] == "1"
+        assert clone.chrom == "1"
+        assert clone.fchrom == "chr1"
 
 
 def test_vcf_header_load_silences_htslib_index_probe(

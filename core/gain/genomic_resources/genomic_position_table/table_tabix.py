@@ -136,6 +136,10 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         self.stats = Counter()
         self.pysam_file = None
         self.line_iterator = None
+        # The parser closes over the column keys and the reverse chromosome
+        # map, both of which open() resolves from the file; a closed table must
+        # not keep them, and re-opening rebuilds it.
+        self.parser = None
 
     def get_chromosomes(self) -> list[str]:
         return list(filter(
@@ -269,6 +273,23 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         pos_begin: int | None = None,
         pos_end: int | None = None,
     ) -> Generator[Record, None, None]:
+        """Yield the records overlapping the region.
+
+        **The PAYLOAD slot is backend-dependent, and the static type does not
+        say so.**  This method's ``Record`` (``tuple[Any, ...]``) is inherited
+        by :class:`VCFGenomicPositionTable`, which yields ``VCFLine``s -- also
+        record-shaped tuples, but whose PAYLOAD is a ``pysam.VariantRecord``,
+        not a raw tabular row.  A ``VCFLine`` *is* a ``tuple[Any, ...]``, so
+        the type checker cannot tell the two apart; the discriminator is the
+        ``yields_records`` ClassVar, which the VCF subclass resets to False.
+
+        So: narrowing a table to this class with ``isinstance`` and then
+        indexing ``record[PAYLOAD][i]`` for a column is **only** valid once you
+        know the table is not a VCF one.  The five decoded slots
+        (CHROM ... ALT) are safe either way -- they mean the same thing in both
+        backends.  #237 migrates the VCF backend to real records and retires
+        the split.
+        """
         self.stats["calls"] += 1
 
         if chrom is None:

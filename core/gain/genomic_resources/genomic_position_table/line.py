@@ -4,7 +4,15 @@ from typing import Any, Protocol
 
 import pysam
 
-from .record import ALT, CHROM, POS_BEGIN, POS_END, REF, Record
+from .record import (
+    ALT,
+    CHROM,
+    PAYLOAD,
+    POS_BEGIN,
+    POS_END,
+    REF,
+    Record,
+)
 
 Key = str | int
 
@@ -85,9 +93,25 @@ class VCFLine(tuple):
     the score layer, which still wraps a VCF line in a ``ScoreLine`` and reads
     INFO fields by name; #237 migrates the VCF backend proper and drops them.
 
+    **Its PAYLOAD is not a tabular row.**  A VCF line carries the
+    ``pysam.VariantRecord`` in the slot where a tabix record carries the raw
+    row, so ``line[PAYLOAD][i]`` is *not* the i-th column of anything -- the
+    PAYLOAD slot means whatever the backend that produced the record says it
+    means.  A ``VCFLine`` is a ``tuple[Any, ...]`` like every other record, so
+    the type checker cannot flag the confusion; the discriminator is the
+    ``yields_records`` ClassVar on the table, which the VCF backend resets to
+    False.  Only the five decoded slots (``CHROM`` ... ``ALT``) mean the same
+    thing across backends.  #237 migrates the VCF backend and retires the
+    split.
+
     The mapped (reference) contig is fixed at construction rather than written
     back onto the object afterwards -- a tuple slot cannot be rebound, and the
     buffer may already be holding the line.
+
+    Equality is the tuple's -- structural over all six slots, a
+    ``pysam.VariantRecord`` being structurally comparable itself -- and
+    :meth:`__hash__` is defined to agree with it.  See the comments there and
+    on :meth:`__getnewargs__`.
     """
 
     def __new__(
@@ -133,6 +157,28 @@ class VCFLine(tuple):
         self.alt: str | None = self[ALT]
         self.info: pysam.VariantRecordInfo = raw_line.info
         self.info_meta: pysam.VariantHeaderMetadata = raw_line.header.info
+
+    def __getnewargs__(self) -> tuple[pysam.VariantRecord, int | None, str]:
+        # A tuple subclass is reconstructed (by ``copy.copy``, and by anything
+        # else that goes through ``__reduce_ex__``) as ``cls.__new__(cls,
+        # *self.__getnewargs__())``.  The inherited ``tuple.__getnewargs__``
+        # would hand the six-slot record itself back as ``raw_line`` and drop
+        # the other two arguments -- so spell the construction arguments out.
+        # The contig comes from the CHROM slot, which is the *mapped* one.
+        return self[PAYLOAD], self.allele_index, self[CHROM]
+
+    def __hash__(self) -> int:
+        # ``tuple.__hash__`` hashes every slot, and the PAYLOAD slot holds a
+        # ``pysam.VariantRecord``, which is unhashable -- so hash the five
+        # decoded slots instead.  Equality stays the tuple's (structural, over
+        # all six slots; a ``VariantRecord`` compares structurally too), and
+        # this hash agrees with it: equal lines have equal slots, hence equal
+        # hashes.  Value semantics are what a record-shaped tuple should have,
+        # and they are what makes a lookup by an equal-but-not-identical line
+        # work; an identity hash next to the inherited structural equality
+        # would break that contract instead of restoring it.
+        return hash((self[CHROM], self[POS_BEGIN], self[POS_END],
+                     self[REF], self[ALT]))
 
     def get(self, key: Key) -> Any:
         """Get a value from the INFO field of the VCF line."""
