@@ -7,6 +7,8 @@ drop and the end-position bump.
 """
 from __future__ import annotations
 
+from operator import itemgetter
+
 import pytest
 from gain.genomic_resources.genomic_position_table.record import (
     ALT,
@@ -74,16 +76,10 @@ def test_record_is_a_six_slot_tuple_whose_slots_cannot_be_rebound() -> None:
 
 def test_record_slots_counts_every_slot_the_parser_emits() -> None:
     # RECORD_SLOTS is the record contract's own count of its slots, and this
-    # module -- which owns the contract -- is where it lives.  Deriving it as
-    # ``PAYLOAD + 1`` would make it a statement about *where the payload sits*,
-    # not about *how many slots there are*: a seventh slot appended after
-    # PAYLOAD would leave the derived count at 6 while every record became 7
-    # long, and any consumer sizing a record by that count (the score layer's
-    # mis-route guard does) would then reject every legitimate record.
-    #
-    # So pin the count against what the parser actually emits, and against the
-    # slot constants themselves: every named slot must be a distinct index
-    # inside the record, and the record must have no unnamed slots.
+    # module -- which owns the contract -- is where it lives.  Pin the count
+    # against what the parser actually emits, and against the slot constants
+    # themselves: every named slot must be a distinct index inside the record,
+    # and the record must have no unnamed slots.
     parse = _parser(ref_key=3, alt_key=4)
     record = parse(["1", "10", "12", "A", "T", "0.5"])
     assert record is not None
@@ -91,6 +87,44 @@ def test_record_slots_counts_every_slot_the_parser_emits() -> None:
 
     slots = [CHROM, POS_BEGIN, POS_END, REF, ALT, PAYLOAD]
     assert sorted(slots) == list(range(RECORD_SLOTS))
+
+
+def test_the_payload_is_the_last_slot_and_the_count_derives_from_it() -> None:
+    # PAYLOAD-IS-LAST IS THE CONTRACT (see the module docstring), and this is
+    # the test that pins it.  The decoded slots come first and the payload
+    # closes the record, so:
+    #
+    #   * the payload's index IS the number of decoded slots, which is what
+    #     lets ``sort_key`` say "everything before the payload" as
+    #     ``record[:PAYLOAD]`` -- were PAYLOAD not the greatest slot, that
+    #     slice would silently drop a decoded field from the ordering;
+    #   * the slot count is one more than it, so RECORD_SLOTS derives from
+    #     PAYLOAD rather than repeating it.
+    #
+    # Together these make the payload's index the ONE place the record's shape
+    # is stated: a new decoded slot is inserted BEFORE the payload (PAYLOAD is
+    # renumbered up), and the count and the ordering key both follow with no
+    # second edit to keep in step.  Appending a decoded slot after the payload
+    # is not a legal record -- it would sit outside the ordering key and split
+    # that one statement in two.
+    slots = [CHROM, POS_BEGIN, POS_END, REF, ALT, PAYLOAD]
+    assert max(slots) == PAYLOAD
+    assert RECORD_SLOTS == PAYLOAD + 1
+    assert len(sort_key(("1", 10, 12, "A", "T", "row"))) == PAYLOAD
+
+    # ...and the parser emits exactly that shape, in every specialisation.
+    for extra in [
+        {},
+        {"zero_based": True},
+        {"rev_chrom_map": {"1": "chr1"}},
+        {"rev_chrom_map": {"1": "chr1"}, "zero_based": True},
+    ]:
+        parse = _parser(ref_key=3, alt_key=4, **extra)
+        row = ["1", "10", "12", "A", "T", "0.5"]
+        record = parse(row)
+        assert record is not None
+        assert len(record) - 1 == PAYLOAD
+        assert record[PAYLOAD] is record[-1] is row
 
 
 def test_payload_is_shared_with_the_caller_not_a_frozen_copy() -> None:
@@ -177,6 +211,57 @@ def test_sort_key_covers_every_decoded_slot_and_no_more() -> None:
     assert sort_key(record) == ("1", 10, 12, "A", "T")
     assert len(sort_key(record)) == RECORD_SLOTS - 1
     assert record[PAYLOAD] not in sort_key(record)
+    # The key is not a hard-coded five: it is "every slot the contract decodes",
+    # which the contract states as "everything before the payload".  Spell that
+    # out slot by slot, so the key cannot drift from the slot constants.
+    assert sort_key(record) == tuple(
+        record[slot] for slot in (CHROM, POS_BEGIN, POS_END, REF, ALT))
+
+
+def test_sort_key_agrees_with_an_explicit_decoded_slot_key() -> None:
+    # The in-memory backend sorts each contig's records with ``sort_key``; it
+    # used to build its own ``itemgetter(CHROM, POS_BEGIN, POS_END, REF, ALT)``
+    # for the job.  Pin that the two orderings are the same one -- over a
+    # corpus that ties on every prefix of the key (same contig; same begin;
+    # same begin+end; same begin+end+ref), so every slot of the key is exercised
+    # as a tie-breaker and none can be dropped without this failing.
+    parse = _parser(ref_key=3, alt_key=4)
+    rows = [
+        ["1", "10", "12", "A", "T", "0.1"],
+        ["1", "10", "12", "A", "G", "0.2"],
+        ["1", "10", "12", "C", "T", "0.3"],
+        ["1", "10", "11", "A", "T", "0.4"],
+        ["1", "9", "12", "A", "T", "0.5"],
+        ["2", "1", "1", "A", "T", "0.6"],
+    ]
+    records = [parse(row) for row in rows]
+    assert all(record is not None for record in records)
+
+    explicit = itemgetter(CHROM, POS_BEGIN, POS_END, REF, ALT)
+    assert [sort_key(r) for r in records] == [explicit(r) for r in records]
+    assert sorted(records, key=sort_key) == sorted(records, key=explicit)
+
+
+def test_sort_key_orders_records_whose_ref_and_alt_are_none() -> None:
+    # REF/ALT are ``None`` when the table has no ref/alt columns -- and that is
+    # a property of the TABLE, not of the row: ``build_tabular_parser`` fixes
+    # ``ref_key``/``alt_key`` once, so within one table every record carries
+    # ``None`` in that slot or every record carries a string.  A ``None`` in the
+    # key is therefore always compared against a ``None``, which tuple ordering
+    # settles by equality and never by ``<`` (``None < None`` would raise).
+    # Pin it on the case that would blow up if the slots ever went mixed: two
+    # records that tie all the way down to REF/ALT.
+    parse = _parser(ref_key=None, alt_key=None)
+    first = parse(["1", "10", "12", "0.1"])
+    second = parse(["1", "10", "12", "0.2"])
+    third = parse(["1", "9", "12", "0.3"])
+    assert first is not None
+    assert second is not None
+    assert third is not None
+    assert first[REF] is first[ALT] is None
+
+    ordered = sorted([second, first, third], key=sort_key)
+    assert ordered == [third, second, first]  # ties keep their input order
 
 
 # --- ref/alt columns ------------------------------------------------------
