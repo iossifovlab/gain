@@ -60,9 +60,9 @@ PAYLOAD = 5
 # literal here would be a second, independent statement of the same fact, and
 # the two would have to be bumped in lockstep by hand -- which is how a slot
 # gets added to the record but not to the ordering key.  Consumers size a record
-# by this count (the score layer's mis-route guard rejects a tuple whose length
-# is not RECORD_SLOTS); test_record_parser.py pins it, and the payload's place
-# at the end, against what the parser actually emits.
+# by this count; test_record_parser.py pins it, and the payload's place at the
+# end, against what the parser actually emits, and
+# test_backend_record_contract.py pins every record-yielding backend to it.
 RECORD_SLOTS = PAYLOAD + 1
 
 # A record is a plain six-element tuple; ``tuple[Any, ...]`` keeps the slots

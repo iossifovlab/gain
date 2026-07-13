@@ -5,7 +5,6 @@ import abc
 import copy
 import enum
 import warnings
-import weakref
 from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass
 from functools import lru_cache
@@ -34,7 +33,6 @@ from gain.genomic_resources.genomic_position_table.record import (
     PAYLOAD,
     POS_BEGIN,
     POS_END,
-    RECORD_SLOTS,
     REF,
     Record,
 )
@@ -185,14 +183,15 @@ class ScoreLineBase(abc.ABC):
     record is not substitutable for an adapter and the two constructors share
     no work.  The substitutability that finding 4 wanted is instead enforced
     structurally: :attr:`GenomicScore._score_line_class` is typed as a callable
-    ``(LineBase | Record, dict) -> ScoreLineBase`` and mypy checks every
-    assignment to it -- :class:`ScoreLine`, :class:`RecordScoreLine` and the
-    record path's one-shot checking wrapper -- against that signature.
+    ``(LineBase | Record, dict) -> ScoreLineBase`` and mypy checks both score
+    line classes -- :class:`ScoreLine` and :class:`RecordScoreLine` -- against
+    that signature.
 
-    That a table routed to :class:`RecordScoreLine` really does yield records is
-    checked once per open, on the table's first record, by
-    :meth:`GenomicScore._checked_record_score_line` -- not per line: it is a
-    per-table invariant and this is the hot path.
+    That a table routed to :class:`RecordScoreLine` really does yield records
+    is a claim about a *backend*, not about a line, so it is not checked at
+    runtime at all: it is pinned once, statically, over all four backends by
+    test_backend_record_contract.py.  The fetch path simply believes
+    ``table.yields_records``.
 
     Reading a raw value still costs a per-line bound-method allocation
     (``self._get_raw``).  Measured against a byte-faithful reconstruction of
@@ -350,11 +349,12 @@ class RecordScoreLine(ScoreLineBase):
     per-backend difference is where the raw value comes from, captured by
     binding ``self._get_raw`` to the payload's indexer.
 
-    The constructor does **not** check that ``line`` is a record.  That the
-    table yields records is a per-*table* invariant -- a backend yields one
-    shape of thing, for every line, forever -- and it is verified once, on the
-    table's first record, by :meth:`GenomicScore._checked_record_score_line`.
-    Re-checking it here would put a per-table question on the per-line path,
+    The constructor does **not** check that ``line`` is a record.  Whether a
+    table yields records is a property of the *backend* -- one shape of thing,
+    for every line, forever -- so it is a question about four classes, answered
+    once and statically by test_backend_record_contract.py, which opens each
+    backend and holds its first line against its ``yields_records`` claim.
+    Asking it again per line would put a per-backend question on the hot path,
     which is the cost this whole class exists to avoid.
     """
 
@@ -363,10 +363,10 @@ class RecordScoreLine(ScoreLineBase):
     ):
         # Bind the raw-value lookup to the payload's __getitem__ (score
         # columns are addressed by resolved integer index), the record-backed
-        # counterpart of ``line.get``.  ``line`` is a record: the table's claim
-        # to yield them was checked against its first record (see
-        # GenomicScore._checked_record_score_line).  Nothing here may cost more
-        # than an attribute store -- a ``cast`` would be a real call, ~15ns.
+        # counterpart of ``line.get``.  ``line`` is a record: the table said so
+        # (yields_records), and that claim is pinned against every backend by
+        # test_backend_record_contract.py.  Nothing here may cost more than an
+        # attribute store -- a ``cast`` would be a real call, ~15ns.
         self.record: Record = line  # type: ignore[assignment]
         self.score_defs = score_defs
         self._get_raw = self.record[PAYLOAD].__getitem__
@@ -393,51 +393,11 @@ class RecordScoreLine(ScoreLineBase):
 
 
 # What a fetched line is wrapped in: a callable, not a ``type[...]``, so mypy
-# checks the two score line classes AND the record path's one-shot
-# _RecordContractCheck against one signature.  We never call issubclass on it.
+# checks both score line classes against one signature.  We never call
+# issubclass on it.
 _ScoreLineFactory = Callable[
     [LineBase | Record, dict[str, _ScoreDef]], ScoreLineBase,
 ]
-
-
-class _RecordContractCheck:
-    """A score's once-per-open record-contract check, held **weakly**.
-
-    ``GenomicScore.open`` installs one of these as a record-yielding score's
-    ``_score_line_class``.  It just forwards to
-    :meth:`GenomicScore._checked_record_score_line`, which owns the check (and
-    documents it) and disarms the score -- rebinding ``_score_line_class`` to
-    the bare :class:`RecordScoreLine` -- once the table's first record has
-    proved the contract.
-
-    **The weak hold is the entire reason this class exists**; without it
-    ``open()`` would simply install the bound method itself, which is a line
-    shorter and does the same thing.  But a bound method keeps its instance
-    alive through ``__self__``, while the score keeps the callable alive through
-    ``_score_line_class`` -- so every opened record-yielding score would be a
-    reference cycle, reclaimable only by a generational gc pass instead of by
-    refcount, and dragging its table (for the in-memory backend, its entire
-    ``records_by_chr``) along for the wait.  The disarm breaks such a cycle on
-    the first record read, so the window is "opened but never read from": a
-    score whose first queried region is empty, or one closed without a read.
-    A :class:`weakref.WeakMethod` has no such window, at the cost of one
-    dereference per table.  Pinned by
-    test_an_opened_score_is_not_a_reference_cycle.
-    """
-
-    __slots__ = ("_check_ref",)
-
-    def __init__(self, check: _ScoreLineFactory) -> None:
-        self._check_ref = weakref.WeakMethod(check)
-
-    def __call__(
-        self, line: LineBase | Record, score_defs: dict[str, _ScoreDef],
-    ) -> ScoreLineBase:
-        check = self._check_ref()
-        # The only reference to this object is the score's own
-        # _score_line_class, so a call implies a live score.
-        assert check is not None
-        return check(line, score_defs)
 
 
 @dataclass
@@ -600,15 +560,8 @@ class GenomicScore(ResourceConfigValidationMixin):
         self.score_definitions = self._build_scoredefs()
         # What each fetched line is wrapped in; the record-yielding backends use
         # RecordScoreLine, the adapter-yielding ones ScoreLine.  Selected in
-        # open() once the table is open and its record shape is known; on the
-        # record path it starts out as the one-shot _RecordContractCheck, which
-        # rebinds this attribute to RecordScoreLine after the table's first
-        # record proves its yields_records claim.
-        #
-        # A per-INSTANCE attribute, and load-bearing: the disarm mutates it
-        # mid-flight, which is only safe because one score's proof does not
-        # vouch for another's table (pinned by
-        # test_the_record_check_is_isolated_per_score).
+        # open(), from the table's yields_records claim -- this default holds
+        # only until then.
         self._score_line_class: _ScoreLineFactory = ScoreLine
 
     @staticmethod
@@ -976,15 +929,10 @@ class GenomicScore(ResourceConfigValidationMixin):
         # Choose the score line class per backend: a table that yields records
         # is wrapped in a RecordScoreLine, one that yields adapters in a
         # ScoreLine.  This is decided at open time, alongside the table's own
-        # parser/transform selection.
-        #
-        # The record path goes through _checked_record_score_line, which
-        # verifies the table's yields_records claim against its first actual
-        # record and then rebinds this attribute to RecordScoreLine itself.
-        # See that method for why the check lives here and not per line, and
-        # _RecordContractCheck for why it is installed through a weakref-holding
-        # object rather than as the bound method (which would make every opened
-        # record score a reference cycle).
+        # parser/transform selection, and the table's yields_records claim is
+        # simply believed -- that every backend's claim matches what it really
+        # yields is pinned statically, over all four of them, by
+        # test_backend_record_contract.py, so the fetch path pays nothing.
         #
         # Route BEFORE publishing.  ``table_loaded = True`` is what makes this
         # score look open to everyone else: from that write on, another caller's
@@ -994,13 +942,10 @@ class GenomicScore(ResourceConfigValidationMixin):
         # __init__ default (ScoreLine) for a record-yielding table -- a record
         # tuple into an adapter score line.  Scores are shared across threads
         # (the process-wide in-memory CNV cache; gain-web-api's thread pool), so
-        # the window is reachable; this ordering closes it.  Also re-arms the
-        # once-per-table check on a reopen, since the assignment is
-        # unconditional (pinned by test_the_record_contract_is_rechecked_after_
-        # a_reopen -- close() deliberately does not re-arm; open() does).
+        # the window is reachable; this ordering closes it.  Pinned by
+        # test_the_score_is_routed_before_it_reports_itself_open.
         self._score_line_class = (
-            _RecordContractCheck(self._checked_record_score_line)
-            if self.table.yields_records else ScoreLine)
+            RecordScoreLine if self.table.yields_records else ScoreLine)
         self.table_loaded = True
         if "scores" in self.config:
             self._validate_scoredefs()
@@ -1035,99 +980,6 @@ class GenomicScore(ResourceConfigValidationMixin):
                 "exception while working with genomic score: %s, %s, %s",
                 exc_type, exc_value, exc_tb)
         self.close()
-
-    def _checked_record_score_line(
-        self, line: LineBase | Record, score_defs: dict[str, _ScoreDef],
-    ) -> ScoreLineBase:
-        """Wrap the table's FIRST record, checking the contract it claimed.
-
-        ``open()`` routes a table to :class:`RecordScoreLine` on the strength of
-        one class-level claim, ``table.yields_records``.  A backend that makes
-        that claim and yields something else -- a line adapter, a tuple of the
-        wrong length, a tuple whose payload is not a raw row -- is mis-wired,
-        and without a check the mistake surfaces one line later, inside the
-        ``_get_raw`` binding, as an ``AttributeError`` about a
-        ``pysam...VariantRecord`` having no ``__getitem__``: an error that names
-        nothing that is actually wrong.
-
-        Whether a table yields records is a property of the *backend*, not of a
-        row: one shape of thing, for every line, forever.  So the claim is
-        checked exactly once -- against the first record the table actually
-        produces, which is the earliest moment a claim about records can be
-        contradicted (``open()`` has a table but not yet a line) -- and this
-        method then **disarms itself**, rebinding ``_score_line_class`` to
-        :class:`RecordScoreLine`.  Every later line constructs the bare
-        :class:`RecordScoreLine`: no ``type`` call, no ``len`` call, no branch,
-        i.e. exactly the per-line cost of the un-checked constructor (+31ns/line
-        when the check sat there instead).  Paying the check once per *table*
-        is also what makes it affordable to look past the record's shape and at
-        its payload, which is where the two most misleading mis-wires hide.
-
-        What is checked, exactly -- the promise the error message makes is the
-        promise the code keeps, no more:
-
-        * **Exactly a tuple.**  An allowlist, and load-bearing:
-          ``isinstance(line, tuple)`` would admit a ``VCFLine``, a tuple
-          subclass of the right length whose payload is a
-          ``pysam.VariantRecord``.  Only ``type(line) is tuple`` rejects it.
-        * **``RECORD_SLOTS`` slots.**
-        * **A payload that can be indexed like a raw row.**  Shape alone is not
-          the contract: a plain 6-slot tuple whose payload is ``None`` passes
-          every shape test and then dies in the ``_get_raw`` binding with
-          exactly the ``AttributeError`` this check exists to eliminate.  So the
-          payload is required to have ``__getitem__`` -- one attribute lookup,
-          paid once per table.
-        * **A payload that is not a ``str``/``bytes``.**  Both are indexable, so
-          an indexability test alone admits them -- and then *nothing* raises:
-          ``_get_raw(col)`` returns the col-th **character**, every score fails
-          to parse, and the score silently yields ``None`` everywhere.  Silently
-          wrong values are worse than a crash, so the degenerate
-          sequence-of-characters payload is rejected by name.
-
-        What is deliberately **not** checked: that the payload's cells are the
-        table's columns.  A raw row is duck-typed (a ``pysam.TupleProxy``, a
-        plain tuple of cells, ...) and its width is a per-row property of the
-        data, not of the backend -- so there is nothing here that is both
-        checkable once and true for every row.  The message promises an
-        indexable raw row, which is what it verifies.
-        """
-        # pylint: disable-next=unidiomatic-typecheck
-        if type(line) is not tuple or len(line) != RECORD_SLOTS:
-            raise TypeError(
-                f"table {type(self.table).__name__} of genomic score "
-                f"{self.resource_id} sets yields_records, so GenomicScore.open "
-                f"routed it to RecordScoreLine -- but it yielded a "
-                f"{type(line).__name__}, not a record (a plain "
-                f"{RECORD_SLOTS}-slot tuple whose PAYLOAD is an indexable raw "
-                f"row). A line adapter (Line/VCFLine/BigWigLine) is not a "
-                f"record: a table that yields adapters must leave "
-                f"yields_records False, and is then read through ScoreLine.")
-        payload = line[PAYLOAD]
-        if not hasattr(payload, "__getitem__") \
-                or isinstance(payload, (str, bytes)):
-            raise TypeError(
-                f"table {type(self.table).__name__} of genomic score "
-                f"{self.resource_id} sets yields_records, so GenomicScore.open "
-                f"routed it to RecordScoreLine -- but it yielded a "
-                f"{RECORD_SLOTS}-slot tuple whose PAYLOAD is a "
-                f"{type(payload).__name__}, not an indexable raw row. The "
-                f"payload is read by column index (RecordScoreLine binds "
-                f"_get_raw to payload.__getitem__), so it must be indexable "
-                f"and must not be a str/bytes -- indexing those yields "
-                f"characters, not cells, which would make every score parse to "
-                f"None instead of raising.")
-        # Construct FIRST, disarm after.  RecordScoreLine's __init__ takes the
-        # payload's __getitem__ binding -- an attribute lookup on a duck-typed
-        # object, which can raise -- and a disarm that ran before it would
-        # leave the score unchecked for the rest of its open lifetime on the way
-        # out of that exception: the next mis-wired line would then reach the
-        # bare constructor and die with exactly the nameless AttributeError this
-        # check exists to replace.  The claim is proved only once a score line
-        # has actually been built from the table's own first record; only then
-        # is the per-line path the bare constructor.
-        score_line = RecordScoreLine(line, score_defs)
-        self._score_line_class = RecordScoreLine
-        return score_line
 
     @staticmethod
     def _line_to_begin_end(line: ScoreLineBase) -> tuple[str, int, int]:
