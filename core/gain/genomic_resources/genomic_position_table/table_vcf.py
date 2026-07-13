@@ -45,6 +45,19 @@ def build_vcf_parser(rev_chrom_map: dict[str, str] | None) -> VCFParser:
 
     A variant whose contig is absent from the map yields ``None`` and the
     record is dropped by the callers, exactly as the tabular parser's rows are.
+
+    **The map's presence selects the path, not its contents.**  An *empty* map
+    -- which a well-formed ``chrom_mapping.filename`` with no body rows yields
+    -- is a map that maps nothing, so every record is dropped.  It is not
+    treated as "no mapping at all": a table configured with such a file has no
+    chromosomes either (``get_chromosomes()`` comes from the mapping file), and
+    passing the file contigs through would make it yield records on contigs it
+    says it does not have -- ``get_records_in_region`` would raise for the very
+    contig ``get_all_records`` had just handed back.  This is the same rule
+    :func:`build_tabular_parser` follows, and it is a deliberate change from
+    the pre-record VCF backend, which tested the map for *truthiness* and so
+    identity-mapped an empty one.  (Pinned in test_genomic_position_table.py by
+    test_an_empty_chrom_mapping_file_maps_nothing_and_so_drops_every_record.)
     """
     if rev_chrom_map is not None:
         def parse_mapped(

@@ -3,6 +3,7 @@ import pathlib
 import textwrap
 from typing import cast
 
+import pysam
 import pytest
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
@@ -15,6 +16,7 @@ from gain.genomic_resources.genomic_position_table.line import (
     BigWigLine,
     Line,
 )
+from gain.genomic_resources.genomic_position_table.record import PAYLOAD
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     GenomicScore,
@@ -648,6 +650,78 @@ def test_vcf_tuple_scores_autoconcat_to_string(vcf_score: AlleleScore) -> None:
         ("chr1", 30, 30, "31"),
         ("chr1", 30, 30, "31"),
     )
+
+
+class _CountingVariant:
+    """A pysam variant record that counts the proxy reads made through it.
+
+    ``variant.info`` and ``variant.header`` do not return a cached attribute:
+    pysam builds a **fresh** proxy object on every access (``v.info is v.info``
+    is ``False``, ~85ns each).  So the number of times a score line touches
+    them is a per-line cost that is otherwise invisible -- this proxy makes it
+    observable, over a real variant record with real INFO data behind it.
+    """
+
+    def __init__(self, variant: pysam.VariantRecord) -> None:
+        self._variant = variant
+        self.info_reads = 0
+        self.header_reads = 0
+
+    @property
+    def info(self) -> pysam.VariantRecordInfo:
+        self.info_reads += 1
+        return self._variant.info
+
+    @property
+    def header(self) -> pysam.VariantHeader:
+        self.header_reads += 1
+        return self._variant.header
+
+
+def test_vcf_score_line_reads_the_pysam_proxies_once_per_line(
+    vcf_score: AlleleScore,
+) -> None:
+    """The INFO proxy and its header metadata are read ONCE per line.
+
+    Both ``variant.info`` and ``variant.header.info`` allocate a fresh pysam
+    proxy on every access, so obtaining them per *score* would put ~170ns of
+    pure re-allocation on every score of every line -- a per-line cost that
+    grows with the width of the table, and VCF INFO score resources are wide
+    (a ClinVar-shaped resource declares ~20 INFO fields, and statistics
+    generation reads them all).  They are properties of the LINE, not of a
+    score, so they are obtained once and reused for every score read.
+
+    They are still obtained **lazily**, on the first score read: a line whose
+    scores are never read (an allele filtered out by REF/ALT in
+    ``AlleleScore.fetch_scores``) must pay nothing for them.
+    """
+    with vcf_score.open():
+        # A real, multi-allelic line -- the record whose INFO the counting
+        # proxy stands in front of is the genuine pysam one.
+        line = next(iter(vcf_score.fetch_lines("chr1", 30, 30)))
+        assert isinstance(line, VCFScoreLine)
+        variant, allele_index = line.record[PAYLOAD]
+
+        counting = _CountingVariant(variant)
+        record = (*line.record[:PAYLOAD], (counting, allele_index))
+        counted_line = VCFScoreLine(record, vcf_score.score_definitions)
+
+        # Nothing is read before a score is asked for.
+        assert (counting.info_reads, counting.header_reads) == (0, 0)
+
+        score_defs = list(vcf_score.score_definitions.values())
+        assert len(score_defs) == 4
+        values = counted_line.get_values(score_defs)
+
+        # ...and the four scores read the two proxies exactly once between
+        # them -- not once each.
+        assert counting.info_reads == 1
+        assert counting.header_reads == 1
+
+        # The values are the same ones the real line reads: the hoist is a
+        # cost change, not a semantic one.
+        assert values == line.get_values(score_defs)
+        assert values == [3, "31", "c32", "d31"]
 
 
 def test_vcf_score_line_selects_info_values_by_allele_index(

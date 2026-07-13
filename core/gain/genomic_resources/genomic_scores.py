@@ -445,11 +445,39 @@ class VCFScoreLine(RecordScoreLineBase):
         # ``line`` is a VCF record -- the table said so, and the claim is pinned
         # over every backend by test_backend_record_contract.py.  The payload is
         # unpacked lazily, in _get_info: a line whose scores are never read (an
-        # allele filtered out by REF/ALT in AlleleScore.fetch_scores, say) then
-        # pays nothing for it.
+        # allele filtered out by REF/ALT in AlleleScore.fetch_scores, say) pays
+        # nothing beyond the three null stores below.
         self.record: Record = line  # type: ignore[assignment]
         self.score_defs = score_defs
         self._get_raw = self._get_info
+        # What an INFO lookup needs, resolved on the first score read of this
+        # line and reused by every later one (see _get_info).  ``_info`` doubles
+        # as the "not resolved yet" flag -- pysam never hands back a null INFO
+        # proxy, so ``None`` here can only mean unread.  All three are declared
+        # here, null, rather than sprung into existence inside _get_info, so
+        # every instance of the class lays the same attributes down in the same
+        # order.
+        #
+        # The memo is not free: at ONE score there is nothing to reuse yet, only
+        # the state to set up, and it costs ~0.17us/line; from the second score
+        # on it saves ~0.17us per score, which is what it costs to allocate the
+        # two proxies again.  So it pays for itself at two scores and compounds
+        # from there -- 3000-line fetch_lines + get_values, min-of-9, us/line:
+        #
+        #     scores      1      5     20     50
+        #     no memo   1.47   3.84  12.57  31.08
+        #     memo      1.64   3.56  10.89  25.43
+        #
+        # That is the right trade for this backend: score resources of VCF INFO
+        # shape are wide (ClinVar-shaped: ~20 INFO fields), and statistics and
+        # histogram generation read every score def of them, so the width is
+        # where this read path actually lives.  Resolving on first read rather
+        # than in __init__ is the other half of the trade: an allele filtered
+        # out by REF/ALT in AlleleScore.fetch_scores is never scored at all, and
+        # eager resolution would charge it the two proxies for nothing.
+        self._info: Any = None
+        self._info_meta: Any = None
+        self._allele_index: int | None = None
 
     def _get_info(self, key: str | int) -> Any:
         """Look one INFO field up on this record's allele.
@@ -468,18 +496,43 @@ class VCFScoreLine(RecordScoreLineBase):
         * anything else -- handed back as pysam decoded it.
 
         An absent INFO key yields ``None`` rather than raising: ``info.get``
-        returns ``None``, which is not a tuple, so the number cases are skipped
-        and ``_extract_value`` turns it into a null score.  (That is also why
-        the metadata is only ever touched *inside* the tuple branch -- an absent
-        key has no metadata entry either.)
+        and the metadata's ``.get`` both return ``None``, and ``None`` is not a
+        tuple, so the number cases are skipped and ``_extract_value`` turns it
+        into a null score.  (The metadata is looked up for every key, absent
+        ones included -- ``.get`` simply answers ``None`` for those, and only
+        the tuple branch below goes on to read a ``.number`` off it.)
+
+        **The two pysam proxies are per-LINE, not per-score.**  Neither
+        ``variant.info`` nor ``variant.header.info`` is a cached attribute:
+        pysam allocates a fresh proxy on *every* access (~85ns each, and
+        ``v.info is v.info`` is False).  Obtaining them once per score would
+        therefore put ~170ns of pure re-allocation on every score of every
+        line, which is a per-line cost of exactly the kind the record migration
+        exists to remove -- and it grows with the width of the table, where VCF
+        INFO resources are widest (a ClinVar-shaped resource declares ~20 INFO
+        fields, and statistics generation reads them all).  They belong to the
+        line, so they are resolved once, on the first score read, and every
+        later read of the same line reuses them.  (Pinned by
+        test_vcf_score_line_reads_the_pysam_proxies_once_per_line.)
+
+        Resolving them on the first read rather than in ``__init__`` keeps the
+        payload unpacking lazy: a line whose scores are never read pays nothing
+        at all.
         """
         assert isinstance(key, str)
-        variant = self.record[PAYLOAD][VARIANT]
-        allele_index = self.record[PAYLOAD][ALLELE_INDEX]
+        info = self._info
+        if info is None:
+            payload = self.record[PAYLOAD]
+            variant = payload[VARIANT]
+            # The header metadata is derived from the record, not carried with
+            # it.
+            info = self._info = variant.info
+            self._info_meta = variant.header.info
+            self._allele_index = payload[ALLELE_INDEX]
+        allele_index = self._allele_index
 
-        # The header metadata is derived from the record, not carried with it.
-        value = variant.info.get(key)
-        meta = variant.header.info.get(key)
+        value = info.get(key)
+        meta = self._info_meta.get(key)
         if isinstance(value, tuple):
             if meta.number == "A" and allele_index is not None:
                 value = value[allele_index]
@@ -1048,8 +1101,15 @@ class GenomicScore(ResourceConfigValidationMixin):
         # __init__ default (ScoreLine) for a record-yielding table -- a record
         # tuple into an adapter score line.  Scores are shared across threads
         # (the process-wide in-memory CNV cache; gain-web-api's thread pool), so
-        # the window is reachable; this ordering closes it.  Pinned by
-        # test_the_score_is_routed_before_it_reports_itself_open.
+        # the window is reachable; this ordering keeps the ROUTING out of it.
+        # Pinned by test_the_score_is_routed_before_it_reports_itself_open.
+        #
+        # It does not make open() as a whole safe to race, and does not claim
+        # to: the score_index assignment below still runs after the score has
+        # published itself open, so a caller that catches that window reads a
+        # score def whose score_index is still None.  That window is older than
+        # this routing and untouched by it -- open() is not synchronised, and
+        # making it so is a separate change.
         if is_vcf:
             self._score_line_class = VCFScoreLine
         elif self.table.yields_records:

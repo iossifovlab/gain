@@ -40,6 +40,7 @@ from gain.genomic_resources.genomic_position_table.line import LineBase
 from gain.genomic_resources.genomic_position_table.record import (
     PAYLOAD,
     RECORD_SLOTS,
+    sort_key,
 )
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
@@ -119,6 +120,77 @@ _BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
     pytest.param(_open_vcf, VCFScoreLine, id="vcf"),
     pytest.param(_open_bigwig, ScoreLine, id="bigwig"),
 ]
+
+
+# Whether a record this backend yields can be HASHED -- put in a set, or used
+# as a dict key.  It is a per-backend fact, not a property of the record
+# contract, and that is exactly why it is declared here: a record is a plain
+# tuple, so ``hash(record)`` walks the tuple -- straight into the PAYLOAD,
+# whose hashability belongs to the backend that built it.  Only ONE of the
+# three record backends gives it:
+#
+#   * in-memory -- payload is a ``tuple[str, ...]``: hashes;
+#   * tabix -- payload is a ``pysam.TupleProxy``, which defines ``__eq__`` and
+#     so has ``__hash__ = None``: raises ``TypeError``;
+#   * VCF -- payload is a ``(pysam.VariantRecord, allele index)`` pair, and a
+#     ``pysam.VariantRecord`` is unhashable for the same reason, so hashing the
+#     pair -- and so the record -- raises ``TypeError``.
+#
+# Only record-yielding backends are listed (bigWig still yields adapters);
+# test_every_record_backend_declares_whether_its_records_hash keeps this list
+# in step with _BACKENDS.
+_HASHABILITY: list[pytest.param] = [  # type: ignore[valid-type]
+    pytest.param(_open_inmemory, True, id="inmemory"),
+    pytest.param(_open_tabix, False, id="tabix"),
+    pytest.param(_open_vcf, False, id="vcf"),
+]
+
+
+def test_every_record_backend_declares_whether_its_records_hash() -> None:
+    # A new record backend must say whether its records hash -- the answer is
+    # its payload's, and a caller cannot read it off the record contract.
+    record_backends = {
+        param.id for param in _BACKENDS
+        if param.values[1] in (RecordScoreLine, VCFScoreLine)
+    }
+    assert {param.id for param in _HASHABILITY} == record_backends
+
+
+@pytest.mark.parametrize(("open_backend", "records_hash"), _HASHABILITY)
+def test_a_records_hashability_is_its_payloads(
+    tmp_path: pathlib.Path,
+    open_backend: Callable[[pathlib.Path], OpenedBackend],
+    records_hash: bool,
+) -> None:
+    """A record hashes exactly when its backend's payload does.
+
+    The record contract (record.py) says so, and this is what pins it.  The
+    decoded half of a record always hashes -- ``sort_key`` projects it, and
+    that projection is a key a caller can always take -- but the record as a
+    whole is a tuple with the payload inside it, so its hash is the payload's
+    to give or to withhold.  A caller that wants a set of records, or a dict
+    keyed by one, must key it on ``sort_key(record)`` and not on the record --
+    on two of the three record backends the record itself raises.
+    """
+    score, region = open_backend(tmp_path)
+    with score:
+        records = list(score.table.get_records_in_region(*region))
+        first = records[0]
+        backend = type(score.table).__name__
+
+        # The decoded half always hashes, whatever the backend.
+        assert hash(sort_key(first)) == hash(sort_key(first))
+
+        if records_hash:
+            by_record = {record: i for i, record in enumerate(records)}
+            assert by_record[first] == 0, (
+                f"{backend} records are declared hashable but do not work as "
+                f"dict keys")
+        else:
+            with pytest.raises(TypeError, match="unhashable"):
+                hash(first)
+            with pytest.raises(TypeError, match="unhashable"):
+                _ = {first: 0}
 
 
 @pytest.mark.parametrize(("open_backend", "score_line_cls"), _BACKENDS)

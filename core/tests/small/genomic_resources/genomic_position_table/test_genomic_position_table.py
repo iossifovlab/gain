@@ -797,6 +797,77 @@ def test_chrom_mapping_file_with_tabix(tmp_path: pathlib.Path) -> None:
             ["pesho"]
 
 
+def test_an_empty_chrom_mapping_file_maps_nothing_and_so_drops_every_record(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A chrom_mapping file with only its header maps NO contig -- so no record.
+
+    This is the degenerate mapping: a well-formed ``chrom_mapping.filename``
+    whose body is empty.  It maps nothing, and a table configured with it
+    therefore *has* no chromosomes -- ``get_chromosomes()`` is empty, because
+    the mapping file is the source of the table's contigs.
+
+    A record whose file contig is absent from a configured map is dropped, and
+    with an empty map that is every record.  The alternative -- treating the
+    empty map as "no mapping at all" and passing the file contigs through --
+    would make the table yield records on contigs it says it does not have, and
+    ``get_records_in_region`` would then raise for the very contig
+    ``get_all_records`` had just handed back.
+
+    Every record backend answers this the same way: the map's *presence* is
+    what selects the mapping path, not its emptiness.
+    """
+    mapping = convert_to_tab_separated("""
+        chrom   file_chrom
+    """)
+
+    inmemory_res = build_inmemory_test_resource({
+        "genomic_resource.yaml": """
+            table:
+                filename: data.mem
+                chrom_mapping:
+                    filename: chrom_map.txt
+            scores:
+            - id: c2
+              name: c2
+              type: float""",
+        "data.mem": convert_to_tab_separated("""
+            chrom    pos_begin pos_end  c2
+            chr1     10        10       3.14"""),
+        "chrom_map.txt": mapping,
+    })
+
+    setup_directories(
+        tmp_path, {
+            "genomic_resource.yaml": textwrap.dedent("""
+                table:
+                    filename: data.vcf.gz
+                    format: vcf_info
+                    chrom_mapping:
+                        filename: chrom_map.txt
+            """),
+            "chrom_map.txt": mapping,
+        })
+    setup_vcf(
+        tmp_path / "data.vcf.gz",
+        textwrap.dedent("""
+##fileformat=VCFv4.1
+##INFO=<ID=A,Number=1,Type=Integer,Description="Score A">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   10  .  A   T   .    .      A=1
+    """),
+    )
+    vcf_res = build_filesystem_test_resource(tmp_path)
+
+    for res in (inmemory_res, vcf_res):
+        assert res.config is not None
+        with build_genomic_position_table(res, res.config["table"]) as tab:
+            assert tab.get_chromosomes() == []
+            assert list(tab.get_all_records()) == []
+            with pytest.raises(ValueError, match="chr1"):
+                list(tab.get_records_in_region("chr1"))
+
+
 def test_invalid_chrom_mapping_file_with_tabix(tmp_path: pathlib.Path) -> None:
     setup_directories(
         tmp_path, {
