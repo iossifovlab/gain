@@ -61,6 +61,11 @@ logger = logging.getLogger(__name__)
 
 ScoreValue = str | int | float | bool | None
 
+# A record is a six-slot tuple -- CHROM, POS_BEGIN, POS_END, REF, ALT, PAYLOAD.
+# Derived from the index of the last slot so it cannot drift from the contract
+# in ``genomic_position_table.record``.
+RECORD_SLOTS = PAYLOAD + 1
+
 VCF_TYPE_CONVERSION_MAP = {
     "Integer": "int",
     "Float": "float",
@@ -346,10 +351,29 @@ class RecordScoreLine(ScoreLineBase):
     def __init__(
         self, line: LineBase | Record, score_defs: dict[str, _ScoreDef],
     ):
-        # A record is a plain tuple; bind the raw-value lookup to the
-        # payload's __getitem__ (score columns are addressed by resolved
-        # integer index), the record-backed counterpart of ``line.get``.
-        assert isinstance(line, tuple)
+        # A record is a *plain* tuple of exactly RECORD_SLOTS slots, and only
+        # such a tuple has an indexable raw row in its PAYLOAD.  The exact-type
+        # check is the load-bearing half: ``isinstance(line, tuple)`` would
+        # pass a ``VCFLine``, which is a tuple subclass of the right length but
+        # carries a ``pysam.VariantRecord`` in its PAYLOAD -- binding
+        # ``_get_raw`` to that would fail on the next line with an
+        # ``AttributeError`` about a missing ``__getitem__``, which says
+        # nothing about the actual mistake (an adapter-yielding table routed
+        # here; see ``GenomicScore.open``).  Reject it here, by name, instead.
+        # pylint: disable=unidiomatic-typecheck  (isinstance is the bug: it
+        # accepts a tuple *subclass*, and VCFLine is one -- the exact-type
+        # check is the point of this guard, not an oversight.)
+        if type(line) is not tuple or len(line) != RECORD_SLOTS:
+            raise TypeError(
+                f"RecordScoreLine expects a record -- a plain "
+                f"{RECORD_SLOTS}-slot tuple whose PAYLOAD is an indexable raw "
+                f"row -- but got {type(line).__name__}. A line adapter "
+                f"(Line/VCFLine/BigWigLine) is not a record: wrap it in a "
+                f"ScoreLine. A table whose yields_records is False must not "
+                f"be routed here.")
+        # Bind the raw-value lookup to the payload's __getitem__ (score
+        # columns are addressed by resolved integer index), the record-backed
+        # counterpart of ``line.get``.
         self.record = line
         self.score_defs = score_defs
         self._get_raw = line[PAYLOAD].__getitem__

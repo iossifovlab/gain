@@ -20,12 +20,18 @@ payloads are different objects: the in-memory backend's payload is a plain
 ``RecordScoreLine`` binds ``_get_raw`` to whichever one it is handed, so a
 binding that works on one and not the other fails here.  ``ScoreLine``'s own
 binding is pinned by the two adapter-backend tests at the bottom of this file.
+
+Which class a backend is routed to is therefore load-bearing, so the routing
+itself is pinned here too: the adapter backends must yield a ``ScoreLine``,
+and ``RecordScoreLine`` must reject an adapter handed to it by mistake --
+loudly, at construction, rather than one line later inside the binding.
 """
 from __future__ import annotations
 
 import logging
 
 import pytest
+from gain.genomic_resources.genomic_position_table import VCFLine
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     PositionScore,
@@ -197,6 +203,73 @@ chr1   10  .  A   T   .    .      scoreA=0.1
         assert isinstance(line, ScoreLine)
         assert not isinstance(line, RecordScoreLine)
         assert line.get_score("scoreA") == pytest.approx(0.1)
+
+
+def _a_vcf_line(tmp_path) -> VCFLine:
+    """Return a real ``VCFLine`` (the adapter the VCF backend yields)."""
+    builder = a_vcf_info_score().with_data("""
+##fileformat=VCFv4.1
+##INFO=<ID=scoreA,Number=1,Type=Float,Description="score A">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   10  .  A   T   .    .      scoreA=0.1
+""")
+    repo = a_grr().with_resource("vcf", builder).build_repo(tmp_path)
+    score = AlleleScore(repo.get_resource("vcf")).open()
+    with score:
+        score_line = next(iter(score.fetch_lines("chr1", 10, 10)))
+        assert isinstance(score_line, ScoreLine)
+        line = score_line.line
+        assert isinstance(line, VCFLine)
+        return line
+
+
+def test_record_score_line_rejects_a_line_adapter(tmp_path) -> None:
+    # The mis-route guard.  A ``VCFLine`` is a ``tuple`` subclass (it rides
+    # the record-indexed LineBuffer), so ``isinstance(line, tuple)`` no longer
+    # tells a record from an adapter -- a VCFLine would sail past such a guard
+    # and blow up one line later, deep inside the _get_raw binding, with an
+    # ``AttributeError`` about ``pysam...VariantRecord`` having no
+    # ``__getitem__``: its PAYLOAD is a VariantRecord, not an indexable raw
+    # row.  Pin that a mis-routed adapter is rejected *at construction*, and
+    # that the error says what is wrong.
+    line = _a_vcf_line(tmp_path)
+    assert isinstance(line, tuple)  # this is why the old guard stopped working
+
+    with pytest.raises(TypeError, match="VCFLine") as exc_info:
+        RecordScoreLine(line, {})
+
+    message = str(exc_info.value)
+    assert "record" in message
+    # It must not be the downstream payload confusion.
+    assert "__getitem__" not in message
+
+
+def test_record_score_line_rejects_a_mis_shaped_tuple() -> None:
+    # The other half of the record contract: six slots.  A plain tuple of the
+    # wrong length is not a record either.
+    with pytest.raises(TypeError, match="record"):
+        RecordScoreLine(("1", 10, 10), {})
+
+
+def test_record_score_line_accepts_a_plain_record() -> None:
+    # The guard must not reject a legitimate record: a plain six-slot tuple
+    # whose PAYLOAD is an indexable raw row.
+    raw = ("1", "10", "0.5")
+    line = RecordScoreLine(
+        ("1", 10, 10, None, None, raw),
+        {"s": _ScoreDef(
+            score_id="s", desc="", value_type="float",
+            pos_aggregator=None, allele_aggregator=None,
+            small_values_desc=None, large_values_desc=None, hist_conf=None,
+            col_name=None, col_index=2,
+            value_parser=float, na_values=None, score_index=2)},
+    )
+    assert line.chrom == "1"
+    assert line.pos_begin == 10
+    assert line.pos_end == 10
+    assert line.ref is None
+    assert line.alt is None
+    assert line.get_score("s") == 0.5
 
 
 def test_bigwig_backend_yields_the_adapter_score_line(tmp_path) -> None:
