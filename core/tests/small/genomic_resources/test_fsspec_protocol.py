@@ -733,17 +733,11 @@ def test_build_manifest_keeps_dvc_managed_file_present_on_disk() -> None:
     # are deliberately wrong. Two things are asserted:
     #   1. The pure scan (`collect_resource_entries`) sees the real on-disk
     #      file (size 11) — proving the gitignore exemption keeps it.
-    #   2. `build_manifest` merges the DVC pointer LAST, so the final manifest
-    #      entry carries the POINTER's md5/size (999 / all-f), NOT the scanned
-    #      value. This documents CURRENT behavior: for a present-on-disk DVC
-    #      file the pointer wins over the scan.
-    #
-    # OPEN QUESTION (flagged in review, deliberately not changed here): for a
-    # file that is present on disk, the manifest arguably should describe the
-    # bytes actually served — i.e. the SCANNED md5/size should win, so a stale
-    # `.dvc` pointer cannot produce a manifest that mismatches the real file.
-    # Reconciling that would change production behavior in `build_manifest`
-    # (and `check_update_manifest`), so it is left for a separate decision.
+    #   2. The manifest describes the bytes actually served: for a file that is
+    #      materialised on disk, its resource file state (built from content)
+    #      wins over the `.dvc` pointer, so a stale pointer cannot produce a
+    #      manifest that mismatches the real file. The pointer remains the sole
+    #      source of md5/size only for pointer-only (not materialised) files.
     proto = build_inmemory_test_protocol({
         "res": {
             GR_CONF_FILE_NAME: "",
@@ -762,9 +756,9 @@ def test_build_manifest_keeps_dvc_managed_file_present_on_disk() -> None:
     manifest = proto.build_manifest(res, prebuild_entries)
     assert "scores.bw" in manifest
     assert "scores.bw.dvc" in manifest
-    # Current behavior: the DVC pointer overrides the scanned value.
-    assert manifest["scores.bw"].size == 999
-    assert manifest["scores.bw"].md5 == "ffffffffffffffffffffffffffffffff"
+    # The lying DVC pointer does not override the materialised file.
+    assert manifest["scores.bw"].size == REAL_SCORES_BW_SIZE
+    assert manifest["scores.bw"].md5 == REAL_SCORES_BW_MD5
 
 
 def test_gitignore_dvc_managed_leaf_in_subdirectory_is_kept() -> None:

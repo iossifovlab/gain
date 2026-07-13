@@ -1,6 +1,30 @@
 Release Notes
 =============
 
+* 2026.7.2
+    * **Behavior change:** the md5 sum of a resource file that is
+      materialised on disk is now computed from the file's content
+      whenever the file has changed under ``grr_manage`` (its recorded
+      size or timestamp disagree with the file), instead of being read
+      from the file's ``.dvc`` sidecar (#251). Editing a DVC-managed file
+      in place without ``dvc add`` / ``dvc commit`` and running
+      ``resource-repair`` previously reported the resource as up to date
+      and left the manifest certifying the *old* md5; the manifest now
+      describes the bytes actually served. A ``.dvc`` sidecar remains the
+      sole source of md5 and size for a file that is **not** materialised
+      (the pointer-only clone the ``grr`` pipeline builds from), and an
+      unchanged file is still not rehashed.
+    * **Behavior change:** the ``--with-dvc`` (default) /
+      ``-D``, ``--without-dvc`` option group is restored on
+      ``repo-manifest``, ``resource-manifest``, ``repo-stats``,
+      ``resource-stats``, ``repo-repair``, ``resource-repair``,
+      ``repo-info`` and ``resource-info`` (#251). It was removed in
+      2026.7.1, which left no way to make ``grr_manage`` hash a file
+      whose ``.dvc`` sidecar was present. ``--without-dvc`` ignores
+      ``.dvc`` sidecars entirely and computes the md5 of every
+      materialised resource file from its content — the explicit "verify
+      these bytes against their recorded md5" audit mode.
+
 * 2026.7.1
     * **Behavior change:** a completed anonymous annotation job and its
       result file are no longer deleted when the user's last WebSocket

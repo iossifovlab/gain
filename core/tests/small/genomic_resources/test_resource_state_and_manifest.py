@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 
+import pathlib
 import textwrap
 
 import pytest
@@ -8,12 +9,21 @@ from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     ReadWriteRepositoryProtocol,
 )
-from gain.genomic_resources.testing import build_inmemory_test_protocol
+from gain.genomic_resources.testing import (
+    build_filesystem_test_protocol,
+    setup_directories,
+)
 
 
 @pytest.fixture
-def proto_fixture() -> ReadWriteRepositoryProtocol:
-    return build_inmemory_test_protocol({
+def proto_fixture(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> ReadWriteRepositoryProtocol:
+    # `repair=False` leaves the resource without recorded file states, as a
+    # freshly cloned GRR is. A file's `.dvc` sidecar is consulted only when
+    # there is no state for it yet.
+    path = tmp_path_factory.mktemp("resource_state_and_manifest")
+    setup_directories(path, {
         "one": {
             GR_CONF_FILE_NAME: "",
             "data.txt": "alabala",
@@ -35,6 +45,8 @@ def proto_fixture() -> ReadWriteRepositoryProtocol:
             },
         },
     })
+    return build_filesystem_test_protocol(
+        pathlib.Path(path), repair=False)
 
 
 @pytest.mark.parametrize("use_dvc,filename,expected", [
@@ -63,18 +75,18 @@ def test_build_build_manifest_use_dvc(
     assert entry.size == size
 
 
-@pytest.mark.parametrize("use_dvc,filename,expected", [
-    (True, "sub/a.big", ("aaaa", 3_000_000_000)),
-    (False, "sub/a.big", ("7de99d55a70b4e1215218f00d95a9720", 6)),
-    (True, "b.big", ("bbbb", 3_000_000_000)),
-    (False, "b.big", ("7de99d55a70b4e1215218f00d95a9720", 6)),
-])
-def test_build_update_manifest_use_dvc(
+@pytest.mark.parametrize("use_dvc", [True, False])
+@pytest.mark.parametrize("filename", ["sub/a.big", "b.big"])
+def test_build_update_manifest_rehashes_changed_file(
     proto_fixture: ReadWriteRepositoryProtocol,
     use_dvc: bool,
     filename: str,
-    expected: tuple[str, int],
 ) -> None:
+    """A file changed on disk is hashed from content, dvc or not.
+
+    Its `.dvc` sidecar describes the *old* bytes, so it cannot be the md5
+    source for a file that has been edited in place.
+    """
     res = proto_fixture.get_resource("one")
 
     prebuild_entries = {}
@@ -91,9 +103,7 @@ def test_build_update_manifest_use_dvc(
     proto_fixture.save_manifest(res, manifest)
 
     manifest = proto_fixture.load_manifest(res)
-
-    md5, size = expected
     entry = manifest[filename]
 
-    assert entry.md5 == md5
-    assert entry.size == size
+    assert entry.md5 == "7de99d55a70b4e1215218f00d95a9720"
+    assert entry.size == 6

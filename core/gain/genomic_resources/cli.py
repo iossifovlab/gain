@@ -109,6 +109,20 @@ def _add_dry_run_and_force_parameters_group(
         help="ignore resource state and rebuild manifest")
 
 
+def _add_dvc_parameters_group(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_argument_group(title="DVC params")
+    group.add_argument(
+        "--with-dvc", default=True,
+        action="store_true", dest="use_dvc",
+        help="use '.dvc' files if present to get md5 sum of resource files "
+        "(default)")
+    group.add_argument(
+        "-D", "--without-dvc",
+        action="store_false", dest="use_dvc",
+        help="compute the md5 sum of every resource file from its content; "
+        "do not use '.dvc' files to get md5 sum of resource files")
+
+
 def _add_hist_parameters_group(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group(title="Statistics")
     group.add_argument(
@@ -206,6 +220,7 @@ def _configure_repo_manifest_subparser(
 
     _add_repository_resource_parameters_group(parser, use_resource=False)
     _add_dry_run_and_force_parameters_group(parser)
+    _add_dvc_parameters_group(parser)
     VerbosityConfiguration.set_arguments(parser)
 
 
@@ -216,6 +231,7 @@ def _configure_resource_manifest_subparser(
 
     _add_repository_resource_parameters_group(parser)
     _add_dry_run_and_force_parameters_group(parser)
+    _add_dvc_parameters_group(parser)
     VerbosityConfiguration.set_arguments(parser)
 
 
@@ -227,6 +243,7 @@ def _configure_repo_stats_subparser(
 
     _add_repository_resource_parameters_group(parser, use_resource=False)
     _add_dry_run_and_force_parameters_group(parser)
+    _add_dvc_parameters_group(parser)
     _add_hist_parameters_group(parser)
     VerbosityConfiguration.set_arguments(parser)
 
@@ -243,6 +260,7 @@ def _configure_resource_stats_subparser(
 
     _add_repository_resource_parameters_group(parser)
     _add_dry_run_and_force_parameters_group(parser)
+    _add_dvc_parameters_group(parser)
     _add_hist_parameters_group(parser)
     VerbosityConfiguration.set_arguments(parser)
 
@@ -258,6 +276,7 @@ def _configure_repo_repair_subparser(
         help="Update/rebuild manifest and histograms whole GRR")
     _add_repository_resource_parameters_group(parser, use_resource=False)
     _add_dry_run_and_force_parameters_group(parser)
+    _add_dvc_parameters_group(parser)
     _add_hist_parameters_group(parser)
     VerbosityConfiguration.set_arguments(parser)
 
@@ -273,6 +292,7 @@ def _configure_resource_repair_subparser(
         help="Update/rebuild manifest and histograms for a resource")
     _add_repository_resource_parameters_group(parser)
     _add_dry_run_and_force_parameters_group(parser)
+    _add_dvc_parameters_group(parser)
     _add_hist_parameters_group(parser)
     VerbosityConfiguration.set_arguments(parser)
 
@@ -288,6 +308,7 @@ def _configure_repo_info_subparser(
     )
     _add_repository_resource_parameters_group(parser)
     _add_dry_run_and_force_parameters_group(parser)
+    _add_dvc_parameters_group(parser)
     VerbosityConfiguration.set_arguments(parser)
 
     TaskGraphCli.add_arguments(
@@ -302,6 +323,7 @@ def _configure_resource_info_subparser(
     )
     _add_repository_resource_parameters_group(parser)
     _add_dry_run_and_force_parameters_group(parser)
+    _add_dvc_parameters_group(parser)
     VerbosityConfiguration.set_arguments(parser)
 
     TaskGraphCli.add_arguments(
@@ -343,8 +365,11 @@ def _do_resource_manifest_command(
     res: GenomicResource,
     dry_run: bool,  # noqa: FBT001
     force: bool,  # noqa: FBT001
+    use_dvc: bool,  # noqa: FBT001
 ) -> bool:
-    prebuild_entries = collect_dvc_entries(proto, res)
+    prebuild_entries = {}
+    if use_dvc:
+        prebuild_entries = collect_dvc_entries(proto, res)
 
     manifest_update = proto.check_update_manifest(res, prebuild_entries)
     if not bool(manifest_update):
@@ -394,6 +419,7 @@ def _run_repo_manifest_command_internal(
         **kwargs: bool | int | str) -> dict[str, Any]:
     dry_run = cast(bool, kwargs.get("dry_run", False))
     force = cast(bool, kwargs.get("force", False))
+    use_dvc = cast(bool, kwargs.get("use_dvc", True))
 
     updates_needed = {}
     for res in resources:
@@ -401,6 +427,7 @@ def _run_repo_manifest_command_internal(
             proto, res,
             dry_run=dry_run,
             force=force,
+            use_dvc=use_dvc,
         )
 
     return updates_needed
@@ -670,6 +697,7 @@ def _run_repo_stats_command(
         **kwargs: bool | int | str) -> int:
     dry_run = cast(bool, kwargs.get("dry_run", False))
     force = cast(bool, kwargs.get("force", False))
+    use_dvc = cast(bool, kwargs.get("use_dvc", True))
     region_size = cast(int, kwargs.get("region_size", 3_000_000))
 
     if dry_run and force:
@@ -722,7 +750,7 @@ def _run_repo_stats_command(
     if stats_resources:
         _run_repo_manifest_command_internal(
             proto, stats_resources,
-            dry_run=False, force=True)
+            dry_run=False, force=True, use_dvc=use_dvc)
 
     assert isinstance(proto, FsspecReadWriteProtocol)
     _build_content_file(proto)
