@@ -360,9 +360,9 @@ class RecordScoreLine(ScoreLineBase):
         # ``AttributeError`` about a missing ``__getitem__``, which says
         # nothing about the actual mistake (an adapter-yielding table routed
         # here; see ``GenomicScore.open``).  Reject it here, by name, instead.
-        # pylint: disable=unidiomatic-typecheck  (isinstance is the bug: it
-        # accepts a tuple *subclass*, and VCFLine is one -- the exact-type
-        # check is the point of this guard, not an oversight.)
+        # The exact-type check is the point of this guard, not an oversight:
+        # ``isinstance`` accepts a tuple *subclass*, and ``VCFLine`` is one.
+        # pylint: disable-next=unidiomatic-typecheck
         if type(line) is not tuple or len(line) != RECORD_SLOTS:
             raise TypeError(
                 f"RecordScoreLine expects a record -- a plain "
