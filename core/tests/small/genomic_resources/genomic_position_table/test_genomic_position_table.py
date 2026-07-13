@@ -168,6 +168,36 @@ chr1   5   .  A   T,T   .    .       A=1,2
     return build_filesystem_test_resource(tmp_path)
 
 
+@pytest.fixture
+def vcf_res_same_locus(tmp_path: pathlib.Path) -> GenomicResource:
+    # Two *records* at one locus, with the same REF and the same (missing) ALT
+    # and different INFO -- so the two VCFLines the table emits agree in all
+    # five decoded slots and in their allele index, and differ only in their
+    # PAYLOAD, the one slot that cannot be ordered.  This is the case that
+    # tells whether a line can be ordered at all.
+    setup_directories(
+        tmp_path, {
+            "genomic_resource.yaml": textwrap.dedent("""
+                tabix_table:
+                    filename: data.vcf.gz
+                    format: vcf_info
+            """),
+        })
+    setup_vcf(
+        tmp_path / "data.vcf.gz",
+        textwrap.dedent("""
+##fileformat=VCFv4.1
+##INFO=<ID=A,Number=1,Type=Integer,Description="Score A">
+##contig=<ID=chr1>
+#CHROM POS ID REF ALT QUAL FILTER  INFO
+chr1   5   .  A   .   .    .       A=1
+chr1   5   .  A   .   .    .       A=2
+chr1   9   .  A   T   .    .       A=3
+    """),
+    )
+    return build_filesystem_test_resource(tmp_path)
+
+
 def test_regions() -> None:
     res = build_inmemory_test_resource({
         "genomic_resource.yaml": """
@@ -1717,10 +1747,14 @@ def test_vcf_lines_of_the_same_record_differ_by_allele_index(
     # the first answers lookups made with the second.
     assert vcf_res_repeated_alt.config is not None
 
-    with build_genomic_position_table(
-        vcf_res_repeated_alt, vcf_res_repeated_alt.config["tabix_table"],
-    ) as tab:
-        lines = cast(list[VCFLine], list(tab.get_all_records()))
+    def read_lines() -> list[VCFLine]:
+        assert vcf_res_repeated_alt.config is not None
+        with build_genomic_position_table(
+            vcf_res_repeated_alt, vcf_res_repeated_alt.config["tabix_table"],
+        ) as tab:
+            return cast(list[VCFLine], list(tab.get_all_records()))
+
+    lines = read_lines()
 
     assert len(lines) == 2
     first, second = lines
@@ -1739,11 +1773,93 @@ def test_vcf_lines_of_the_same_record_differ_by_allele_index(
     assert {first: "value"}.get(second) is None
 
     # And the hash/equality contract still holds where the lines *are* equal:
-    # equal lines hash equal.
+    # equal lines hash equal.  The twin comes from a *second read* of the
+    # table, so it carries a different pysam.VariantRecord object than
+    # ``first`` does -- which is what makes this exercise the structural
+    # comparison of the payload rather than the identity fast path a
+    # ``copy.copy`` (which reuses the very same record object) would take.
+    twin = read_lines()[0]
+    assert twin is not first
+    assert twin[PAYLOAD] is not first[PAYLOAD]
+
+    assert twin == first
+    assert hash(twin) == hash(first)
+    assert {first: "value"}[twin] == "value"
+
+    # ...and the twin is still not the *other* allele of the same record.
+    assert twin != second
+    assert len({first, second, twin}) == 2
+
     clone = copy.copy(first)
     assert clone == first
     assert hash(clone) == hash(first)
     assert {first: "value"}[clone] == "value"
+
+
+def test_vcf_lines_of_the_same_record_are_not_orderable(
+    vcf_res_repeated_alt: GenomicResource,
+) -> None:
+    # Ordering a VCF line is refused, and refused *loudly*.  The two lines of a
+    # repeated ALT are the case that shows why the inherited tuple ordering had
+    # to go: they agree in all six slots and differ only in their allele index,
+    # so tuple's slot-wise ``<=`` answered True in both directions while
+    # ``__eq__`` said they were different lines -- ``a <= b`` and ``b <= a`` and
+    # ``a != b``, all at once.  A comparison that cannot be answered
+    # consistently is not answered at all.
+    assert vcf_res_repeated_alt.config is not None
+
+    with build_genomic_position_table(
+        vcf_res_repeated_alt, vcf_res_repeated_alt.config["tabix_table"],
+    ) as tab:
+        first, second = cast(list[VCFLine], list(tab.get_all_records()))
+
+    for left, right in ((first, second), (second, first)):
+        with pytest.raises(TypeError, match="VCFLine is not orderable"):
+            _ = left < right
+        with pytest.raises(TypeError, match="VCFLine is not orderable"):
+            _ = left <= right
+        with pytest.raises(TypeError, match="VCFLine is not orderable"):
+            _ = left > right
+        with pytest.raises(TypeError, match="VCFLine is not orderable"):
+            _ = left >= right
+
+    # Equality is untouched: the two lines are still different lines, and a
+    # line is still equal to itself.
+    assert first != second
+    assert first == first
+    assert len({first, second}) == 2
+
+
+def test_sorting_vcf_lines_raises_a_clear_error(
+    vcf_res_same_locus: GenomicResource,
+) -> None:
+    # ``sorted``/``min``/``max`` over VCF lines fail -- and they fail with an
+    # error that names the class and says why, rather than with the
+    # "'<' not supported between instances of 'pysam.libcbcf.VariantRecord'"
+    # that the inherited tuple ordering produced once two lines tied on the
+    # five decoded slots and it walked into the PAYLOAD slot.  Two records at
+    # one locus with different INFO are exactly that tie.
+    assert vcf_res_same_locus.config is not None
+
+    with build_genomic_position_table(
+        vcf_res_same_locus, vcf_res_same_locus.config["tabix_table"],
+    ) as tab:
+        lines = cast(list[VCFLine], list(tab.get_all_records()))
+
+    assert len(lines) == 3
+
+    with pytest.raises(TypeError, match="VCFLine is not orderable"):
+        sorted(lines)
+    with pytest.raises(TypeError, match="VCFLine is not orderable"):
+        min(lines)
+    with pytest.raises(TypeError, match="VCFLine is not orderable"):
+        max(lines)
+
+    # An explicit key is the supported way to order lines, and it still works.
+    assert [
+        line.pos_begin
+        for line in sorted(lines, key=lambda line: line.pos_begin)
+    ] == [5, 5, 9]
 
 
 def test_vcf_line_can_be_copied(vcf_res: GenomicResource) -> None:

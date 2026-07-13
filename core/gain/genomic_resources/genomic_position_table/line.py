@@ -1,6 +1,6 @@
 from collections import deque
 from collections.abc import Generator
-from typing import Any, Protocol
+from typing import Any, NoReturn, Protocol
 
 import pysam
 
@@ -114,12 +114,40 @@ class VCFLine(tuple):
     :meth:`__hash__` agrees with that.  The pre-migration ``VCFLine`` had
     *identity* equality and an identity hash, so this does not restore the old
     contract -- it replaces it with the one a record-shaped tuple should have,
-    the one that makes a lookup by an equal-but-not-identical line work.  Two
-    further consequences of being a tuple, both intended: a line is equal to no
-    other type (not even to a bare six-slot record, which has no allele index
-    -- see :meth:`__eq__`), and ``sorted(lines)`` now orders them slot-wise via
-    the inherited ``tuple.__lt__``, where the adapter raised ``TypeError``.
+    the one that makes a lookup by an equal-but-not-identical line work.  One
+    further consequence of being a tuple, intended: a line is equal to no other
+    type, not even to a bare six-slot record, which has no allele index -- see
+    :meth:`__eq__`.
+
+    **A VCF line is a value, but it is not orderable** -- ``line < line``,
+    ``sorted(lines)``, ``min``/``max`` and ``bisect`` all raise ``TypeError``,
+    and the inherited ``tuple`` ordering is explicitly withdrawn to make them
+    (see :meth:`__lt__`).  A tuple orders slot-wise, walking to the first slot
+    where the two tuples are unequal -- and for two lines that tie on the five
+    decoded slots that is the PAYLOAD slot, a ``pysam.VariantRecord``, which
+    implements only ``__eq__``/``__ne__`` and has no order at all.  So the
+    inherited ordering did not work anyway: any VCF-derived resource with two
+    rows at one locus (same REF/ALT, different INFO) made ``sorted(lines)``
+    die inside pysam.  Nor can the ordering simply skip the payload: the key
+    that remains -- the five decoded slots plus the allele index -- is strictly
+    *coarser* than :meth:`__eq__`, which compares the payload too, so ordering
+    on it would answer ``a <= b`` and ``b <= a`` for a pair that ``__eq__``
+    calls different (the two rows above, which carry different scores).
+    Ordering consistently with equality would mean dropping the payload from
+    equality as well, which would collapse those two rows -- the very failure
+    the allele index was added to :meth:`__eq__` to prevent.  A comparison that
+    cannot be answered consistently is refused, with an error that says so.
+    Order lines with an explicit key instead
+    (``sorted(lines, key=lambda line: line.pos_begin)``).
     """
+
+    _NOT_ORDERABLE = (
+        "VCFLine is not orderable: its PAYLOAD slot holds a "
+        "pysam.VariantRecord, which has no order, and an order over the "
+        "remaining slots would contradict __eq__, which compares the payload "
+        "too.  Order lines with an explicit key, e.g. "
+        "sorted(lines, key=lambda line: line.pos_begin)."
+    )
 
     def __new__(
         cls,
@@ -210,6 +238,31 @@ class VCFLine(tuple):
         # (allele index ignored) while ``a == b`` says otherwise.  Spell it
         # out.
         return not self.__eq__(other)
+
+    def _not_orderable(self, other: object) -> NoReturn:
+        # ``tuple`` serves all four ordering operators, so a subclass inherits
+        # them whether it wants them or not, and ``functools.total_ordering``
+        # will not replace them (it treats every operator inherited from a base
+        # other than ``object`` as already defined, and fills in nothing).  So
+        # withdraw them by hand -- one raising method behind all four -- rather
+        # than leave an order that is either broken (it walks into the payload)
+        # or inconsistent with :meth:`__eq__` (it does not).
+        raise TypeError(
+            f"{self._NOT_ORDERABLE}  "
+            f"(comparing {type(self).__name__} with {type(other).__name__})",
+        )
+
+    def __lt__(self, other: object) -> bool:
+        self._not_orderable(other)
+
+    def __le__(self, other: object) -> bool:
+        self._not_orderable(other)
+
+    def __gt__(self, other: object) -> bool:
+        self._not_orderable(other)
+
+    def __ge__(self, other: object) -> bool:
+        self._not_orderable(other)
 
     def __hash__(self) -> int:
         # ``tuple.__hash__`` hashes every slot, and the PAYLOAD slot holds a
