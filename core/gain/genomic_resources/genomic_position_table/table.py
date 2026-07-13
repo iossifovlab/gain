@@ -11,7 +11,7 @@ from box import Box
 from gain import logging
 from gain.genomic_resources.repository import GenomicResource
 
-from .line import Line, LineBase
+from .line import LineBase
 from .record import Record
 
 logger = logging.getLogger(__name__)
@@ -214,11 +214,6 @@ class GenomicPositionTable(abc.ABC):
             return self.chrom_map[chrom]
         return chrom
 
-    def _map_result_chrom(self, chrom: str) -> str | None:
-        """Transfroms chromosome from score file to the genome chromosomes."""
-        assert self.rev_chrom_map is not None
-        return self.rev_chrom_map.get(chrom)
-
     def map_chromosome(self, chromosome: str) -> str | None:
         """Map a chromosome from reference genome to file chromosome."""
         if self.rev_chrom_map is not None:
@@ -253,12 +248,3 @@ class GenomicPositionTable(abc.ABC):
         This is to be overwritten by the subclass. It should return a list of
         the chromosomes in the file in the order determinted by the file.
         """
-
-
-def adjust_zero_based_line(line: Line) -> Line:
-    """Adjust a zero-based line."""
-    if line.pos_begin == line.pos_end:
-        line.pos_end += 1
-    line.pos_begin += 1
-
-    return line

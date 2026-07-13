@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from functools import cache
+from typing import ClassVar
 
 import pysam
 
@@ -12,7 +13,17 @@ from .table_tabix import TabixGenomicPositionTable
 
 
 class VCFGenomicPositionTable(TabixGenomicPositionTable):
-    """Represents a VCF file genome position table."""
+    """Represents a VCF file genome position table.
+
+    Still on the *adapter* path: it yields :class:`VCFLine` objects, and the
+    score layer wraps them in a ``ScoreLine`` that reads INFO fields by name.
+    So it resets ``yields_records``, which its tabix parent sets.  It can
+    nevertheless reuse the parent's record read cascade and record-indexed
+    line buffer unchanged, because a ``VCFLine`` *is* a record-shaped tuple.
+    #237 migrates this backend proper.
+    """
+
+    yields_records: ClassVar[bool] = False
 
     CHROM = "CHROM"
     POS_BEGIN = "POS"
@@ -41,21 +52,22 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
             pysam.set_verbosity(saved_verbosity)
         return vcf_file.header.info
 
-    def _transform_vcf_result(self, line: VCFLine) -> None:
-        rchrom = self._map_result_chrom(line.chrom)
-        assert rchrom is not None
-        line.chrom = rchrom
-
     def _make_vcf_line(
         self, raw_line: pysam.VariantRecord, allele_index: int | None,
     ) -> VCFLine | None:
-        line: VCFLine = VCFLine(raw_line, allele_index)
+        """Build a VCF line, resolving its contig before construction.
+
+        The mapped contig is passed in rather than written back onto a
+        finished line: a VCF line is a record-shaped tuple, so its CHROM slot
+        is fixed once and for all when it is built.  A file contig that is
+        absent from the chromosome map yields ``None`` and the row is dropped.
+        """
         if not self.rev_chrom_map:
-            return line
-        if line.fchrom in self.rev_chrom_map:
-            self._transform_vcf_result(line)
-            return line
-        return None
+            return VCFLine(raw_line, allele_index)
+        rchrom = self.rev_chrom_map.get(raw_line.contig)
+        if rchrom is None:
+            return None
+        return VCFLine(raw_line, allele_index, rchrom)
 
     def open(self) -> VCFGenomicPositionTable:
         self.pysam_file = self.genomic_resource.open_vcf_file(

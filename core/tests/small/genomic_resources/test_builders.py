@@ -1731,10 +1731,9 @@ def test_zero_based_tabix_matches_inmemory(tmp_path: pathlib.Path) -> None:
 def test_zero_based_invalid_row_rejected_by_score_layer(
     tmp_path: pathlib.Path,
 ) -> None:
-    # A zero-based row whose end is below begin is invalid.  The in-memory
-    # backend's zero-based adjustment bumps end only when begin == end (see
-    # record.build_tabular_parser), matching the tabix backend's
-    # adjust_zero_based_line exactly -- a deliberate convergence.  So the
+    # A zero-based row whose end is below begin is invalid.  The zero-based
+    # adjustment in record.build_tabular_parser -- which both tabular backends
+    # now share -- bumps end only when begin == end.  So the
     # end < begin row is left unrepaired (POS_END < POS_BEGIN) and the score
     # layer's GenomicScore._line_to_begin_end rejects it with OSError before
     # any value is read.  No golden can observe this: a rejected row produces

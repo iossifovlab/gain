@@ -1,19 +1,17 @@
 import collections
 from collections.abc import Generator
 from functools import cache
-from operator import itemgetter
 from typing import IO, ClassVar, cast
 
 from gain.genomic_resources.repository import GenomicResource
 
 from .record import (
-    ALT,
     CHROM,
     POS_BEGIN,
     POS_END,
-    REF,
     Record,
     build_tabular_parser,
+    sort_key,
 )
 from .table import GenomicPositionTable
 
@@ -139,10 +137,6 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
                 continue
             records_by_chr[record[CHROM]].append(record)
 
-        # Sort each contig's records explicitly on the five core fields, never
-        # on the whole tuple, so the opaque payload (slot PAYLOAD) is never
-        # compared.
-        sort_key = itemgetter(CHROM, POS_BEGIN, POS_END, REF, ALT)
         self.records_by_chr = {
             c: sorted(recs, key=sort_key)
             for c, recs in records_by_chr.items()

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Generator
+from collections.abc import Generator
 from functools import cache
-from typing import Any
+from typing import Any, ClassVar
 
 import pysam
 
@@ -11,15 +11,55 @@ from gain import logging
 from gain.genomic_resources.repository import GenomicResource
 from gain.utils.regions import get_chromosome_length_tabix
 
-from .line import Line, LineBase, LineBuffer
-from .table import GenomicPositionTable, adjust_zero_based_line
+from .line import LineBuffer
+from .record import (
+    CHROM,
+    POS_BEGIN,
+    POS_END,
+    Record,
+    TabularParser,
+    build_tabular_parser,
+)
+from .table import GenomicPositionTable
 
 PysamFile = pysam.TabixFile | pysam.VariantFile
 logger = logging.getLogger(__name__)
 
 
 class TabixGenomicPositionTable(GenomicPositionTable):
-    """Represents Tabix file genome position table."""
+    """Represents Tabix file genome position table.
+
+    Yields **records** -- the six-slot tuples built by the tabular parser --
+    whose payload is the raw ``pysam`` row.  The row is handed on by
+    reference and never materialised into a tuple of columns: it decodes a
+    column only when a caller indexes it, which is what keeps a 454-score
+    resource from paying for 454 decodes when a caller wants one score.
+
+    The read cascade for a region query, in order:
+
+    1. **the buffering decision** -- a query wider than ``BUFFER_MAXSIZE``
+       (or open-ended) is served straight from the file, unbuffered;
+    2. **the provably-empty-gap short-circuit** -- the query starts after the
+       previous query's end and ends before the first buffered record: the
+       records in between were already read and none of them reach it, so the
+       answer is provably empty without touching the file;
+    3. **the buffer hit** -- the query's start is inside the buffered window;
+    4. **the sequential seek** -- the query's start is beyond the buffer but
+       within ``jump_threshold`` of it, so reading forward beats a fresh
+       ``pysam`` fetch (which drops the buffer and its index lookup);
+    5. **the fresh fetch** -- everything else re-seeks the file.
+
+    :meth:`_gen_from_tabix` buffers every record it pulls *before* it checks
+    whether that record has run past the end of the query.  The record that
+    terminates a read is therefore buffered although it is never yielded --
+    and the short-circuit in (2) and the window in (3) both depend on it
+    being there.  Do not reorder those two steps.
+    """
+
+    # This backend yields records rather than line adapters.  The VCF backend
+    # subclasses this one and still yields VCFLine adapters, so it resets the
+    # flag to False -- see VCFGenomicPositionTable (#237 migrates it).
+    yields_records: ClassVar[bool] = True
 
     BUFFER_MAXSIZE: int = 20_000
 
@@ -42,11 +82,14 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         self.stats: Counter = Counter()
         # pylint: disable=no-member
         self.pysam_file: PysamFile | None = None
-        self.line_iterator: Generator[LineBase | None, None, None] | None = None
+        self.line_iterator: Generator[Record | None, None, None] | None = None
         self.header: Any
         self.zero_based = self.definition.get("zero_based", False)
 
-        self._transform_result: Callable[[Line], Line | None]
+        # Built in open(), where the column keys and the chromosome map are
+        # finally known.  The VCF subclass builds its lines itself and leaves
+        # this None.
+        self.parser: TabularParser | None = None
 
     def _load_header(self) -> tuple[str, ...]:
         header_lines = []
@@ -67,15 +110,20 @@ class TabixGenomicPositionTable(GenomicPositionTable):
             self.header = self._load_header()
         self._set_core_column_keys()
         self._build_chrom_mapping()
-        if self.rev_chrom_map is not None and self.zero_based:
-            self._transform_result = \
-                self._transform_result_zero_based_and_chrom_mapping
-        elif self.rev_chrom_map is not None:
-            self._transform_result = self._transform_result_chrom_mapping
-        elif self.zero_based:
-            self._transform_result = self._transform_result_zero_based
-        else:
-            self._transform_result = self._transform_result_identity
+        # The parser fuses record construction with the zero-based and
+        # chromosome-mapping transforms, specialised once here rather than
+        # branched per line.  It cannot be built any earlier: resolving the
+        # column keys needs the header, and the reverse chromosome map needs
+        # the file's contigs.
+        self.parser = build_tabular_parser(
+            self.chrom_key,
+            self.pos_begin_key,
+            self.pos_end_key,
+            self.ref_key,
+            self.alt_key,
+            self.rev_chrom_map,
+            zero_based=self.zero_based,
+        )
         return self
 
     def close(self) -> None:
@@ -88,6 +136,10 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         self.stats = Counter()
         self.pysam_file = None
         self.line_iterator = None
+        # The parser closes over the column keys and the reverse chromosome
+        # map, both of which open() resolves from the file; a closed table must
+        # not keep them, and re-opening rebuilds it.
+        self.parser = None
 
     def get_chromosomes(self) -> list[str]:
         return list(filter(
@@ -129,43 +181,12 @@ class TabixGenomicPositionTable(GenomicPositionTable):
             raise ValueError(f"Could not find contig '{fchrom}'")
         return length
 
-    def _make_line(self, data: tuple) -> Line | None:
-        line: Line = Line(
-            data,
-            chrom_key=self.chrom_key,
-            pos_begin_key=self.pos_begin_key,
-            pos_end_key=self.pos_end_key,
-            ref_key=self.ref_key,
-            alt_key=self.alt_key,
-        )
-        return self._transform_result(line)
-
-    def _transform_result_zero_based(self, line: Line) -> Line:
-        return adjust_zero_based_line(line)
-
-    def _transform_result_chrom_mapping(self, line: Line) -> Line | None:
-        rchrom = self._map_result_chrom(line.fchrom)
-        if rchrom is None:
-            return None
-
-        line.chrom = rchrom
-        return line
-
-    def _transform_result_zero_based_and_chrom_mapping(
-        self, line: Line,
-    ) -> Line | None:
-        return self._transform_result_chrom_mapping(
-            self._transform_result_zero_based(line))
-
-    def _transform_result_identity(self, line: Line) -> Line | None:
-        return line
-
-    def get_all_records(self) -> Generator[LineBase, None, None]:
+    def get_all_records(self) -> Generator[Record, None, None]:
         # pylint: disable=no-member
-        for line in self.get_line_iterator():
-            if line is None:
+        for record in self.get_line_iterator():
+            if record is None:
                 continue
-            yield line
+            yield record
 
     def _should_use_sequential_seek_forward(
             self, chrom: str | None, pos: int) -> bool:
@@ -174,7 +195,7 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         Determine whether to use sequential access or jump-ahead
         optimization for a given chromosome and position. Sequential access is
         used if the position is on the same chromosome and the distance between
-        it and the last line in the buffer is less than the jump threshold.
+        it and the last record in the buffer is less than the jump threshold.
         """
         if self.jump_threshold == 0:
             return False
@@ -184,59 +205,64 @@ class TabixGenomicPositionTable(GenomicPositionTable):
             return False
 
         last = self.buffer.peek_last()
-        if chrom != last.chrom:
+        if chrom != last[CHROM]:
             return False
-        if pos < last.pos_end:
+        # A record slot is statically opaque (a record is tuple[Any, ...]);
+        # annotate the read so the arithmetic below stays typed.
+        last_end: int = last[POS_END]
+        if pos < last_end:
             return False
 
-        return (pos - last.pos_end) < self.jump_threshold
+        return (pos - last_end) < self.jump_threshold
 
     def _sequential_seek_forward(self, chrom: str, pos: int) -> bool:
         """Advance the buffer forward to the given position."""
         assert len(self.buffer) > 0
         assert self.jump_threshold > 0
 
-        last: LineBase = self.buffer.peek_last()
-        assert chrom == last.chrom
-        assert pos >= last.pos_begin
+        last: Record = self.buffer.peek_last()
+        assert chrom == last[CHROM]
+        assert pos >= last[POS_BEGIN]
 
         self.stats["sequential seek forward"] += 1
 
-        for row in self._gen_from_tabix(chrom, pos, buffering=True):
-            last = row
-        return bool(pos >= last.pos_end)
+        for record in self._gen_from_tabix(chrom, pos, buffering=True):
+            last = record
+        return bool(pos >= last[POS_END])
 
     def _gen_from_tabix(
             self, chrom: str, pos: int | None, *_args: Any,
-            buffering: bool = True) -> Generator[LineBase, None, None]:
+            buffering: bool = True) -> Generator[Record, None, None]:
         try:
             assert self.line_iterator is not None
             while True:
-                line = next(self.line_iterator)
-                if line is None:
+                record = next(self.line_iterator)
+                if record is None:
                     continue
+                # Buffer FIRST, then decide whether this record has run past
+                # the query: the record that terminates the read must be in
+                # the buffer for the next call's gap/buffer checks to work.
                 if buffering:
-                    self.buffer.append(line)
+                    self.buffer.append(record)
 
-                if line.chrom != chrom:
+                if record[CHROM] != chrom:
                     return
-                if pos is not None and line.pos_begin > pos:
+                if pos is not None and record[POS_BEGIN] > pos:
                     return
 
                 self.stats["yield from tabix"] += 1
-                if line:
-                    yield line
+                yield record
         except StopIteration:
             pass
 
     def _gen_from_buffer_and_tabix(
         self, chrom: str, beg: int, end: int,
-    ) -> Generator[LineBase, None, None]:
-        for line in self.buffer.fetch(chrom, beg, end):
+    ) -> Generator[Record, None, None]:
+        for record in self.buffer.fetch(chrom, beg, end):
             self.stats["yield from buffer"] += 1
-            yield line
+            yield record
         last = self.buffer.peek_last()
-        if end < last.pos_end:
+        if end < last[POS_END]:
             return
 
         yield from self._gen_from_tabix(chrom, end, buffering=True)
@@ -246,7 +272,24 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         chrom: str | None = None,
         pos_begin: int | None = None,
         pos_end: int | None = None,
-    ) -> Generator[LineBase, None, None]:
+    ) -> Generator[Record, None, None]:
+        """Yield the records overlapping the region.
+
+        **The PAYLOAD slot is backend-dependent, and the static type does not
+        say so.**  This method's ``Record`` (``tuple[Any, ...]``) is inherited
+        by :class:`VCFGenomicPositionTable`, which yields ``VCFLine``s -- also
+        record-shaped tuples, but whose PAYLOAD is a ``pysam.VariantRecord``,
+        not a raw tabular row.  A ``VCFLine`` *is* a ``tuple[Any, ...]``, so
+        the type checker cannot tell the two apart; the discriminator is the
+        ``yields_records`` ClassVar, which the VCF subclass resets to False.
+
+        So: narrowing a table to this class with ``isinstance`` and then
+        indexing ``record[PAYLOAD][i]`` for a column is **only** valid once you
+        know the table is not a VCF one.  The five decoded slots
+        (CHROM ... ALT) are safe either way -- they mean the same thing in both
+        backends.  #237 migrates the VCF backend to real records and retires
+        the split.
+        """
         self.stats["calls"] += 1
 
         if chrom is None:
@@ -277,20 +320,20 @@ class TabixGenomicPositionTable(GenomicPositionTable):
 
             first = self.buffer.peek_first()
             assert pos_end is not None
-            if first.chrom == chrom \
+            if first[CHROM] == chrom \
                and prev_call_end is not None \
                and pos_begin > prev_call_end \
-               and pos_end < first.pos_begin:
+               and pos_end < first[POS_BEGIN]:
 
-                assert first.chrom == prev_call_chrom
+                assert first[CHROM] == prev_call_chrom
                 self.stats["not found"] += 1
                 return
 
             if self.buffer.contains(chrom, pos_begin):
-                for row in self._gen_from_buffer_and_tabix(
+                for record in self._gen_from_buffer_and_tabix(
                         chrom, pos_begin, pos_end):
                     self.stats["yield from buffer and tabix"] += 1
-                    yield row
+                    yield record
 
                 self.buffer.prune(chrom, pos_begin)
                 return
@@ -310,9 +353,16 @@ class TabixGenomicPositionTable(GenomicPositionTable):
     def get_line_iterator(
         self, chrom: str | None = None,
         pos_begin: int | None = None,
-    ) -> Generator[LineBase | None, None, None]:
-        """Extract raw lines and wrap them in our Line adapter."""
+    ) -> Generator[Record | None, None, None]:
+        """Fetch the raw rows and parse them into records.
+
+        A row whose contig is absent from a configured chromosome map parses
+        to ``None`` and is dropped by the callers, exactly as the adapter-era
+        transform dropped it.
+        """
         assert isinstance(self.pysam_file, pysam.TabixFile)
+        assert self.parser is not None
+        parser = self.parser
 
         if chrom is not None:
             fchrom = self.unmap_chromosome(chrom)
@@ -327,7 +377,9 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         self.buffer.clear()
 
         # Yes, the argument for the chromosome/contig is called "reference".
+        # ``pysam.asTuple()`` hands up one lazily-decoding row object per line;
+        # it becomes the record's payload as-is.
         for raw in self.pysam_file.fetch(
             reference=fchrom, start=pos_begin, parser=pysam.asTuple(),
         ):
-            yield self._make_line(raw)
+            yield parser(raw)

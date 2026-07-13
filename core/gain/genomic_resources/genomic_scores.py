@@ -183,8 +183,15 @@ class ScoreLineBase(abc.ABC):
     record is not substitutable for an adapter and the two constructors share
     no work.  The substitutability that finding 4 wanted is instead enforced
     structurally: :attr:`GenomicScore._score_line_class` is typed as a callable
-    ``(LineBase | Record, dict) -> ScoreLineBase`` and mypy checks both
-    subclasses against it at the assignment in :meth:`GenomicScore.open`.
+    ``(LineBase | Record, dict) -> ScoreLineBase`` and mypy checks both score
+    line classes -- :class:`ScoreLine` and :class:`RecordScoreLine` -- against
+    that signature.
+
+    That a table routed to :class:`RecordScoreLine` really does yield records
+    is a claim about a *backend*, not about a line, so it is not checked at
+    runtime at all: it is pinned once, statically, over all four backends by
+    test_backend_record_contract.py.  The fetch path simply believes
+    ``table.yields_records``.
 
     Reading a raw value still costs a per-line bound-method allocation
     (``self._get_raw``).  Measured against a byte-faithful reconstruction of
@@ -341,18 +348,28 @@ class RecordScoreLine(ScoreLineBase):
     handling and parsing come from :class:`ScoreLineBase`; the only
     per-backend difference is where the raw value comes from, captured by
     binding ``self._get_raw`` to the payload's indexer.
+
+    The constructor does **not** check that ``line`` is a record.  Whether a
+    table yields records is a property of the *backend* -- one shape of thing,
+    for every line, forever -- so it is a question about four classes, answered
+    once and statically by test_backend_record_contract.py, which opens each
+    backend and holds its first line against its ``yields_records`` claim.
+    Asking it again per line would put a per-backend question on the hot path,
+    which is the cost this whole class exists to avoid.
     """
 
     def __init__(
         self, line: LineBase | Record, score_defs: dict[str, _ScoreDef],
     ):
-        # A record is a plain tuple; bind the raw-value lookup to the
-        # payload's __getitem__ (score columns are addressed by resolved
-        # integer index), the record-backed counterpart of ``line.get``.
-        assert isinstance(line, tuple)
-        self.record = line
+        # Bind the raw-value lookup to the payload's __getitem__ (score
+        # columns are addressed by resolved integer index), the record-backed
+        # counterpart of ``line.get``.  ``line`` is a record: the table said so
+        # (yields_records), and that claim is pinned against every backend by
+        # test_backend_record_contract.py.  Nothing here may cost more than an
+        # attribute store -- a ``cast`` would be a real call, ~15ns.
+        self.record: Record = line  # type: ignore[assignment]
         self.score_defs = score_defs
-        self._get_raw = line[PAYLOAD].__getitem__
+        self._get_raw = self.record[PAYLOAD].__getitem__
 
     @property
     def chrom(self) -> str:
@@ -373,6 +390,14 @@ class RecordScoreLine(ScoreLineBase):
     @property
     def alt(self) -> str | None:
         return cast("str | None", self.record[ALT])
+
+
+# What a fetched line is wrapped in: a callable, not a ``type[...]``, so mypy
+# checks both score line classes against one signature.  We never call
+# issubclass on it.
+_ScoreLineFactory = Callable[
+    [LineBase | Record, dict[str, _ScoreDef]], ScoreLineBase,
+]
 
 
 @dataclass
@@ -533,16 +558,11 @@ class GenomicScore(ResourceConfigValidationMixin):
             self.resource, self.config["table"],
         )
         self.score_definitions = self._build_scoredefs()
-        # The per-backend score line class; the record-yielding backends use
+        # What each fetched line is wrapped in; the record-yielding backends use
         # RecordScoreLine, the adapter-yielding ones ScoreLine.  Selected in
-        # open() once the table is open and its record shape is known.
-        # A callable, not type[...], so mypy checks both ScoreLine and
-        # RecordScoreLine against the constructor signature at the assignment
-        # in open() -- the substitutability finding 4 wanted, enforced
-        # structurally.  We never call issubclass on it.
-        self._score_line_class: Callable[
-            [LineBase | Record, dict[str, _ScoreDef]], ScoreLineBase,
-        ] = ScoreLine
+        # open(), from the table's yields_records claim -- this default holds
+        # only until then.
+        self._score_line_class: _ScoreLineFactory = ScoreLine
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
@@ -906,13 +926,27 @@ class GenomicScore(ResourceConfigValidationMixin):
                 self.resource.resource_id)
             return self
         self.table.open()
-        self.table_loaded = True
         # Choose the score line class per backend: a table that yields records
         # is wrapped in a RecordScoreLine, one that yields adapters in a
         # ScoreLine.  This is decided at open time, alongside the table's own
-        # parser/transform selection.
+        # parser/transform selection, and the table's yields_records claim is
+        # simply believed -- that every backend's claim matches what it really
+        # yields is pinned statically, over all four of them, by
+        # test_backend_record_contract.py, so the fetch path pays nothing.
+        #
+        # Route BEFORE publishing.  ``table_loaded = True`` is what makes this
+        # score look open to everyone else: from that write on, another caller's
+        # open() takes the is_open() early return above and reads
+        # _score_line_class straight away.  Written the other way round, that
+        # caller can catch the score published-but-unrouted and read the
+        # __init__ default (ScoreLine) for a record-yielding table -- a record
+        # tuple into an adapter score line.  Scores are shared across threads
+        # (the process-wide in-memory CNV cache; gain-web-api's thread pool), so
+        # the window is reachable; this ordering closes it.  Pinned by
+        # test_the_score_is_routed_before_it_reports_itself_open.
         self._score_line_class = (
             RecordScoreLine if self.table.yields_records else ScoreLine)
+        self.table_loaded = True
         if "scores" in self.config:
             self._validate_scoredefs()
 
