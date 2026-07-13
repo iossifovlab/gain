@@ -924,35 +924,43 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         """
 
     def _update_manifest_entry_and_state(
-            self, resource: GenomicResource, entry: ManifestEntry,
-            prebuild_entries: dict[str, ManifestEntry]) -> None:
-        pre_state = self.load_resource_file_state(resource, entry.name)
+            self, resource: GenomicResource, entry: ManifestEntry, *,
+            verify_content: bool = False) -> None:
+        """Fill in md5 and size of a *materialised* file's manifest entry.
 
-        if pre_state is None:
-            # No recorded state; a prebuild (.dvc) entry, when available,
-            # is the accepted source of md5 and size for the file.
-            size = None
-            md5 = None
-            if entry.name in prebuild_entries:
-                ready_entry = prebuild_entries[entry.name]
-                size = ready_entry.size
-                md5 = ready_entry.md5
-            state = self.build_resource_file_state(
-                resource, entry.name, size=size, md5=md5)
-            self.save_resource_file_state(resource, state)
-        else:
-            timestamp = self.get_resource_file_timestamp(resource, entry.name)
-            size = self.get_resource_file_size(resource, entry.name)
-            if abs(timestamp - pre_state.timestamp) <= 1e-2 \
-                    and size == pre_state.size:
-                state = pre_state
-            else:
-                # The file changed under us. Its prebuild (.dvc) entry
-                # describes the *old* bytes, so it must not be trusted here;
-                # compute the md5 from the file's current content.
-                state = self.build_resource_file_state(
-                    resource, entry.name, size=size)
-                self.save_resource_file_state(resource, state)
+        The md5 of a file whose bytes are on disk always describes those
+        bytes. It is either computed from the file's content, or reused from
+        a recorded resource file state - which was itself computed from the
+        content, and whose size and timestamp still match the file.
+
+        A prebuild (``.dvc``) entry is never a source of md5 here: a sidecar
+        cannot be confirmed without reading the bytes it claims to describe.
+        See :meth:`_merge_pointer_only_entries` for the case where the bytes
+        are absent and the sidecar is the only source there is.
+
+        With ``verify_content`` the recorded state is not consulted at all and
+        the file's content is hashed - the explicit "verify these bytes"
+        audit mode behind ``grr_manage --without-dvc``.
+        """
+        if not verify_content:
+            pre_state = self.load_resource_file_state(resource, entry.name)
+            if pre_state is not None:
+                timestamp = self.get_resource_file_timestamp(
+                    resource, entry.name)
+                size = self.get_resource_file_size(resource, entry.name)
+                if abs(timestamp - pre_state.timestamp) <= 1e-2 \
+                        and size == pre_state.size:
+                    entry.md5 = pre_state.md5
+                    entry.size = pre_state.size
+                    return
+                logger.debug(
+                    "timestamp (%s) or size (%s) mismatch for %s in %s; "
+                    "recomputing md5...",
+                    pre_state.timestamp - timestamp, pre_state.size - size,
+                    entry.name, resource.resource_id)
+
+        state = self.build_resource_file_state(resource, entry.name)
+        self.save_resource_file_state(resource, state)
 
         entry.md5 = state.md5
         entry.size = state.size
@@ -966,10 +974,12 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
 
         ``collect_resource_entries`` only yields files that exist, so any
         prebuild (e.g. DVC) entry missing from the scanned manifest is a
-        pointer-only entry - its sidecar is the sole source of md5 and size.
+        pointer-only entry - the ``.dvc``-only clone the ``grr`` pipeline
+        builds from. Its bytes are absent, so its sidecar is the sole
+        possible source of md5 and size, whatever the caller asked for.
+
         Entries for materialised files are left as the scan built them; their
-        md5 comes from the resource file state, which hashes the file's
-        content whenever the file has changed.
+        md5 is derived from the file's content.
         """
         for name, entry in prebuild_entries.items():
             if name in manifest:
@@ -979,6 +989,8 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
     def build_manifest(
         self, resource: GenomicResource,
         prebuild_entries: dict[str, ManifestEntry] | None = None,
+        *,
+        verify_content: bool = False,
     ) -> Manifest:
         """Build full manifest for the resource."""
         if prebuild_entries is None:
@@ -986,7 +998,7 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         manifest = Manifest()
         for entry in self.collect_resource_entries(resource):
             self._update_manifest_entry_and_state(
-                resource, entry, prebuild_entries)
+                resource, entry, verify_content=verify_content)
             manifest.add(entry)
         self._merge_pointer_only_entries(manifest, prebuild_entries)
         return manifest
@@ -994,8 +1006,12 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
     def check_update_manifest(
         self, resource: GenomicResource,
         prebuild_entries: dict[str, ManifestEntry] | None = None,
+        *,
+        verify_content: bool = False,
     ) -> ManifestUpdate:
         """Check if the resource manifest needs update."""
+        if prebuild_entries is None:
+            prebuild_entries = {}
         try:
             current_manifest = self.load_manifest(resource)
         except FileNotFoundError:
@@ -1004,53 +1020,15 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         manifest = Manifest()
         entries_to_update = set()
         for entry in self.collect_resource_entries(resource):
+            self._update_manifest_entry_and_state(
+                resource, entry, verify_content=verify_content)
             manifest.add(entry)
-            state = self.load_resource_file_state(resource, entry.name)
-            if state is None:
-                md5 = None
-                size = None
-                if prebuild_entries and entry.name in prebuild_entries:
-                    md5 = prebuild_entries[entry.name].md5
-                    size = prebuild_entries[entry.name].size
-                state = self.build_resource_file_state(
-                    resource, entry.name,
-                    md5=md5, size=size)
-                self.save_resource_file_state(resource, state)
-            if state.filename not in current_manifest:
-                entries_to_update.add(entry.name)
-                continue
-            file_timestamp = self.get_resource_file_timestamp(
-                resource, entry.name)
-            file_size = self.get_resource_file_size(
-                resource, entry.name)
-            if state.timestamp != file_timestamp or \
-                    state.size != file_size:
-                logger.debug(
-                    "timestamp (%s) or size (%s) mismatch for %s in %s; "
-                    "recomputing md5...",
-                    state.timestamp - file_timestamp, state.size - file_size,
-                    entry.name, resource.resource_id)
-                # The file changed under us. Its prebuild (.dvc) entry
-                # describes the *old* bytes, so it must not be trusted here;
-                # compute the md5 from the file's current content.
-                state = self.build_resource_file_state(
-                    resource, entry.name)
-                if state.md5 == current_manifest[entry.name].md5:
-                    self.save_resource_file_state(resource, state)
-                else:
-                    entries_to_update.add(entry.name)
-                entry.md5 = state.md5
-                entry.size = state.size
-                continue
-            if state.md5 != current_manifest[entry.name].md5:
-                entries_to_update.add(entry.name)
-                continue
 
-            entry.md5 = state.md5
-            entry.size = state.size
+            if entry.name not in current_manifest \
+                    or entry.md5 != current_manifest[entry.name].md5:
+                entries_to_update.add(entry.name)
 
-        if prebuild_entries is not None:
-            self._merge_pointer_only_entries(manifest, prebuild_entries)
+        self._merge_pointer_only_entries(manifest, prebuild_entries)
 
         entries_to_delete = current_manifest.names() - manifest.names()
         return ManifestUpdate(manifest, entries_to_delete, entries_to_update)
@@ -1058,24 +1036,17 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
     def update_manifest(
         self, resource: GenomicResource,
         prebuild_entries: dict[str, ManifestEntry] | None = None,
+        *,
+        verify_content: bool = False,
     ) -> Manifest:
         """Update or create full manifest for the resource."""
+        # `check_update_manifest` already fills in md5 and size of every
+        # materialised entry of the manifest it returns, and merges the
+        # pointer-only entries; the manifest it hands back is the updated one.
         manifest_update = self.check_update_manifest(
-            resource, prebuild_entries)
+            resource, prebuild_entries, verify_content=verify_content)
 
-        if not bool(manifest_update):
-            return manifest_update.manifest
-
-        manifest = manifest_update.manifest
-        if prebuild_entries is None:
-            prebuild_entries = {}
-
-        for filename in manifest_update.entries_to_update:
-            entry = manifest[filename]
-            self._update_manifest_entry_and_state(
-                resource, entry, prebuild_entries)
-
-        return manifest
+        return manifest_update.manifest
 
     def save_manifest(
             self, resource: GenomicResource, manifest: Manifest) -> None:

@@ -114,13 +114,16 @@ def _add_dvc_parameters_group(parser: argparse.ArgumentParser) -> None:
     group.add_argument(
         "--with-dvc", default=True,
         action="store_true", dest="use_dvc",
-        help="use '.dvc' files if present to get md5 sum of resource files "
-        "(default)")
+        help="reuse the recorded md5 sum of a resource file whose size and "
+        "timestamp are unchanged, instead of hashing it again (default)")
     group.add_argument(
         "-D", "--without-dvc",
         action="store_false", dest="use_dvc",
-        help="compute the md5 sum of every resource file from its content; "
-        "do not use '.dvc' files to get md5 sum of resource files")
+        help="verify mode: compute the md5 sum of every resource file that "
+        "is present on disk from its content, ignoring its recorded state. "
+        "A file that is not present on disk (a '.dvc' pointer only) has no "
+        "content to hash, so its '.dvc' file remains the source of its md5 "
+        "sum in both modes")
 
 
 def _add_hist_parameters_group(parser: argparse.ArgumentParser) -> None:
@@ -367,11 +370,16 @@ def _do_resource_manifest_command(
     force: bool,  # noqa: FBT001
     use_dvc: bool,  # noqa: FBT001
 ) -> bool:
-    prebuild_entries = {}
-    if use_dvc:
-        prebuild_entries = collect_dvc_entries(proto, res)
+    # '.dvc' entries are always collected: a resource file that is not
+    # materialised has no content to hash, so its '.dvc' file is the only
+    # possible source of its manifest entry - dropping it here would delete
+    # the entry from the manifest. `use_dvc` decides only whether a file that
+    # IS on disk may skip hashing and reuse its recorded md5 sum.
+    prebuild_entries = collect_dvc_entries(proto, res)
+    verify_content = not use_dvc
 
-    manifest_update = proto.check_update_manifest(res, prebuild_entries)
+    manifest_update = proto.check_update_manifest(
+        res, prebuild_entries, verify_content=verify_content)
     if not bool(manifest_update):
         logger.debug(
             "manifest of <%s> is up to date",
@@ -399,7 +407,7 @@ def _do_resource_manifest_command(
         logger.info(
             "building manifest for resource <%s>...", res.resource_id)
         manifest = proto.build_manifest(
-            res, prebuild_entries)
+            res, prebuild_entries, verify_content=verify_content)
         proto.save_manifest(res, manifest)
         return False
 
@@ -407,7 +415,7 @@ def _do_resource_manifest_command(
         logger.info(
             "updating manifest for resource <%s>...", res.resource_id)
         manifest = proto.update_manifest(
-            res, prebuild_entries)
+            res, prebuild_entries, verify_content=verify_content)
         proto.save_manifest(res, manifest)
         return False
     return bool(manifest_update)
