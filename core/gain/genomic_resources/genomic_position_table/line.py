@@ -108,10 +108,17 @@ class VCFLine(tuple):
     back onto the object afterwards -- a tuple slot cannot be rebound, and the
     buffer may already be holding the line.
 
-    Equality is the tuple's -- structural over all six slots, a
-    ``pysam.VariantRecord`` being structurally comparable itself -- and
-    :meth:`__hash__` is defined to agree with it.  See the comments there and
-    on :meth:`__getnewargs__`.
+    **A VCF line now has value semantics, which is a deliberate change.**  Two
+    lines are equal when their six slots agree (a ``pysam.VariantRecord``
+    compares structurally itself) *and* they carry the same ``allele_index``;
+    :meth:`__hash__` agrees with that.  The pre-migration ``VCFLine`` had
+    *identity* equality and an identity hash, so this does not restore the old
+    contract -- it replaces it with the one a record-shaped tuple should have,
+    the one that makes a lookup by an equal-but-not-identical line work.  Two
+    further consequences of being a tuple, both intended: a line is equal to no
+    other type (not even to a bare six-slot record, which has no allele index
+    -- see :meth:`__eq__`), and ``sorted(lines)`` now orders them slot-wise via
+    the inherited ``tuple.__lt__``, where the adapter raised ``TypeError``.
     """
 
     def __new__(
@@ -159,26 +166,63 @@ class VCFLine(tuple):
         self.info_meta: pysam.VariantHeaderMetadata = raw_line.header.info
 
     def __getnewargs__(self) -> tuple[pysam.VariantRecord, int | None, str]:
-        # A tuple subclass is reconstructed (by ``copy.copy``, and by anything
-        # else that goes through ``__reduce_ex__``) as ``cls.__new__(cls,
-        # *self.__getnewargs__())``.  The inherited ``tuple.__getnewargs__``
-        # would hand the six-slot record itself back as ``raw_line`` and drop
-        # the other two arguments -- so spell the construction arguments out.
-        # The contig comes from the CHROM slot, which is the *mapped* one.
+        # A tuple subclass is reconstructed through ``__reduce_ex__`` as
+        # ``cls.__new__(cls, *self.__getnewargs__())``.  The inherited
+        # ``tuple.__getnewargs__`` would hand the six-slot record itself back
+        # as ``raw_line`` and drop the other two arguments -- so spell the
+        # construction arguments out.  The contig comes from the CHROM slot,
+        # which is the *mapped* one.
+        #
+        # What this buys, precisely: ``copy.copy`` works, and the ``__dict__``
+        # round-trip that follows ``__new__`` restores ``fchrom`` and
+        # ``allele_index``.  ``copy.deepcopy`` still raises -- it deep-copies
+        # the ``__getnewargs__`` arguments, and the ``pysam.VariantRecord``
+        # among them cannot be pickled ("self.ptr cannot be converted to a
+        # Python object").  That is not a regression (deepcopy of a VCF line
+        # never worked); making it work needs a picklable VariantRecord, which
+        # the VCF backend does not have.
         return self[PAYLOAD], self.allele_index, self[CHROM]
+
+    def __eq__(self, other: object) -> bool:
+        # A VCF line stands for an *allele*, and the allele index is the only
+        # field that always says which one.  The ALT slot usually proxies for
+        # it -- but not when a record repeats an ALT ("A -> T,T"), where the
+        # two lines agree in all six slots, differ only in their allele index,
+        # and carry different per-allele (Number=A) scores.  Comparing slots
+        # alone would silently collapse them in a set or a dict, so the allele
+        # index takes part in equality (and in ``__hash__``) as well.
+        #
+        # A plain record tuple is never equal to a VCF line: it has no allele
+        # index to compare against, and admitting it would break transitivity
+        # (both lines of a repeated ALT would equal the same bare record while
+        # differing from each other).  ``False``, not ``NotImplemented``: the
+        # latter would let the reflected ``tuple.__eq__`` answer instead.
+        if not isinstance(other, VCFLine):
+            return False
+        return bool(super().__eq__(other)) \
+            and self.allele_index == other.allele_index
+
+    def __ne__(self, other: object) -> bool:
+        # Python derives ``__ne__`` from ``__eq__`` only when ``__ne__`` is
+        # ``object``'s.  ``tuple`` serves both from one rich-comparison slot
+        # and so *provides* one, which a subclass that overrides only
+        # ``__eq__`` inherits -- leaving ``a != b`` answering structurally
+        # (allele index ignored) while ``a == b`` says otherwise.  Spell it
+        # out.
+        return not self.__eq__(other)
 
     def __hash__(self) -> int:
         # ``tuple.__hash__`` hashes every slot, and the PAYLOAD slot holds a
         # ``pysam.VariantRecord``, which is unhashable -- so hash the five
-        # decoded slots instead.  Equality stays the tuple's (structural, over
-        # all six slots; a ``VariantRecord`` compares structurally too), and
-        # this hash agrees with it: equal lines have equal slots, hence equal
-        # hashes.  Value semantics are what a record-shaped tuple should have,
-        # and they are what makes a lookup by an equal-but-not-identical line
-        # work; an identity hash next to the inherited structural equality
-        # would break that contract instead of restoring it.
+        # decoded slots, plus the ``allele_index`` that :meth:`__eq__` also
+        # compares.  The contract holds in the direction that matters: equal
+        # lines agree in all of these, hence hash equal.  The hash is coarser
+        # than equality (it omits the PAYLOAD), which is allowed -- two lines
+        # from different variant records that decode to the same five slots
+        # and the same allele index collide and are then separated by
+        # ``__eq__``.
         return hash((self[CHROM], self[POS_BEGIN], self[POS_END],
-                     self[REF], self[ALT]))
+                     self[REF], self[ALT], self.allele_index))
 
     def get(self, key: Key) -> Any:
         """Get a value from the INFO field of the VCF line."""
@@ -226,11 +270,20 @@ class LineBuffer:
 
     Holds **records** -- the six-slot tuples the tabular parser builds -- and
     reads them by slot constant (``record[CHROM]``, ``record[POS_BEGIN]``,
-    ``record[POS_END]``), never by attribute.  Records are immutable, so a
-    buffered record can be handed out and retained here at the same time
-    without any risk that a later read mutates it (which the ``Line`` adapter
-    it replaces did allow -- the zero-based/chrom-mapping transforms rewrote
-    the object in place).
+    ``record[POS_END]``), never by attribute.  The slots this buffer indexes on
+    are immutable -- a record's tuple cells cannot be rebound -- so a buffered
+    record can be handed out and retained here at the same time without any
+    risk that a later read moves it out from under the positional logic below
+    (which the ``Line`` adapter it replaces did allow: the
+    zero-based/chrom-mapping transforms rewrote the object in place).
+
+    That promise covers the slots, **not the payload**: the buffer holds the
+    same record object the caller got, and a tabix payload is a
+    ``pysam.TupleProxy``, which defines ``__setitem__`` -- a caller that writes
+    ``record[PAYLOAD][i] = ...`` mutates the row this buffer is holding.  The
+    payload is shared by reference on purpose (that is what keeps it lazy); see
+    ``record.py``.  Nothing here reads it, so the buffer's own behaviour is
+    unaffected either way.
 
     The semantics are exactly those of the adapter-era buffer: it clears on a
     chromosome change, clears when it observes a non-monotonic ordering

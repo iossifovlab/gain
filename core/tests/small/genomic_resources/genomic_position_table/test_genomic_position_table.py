@@ -34,7 +34,6 @@ from gain.genomic_resources.testing import (
     setup_tabix,
     setup_vcf,
 )
-from pysam.libctabixproxies import TupleProxy
 
 
 @pytest.fixture
@@ -136,6 +135,34 @@ chr1   2   .  A   .   .    .       A=0;B=01,02,03;C=c01
 chr1   5   .  A   T   .    .       A=1;B=11,12,13;C=c11,c12;D=d11
 chr1   15   .  A   T,G   .    .       A=2;B=21,22;C=c21,c22,c23;D=d21,d22
 chr1   30   .  A   T,G,C   .    .     A=3;B=31;C=c31,c32,c33,c34;D=d31,d32,d33
+    """),
+    )
+    return build_filesystem_test_resource(tmp_path)
+
+
+@pytest.fixture
+def vcf_res_repeated_alt(tmp_path: pathlib.Path) -> GenomicResource:
+    # A record whose two ALT alleles are *the same string*, with a per-allele
+    # (Number=A) INFO field that scores them differently.  The two VCFLines the
+    # table emits for it agree in all six record slots and differ only in their
+    # allele index -- so they are the case that tells whether the allele index
+    # takes part in a line's identity.
+    setup_directories(
+        tmp_path, {
+            "genomic_resource.yaml": textwrap.dedent("""
+                tabix_table:
+                    filename: data.vcf.gz
+                    format: vcf_info
+            """),
+        })
+    setup_vcf(
+        tmp_path / "data.vcf.gz",
+        textwrap.dedent("""
+##fileformat=VCFv4.1
+##INFO=<ID=A,Number=A,Type=Integer,Description="Score A">
+##contig=<ID=chr1>
+#CHROM POS ID REF ALT QUAL FILTER  INFO
+chr1   5   .  A   T,T   .    .       A=1,2
     """),
     )
     return build_filesystem_test_resource(tmp_path)
@@ -282,8 +309,12 @@ def test_tabix_table_yields_records_with_a_lazy_payload(
             ("1", 21, 30),
         ]
 
+        # ``pysam.TupleProxy`` is the lazy row ``pysam.asTuple()`` hands out;
+        # it is re-exported from pysam's top level (it is in ``pysam.__all__``)
+        # so this asserts laziness through the public API, without importing
+        # the ``pysam.libctabixproxies`` module path that defines it.
         payload = records[0][PAYLOAD]
-        assert isinstance(payload, TupleProxy)
+        assert isinstance(payload, pysam.TupleProxy)
         assert payload[3] == "3.14"
 
 
@@ -1671,6 +1702,48 @@ def test_vcf_line_equality_is_structural_and_agrees_with_its_hash(
 
     assert first[0] != first[1]
     assert len({*first, *second}) == 3
+
+
+def test_vcf_lines_of_the_same_record_differ_by_allele_index(
+    vcf_res_repeated_alt: GenomicResource,
+) -> None:
+    # An allele -- not a variant record -- is what a VCF line stands for, and
+    # the allele index is the only thing that says which one.  Usually the ALT
+    # slot proxies for it, but when a record repeats an ALT (``A T,T``) the two
+    # lines agree in every record slot and differ only in their allele index --
+    # and they carry *different* per-allele (Number=A) scores.  So the allele
+    # index has to take part in equality and in the hash, or the two alleles
+    # collapse: one of them silently disappears from a set, and a dict keyed on
+    # the first answers lookups made with the second.
+    assert vcf_res_repeated_alt.config is not None
+
+    with build_genomic_position_table(
+        vcf_res_repeated_alt, vcf_res_repeated_alt.config["tabix_table"],
+    ) as tab:
+        lines = cast(list[VCFLine], list(tab.get_all_records()))
+
+    assert len(lines) == 2
+    first, second = lines
+
+    # The two lines really are the pathological case: same record slots, same
+    # variant record, different allele -- and different scores.
+    assert tuple(first) == tuple(second)
+    assert first.allele_index == 0
+    assert second.allele_index == 1
+    assert first.get("A") == 1
+    assert second.get("A") == 2
+
+    assert first != second
+    assert second != first
+    assert len({first, second}) == 2
+    assert {first: "value"}.get(second) is None
+
+    # And the hash/equality contract still holds where the lines *are* equal:
+    # equal lines hash equal.
+    clone = copy.copy(first)
+    assert clone == first
+    assert hash(clone) == hash(first)
+    assert {first: "value"}[clone] == "value"
 
 
 def test_vcf_line_can_be_copied(vcf_res: GenomicResource) -> None:
