@@ -30,6 +30,7 @@ from gain.genomic_resources.genomic_scores import (
     _ScoreDef,
 )
 from gain.genomic_resources.testing.builders import (
+    a_bigwig_score,
     a_grr,
     a_position_score,
     a_vcf_info_score,
@@ -168,6 +169,48 @@ chr1   11  .  A   T   .    .      scoreA=0.2;scoreB=0.5
         assert bulk == per_score
         # scoreB is absent from this record's INFO -> null raw value -> None
         assert None in bulk
+
+
+def test_vcf_backend_yields_the_adapter_score_line(tmp_path) -> None:
+    # The VCF backend keeps its line adapter (``yields_records`` is False), so
+    # GenomicScore.open() must pick ScoreLine -- not RecordScoreLine -- for it.
+    # _TABULAR_BACKENDS pins that choice for in-memory and tabix only; this
+    # pins the third non-record backend.
+    builder = a_vcf_info_score().with_data("""
+##fileformat=VCFv4.1
+##INFO=<ID=scoreA,Number=1,Type=Float,Description="score A">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   10  .  A   T   .    .      scoreA=0.1
+""")
+    repo = a_grr().with_resource("vcf", builder).build_repo(tmp_path)
+    score = AlleleScore(repo.get_resource("vcf")).open()
+    with score:
+        assert score.table.yields_records is False
+        line = next(iter(score.fetch_lines("chr1", 10, 10)))
+        assert isinstance(line, ScoreLine)
+        assert not isinstance(line, RecordScoreLine)
+        assert line.get_score("scoreA") == pytest.approx(0.1)
+
+
+def test_bigwig_backend_yields_the_adapter_score_line(tmp_path) -> None:
+    # Same for the bigWig backend, the last of the three adapter backends.
+    builder = (
+        a_bigwig_score()
+        .with_score("bw", "float")
+        .with_data("""
+            chr1  0   10  0.11
+            chr1  10  20  0.22
+        """)
+        .with_chrom_lens({"chr1": 1000})
+    )
+    repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
+    score = PositionScore(repo.get_resource("bw")).open()
+    with score:
+        assert score.table.yields_records is False
+        line = next(iter(score.fetch_lines("chr1", 5, 5)))
+        assert isinstance(line, ScoreLine)
+        assert not isinstance(line, RecordScoreLine)
+        assert line.get_score("bw") == pytest.approx(0.11)
 
 
 def test_record_score_line_get_score_singular(tmp_path) -> None:

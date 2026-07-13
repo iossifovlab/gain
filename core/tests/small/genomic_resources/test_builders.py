@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pathlib
+import re
 
 import pytest
 import yaml
@@ -1751,6 +1752,27 @@ def test_zero_based_invalid_row_rejected_by_score_layer(
         .build_resource(tmp_path),
     ).open()
     with pytest.raises(OSError, match="has a region"):
+        list(score.fetch_region_values("1", 1, 100))
+
+
+def test_invalid_region_error_names_the_offending_line(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The OSError raised for an end < begin row interpolates the score line
+    # itself.  Without a __repr__ that reads
+    # "<gain...RecordScoreLine object at 0x7f...>" -- an address, useless for
+    # diagnosis.  The message must name the contig and the two positions.
+    score = PositionScore(
+        a_position_score()
+        .with_score("v", "float")
+        .with_zero_based()
+        .with_data("""
+            chrom  pos_begin  pos_end  v
+            1      5          3        0.5
+        """)
+        .build_resource(tmp_path),
+    ).open()
+    with pytest.raises(OSError, match=re.escape("RecordScoreLine(1:6-3")):
         list(score.fetch_region_values("1", 1, 100))
 
 

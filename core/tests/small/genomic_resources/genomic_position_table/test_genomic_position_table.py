@@ -269,6 +269,81 @@ def test_chr_add_pref() -> None:
         assert tab.get_chromosomes() == ["chr1", "chr11", "chrX"]
 
 
+def test_chr_add_pref_records_carry_the_mapped_chrom() -> None:
+    # The file contigs are '1'/'X'/'11'; every record must come out under the
+    # PREFIXED reference contig in its CHROM slot -- the add_prefix reverse map
+    # is derived from the observed file contigs, which is the sole reason the
+    # in-memory open() buffers the raw rows before building the parser.
+    res = build_inmemory_test_resource({
+        "genomic_resource.yaml": """
+            table:
+                filename: data.mem
+                chrom_mapping:
+                    add_prefix: chr
+            scores:
+            - id: c2
+              name: c2
+              type: float""",
+        "data.mem": convert_to_tab_separated(
+            """
+            chrom pos_begin pos2  c2
+            1     10        12    3.14
+            X     11        11    4.14
+            11    12        10    5.14
+            """)})
+    assert res.config is not None
+
+    with build_genomic_position_table(res, res.config["table"]) as tab:
+        records = list(tab.get_all_records())
+        assert [record[CHROM] for record in records] == \
+            ["chr1", "chr11", "chrX"]
+        assert [record[POS_BEGIN] for record in records] == [10, 12, 11]
+
+        # a region fetch is keyed by the mapped contig too
+        fetched = list(tab.get_records_in_region("chrX"))
+        assert len(fetched) == 1
+        assert fetched[0][CHROM] == "chrX"
+        assert fetched[0][POS_BEGIN] == 11
+
+        # ...and the unmapped file contig is not a contig of the table
+        with pytest.raises(ValueError, match="chromosome X"):
+            list(tab.get_records_in_region("X"))
+
+
+def test_chr_del_pref_records_carry_the_mapped_chrom() -> None:
+    # Mirror of the add_prefix case: file contigs are 'chr1'/'chr22'/'chrX',
+    # records must come out under the DE-prefixed reference contig.
+    res = build_inmemory_test_resource({
+        "genomic_resource.yaml": """
+            table:
+                filename: data.mem
+                chrom_mapping:
+                    del_prefix: chr
+            scores:
+            - id: c2
+              name: c2
+              type: float""",
+        "data.mem": """
+            chrom    pos_begin pos2  c2
+            chr1     10        12    3.14
+            chr22    11        11    4.14
+            chrX     12        10    5.14"""})
+    assert res.config is not None
+
+    with build_genomic_position_table(res, res.config["table"]) as tab:
+        records = list(tab.get_all_records())
+        assert [record[CHROM] for record in records] == ["1", "22", "X"]
+        assert [record[POS_BEGIN] for record in records] == [10, 11, 12]
+
+        fetched = list(tab.get_records_in_region("22"))
+        assert len(fetched) == 1
+        assert fetched[0][CHROM] == "22"
+        assert fetched[0][POS_BEGIN] == 11
+
+        with pytest.raises(ValueError, match="chromosome chr22"):
+            list(tab.get_records_in_region("chr22"))
+
+
 def test_chr_del_pref() -> None:
     res = build_inmemory_test_resource({
         "genomic_resource.yaml": """

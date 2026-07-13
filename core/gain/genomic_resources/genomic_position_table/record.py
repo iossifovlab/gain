@@ -1,11 +1,17 @@
 """Record contract and pure tabular parser factory.
 
-A genomic position table yields a **record**: a plain, immutable six-element
-tuple whose slot positions are named by the module-level integer constants
-below -- chromosome, start position, end position, reference allele,
-alternative allele, and an opaque backend payload.  The five core fields are
-decoded eagerly; the payload stays lazy (for a tabular backend it is the raw
-row, which decodes columns only when a caller asks for one).
+A genomic position table yields a **record**: a plain six-element tuple whose
+slot positions are named by the module-level integer constants below --
+chromosome, start position, end position, reference allele, alternative
+allele, and an opaque backend payload.  The five core fields are decoded
+eagerly; the payload stays lazy (for a tabular backend it is the raw row,
+which decodes columns only when a caller asks for one).
+
+The *tuple* is immutable: six slots, none of which can be rebound.  That
+promise stops at the payload, which is the backend's raw row held **by
+reference** -- it is deliberately neither copied nor frozen, because that is
+what keeps it lazy.  A mutable raw row therefore stays mutable through the
+record's payload slot.  (Both halves are pinned in test_record_parser.py.)
 
 This module is deliberately pure: it imports no pysam, no file handles and no
 genomic resource, so :func:`build_tabular_parser` can be unit-tested against
@@ -62,28 +68,33 @@ def build_tabular_parser(
     Reference and alternative are read from their columns when configured and
     are ``None`` otherwise.  The returned interval is closed on both sides and
     one-based, exactly as today.
+
+    What the per-row body costs, precisely.  Each specialisation's body is
+    fully inlined: no helper call and no intermediate tuple is built per row,
+    only the record itself.  The row still pays two ``is not None`` checks on
+    ``ref_key``/``alt_key`` -- they are loop-invariant, but folding them out
+    would mean crossing the ref/alt presence (four combinations, since ref and
+    alt are configured independently) with the four specialisations here, i.e.
+    sixteen near-identical closures.  Two pointer compares are not worth that,
+    so the ref/alt reads stay inline and this docstring states the cost rather
+    than claiming a branch-free body.  The zero-based ``pos_begin == pos_end``
+    check is data-dependent and cannot be hoisted at all.
     """
-    def _ref_alt(raw: TabularRow) -> tuple[str | None, str | None]:
-        ref = raw[ref_key] if ref_key is not None else None
-        alt = raw[alt_key] if alt_key is not None else None
-        return ref, alt
-
-    def _zero_based_positions(raw: TabularRow) -> tuple[int, int]:
-        pos_begin = int(raw[pos_begin_key])
-        pos_end = int(raw[pos_end_key])
-        if pos_begin == pos_end:
-            pos_end += 1
-        pos_begin += 1
-        return pos_begin, pos_end
-
     if rev_chrom_map is not None and zero_based:
         def parse_zero_based_mapped(raw: TabularRow) -> Record | None:
             rchrom = rev_chrom_map.get(raw[chrom_key])
             if rchrom is None:
                 return None
-            pos_begin, pos_end = _zero_based_positions(raw)
-            ref, alt = _ref_alt(raw)
-            return (rchrom, pos_begin, pos_end, ref, alt, raw)
+            pos_begin = int(raw[pos_begin_key])
+            pos_end = int(raw[pos_end_key])
+            if pos_begin == pos_end:
+                pos_end += 1
+            pos_begin += 1
+            return (
+                rchrom, pos_begin, pos_end,
+                raw[ref_key] if ref_key is not None else None,
+                raw[alt_key] if alt_key is not None else None,
+                raw)
         return parse_zero_based_mapped
 
     if rev_chrom_map is not None:
@@ -91,22 +102,31 @@ def build_tabular_parser(
             rchrom = rev_chrom_map.get(raw[chrom_key])
             if rchrom is None:
                 return None
-            ref, alt = _ref_alt(raw)
             return (
                 rchrom, int(raw[pos_begin_key]), int(raw[pos_end_key]),
-                ref, alt, raw)
+                raw[ref_key] if ref_key is not None else None,
+                raw[alt_key] if alt_key is not None else None,
+                raw)
         return parse_mapped
 
     if zero_based:
         def parse_zero_based(raw: TabularRow) -> Record | None:
-            pos_begin, pos_end = _zero_based_positions(raw)
-            ref, alt = _ref_alt(raw)
-            return (raw[chrom_key], pos_begin, pos_end, ref, alt, raw)
+            pos_begin = int(raw[pos_begin_key])
+            pos_end = int(raw[pos_end_key])
+            if pos_begin == pos_end:
+                pos_end += 1
+            pos_begin += 1
+            return (
+                raw[chrom_key], pos_begin, pos_end,
+                raw[ref_key] if ref_key is not None else None,
+                raw[alt_key] if alt_key is not None else None,
+                raw)
         return parse_zero_based
 
     def parse_identity(raw: TabularRow) -> Record | None:
-        ref, alt = _ref_alt(raw)
         return (
             raw[chrom_key], int(raw[pos_begin_key]), int(raw[pos_end_key]),
-            ref, alt, raw)
+            raw[ref_key] if ref_key is not None else None,
+            raw[alt_key] if alt_key is not None else None,
+            raw)
     return parse_identity

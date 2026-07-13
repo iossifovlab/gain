@@ -227,6 +227,22 @@ class ScoreLineBase(abc.ABC):
     def alt(self) -> str | None:
         ...
 
+    def __repr__(self) -> str:
+        """Name the line by its core fields, not by its address.
+
+        Score lines are interpolated into diagnostics (e.g. the OSError in
+        ``GenomicScore._line_to_begin_end``); the default object repr would
+        print ``<...RecordScoreLine object at 0x7f...>``, which says nothing
+        about the offending row.
+        """
+        ref_alt = ""
+        if self.ref is not None or self.alt is not None:
+            ref_alt = f" {self.ref}->{self.alt}"
+        return (
+            f"{type(self).__name__}"
+            f"({self.chrom}:{self.pos_begin}-{self.pos_end}{ref_alt})"
+        )
+
     def _extract_value(self, score_def: _ScoreDef) -> ScoreValue:
         """Get and parse one score from the line using a resolved def.
 

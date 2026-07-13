@@ -7,6 +7,7 @@ drop and the end-position bump.
 """
 from __future__ import annotations
 
+import pytest
 from gain.genomic_resources.genomic_position_table.record import (
     ALT,
     CHROM,
@@ -55,10 +56,33 @@ def test_identity_payload_is_the_raw_row() -> None:
     assert record[PAYLOAD] is row
 
 
-def test_record_is_an_immutable_tuple() -> None:
+def test_record_is_a_six_slot_tuple_whose_slots_cannot_be_rebound() -> None:
+    # The record itself is immutable: exactly six slots, none of which can be
+    # reassigned.  That is the whole of the promise -- it does NOT extend to
+    # the payload, which is the backend's raw row held BY REFERENCE (see
+    # test_payload_is_shared_with_the_caller_not_a_frozen_copy).
     parse = _parser()
     record = parse(["1", "10", "12"])
+    assert record is not None
     assert isinstance(record, tuple)
+    assert len(record) == 6
+    with pytest.raises(TypeError):
+        record[CHROM] = "2"  # type: ignore[index]
+
+
+def test_payload_is_shared_with_the_caller_not_a_frozen_copy() -> None:
+    # The payload slot holds the raw row by reference and is deliberately NOT
+    # copied or frozen -- that is what keeps it lazy.  So a mutable row stays
+    # mutable through the record: the record contract promises an immutable
+    # *tuple*, not a deeply immutable payload.  Pinned so the distinction is
+    # stated by a test rather than only by a docstring.
+    parse = _parser()
+    row = ["1", "10", "12", "0.5"]
+    record = parse(row)
+    assert record is not None
+    assert record[PAYLOAD] is row
+    row[3] = "0.9"
+    assert record[PAYLOAD][3] == "0.9"
 
 
 # --- ref/alt columns ------------------------------------------------------
@@ -77,6 +101,39 @@ def test_ref_alt_absent_yield_none() -> None:
     assert record is not None
     assert record[REF] is None
     assert record[ALT] is None
+
+
+@pytest.mark.parametrize(
+    ("ref_key", "alt_key", "expected_ref", "expected_alt"),
+    [
+        (3, 4, "A", "T"),
+        (3, None, "A", None),
+        (None, 4, None, "T"),
+        (None, None, None, None),
+    ],
+)
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {},
+        {"zero_based": True},
+        {"rev_chrom_map": {"1": "chr1"}},
+        {"rev_chrom_map": {"1": "chr1"}, "zero_based": True},
+    ],
+    ids=["identity", "zero_based", "mapped", "zero_based_mapped"],
+)
+def test_ref_alt_are_read_independently_in_every_specialisation(
+    ref_key, alt_key, expected_ref, expected_alt, extra,
+) -> None:
+    # ref and alt are configured INDEPENDENTLY: either may be present without
+    # the other.  Pin all four ref/alt combinations against all four fused
+    # specialisations, so folding the ref/alt reads into the specialised
+    # closures cannot silently change what lands in the REF/ALT slots.
+    parse = _parser(ref_key=ref_key, alt_key=alt_key, **extra)
+    record = parse(["1", "10", "10", "A", "T"])
+    assert record is not None
+    assert record[REF] == expected_ref
+    assert record[ALT] == expected_alt
 
 
 # --- specialisation 2: zero-based ----------------------------------------
@@ -190,9 +247,29 @@ def test_zero_based_and_chrom_mapping_unmapped_contig_returns_none() -> None:
     assert parse(["2", "10", "10"]) is None
 
 
-def test_factory_selects_one_specialisation_reused_across_rows() -> None:
-    # the same parser callable handles many rows -- the specialisation is
-    # selected once by the factory, not re-decided per row
+@pytest.mark.parametrize(("kwargs", "expected"), [
+    ({}, "parse_identity"),
+    ({"zero_based": True}, "parse_zero_based"),
+    ({"rev_chrom_map": {"1": "chr1"}}, "parse_mapped"),
+    (
+        {"rev_chrom_map": {"1": "chr1"}, "zero_based": True},
+        "parse_zero_based_mapped",
+    ),
+])
+def test_factory_selects_the_specialisation_once_at_build_time(
+    kwargs, expected,
+) -> None:
+    # The factory's contract is that (chrom-mapping, zero-based) is resolved
+    # ONCE, at build time, into a single fused closure -- a row can never
+    # re-decide it.  Assert exactly that: which closure came back, keyed by the
+    # two build-time flags.  (The old version of this test only re-checked the
+    # zero-based arithmetic and asserted nothing about the selection.)
+    parse = _parser(**kwargs)
+    assert parse.__name__ == expected
+
+
+def test_the_selected_parser_is_one_callable_reused_across_rows() -> None:
+    # ...and that one closure handles every row: same callable, many rows.
     parse = _parser(zero_based=True)
     first = parse(["1", "0", "0"])
     second = parse(["1", "5", "9"])

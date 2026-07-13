@@ -171,11 +171,19 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
             return
 
         # An unknown contig is an error; a known-but-empty one yields nothing.
-        if chrom not in self.get_chromosomes():
-            raise ValueError(
-                f"The chromosome {chrom} is not present in the table")
+        # Probe the dict FIRST: this runs once per annotated variant, and
+        # ``get_chromosomes()`` is a list -- membership in it is O(n_contigs).
+        # The populated-contig case (the hot one) therefore pays a single O(1)
+        # dict lookup, and only the miss falls back to the list scan to tell an
+        # unknown contig from a known-but-empty one.
+        records = self.records_by_chr.get(chrom)
+        if records is None:
+            if chrom not in self.get_chromosomes():
+                raise ValueError(
+                    f"The chromosome {chrom} is not present in the table")
+            return
 
-        for record in self.records_by_chr.get(chrom, []):
+        for record in records:
             if pos_begin and pos_begin > record[POS_END]:
                 continue
             if pos_end and pos_end < record[POS_BEGIN]:
