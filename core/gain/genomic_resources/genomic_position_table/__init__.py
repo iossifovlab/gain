@@ -1,4 +1,4 @@
-from .line import BigWigLine, Line, LineBuffer, VCFLine
+from .line import BigWigLine, Line, LineBuffer
 from .table_bigwig import BigWigTable
 from .table_tabix import TabixGenomicPositionTable
 from .table_vcf import VCFGenomicPositionTable
@@ -11,6 +11,5 @@ __all__ = [
     "LineBuffer",
     "TabixGenomicPositionTable",
     "VCFGenomicPositionTable",
-    "VCFLine",
     "build_genomic_position_table",
 ]

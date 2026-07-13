@@ -663,9 +663,9 @@ def test_allele_score_region_vcf_repeated_annotation_idempotent(
 ) -> None:
     """Annotating the same position twice must return identical results.
 
-    Regression test for a bug where VCFLine stored pos_end = raw_line.pos
-    (the 1-based VCF POS) for all variants, instead of the actual end
-    position (raw_line.stop).  A multi-base variant whose span overlaps a
+    Regression test for a bug where the VCF backend stored pos_end =
+    variant.pos (the 1-based VCF POS) for all variants, instead of the actual
+    end position (variant.stop).  A multi-base variant whose span overlaps a
     query position was included by the tabix path on the first call but
     silently dropped by the LineBuffer on the second call, because
     buffer.fetch skips records whose pos_end < query pos_begin.
