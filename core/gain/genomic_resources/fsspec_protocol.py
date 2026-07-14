@@ -51,6 +51,7 @@ from gain.genomic_resources.repository import (
     ReadWriteRepositoryProtocol,
     ResourceFileState,
     is_gr_id_token,
+    parse_dvc_pointer_out,
     parse_gr_id_version_token,
 )
 from gain.templates import get_template
@@ -810,9 +811,10 @@ class FsspecReadWriteProtocol(
            pointer and must not be opened).
         3. that ``<name>.dvc`` parses as a well-formed DVC pointer -- a dict
            with an ``outs`` list of dicts -- that declares ``name`` as one of
-           its outputs (``out["path"] == name``). This mirrors
-           ``cli.collect_dvc_entries``' strict ``out["path"] == basename``
-           comparison, so the scanner and cli classify identically.
+           its outputs (``out["path"] == name``). Both this test and
+           ``cli.collect_dvc_entries`` delegate to
+           :func:`repository.parse_dvc_pointer_out`, so the scanner and the
+           cli cannot classify the same sidecar differently.
 
         Parsing NEVER raises: a binary/non-UTF-8 ``.dvc`` (read in binary and
         handed to ``yaml.safe_load`` as bytes, so no UnicodeDecodeError), a
@@ -834,13 +836,13 @@ class FsspecReadWriteProtocol(
         # (3) it must parse as a genuine pointer declaring `name` as output.
         try:
             with self.filesystem.open(dvc_url, "rb") as infile:
-                dvc = yaml.safe_load(infile.read())
-            return any(out["path"] == name for out in dvc["outs"])
-        except (yaml.YAMLError, TypeError, KeyError, OSError, ValueError) \
-                as error:
+                content = cast(bytes, infile.read())
+        except (OSError, ValueError) as error:
             logger.debug(
-                "ignoring malformed .dvc pointer %s: %s", dvc_url, error)
+                "ignoring unreadable .dvc pointer %s: %s", dvc_url, error)
             return False
+
+        return parse_dvc_pointer_out(content, name) is not None
 
     @staticmethod
     def _is_gitignored(

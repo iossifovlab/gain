@@ -3,8 +3,9 @@ Release Notes
 
 * 2026.7.2
     * **Behavior change:** a ``.dvc`` sidecar is no longer accepted as the
-      md5 sum of a resource file that is present on disk (#251). The rule
-      ``grr_manage`` now follows is:
+      md5 sum of a resource file that the repository scan yields and that is
+      present on disk (#251). The rule ``grr_manage`` now follows, for every
+      file the scan yields, is:
 
       * a file that is **materialised** (its bytes are on disk) always gets
         an md5 sum derived from those bytes — either hashed from the file's
@@ -32,6 +33,17 @@ Release Notes
       size-and-timestamp fast path applies as before, so repeated
       ``repo-repair`` runs do not rehash unchanged files, and the
       pointer-only clone hashes nothing at all.
+
+      **Limitation (pre-existing, not addressed here):** the rule reaches
+      exactly as far as the repository scan does, and the scan yields
+      neither the content of a *directory* that ``dvc add <dir>`` produced
+      (a gitignored directory is skipped whole, so its files never enter the
+      manifest individually — only a single pointer-only entry for the
+      directory itself, taken from its sidecar), nor the names the scan
+      skips by pattern (e.g. ``*html``). For those, the sidecar remains the
+      source of the md5 sum even when the data is materialised, in every
+      mode including ``--without-dvc``. Per-file ``dvc add <file>`` outputs —
+      what the GRRs use — are fully covered.
     * **Behavior change:** the ``--with-dvc`` (default) /
       ``-D``, ``--without-dvc`` option group is restored on
       ``repo-manifest``, ``resource-manifest``, ``repo-stats``,
@@ -40,11 +52,18 @@ Release Notes
       2026.7.1, which left no way to ask ``grr_manage`` to verify a
       resource file's bytes against its recorded md5 sum.
       ``--without-dvc`` is that audit mode: it ignores the recorded
-      resource file state and computes the md5 sum of every materialised
-      resource file from its content. It does **not** discard ``.dvc``
-      sidecars for files that are not materialised — those have no content
-      to hash, so dropping them would delete their entries from the
-      manifest.
+      resource file state and computes from its content the md5 sum of every
+      materialised resource file the scan yields (see the limitation above).
+      It does **not** discard ``.dvc`` sidecars for files that are not
+      materialised — those have no content to hash, so dropping them would
+      delete their entries from the manifest. Each file is read exactly once
+      per command.
+    * A malformed, unreadable or incomplete ``.dvc`` file no longer aborts
+      ``grr_manage`` with a traceback (#251). It is reported as a warning and
+      ignored, exactly as the repository scan already ignored it — both now
+      interpret a sidecar through the same parser, so they cannot classify
+      one differently. A sidecar that declares no usable md5 sum and size is
+      ignored rather than written into the ``.MANIFEST`` as ``md5: null``.
 
 * 2026.7.1
     * **Behavior change:** a completed anonymous annotation job and its

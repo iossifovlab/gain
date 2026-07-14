@@ -397,6 +397,47 @@ class ManifestUpdate:
         return bool(self.entries_to_delete or self.entries_to_update)
 
 
+def parse_dvc_pointer_out(
+    content: str | bytes, basename: str,
+) -> dict[str, Any] | None:
+    """Parse a ``.dvc`` sidecar; return the output entry describing basename.
+
+    A well-formed ``.dvc`` pointer is a mapping with an ``outs`` list of
+    mappings; the output that describes ``basename`` is the one whose
+    ``path`` equals it exactly. Anything else - a mapping without ``outs``,
+    an ``outs`` that is not a list of mappings, an output for some other
+    path, YAML that does not parse, non-UTF-8 bytes - is not a pointer for
+    ``basename`` and yields ``None``.
+
+    Parsing NEVER raises. This is the single place a ``.dvc`` file is
+    interpreted, so that the repository scan
+    (``_is_dvc_managed_leaf``, which must never abort on stray content) and
+    ``grr_manage``'s ``collect_dvc_entries`` cannot classify the same sidecar
+    differently (#251).
+
+    Args:
+        content: raw content of the ``.dvc`` file; bytes are safe to pass -
+            ``yaml`` decodes them itself, so a binary file cannot raise a
+            ``UnicodeDecodeError`` past this function.
+        basename: the base name of the data file the pointer must describe.
+
+    Returns:
+        The matching ``outs`` entry, or None if the content is not a pointer
+        for ``basename``. The entry is NOT validated beyond its ``path``:
+        callers that need an md5 sum and a size must check for them.
+    """
+    try:
+        dvc = yaml.safe_load(content)
+        for out in dvc["outs"]:
+            if out["path"] == basename:
+                return cast(dict[str, Any], out)
+    except (yaml.YAMLError, TypeError, KeyError, OSError, ValueError) as error:
+        logger.debug(
+            "ignoring malformed '.dvc' pointer for <%s>: %s", basename, error)
+        return None
+    return None
+
+
 class GenomicResource:
     """Represents a single genomic resource with metadata and file access.
 

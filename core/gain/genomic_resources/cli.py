@@ -30,6 +30,7 @@ from gain.genomic_resources.repository import (
     ManifestEntry,
     ReadOnlyRepositoryProtocol,
     ReadWriteRepositoryProtocol,
+    parse_dvc_pointer_out,
     parse_gr_id_version_token,
     version_tuple_to_string,
 )
@@ -119,11 +120,14 @@ def _add_dvc_parameters_group(parser: argparse.ArgumentParser) -> None:
     group.add_argument(
         "-D", "--without-dvc",
         action="store_false", dest="use_dvc",
-        help="verify mode: compute the md5 sum of every resource file that "
-        "is present on disk from its content, ignoring its recorded state. "
-        "A file that is not present on disk (a '.dvc' pointer only) has no "
-        "content to hash, so its '.dvc' file remains the source of its md5 "
-        "sum in both modes")
+        help="verify mode: compute from its content the md5 sum of every "
+        "resource file that the repository scan yields and that is present "
+        "on disk, ignoring its recorded state. Two kinds of file keep taking "
+        "their md5 sum from a '.dvc' sidecar even here, because there is no "
+        "content of theirs to hash or none is scanned: a file that is not "
+        "present on disk (a '.dvc' pointer only), and the output of "
+        "'dvc add <dir>' - a whole directory, which the scan skips and whose "
+        "files therefore never enter the manifest individually")
 
 
 def _add_hist_parameters_group(parser: argparse.ArgumentParser) -> None:
@@ -337,7 +341,18 @@ def _configure_resource_info_subparser(
 def collect_dvc_entries(
         proto: ReadWriteRepositoryProtocol,
         res: GenomicResource) -> dict[str, ManifestEntry]:
-    """Collect manifest entries defined by .dvc files."""
+    """Collect manifest entries defined by .dvc files.
+
+    A ``.dvc`` file that cannot be read, does not parse as a pointer for the
+    data file it sits next to, or declares no usable md5 sum and size is
+    skipped with a warning - never propagated into the manifest, and never
+    allowed to abort the command. `.dvc` sidecars are read on every
+    ``grr_manage`` run, and the repository scan that produced this entry has
+    already tolerated the very same content (see
+    :meth:`FsspecReadWriteProtocol._is_dvc_managed_leaf`); the two classify
+    identically because both delegate to
+    :func:`repository.parse_dvc_pointer_out`.
+    """
     result = {}
     manifest = proto.collect_resource_entries(res)
     for entry in manifest:
@@ -346,19 +361,39 @@ def collect_dvc_entries(
         filename = entry.name[:-4]
         basename = os.path.basename(filename)
 
+        try:
+            with proto.open_raw_file(res, entry.name, "rb") as infile:
+                content = cast(bytes, infile.read())
+        except (OSError, ValueError):
+            logger.warning(
+                "unable to read the '.dvc' file <%s> of <%s>; ignoring it",
+                entry.name, res.resource_id)
+            continue
+
+        out = parse_dvc_pointer_out(content, basename)
+        if out is None:
+            logger.warning(
+                "the '.dvc' file <%s> of <%s> is not a dvc pointer for <%s>; "
+                "ignoring it",
+                entry.name, res.resource_id, filename)
+            continue
+
+        md5 = out.get("md5")
+        size = out.get("size")
+        if not isinstance(md5, str) or not isinstance(size, int):
+            logger.warning(
+                "the '.dvc' file <%s> of <%s> declares no usable md5 sum and "
+                "size for <%s>; ignoring it",
+                entry.name, res.resource_id, filename)
+            continue
+
         if filename not in manifest:
             logger.info(
                 "filling manifest of <%s> with entry for <%s> based on "
                 "dvc data only",
                 res.resource_id, filename)
 
-        with proto.open_raw_file(res, entry.name, "rt") as infile:
-            content = infile.read()
-            dvc = yaml.safe_load(content)
-            for data in dvc["outs"]:
-                if data["path"] == basename:
-                    result[filename] = \
-                        ManifestEntry(filename, data["size"], data["md5"])
+        result[filename] = ManifestEntry(filename, size, md5)
 
     return result
 
@@ -403,22 +438,21 @@ def _do_resource_manifest_command(
     if dry_run:
         return bool(manifest_update)
 
-    if force:
-        logger.info(
-            "building manifest for resource <%s>...", res.resource_id)
-        manifest = proto.build_manifest(
-            res, prebuild_entries, verify_content=verify_content)
-        proto.save_manifest(res, manifest)
-        return False
-
-    if bool(manifest_update):
+    if force or bool(manifest_update):
+        # The manifest `check_update_manifest` returned IS the updated one:
+        # every materialised entry already carries an md5 sum derived from
+        # the file's bytes, and the pointer-only entries are already merged
+        # in. Deriving it again through `build_manifest`/`update_manifest`
+        # would hash every materialised file a SECOND time - free in the
+        # default mode, where the states just persisted make the size and
+        # timestamp fast path hit, but a full second read of the repository
+        # under `--without-dvc`, which deliberately bypasses that fast
+        # path (#251).
         logger.info(
             "updating manifest for resource <%s>...", res.resource_id)
-        manifest = proto.update_manifest(
-            res, prebuild_entries, verify_content=verify_content)
-        proto.save_manifest(res, manifest)
-        return False
-    return bool(manifest_update)
+        proto.save_manifest(res, manifest_update.manifest)
+
+    return False
 
 
 def _run_repo_manifest_command_internal(
@@ -705,7 +739,6 @@ def _run_repo_stats_command(
         **kwargs: bool | int | str) -> int:
     dry_run = cast(bool, kwargs.get("dry_run", False))
     force = cast(bool, kwargs.get("force", False))
-    use_dvc = cast(bool, kwargs.get("use_dvc", True))
     region_size = cast(int, kwargs.get("region_size", 3_000_000))
 
     if dry_run and force:
@@ -756,9 +789,18 @@ def _run_repo_stats_command(
             graph, task_progress_mode=False, **modified_kwargs)
 
     if stats_resources:
+        # Rebuilding the statistics wrote new files into these resources, so
+        # their manifests have to be rebuilt. `use_dvc=True` (the size and
+        # timestamp fast path) is deliberate even under `--without-dvc`: the
+        # manifest pass above has just verified the content of every
+        # materialised file of this very repository, in this very command,
+        # and persisted the resulting states - so re-verifying them here
+        # would be a second full read of the repository, not a second
+        # opinion (#251). The freshly written statistics files have no state
+        # and are hashed here.
         _run_repo_manifest_command_internal(
             proto, stats_resources,
-            dry_run=False, force=True, use_dvc=use_dvc)
+            dry_run=False, force=True, use_dvc=True)
 
     assert isinstance(proto, FsspecReadWriteProtocol)
     _build_content_file(proto)
