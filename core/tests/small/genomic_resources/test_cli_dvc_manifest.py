@@ -997,6 +997,38 @@ def test_pointer_only_dvc_directory_keeps_its_sidecar_entry(
         for name in md5_spy), md5_spy
 
 
+def test_materialising_a_dvc_directory_replaces_its_stale_pointer_entry(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """The `dvc pull` transition: pointer entry out, real files in.
+
+    A clone is repaired while the directory is still a pointer (its `.dir`
+    entry is all there is), then `dvc pull` materialises it. The next repair
+    must replace that entry with the subtree's real, content-hashed files -
+    never leave the unverifiable `.dir` md5 sum standing next to them.
+    """
+    # Given a repaired `.dvc`-only clone whose manifest holds the `.dir` entry
+    path = tmp_path_factory.mktemp("cli_dvc_directory_pull")
+    setup_dvc_directory_grr(path, materialised=False)
+    proto = build_filesystem_test_protocol(path, repair=False)
+    cli_manage(["repo-repair", "-R", str(path)])
+    assert proto.load_manifest(proto.get_resource("one"))["chunks"].md5 == \
+        LYING_DIR_MD5
+
+    # When the directory is materialised (as `dvc pull` would) and repaired
+    setup_directories(
+        path, {"one": {"chunks": {"a.txt": CHUNK_A, "b.txt": CHUNK_B}}})
+    cli_manage(["repo-repair", "-R", str(path)])
+
+    # Then the pointer entry is gone and the real files describe themselves
+    manifest = proto.load_manifest(proto.get_resource("one"))
+    assert "chunks" not in manifest
+    assert manifest["chunks/a.txt"].md5 == md5_of(CHUNK_A)
+    assert manifest["chunks/b.txt"].md5 == md5_of(CHUNK_B)
+    raw = (path / "one" / ".MANIFEST").read_text(encoding="utf8")
+    assert LYING_DIR_MD5 not in raw, raw
+
+
 # ---------------------------------------------------------------------------
 # The other scan exclusion: `*html` (#255)
 # ---------------------------------------------------------------------------
