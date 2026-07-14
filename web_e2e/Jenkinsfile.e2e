@@ -59,7 +59,16 @@ pipeline {
     }
 
     options {
-        timeout(time: 1, unit: 'HOURS')
+        // 4h, not 1h: the GRR is no longer a bind-mounted NFS
+        // directory but https://grr.seqpipe.org behind a
+        // persistent per-agent cache, and the cache's unit is a
+        // whole file rather than a byte range — the first build on
+        // a given agent downloads every resource the suite touches
+        // in full. Cold builds are expected to be slow (and are
+        // allowed to be); warm builds should beat the old NFS
+        // baseline, since they read from local disk. Trim this
+        // back once warm-build times have been measured.
+        timeout(time: 4, unit: 'HOURS')
         buildDiscarder(logRotator(numToKeepStr: '20'))
     }
 
@@ -70,6 +79,31 @@ pipeline {
             "gain-web-e2e-${env.BUILD_NUMBER}"
         COMPOSE_NETWORK =
             "gain-web-e2e-${env.BUILD_NUMBER}_default"
+
+        // Persistent across builds, and shared with gpf-web-e2e:
+        // both call the main GRR `grr.sync`, and the cache is keyed
+        // by child repo id (cached_repository.py joins cache_url
+        // with proto_id), so both jobs populate and reuse the same
+        // ${HOME}/grr_cache/grr.sync/ tree. Same shape as
+        // core/Jenkinsfile.integration's grr_seqpipe_cache: anchored
+        // to the agent home (on pooh, /var/lib/jenkins -> ZFS via the
+        // home symlink) rather than a hardcoded mount, bind-mounted
+        // into the containers by web_infra/compose-jenkins.yaml.
+        //
+        // Created here with `mkdir -p` rather than relying on the
+        // agent being pre-provisioned (seqpipe/infra#67 provisions it
+        // on pooh, but this job's label is `!dory`, so it can also
+        // land on eyoree). Concurrent builds on one agent are safe:
+        // the caching protocol takes a per-file lock before copying.
+        GRR_CACHE_DIR = "${env.HOME}/grr_cache"
+
+        // The backend containers run as the agent's uid/gid instead
+        // of root, so the long-lived cache (and the gpfwa-data /
+        // gpfwa-logs binds) stay owned by `jenkins` and remain
+        // prunable. Root-owned artefacts in a workspace are a bug
+        // class this stack has already been bitten by.
+        AGENT_UID = sh(script: 'id -u', returnStdout: true).trim()
+        AGENT_GID = sh(script: 'id -g', returnStdout: true).trim()
     }
 
     stages {
@@ -111,11 +145,35 @@ pipeline {
                 // Then mkdir runs on the host so the new reports
                 // dir is Jenkins-owned and the post-stage
                 // host-side `cp` can write into it.
+                //
+                // gpfwa-data/gpfwa-logs are wiped and re-created on
+                // the host for the same reason plus a new one: the
+                // backend now runs as the agent uid, and dockerd
+                // creates a *missing* bind source as root:root — a
+                // dir the non-root container could not write into.
+                // Creating them here (as `jenkins`) is what makes
+                // the non-root switch work. Both are per-build
+                // scratch: the stack is torn down with `down -v`
+                // and the DB starts empty every build.
+                //
+                // GRR_CACHE_DIR is the one thing that must NOT be
+                // wiped — it is the persistent cross-build cache —
+                // so it is only ever mkdir'd.
                 sh '''
                     docker run --rm -v "$PWD:/wd" -w /wd alpine \
                         rm -rf dist reports web_e2e/reports \
-                               web_infra/gpfwa-logs
-                    mkdir -p reports/web_e2e
+                               web_infra/gpfwa-logs \
+                               web_infra/gpfwa-data
+                    mkdir -p reports/web_e2e \
+                             web_infra/gpfwa-logs \
+                             web_infra/gpfwa-data
+
+                    # Re-derive rather than trusting the environment{}
+                    # block: see the `Compose env` stage. `mkdir -p ""`
+                    # is an error, so an unset/empty GRR_CACHE_DIR would
+                    # otherwise fail here for a confusing reason.
+                    : "${GRR_CACHE_DIR:=$HOME/grr_cache}"
+                    mkdir -p "$GRR_CACHE_DIR"
                 '''
             }
         }
@@ -137,6 +195,85 @@ pipeline {
                                       depth: 1]],
                     ])
                 }
+            }
+        }
+
+        // Make the compose stack's view of GRR_CACHE_DIR / AGENT_UID /
+        // AGENT_GID deterministic, then PROVE it before anything starts.
+        //
+        // Build #1042 declared all three in the pipeline `environment{}`
+        // block and `docker compose` still did not see them: `docker
+        // inspect` on the live container showed the bind source as
+        // <workspace>/web_infra/grr_cache (the `${GRR_CACHE_DIR:-./grr_cache}`
+        // FALLBACK, i.e. inside the workspace, wiped by the next build) and
+        // User=0:0 (the `${AGENT_UID:-0}` fallback). Both designs — the
+        // persistent cache and the non-root ownership — were completely
+        // inert, and nothing failed.
+        //
+        // Rather than chase Jenkins' env-export semantics, pin it:
+        //
+        //   1. Re-derive the values HERE, in the shell, from `$HOME` and
+        //      `id -u`/`id -g` — the shell's own view is authoritative and
+        //      cannot be half-exported.
+        //   2. Write them to web_infra/.env — the compose PROJECT directory
+        //      (the dir of the first `-f` file), which is where Compose
+        //      auto-loads a .env from.
+        //   3. Pass `--env-file web_infra/.env` explicitly on every compose
+        //      call anyway, so nothing depends on which directory Compose
+        //      decides the project dir is.
+        //   4. `set -a; . ./web_infra/.env` before each compose call, because
+        //      --env-file is NOT enough on its own: the process environment
+        //      OUTRANKS --env-file, so a var that is present-but-EMPTY in the
+        //      shell still wins and still selects the fallback (verified
+        //      against docker compose). Sourcing makes the shell agree with
+        //      the file, which closes that hole.
+        //
+        // The ${VAR:-default} fallbacks stay in the compose YAML as a
+        // last-resort guard for local `docker compose up` outside CI.
+        stage('Compose env') {
+            steps {
+                sh '''
+                    set -eu
+
+                    : "${GRR_CACHE_DIR:=$HOME/grr_cache}"
+                    mkdir -p "$GRR_CACHE_DIR"
+
+# Heredoc body is at column 0 on purpose: compose's dotenv parser
+# takes the line verbatim, and a leading-space "  KEY=value" is not
+# reliably the same thing as "KEY=value".
+cat > web_infra/.env <<EOF
+GRR_CACHE_DIR=$GRR_CACHE_DIR
+AGENT_UID=$(id -u)
+AGENT_GID=$(id -g)
+EOF
+
+                    echo "--- web_infra/.env ---"
+                    cat web_infra/.env
+                '''
+
+                // The teeth. A silent fallback to a workspace-local cache
+                // running as root is EXACTLY the bug above; it must never
+                // pass quietly again. This asserts on the RESOLVED config
+                // (`docker compose config`), not on what we believe we
+                // exported, and fails the build with expected-vs-actual.
+                sh '''
+                    set -eu
+                    set -a; . ./web_infra/.env; set +a
+
+                    # Every one of these builds a GRR. The two web services
+                    # do it obviously; the three one-shots do it via Django's
+                    # system checks, which resolve ROOT_URLCONF and thereby
+                    # import annotation_base_view's module-level
+                    # `GRR = build_genomic_resource_repository(...)`. A
+                    # service missing any leg silently uses the image's
+                    # baked-in default GRR and caches nothing.
+                    EXPECT_GRR_SERVICES="backend backend-e2e \
+                                         backend-migrate backend-e2e-migrate \
+                                         backend-e2e-setup" \
+                    ./web_infra/verify-compose-env.sh \
+                        web_infra/.env \
+                        web_infra/compose-jenkins.yaml
+                '''
             }
         }
 
@@ -271,7 +408,9 @@ pipeline {
             // committed package-lock.json and the test sources).
             steps {
                 sh '''
+                    set -a; . ./web_infra/.env; set +a
                     docker compose \
+                        --env-file web_infra/.env \
                         -p "$COMPOSE_PROJECT" \
                         -f web_infra/compose-jenkins.yaml \
                         build e2e-tests
@@ -282,7 +421,9 @@ pipeline {
         stage('Instance import') {
             steps {
                 sh '''
+                    set -a; . ./web_infra/.env; set +a
                     docker compose \
+                        --env-file web_infra/.env \
                         -p "$COMPOSE_PROJECT" \
                         -f web_infra/compose-jenkins.yaml \
                         run --rm backend-e2e-setup
@@ -328,6 +469,7 @@ pipeline {
                     try {
                         try {
                             sh '''
+                                set -a; . ./web_infra/.env; set +a
                                 mkdir -p web_e2e/reports
                                 # `compose run --rm e2e-tests` honours
                                 # backend-e2e-migrate / backend-e2e /
@@ -343,6 +485,7 @@ pipeline {
                                 # #39 lesson.
                                 TEST_RC=0
                                 docker compose \
+                                    --env-file web_infra/.env \
                                     -p "$COMPOSE_PROJECT" \
                                     -f web_infra/compose-jenkins.yaml \
                                     run --rm e2e-tests \
@@ -354,6 +497,7 @@ pipeline {
                             '''
                         } finally {
                             sh '''
+                                set -a; . ./web_infra/.env; set +a
                                 # Wide combined log of every compose
                                 # service (db, mail, backend-migrate,
                                 # backend-e2e, frontend-e2e). One
@@ -362,6 +506,7 @@ pipeline {
                                 # cross-service failures than
                                 # per-service splits.
                                 docker compose \
+                                    --env-file web_infra/.env \
                                     -p "$COMPOSE_PROJECT" \
                                     -f web_infra/compose-jenkins.yaml \
                                     logs --no-color \
@@ -381,7 +526,9 @@ pipeline {
                         }
                     } finally {
                         sh '''
+                            set -a; . ./web_infra/.env; set +a
                             docker compose \
+                                --env-file web_infra/.env \
                                 -p "$COMPOSE_PROJECT" \
                                 -f web_infra/compose-jenkins.yaml \
                                 down -v --remove-orphans || true
@@ -427,6 +574,12 @@ pipeline {
                 # $COMPOSE_PROJECT with no `-f` files so `down`
                 # resolves the project by label and works even if
                 # checkout never ran.
+                #
+                # Deliberately NO --env-file here (unlike every other
+                # compose call): with no `-f` there is no compose file to
+                # interpolate, so there is nothing an env-file could
+                # affect — and this backstop has to survive the case where
+                # checkout never ran and web_infra/.env does not exist.
                 docker compose -p "$COMPOSE_PROJECT" \
                     down -v --remove-orphans 2>/dev/null || true
 

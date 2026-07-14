@@ -28,13 +28,33 @@ services:
   # One-shot: runs `python manage.py migrate` against the
   # production backend image and exits 0. The long-running
   # `backend` service depends on this completing.
+  #
+  # This one-shot BUILDS A GRR, which is not obvious from its
+  # entrypoint. Django's BaseCommand defaults to
+  # `requires_system_checks = "__all__"` and `migrate` does not
+  # override it, so `execute()` runs the system checks, which include
+  # `check_url_config` (@register(Tags.urls)). That resolves
+  # ROOT_URLCONF -> web_annotation/urls.py -> jobs/views.py ->
+  # annotation_base_view.py, whose module scope runs
+  #     GRR = build_genomic_resource_repository(
+  #         file_name=settings.GRR_DEFINITION_PATH)
+  # So it needs all three GRR legs (cache bind + GRR_DEFINITION_FILE +
+  # non-root user) exactly like `backend` does. Without them it
+  # silently falls back to the image's baked-in default GRR
+  # (grr.iossifovlab.com) and caches nothing -- the gain-web-e2e #1042
+  # bug, which surfaced on gpf's instance-import for the same reason.
   backend-migrate:
     image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
+    user: "${AGENT_UID:-0}:${AGENT_GID:-0}"
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - ${GRR_CACHE_DIR:-./grr_cache}:/grr_cache
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_daphne
+      GRR_DEFINITION_FILE: /grr-definition-http.yaml
+      HOME: /tmp
       GPFWA_DB_NAME: gpfwa
       GPFWA_DB_USER: postgres
       GPFWA_DB_PASSWORD: secret
@@ -44,16 +64,22 @@ services:
     entrypoint: ["python", "-m", "django", "migrate", "--noinput"]
     restart: "no"
 
+  # Also builds a GRR via the system checks -> URLconf import chain;
+  # see the note on `backend-migrate` above.
   backend-e2e-migrate:
     image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
+    user: "${AGENT_UID:-0}:${AGENT_GID:-0}"
     depends_on:
       db:
         condition: service_healthy
     volumes:
+      - ${GRR_CACHE_DIR:-./grr_cache}:/grr_cache
       - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
       PYTHONPATH: /web_api_src
+      GRR_DEFINITION_FILE: /grr-definition-http.yaml
+      HOME: /tmp
       GPFWA_DB_NAME: gpfwa
       GPFWA_DB_USER: postgres
       GPFWA_DB_PASSWORD: secret
@@ -65,6 +91,15 @@ services:
 
   backend:
     image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
+    # Run as the agent's uid/gid, not root. The GRR cache below is
+    # long-lived and shared across builds (and with gpf-web-e2e); a
+    # root-owned cache tree is one the `jenkins` user can neither
+    # prune nor rewrite -- the EPERM-on-root-owned-artefacts bug this
+    # stack has already hit once. The host bind sources are created by
+    # the Jenkinsfile before compose runs, because dockerd creates a
+    # *missing* bind source as root:root, which a non-root container
+    # then cannot write into.
+    user: "${AGENT_UID:-0}:${AGENT_GID:-0}"
     depends_on:
       backend-migrate:
         condition: service_completed_successfully
@@ -75,11 +110,19 @@ services:
     volumes:
       - ./gpfwa-data:/data
       - ./gpfwa-logs:/logs
-      - /mnt/cephfs/seqpipe/grr:/grr
+      # Persistent per-agent GRR cache, replacing the dead
+      # /mnt/cephfs/seqpipe/grr NFS bind (piglet is decommissioned).
+      # /grr_cache is what grr-definition-http.yaml names as its
+      # cache_dir; the cache lands in /grr_cache/grr.sync/.
+      - ${GRR_CACHE_DIR:-./grr_cache}:/grr_cache
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_daphne
       GPFWA_EMAIL_HOST: mail
-      GRR_DEFINITION_FILE: /grr-definition.yaml
+      GRR_DEFINITION_FILE: /grr-definition-http.yaml
+      # The image has no passwd entry for the agent uid, so HOME would
+      # default to `/` (root-owned, unwritable). Point it somewhere
+      # writable for any library that reaches for a dotfile cache.
+      HOME: /tmp
       GPFWA_DB_NAME: gpfwa
       GPFWA_DB_USER: postgres
       GPFWA_DB_PASSWORD: secret
@@ -96,16 +139,24 @@ services:
       timeout: 5s
       retries: 5
 
+  # `create_user` / `add_units` are plain BaseCommands, so they take the
+  # `requires_system_checks = "__all__"` default outright -- they build a
+  # GRR before they run a single line of their own code. Same three legs
+  # as `backend-migrate`; see the note there.
   backend-e2e-setup:
     image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
+    user: "${AGENT_UID:-0}:${AGENT_GID:-0}"
     depends_on:
       backend-e2e-migrate:
         condition: service_completed_successfully
     volumes:
+      - ${GRR_CACHE_DIR:-./grr_cache}:/grr_cache
       - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
       PYTHONPATH: /web_api_src
+      GRR_DEFINITION_FILE: /grr-definition-http.yaml
+      HOME: /tmp
       GPFWA_DB_NAME: gpfwa
       GPFWA_DB_USER: postgres
       GPFWA_DB_PASSWORD: secret
@@ -123,6 +174,8 @@ services:
   backend-e2e:
     image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
     hostname: backend
+    # Same rationale as `backend` above: agent uid, not root.
+    user: "${AGENT_UID:-0}:${AGENT_GID:-0}"
     depends_on:
       backend-e2e-migrate:
         condition: service_completed_successfully
@@ -133,13 +186,14 @@ services:
     volumes:
       - ./gpfwa-data:/data
       - ./gpfwa-logs:/logs
-      - /mnt/cephfs/seqpipe/grr:/grr
+      - ${GRR_CACHE_DIR:-./grr_cache}:/grr_cache
       - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
       PYTHONPATH: /web_api_src
       GPFWA_EMAIL_HOST: mail
-      GRR_DEFINITION_FILE: /grr-definition.yaml
+      GRR_DEFINITION_FILE: /grr-definition-http.yaml
+      HOME: /tmp
       GPFWA_DB_NAME: gpfwa
       GPFWA_DB_USER: postgres
       GPFWA_DB_PASSWORD: secret
@@ -152,20 +206,31 @@ services:
       GPFWA_EMAIL_REDIRECT_ENDPOINT: "http://frontend"
     # Probes pipeline_status, not /api/user_info, so e2e-tests
     # waits until pipeline/Clinical_annotation has finished its
-    # first GRR build (~75s cold) before tests start. Without
-    # this, the first test to selectPipeline() pays the load
-    # cost and can blow .loaded-editor's 120s wait under worker
-    # pressure (annotation-jobs.spec.ts:105 was the canonical
-    # flake). The endpoint is anonymous-readable and blocks in
+    # first GRR build (~75s cold over the old NFS bind) before
+    # tests start. Without this, the first test to
+    # selectPipeline() pays the load cost and can blow
+    # .loaded-editor's 120s wait under worker pressure
+    # (annotation-jobs.spec.ts:105 was the canonical flake). The
+    # endpoint is anonymous-readable and blocks in
     # pipeline_cache.py:get_pipeline until the future resolves;
-    # --fail rejects non-2xx, --max-time bounds the call.
+    # --fail rejects non-2xx, --max-time bounds each call.
+    #
+    # start_period is generous because the GRR is now an http repo
+    # with a cache whose unit is a WHOLE FILE, not a byte range:
+    # against the NFS mount a tabix query read a few KB of a score
+    # file, but on a cold cache the first open() downloads the
+    # entire file. While in start_period a failing probe only marks
+    # the container `starting` (it does not burn a retry), so this
+    # is a budget for the cold pipeline build, not added latency:
+    # a warm cache still goes healthy on the first probe. Overall
+    # bound is the Jenkins job timeout.
     healthcheck:
       test: ["CMD", "curl", "--fail", "--max-time", "120",
              "http://localhost:9001/api/editor/pipeline_status?pipeline_id=pipeline/hg38_clinical_annotation"]
       interval: 10s
       timeout: 125s
       retries: 3
-      start_period: 120s
+      start_period: 3600s
 
 
   frontend:
