@@ -59,7 +59,16 @@ pipeline {
     }
 
     options {
-        timeout(time: 1, unit: 'HOURS')
+        // 4h, not 1h: the GRR is no longer a bind-mounted NFS
+        // directory but https://grr.seqpipe.org behind a
+        // persistent per-agent cache, and the cache's unit is a
+        // whole file rather than a byte range — the first build on
+        // a given agent downloads every resource the suite touches
+        // in full. Cold builds are expected to be slow (and are
+        // allowed to be); warm builds should beat the old NFS
+        // baseline, since they read from local disk. Trim this
+        // back once warm-build times have been measured.
+        timeout(time: 4, unit: 'HOURS')
         buildDiscarder(logRotator(numToKeepStr: '20'))
     }
 
@@ -70,6 +79,31 @@ pipeline {
             "gain-web-e2e-${env.BUILD_NUMBER}"
         COMPOSE_NETWORK =
             "gain-web-e2e-${env.BUILD_NUMBER}_default"
+
+        // Persistent across builds, and shared with gpf-web-e2e:
+        // both call the main GRR `grr.sync`, and the cache is keyed
+        // by child repo id (cached_repository.py joins cache_url
+        // with proto_id), so both jobs populate and reuse the same
+        // ${HOME}/grr_cache/grr.sync/ tree. Same shape as
+        // core/Jenkinsfile.integration's grr_seqpipe_cache: anchored
+        // to the agent home (on pooh, /var/lib/jenkins -> ZFS via the
+        // home symlink) rather than a hardcoded mount, bind-mounted
+        // into the containers by web_infra/compose-jenkins.yaml.
+        //
+        // Created here with `mkdir -p` rather than relying on the
+        // agent being pre-provisioned (seqpipe/infra#67 provisions it
+        // on pooh, but this job's label is `!dory`, so it can also
+        // land on eyoree). Concurrent builds on one agent are safe:
+        // the caching protocol takes a per-file lock before copying.
+        GRR_CACHE_DIR = "${env.HOME}/grr_cache"
+
+        // The backend containers run as the agent's uid/gid instead
+        // of root, so the long-lived cache (and the gpfwa-data /
+        // gpfwa-logs binds) stay owned by `jenkins` and remain
+        // prunable. Root-owned artefacts in a workspace are a bug
+        // class this stack has already been bitten by.
+        AGENT_UID = sh(script: 'id -u', returnStdout: true).trim()
+        AGENT_GID = sh(script: 'id -g', returnStdout: true).trim()
     }
 
     stages {
@@ -111,11 +145,29 @@ pipeline {
                 // Then mkdir runs on the host so the new reports
                 // dir is Jenkins-owned and the post-stage
                 // host-side `cp` can write into it.
+                //
+                // gpfwa-data/gpfwa-logs are wiped and re-created on
+                // the host for the same reason plus a new one: the
+                // backend now runs as the agent uid, and dockerd
+                // creates a *missing* bind source as root:root — a
+                // dir the non-root container could not write into.
+                // Creating them here (as `jenkins`) is what makes
+                // the non-root switch work. Both are per-build
+                // scratch: the stack is torn down with `down -v`
+                // and the DB starts empty every build.
+                //
+                // GRR_CACHE_DIR is the one thing that must NOT be
+                // wiped — it is the persistent cross-build cache —
+                // so it is only ever mkdir'd.
                 sh '''
                     docker run --rm -v "$PWD:/wd" -w /wd alpine \
                         rm -rf dist reports web_e2e/reports \
-                               web_infra/gpfwa-logs
-                    mkdir -p reports/web_e2e
+                               web_infra/gpfwa-logs \
+                               web_infra/gpfwa-data
+                    mkdir -p reports/web_e2e \
+                             web_infra/gpfwa-logs \
+                             web_infra/gpfwa-data
+                    mkdir -p "${GRR_CACHE_DIR}"
                 '''
             }
         }

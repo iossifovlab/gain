@@ -52,9 +52,13 @@ ENV PATH=/opt/gpf/bin:$PATH \
     DJANGO_SETTINGS_MODULE=web_annotation.settings_daphne
 
 # GRR config files (env var GRR_DEFINITION_FILE selects which
-# one each compose file consumes).
+# one each compose file consumes): the two directory-backed
+# definitions for the on-host GRRs of the production deploys,
+# and the http one the Jenkins e2e stack uses against
+# https://grr.seqpipe.org with a persistent per-agent cache.
 COPY web_api/scripts/grr-definition.yaml \
-     web_api/scripts/grr-definition-dir.yaml /
+     web_api/scripts/grr-definition-dir.yaml \
+     web_api/scripts/grr-definition-http.yaml /
 
 EXPOSE 9001
 
