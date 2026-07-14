@@ -1,6 +1,9 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613,C0415
+import gc
 import pathlib
 import textwrap
+import weakref
+from collections.abc import Callable
 from typing import Any, cast
 
 import pysam
@@ -927,7 +930,7 @@ def test_vcf_score_line_hands_back_a_number_a_field_raw_when_alt_is_absent(
     deliberate decision, and this test is what will tell them they are.
 
     The branch this pins is a **crash guard**.  Drop the ``allele_index is not
-    None`` half of the Number=A test in ``VCFScoreLine._get_info`` and this
+    None`` half of the Number=A test in ``VCFScoreLine._get_raw`` and this
     record indexes a tuple with ``None`` -- ``TypeError: tuple indices must be
     integers or slices, not NoneType``.  Nothing else in the suite covers it:
     the ``vcf_score`` fixture's own no-ALT row happens to omit its Number=A
@@ -1028,6 +1031,70 @@ def test_a_record_score_lines_record_is_write_once(
     for line in (vcf_line, record_line):
         with pytest.raises(AttributeError):
             line.record = ("chr1", 1, 1, "A", "T", ())  # type: ignore[misc]
+
+
+def _dies_by_refcount(
+    build_line: Callable[[], ScoreLineBase],
+) -> bool:
+    """Whether a freshly built, fully read score line dies without the GC.
+
+    Builds one line, reads every score off it (so whatever the line memoises
+    on its first read is in place), drops the last reference to it with the
+    cycle collector **disabled**, and reports whether it was freed anyway.
+
+    A weak reference that has cleared can only mean the object's refcount
+    reached zero, so it is exactly the question "is this line in a cycle?" --
+    with no dependence on when a GC pass happens to run.
+    """
+    gc.disable()
+    try:
+        line = build_line()
+        line.get_values(list(line.score_defs.values()))
+        ref = weakref.ref(line)
+        del line
+        return ref() is None
+    finally:
+        gc.enable()
+
+
+def test_score_lines_are_freed_without_the_cycle_collector(
+    vcf_score: AlleleScore,
+) -> None:
+    """No score line is part of a reference cycle.
+
+    One score line is built **per line** of a fetch -- that is the whole cost
+    #237 is about -- so a line that can only be freed by the cycle collector
+    does not merely leak a few bytes: it turns a scan that produced *zero*
+    cyclic garbage into one that produces a gen-0 pass every ~150 lines, and
+    promotes the survivors to gen-1.  What those cycles hold alive until then
+    is the payload: a live ``pysam.VariantRecord`` (and the header it pins),
+    retained well past its last use instead of being freed by refcount the
+    moment the line goes out of scope.  Measured on a 3000-row VCF, master ran
+    a fetch with 0/0/0 collections; the cycle put it at 20/1/0.
+
+    The way to make a per-line object cyclic is to store a bound method **of
+    self** on self (``self._x = self._y`` -- self -> bound method -> self), and
+    that is exactly what a score line must not do.  Both record-backed lines
+    bind their raw-value lookup to something that is *not* self -- the payload's
+    indexer -- or reach it as a plain method, which allocates nothing per line
+    and refers to nothing.
+
+    Pinned for the whole family, over real fetched lines, so a future backend
+    (or #239's rework of the adapters) cannot quietly reintroduce it.
+    """
+    with vcf_score.open():
+        vcf_record = next(
+            iter(vcf_score.fetch_lines("chr1", 30, 30))).record
+        vcf_defs = vcf_score.score_definitions
+        assert _dies_by_refcount(
+            lambda: VCFScoreLine(vcf_record, vcf_defs))
+
+    position_score = build_score_from_resource(
+        build_simple_position_score_resource())
+    with position_score.open():
+        record = next(iter(position_score.fetch_lines("1", 10, 10))).record
+        defs = position_score.score_definitions
+        assert _dies_by_refcount(lambda: RecordScoreLine(record, defs))
 
 
 def test_vcf_score_line_joins_an_unbounded_string_info_field(
