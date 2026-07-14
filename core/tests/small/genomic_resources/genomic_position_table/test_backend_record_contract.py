@@ -138,7 +138,7 @@ _BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
 #
 # Only record-yielding backends are listed (bigWig still yields adapters);
 # test_every_record_backend_declares_whether_its_records_hash keeps this list
-# in step with _BACKENDS.
+# in step with what the backends in _BACKENDS actually claim.
 _HASHABILITY: list[pytest.param] = [  # type: ignore[valid-type]
     pytest.param(_open_inmemory, True, id="inmemory"),
     pytest.param(_open_tabix, False, id="tabix"),
@@ -146,14 +146,51 @@ _HASHABILITY: list[pytest.param] = [  # type: ignore[valid-type]
 ]
 
 
-def test_every_record_backend_declares_whether_its_records_hash() -> None:
-    # A new record backend must say whether its records hash -- the answer is
-    # its payload's, and a caller cannot read it off the record contract.
-    record_backends = {
-        param.id for param in _BACKENDS
-        if param.values[1] in (RecordScoreLine, VCFScoreLine)
-    }
-    assert {param.id for param in _HASHABILITY} == record_backends
+def test_every_record_backend_declares_whether_its_records_hash(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A backend that yields records must say whether those records hash.
+
+    The answer is its payload's, and a caller cannot read it off the record
+    contract -- so a record backend that does not declare it leaves
+    test_a_records_hashability_is_its_payloads with nothing to check.
+
+    Which backends must declare is asked of the **live tables**:
+    ``yields_records`` is the claim this whole file exists to hold backends to,
+    and it is the same discriminator ``GenomicScore.open`` routes on.  It is
+    deliberately NOT read off the score line class each backend is paired with
+    below: a migrating backend whose payload is neither a raw tabular row nor a
+    VCF ``(variant, allele index)`` pair will arrive with a score line class of
+    its own (bigWig, #238, is expected to), and a check written against a list
+    of the score line classes known TODAY would wave exactly that backend
+    through.  Ask the table, and there is nothing to add to but _HASHABILITY.
+    """
+    record_backends = set()
+    for param in _BACKENDS:
+        open_backend, _score_line_cls = param.values
+        # A repo per backend: two of them build a resource under the same name.
+        backend_dir = tmp_path / str(param.id)
+        backend_dir.mkdir()
+        score, _region = open_backend(backend_dir)
+        with score:
+            if score.table.yields_records:
+                record_backends.add(str(param.id))
+
+    declared = {str(param.id) for param in _HASHABILITY}
+
+    undeclared = record_backends - declared
+    assert not undeclared, (
+        f"{sorted(undeclared)} now set yields_records, so each yields plain "
+        f"record tuples -- but none of them declares whether those records "
+        f"hash. A record's hash walks the tuple straight into its PAYLOAD, so "
+        f"the answer is the backend's alone to give: add it to _HASHABILITY "
+        f"(and test_a_records_hashability_is_its_payloads will hold you to it)")
+
+    stale = declared - record_backends
+    assert not stale, (
+        f"{sorted(stale)} declare their records' hashability in _HASHABILITY "
+        f"but no longer set yields_records -- they yield line adapters, whose "
+        f"hashability is not a record fact. Drop them from _HASHABILITY")
 
 
 @pytest.mark.parametrize(("open_backend", "records_hash"), _HASHABILITY)
