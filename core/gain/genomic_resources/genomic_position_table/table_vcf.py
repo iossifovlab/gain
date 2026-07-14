@@ -131,6 +131,19 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
         no such thing: it derives the header from the variant record it is
         reading (``variant.header.info``), so nothing is carried alongside a
         record.
+
+        **The returned metadata outlives the file it is read from.**  A
+        ``pysam.VariantHeaderMetadata`` is a *view*, not a copy, so closing the
+        file under it would be a use-after-free if the view borrowed the
+        ``bcf_hdr_t`` from the ``htsFile``.  It does not: the view holds a
+        strong reference to its ``pysam.VariantHeader``, which owns the header
+        struct and frees it only when *it* is collected -- so the header
+        survives the file, and closing the file is safe.  That is what lets this
+        method hand the metadata out and shut the file behind it, rather than
+        leaving the descriptor to refcount finalisation.  (Pinned in
+        test_genomic_position_table.py by
+        test_vcf_header_metadata_outlives_the_closed_header_file and
+        test_vcf_header_load_leaves_no_open_file_descriptor.)
         """
         assert self.definition.get("header_mode", "file") == "file"
         filename = self.definition.filename
@@ -147,7 +160,8 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
             vcf_file = self.genomic_resource.open_vcf_file(header_filename)
         finally:
             pysam.set_verbosity(saved_verbosity)
-        return vcf_file.header.info
+        with vcf_file:
+            return vcf_file.header.info
 
     def open(self) -> VCFGenomicPositionTable:
         self.pysam_file = self.genomic_resource.open_vcf_file(
