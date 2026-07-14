@@ -28,13 +28,33 @@ services:
   # One-shot: runs `python manage.py migrate` against the
   # production backend image and exits 0. The long-running
   # `backend` service depends on this completing.
+  #
+  # This one-shot BUILDS A GRR, which is not obvious from its
+  # entrypoint. Django's BaseCommand defaults to
+  # `requires_system_checks = "__all__"` and `migrate` does not
+  # override it, so `execute()` runs the system checks, which include
+  # `check_url_config` (@register(Tags.urls)). That resolves
+  # ROOT_URLCONF -> web_annotation/urls.py -> jobs/views.py ->
+  # annotation_base_view.py, whose module scope runs
+  #     GRR = build_genomic_resource_repository(
+  #         file_name=settings.GRR_DEFINITION_PATH)
+  # So it needs all three GRR legs (cache bind + GRR_DEFINITION_FILE +
+  # non-root user) exactly like `backend` does. Without them it
+  # silently falls back to the image's baked-in default GRR
+  # (grr.iossifovlab.com) and caches nothing -- the gain-web-e2e #1042
+  # bug, which surfaced on gpf's instance-import for the same reason.
   backend-migrate:
     image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
+    user: "${AGENT_UID:-0}:${AGENT_GID:-0}"
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - ${GRR_CACHE_DIR:-./grr_cache}:/grr_cache
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_daphne
+      GRR_DEFINITION_FILE: /grr-definition-http.yaml
+      HOME: /tmp
       GPFWA_DB_NAME: gpfwa
       GPFWA_DB_USER: postgres
       GPFWA_DB_PASSWORD: secret
@@ -44,16 +64,22 @@ services:
     entrypoint: ["python", "-m", "django", "migrate", "--noinput"]
     restart: "no"
 
+  # Also builds a GRR via the system checks -> URLconf import chain;
+  # see the note on `backend-migrate` above.
   backend-e2e-migrate:
     image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
+    user: "${AGENT_UID:-0}:${AGENT_GID:-0}"
     depends_on:
       db:
         condition: service_healthy
     volumes:
+      - ${GRR_CACHE_DIR:-./grr_cache}:/grr_cache
       - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
       PYTHONPATH: /web_api_src
+      GRR_DEFINITION_FILE: /grr-definition-http.yaml
+      HOME: /tmp
       GPFWA_DB_NAME: gpfwa
       GPFWA_DB_USER: postgres
       GPFWA_DB_PASSWORD: secret
@@ -113,16 +139,24 @@ services:
       timeout: 5s
       retries: 5
 
+  # `create_user` / `add_units` are plain BaseCommands, so they take the
+  # `requires_system_checks = "__all__"` default outright -- they build a
+  # GRR before they run a single line of their own code. Same three legs
+  # as `backend-migrate`; see the note there.
   backend-e2e-setup:
     image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
+    user: "${AGENT_UID:-0}:${AGENT_GID:-0}"
     depends_on:
       backend-e2e-migrate:
         condition: service_completed_successfully
     volumes:
+      - ${GRR_CACHE_DIR:-./grr_cache}:/grr_cache
       - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
       PYTHONPATH: /web_api_src
+      GRR_DEFINITION_FILE: /grr-definition-http.yaml
+      HOME: /tmp
       GPFWA_DB_NAME: gpfwa
       GPFWA_DB_USER: postgres
       GPFWA_DB_PASSWORD: secret
