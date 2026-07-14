@@ -1065,12 +1065,20 @@ def test_score_lines_are_freed_without_the_cycle_collector(
     One score line is built **per line** of a fetch -- that is the whole cost
     #237 is about -- so a line that can only be freed by the cycle collector
     does not merely leak a few bytes: it turns a scan that produced *zero*
-    cyclic garbage into one that produces a gen-0 pass every ~150 lines, and
-    promotes the survivors to gen-1.  What those cycles hold alive until then
-    is the payload: a live ``pysam.VariantRecord`` (and the header it pins),
-    retained well past its last use instead of being freed by refcount the
-    moment the line goes out of scope.  Measured on a 3000-row VCF, master ran
-    a fetch with 0/0/0 collections; the cycle put it at 20/1/0.
+    cyclic garbage into one that hands the collector thousands of objects to
+    free, and promotes the survivors to gen-1.  What those cycles hold alive
+    until then is the payload: a live ``pysam.VariantRecord`` (and the header it
+    pins), retained well past its last use instead of being freed by refcount
+    the moment the line goes out of scope.
+
+    Measured on a 3000-row VCF (fetch_lines + get_values over every line): with
+    the cycle the collector freed 11076/888/0 gen-0/1/2 objects -- ~3.7 per
+    line, the line, its instance dict and the bound method -- over 28/2/0
+    passes; without it, it freed *nothing*, its 11/1/0 gen-0 passes all empty.
+    Count what the collector FREES, not how often it runs: the pass count never
+    reaches zero (CPython untracks tuples of immutables, so the gen-0 counter
+    creeps even in allocation-balanced code), which is why this test asserts on
+    liveness under a disabled collector rather than on a collection count.
 
     The way to make a per-line object cyclic is to store a bound method **of
     self** on self (``self._x = self._y`` -- self -> bound method -> self), and

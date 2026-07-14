@@ -140,9 +140,15 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
         struct and frees it only when *it* is collected -- so the header
         survives the file, and closing the file is safe.  That is what lets this
         method hand the metadata out and shut the file behind it, rather than
-        leaving the descriptor to refcount finalisation.  (Pinned in
-        test_genomic_position_table.py by
-        test_vcf_header_metadata_outlives_the_closed_header_file.)
+        leaving the descriptor to refcount finalisation.
+
+        Both halves are pinned, in test_genomic_position_table.py:
+        test_vcf_header_metadata_outlives_the_closed_header_file pins that the
+        metadata survives the close (that this is not a use-after-free), and
+        test_vcf_header_load_closes_the_header_file pins the close itself.  The
+        latter has to spy on it: closing is invisible to every functional test
+        -- *because* the metadata outlives it, a version that retained the file
+        forever would return byte-identical results.
 
         The close is deliberate, and it is not free: ``VariantFile.close()``
         raises ``OSError`` when ``hts_close`` fails, where the implicit

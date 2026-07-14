@@ -2,7 +2,7 @@
 import gc
 import pathlib
 import textwrap
-from typing import cast
+from typing import Self, cast
 
 import pysam
 import pytest
@@ -1904,6 +1904,93 @@ chr1   5   .  A   T   .    .      A=1
 
     # the header open is bracketed by set_verbosity(0) ... set_verbosity(prev)
     assert mocker.call(0) in spy.call_args_list
+
+
+class _CloseSpyingVariantFile:
+    """Stand-in for a ``pysam.VariantFile`` whose ``close`` can be spied on.
+
+    ``pysam.VariantFile`` is a Cython extension type and an *immutable* one:
+    ``mocker.spy(pysam.VariantFile, "close")`` dies with ``TypeError: cannot
+    set 'close' attribute of immutable type``.  So the spy goes on a
+    pure-Python delegate, injected at the single seam the table opens the
+    sidecar through (``GenomicResource.open_vcf_file``).
+
+    It forwards everything to the real file, including a ``__exit__`` that
+    closes -- which is precisely what ``pysam.HTSFile.__exit__`` does.
+    """
+
+    def __init__(self, wrapped: pysam.VariantFile) -> None:
+        self.wrapped = wrapped
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.wrapped, name)
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_exc_info: object) -> bool:
+        self.close()
+        return False
+
+    def close(self) -> None:
+        self.wrapped.close()
+
+
+def test_vcf_header_load_closes_the_header_file(
+    vcf_res: GenomicResource,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """``_load_vcf_header`` must *close* the sidecar it opens.
+
+    The method reads ``header.info`` out of the ``*.header.vcf.gz`` file and
+    hands the metadata on; the file itself has no further use.  It shuts it
+    explicitly (``with vcf_file:``) rather than dropping the last reference and
+    leaving the descriptor to refcount finalisation -- the deliberate choice
+    this test exists to pin.
+
+    Nothing else can pin it.  The close is invisible to every functional test:
+    the metadata survives it (see the next test), so a version that retained
+    the file forever would return byte-identical results and pass the whole
+    suite.  Hence the spy.
+    """
+    assert vcf_res.config is not None
+
+    header_files: list[_CloseSpyingVariantFile] = []
+    real_open_vcf_file = GenomicResource.open_vcf_file
+
+    def open_vcf_file(
+        resource: GenomicResource,
+        filename: str,
+        index_filename: str | None = None,
+    ) -> object:
+        vcf_file = real_open_vcf_file(resource, filename, index_filename)
+        if ".header." not in filename:
+            return vcf_file
+        # the sidecar is handed over *open* -- so the `is_open` check at the
+        # bottom is about the close, and not vacuously true
+        assert bool(vcf_file.is_open)
+        spied = _CloseSpyingVariantFile(vcf_file)
+        header_files.append(spied)
+        return spied
+
+    mocker.patch.object(
+        GenomicResource, "open_vcf_file",
+        autospec=True, side_effect=open_vcf_file)
+    close_spy = mocker.spy(_CloseSpyingVariantFile, "close")
+
+    table = build_genomic_position_table(
+        vcf_res, vcf_res.config["tabix_table"])
+    assert isinstance(table, VCFGenomicPositionTable)
+    # the header metadata was read, so the file really was opened and used
+    assert sorted(table.header.keys()) == ["A", "B", "C", "D"]
+
+    # exactly one header sidecar was opened, ...
+    assert len(header_files) == 1
+    # ... `_load_vcf_header` closed it before handing the metadata back, ...
+    close_spy.assert_called_once_with(header_files[0])
+    # ... and it is shut for real -- not merely asked to shut.  (pysam's
+    # `is_open` is a `CallableValue`, not a bool; read its truth value.)
+    assert bool(header_files[0].wrapped.is_open) is False
 
 
 def test_vcf_header_metadata_outlives_the_closed_header_file(

@@ -9,19 +9,31 @@ absent key, ``None`` for a configured NA value, and ``None`` (plus a logged
 parse failure) for an unparseable value.
 
 The value-extraction logic (``_extract_value``) is shared by all three score
-line classes, but each reads its raw value through a per-instance ``_get_raw``
-bound to a *different* lookup: ``ScoreLine`` (the bigWig adapter backend) binds
-it to ``line.get``; ``RecordScoreLine`` (the in-memory and tabix record
-backends) to the record payload's ``__getitem__``; ``VCFScoreLine`` (the VCF
-record backend, whose payload is a ``(variant, allele index)`` pair rather than
-a row) to an INFO lookup by name.
+line classes, but each reaches its raw value through a ``_get_raw`` of its own,
+and they do not all get there the same way.
+
+Two of them **bind** it, in their constructor, to a callable that is reachable
+*from* the line but is not the line: ``ScoreLine`` (the bigWig adapter backend)
+to the adapter's ``line.get``; ``RecordScoreLine`` (the in-memory and tabix
+record backends) to the record payload's ``__getitem__``.
+
+``VCFScoreLine`` (the VCF record backend, whose payload is a ``(variant, allele
+index)`` pair rather than a row) instead declares ``_get_raw`` as a plain
+**method**, and must: its INFO lookup needs the line *itself*, and binding a
+method of self onto self (``self._get_raw = self._something``) is a reference
+cycle -- one per line, on the hot path, where one score line is built per line
+of a fetch.  A method allocates nothing per line and refers to nothing, so the
+line dies by refcount when the fetch loop drops it.  That rule -- a subclass
+whose lookup needs ``self`` uses a method and does not bind -- is pinned in
+test_genomic_scores.py, by
+test_score_lines_are_freed_without_the_cycle_collector.
 
 The NA and parse tests run against **both** column-payload record backends,
 because their payloads are different objects: the in-memory backend's payload is
 a plain ``tuple`` of cells, the tabix backend's is a lazily-decoding ``pysam``
 row.  ``RecordScoreLine`` binds ``_get_raw`` to whichever one it is handed, so a
-binding that works on one and not the other fails here.  The other two classes'
-bindings are pinned by the backend tests at the bottom of this file.
+binding that works on one and not the other fails here.  Each class is exercised
+over its own backend by the backend tests at the bottom of this file.
 
 Which class a backend is routed to is therefore load-bearing, so the routing is
 pinned here too, from the score's side.  That every backend's ``yields_records``

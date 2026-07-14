@@ -191,6 +191,28 @@ class ScoreLineBase(abc.ABC):
     fetch.  (Pinned by
     test_score_lines_are_freed_without_the_cycle_collector.)
 
+    **No type checker will catch you breaking that rule** -- know this before
+    you lean on one.  The two failure modes are not symmetric:
+
+    * *Shadowing* the method (a subclass re-declaring ``_get_raw`` as an
+      attribute over :class:`VCFScoreLine`'s method) IS caught: mypy rejects it
+      with "Cannot assign to a method".
+    * *Re-introducing the cycle* -- a future subclass writing
+      ``self._get_raw = self._something`` in its constructor -- is caught by
+      **nothing**.  It is a perfectly legal assignment against the ``Callable``
+      attribute this base declares below, which is exactly how the bug got in.
+
+    So the cycle has no static defence at all, and
+    test_score_lines_are_freed_without_the_cycle_collector is the only one there
+    is.  It asserts over real fetched lines, for the whole family, so it holds
+    for backends added later (#238's bigWig migration, #239's adapter removal).
+
+    (For the record: pyright flags :meth:`VCFScoreLine._get_raw` with
+    ``reportIncompatibleMethodOverride`` -- the base declares ``_get_raw`` as a
+    ``Callable`` *attribute* and that subclass overrides it with a *method*.
+    mypy accepts it, ``self._get_raw(key)`` resolves either, and CI runs mypy;
+    it is a checker disagreement about the declaration, not a defect.)
+
     Everything downstream of that one lookup -- the five core-field
     properties' contract, NA handling, parsing, logging and the
     bulk/single value walks -- lives here so it cannot drift between the two.
@@ -519,13 +541,31 @@ class VCFScoreLine(RecordScoreLineBase):
         # reference cycle -- one per line, on the hot path.  So this one is a
         # plain method instead: ``self._get_raw(key)`` in ``_extract_value``
         # resolves it on the class, allocates nothing per line, and the line
-        # dies by refcount the moment the fetch loop drops it.  Left as a bound
-        # attribute, every line of a scan became cyclic garbage: a 3000-row VCF
-        # fetch that ran 0/0/0 gen-0/1/2 collections before the migration ran
-        # 16/1/0 (and runs 0/0/0 again with this method), which held each line's
-        # live ``pysam.VariantRecord`` -- and the header it pins -- alive until
-        # a GC pass instead of freeing it at the end of the loop body, and
-        # promoted the survivors to gen-1.  Pinned by
+        # dies by refcount the moment the fetch loop drops it.
+        #
+        # Left as a bound attribute, every line of a scan became cyclic garbage.
+        # Measure it by what the collector has to FREE, not by how often it runs
+        # (the pass count is threshold churn and a poor signal -- see below).
+        # A 3000-row VCF fetch (fetch_lines + get_values over every line, this
+        # fixture, every width 1/5/20/50, every run):
+        #
+        #                          objects freed by gc      gen-0/1/2 passes
+        #     bound (the cycle)    11076 / 888 / 0          28/2/0
+        #     method (this class)      0 /   0 / 0          11/1/0
+        #
+        # ~3.7 cyclic objects per line -- the line, its instance dict, the bound
+        # method -- which held each line's live ``pysam.VariantRecord``, and the
+        # header it pins, alive until a GC pass instead of freeing it at the end
+        # of the loop body; ~900 of them survived gen-0 and were promoted to
+        # gen-1.  As a method the collector frees *nothing*: the scan produces
+        # no cyclic garbage at all.
+        #
+        # The pass counts do not go to zero, and that is not a leak: CPython
+        # untracks tuples of immutables during a collection, so their later
+        # dealloc never decrements the gen-0 counter, which creeps up even in
+        # allocation-balanced code.  All 11 of the method's gen-0 passes free
+        # zero objects -- they are empty.  Only the "objects freed" column
+        # separates the two designs; it is the one this rests on.  Pinned by
         # test_score_lines_are_freed_without_the_cycle_collector.
         self._record: Record = line  # type: ignore[assignment]
         self.score_defs = score_defs
