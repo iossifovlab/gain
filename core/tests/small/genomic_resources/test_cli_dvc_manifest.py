@@ -12,6 +12,7 @@ from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.repository import (
     GenomicResource,
     ReadWriteRepositoryProtocol,
+    ResourceFileState,
 )
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
@@ -1082,3 +1083,73 @@ def test_pointer_only_per_file_dvc_manifest_is_byte_identical(
     # the same whether or not its bytes have been pulled
     text = (path / "one" / ".MANIFEST").read_text(encoding="utf8")
     assert text == PER_FILE_DVC_MANIFEST, repr(text)
+
+
+def _record_state_as_an_earlier_gain_would(
+    proto: ReadWriteRepositoryProtocol, path: pathlib.Path,
+) -> None:
+    """Write the state an earlier GAIn leaves behind for a tampered file.
+
+    Before #251, a materialised file's md5 was taken from its `.dvc`
+    sidecar while its size and timestamp were read from the file on disk.
+    For a file edited in place that pairs a *stale* md5 with the *current*
+    bytes' size and timestamp.
+    """
+    (path / "one" / "data.txt").write_text(TAMPERED_DATA, encoding="utf8")
+    res = proto.get_resource("one")
+    proto.save_resource_file_state(res, ResourceFileState(
+        "data.txt",
+        proto.get_resource_file_size(res, "data.txt"),
+        proto.get_resource_file_timestamp(res, "data.txt"),
+        md5_of(ORIGINAL_DATA),
+    ))
+
+
+def test_a_state_written_by_an_earlier_gain_is_trusted_whatever_wrote_it(
+    dvc_proto_fixture: tuple[pathlib.Path, FsspecReadWriteProtocol],
+    md5_spy: list[str],
+) -> None:
+    """A DVC-declared md5 and a content-derived one are equivalent.
+
+    This is a deliberate design decision, not an oversight.
+    `ResourceFileState` does not record how its md5 was derived, and GAIn
+    does not distinguish: `dvc add` computes the md5 from the very bytes it
+    stores. So a state written by an earlier GAIn keeps its md5 while its
+    size and timestamp match the file, and the file is NOT rehashed on
+    upgrade -- no GRR pays a full re-verification pass.
+
+    The accepted consequence, pinned here: an in-place edit that an earlier
+    GAIn already baked into a state is not re-detected. `--without-dvc` is
+    the escape hatch -- see the sibling test. Do not "fix" this without
+    reading the upgrade note in `docs/source/changes.rst`.
+    """
+    path, proto = dvc_proto_fixture
+    cli_manage(["resource-manifest", "-R", str(path), "-r", "one"])
+    _record_state_as_an_earlier_gain_would(proto, path)
+
+    md5_spy.clear()
+    cli_manage(["resource-repair", "-R", str(path), "-r", "one"])
+
+    # The recorded state is authoritative: no rehash, stale md5 kept.
+    assert "data.txt" not in md5_spy
+    manifest = proto.load_manifest(proto.get_resource("one"))
+    assert manifest["data.txt"].md5 == md5_of(ORIGINAL_DATA)
+
+
+def test_without_dvc_re_verifies_a_state_written_by_an_earlier_gain(
+    dvc_proto_fixture: tuple[pathlib.Path, FsspecReadWriteProtocol],
+    md5_spy: list[str],
+) -> None:
+    """`--without-dvc` is the upgrade escape hatch for the case above."""
+    path, proto = dvc_proto_fixture
+    cli_manage(["resource-manifest", "-R", str(path), "-r", "one"])
+    _record_state_as_an_earlier_gain_would(proto, path)
+
+    md5_spy.clear()
+    cli_manage([
+        "resource-repair", "-R", str(path), "-r", "one", "--without-dvc"])
+
+    # Recorded state ignored; the file's real bytes win.
+    assert "data.txt" in md5_spy
+    manifest = proto.load_manifest(proto.get_resource("one"))
+    assert manifest["data.txt"].md5 == md5_of(TAMPERED_DATA)

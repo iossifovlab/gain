@@ -991,15 +991,26 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
             verify_content: bool = False) -> None:
         """Fill in md5 and size of a *materialised* file's manifest entry.
 
-        The md5 of a file whose bytes are on disk always describes those
-        bytes. It is either computed from the file's content, or reused from
-        a recorded resource file state - which was itself computed from the
-        content, and whose size and timestamp still match the file.
+        Whenever an md5 has to be *derived* for a file whose bytes are on
+        disk, it is computed from those bytes. A prebuild (``.dvc``) entry is
+        never a source of md5 here: a sidecar cannot be confirmed without
+        reading the bytes it claims to describe. See
+        :meth:`_merge_pointer_only_entries` for the case where the bytes are
+        absent and the sidecar is the only source there is.
 
-        A prebuild (``.dvc``) entry is never a source of md5 here: a sidecar
-        cannot be confirmed without reading the bytes it claims to describe.
-        See :meth:`_merge_pointer_only_entries` for the case where the bytes
-        are absent and the sidecar is the only source there is.
+        An already-recorded resource file state, however, is authoritative
+        whenever its size and timestamp still match the file - whatever wrote
+        it. A ``ResourceFileState`` does not record how its md5 was derived,
+        and GAIn deliberately does not distinguish: a DVC-declared md5 and a
+        content-derived one are treated as equivalent, because ``dvc add``
+        computes the md5 from the very bytes it stores. A state written by an
+        older GAIn therefore keeps its md5, and such a file is not rehashed.
+
+        The accepted consequence: on a GRR an older GAIn already managed, an
+        in-place edit made *before* the upgrade may already be baked into a
+        state, and re-running ``repo-repair`` will not re-detect it. Force
+        content verification with ``verify_content`` (``grr_manage
+        --without-dvc``), which ignores recorded state entirely.
 
         With ``verify_content`` the recorded state is not consulted at all and
         the file's content is hashed - the explicit "verify these bytes"

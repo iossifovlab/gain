@@ -6,11 +6,9 @@ Release Notes
       md5 sum of a resource file whose bytes are on disk (#251, #255). The
       rule ``grr_manage`` now follows is:
 
-      * a file that is **materialised** (its bytes are on disk) always gets
-        an md5 sum derived from those bytes — either hashed from the file's
-        content, or reused from a recorded resource file state, which was
-        itself hashed from the content and whose size and timestamp still
-        match the file;
+      * whenever an md5 sum has to be **derived** for a file that is
+        **materialised** (its bytes are on disk), it is computed from those
+        bytes. The file's ``.dvc`` sidecar is not consulted;
       * a file that is **not materialised** (only a ``.dvc`` sidecar is
         checked out, as in the pointer-only clone the ``grr`` pipeline
         builds from) has no bytes to hash, so its sidecar remains the sole
@@ -23,8 +21,32 @@ Release Notes
       ``dvc commit`` and running ``resource-repair`` reported the resource
       as up to date and left the manifest certifying the *old* md5 — even
       when the edit preserved the file's size, which no later ``--force``
-      or ``--without-dvc`` run could recover from. The manifest now
-      describes the bytes actually served.
+      run could recover from.
+
+    * **Upgrading an existing GRR — please read.** The rule above governs how
+      an md5 sum is *derived*. It does not retroactively re-verify md5 sums
+      that are **already recorded** in a resource file state
+      (``<resource>/.grr/<file>.state``). Such a state stays authoritative for
+      as long as its size and timestamp match the file, whatever wrote it.
+
+      A ``ResourceFileState`` does not record how its md5 sum was derived, and
+      GAIn deliberately does not distinguish: a DVC-declared md5 sum and a
+      content-derived one are treated as **equivalent**, since ``dvc add``
+      computes the md5 sum from the very bytes it stores. States written by an
+      earlier GAIn carry sidecar-derived md5 sums and are kept — they are not
+      invalidated, and their files are not rehashed on upgrade.
+
+      The accepted consequence: if a DVC-managed file was edited in place
+      *before* the upgrade and an earlier GAIn already recorded that edit's
+      size and timestamp alongside the sidecar's md5 sum, the manifest keeps
+      certifying the stale md5 sum, and ``repo-repair`` will not re-detect it.
+      To force content verification of a GRR — the recommended one-off step
+      when upgrading a GRR that an earlier GAIn managed — run::
+
+          grr_manage repo-repair --without-dvc
+
+      which ignores recorded state and hashes every materialised file from its
+      content. (Deleting the ``.grr`` directories has the same effect.)
 
       "Materialised" means the file exists, not "the repository scan yielded
       it" (#255). The two are not the same, and the difference used to be a
