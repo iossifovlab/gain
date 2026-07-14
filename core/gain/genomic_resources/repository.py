@@ -411,7 +411,7 @@ def parse_dvc_pointer_out(
 
     Parsing NEVER raises. This is the single place a ``.dvc`` file is
     interpreted, so that the repository scan
-    (``_is_dvc_managed_path``, which must never abort on stray content) and
+    (``_is_dvc_managed_leaf``, which must never abort on stray content) and
     ``grr_manage``'s ``collect_dvc_entries`` cannot classify the same sidecar
     differently (#251).
 
@@ -436,6 +436,28 @@ def parse_dvc_pointer_out(
             "ignoring malformed '.dvc' pointer for <%s>: %s", basename, error)
         return None
     return None
+
+
+def is_dvc_directory_out(out: dict[str, Any]) -> bool:
+    """Return True if a ``.dvc`` output describes a ``dvc add <dir>`` output.
+
+    DVC writes two signals for a directory output, and either one on its own
+    is enough to recognise it:
+
+    * its ``md5`` is the hash of a DVC *cache object* - a listing of the
+      directory's files - and carries a ``.dir`` suffix to say so;
+    * it declares ``nfiles``, the number of files in the directory.
+
+    Neither is checked in isolation: an out that lost its ``nfiles`` is still
+    a directory, and so is one whose md5 sum lost its suffix. GAIn does not
+    support directory outputs - it cannot verify a ``.dir`` md5 sum against
+    anything it can read - so ``grr_manage`` refuses a resource that has one
+    (#255).
+    """
+    md5 = out.get("md5")
+    if isinstance(md5, str) and md5.endswith(".dir"):
+        return True
+    return "nfiles" in out
 
 
 class GenomicResource:
@@ -1035,11 +1057,10 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
             if name in manifest:
                 continue
             if self.file_exists(resource, name):
-                # On disk, yet not in the scanned manifest: a materialised
-                # `dvc add <dir>` output, whose real files the scan has just
-                # manifested individually, each hashed from its own bytes -
-                # so the sidecar's unverifiable `.dir` md5 sum describes
-                # nothing that is not already covered.
+                # On disk, yet not in the scanned manifest. Whatever kept it
+                # out of the scan, its bytes are right there and its sidecar
+                # is not evidence about them: it is left out of the manifest
+                # rather than certified from a claim nobody checked.
                 logger.debug(
                     "not taking the md5 sum of <%s> in <%s> from its '.dvc' "
                     "sidecar: it is materialised, and a sidecar is never the "

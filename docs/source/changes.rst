@@ -30,27 +30,18 @@ Release Notes
       it" (#255). The two are not the same, and the difference used to be a
       hole in the rule: everything the scan skipped but that was nonetheless
       on disk was classified as a pointer and handed its sidecar's md5 sum
-      unverified, in every mode. Two kinds of resource data fell through it,
-      and both are now covered:
+      unverified, in every mode. A file the scan does not yield but that
+      exists on disk is now left out of the manifest rather than certified
+      from a sidecar whose claim nobody checked. Two kinds of resource data
+      fell through the hole:
 
-      * a **``dvc add <dir>`` output that is materialised** is scanned into,
-        and the real files it holds enter the manifest individually, each
-        with an md5 sum derived from its own bytes. The directory itself is
-        no longer a manifest entry carrying the sidecar's ``.dir`` md5 sum —
-        a hash of a DVC cache object, which GAIn can never recompute from the
-        resource and so could never verify. Tampering with a file inside such
-        a directory used to be certified clean; it is now caught. A
-        ``dvc add <dir>`` output that is **not** materialised keeps its
-        sidecar entry, exactly like a pointer-only file: there is nothing to
-        hash and nothing to expand. The two therefore describe the same
-        directory differently — as its files once they are on disk, as a
-        single pointer entry while they are not. No GRR currently uses
-        ``dvc add <dir>``;
       * a **DVC-managed ``*html`` file** is resource data, not one of the
         info pages GAIn generates for a resource, and the scan's blanket
         ``*html`` exclusion no longer applies to it. It is manifested with an
         md5 sum derived from its content. ``*html`` files that are not
-        DVC-managed are still excluded, as before.
+        DVC-managed are still excluded, as before;
+      * a **``dvc add <dir>`` output** — see the next entry: it is now
+        refused, not described.
 
       The cost is that the **first** manifest build of a fully-materialised
       GRR hashes each DVC-managed file once, where it previously read the
@@ -62,6 +53,27 @@ Release Notes
       Every ``.dvc`` sidecar in the GRRs is a per-file ``dvc add <file>``
       output, and the manifest of such a resource is byte-for-byte unchanged
       — whether its data is materialised or not.
+    * **Behavior change:** ``grr_manage`` now **refuses** a resource that has
+      a ``dvc add <dir>`` output — a ``.dvc`` sidecar declaring a directory
+      (a ``.dir`` md5 sum and/or an ``nfiles`` count) — instead of describing
+      it (#255). Every subcommand that builds or checks a manifest
+      (``repo-manifest``, ``resource-manifest``, ``repo-stats``,
+      ``resource-stats``, ``repo-repair``, ``resource-repair``,
+      ``repo-info``, ``resource-info``) fails with a non-zero exit and an
+      error naming the resource and the offending ``.dvc`` file. The refusal
+      applies whether or not the directory's data is materialised.
+
+      GAIn cannot verify a ``.dir`` md5 sum: it hashes a DVC *cache object*
+      listing the directory's files, not any file GAIn can read from the
+      resource. Accepting it into the manifest — which is what used to
+      happen — was a false clean bill of health: a file inside such a
+      directory could be tampered with and the resource was still reported up
+      to date, ``--without-dvc`` included. Silently skipping the directory
+      would be no better, since its data would then be neither manifested nor
+      verified. Fix such a resource by DVC-managing its individual files
+      (``dvc add <file>``). No GRR uses ``dvc add <dir>``: all 344 ``.dvc``
+      sidecars in ``iossifovlab/grr`` are per-file outputs, so nothing in
+      production is refused today.
     * **Behavior change:** the ``--with-dvc`` (default) /
       ``-D``, ``--without-dvc`` option group is restored on
       ``repo-manifest``, ``resource-manifest``, ``repo-stats``,

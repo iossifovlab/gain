@@ -30,6 +30,7 @@ from gain.genomic_resources.repository import (
     ManifestEntry,
     ReadOnlyRepositoryProtocol,
     ReadWriteRepositoryProtocol,
+    is_dvc_directory_out,
     parse_dvc_pointer_out,
     parse_gr_id_version_token,
     version_tuple_to_string,
@@ -336,6 +337,14 @@ def _configure_resource_info_subparser(
     )
 
 
+class UnsupportedDvcDirectoryOutputError(Exception):
+    """A resource declares a ``dvc add <dir>`` output, which GAIn refuses.
+
+    Raised by :func:`collect_dvc_entries` and turned into a non-zero exit by
+    :func:`cli_manage` (#255).
+    """
+
+
 def collect_dvc_entries(
         proto: ReadWriteRepositoryProtocol,
         res: GenomicResource) -> dict[str, ManifestEntry]:
@@ -347,14 +356,29 @@ def collect_dvc_entries(
     allowed to abort the command. `.dvc` sidecars are read on every
     ``grr_manage`` run, and the repository scan that produced this entry has
     already tolerated the very same content (see
-    :meth:`FsspecReadWriteProtocol._is_dvc_managed_path`); the two classify
+    :meth:`FsspecReadWriteProtocol._is_dvc_managed_leaf`); the two classify
     identically because both delegate to
     :func:`repository.parse_dvc_pointer_out`.
+
+    A *well-formed* sidecar for a ``dvc add <dir>`` output is a different
+    matter: it is not ignored, it is REFUSED. GAIn cannot verify a ``.dir``
+    md5 sum - it hashes a DVC cache object, not any file GAIn can read - so
+    writing it into the manifest would be a false clean bill of health, and
+    quietly skipping the directory would leave its data unmanifested and
+    unverified. Either way the resource would be certified without its
+    content ever being checked, so the command fails instead (#255). This is
+    the gate every ``grr_manage`` subcommand that builds or checks a manifest
+    passes through, and it applies whether or not the directory is
+    materialised.
 
     An entry is produced for every readable sidecar. Which of them actually
     reach the manifest is decided by
     :meth:`ReadWriteRepositoryProtocol._merge_pointer_only_entries`: only
     those whose data file is not materialised (gain#255).
+
+    Raises:
+        UnsupportedDvcDirectoryOutputError: the resource has a ``dvc add
+            <dir>`` output.
     """
     result = {}
     manifest = proto.collect_resource_entries(res)
@@ -380,6 +404,20 @@ def collect_dvc_entries(
                 "ignoring it",
                 entry.name, res.resource_id, filename)
             continue
+
+        if is_dvc_directory_out(out):
+            message = (
+                f"resource <{res.resource_id}> has a 'dvc add <dir>' output: "
+                f"the '.dvc' file <{entry.name}> describes the directory "
+                f"<{filename}>. 'dvc add <dir>' outputs are not supported by "
+                f"GAIn: the '.dir' md5 sum such a sidecar declares is the "
+                f"hash of a DVC cache object, not of any file in the "
+                f"resource, so GAIn can never verify it against the bytes it "
+                f"serves. DVC-manage the individual files instead: run 'dvc "
+                f"add <file>' on each file of <{filename}> (and remove "
+                f"<{entry.name}>)."
+            )
+            raise UnsupportedDvcDirectoryOutputError(message)
 
         md5 = out.get("md5")
         size = out.get("size")
@@ -972,6 +1010,10 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
             if status == 0:
                 logger.info("GRR <%s> is consistent", repo_url)
                 return
+        except UnsupportedDvcDirectoryOutputError as ex:
+            # A resource GAIn cannot verify: refuse it outright, loudly.
+            logger.error("%s", ex)  # noqa: TRY400
+            sys.exit(1)
         except ValueError as ex:
             logger.error(  # noqa: TRY400
                 "Misconfigured repository %s; %s", repo_url, ex)
@@ -1008,6 +1050,10 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
             if status == 0:
                 logger.info("GRR <%s> is consistent", repo_url)
                 return
+        except UnsupportedDvcDirectoryOutputError as ex:
+            # A resource GAIn cannot verify: refuse it outright, loudly.
+            logger.error("%s", ex)  # noqa: TRY400
+            sys.exit(1)
         except ValueError:
             logger.exception("unexpected exception")
             status = 1

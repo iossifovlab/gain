@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import hashlib
+import logging
 import os
 import pathlib
 import textwrap
@@ -775,258 +776,190 @@ def test_dvc_sidecar_without_md5_yields_no_pointer_only_entry(
 
 
 # ---------------------------------------------------------------------------
-# `dvc add <dir>`: a DVC-managed DIRECTORY (#255)
+# `dvc add <dir>`: a DVC-managed DIRECTORY is REFUSED (#255)
 # ---------------------------------------------------------------------------
 # `dvc add chunks` writes `/chunks` into `.gitignore` and drops a sibling
-# `chunks.dvc` whose single out has a `.dir` md5 over the whole subtree. That
-# md5 is a hash of a DVC cache object listing the children - GAIn can never
-# recompute it from the resource alone, so it can never verify it.
+# `chunks.dvc` whose single out has a `.dir` md5 sum over the whole subtree.
+# That md5 sum is the hash of a DVC cache object listing the children - GAIn
+# can never recompute it from the resource, so it can never verify it.
 #
-# Semantics (#255): the pointer-only predicate is "the file is NOT
-# materialised", never "the scan did not yield it".
-#   * materialised   -> the bytes are right there: scan INTO the directory and
-#                       manifest its real files, each with a content-derived
-#                       md5. No unverifiable `.dir` entry is emitted.
-#   * not materialised -> nothing to hash; the sidecar entry is kept exactly as
-#                       for a pointer-only file (the `.dvc`-only clone the
-#                       `grr` pipeline builds from).
+# GAIn does not support `dvc add <dir>`. Writing the `.dir` md5 sum into the
+# manifest would be a false clean bill of health (#255: a tamper inside such a
+# directory was certified clean, `--without-dvc` included), and silently
+# skipping the directory would leave its data unmanifested and unverified.
+# `grr_manage` therefore REFUSES the resource outright, materialised or not,
+# with a non-zero exit - and says to `dvc add <file>` the individual files.
 
 CHUNK_A = "chunk A - original bytes\n"
 CHUNK_B = "chunk B - original bytes\n"
-# Same length as CHUNK_A: an in-place edit no size check can see.
-SAME_SIZE_TAMPERED_CHUNK_A = "chunk A - TAMPERED bytes\n"
 
-# A `.dir` md5 no one can verify - and, here, an outright lie.
-LYING_DIR_MD5 = "1234567890abcdef1234567890abcdef.dir"
+# A `.dir` md5 sum no one can verify.
+DIR_MD5 = "1234567890abcdef1234567890abcdef.dir"
+# A plain (non-`.dir`) md5 sum: the `nfiles` count is then the only signal.
+PLAIN_MD5 = "1234567890abcdef1234567890abcdef"
 
 
-def dvc_dir_sidecar(path: str, *, size: int, nfiles: int) -> str:
-    """Render a realistic `dvc add <dir>` pointer (a `.dir` md5)."""
-    return textwrap.dedent(f"""
-        outs:
-        - md5: {LYING_DIR_MD5}
-          size: {size}
-          nfiles: {nfiles}
-          path: {path}
-    """)
+def dvc_dir_sidecar(
+    path: str, *, size: int,
+    md5: str = DIR_MD5, nfiles: int | None = 2,
+) -> str:
+    """Render a `dvc add <dir>` pointer.
+
+    A real one declares BOTH signals: a `.dir`-suffixed md5 sum and an
+    `nfiles` count. Either alone must be enough to recognise it.
+    """
+    nfiles_line = "" if nfiles is None else f"  nfiles: {nfiles}\n"
+    return (
+        "\nouts:\n"
+        f"- md5: {md5}\n"
+        f"  size: {size}\n"
+        f"{nfiles_line}"
+        f"  path: {path}\n"
+    )
+
+
+# The three shapes a directory output can present itself in. `nfiles-only` is
+# not something DVC writes, but recognising a directory must not hinge on a
+# single signal - and `md5` is the one an unverifiable entry would be built
+# from, so a `.dir` md5 sum alone is refused too.
+DIR_SIDECARS: dict[str, str] = {
+    "dir-md5-and-nfiles": dvc_dir_sidecar(
+        "chunks", size=size_of(CHUNK_A) + size_of(CHUNK_B)),
+    "dir-md5-only": dvc_dir_sidecar(
+        "chunks", size=size_of(CHUNK_A) + size_of(CHUNK_B), nfiles=None),
+    "nfiles-only": dvc_dir_sidecar(
+        "chunks", size=size_of(CHUNK_A) + size_of(CHUNK_B), md5=PLAIN_MD5),
+}
 
 
 def setup_dvc_directory_grr(
     path: pathlib.Path, *, materialised: bool,
-    chunk_a: str = CHUNK_A,
+    sidecar: str = DIR_SIDECARS["dir-md5-and-nfiles"],
 ) -> None:
     """Set up a GRR holding a `dvc add <dir>` output."""
     one: dict = {
         "genomic_resource.yaml": "",
         ".gitignore": "/chunks\n",
-        "chunks.dvc": dvc_dir_sidecar(
-            "chunks", size=size_of(chunk_a) + size_of(CHUNK_B), nfiles=2),
+        "chunks.dvc": sidecar,
     }
     if materialised:
-        one["chunks"] = {"a.txt": chunk_a, "b.txt": CHUNK_B}
+        one["chunks"] = {"a.txt": CHUNK_A, "b.txt": CHUNK_B}
     setup_directories(path, {"one": one})
 
 
-@pytest.fixture
-def dvc_directory_proto_fixture(
-    tmp_path_factory: pytest.TempPathFactory,
-) -> tuple[pathlib.Path, FsspecReadWriteProtocol]:
-    """A materialised `dvc add <dir>` output: real bytes on disk."""
-    path = tmp_path_factory.mktemp("cli_dvc_directory")
-    setup_dvc_directory_grr(path, materialised=True)
-    proto = build_filesystem_test_protocol(path, repair=False)
-    return path, proto
-
-
-@pytest.fixture
-def pointer_only_dvc_directory_proto_fixture(
-    tmp_path_factory: pytest.TempPathFactory,
-) -> tuple[pathlib.Path, FsspecReadWriteProtocol]:
-    """A `dvc add <dir>` output that was never `dvc pull`ed."""
-    path = tmp_path_factory.mktemp("cli_dvc_directory_pointer_only")
-    setup_dvc_directory_grr(path, materialised=False)
-    proto = build_filesystem_test_protocol(path, repair=False)
-    return path, proto
-
-
-def test_materialised_dvc_directory_is_expanded_into_its_real_files(
-    dvc_directory_proto_fixture: tuple[
-        pathlib.Path, FsspecReadWriteProtocol],
-    md5_spy: list[str],
-) -> None:
-    # Given a materialised `dvc add <dir>` output
-    path, proto = dvc_directory_proto_fixture
-
-    # When the GRR is repaired
-    cli_manage(["repo-repair", "-R", str(path)])
-
-    # Then the directory's real files are in the manifest, hashed from content
-    manifest = proto.load_manifest(proto.get_resource("one"))
-    assert manifest["chunks/a.txt"].md5 == md5_of(CHUNK_A)
-    assert manifest["chunks/a.txt"].size == size_of(CHUNK_A)
-    assert manifest["chunks/b.txt"].md5 == md5_of(CHUNK_B)
-    assert manifest["chunks/b.txt"].size == size_of(CHUNK_B)
-    assert "chunks/a.txt" in md5_spy
-    assert "chunks/b.txt" in md5_spy
-
-    # ... and the unverifiable `.dir` pointer entry is NOT emitted
-    assert "chunks" not in manifest
-    raw = (path / "one" / ".MANIFEST").read_text(encoding="utf8")
-    assert LYING_DIR_MD5 not in raw, raw
-    assert ".dir" not in raw, raw
-
-
+@pytest.mark.parametrize("materialised", [True, False])
 @pytest.mark.parametrize("dvc_args", [[], ["-D"]])
-def test_tamper_inside_a_materialised_dvc_directory_is_caught(
-    dvc_directory_proto_fixture: tuple[
-        pathlib.Path, FsspecReadWriteProtocol],
+def test_dvc_directory_output_is_refused(
+    tmp_path_factory: pytest.TempPathFactory,
+    md5_spy: list[str],
+    materialised: bool,
     dvc_args: list[str],
 ) -> None:
-    """#255, the headline case: the tamper the `.dir` hash used to hide."""
-    # Given a repaired GRR holding a materialised `dvc add <dir>` output
-    path, proto = dvc_directory_proto_fixture
-    cli_manage(["repo-repair", "-R", str(path)])
+    """A `dvc add <dir>` output aborts the command, in every mode.
 
-    # When a file INSIDE the directory is edited in place, size unchanged
-    tamper(
-        path / "one" / "chunks" / "a.txt", SAME_SIZE_TAMPERED_CHUNK_A,
-        keep_timestamp=("-D" in dvc_args))
-
-    cli_manage(["repo-repair", "-R", str(path), *dvc_args])
-
-    # Then the manifest describes the bytes actually on disk
-    res = proto.get_resource("one")
-    manifest = proto.load_manifest(res)
-    assert manifest["chunks/a.txt"].md5 == md5_of(SAME_SIZE_TAMPERED_CHUNK_A)
-    assert manifest["chunks/a.txt"].md5 != md5_of(CHUNK_A)
-
-    state = proto.load_resource_file_state(res, "chunks/a.txt")
-    assert state is not None
-    assert state.md5 == md5_of(SAME_SIZE_TAMPERED_CHUNK_A)
-    assert state.size == size_of(SAME_SIZE_TAMPERED_CHUNK_A)
-
-
-def test_tampered_dvc_directory_is_reported_before_any_state(
-    tmp_path_factory: pytest.TempPathFactory,
-) -> None:
-    """A stateless GRR whose `dvc add <dir>` content was tampered with."""
-    # Given a GRR whose directory holds bytes the `.dir` hash cannot describe
-    path = tmp_path_factory.mktemp("cli_dvc_directory_stale")
-    setup_dvc_directory_grr(
-        path, materialised=True, chunk_a=SAME_SIZE_TAMPERED_CHUNK_A)
-    proto = build_filesystem_test_protocol(path, repair=False)
-
-    # When the GRR is repaired
-    cli_manage(["repo-repair", "-R", str(path)])
-
-    # Then the manifest carries the md5 of the bytes on disk - never the
-    # sidecar's unverifiable `.dir` claim
-    manifest = proto.load_manifest(proto.get_resource("one"))
-    assert manifest["chunks/a.txt"].md5 == md5_of(SAME_SIZE_TAMPERED_CHUNK_A)
-    assert "chunks" not in manifest
-
-
-def test_materialised_dvc_directory_is_not_rehashed_on_a_repeat_run(
-    dvc_directory_proto_fixture: tuple[
-        pathlib.Path, FsspecReadWriteProtocol],
-    md5_spy: list[str],
-) -> None:
-    """The size+timestamp fast path holds for the expanded subtree too."""
-    # Given a repaired GRR holding a materialised `dvc add <dir>` output
-    path, _proto = dvc_directory_proto_fixture
-    cli_manage(["repo-repair", "-R", str(path)])
-    manifest_before = (path / "one" / ".MANIFEST").read_bytes()
-    md5_spy.clear()
-
-    # When nothing changed and the GRR is repaired again
-    cli_manage(["repo-repair", "-R", str(path)])
-
-    # Then nothing is hashed and the manifest is unchanged
-    assert md5_spy == []
-    assert (path / "one" / ".MANIFEST").read_bytes() == manifest_before
-
-
-def test_materialised_dvc_directory_hashes_every_file_exactly_once(
-    dvc_directory_proto_fixture: tuple[
-        pathlib.Path, FsspecReadWriteProtocol],
-    md5_spy: list[str],
-) -> None:
-    # Given a GRR holding a materialised `dvc add <dir>` output
-    path, _proto = dvc_directory_proto_fixture
-
-    # When it is audited with '-D'
-    cli_manage(["repo-repair", "-R", str(path), "-D"])
-
-    # Then every file - the subtree's included - is hashed exactly once
-    counts = Counter(md5_spy)
-    assert counts["chunks/a.txt"] == 1
-    assert counts["chunks/b.txt"] == 1
-    assert set(counts.values()) == {1}, counts
-
-
-@pytest.mark.parametrize("dvc_args", [[], ["-D"]])
-def test_pointer_only_dvc_directory_keeps_its_sidecar_entry(
-    pointer_only_dvc_directory_proto_fixture: tuple[
-        pathlib.Path, FsspecReadWriteProtocol],
-    md5_spy: list[str],
-    dvc_args: list[str],
-) -> None:
-    """Not materialised: there is nothing to hash and nothing to expand.
-
-    The `grr` pipeline's clone has the `.dvc` sidecars and no data. Its
-    entries must survive untouched, in every mode.
+    A pointer-only `.dir` sidecar is refused just like a materialised one:
+    accepting it would write an md5 sum GAIn can never verify into the
+    manifest.
     """
-    # Given a `dvc add <dir>` output that was never `dvc pull`ed
-    path, proto = pointer_only_dvc_directory_proto_fixture
-    assert not (path / "one" / "chunks").exists()
+    # Given a GRR holding a `dvc add <dir>` output
+    path = tmp_path_factory.mktemp("cli_dvc_directory")
+    setup_dvc_directory_grr(path, materialised=materialised)
+    build_filesystem_test_protocol(path, repair=False)
 
     # When the GRR is repaired
-    cli_manage(["repo-repair", "-R", str(path), *dvc_args])
+    with pytest.raises(SystemExit) as excinfo:
+        cli_manage(["repo-repair", "-R", str(path), *dvc_args])
 
-    # Then the sidecar entry is kept - it is the only source there is
-    manifest = proto.load_manifest(proto.get_resource("one"))
-    assert manifest["chunks"].md5 == LYING_DIR_MD5
-    assert manifest["chunks"].size == size_of(CHUNK_A) + size_of(CHUNK_B)
+    # Then the command fails
+    assert excinfo.value.code == 1
 
-    # ... nothing was materialised, and nothing was hashed on the absent
-    # directory's behalf (the tracked `chunks.dvc` sidecar itself is a normal
-    # resource file and is hashed like any other)
-    assert not (path / "one" / "chunks").exists()
+    # ... nothing was hashed on the directory's behalf, and no manifest
+    # certifying it was written
     assert not any(
         name == "chunks" or name.startswith("chunks/")
         for name in md5_spy), md5_spy
+    assert not (path / "one" / ".MANIFEST").exists()
 
 
-def test_materialising_a_dvc_directory_replaces_its_stale_pointer_entry(
+@pytest.mark.parametrize("shape", sorted(DIR_SIDECARS))
+def test_dvc_directory_output_is_recognised_by_either_signal(
     tmp_path_factory: pytest.TempPathFactory,
+    shape: str,
 ) -> None:
-    """The `dvc pull` transition: pointer entry out, real files in.
+    """`.dir` md5 sum OR `nfiles`: either is enough to refuse."""
+    # Given a `dvc add <dir>` output declaring only some of the signals
+    path = tmp_path_factory.mktemp("cli_dvc_directory_shape")
+    setup_dvc_directory_grr(
+        path, materialised=True, sidecar=DIR_SIDECARS[shape])
+    build_filesystem_test_protocol(path, repair=False)
 
-    A clone is repaired while the directory is still a pointer (its `.dir`
-    entry is all there is), then `dvc pull` materialises it. The next repair
-    must replace that entry with the subtree's real, content-hashed files -
-    never leave the unverifiable `.dir` md5 sum standing next to them.
-    """
-    # Given a repaired `.dvc`-only clone whose manifest holds the `.dir` entry
-    path = tmp_path_factory.mktemp("cli_dvc_directory_pull")
-    setup_dvc_directory_grr(path, materialised=False)
-    proto = build_filesystem_test_protocol(path, repair=False)
+    # When the GRR is repaired - it is refused
+    with pytest.raises(SystemExit) as excinfo:
+        cli_manage(["repo-repair", "-R", str(path)])
+    assert excinfo.value.code == 1
+
+
+@pytest.mark.parametrize("materialised", [True, False])
+def test_dvc_directory_refusal_names_the_resource_and_the_sidecar(
+    tmp_path_factory: pytest.TempPathFactory,
+    caplog: pytest.LogCaptureFixture,
+    materialised: bool,
+) -> None:
+    # Given a GRR holding a `dvc add <dir>` output
+    path = tmp_path_factory.mktemp("cli_dvc_directory_message")
+    setup_dvc_directory_grr(path, materialised=materialised)
+    build_filesystem_test_protocol(path, repair=False)
+
+    # When the GRR is repaired
+    with caplog.at_level(logging.ERROR), pytest.raises(SystemExit):
+        cli_manage(["repo-repair", "-R", str(path)])
+
+    # Then the error names the resource and the offending `.dvc` file, says
+    # what is not supported, and says what to do instead
+    message = caplog.text
+    assert "one" in message
+    assert "chunks.dvc" in message
+    assert "dvc add <dir>" in message
+    assert "not supported" in message
+    assert "dvc add <file>" in message
+
+
+@pytest.mark.parametrize("subcommand", DVC_SUBCOMMANDS)
+def test_every_manifest_subcommand_refuses_a_dvc_directory(
+    tmp_path_factory: pytest.TempPathFactory,
+    subcommand: str,
+) -> None:
+    """Every subcommand that builds or checks a manifest hits the gate."""
+    # Given a GRR holding a materialised `dvc add <dir>` output
+    path = tmp_path_factory.mktemp("cli_dvc_directory_subcommands")
+    setup_dvc_directory_grr(path, materialised=True)
+    build_filesystem_test_protocol(path, repair=False)
+
+    args = [subcommand, "-R", str(path)]
+    if subcommand.startswith("resource-"):
+        args.extend(["-r", "one"])
+
+    # When it is run - the command fails
+    with pytest.raises(SystemExit) as excinfo:
+        cli_manage(args)
+    assert excinfo.value.code == 1
+    assert not (path / "one" / ".MANIFEST").exists()
+
+
+def test_a_per_file_dvc_resource_is_not_refused(
+    gitignored_dvc_proto_fixture: tuple[
+        pathlib.Path, FsspecReadWriteProtocol],
+) -> None:
+    """The refusal is for `dvc add <dir>` only - `dvc add <file>` is fine."""
+    # Given a GRR in the production `dvc add <file>` layout
+    path, proto = gitignored_dvc_proto_fixture
+
+    # When the GRR is repaired - it does not raise
     cli_manage(["repo-repair", "-R", str(path)])
-    assert proto.load_manifest(proto.get_resource("one"))["chunks"].md5 == \
-        LYING_DIR_MD5
 
-    # When the directory is materialised (as `dvc pull` would) and repaired
-    setup_directories(
-        path, {"one": {"chunks": {"a.txt": CHUNK_A, "b.txt": CHUNK_B}}})
-    cli_manage(["repo-repair", "-R", str(path)])
-
-    # Then the pointer entry is gone and the real files describe themselves
+    # Then the manifest describes the file's own bytes
     manifest = proto.load_manifest(proto.get_resource("one"))
-    assert "chunks" not in manifest
-    assert manifest["chunks/a.txt"].md5 == md5_of(CHUNK_A)
-    assert manifest["chunks/b.txt"].md5 == md5_of(CHUNK_B)
-    raw = (path / "one" / ".MANIFEST").read_text(encoding="utf8")
-    assert LYING_DIR_MD5 not in raw, raw
+    assert manifest["data.txt"].md5 == md5_of(ORIGINAL_DATA)
 
 
 # ---------------------------------------------------------------------------
