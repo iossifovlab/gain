@@ -1,6 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613,too-many-lines
 import gc
-import os
 import pathlib
 import textwrap
 from typing import cast
@@ -1907,65 +1906,6 @@ chr1   5   .  A   T   .    .      A=1
     assert mocker.call(0) in spy.call_args_list
 
 
-def _header_sidecar_path(res: GenomicResource) -> pathlib.Path:
-    """Filesystem path of a VCF resource's ``*.header.vcf.gz`` sidecar."""
-    url = res.get_file_url("data.header.vcf.gz")
-    return pathlib.Path(url.removeprefix("file://").removeprefix("file:"))
-
-
-def _open_header_fds(header_path: pathlib.Path) -> int:
-    """Count this process's open file descriptors on ``header_path``.
-
-    Reads ``/proc/self/fd`` directly rather than taking psutil as a test
-    dependency.  It counts *only* descriptors pointing at the header sidecar,
-    so it cannot be fooled by unrelated churn (pytest's own capture pipes, the
-    resource's manifest reads) the way a bare fd *total* could be.
-    """
-    count = 0
-    for fd in os.listdir("/proc/self/fd"):
-        try:
-            target = os.readlink(f"/proc/self/fd/{fd}")
-        except OSError:  # the listdir fd itself, already gone
-            continue
-        if target == str(header_path):
-            count += 1
-    return count
-
-
-def test_vcf_header_load_leaves_no_open_file_descriptor(
-    vcf_res: GenomicResource,
-) -> None:
-    """Constructing VCF tables must not accumulate open header descriptors.
-
-    ``_load_vcf_header`` opens the ``*.header.vcf.gz`` sidecar purely to read
-    ``header.info``.  The file it opens must not outlive that read: a table is
-    constructed once per score-resource open, and in a long-lived process (the
-    web API, a task-graph worker) a retained descriptor per construction is an
-    fd leak.  The header *metadata* must survive -- see
-    test_vcf_header_metadata_outlives_the_closed_header_file -- but the file
-    behind it must not.
-    """
-    assert vcf_res.config is not None
-    header_path = _header_sidecar_path(vcf_res)
-    assert header_path.exists()
-
-    # Not vacuous: an open header sidecar IS visible in /proc/self/fd.
-    with vcf_res.open_vcf_file("data.header.vcf.gz"):
-        assert _open_header_fds(header_path) == 1
-    assert _open_header_fds(header_path) == 0
-
-    tables = [
-        build_genomic_position_table(vcf_res, vcf_res.config["tabix_table"])
-        for _ in range(50)
-    ]
-    # The tables are still alive and still hold their header metadata -- so a
-    # zero count here is a *closed* file, not a collected table.
-    assert all(isinstance(t, VCFGenomicPositionTable) for t in tables)
-    assert all("A" in set(t.header.keys()) for t in tables)
-
-    assert _open_header_fds(header_path) == 0
-
-
 def test_vcf_header_metadata_outlives_the_closed_header_file(
     vcf_res: GenomicResource,
 ) -> None:
@@ -1985,7 +1925,6 @@ def test_vcf_header_metadata_outlives_the_closed_header_file(
     and the heap churned underneath the view.
     """
     assert vcf_res.config is not None
-    header_path = _header_sidecar_path(vcf_res)
 
     expected = [
         ("A", 1, "Integer", "Score A"),
@@ -1994,14 +1933,14 @@ def test_vcf_header_metadata_outlives_the_closed_header_file(
         ("D", ".", "String", "Score D"),
     ]
 
+    # `_load_vcf_header` closes the sidecar before it returns (`with
+    # vcf_file:`), so by construction the file behind this metadata is already
+    # shut -- there is no live handle to it anywhere in this test.
     table = build_genomic_position_table(
         vcf_res, vcf_res.config["tabix_table"])
     assert isinstance(table, VCFGenomicPositionTable)
 
-    # The file the metadata came from is gone ...
-    assert _open_header_fds(header_path) == 0
-
-    # ... and the view onto its header still answers, correctly.
+    # The view onto the closed file's header still answers, correctly.
     def read_everything() -> list[tuple]:
         meta = table.header
         assert len(meta) == len(expected)

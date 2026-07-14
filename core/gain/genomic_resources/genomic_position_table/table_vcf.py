@@ -142,8 +142,16 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
         method hand the metadata out and shut the file behind it, rather than
         leaving the descriptor to refcount finalisation.  (Pinned in
         test_genomic_position_table.py by
-        test_vcf_header_metadata_outlives_the_closed_header_file and
-        test_vcf_header_load_leaves_no_open_file_descriptor.)
+        test_vcf_header_metadata_outlives_the_closed_header_file.)
+
+        The close is deliberate, and it is not free: ``VariantFile.close()``
+        raises ``OSError`` when ``hts_close`` fails, where the implicit
+        refcount-driven ``__dealloc__`` it replaces would have swallowed that
+        error.  The sidecar is a small read-only bgzf file, so a failing close
+        is effectively unreachable here -- but on a closing file this *is* a
+        newly reachable exception, and it is preferred to relying on
+        finalisation: an exception raised between the open and the return keeps
+        the frame -- and so the file -- alive.
         """
         assert self.definition.get("header_mode", "file") == "file"
         filename = self.definition.filename
