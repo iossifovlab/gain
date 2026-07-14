@@ -724,18 +724,52 @@ class FsspecReadWriteProtocol(
     def _scan_resource_for_files(
         self, resource_path: str, path_array: list[str],
         ancestor_specs: list[tuple[int, pathspec.PathSpec]] | None = None,
-    ) -> Generator[Any, None, None]:
+        *,
+        dvc_managed: bool = False,
+    ) -> Generator[tuple[str, str, bool], None, None]:
+        """Yield ``(name, url, dvc_managed)`` for every file of a resource.
 
+        ``dvc_managed`` marks a path that DVC tracks: a ``dvc add`` output, or
+        anything under a materialised ``dvc add <dir>`` output. It never grants
+        the file's ``.dvc`` sidecar any authority over its md5 sum -- the bytes
+        are on disk, so the md5 comes from them. It only says "this is resource
+        data, not a page GAIn generated" (see :meth:`collect_resource_entries`).
+        """
         url = os.path.join(self.url, resource_path, *path_array)
         if not self.filesystem.isdir(url):
             if path_array:
-                yield os.path.join(*path_array), url
+                yield os.path.join(*path_array), url, dvc_managed
             return
 
         path = os.path.join(self.root_path, resource_path, *path_array)
 
         if ancestor_specs is None:
             ancestor_specs = []
+
+        raw_names = []
+        for direntry in self.filesystem.ls(url, detail=False):
+            if self.netloc and direntry.startswith(self.netloc):
+                direntry = direntry[len(self.netloc):]
+
+            name = os.path.relpath(direntry, path)
+            if name.startswith("."):
+                continue
+            raw_names.append(name)
+
+        if dvc_managed:
+            # We are inside a MATERIALISED `dvc add <dir>` output. Everything
+            # under it is DVC-tracked data whose bytes are on disk, so it is
+            # all scanned and all hashed from content (gain#255). The
+            # gitignore filter is not applied here: the `/<dir>` line `dvc
+            # add <dir>` writes ignores the whole subtree, and re-applying it
+            # to the children would skip every one of them -- which is what
+            # used to leave the directory represented by nothing but its
+            # sidecar's unverifiable `.dir` md5 sum.
+            for name in raw_names:
+                yield from self._scan_resource_for_files(
+                    resource_path, [*path_array, name], ancestor_specs,
+                    dvc_managed=True)
+            return
 
         # Read .gitignore in the current directory and accumulate specs.
         # Each spec is paired with the depth at which it was found so that
@@ -753,79 +787,73 @@ class FsspecReadWriteProtocol(
                 spec = pathspec.PathSpec.from_lines("gitignore", lines)
                 current_specs = [*ancestor_specs, (len(path_array), spec)]
 
-        raw_names = []
-        for direntry in self.filesystem.ls(url, detail=False):
-            if self.netloc and direntry.startswith(self.netloc):
-                direntry = direntry[len(self.netloc):]
-
-            name = os.path.relpath(direntry, path)
-            if name.startswith("."):
-                continue
-            raw_names.append(name)
-
-        # `dvc add <file>` writes `/<file>` into .gitignore and drops a
-        # sibling `<file>.dvc` pointer; the real data file must stay in the
-        # manifest. Exempt a gitignored leaf ONLY when it has such a genuine
-        # pointer in this directory (see _is_dvc_managed_leaf for the exact,
+        # `dvc add <path>` writes `/<path>` into .gitignore and drops a
+        # sibling `<path>.dvc` pointer; the real data must stay in the
+        # manifest. Exempt a gitignored name ONLY when it has such a genuine
+        # pointer in this directory (see _is_dvc_managed_path for the exact,
         # cli-consistent, crash-safe test). This is done per-candidate and
-        # lazily: only the sibling `.dvc` of an actually-gitignored leaf is
+        # lazily: only the sibling `.dvc` of an actually-gitignored name is
         # ever opened, so a directory with nothing gitignored -- the common
         # case -- opens zero `.dvc` files (gain#209).
         sibling_names = set(raw_names)
 
-        content = []
         for name in raw_names:
             if self._is_gitignored(name, path_array, current_specs):
-                # A gitignored leaf named by a genuine sibling `<name>.dvc`
-                # pointer is a `dvc add <file>` data file and must stay in
-                # the manifest -- regardless of WHICH gitignore rule ignored
-                # it. Being ignored by a coincidental ancestor pattern (e.g.
-                # root `*.tmp` matching `sub/x.tmp`) instead of the `/x.tmp`
-                # line dvc itself writes is still exactly the DVC situation:
-                # the pointer proves the data is DVC-managed, so keeping it
-                # is correct (gain#209).
-                if self._is_dvc_managed_leaf(url, name, sibling_names):
-                    content.append(name)
+                # A gitignored name named by a genuine sibling `<name>.dvc`
+                # pointer is a `dvc add` output and must stay in the manifest
+                # -- regardless of WHICH gitignore rule ignored it. Being
+                # ignored by a coincidental ancestor pattern (e.g. root
+                # `*.tmp` matching `sub/x.tmp`) instead of the `/x.tmp` line
+                # dvc itself writes is still exactly the DVC situation: the
+                # pointer proves the data is DVC-managed, so keeping it is
+                # correct (gain#209).
+                if not self._is_dvc_managed_path(url, name, sibling_names):
+                    continue
+                yield from self._scan_resource_for_files(
+                    resource_path, [*path_array, name], current_specs,
+                    dvc_managed=True)
                 continue
-            content.append(name)
 
-        for name in content:
+            # A file that is not gitignored is already in the scan; the cheap
+            # sibling-name test is only used to tell resource data apart from
+            # a generated info page, never to trust a sidecar. Deliberately
+            # NOT `_is_dvc_managed_path`: that opens the `.dvc`, and a
+            # directory with nothing gitignored must open none (gain#209).
             yield from self._scan_resource_for_files(
-                resource_path, [*path_array, name], current_specs)
+                resource_path, [*path_array, name], current_specs,
+                dvc_managed=f"{name}.dvc" in sibling_names)
 
-    def _is_dvc_managed_leaf(
+    def _is_dvc_managed_path(
         self, url: str, name: str, sibling_names: set[str],
     ) -> bool:
-        """Return True if gitignored ``name`` is a per-file `dvc add` output.
+        """Return True if gitignored ``name`` is a genuine `dvc add` output.
 
-        ``name`` is a genuine DVC-managed data file -- and so must stay in the
-        manifest despite being gitignored -- iff ALL hold (gain#209):
+        ``name`` -- a file or a directory -- is genuine DVC-managed data, and
+        so must stay in the scan despite being gitignored, iff BOTH hold:
 
-        1. ``name`` is not a directory. Only per-file ``dvc add <file>`` is
-           supported: a gitignored *directory* with a sibling ``<dir>.dvc``
-           stays skipped whole (recursing into it would re-skip its children
-           under the inherited ancestor gitignore spec and silently yield a
-           half-populated subtree).
-        2. a sibling ``<name>.dvc`` exists in this directory and is a regular
+        1. a sibling ``<name>.dvc`` exists in this directory and is a regular
            file (a *directory* literally named ``<name>.dvc`` is not a
            pointer and must not be opened).
-        3. that ``<name>.dvc`` parses as a well-formed DVC pointer -- a dict
+        2. that ``<name>.dvc`` parses as a well-formed DVC pointer -- a dict
            with an ``outs`` list of dicts -- that declares ``name`` as one of
            its outputs (``out["path"] == name``). Both this test and
            ``cli.collect_dvc_entries`` delegate to
            :func:`repository.parse_dvc_pointer_out`, so the scanner and the
            cli cannot classify the same sidecar differently.
 
+        A *directory* passing this test is a materialised ``dvc add <dir>``
+        output: the caller scans into it and manifests the real files it
+        holds, each with an md5 sum derived from its own bytes (gain#255). It
+        used to be skipped whole, which left the directory in the manifest as
+        a single entry carrying the sidecar's ``.dir`` md5 sum -- a hash of a
+        DVC cache object that GAIn can never recompute, and so never verify.
+
         Parsing NEVER raises: a binary/non-UTF-8 ``.dvc`` (read in binary and
         handed to ``yaml.safe_load`` as bytes, so no UnicodeDecodeError), a
         directory opened as a file, or any malformed YAML/shape is treated as
         "not a pointer" -- the scan must never abort on stray content.
         """
-        # (1) per-file dvc only: a gitignored directory is never exempted.
-        if self.filesystem.isdir(os.path.join(url, name)):
-            return False
-
-        # (2) a sibling pointer must exist and be a regular file.
+        # (1) a sibling pointer must exist and be a regular file.
         dvc_name = f"{name}.dvc"
         if dvc_name not in sibling_names:
             return False
@@ -833,7 +861,7 @@ class FsspecReadWriteProtocol(
         if self.filesystem.isdir(dvc_url):
             return False
 
-        # (3) it must parse as a genuine pointer declaring `name` as output.
+        # (2) it must parse as a genuine pointer declaring `name` as output.
         try:
             with self.filesystem.open(dvc_url, "rb") as infile:
                 content = cast(bytes, infile.read())
@@ -900,8 +928,14 @@ class FsspecReadWriteProtocol(
         resource_path = resource.get_genomic_resource_id_version()
 
         result = Manifest()
-        for name, path in self._scan_resource_for_files(resource_path, []):
-            if name.endswith("html"):  # Ignore generated info files
+        for name, path, dvc_managed in self._scan_resource_for_files(
+                resource_path, []):
+            # The info pages GAIn generates for a resource are not resource
+            # data and stay out of the manifest. A DVC-managed `*html` file is
+            # not generated - it is data, `dvc add`ed like any other file - so
+            # the exclusion does not apply to it: it is scanned, and its md5
+            # sum comes from its bytes rather than from its sidecar (gain#255).
+            if name.endswith("html") and not dvc_managed:
                 continue
 
             size = self._get_filepath_size(path)

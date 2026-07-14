@@ -653,24 +653,27 @@ def test_gitignore_leaf_without_dvc_sibling_is_excluded() -> None:
     assert "debug.log" not in entries
 
 
-def test_gitignore_dvc_managed_directory_is_not_exempted() -> None:
-    # Per-file `dvc add <file>` is the only supported DVC mode here. A stray
-    # `dvc add <dir>` writes `/<dir>` into .gitignore and drops a sibling
-    # `<dir>.dvc`; but a gitignored *directory* must NOT be exempted. If it
-    # were, the scan would recurse into it and re-skip its children under the
-    # inherited ancestor gitignore spec — silently yielding a half-populated
-    # subtree (here: `bigdir/a.bw`, which has its own nested `.dvc`, would
-    # slip in while `bigdir/b.bw` stays skipped). The directory is instead
-    # treated like any other gitignored directory: skipped whole, its files
-    # entirely absent from the entries.
+def test_materialised_dvc_managed_directory_is_scanned_into() -> None:
+    # A materialised `dvc add <dir>` output: `/<dir>` in .gitignore, a sibling
+    # `<dir>.dvc` carrying a `.dir` md5, and the real bytes on disk. The whole
+    # subtree is scanned (gain#255).
+    #
+    # The gitignore filter is NOT re-applied to the children: `/bigdir` ignores
+    # the entire subtree, so applying it would skip every child that lacks a
+    # `.dvc` sibling of its own and yield a half-populated subtree. Everything
+    # under a materialised `dvc add <dir>` output is DVC-managed data, so the
+    # exemption extends to all of it — `bigdir/b.bw` (no sibling pointer) is
+    # kept exactly like `bigdir/a.bw` (which has one).
+    #
+    # Skipping the directory whole — what this used to do — left it in the
+    # manifest as a single entry carrying `bigdir.dvc`'s `.dir` md5, a hash
+    # GAIn can never recompute and so never verify, while the real files never
+    # appeared at all. See `test_cli_dvc_manifest.py` for the manifest-level
+    # consequences.
     #
     # `bigdir.dvc` is a REALISTIC `dvc add <dir>` pointer whose single out has
     # `path: bigdir` (a `.dir` md5 + total size), exactly as DVC writes for a
-    # directory add. This is deliberate: with `path == "bigdir"`, the parse
-    # guard (out["path"] == name) MATCHES, so only the `isdir` guard #1 stands
-    # between the directory and a wrongful exemption. Using a `path: scores.bw`
-    # pointer here would let the parse guard reject the directory on its own
-    # and leave guard #1 untested (see #209 review).
+    # directory add.
     proto = build_inmemory_test_protocol({
         "res": {
             GR_CONF_FILE_NAME: "",
@@ -688,11 +691,39 @@ def test_gitignore_dvc_managed_directory_is_not_exempted() -> None:
     entries = proto.collect_resource_entries(res)
     assert "data.txt" in entries
     assert "bigdir.dvc" in entries
-    # The gitignored directory is skipped whole: none of its children appear,
-    # not even the one carrying its own sibling `.dvc` pointer.
-    assert "bigdir/a.bw" not in entries
-    assert "bigdir/a.bw.dvc" not in entries
-    assert "bigdir/b.bw" not in entries
+    # The whole subtree is scanned - every child, pointer or no pointer.
+    assert "bigdir/a.bw" in entries
+    assert "bigdir/a.bw.dvc" in entries
+    assert "bigdir/b.bw" in entries
+    # The real on-disk sizes, never the sidecar's claims.
+    assert entries["bigdir/a.bw"].size == 3
+    assert entries["bigdir/b.bw"].size == 3
+    # ... and the directory itself is not an entry.
+    assert "bigdir" not in entries
+
+
+def test_pointer_only_dvc_managed_directory_yields_nothing_to_scan() -> None:
+    # The same resource as a `.dvc`-only clone: `bigdir.dvc` is checked out,
+    # `bigdir/` was never `dvc pull`ed. There is nothing on disk to scan, so
+    # the scan yields nothing for it - and `cli.collect_dvc_entries` supplies
+    # the pointer entry, which is the only description of it there is.
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            "bigdir.dvc": BIGDIR_DVC_CONTENT,
+            ".gitignore": "/bigdir\n",
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "data.txt" in entries
+    assert "bigdir.dvc" in entries
+    assert "bigdir" not in entries
+
+    assert "bigdir" in collect_dvc_entries(proto, res)
+    manifest = proto.build_manifest(res, collect_dvc_entries(proto, res))
+    assert manifest["bigdir"].md5 == "1234567890abcdef1234567890abcdef.dir"
 
 
 # A `.dvc` pointer whose md5/size DELIBERATELY disagree with the real

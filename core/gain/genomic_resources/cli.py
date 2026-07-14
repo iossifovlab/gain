@@ -121,13 +121,11 @@ def _add_dvc_parameters_group(parser: argparse.ArgumentParser) -> None:
         "-D", "--without-dvc",
         action="store_false", dest="use_dvc",
         help="verify mode: compute from its content the md5 sum of every "
-        "resource file that the repository scan yields and that is present "
-        "on disk, ignoring its recorded state. Two kinds of file keep taking "
-        "their md5 sum from a '.dvc' sidecar even here, because there is no "
-        "content of theirs to hash or none is scanned: a file that is not "
-        "present on disk (a '.dvc' pointer only), and the output of "
-        "'dvc add <dir>' - a whole directory, which the scan skips and whose "
-        "files therefore never enter the manifest individually")
+        "resource file that is present on disk, ignoring its recorded state. "
+        "Only a file that is NOT present on disk (a '.dvc' pointer only) "
+        "keeps taking its md5 sum and size from its '.dvc' sidecar - there "
+        "is no content of its own to hash, and its manifest entry is never "
+        "dropped")
 
 
 def _add_hist_parameters_group(parser: argparse.ArgumentParser) -> None:
@@ -349,9 +347,14 @@ def collect_dvc_entries(
     allowed to abort the command. `.dvc` sidecars are read on every
     ``grr_manage`` run, and the repository scan that produced this entry has
     already tolerated the very same content (see
-    :meth:`FsspecReadWriteProtocol._is_dvc_managed_leaf`); the two classify
+    :meth:`FsspecReadWriteProtocol._is_dvc_managed_path`); the two classify
     identically because both delegate to
     :func:`repository.parse_dvc_pointer_out`.
+
+    An entry is produced for every readable sidecar. Which of them actually
+    reach the manifest is decided by
+    :meth:`ReadWriteRepositoryProtocol._merge_pointer_only_entries`: only
+    those whose data file is not materialised (gain#255).
     """
     result = {}
     manifest = proto.collect_resource_entries(res)

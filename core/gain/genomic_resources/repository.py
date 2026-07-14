@@ -411,7 +411,7 @@ def parse_dvc_pointer_out(
 
     Parsing NEVER raises. This is the single place a ``.dvc`` file is
     interpreted, so that the repository scan
-    (``_is_dvc_managed_leaf``, which must never abort on stray content) and
+    (``_is_dvc_managed_path``, which must never abort on stray content) and
     ``grr_manage``'s ``collect_dvc_entries`` cannot classify the same sidecar
     differently (#251).
 
@@ -1006,24 +1006,45 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         entry.md5 = state.md5
         entry.size = state.size
 
-    @staticmethod
     def _merge_pointer_only_entries(
+        self,
+        resource: GenomicResource,
         manifest: Manifest,
         prebuild_entries: dict[str, ManifestEntry],
     ) -> None:
-        """Merge prebuild entries for files that are not materialised.
+        """Merge prebuild entries for the files that are NOT materialised.
 
-        ``collect_resource_entries`` only yields files that exist, so any
-        prebuild (e.g. DVC) entry missing from the scanned manifest is a
-        pointer-only entry - the ``.dvc``-only clone the ``grr`` pipeline
-        builds from. Its bytes are absent, so its sidecar is the sole
-        possible source of md5 and size, whatever the caller asked for.
+        A prebuild (``.dvc``) entry is merged in iff the data it describes is
+        absent from the repository - the pointer-only clone the ``grr``
+        pipeline builds from. There are no bytes to hash, so the sidecar is
+        the sole possible source of md5 and size, whatever the caller asked
+        for, and the entry is never dropped.
+
+        The predicate is "the file is NOT materialised" (``file_exists``), NOT
+        "the scan did not yield it" (gain#255). The two are not the same: the
+        scan skips things that ARE on disk, and every one of them used to be
+        classified pointer-only and handed its sidecar's md5 sum unverified -
+        in every mode, ``--without-dvc`` included. Anything the scan does not
+        yield but that exists on disk is deliberately left out of the manifest
+        rather than certified from a sidecar nobody read the bytes for.
 
         Entries for materialised files are left as the scan built them; their
         md5 is derived from the file's content.
         """
         for name, entry in prebuild_entries.items():
             if name in manifest:
+                continue
+            if self.file_exists(resource, name):
+                # On disk, yet not in the scanned manifest: a materialised
+                # `dvc add <dir>` output, whose real files the scan has just
+                # manifested individually, each hashed from its own bytes -
+                # so the sidecar's unverifiable `.dir` md5 sum describes
+                # nothing that is not already covered.
+                logger.debug(
+                    "not taking the md5 sum of <%s> in <%s> from its '.dvc' "
+                    "sidecar: it is materialised, and a sidecar is never the "
+                    "md5 sum of bytes that are on disk",
+                    name, resource.resource_id)
                 continue
             manifest.add(entry)
 
@@ -1041,7 +1062,8 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
             self._update_manifest_entry_and_state(
                 resource, entry, verify_content=verify_content)
             manifest.add(entry)
-        self._merge_pointer_only_entries(manifest, prebuild_entries)
+        self._merge_pointer_only_entries(
+            resource, manifest, prebuild_entries)
         return manifest
 
     def check_update_manifest(
@@ -1069,7 +1091,8 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
                     or entry.md5 != current_manifest[entry.name].md5:
                 entries_to_update.add(entry.name)
 
-        self._merge_pointer_only_entries(manifest, prebuild_entries)
+        self._merge_pointer_only_entries(
+            resource, manifest, prebuild_entries)
 
         entries_to_delete = current_manifest.names() - manifest.names()
         return ManifestUpdate(manifest, entries_to_delete, entries_to_update)
