@@ -1,7 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613,C0415
 import pathlib
 import textwrap
-from typing import cast
+from typing import Any, cast
 
 import pysam
 import pytest
@@ -22,7 +22,9 @@ from gain.genomic_resources.genomic_scores import (
     GenomicScore,
     RecordScoreLine,
     ScoreLine,
+    ScoreLineBase,
     VCFScoreLine,
+    _ScoreDef,
     build_score_from_resource,
     build_score_from_resource_id,
 )
@@ -653,6 +655,31 @@ def test_vcf_tuple_scores_autoconcat_to_string(vcf_score: AlleleScore) -> None:
     )
 
 
+class _CountingHeaderMetadata:
+    """The header's INFO metadata, counting the per-KEY lookups made on it.
+
+    ``metadata.get(key)`` is not free either: it builds a fresh pysam
+    ``VariantMetadata`` for the key.  Unlike the two proxies above that cost is
+    per-SCORE, not per-line, so it is the one a wide table pays most often --
+    which makes *whether a score reads it at all* worth pinning.
+    """
+
+    def __init__(self, meta: pysam.VariantHeaderMetadata) -> None:
+        self._meta = meta
+        self.gets = 0
+
+    def get(self, key: str) -> Any:
+        self.gets += 1
+        return self._meta.get(key)
+
+
+class _CountingHeader:
+    """A variant header whose INFO metadata counts its lookups."""
+
+    def __init__(self, header: pysam.VariantHeader) -> None:
+        self.info = _CountingHeaderMetadata(header.info)
+
+
 class _CountingVariant:
     """A pysam variant record that counts the proxy reads made through it.
 
@@ -661,10 +688,14 @@ class _CountingVariant:
     is ``False``, ~85ns each).  So the number of times a score line touches
     them is a per-line cost that is otherwise invisible -- this proxy makes it
     observable, over a real variant record with real INFO data behind it.
+
+    The header it hands back counts one level deeper: how many *keys* were
+    looked up in its INFO metadata (``meta_gets``).
     """
 
     def __init__(self, variant: pysam.VariantRecord) -> None:
         self._variant = variant
+        self._header = _CountingHeader(variant.header)
         self.info_reads = 0
         self.header_reads = 0
 
@@ -674,9 +705,24 @@ class _CountingVariant:
         return self._variant.info
 
     @property
-    def header(self) -> pysam.VariantHeader:
+    def header(self) -> _CountingHeader:
         self.header_reads += 1
-        return self._variant.header
+        return self._header
+
+    @property
+    def meta_gets(self) -> int:
+        return self._header.info.gets
+
+
+def _count_line(
+    line: ScoreLineBase, score_defs: dict[str, _ScoreDef],
+) -> tuple[VCFScoreLine, _CountingVariant]:
+    """Rebuild a VCF score line over a counting stand-in for its variant."""
+    assert isinstance(line, VCFScoreLine)
+    variant, allele_index = line.record[PAYLOAD]
+    counting = _CountingVariant(variant)
+    record = (*line.record[:PAYLOAD], (counting, allele_index))
+    return VCFScoreLine(record, score_defs), counting
 
 
 def test_vcf_score_line_reads_the_pysam_proxies_once_per_line(
@@ -700,12 +746,8 @@ def test_vcf_score_line_reads_the_pysam_proxies_once_per_line(
         # A real, multi-allelic line -- the record whose INFO the counting
         # proxy stands in front of is the genuine pysam one.
         line = next(iter(vcf_score.fetch_lines("chr1", 30, 30)))
-        assert isinstance(line, VCFScoreLine)
-        variant, allele_index = line.record[PAYLOAD]
-
-        counting = _CountingVariant(variant)
-        record = (*line.record[:PAYLOAD], (counting, allele_index))
-        counted_line = VCFScoreLine(record, vcf_score.score_definitions)
+        counted_line, counting = _count_line(
+            line, vcf_score.score_definitions)
 
         # Nothing is read before a score is asked for.
         assert (counting.info_reads, counting.header_reads) == (0, 0)
@@ -723,6 +765,104 @@ def test_vcf_score_line_reads_the_pysam_proxies_once_per_line(
         # cost change, not a semantic one.
         assert values == line.get_values(score_defs)
         assert values == [3, "31", "c32", "d31"]
+
+
+def test_vcf_score_line_reads_the_info_metadata_only_for_a_tuple_value(
+    vcf_score: AlleleScore,
+) -> None:
+    """The INFO metadata is looked up ONLY when the value is a tuple.
+
+    ``self._info_meta.get(key)`` builds a fresh pysam ``VariantMetadata`` for
+    the key, and unlike the two per-line proxies that cost is paid per SCORE --
+    so a 50-score table pays it 50 times a line.  The only thing the metadata is
+    ever used for is deciding, for a **tuple** value, which element of it this
+    allele reads (Number=A / Number=R / Number='.').  A ``Number=1`` field --
+    the shape of essentially every score-bearing INFO field -- decodes to a
+    scalar, so its metadata is allocated and thrown away unread.
+
+    So the lookup belongs *inside* the tuple branch, and this test says so in
+    the only terms that survive a refactor: how many keys the line looks up in
+    the header metadata.  (Measured over a 3000-row VCF: 0.80x at 20 scores,
+    0.78x at 50.)  This is a cost change only -- what each number case returns
+    is pinned by the three tests below, unchanged.
+    """
+    with vcf_score.open():
+        line = next(iter(vcf_score.fetch_lines("chr1", 30, 30)))
+        counted_line, counting = _count_line(
+            line, vcf_score.score_definitions)
+
+        # A -- Number=1, so the value is a scalar and its number cannot
+        # change which value this allele reads.  The metadata is never asked.
+        assert counted_line.get_score("A") == 3
+        assert counting.meta_gets == 0
+
+        # C -- Number=R, a tuple: the number is what says the reference sits
+        # at offset 0, so the metadata IS read, once, for this key.
+        assert counted_line.get_score("C") == "c32"
+        assert counting.meta_gets == 1
+
+    # An absent key still answers None -- and does so without touching the
+    # metadata and without raising.  (The no-ALT record at chr1:2 carries no
+    # D at all.)
+    with vcf_score.open():
+        absent = next(iter(vcf_score.fetch_lines("chr1", 2, 2)))
+        absent_line, absent_counting = _count_line(
+            absent, vcf_score.score_definitions)
+
+        assert absent_line.get_score("D") is None
+        assert absent_counting.meta_gets == 0
+
+
+class _HeaderlessVariant:
+    """A variant whose INFO reads fine but whose header raises.
+
+    The cheapest thing that can fail *half way through* resolving a VCF score
+    line's per-line state: ``variant.info`` hands a value back, ``variant.header
+    .info`` does not.  A real one of these is a corrupt or truncated VCF; here
+    it only has to raise where pysam would.
+    """
+
+    def __init__(self, info: dict[str, Any]) -> None:
+        self.info = info
+
+    @property
+    def header(self) -> pysam.VariantHeader:
+        raise RuntimeError("no header on this variant")
+
+
+def test_vcf_score_line_that_fails_to_resolve_reports_the_same_error(
+    vcf_score: AlleleScore,
+) -> None:
+    """A line that fails to resolve reports the SAME failure on a re-read.
+
+    ``_info`` doubles as the "per-line state already resolved" flag, and the
+    state it guards is written across three statements.  Set the flag FIRST and
+    a raise from either of the other two strands the line half-initialised:
+    flagged as resolved, with a null ``_info_meta`` behind it.  The next read of
+    that same line then skips the resolve block and dies on the null --
+    ``AttributeError: 'NoneType' object has no attribute 'get'`` -- which says
+    nothing about the corrupt record that actually broke it.
+
+    So the flag is written LAST.  A line that failed to resolve is simply still
+    unresolved, and reading it again re-runs the resolve and re-reports the real
+    error.  (Only the tuple branch reads the metadata now, so the value below is
+    a tuple -- that is the path that would meet the null.)
+
+    No in-tree caller catches an exception out of a score read and then re-reads
+    the same line, so this is latent today.  It is pinned rather than argued
+    because it is what makes ``_info_meta``'s non-optional type -- and the
+    ``type: ignore`` on its null initialiser -- sound instead of merely
+    asserted: nothing can observe that null.
+    """
+    with vcf_score.open():
+        variant = _HeaderlessVariant({"D": ("d11",)})
+        record = ("chr1", 5, 5, "A", "T", (variant, 0))
+        line = VCFScoreLine(record, vcf_score.score_definitions)
+
+        for _ in range(2):
+            with pytest.raises(
+                    RuntimeError, match="no header on this variant"):
+                line.get_score("D")
 
 
 def test_vcf_score_line_selects_info_values_by_allele_index(
@@ -858,8 +998,16 @@ def test_a_record_score_lines_record_is_write_once(
 
     Rather than pay to detect that on the hot path -- an identity check per
     score read is exactly the per-line cost #237 exists to remove -- the line
-    simply does not allow it: ``record`` is a read-only property, so the stale
-    state is unrepresentable.  A line is built over one record and reads that
+    refuses the rebinding at its public surface: ``record`` is a read-only
+    property, and that is what this test pins.
+
+    It pins a **guard-rail, not an impossibility**, and the difference matters.
+    ``_record`` is an ordinary attribute: ``line._record = other`` still stores,
+    and the line then really does report the new record's position with the old
+    record's scores, silently.  Nothing short of a per-read check could stop
+    that, and that check is the cost this class exists to avoid.  What the
+    property does buy is that the stale state cannot be reached through the name
+    a caller is meant to use.  A line is built over one record and reads that
     record, and reuse (which #239 may want) has to add memo invalidation
     *deliberately*, with this test to tell it so.
     """

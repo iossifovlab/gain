@@ -377,15 +377,24 @@ class RecordScoreLineBase(ScoreLineBase):
     position says one row, the values say another, and nothing raises.
 
     Detecting that per score read would cost exactly what this class exists to
-    save, so it is made unrepresentable instead: ``record`` is exposed as a
-    read-only property over ``_record``, and rebinding it raises
-    ``AttributeError``.  One line reads one record.  Score-line *reuse* (which
-    #239 may want) is not forbidden by this -- it just has to invalidate both
-    memos deliberately, rather than silently inheriting a stale one.  (Pinned by
+    save, so instead the rebinding is refused *at the public surface*:
+    ``record`` is a read-only property over ``_record``, and ``line.record = x``
+    raises ``AttributeError``.  One line reads one record.
+
+    That is a guard-rail, not an impossibility, and it is worth being exact
+    about which: ``_record`` is an ordinary attribute, so ``line._record = x``
+    still stores, and a line rebound that way really does report the new
+    record's position with the old record's scores -- silently.  Nothing here
+    can prevent that; only a per-read check could, at the price this class
+    exists to avoid.  What the property buys is that the stale state cannot be
+    reached through the name a caller is meant to use, and it costs the fetch
+    path nothing.  Score-line *reuse* (which #239 may want) is not forbidden by
+    any of this -- it just has to invalidate both memos deliberately, rather
+    than silently inheriting a stale one.  (The public guard is pinned by
     test_a_record_score_lines_record_is_write_once.)
 
     Everything on the hot path reads ``self._record`` directly, so the property
-    is a guard-rail for callers and costs the fetch path nothing.
+    is for callers and the fetch path never goes through it.
     """
 
     _record: Record
@@ -527,18 +536,22 @@ class VCFScoreLine(RecordScoreLineBase):
         # AlleleScore.fetch_scores is never scored at all, and eager resolution
         # would charge it the two proxies for nothing.
         #
-        # These are the real pysam types, not Any: they are the hottest lookup
-        # in the class (``info.get``, ``self._info_meta.get(key).number``) and
-        # typing them is what lets mypy check it.  Annotations cost nothing at
-        # runtime.
+        # These are the real pysam types, not Any: they carry the hottest
+        # lookups in the class (``info.get``, and ``self._info_meta.get(key)``
+        # for a tuple value) and typing them is what lets mypy check those.
+        # Annotations cost nothing at runtime.
         #
         # Only ``_info`` is Optional, because only ``_info`` is the "unread"
-        # flag.  ``_info_meta`` is written in the same breath as it and is never
-        # read before it, so its null here is a pre-birth value that no reader
-        # can observe -- typing it non-optional states that invariant and is
-        # what lets mypy check ``.get(key).number``.  The alternative, a None
-        # check or a cast in _get_info, would put real cost on the hottest path
-        # in the class, which is the one thing this line must not do.
+        # flag.  ``_info_meta`` is written BEFORE that flag flips (see
+        # _get_info, which writes ``_info`` last precisely so that this holds
+        # even if resolving raises), and is never read before it, so its null
+        # here is a pre-birth value that no reader can observe -- typing it
+        # non-optional states that invariant, and the ordering in _get_info is
+        # what makes the invariant true rather than merely asserted (pinned by
+        # test_vcf_score_line_that_fails_to_resolve_reports_the_same_error).
+        # The alternative, a None check or a cast in _get_info, would put real
+        # cost on the hottest path in the class, which is the one thing this
+        # line must not do.
         self._info: pysam.VariantRecordInfo | None = None
         self._info_meta = None  # type: ignore[assignment]
         self._allele_index: int | None = None
@@ -568,11 +581,10 @@ class VCFScoreLine(RecordScoreLineBase):
         * anything else -- handed back as pysam decoded it.
 
         An absent INFO key yields ``None`` rather than raising: ``info.get``
-        and the metadata's ``.get`` both return ``None``, and ``None`` is not a
-        tuple, so the number cases are skipped and ``_extract_value`` turns it
-        into a null score.  (The metadata is looked up for every key, absent
-        ones included -- ``.get`` simply answers ``None`` for those, and only
-        the tuple branch below goes on to read a ``.number`` off it.)
+        returns ``None``, ``None`` is not a tuple, so the number cases are
+        skipped and ``_extract_value`` turns it into a null score.  An absent
+        key does not reach the metadata at all -- nothing below it does, unless
+        the value is a tuple.
 
         **The two pysam proxies are per-LINE, not per-score.**  Neither
         ``variant.info`` nor ``variant.header.info`` is a cached attribute:
@@ -598,14 +610,34 @@ class VCFScoreLine(RecordScoreLineBase):
             variant = payload[VARIANT]
             # The header metadata is derived from the record, not carried with
             # it.
-            info = self._info = variant.info
+            resolved = variant.info
             self._info_meta = variant.header.info
             self._allele_index = payload[ALLELE_INDEX]
+            # ``_info`` is the "already resolved" flag, so it is written LAST,
+            # once the state it guards is complete.  Written first, a raise from
+            # either line above would leave the line flagged as resolved with a
+            # null ``_info_meta`` behind it, and the next read of the SAME line
+            # would skip this block and die on the null instead of reporting the
+            # real failure again.  (Pinned by
+            # test_vcf_score_line_that_fails_to_resolve_reports_the_same_error.)
+            info = self._info = resolved
         allele_index = self._allele_index
 
         value = info.get(key)
-        meta = self._info_meta.get(key)
         if isinstance(value, tuple):
+            # The metadata is read HERE and not above, because this branch is
+            # the only thing that uses it -- and it is not free: ``.get`` builds
+            # a fresh pysam ``VariantMetadata`` for the key, per score, per
+            # line.  A ``Number=1`` field decodes to a scalar, never reaches
+            # this branch, and so must not pay for a metadata object it will
+            # never read; that is the common shape of a score-bearing INFO
+            # field, and hoisting the lookup out of it took a 50-score read of a
+            # 3000-row VCF from 35.9 to 28.1us/line (0.78x).  An absent key is
+            # the same story: ``info.get`` answers None, None is not a tuple,
+            # and the read costs one dict miss and nothing else.  (Pinned by
+            # test_vcf_score_line_reads_the_info_metadata_only_for_a_tuple_
+            # value.)
+            meta = self._info_meta.get(key)
             if meta.number == "A" and allele_index is not None:
                 value = value[allele_index]
             elif meta.number == "R":
