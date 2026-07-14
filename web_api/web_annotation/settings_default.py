@@ -18,11 +18,18 @@ from gain.genomic_resources.repository_factory import (
 )
 
 DEFAULT_DATA_DIR = str(pathlib.Path(__file__).parent.parent / "data")
-if not os.path.exists(DEFAULT_DATA_DIR):
-    os.makedirs(DEFAULT_DATA_DIR)
 
 # Dir for all data storage
 DATA_STORAGE_DIR = os.environ.get("GPFWA_DATA_STORAGE", DEFAULT_DATA_DIR)
+
+# Create the dir we will ACTUALLY use -- not DEFAULT_DATA_DIR, which lives
+# inside the installed package. This used to mkdir DEFAULT_DATA_DIR at import
+# time, BEFORE the GPFWA_DATA_STORAGE override above was read, so pointing the
+# override at a writable volume did not help: the import still wrote into
+# site-packages. That only worked because every container ran as root; a
+# non-root uid dies here with EPERM before Django starts (gain#274).
+# `exist_ok` also drops a race between concurrently-importing workers.
+os.makedirs(DATA_STORAGE_DIR, exist_ok=True)
 
 # Subdir to store uploaded annotation configurations in
 ANNOTATION_CONFIG_STORAGE_DIR = f"{DATA_STORAGE_DIR}/annotation-configs"
@@ -187,7 +194,11 @@ else:
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "NAME": f"{DEFAULT_DATA_DIR}/db.sqlite3",
+            # DATA_STORAGE_DIR, not DEFAULT_DATA_DIR: that is the dir we
+            # create above. Keying the db off DEFAULT_DATA_DIR would put it
+            # inside site-packages, and would now point at a dir that is not
+            # created at all when GPFWA_DATA_STORAGE is set.
+            "NAME": f"{DATA_STORAGE_DIR}/db.sqlite3",
             "USER": "",
             "PASSWORD": "",
             "HOST": "",

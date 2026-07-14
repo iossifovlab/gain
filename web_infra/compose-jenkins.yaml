@@ -55,6 +55,13 @@ services:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_daphne
       GRR_DEFINITION_FILE: /grr-definition-http.yaml
       HOME: /tmp
+      # Non-root: settings_default.py creates DATA_STORAGE_DIR at
+      # import time, and its default lives inside site-packages,
+      # which a non-root uid cannot write (gain#274). These
+      # services need no persistence -- HOME is /tmp, so put it
+      # there. Without this the settings import dies with EPERM
+      # before Django starts.
+      GPFWA_DATA_STORAGE: /tmp/gpfwa-data
       GPFWA_DB_NAME: gpfwa
       GPFWA_DB_USER: postgres
       GPFWA_DB_PASSWORD: secret
@@ -80,6 +87,13 @@ services:
       PYTHONPATH: /web_api_src
       GRR_DEFINITION_FILE: /grr-definition-http.yaml
       HOME: /tmp
+      # Non-root: settings_default.py creates DATA_STORAGE_DIR at
+      # import time, and its default lives inside site-packages,
+      # which a non-root uid cannot write (gain#274). These
+      # services need no persistence -- HOME is /tmp, so put it
+      # there. Without this the settings import dies with EPERM
+      # before Django starts.
+      GPFWA_DATA_STORAGE: /tmp/gpfwa-data
       GPFWA_DB_NAME: gpfwa
       GPFWA_DB_USER: postgres
       GPFWA_DB_PASSWORD: secret
@@ -157,6 +171,13 @@ services:
       PYTHONPATH: /web_api_src
       GRR_DEFINITION_FILE: /grr-definition-http.yaml
       HOME: /tmp
+      # Non-root: settings_default.py creates DATA_STORAGE_DIR at
+      # import time, and its default lives inside site-packages,
+      # which a non-root uid cannot write (gain#274). These
+      # services need no persistence -- HOME is /tmp, so put it
+      # there. Without this the settings import dies with EPERM
+      # before Django starts.
+      GPFWA_DATA_STORAGE: /tmp/gpfwa-data
       GPFWA_DB_NAME: gpfwa
       GPFWA_DB_USER: postgres
       GPFWA_DB_PASSWORD: secret
