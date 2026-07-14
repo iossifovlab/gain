@@ -11,6 +11,7 @@ from functools import lru_cache
 from threading import Lock
 from types import TracebackType
 from typing import (
+    TYPE_CHECKING,
     Any,
     cast,
 )
@@ -59,6 +60,13 @@ from gain.genomic_resources.resource_implementation import (
 )
 
 from .aggregators import AGGREGATOR_SCHEMA, Aggregator
+
+if TYPE_CHECKING:
+    # Only ever needed to type VCFScoreLine's two memoised INFO proxies.  pysam
+    # is a hard runtime dep and is already imported by the VCF table anyway, but
+    # keeping it behind TYPE_CHECKING makes it unambiguous that the annotations
+    # cost nothing at runtime.
+    import pysam
 
 logger = logging.getLogger(__name__)
 
@@ -356,31 +364,56 @@ class RecordScoreLineBase(ScoreLineBase):
     payload calls for.
 
     Like :class:`ScoreLineBase`, this declares no ``__init__``: each subclass
-    sets ``record``/``score_defs`` and binds ``_get_raw`` in its own
+    sets ``_record``/``score_defs`` and binds ``_get_raw`` in its own
     constructor, so a fetched line pays no base-constructor call.
+
+    **A line's record is write-once.**  Both subclasses memoise something
+    derived from their record's payload -- ``RecordScoreLine`` binds
+    ``_get_raw`` to the payload's indexer in its constructor, ``VCFScoreLine``
+    hoists the pysam INFO proxies on its first score read -- and neither memo
+    has an invalidation hook.  Rebinding the record would therefore leave the
+    core fields below (which re-read the slots on every access) reporting the
+    NEW record while the scores still came from the OLD one's payload: the
+    position says one row, the values say another, and nothing raises.
+
+    Detecting that per score read would cost exactly what this class exists to
+    save, so it is made unrepresentable instead: ``record`` is exposed as a
+    read-only property over ``_record``, and rebinding it raises
+    ``AttributeError``.  One line reads one record.  Score-line *reuse* (which
+    #239 may want) is not forbidden by this -- it just has to invalidate both
+    memos deliberately, rather than silently inheriting a stale one.  (Pinned by
+    test_a_record_score_lines_record_is_write_once.)
+
+    Everything on the hot path reads ``self._record`` directly, so the property
+    is a guard-rail for callers and costs the fetch path nothing.
     """
 
-    record: Record
+    _record: Record
+
+    @property
+    def record(self) -> Record:
+        """The record this line was built over.  Write-once -- see above."""
+        return self._record
 
     @property
     def chrom(self) -> str:
-        return cast(str, self.record[CHROM])
+        return cast(str, self._record[CHROM])
 
     @property
     def pos_begin(self) -> int:
-        return cast(int, self.record[POS_BEGIN])
+        return cast(int, self._record[POS_BEGIN])
 
     @property
     def pos_end(self) -> int:
-        return cast(int, self.record[POS_END])
+        return cast(int, self._record[POS_END])
 
     @property
     def ref(self) -> str | None:
-        return cast("str | None", self.record[REF])
+        return cast("str | None", self._record[REF])
 
     @property
     def alt(self) -> str | None:
-        return cast("str | None", self.record[ALT])
+        return cast("str | None", self._record[ALT])
 
 
 class RecordScoreLine(RecordScoreLineBase):
@@ -411,9 +444,9 @@ class RecordScoreLine(RecordScoreLineBase):
         # (yields_records), and that claim is pinned against every backend by
         # test_backend_record_contract.py.  Nothing here may cost more than an
         # attribute store -- a ``cast`` would be a real call, ~15ns.
-        self.record: Record = line  # type: ignore[assignment]
+        self._record: Record = line  # type: ignore[assignment]
         self.score_defs = score_defs
-        self._get_raw = self.record[PAYLOAD].__getitem__
+        self._get_raw = self._record[PAYLOAD].__getitem__
 
 
 class VCFScoreLine(RecordScoreLineBase):
@@ -439,6 +472,11 @@ class VCFScoreLine(RecordScoreLineBase):
     The INFO number cases, all of them, in :meth:`_get_info`.
     """
 
+    # Declared here rather than inline in __init__ so that the annotation does
+    # not have to share a line with the ``type: ignore`` that its null
+    # initialiser needs.  Why it is not Optional: see __init__.
+    _info_meta: pysam.VariantHeaderMetadata
+
     def __init__(
         self, line: LineBase | Record, score_defs: dict[str, _ScoreDef],
     ):
@@ -447,7 +485,7 @@ class VCFScoreLine(RecordScoreLineBase):
         # unpacked lazily, in _get_info: a line whose scores are never read (an
         # allele filtered out by REF/ALT in AlleleScore.fetch_scores, say) pays
         # nothing beyond the three null stores below.
-        self.record: Record = line  # type: ignore[assignment]
+        self._record: Record = line  # type: ignore[assignment]
         self.score_defs = score_defs
         self._get_raw = self._get_info
         # What an INFO lookup needs, resolved on the first score read of this
@@ -468,15 +506,41 @@ class VCFScoreLine(RecordScoreLineBase):
         #     no memo   1.47   3.84  12.57  31.08
         #     memo      1.64   3.56  10.89  25.43
         #
-        # That is the right trade for this backend: score resources of VCF INFO
-        # shape are wide (ClinVar-shaped: ~20 INFO fields), and statistics and
-        # histogram generation read every score def of them, so the width is
-        # where this read path actually lives.  Resolving on first read rather
-        # than in __init__ is the other half of the trade: an allele filtered
-        # out by REF/ALT in AlleleScore.fetch_scores is never scored at all, and
-        # eager resolution would charge it the two proxies for nothing.
-        self._info: Any = None
-        self._info_meta: Any = None
+        # The trade rests on those numbers and on nothing else.  In particular
+        # it does NOT rest on a claim about how wide real VCF INFO score
+        # resources are: we have no such measurement -- every vcf_info fixture
+        # in this tree declares 1-4 INFO fields, and no GRR resource definition
+        # here backs a wider figure.  The memo does not need one to be worth it.
+        # Its worst case is exactly one score, where it costs ~0.17us/line and
+        # nothing else regresses; it breaks even at two and wins from three on.
+        # So it is never a meaningful loss and is a growing win, whatever the
+        # width turns out to be -- and the multi-score case is not exotic:
+        # statistics and histogram generation read every score def of a table.
+        #
+        # The hoist is also what keeps the migration a win at width AT ALL: the
+        # un-hoisted version, which re-allocated both proxies per score, was
+        # *slower than pre-#237 master* at 20 scores and beyond.  With the hoist
+        # the migration beats master at every width measured.
+        #
+        # Resolving on first read rather than in __init__ is the other half of
+        # the trade: an allele filtered out by REF/ALT in
+        # AlleleScore.fetch_scores is never scored at all, and eager resolution
+        # would charge it the two proxies for nothing.
+        #
+        # These are the real pysam types, not Any: they are the hottest lookup
+        # in the class (``info.get``, ``self._info_meta.get(key).number``) and
+        # typing them is what lets mypy check it.  Annotations cost nothing at
+        # runtime.
+        #
+        # Only ``_info`` is Optional, because only ``_info`` is the "unread"
+        # flag.  ``_info_meta`` is written in the same breath as it and is never
+        # read before it, so its null here is a pre-birth value that no reader
+        # can observe -- typing it non-optional states that invariant and is
+        # what lets mypy check ``.get(key).number``.  The alternative, a None
+        # check or a cast in _get_info, would put real cost on the hottest path
+        # in the class, which is the one thing this line must not do.
+        self._info: pysam.VariantRecordInfo | None = None
+        self._info_meta = None  # type: ignore[assignment]
         self._allele_index: int | None = None
 
     def _get_info(self, key: str | int) -> Any:
@@ -487,6 +551,14 @@ class VCFScoreLine(RecordScoreLineBase):
         * **Number=A** -- one value per ALT allele: select this record's allele.
           A record whose ALT is absent ('.') has no allele index and no
           per-allele value; the raw tuple is handed back untouched, as before.
+          That is odd -- read through a ``str`` score it stringifies to the
+          tuple's repr, ``"('d01',)"`` -- and it is preserved bug-for-bug from
+          the pre-record backend, because #237 is a cost change and not a
+          semantic one.  The ``allele_index is not None`` half of the test below
+          is what makes it so: without it the tuple is indexed with ``None`` and
+          the read dies with ``TypeError``.  Both halves -- the value and the
+          crash it guards -- are pinned by
+          test_vcf_score_line_hands_back_a_number_a_field_raw_when_alt_is_absent
         * **Number=R** -- one value per allele *including the reference*, which
           occupies offset 0: an ALT allele reads at ``allele_index + 1``, and a
           record with no ALT reads the **reference** value at offset 0.
@@ -508,11 +580,11 @@ class VCFScoreLine(RecordScoreLineBase):
         ``v.info is v.info`` is False).  Obtaining them once per score would
         therefore put ~170ns of pure re-allocation on every score of every
         line, which is a per-line cost of exactly the kind the record migration
-        exists to remove -- and it grows with the width of the table, where VCF
-        INFO resources are widest (a ClinVar-shaped resource declares ~20 INFO
-        fields, and statistics generation reads them all).  They belong to the
-        line, so they are resolved once, on the first score read, and every
-        later read of the same line reuses them.  (Pinned by
+        exists to remove, and it grows with the width of the table: measured,
+        the un-hoisted version was *slower than pre-#237 master* from 20 scores
+        on.  They belong to the line, so they are resolved once, on the first
+        score read, and every later read of the same line reuses them.  See
+        ``__init__`` for the full cost table and the trade.  (Pinned by
         test_vcf_score_line_reads_the_pysam_proxies_once_per_line.)
 
         Resolving them on the first read rather than in ``__init__`` keeps the
@@ -522,7 +594,7 @@ class VCFScoreLine(RecordScoreLineBase):
         assert isinstance(key, str)
         info = self._info
         if info is None:
-            payload = self.record[PAYLOAD]
+            payload = self._record[PAYLOAD]
             variant = payload[VARIANT]
             # The header metadata is derived from the record, not carried with
             # it.
