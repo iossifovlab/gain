@@ -169,21 +169,35 @@ class _ScoreDef:
 
 
 class ScoreLineBase(abc.ABC):
-    """Shared value extraction for the two per-backend score lines.
+    """Shared value extraction for the three per-backend score lines.
 
-    A genomic score is read through one of two concrete score lines, chosen
-    per backend when the score is opened: :class:`ScoreLine` wraps the line
-    adapter that the tabix/VCF/bigWig backends yield, and
-    :class:`RecordScoreLine` wraps the immutable record tuple that the
-    in-memory backend yields.  They are **siblings**, not parent/child -- the
-    only per-backend difference is where a raw score value comes from, and
-    that is captured by ``self._get_raw(key)``, which every subclass answers
-    in its own way: :class:`ScoreLine` and :class:`RecordScoreLine` bind an
-    instance attribute to a callable that is reachable from the line but is
-    not the line (the adapter's ``line.get``, the record payload's
-    ``__getitem__``), while :class:`VCFScoreLine` -- whose lookup needs the
-    line itself -- declares a plain **method**.  ``self._get_raw(key)`` below
-    resolves either.
+    A genomic score is read through one of **three** concrete score lines,
+    chosen per backend when the score is opened (``GenomicScore.open``, which
+    routes on the table and nothing else):
+
+    * :class:`RecordScoreLine` -- the **tabix** and **in-memory** backends.
+      They yield records whose payload is the raw row, so a score is a column
+      of it, addressed by resolved index.
+    * :class:`VCFScoreLine` -- the **VCF** backend.  It yields records too, but
+      its payload is a ``(variant record, allele index)`` pair and its scores
+      are INFO fields looked up by name, not columns; that is the whole reason
+      it needs a score line of its own.
+    * :class:`ScoreLine` -- the last backend still yielding a line *adapter*:
+      **bigWig**, and only bigWig.  #238 migrates it to records and #239 then
+      removes this class, at which point every score line is record-backed and
+      this base collapses into :class:`RecordScoreLineBase`.
+
+    So at HEAD the split is not adapter-vs-record-backend: three of the four
+    backends yield records, and two *kinds* of record payload (raw row, VCF
+    variant) are already in play.  The three are **siblings**, not
+    parent/child -- the only per-backend difference is where a raw score value
+    comes from, and that is captured by ``self._get_raw(key)``, which each
+    subclass answers in its own way: :class:`ScoreLine` and
+    :class:`RecordScoreLine` bind an instance attribute to a callable that is
+    reachable from the line but is not the line (the adapter's ``line.get``,
+    the record payload's ``__getitem__``), while :class:`VCFScoreLine` --
+    whose lookup needs the line itself -- declares a plain **method**.
+    ``self._get_raw(key)`` below resolves either.
 
     A subclass whose lookup needs ``self`` must use a method and NOT bind
     ``self._get_raw = self._something``: a bound method of self, stored on
@@ -215,25 +229,28 @@ class ScoreLineBase(abc.ABC):
 
     Everything downstream of that one lookup -- the five core-field
     properties' contract, NA handling, parsing, logging and the
-    bulk/single value walks -- lives here so it cannot drift between the two.
+    bulk/single value walks -- lives here so it cannot drift between the three.
 
     The base declares no ``__init__`` on purpose: each subclass sets
     ``score_defs`` and binds ``_get_raw`` in its own constructor, with no
     ``super().__init__`` call.  A base constructor (even a trivial one) would
     add a per-**line** Python call on the hot ``fetch_lines`` path -- ~0.055us
     /line, doubling the narrow-table overhead below -- for no benefit, since a
-    record is not substitutable for an adapter and the two constructors share
+    record is not substitutable for an adapter and the three constructors share
     no work.  The substitutability that finding 4 wanted is instead enforced
     structurally: :attr:`GenomicScore._score_line_class` is typed as a callable
-    ``(LineBase | Record, dict) -> ScoreLineBase`` and mypy checks both score
-    line classes -- :class:`ScoreLine` and :class:`RecordScoreLine` -- against
-    that signature.
+    ``(LineBase | Record, dict) -> ScoreLineBase``, every one of the three
+    subclasses is assigned to it by ``GenomicScore.open``, and mypy checks all
+    three -- :class:`ScoreLine`, :class:`RecordScoreLine` and
+    :class:`VCFScoreLine` -- against that signature.
 
-    That a table routed to :class:`RecordScoreLine` really does yield records
-    is a claim about a *backend*, not about a line, so it is not checked at
-    runtime at all: it is pinned once, statically, over all four backends by
-    test_backend_record_contract.py.  The fetch path simply believes
-    ``table.yields_records``.
+    That a table routed to a *record* score line (:class:`RecordScoreLine` or
+    :class:`VCFScoreLine`) really does yield records is a claim about a
+    *backend*, not about a line, so it is not checked at runtime at all: it is
+    pinned once, statically, over all four backends by
+    test_backend_record_contract.py.  The fetch path simply believes the table
+    (``table.yields_records``, and the ``VCFGenomicPositionTable`` isinstance
+    check for the VCF branch).
 
     Reading a raw value through one of the two *binding* subclasses still costs
     a per-line bound-method allocation (:class:`VCFScoreLine`, which reaches
@@ -546,19 +563,42 @@ class VCFScoreLine(RecordScoreLineBase):
         # Left as a bound attribute, every line of a scan became cyclic garbage.
         # Measure it by what the collector has to FREE, not by how often it runs
         # (the pass count is threshold churn and a poor signal -- see below).
-        # A 3000-row VCF fetch (fetch_lines + get_values over every line, this
-        # fixture, every width 1/5/20/50, every run):
+        # A 3000-row VCF fetch of Number=1/Float INFO scores (fetch_lines +
+        # get_values over every line; identical at every width 1/5/20/50 and on
+        # every run):
         #
         #                          objects freed by gc      gen-0/1/2 passes
-        #     bound (the cycle)    11076 / 888 / 0          28/2/0
-        #     method (this class)      0 /   0 / 0          11/1/0
+        #                          gen-0 / gen-1 / gen-2
+        #     bound (the cycle)    11080 /   880 /  0       28/2/0
+        #     method (this class)      0 /     0 /  0       11/1/0
         #
-        # ~3.7 cyclic objects per line -- the line, its instance dict, the bound
-        # method -- which held each line's live ``pysam.VariantRecord``, and the
-        # header it pins, alive until a GC pass instead of freeing it at the end
-        # of the loop body; ~900 of them survived gen-0 and were promoted to
-        # gen-1.  As a method the collector frees *nothing*: the scan produces
-        # no cyclic garbage at all.
+        # 11960 objects freed for 3000 lines: **4 per line**, exactly the four a
+        # single cyclic line hands over (named by ``gc.DEBUG_SAVEALL`` after
+        # dropping one such line):
+        #
+        #     VCFScoreLine                         the line
+        #     builtins.method                      the bound ``self._get_raw``
+        #     pysam.libcbcf.VariantRecordInfo      ``self._info``
+        #     pysam.libcbcf.VariantHeaderMetadata  ``self._info_meta``
+        #
+        # -- the last two both memoised on the line's first score read.
+        #
+        # The last two are the point.  They are the INFO proxies this class
+        # memoises on its first score read (below), and they are what the cycle
+        # RETAINS: a line kept alive by the collector keeps its two live pysam
+        # proxies -- and through them its ``pysam.VariantRecord`` and the header
+        # that record pins -- alive until a GC pass, instead of dropping them at
+        # the end of the loop body.  (The instance ``__dict__`` is NOT among the
+        # four: CPython 3.12 lays these attributes down in a managed dict, which
+        # the collector does not free as a separate object.)
+        #
+        # Read the 4.0 off the TOTAL, not off gen-0.  Roughly 880 of the 11960
+        # survive their first pass and are freed as gen-1, so gen-0 alone reads
+        # ~3.69/line, which undercounts the cycle by the very objects that cost
+        # most -- the promoted ones.  The gen-0/gen-1 split is a promotion
+        # boundary and wobbles by a handful of objects between environments; the
+        # total, and the 4-per-line it gives, do not.  As a method the collector
+        # frees *nothing*: the scan produces no cyclic garbage at all.
         #
         # The pass counts do not go to zero, and that is not a leak: CPython
         # untracks tuples of immutables during a collection, so their later
@@ -751,8 +791,8 @@ class VCFScoreLine(RecordScoreLineBase):
 
 
 # What a fetched line is wrapped in: a callable, not a ``type[...]``, so mypy
-# checks both score line classes against one signature.  We never call
-# issubclass on it.
+# checks all three score line classes -- ScoreLine, RecordScoreLine and
+# VCFScoreLine -- against one signature.  We never call issubclass on it.
 _ScoreLineFactory = Callable[
     [LineBase | Record, dict[str, _ScoreDef]], ScoreLineBase,
 ]

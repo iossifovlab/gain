@@ -1954,6 +1954,13 @@ def test_vcf_header_load_closes_the_header_file(
     suite.  Hence the spy.
     """
     assert vcf_res.config is not None
+    assert vcf_res.config["tabix_table"]["filename"] == "data.vcf.gz"
+    # The sidecar `_load_vcf_header` derives from that table filename, matched
+    # here EXACTLY: a substring test (`".header." in filename`) would also wrap
+    # a main table that happened to carry `.header.` in its own name, and spy
+    # on the wrong file.  If the derivation ever changes, no file is wrapped
+    # and the `len(header_files) == 1` assertion below fails -- loudly.
+    header_filename = "data.header.vcf.gz"
 
     header_files: list[_CloseSpyingVariantFile] = []
     real_open_vcf_file = GenomicResource.open_vcf_file
@@ -1964,7 +1971,7 @@ def test_vcf_header_load_closes_the_header_file(
         index_filename: str | None = None,
     ) -> object:
         vcf_file = real_open_vcf_file(resource, filename, index_filename)
-        if ".header." not in filename:
+        if filename != header_filename:
             return vcf_file
         # the sidecar is handed over *open* -- so the `is_open` check at the
         # bottom is about the close, and not vacuously true

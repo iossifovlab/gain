@@ -1072,9 +1072,17 @@ def test_score_lines_are_freed_without_the_cycle_collector(
     the moment the line goes out of scope.
 
     Measured on a 3000-row VCF (fetch_lines + get_values over every line): with
-    the cycle the collector freed 11076/888/0 gen-0/1/2 objects -- ~3.7 per
-    line, the line, its instance dict and the bound method -- over 28/2/0
-    passes; without it, it freed *nothing*, its 11/1/0 gen-0 passes all empty.
+    the cycle the collector freed 11080/880/0 gen-0/1/2 objects over 28/2/0
+    passes -- 11960 in all, **4.0 per line**; without it, it freed *nothing*,
+    its 11/1/0 passes all empty.  The four, named with ``gc.DEBUG_SAVEALL`` on
+    one dropped line, are the ``VCFScoreLine``, the bound ``_get_raw`` method,
+    and the two pysam INFO proxies the line memoises -- a
+    ``pysam.VariantRecordInfo`` and a ``pysam.VariantHeaderMetadata``, which is
+    how the cycle keeps the live variant record and its header alive.  (The
+    instance ``__dict__`` is not one of them: CPython 3.12 manages it inline.)
+    Read the per-line figure off the total, not off gen-0 (~3.69/line), which
+    misses precisely the ~880 objects promoted to gen-1.
+
     Count what the collector FREES, not how often it runs: the pass count never
     reaches zero (CPython untracks tuples of immutables, so the gen-0 counter
     creeps even in allocation-balanced code), which is why this test asserts on
