@@ -46,6 +46,13 @@ services:
   backend-migrate:
     image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
     user: "${AGENT_UID:-0}:${AGENT_GID:-0}"
+    # Run from a writable cwd. Several gain CLIs/paths default to a
+    # cwd-relative dir (annotate_vcf jobs -> ./work; task-graph ->
+    # ./.task-log). The container cwd is /, root-owned, so as a non-root
+    # uid every one EPERMs. /tmp is writable; the app uses absolute paths.
+    # Umbrella for the whole cwd-relative class (gain#277); the surgical
+    # per-callsite fix in gain code is tracked separately.
+    working_dir: /tmp
     depends_on:
       db:
         condition: service_healthy
@@ -76,6 +83,13 @@ services:
   backend-e2e-migrate:
     image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
     user: "${AGENT_UID:-0}:${AGENT_GID:-0}"
+    # Run from a writable cwd. Several gain CLIs/paths default to a
+    # cwd-relative dir (annotate_vcf jobs -> ./work; task-graph ->
+    # ./.task-log). The container cwd is /, root-owned, so as a non-root
+    # uid every one EPERMs. /tmp is writable; the app uses absolute paths.
+    # Umbrella for the whole cwd-relative class (gain#277); the surgical
+    # per-callsite fix in gain code is tracked separately.
+    working_dir: /tmp
     depends_on:
       db:
         condition: service_healthy
@@ -114,6 +128,13 @@ services:
     # *missing* bind source as root:root, which a non-root container
     # then cannot write into.
     user: "${AGENT_UID:-0}:${AGENT_GID:-0}"
+    # Run from a writable cwd. Several gain CLIs/paths default to a
+    # cwd-relative dir (annotate_vcf jobs -> ./work; task-graph ->
+    # ./.task-log). The container cwd is /, root-owned, so as a non-root
+    # uid every one EPERMs. /tmp is writable; the app uses absolute paths.
+    # Umbrella for the whole cwd-relative class (gain#277); the surgical
+    # per-callsite fix in gain code is tracked separately.
+    working_dir: /tmp
     depends_on:
       backend-migrate:
         condition: service_completed_successfully
@@ -160,6 +181,13 @@ services:
   backend-e2e-setup:
     image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
     user: "${AGENT_UID:-0}:${AGENT_GID:-0}"
+    # Run from a writable cwd. Several gain CLIs/paths default to a
+    # cwd-relative dir (annotate_vcf jobs -> ./work; task-graph ->
+    # ./.task-log). The container cwd is /, root-owned, so as a non-root
+    # uid every one EPERMs. /tmp is writable; the app uses absolute paths.
+    # Umbrella for the whole cwd-relative class (gain#277); the surgical
+    # per-callsite fix in gain code is tracked separately.
+    working_dir: /tmp
     depends_on:
       backend-e2e-migrate:
         condition: service_completed_successfully
@@ -197,6 +225,13 @@ services:
     hostname: backend
     # Same rationale as `backend` above: agent uid, not root.
     user: "${AGENT_UID:-0}:${AGENT_GID:-0}"
+    # Run from a writable cwd. Several gain CLIs/paths default to a
+    # cwd-relative dir (annotate_vcf jobs -> ./work; task-graph ->
+    # ./.task-log). The container cwd is /, root-owned, so as a non-root
+    # uid every one EPERMs. /tmp is writable; the app uses absolute paths.
+    # Umbrella for the whole cwd-relative class (gain#277); the surgical
+    # per-callsite fix in gain code is tracked separately.
+    working_dir: /tmp
     depends_on:
       backend-e2e-migrate:
         condition: service_completed_successfully
