@@ -10,7 +10,7 @@ The GAIn Web Annotation page (https://gain.iossifovlab.com/) provides a simple a
 Select annotation pipeline
 **************************
 
-To begin, open the Select pipeline menu, scroll through the available options, and choose ``pipeline/hg38_clinical_annotation``. This pipeline is designed for annotatables provided in the ``hg38`` assembly and annotates them with a broad set of clinically relevant attributes. In addition to effect prediction, it incorporates information from resources such as dbSNP, gnomAD, ClinVar, PhyloP7, AlphaMissense, MPC, and gene-level constraint scores. After selecting it, users can review the full annotation pipeline definition in the annotation pipeline editor on the left.
+The GAIn web interface opens with ``pipeline/hg38_clinical_annotation`` selected by default, so no pipeline selection is needed for this example. This pipeline is designed for annotatables provided in the ``hg38`` assembly and annotates them with a broad set of clinically relevant attributes. In addition to effect prediction, it incorporates information from resources such as dbSNP, gnomAD, ClinVar, PhyloP7, AlphaMissense, MPC, and gene-level constraint scores. Users can review the full annotation pipeline definition in the annotation pipeline editor on the left.
 
 
 .. figure:: figures/GAInWeb2b.png
