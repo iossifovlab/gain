@@ -73,8 +73,8 @@ test.describe('Add annotator to pipeline tests', () => {
     await annotatorModal.selectAnnotator('liftover_annotator');
     await annotatorModal.next();
 
-    await annotatorModal.selectParameter('chain', 'liftover/hg19_to_T2T');
-    await annotatorModal.selectParameter('source_genome', 't2t/genomes/t2t-chm13v2.0');
+    await annotatorModal.selectParameter('chain', 'liftover/hg19_to_hs1');
+    await annotatorModal.selectParameter('source_genome', 'hs1/genomes/ucsc-hs1');
     await annotatorModal.selectParameter('target_genome', 'hg38/genomes/GRCh38.p14');
     await annotatorModal.next();
 
@@ -85,7 +85,7 @@ test.describe('Add annotator to pipeline tests', () => {
       ),
       page.waitForResponse(
         resp => resp.url().includes('api/pipelines/user'), // wait for pipeline to be saved
-        {timeout: 20000}, // hg38_to_t2t chain loading can take a while, increase timeout for this test
+        {timeout: 20000}, // hg19_to_hs1 chain loading can take a while, increase timeout for this test
       ),
     ]);
 
@@ -117,8 +117,8 @@ test.describe('Add annotator to pipeline tests', () => {
 
     expect(value).toContain(
       '- liftover_annotator:\n' +
-      '    chain: liftover/hg19_to_T2T\n' +
-      '    source_genome: t2t/genomes/t2t-chm13v2.0\n' +
+      '    chain: liftover/hg19_to_hs1\n' +
+      '    source_genome: hs1/genomes/ucsc-hs1\n' +
       '    target_genome: hg38/genomes/GRCh38.p14\n' +
       '    attributes:\n' +
       '    - name: liftover_annotatable\n' +
@@ -343,10 +343,10 @@ test.describe('Add annotator to pipeline tests', () => {
     await annotatorModal.selectAnnotator('liftover_annotator');
     await annotatorModal.next();
 
-    await annotatorModal.selectParameter('chain', 'liftover/hg19_to_T2T');
+    await annotatorModal.selectParameter('chain', 'liftover/hg19_to_hs1');
     await expect(annotatorModal.nextButton).toBeDisabled();
 
-    await annotatorModal.selectParameter('source_genome', 't2t/genomes/t2t-chm13v2.0');
+    await annotatorModal.selectParameter('source_genome', 'hs1/genomes/ucsc-hs1');
     await expect(annotatorModal.nextButton).toBeDisabled();
 
     await annotatorModal.selectParameter('target_genome', 'hg38/genomes/GRCh38.p14');
@@ -407,7 +407,7 @@ test.describe('Add annotator to pipeline tests', () => {
 
     await page.locator('[id="source_genome-dropdown"]').locator('.dropdown-icon').click();
 
-    await page.locator('[id="source_genome-dropdown"] input').pressSequentially('t2t');
+    await page.locator('[id="source_genome-dropdown"] input').pressSequentially('hs1');
     const filteredOptions = page.locator('mat-option.resource-option');
 
     expect(await filteredOptions.count()).toBe(1);
@@ -419,8 +419,8 @@ test.describe('Add annotator to pipeline tests', () => {
     await annotatorModal.selectAnnotator('liftover_annotator');
     await annotatorModal.next();
 
-    await annotatorModal.selectParameter('chain', 'liftover/hg19_to_T2T');
-    await annotatorModal.selectParameter('source_genome', 't2t/genomes/t2t-chm13v2.0');
+    await annotatorModal.selectParameter('chain', 'liftover/hg19_to_hs1');
+    await annotatorModal.selectParameter('source_genome', 'hs1/genomes/ucsc-hs1');
     await annotatorModal.selectParameter('target_genome', 'hg38/genomes/GRCh38.p14');
 
     await expect(annotatorModal.nextButton).toBeEnabled();

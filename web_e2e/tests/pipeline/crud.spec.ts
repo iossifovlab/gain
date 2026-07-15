@@ -289,7 +289,7 @@ test.describe('Pipeline tests', () => {
     const editor = new PipelineEditor(page);
     await editor.pipelineInput.fill('clini');
     await expect(page.locator('mat-option')).toHaveCount(3);
-    await expect(page.getByRole('option', { name: 'circle pipeline/T2T_clinical_annotation' })).toBeVisible();
+    await expect(page.getByRole('option', { name: 'circle pipeline/hs1_clinical_annotation' })).toBeVisible();
     await expect(page.getByRole('option', { name: 'circle pipeline/hg38_clinical_annotation' })).toBeVisible();
     await expect(page.getByRole('option', { name: 'circle pipeline/hg19_clinical_annotation' })).toBeVisible();
   });

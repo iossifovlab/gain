@@ -424,7 +424,7 @@ test.describe('Job file upload tests', () => {
     await expect(page.locator('label[for="select-genome"]')).toHaveText('Select genome:');
 
     const options = await jobs.selectGenome.locator('option').allTextContents();
-    expect(options.length).toBe(5);
+    expect(options.length).toBe(7);
   });
 });
 
