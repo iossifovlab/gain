@@ -62,7 +62,7 @@ test.describe('Single annotation report tests', () => {
     const singleAnnotation = new SingleAnnotation(page);
     await page.locator('#pipelines-input').click();
     await page.getByRole('button', { name: 'Continue' }).click();
-    await page.locator('mat-option').getByText('pipeline/T2T_clinical_annotation').click();
+    await page.locator('mat-option').getByText('pipeline/hs1_clinical_annotation').click();
     await PipelineEditor.waitForLoaded(page);
 
     await singleAnnotation.annotate('chr1 1265232 G A');

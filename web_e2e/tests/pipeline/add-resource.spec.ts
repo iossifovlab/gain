@@ -74,7 +74,7 @@ test.describe('Add resource to pipeline tests', () => {
   test('should filter resources by resource type', async({ page }) => {
     const resourceModal = new ResourceDialog(page);
     await resourceModal.open();
-    await expect(resourceModal.resourceCount).toHaveText('259 resources');
+    await expect(resourceModal.resourceCount).toHaveText('267 resources');
     await resourceModal.selectResourceType('gene_score');
     await expect(resourceModal.resourceCount).toHaveText('10 resources');
   });

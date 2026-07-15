@@ -122,7 +122,7 @@ test.describe('Pipeline aggregators tests', () => {
     // phastCons100way is a position_score resource with a single float attribute.
     await openAggregatorsStep(page, annotatorModal, 'position_score_annotator', 'hg38/scores/phastCons100way');
 
-    await expect(annotatorModal.aggregatorNames).toHaveText('phastcons100way');
+    await expect(annotatorModal.aggregatorNames).toHaveText('phastCons100way');
     await expect(page.locator('#attributes-aggregators-list .attribute-source-description'))
       .toHaveText('phastCons100way');
     await expect(annotatorModal.aggregatorTypes).toHaveText('float');
@@ -152,7 +152,7 @@ test.describe('Pipeline aggregators tests', () => {
       '- position_score_annotator:\n' +
       '    resource_id: hg38/scores/phastCons100way\n' +
       '    attributes:\n' +
-      '    - name: phastcons100way\n' +
+      '    - name: phastCons100way\n' +
       '      source: phastCons100way\n' +
       '      internal: false\n' +
       '      aggregator: join(,)\n'

@@ -112,7 +112,7 @@ test.describe('Anonymous user tests', () => {
     const editor = new PipelineEditor(page);
     const singleAnnotation = new SingleAnnotation(page);
     await editor.pipelineInput.click();
-    await page.locator('mat-option').getByText('pipeline/T2T_clinical_annotation').click();
+    await page.locator('mat-option').getByText('pipeline/hs1_clinical_annotation').click();
 
     await singleAnnotation.annotate('chr1 1265232 G A');
     await expect(singleAnnotation.report).toBeVisible();
@@ -123,7 +123,7 @@ test.describe('Anonymous user tests', () => {
     const singleAnnotation = new SingleAnnotation(page);
     await PipelineEditor.waitForLoaded(page);
     await editor.dropdownIcon.click();
-    await page.locator('mat-option').getByText('pipeline/T2T_clinical_annotation').click();
+    await page.locator('mat-option').getByText('pipeline/hs1_clinical_annotation').click();
 
     await singleAnnotation.annotate('chr1 1265232 G A');
     await expect(singleAnnotation.downloadReportButton).toBeVisible();
