@@ -8,7 +8,7 @@ is a browser-based entry point to GAIn. It lets users explore annotation
 pipelines, test single-allele queries, and run batch annotation jobs without
 local installation.
 
-
+A preprint describing GAIn is available on `bioRxiv <https://doi.org/10.64898/2026.07.08.737273>`_.
 
 <a href="https://iossifovlab.com/gaindocs/index.html" target="_blank">GAIn's documentation</a>
 contains a detailed description of GAIn's web interface, pipelines, resources,
