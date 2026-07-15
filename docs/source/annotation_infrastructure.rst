@@ -1288,7 +1288,7 @@ annotate_doc
 This is useful for reviewing a pipeline, sharing it with collaborators, or publishing a readable 
 description alongside your analysis.
 
-.. figure:: figures/ClinicalPipeline.png
+.. figure:: figures/ClinicalPipeline2.png
   :align: center
 
   Partial screen shot of the summary html page created for `hs1 annotation pipeline <https://grr.iossifovlab.com/pipeline/hs1_clinical_annotation/index.html>`_ in IossifovLab GRR.
@@ -1366,9 +1366,7 @@ named ``annotation_pipeline_1.yaml`` with the following content:
 
 
 Since there is a preamble section, annotators must be specified under the annotators section. ``effect_annotator`` will use the `MANE 1.5 gene models <https://grr.iossifovlab.com/hg38/gene_models/MANE/1.5/index.html>`_ and 
-`GRCh38-hg38 <https://grr.iossifovlab.com/hg38/genomes/GRCh38-hg38/index.html>`_ as its reference genome (as set by the preamble). 
-The attributes added will be genes (affected genes) and ``worst_effect`` across transcripts. 
-The genes attribute is renamed to ``MANE_1.5_genes`` in the output. (Because ``worst_effect`` is not renamed, it will appear as ``worst_effect`` in the output.)
+`GRCh38-hg38 <https://grr.iossifovlab.com/hg38/genomes/GRCh38-hg38/index.html>`_ as its reference genome (as set by the preamble). The attributes added will be genes (affected genes) and ``worst_effect`` across transcripts.  The genes attribute is renamed to ``MANE_1.5_genes`` in the output. (Because ``worst_effect`` is not renamed, it will appear as ``worst_effect`` in the output.)
 
 To run this annotation pipeline, enter the following command, which annotates ``variants.txt`` using the pipeline in ``annotation_pipeline_1.yaml``:
 
