@@ -69,7 +69,25 @@ pipelineJob('gain-web-e2e') {
                     remote {
                         url('https://github.com/iossifovlab/gain.git')
                     }
-                    branch('master')
+                    // Single-quoted Groovy string so `${BRANCH_NAME}`
+                    // is stored literally in the SCM config XML;
+                    // Jenkins's git plugin expands it at checkout
+                    // time using the BRANCH_NAME build parameter
+                    // declared in the parameters{} block above. A
+                    // branch trigger therefore loads Jenkinsfile.e2e
+                    // from the same branch it tests, not from
+                    // master — important when the pipeline
+                    // definition lives on a non-master branch.
+                    //
+                    // Note the COMMIT_SHA interaction: the workspace
+                    // Checkout stage prefers COMMIT_SHA over
+                    // BRANCH_NAME, while cpsScm here resolves
+                    // ${BRANCH_NAME} to that branch's HEAD. A build
+                    // triggered for an older COMMIT_SHA can thus load
+                    // a newer pipeline script than the tree under
+                    // test; accepted in practice, flagged here for
+                    // the next reader.
+                    branch('${BRANCH_NAME}')
                 }
             }
             scriptPath('web_e2e/Jenkinsfile.e2e')
