@@ -18,11 +18,18 @@ from gain.genomic_resources.repository_factory import (
 )
 
 DEFAULT_DATA_DIR = str(pathlib.Path(__file__).parent.parent / "data")
-if not os.path.exists(DEFAULT_DATA_DIR):
-    os.makedirs(DEFAULT_DATA_DIR)
 
 # Dir for all data storage
 DATA_STORAGE_DIR = os.environ.get("GPFWA_DATA_STORAGE", DEFAULT_DATA_DIR)
+
+# Create the dir we will ACTUALLY use -- not DEFAULT_DATA_DIR, which lives
+# inside the installed package. This used to mkdir DEFAULT_DATA_DIR at import
+# time, BEFORE the GPFWA_DATA_STORAGE override above was read, so pointing the
+# override at a writable volume did not help: the import still wrote into
+# site-packages. That only worked because every container ran as root; a
+# non-root uid dies here with EPERM before Django starts (gain#274).
+# `exist_ok` also drops a race between concurrently-importing workers.
+os.makedirs(DATA_STORAGE_DIR, exist_ok=True)
 
 # Subdir to store uploaded annotation configurations in
 ANNOTATION_CONFIG_STORAGE_DIR = f"{DATA_STORAGE_DIR}/annotation-configs"
@@ -30,6 +37,14 @@ ANNOTATION_CONFIG_STORAGE_DIR = f"{DATA_STORAGE_DIR}/annotation-configs"
 JOB_INPUT_STORAGE_DIR = f"{DATA_STORAGE_DIR}/job-inputs"
 # Subdir to store results of annotation in
 JOB_RESULT_STORAGE_DIR = f"{DATA_STORAGE_DIR}/job-results"
+# Scratch dir for annotators built by the pipeline cache (the editor /
+# pipeline_status path). gain's build_annotation_pipeline defaults work_dir to
+# a RELATIVE Path("./work") -- a CLI convention, since annotate_* run in the
+# user's own writable cwd. A server does not have one: "./work" resolves
+# against the process cwd, which is root-owned in the container, so every
+# pipeline build EPERMs as a non-root uid (gain#276). The job path already
+# passes an explicit work_dir (tasks.py); this gives the cache one too.
+PIPELINE_WORK_DIR = f"{DATA_STORAGE_DIR}/pipeline-work"
 
 PIPELINES_STORAGE_DIR = f"{DATA_STORAGE_DIR}/pipelines"
 
@@ -187,7 +202,11 @@ else:
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "NAME": f"{DEFAULT_DATA_DIR}/db.sqlite3",
+            # DATA_STORAGE_DIR, not DEFAULT_DATA_DIR: that is the dir we
+            # create above. Keying the db off DEFAULT_DATA_DIR would put it
+            # inside site-packages, and would now point at a dir that is not
+            # created at all when GPFWA_DATA_STORAGE is set.
+            "NAME": f"{DATA_STORAGE_DIR}/db.sqlite3",
             "USER": "",
             "PASSWORD": "",
             "HOST": "",
