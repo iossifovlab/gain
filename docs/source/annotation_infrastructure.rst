@@ -52,8 +52,23 @@ The attributes section has the following minimal structure, which only specifies
 
 attributes section has two optional fields. 
 
-    | **name**: the user may rename the resource attribute to a different name in the annotation output. If not specified, source attribute name is used in the output.
-    | **internal**: the user can choose to compute an attribute but not include it in the output. This is useful when an attribute is needed as input to a later annotator but is not of interest to the user. If internal is set to true, that attribute will be computed but not written to the annotation output. The default value for internal is false, meaning that attributes are included in the output by default.
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Option
+     - Description
+   * - ``name``
+     - Rename the resource attribute in the annotation output. 
+
+       If not specified, the source attribute name is used.
+   * - ``internal``
+     - Compute the attribute without including it in the annotation output.
+
+       This is useful when the attribute is required by a later annotator but is not needed in the final output.
+
+       The default is ``false``. If set to ``true``, the attribute is computed but not written to the output.
+
 
 Different annotator types have different configurations, and we will discuss them below. First, we will talk about the preamble section.
 
@@ -183,8 +198,20 @@ A minimal ``allele_score_annotator`` configuration is shown below:
 
 The ``allele_score_annotator`` operates in one of two modes, selected by the ``mode`` parameter:
 
-  | **allele** (default): performs an exact chrom/pos/ref/alt lookup. The annotatable must be a ``VCFAllele``; other types fall back to region mode.
-  | **region**: iterates all allele lines that overlap the annotatable's span and aggregates their scores. Works with any annotatable type (``VCFAllele``, ``Region``, CNV, etc.).
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Mode
+     - Description
+   * - ``allele`` (default)
+     - Performs an exact ``chrom/pos/ref/alt`` lookup.
+
+       The annotatable must be a ``VCFAllele``. Other annotatable types fall back to ``region`` mode.
+   * - ``region``
+     - Finds all allele lines that overlap the annotatable's span and aggregates their scores.
+
+       This mode works with any annotatable type, including ``VCFAllele``, ``Region``, and CNV.
 
 In ``region`` mode, the ``aggregator`` attribute parameter controls how multiple matched values are combined. If no ``aggregator`` is specified in the attribute configuration, the annotator uses the score's default ``allele_aggregator`` from the resource definition (which defaults to ``max`` for numeric scores and ``list`` for string scores).
 
@@ -321,15 +348,49 @@ The ``genome`` field is optional. If it is not provided, the annotator resolves 
 
 The ``effect_annotator`` can emit the following attributes:
 
-  | **worst_effect** (default: yes): the worst effect across all transcripts.
-  | **worst_effect_genes** (default: yes): comma-separated list of genes with the worst effect.
-  | **gene_effects** (default: yes): effect types for each gene.
-  | **effect_details** (default: yes): effect details for each affected transcript.
-  | **gene_list** (internal, default: yes): list of all affected genes.
-  | **worst_effect_gene_list** (internal, default: no): list of genes with the worst effect.
-  | **genes** (default: no): comma-separated list of affected genes.
-  | **<effect>_genes** (default: no): comma-separated list of genes with a specific effect type.
-  | **<effect>_gene_list** (internal, default: no): list of genes with a specific effect type.
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - Attribute
+     - Description
+   * - ``worst_effect``
+     - The worst effect across all transcripts.
+
+       Default: yes.
+   * - ``worst_effect_genes``
+     - Comma-separated list of genes with the worst effect.
+
+       Default: yes.
+   * - ``gene_effects``
+     - Effect types for each gene.
+
+       Default: yes.
+   * - ``effect_details``
+     - Effect details for each affected transcript.
+
+       Default: yes.
+   * - ``gene_list``
+     - List of all affected genes.
+
+       Internal; default: yes.
+   * - ``worst_effect_gene_list``
+     - List of genes with the worst effect.
+
+       Internal; default: no.
+   * - ``genes``
+     - Comma-separated list of affected genes.
+
+       Default: no.
+   * - ``<effect>_genes``
+     - Comma-separated list of genes with a specific effect type.
+
+       Default: no.
+   * - ``<effect>_gene_list``
+     - List of genes with a specific effect type.
+
+       Internal; default: no.
+
 
 Gene list attributes (``gene_list``, ``worst_effect_gene_list``, and ``<effect>_gene_list``) support
 aggregation. By default they are emitted as Python lists; supply an ``aggregator`` to collapse them
@@ -596,31 +657,88 @@ A typical configuration is shown below:
 
 The configuration fields are:
 
-  | **genome**: the reference genome resource ID to use for the annotation.
-  | **gene_models**: the gene models resource ID to use for the annotation.
-  | **distance**: maximum distance (in bp) between the variant and a gained/lost splice site (default: 50).
-  | **mask**: if set to true, masks scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss (default: false).
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Option
+     - Description
+   * - ``genome``
+     - Reference genome resource ID used for the annotation.
+   * - ``gene_models``
+     - Gene models resource ID used for the annotation.
+   * - ``distance``
+     - Maximum distance, in base pairs, between the variant and a gained or lost splice site.
+
+       Default: ``50``.
+   * - ``mask``
+     - Masks scores representing annotated acceptor or donor gain and unannotated acceptor or donor loss.
+
+       Default: ``false``.
 
 
 The annotator produces the following attributes, along with their default aggregators for
 batch annotations that span multiple predictions:
 
-  | **gene** (aggregator: ``join(,)``): gene symbol.
-  | **transcript_ids** (aggregator: ``join(,)``): comma-separated list of transcript IDs.
-  | **DS_AG** (aggregator: ``max``): delta score for acceptor gain.
-  | **DS_AL** (aggregator: ``max``): delta score for acceptor loss.
-  | **DS_DG** (aggregator: ``max``): delta score for donor gain.
-  | **DS_DL** (aggregator: ``max``): delta score for donor loss.
-  | **DS_MAX** (aggregator: ``max``): maximum delta score.
-  | **DP_AG** (aggregator: ``join(;)``): delta position for acceptor gain.
-  | **DP_AL** (aggregator: ``join(;)``): delta position for acceptor loss.
-  | **DP_DG** (aggregator: ``join(;)``): delta position for donor gain.
-  | **DP_DL** (aggregator: ``join(;)``): delta position for donor loss.
-  | **ref_A_p** (aggregator: ``join(;)``): reference acceptor probabilities.
-  | **ref_D_p** (aggregator: ``join(;)``): reference donor probabilities.
-  | **alt_A_p** (aggregator: ``join(;)``): alternative acceptor probabilities.
-  | **alt_D_p** (aggregator: ``join(;)``): alternative donor probabilities.
-  | **delta_score** (aggregator: ``join(;)``): compact SpliceAI annotation string with DS and DP values. Format: ``ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL``.
+.. list-table::
+   :header-rows: 1
+   :widths: 30 20 50
+
+   * - Attribute
+     - Aggregator
+     - Description
+   * - ``gene``
+     - ``join(,)``
+     - Gene symbol.
+   * - ``transcript_ids``
+     - ``join(,)``
+     - Comma-separated list of transcript IDs.
+   * - ``DS_AG``
+     - ``max``
+     - Delta score for acceptor gain.
+   * - ``DS_AL``
+     - ``max``
+     - Delta score for acceptor loss.
+   * - ``DS_DG``
+     - ``max``
+     - Delta score for donor gain.
+   * - ``DS_DL``
+     - ``max``
+     - Delta score for donor loss.
+   * - ``DS_MAX``
+     - ``max``
+     - Maximum delta score.
+   * - ``DP_AG``
+     - ``join(;)``
+     - Delta position for acceptor gain.
+   * - ``DP_AL``
+     - ``join(;)``
+     - Delta position for acceptor loss.
+   * - ``DP_DG``
+     - ``join(;)``
+     - Delta position for donor gain.
+   * - ``DP_DL``
+     - ``join(;)``
+     - Delta position for donor loss.
+   * - ``ref_A_p``
+     - ``join(;)``
+     - Reference acceptor probabilities.
+   * - ``ref_D_p``
+     - ``join(;)``
+     - Reference donor probabilities.
+   * - ``alt_A_p``
+     - ``join(;)``
+     - Alternative acceptor probabilities.
+   * - ``alt_D_p``
+     - ``join(;)``
+     - Alternative donor probabilities.
+   * - ``delta_score``
+     - ``join(;)``
+     - Compact SpliceAI annotation containing the DS and DP values.
+
+       The fields are ordered as follows: ``ALLELE``, ``SYMBOL``, ``DS_AG``,
+       ``DS_AL``, ``DS_DG``, ``DS_DL``, ``DP_AG``, ``DP_AL``, ``DP_DG``,
+       and ``DP_DL``, separated by ``|``.
 
 Each attribute's aggregator can be overridden via the ``aggregator`` attribute parameter.
 
@@ -686,94 +804,222 @@ The annotator configuration looks like this:
 
 By default, the annotator produces only the following attributes: ``SYMBOL``, ``Feature``, ``Feature_type``, ``Consequence``, ``worst_consequence``, ``highest_impact``, and ``gene_consequence``.
 
-The full VEP annotator can optionally emit many additional VEP fields (listed below) by selecting them as pipeline attributes. VEP annotators are run via annotate_tabular in batch mode. See the example command at the end of the VEP Effect Annotator section.
+The full VEP annotator can optionally emit many additional VEP fields (listed below) by selecting them as pipeline attributes. VEP annotators are run via ``annotate_tabular`` in batch mode. See the example command at the end of the VEP Effect Annotator section.
 
-All available output attributes:
+**Core consequence and feature attributes**
 
-  | **Gene**: Stable ID of affected gene
-  | **Feature**: Stable ID of feature
-  | **Feature_type**: Type of feature - Transcript, RegulatoryFeature or MotifFeature
-  | **Consequence**: Consequence type
-  | **cDNA_position**: Relative position of base pair in cDNA sequence
-  | **CDS_position**: Relative position of base pair in coding sequence
-  | **Protein_position**: Relative position of amino acid in protein
-  | **Amino_acids**: Reference and variant amino acids
-  | **Codons**: Reference and variant codon sequence
-  | **Existing_variation**: Identifier(s) of co-located known variants
-  | **IMPACT**: Subjective impact classification of consequence type
-  | **DISTANCE**: Shortest distance from variant to transcript
-  | **STRAND**: Strand of the feature (1/-1)
-  | **FLAGS**: Transcript quality flags
-  | **VARIANT_CLASS**: SO variant class
-  | **SYMBOL**: Gene symbol (e.g. HGNC)
-  | **SYMBOL_SOURCE**: Source of gene symbol
-  | **HGNC_ID**: Stable identifier of HGNC gene symbol
-  | **BIOTYPE**: Biotype of transcript or regulatory feature
-  | **CANONICAL**: Indicates if transcript is canonical for this gene
-  | **MANE**: MANE (Matched Annotation from NCBI and EMBL-EBI) set(s) the transcript belongs to
-  | **MANE_SELECT**: MANE Select (Matched Annotation from NCBI and EMBL-EBI) Transcript
-  | **MANE_PLUS_CLINICAL**: MANE Plus Clinical (Matched Annotation from NCBI and EMBL-EBI) Transcript
-  | **TSL**: Transcript support level
-  | **APPRIS**: Annotates alternatively spliced transcripts as primary or alternate based on a range of computational methods
-  | **CCDS**: Indicates if transcript is a CCDS transcript
-  | **ENSP**: Protein identifer
-  | **SWISSPROT**: UniProtKB/Swiss-Prot accession
-  | **TREMBL**: UniProtKB/TrEMBL accession
-  | **UNIPARC**: UniParc accession
-  | **UNIPROT_ISOFORM**: Direct mappings to UniProtKB isoforms
-  | **GENE_PHENO**: Indicates if gene is associated with a phenotype, disease or trait
-  | **SIFT**: SIFT prediction and/or score
-  | **PolyPhen**: PolyPhen prediction and/or score
-  | **EXON**: Exon number(s) / total
-  | **INTRON**: Intron number(s) / total
-  | **DOMAINS**: The source and identifer of any overlapping protein domains
-  | **miRNA**: SO terms of overlapped miRNA secondary structure feature(s)
-  | **HGVSc**: HGVS coding sequence name
-  | **HGVSp**: HGVS protein sequence name
-  | **HGVS_OFFSET**: Indicates by how many bases the HGVS notations for this variant have been shifted
-  | **AF**: Frequency of existing variant in 1000 Genomes combined population
-  | **AFR_AF**: Frequency of existing variant in 1000 Genomes combined African population
-  | **AMR_AF**: Frequency of existing variant in 1000 Genomes combined American population
-  | **EAS_AF**: Frequency of existing variant in 1000 Genomes combined East Asian population
-  | **EUR_AF**: Frequency of existing variant in 1000 Genomes combined European population
-  | **SAS_AF**: Frequency of existing variant in 1000 Genomes combined South Asian population
-  | **gnomADe_AF**: Frequency of existing variant in gnomAD exomes combined population
-  | **gnomADe_AFR_AF**: Frequency of existing variant in gnomAD exomes African/American population
-  | **gnomADe_AMR_AF**: Frequency of existing variant in gnomAD exomes American population
-  | **gnomADe_ASJ_AF**: Frequency of existing variant in gnomAD exomes Ashkenazi Jewish population
-  | **gnomADe_EAS_AF**: Frequency of existing variant in gnomAD exomes East Asian population
-  | **gnomADe_FIN_AF**: Frequency of existing variant in gnomAD exomes Finnish population
-  | **gnomADe_MID_AF**: Frequency of existing variant in gnomAD exomes Mid-eastern population
-  | **gnomADe_NFE_AF**: Frequency of existing variant in gnomAD exomes Non-Finnish European population
-  | **gnomADe_OTH_AF**: Frequency of existing variant in gnomAD exomes other combined populations
-  | **gnomADe_SAS_AF**: Frequency of existing variant in gnomAD exomes South Asian population
-  | **gnomADe_REMAINING_AF**: Frequency of existing variant in gnomAD exomes remaining combined populations
-  | **gnomADg_AF**: Frequency of existing variant in gnomAD genomes combined population
-  | **gnomADg_AFR_AF**: Frequency of existing variant in gnomAD genomes African/American population
-  | **gnomADg_AMI_AF**: Frequency of existing variant in gnomAD genomes Amish population
-  | **gnomADg_AMR_AF**: Frequency of existing variant in gnomAD genomes American population
-  | **gnomADg_ASJ_AF**: Frequency of existing variant in gnomAD genomes Ashkenazi Jewish population
-  | **gnomADg_EAS_AF**: Frequency of existing variant in gnomAD genomes East Asian population
-  | **gnomADg_FIN_AF**: Frequency of existing variant in gnomAD genomes Finnish population
-  | **gnomADg_MID_AF**: Frequency of existing variant in gnomAD genomes Mid-eastern population
-  | **gnomADg_NFE_AF**: Frequency of existing variant in gnomAD genomes Non-Finnish European population
-  | **gnomADg_OTH_AF**: Frequency of existing variant in gnomAD genomes other combined populations
-  | **gnomADg_SAS_AF**: Frequency of existing variant in gnomAD genomes South Asian population
-  | **gnomADg_REMAINING_AF**: Frequency of existing variant in gnomAD genomes remaining combined populations
-  | **MAX_AF**: Maximum observed allele frequency in 1000 Genomes, ESP and ExAC/gnomAD
-  | **MAX_AF_POPS**: Populations in which maximum allele frequency was observed
-  | **CLIN_SIG**: ClinVar clinical significance of the dbSNP variant
-  | **SOMATIC**: Somatic status of existing variant
-  | **PHENO**: Indicates if existing variant(s) is associated with a phenotype, disease or trait; multiple values correspond to multiple variants
-  | **PUBMED**: Pubmed ID(s) of publications that cite existing variant
-  | **MOTIF_NAME**: The stable identifier of a transcription factor binding profile (TFBP) aligned at this position
-  | **MOTIF_POS**: The relative position of the variation in the aligned TFBP
-  | **HIGH_INF_POS**: A flag indicating if the variant falls in a high information position of the TFBP
-  | **MOTIF_SCORE_CHANGE**: The difference in motif score of the reference and variant sequences for the TFBP
-  | **TRANSCRIPTION_FACTORS**: List of transcription factors which bind to the transcription factor binding profile
-  | **worst_consequence**: Worst consequence reported by VEP
-  | **highest_impact**: Highest impact reported by VEP
-  | **gene_consequence**: List of gene consequence pairs reported by VEP
+.. list-table::
+   :header-rows: 1
+   :widths: 38 62
+
+   * - Attribute
+     - Description
+   * - ``Gene``
+     - Stable ID of the affected gene.
+   * - ``Feature``
+     - Stable ID of the affected feature.
+   * - ``Feature_type``
+     - Feature type: ``Transcript``, ``RegulatoryFeature``, or ``MotifFeature``.
+   * - ``Consequence``
+     - Consequence type.
+   * - ``cDNA_position``
+     - Relative position of the base pair in the cDNA sequence.
+   * - ``CDS_position``
+     - Relative position of the base pair in the coding sequence.
+   * - ``Protein_position``
+     - Relative position of the amino acid in the protein.
+   * - ``Amino_acids``
+     - Reference and variant amino acids.
+   * - ``Codons``
+     - Reference and variant codon sequences.
+   * - ``Existing_variation``
+     - Identifier or identifiers of co-located known variants.
+   * - ``IMPACT``
+     - Subjective impact classification of the consequence type.
+   * - ``DISTANCE``
+     - Shortest distance from the variant to the transcript.
+   * - ``STRAND``
+     - Strand of the feature: ``1`` or ``-1``.
+   * - ``FLAGS``
+     - Transcript quality flags.
+   * - ``VARIANT_CLASS``
+     - Sequence Ontology variant class.
+   * - ``SYMBOL``
+     - Gene symbol, for example an HGNC symbol.
+   * - ``SYMBOL_SOURCE``
+     - Source of the gene symbol.
+   * - ``HGNC_ID``
+     - Stable identifier of the HGNC gene symbol.
+   * - ``BIOTYPE``
+     - Biotype of the transcript or regulatory feature.
+   * - ``CANONICAL``
+     - Indicates whether the transcript is canonical for the gene.
+   * - ``MANE``
+     - MANE set or sets to which the transcript belongs.
+
+       MANE stands for Matched Annotation from NCBI and EMBL-EBI.
+   * - ``MANE_SELECT``
+     - MANE Select transcript.
+   * - ``MANE_PLUS_CLINICAL``
+     - MANE Plus Clinical transcript.
+
+
+**Transcript and protein attributes**
+
+.. list-table::
+   :header-rows: 1
+   :widths: 38 62
+
+   * - Attribute
+     - Description
+   * - ``TSL``
+     - Transcript support level.
+   * - ``APPRIS``
+     - Classifies alternatively spliced transcripts as primary or alternate.
+
+       The classification is based on a range of computational methods.
+   * - ``CCDS``
+     - Indicates whether the transcript is a CCDS transcript.
+   * - ``ENSP``
+     - Protein identifier.
+   * - ``SWISSPROT``
+     - UniProtKB/Swiss-Prot accession.
+   * - ``TREMBL``
+     - UniProtKB/TrEMBL accession.
+   * - ``UNIPARC``
+     - UniParc accession.
+   * - ``UNIPROT_ISOFORM``
+     - Direct mapping to UniProtKB isoforms.
+   * - ``GENE_PHENO``
+     - Indicates whether the gene is associated with a phenotype, disease, or trait.
+   * - ``SIFT``
+     - SIFT prediction and/or score.
+   * - ``PolyPhen``
+     - PolyPhen prediction and/or score.
+   * - ``EXON``
+     - Exon number or numbers and the total number of exons.
+   * - ``INTRON``
+     - Intron number or numbers and the total number of introns.
+   * - ``DOMAINS``
+     - Source and identifier of any overlapping protein domains.
+   * - ``miRNA``
+     - Sequence Ontology terms for overlapping miRNA secondary-structure features.
+   * - ``HGVSc``
+     - HGVS coding-sequence name.
+   * - ``HGVSp``
+     - HGVS protein-sequence name.
+   * - ``HGVS_OFFSET``
+     - Number of bases by which the HGVS notation for the variant has been shifted.
+
+
+**Population-frequency attributes**
+
+.. list-table::
+   :header-rows: 1
+   :widths: 42 58
+
+   * - Attribute
+     - Description
+   * - ``AF``
+     - Frequency of the existing variant in the combined 1000 Genomes population.
+   * - ``AFR_AF``
+     - Frequency in the 1000 Genomes African population.
+   * - ``AMR_AF``
+     - Frequency in the 1000 Genomes American population.
+   * - ``EAS_AF``
+     - Frequency in the 1000 Genomes East Asian population.
+   * - ``EUR_AF``
+     - Frequency in the 1000 Genomes European population.
+   * - ``SAS_AF``
+     - Frequency in the 1000 Genomes South Asian population.
+   * - ``gnomADe_AF``
+     - Frequency in the combined gnomAD exomes population.
+   * - ``gnomADe_AFR_AF``
+     - Frequency in the gnomAD exomes African/African American population.
+   * - ``gnomADe_AMR_AF``
+     - Frequency in the gnomAD exomes American population.
+   * - ``gnomADe_ASJ_AF``
+     - Frequency in the gnomAD exomes Ashkenazi Jewish population.
+   * - ``gnomADe_EAS_AF``
+     - Frequency in the gnomAD exomes East Asian population.
+   * - ``gnomADe_FIN_AF``
+     - Frequency in the gnomAD exomes Finnish population.
+   * - ``gnomADe_MID_AF``
+     - Frequency in the gnomAD exomes Middle Eastern population.
+   * - ``gnomADe_NFE_AF``
+     - Frequency in the gnomAD exomes non-Finnish European population.
+   * - ``gnomADe_OTH_AF``
+     - Frequency in the other combined gnomAD exomes populations.
+   * - ``gnomADe_SAS_AF``
+     - Frequency in the gnomAD exomes South Asian population.
+   * - ``gnomADe_REMAINING_AF``
+     - Frequency in the remaining combined gnomAD exomes populations.
+   * - ``gnomADg_AF``
+     - Frequency in the combined gnomAD genomes population.
+   * - ``gnomADg_AFR_AF``
+     - Frequency in the gnomAD genomes African/African American population.
+   * - ``gnomADg_AMI_AF``
+     - Frequency in the gnomAD genomes Amish population.
+   * - ``gnomADg_AMR_AF``
+     - Frequency in the gnomAD genomes American population.
+   * - ``gnomADg_ASJ_AF``
+     - Frequency in the gnomAD genomes Ashkenazi Jewish population.
+   * - ``gnomADg_EAS_AF``
+     - Frequency in the gnomAD genomes East Asian population.
+   * - ``gnomADg_FIN_AF``
+     - Frequency in the gnomAD genomes Finnish population.
+   * - ``gnomADg_MID_AF``
+     - Frequency in the gnomAD genomes Middle Eastern population.
+   * - ``gnomADg_NFE_AF``
+     - Frequency in the gnomAD genomes non-Finnish European population.
+   * - ``gnomADg_OTH_AF``
+     - Frequency in the other combined gnomAD genomes populations.
+   * - ``gnomADg_SAS_AF``
+     - Frequency in the gnomAD genomes South Asian population.
+   * - ``gnomADg_REMAINING_AF``
+     - Frequency in the remaining combined gnomAD genomes populations.
+
+
+**Clinical, regulatory, and summary attributes**
+
+.. list-table::
+   :header-rows: 1
+   :widths: 38 62
+
+   * - Attribute
+     - Description
+   * - ``MAX_AF``
+     - Maximum observed allele frequency in 1000 Genomes, ESP, and ExAC/gnomAD.
+   * - ``MAX_AF_POPS``
+     - Populations in which the maximum allele frequency was observed.
+   * - ``CLIN_SIG``
+     - ClinVar clinical significance of the dbSNP variant.
+   * - ``SOMATIC``
+     - Somatic status of the existing variant.
+   * - ``PHENO``
+     - Indicates whether the existing variant is associated with a phenotype, disease, or trait.
+
+       Multiple values correspond to multiple variants.
+   * - ``PUBMED``
+     - PubMed ID or IDs of publications that cite the existing variant.
+   * - ``MOTIF_NAME``
+     - Stable identifier of the transcription factor binding profile aligned at this position.
+   * - ``MOTIF_POS``
+     - Relative position of the variant in the aligned transcription factor binding profile.
+   * - ``HIGH_INF_POS``
+     - Indicates whether the variant falls at a high-information position in the profile.
+   * - ``MOTIF_SCORE_CHANGE``
+     - Difference between the motif scores of the reference and variant sequences.
+   * - ``TRANSCRIPTION_FACTORS``
+     - List of transcription factors that bind to the transcription factor binding profile.
+   * - ``worst_consequence``
+     - Worst consequence reported by VEP.
+   * - ``highest_impact``
+     - Highest impact reported by VEP.
+   * - ``gene_consequence``
+     - List of gene-consequence pairs reported by VEP.
+
+
 
 
 external_vep_gtf_annotator
@@ -791,9 +1037,24 @@ The annotator configuration looks like this:
         vep_version: <VEP version to use>
 ..
 
-  | **genome**: the reference genome resource ID to use for the annotation.
-  | **gene_models**: the gene models resource ID to use for the annotation.
-  | **vep_version**: VEP version to use. If not specified, the annotator uses the latest available Docker image from ensemblorg/ensembl-vep. Versions may be given with or without a minor version (for example, 113, 113.0, 113.3). If only the major version is provided (e.g., 113), it is interpreted as 113.0.
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Option
+     - Description
+   * - ``genome``
+     - Reference genome resource ID used for the annotation.
+   * - ``gene_models``
+     - Gene models resource ID used for the annotation.
+   * - ``vep_version``
+     - VEP version to use.
+
+       If not specified, the annotator uses the latest available Docker image from ``ensemblorg/ensembl-vep``.
+
+       Versions may be specified with or without a minor version, for example ``113``, ``113.0``, or ``113.3``.
+
+       A major version given without a minor version, such as ``113``, is interpreted as ``113.0``.
 
 By default, only the following are produced: ``SYMBOL``, ``Feature``, ``Feature_type``, ``Consequence``, ``worst_consequence``, ``highest_impact``, ``gene_consequence``, 
 and the value from the provided gene models.
@@ -802,30 +1063,60 @@ The VEP effect annotator can optionally emit additional VEP fields (listed below
 
 All available output attributes:
 
-  | **Location**: Location of variant in standard coordinate format (chr:start or chr:start-end)
-  | **Allele**: The variant allele used to calculate the consequence
-  | **Gene**: Stable ID of affected gene
-  | **Feature**: Stable ID of feature
-  | **Feature_type**: Type of feature - Transcript, RegulatoryFeature or MotifFeature
-  | **Consequence**: Consequence type
-  | **cDNA_position**: Relative position of base pair in cDNA sequence
-  | **CDS_position**: Relative position of base pair in coding sequence
-  | **Protein_position**: Relative position of amino acid in protein
-  | **Amino_acids**: Reference and variant amino acids
-  | **Codons**: Reference and variant codon sequence
-  | **Existing_variation**: Identifier(s) of co-located known variants
-  | **IMPACT**: Subjective impact classification of consequence type
-  | **DISTANCE**: Shortest distance from variant to transcript
-  | **STRAND**: Strand of the feature (1/-1)
-  | **FLAGS**: Transcript quality flags
-  | **SYMBOL**: Gene symbol (e.g. HGNC)
-  | **SYMBOL_SOURCE**: Source of gene symbol
-  | **HGNC_ID**: Stable identifer of HGNC gene symbol
-  | **SOURCE**: Source of transcript
-  | **worst_consequence**: Worst consequence reported by VEP
-  | **highest_impact**: Highest impact reported by VEP
-  | **gene_consequence**: List of gene consequence pairs reported by VEP
-  | **<gene model filename>**: Value from provided gene models
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Attribute
+     - Description
+   * - ``Location``
+     - Variant location in standard coordinate format: ``chr:start`` or ``chr:start-end``.
+   * - ``Allele``
+     - Variant allele used to calculate the consequence.
+   * - ``Gene``
+     - Stable ID of the affected gene.
+   * - ``Feature``
+     - Stable ID of the affected feature.
+   * - ``Feature_type``
+     - Feature type: ``Transcript``, ``RegulatoryFeature``, or ``MotifFeature``.
+   * - ``Consequence``
+     - Consequence type.
+   * - ``cDNA_position``
+     - Relative position of the base pair in the cDNA sequence.
+   * - ``CDS_position``
+     - Relative position of the base pair in the coding sequence.
+   * - ``Protein_position``
+     - Relative position of the amino acid in the protein.
+   * - ``Amino_acids``
+     - Reference and variant amino acids.
+   * - ``Codons``
+     - Reference and variant codon sequences.
+   * - ``Existing_variation``
+     - Identifier or identifiers of co-located known variants.
+   * - ``IMPACT``
+     - Subjective impact classification of the consequence type.
+   * - ``DISTANCE``
+     - Shortest distance from the variant to the transcript.
+   * - ``STRAND``
+     - Strand of the feature: ``1`` or ``-1``.
+   * - ``FLAGS``
+     - Transcript quality flags.
+   * - ``SYMBOL``
+     - Gene symbol, for example an HGNC symbol.
+   * - ``SYMBOL_SOURCE``
+     - Source of the gene symbol.
+   * - ``HGNC_ID``
+     - Stable identifier of the HGNC gene symbol.
+   * - ``SOURCE``
+     - Source of the transcript.
+   * - ``worst_consequence``
+     - Worst consequence reported by VEP.
+   * - ``highest_impact``
+     - Highest impact reported by VEP.
+   * - ``gene_consequence``
+     - List of gene-consequence pairs reported by VEP.
+   * - ``<gene model filename>``
+     - Value obtained from the provided gene models.
 
 With a prepared variants file and an ``annotation.yaml`` pipeline configuration, VEP-based annotation can be run via ``annotate_tabular`` in batch mode using the --batch-mode flag. For example:
 
@@ -916,13 +1207,28 @@ Additional patterns (such as ``--col-pos-beg`` / ``--col-pos-end``, ``--col-loca
 
 Common options:
 
-  * **-o, --output**: output filename.
-  * **-w, --work-dir**: directory for intermediate files.
-  * **-j, --jobs**: number of parallel jobs.
-  * **-r, --region-size**: region size used for splitting tabix-indexed inputs.
-  * **--input-separator / --output-separator**: override input/output delimiters.
-  * **--reannotate and --full-reannotation**: re-run annotation over existing outputs.
-  * **-ar, --allow-repeated-attributes**: allow duplicate attribute names by suffixing them with annotator IDs.
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Option
+     - Description
+   * - ``-o, --output``
+     - Output filename.
+   * - ``-w, --work-dir``
+     - Directory used for intermediate files.
+   * - ``-j, --jobs``
+     - Number of parallel jobs.
+   * - ``-r, --region-size``
+     - Region size used when splitting tabix-indexed input files.
+   * - ``--input-separator``, ``--output-separator``
+     - Override the input and output delimiters.
+   * - ``--reannotate``, ``--full-reannotation``
+     - Re-run annotation on an existing output.
+   * - ``-ar, --allow-repeated-attributes``
+     - Allow repeated attribute names.
+
+       Repeated names are suffixed with their annotator IDs.
 
 For a full list of options run ``annotate_tabular --help``
 
@@ -951,14 +1257,26 @@ If the file is tabix-indexed, ``annotate_vcf`` can split the work by genomic reg
 
 Common options:
 
-  * **-o, --output**: output filename.
-  * **-w, --work-dir**: directory for intermediate files.
-  * **-j, --jobs**: number of parallel jobs.
-  * **-r, --region-size**: region size used for splitting tabix-indexed inputs.
-  * **--reannotate and --full-reannotation**: re-run annotation over existing outputs.
-  * **-ar, --allow-repeated-attributes**: allow duplicate attribute names by suffixing them with annotator IDs.
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
 
+   * - Option
+     - Description
+   * - ``-o, --output``
+     - Output filename.
+   * - ``-w, --work-dir``
+     - Directory used for intermediate files.
+   * - ``-j, --jobs``
+     - Number of parallel jobs.
+   * - ``-r, --region-size``
+     - Region size used to split tabix-indexed input files.
+   * - ``--reannotate``, ``--full-reannotation``
+     - Re-run annotation on existing output files.
+   * - ``-ar, --allow-repeated-attributes``
+     - Allow duplicate attribute names.
 
+       Duplicate names are suffixed with their annotator IDs.
 
 For a full list of options run ``annotate_vcf --help``
 
@@ -973,7 +1291,7 @@ description alongside your analysis.
 .. figure:: figures/ClinicalPipeline.png
   :align: center
 
-  Partial screen shot of the summary html page created for `T2T annotation pipeline <https://grr.iossifovlab.com/pipeline/T2T_Clinical_annotation/index.html>`_ in IossifovLab GRR.
+  Partial screen shot of the summary html page created for `hs1 annotation pipeline <https://grr.iossifovlab.com/pipeline/hs1_clinical_annotation/index.html>`_ in IossifovLab GRR.
 
 
 The minimal invocation is the pipeline YAML:
@@ -990,11 +1308,21 @@ By default, the tool writes an HTML file next to the pipeline (using its default
 
 Common options:
 
-  * **-o, --output**: output HTML filename.
-  * **--verbose**: increase logging.
-  * **--logfile**: write logs to a file.
-  * **-i, --instance / -g, --grr / --grr-directory**: control which GRR context is used when resolving pipeline resources.
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
 
+   * - Option
+     - Description
+   * - ``-o, --output``
+     - Output HTML filename.
+   * - ``--verbose``
+     - Increase logging verbosity.
+   * - ``--logfile``
+     - Write logs to a file.
+   * - ``-i, --instance``, ``-g, --grr``, ``--grr-directory``
+     - Control the GRR context used when resolving pipeline resources.
+     
 For a full list of options run ``annotate_doc --help``
 
 Example annotations
