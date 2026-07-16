@@ -13,9 +13,11 @@ line classes, but each reaches its raw value through a ``_get_raw`` of its own,
 and they do not all get there the same way.
 
 Two of them **bind** it, in their constructor, to a callable that is reachable
-*from* the line but is not the line: ``ScoreLine`` (the bigWig adapter backend)
-to the adapter's ``line.get``; ``RecordScoreLine`` (the in-memory and tabix
-record backends) to the record payload's ``__getitem__``.
+*from* the line but is not the line: ``RecordScoreLine`` (the in-memory, tabix
+and -- since #238 -- bigWig record backends) to the record payload's
+``__getitem__``; ``ScoreLine`` (the adapter path, which now has no backend
+routed to it -- bigWig was the last, and #239 removes the class) to an
+adapter's ``line.get``.
 
 ``VCFScoreLine`` (the VCF record backend, whose payload is a ``(variant, allele
 index)`` pair rather than a row) instead declares ``_get_raw`` as a plain
@@ -290,8 +292,12 @@ def test_the_score_is_routed_before_it_reports_itself_open(tmp_path) -> None:
         assert seen_at_publication == [RecordScoreLine]
 
 
-def test_bigwig_backend_yields_the_adapter_score_line(tmp_path) -> None:
-    # Same for the bigWig backend, the last of the three adapter backends.
+def test_bigwig_backend_yields_the_record_score_line(tmp_path) -> None:
+    # Since #238 the bigWig backend is on the record contract too: it yields
+    # records whose payload is the four-element interval, so the score is routed
+    # to RecordScoreLine and read by index (``index: 3`` -> the value cell), not
+    # to the retired adapter ScoreLine.  It is the third backend on that leg,
+    # alongside in-memory and tabix.
     builder = (
         a_bigwig_score()
         .with_score("bw", "float")
@@ -304,10 +310,10 @@ def test_bigwig_backend_yields_the_adapter_score_line(tmp_path) -> None:
     repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
     score = PositionScore(repo.get_resource("bw")).open()
     with score:
-        assert score.table.yields_records is False
+        assert score.table.yields_records is True
         line = next(iter(score.fetch_lines("chr1", 5, 5)))
-        assert isinstance(line, ScoreLine)
-        assert not isinstance(line, RecordScoreLine)
+        assert isinstance(line, RecordScoreLine)
+        assert not isinstance(line, VCFScoreLine)
         assert line.get_score("bw") == pytest.approx(0.11)
 
 

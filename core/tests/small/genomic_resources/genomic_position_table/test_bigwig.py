@@ -4,17 +4,35 @@ import textwrap
 
 import pytest
 import pytest_mock
+from gain.genomic_resources.genomic_position_table.record import (
+    ALT,
+    CHROM,
+    PAYLOAD,
+    POS_BEGIN,
+    POS_END,
+    RECORD_SLOTS,
+    REF,
+)
 from gain.genomic_resources.genomic_position_table.table_bigwig import (
     BigWigTable,
+    build_bigwig_parser,
 )
 from gain.genomic_resources.genomic_position_table.utils import (
     build_genomic_position_table,
+)
+from gain.genomic_resources.genomic_scores import (
+    PositionScore,
+    RecordScoreLine,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     setup_bigwig,
     setup_directories,
+)
+from gain.genomic_resources.testing.builders import (
+    a_bigwig_score,
+    a_grr,
 )
 
 
@@ -96,10 +114,75 @@ def test_get_all_records(bigwig_table: BigWigTable) -> None:
         vs = list(bigwig_table.get_all_records())
         assert len(vs) == 9
         line = vs[0]
-        assert line.chrom == "chr1"
-        assert line.pos_begin == 1
-        assert line.pos_end == 10
-        assert line.get(3) == pytest.approx(0.01)
+        assert line[CHROM] == "chr1"
+        assert line[POS_BEGIN] == 1
+        assert line[POS_END] == 10
+        assert line[PAYLOAD][3] == pytest.approx(0.01)
+
+
+def test_bigwig_yields_plain_records(bigwig_table: BigWigTable) -> None:
+    # The bigWig backend is on the record contract: every line it yields is a
+    # plain record tuple (exact type, not an adapter), whose PAYLOAD is the
+    # four-element interval ``(chrom, pos_begin, pos_end, value)`` -- so the
+    # value column stays addressable at index 3, the way it was through the
+    # retired BigWigLine adapter.
+    with bigwig_table:
+        first = next(iter(bigwig_table.get_all_records()))
+
+        assert type(first) is tuple
+        assert len(first) == RECORD_SLOTS
+        assert first[CHROM] == "chr1"
+        assert first[POS_BEGIN] == 1
+        assert first[POS_END] == 10
+        assert first[REF] is None
+        assert first[ALT] is None
+
+        payload = first[PAYLOAD]
+        assert payload == ("chr1", 1, 10, pytest.approx(0.01))
+        assert payload[3] == pytest.approx(0.01)
+
+
+def test_bigwig_parser_converts_zero_based_half_open_to_closed_one_based(
+) -> None:
+    # The subtle correctness point of the migration: a bigWig interval is
+    # 0-based half-open in the file, and the record must carry it as the
+    # contract's closed one-based interval -- byte-identical to what the
+    # BigWigLine adapter produced.  The ``+1`` on the begin lives in the fetch
+    # methods (left untouched), so by the time the parser sees an interval it
+    # is already ``(pos_begin_1based, pos_end, value)``; the parser assembles
+    # the record around it, and the PAYLOAD repeats the interval so the value
+    # stays at index 3.  A file interval ``[0, 10)`` for chr1 reaches the
+    # parser as ``(1, 10, 0.11)`` and must become this exact record.
+    parser = build_bigwig_parser()
+    assert parser("chr1", (1, 10, 0.11)) == (
+        "chr1", 1, 10, None, None, ("chr1", 1, 10, 0.11))
+    # A mapped/reference contig threaded in from the query is carried on both
+    # the record's CHROM slot and inside the payload -- mapping-on-result.
+    assert parser("2", (6, 10, 0.4)) == (
+        "2", 6, 10, None, None, ("2", 6, 10, 0.4))
+
+
+def test_bigwig_score_reads_value_at_index_3_through_record_score_line(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A bigWig score is configured at column ``index: 3`` (the value column of
+    # the four-element interval payload).  Now that the backend yields records,
+    # GenomicScore.open must route it to RecordScoreLine, whose by-index read
+    # of the payload resolves that score -- the record-path equivalent of the
+    # retired ``BigWigLine.get(3)``.
+    builder = (
+        a_bigwig_score()
+        .with_score("bw", "float")
+        .with_data("chr1  0  10  0.11")
+        .with_chrom_lens({"chr1": 1000})
+    )
+    repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
+    score = PositionScore(repo.get_resource("bw")).open()
+    with score:
+        assert score._score_line_class is RecordScoreLine
+        line = next(iter(score.fetch_lines("chr1", 5, 5)))
+        assert type(line) is RecordScoreLine
+        assert line.get_score("bw") == pytest.approx(0.11)
 
 
 def test_get_records_in_region(bigwig_table: BigWigTable) -> None:
@@ -218,13 +301,13 @@ def test_bigwig_genomic_position_table_chrom_mapping_works(
         assert bigwig_table.get_chromosomes() == ["1", "2", "3"]
         vs = list(bigwig_table.get_all_records())
         assert len(vs) == 3
-        assert vs[0].chrom == "1"
-        assert vs[1].chrom == "2"
-        assert vs[2].chrom == "3"
+        assert vs[0][CHROM] == "1"
+        assert vs[1][CHROM] == "2"
+        assert vs[2][CHROM] == "3"
 
         vs = list(bigwig_table.get_records_in_region("1"))
         assert len(vs) == 1
-        assert vs[0].chrom == "1"
+        assert vs[0][CHROM] == "1"
 
 
 def test_bigwig_correct_fetching_of_intervals(
@@ -328,19 +411,19 @@ def test_no_repeating_in_buffered(
     with BigWigTable(res, table_definition) as bigwig_table:
         vs = list(bigwig_table.get_records_in_region("chr1", 1001, 1001))
         assert len(vs) == 1
-        assert vs[0].chrom == "chr1"
-        assert vs[0].pos_begin == 1001
-        assert vs[0].pos_end == 1001
+        assert vs[0][CHROM] == "chr1"
+        assert vs[0][POS_BEGIN] == 1001
+        assert vs[0][POS_END] == 1001
         vs = list(bigwig_table.get_records_in_region("chr1", 1002, 1002))
         assert len(vs) == 1
-        assert vs[0].chrom == "chr1"
-        assert vs[0].pos_begin == 1002
-        assert vs[0].pos_end == 1002
+        assert vs[0][CHROM] == "chr1"
+        assert vs[0][POS_BEGIN] == 1002
+        assert vs[0][POS_END] == 1002
         vs = list(bigwig_table.get_records_in_region("chr1", 1003, 1003))
         assert len(vs) == 1
-        assert vs[0].chrom == "chr1"
-        assert vs[0].pos_begin == 1003
-        assert vs[0].pos_end == 1003
+        assert vs[0][CHROM] == "chr1"
+        assert vs[0][POS_BEGIN] == 1003
+        assert vs[0][POS_END] == 1003
 
 
 def test_no_repeating_in_buffered_alt_case(
@@ -387,19 +470,19 @@ def test_no_repeating_in_buffered_alt_case(
     with BigWigTable(res, table_definition) as bigwig_table:
         vs = list(bigwig_table.get_records_in_region("chr1", 1, 1000))
         assert len(vs) == 1
-        assert vs[0].chrom == "chr1"
-        assert vs[0].pos_begin == 1
-        assert vs[0].pos_end == 1000
+        assert vs[0][CHROM] == "chr1"
+        assert vs[0][POS_BEGIN] == 1
+        assert vs[0][POS_END] == 1000
         vs = list(bigwig_table.get_records_in_region("chr1", 1001, 1001))
         assert len(vs) == 1
-        assert vs[0].chrom == "chr1"
-        assert vs[0].pos_begin == 1001
-        assert vs[0].pos_end == 1001
+        assert vs[0][CHROM] == "chr1"
+        assert vs[0][POS_BEGIN] == 1001
+        assert vs[0][POS_END] == 1001
         vs = list(bigwig_table.get_records_in_region("chr1", 1002, 1002))
         assert len(vs) == 1
-        assert vs[0].chrom == "chr1"
-        assert vs[0].pos_begin == 1002
-        assert vs[0].pos_end == 1002
+        assert vs[0][CHROM] == "chr1"
+        assert vs[0][POS_BEGIN] == 1002
+        assert vs[0][POS_END] == 1002
 
 
 def test_buffered_correctly_checks_if_query_is_in_buffer(
@@ -446,19 +529,19 @@ def test_buffered_correctly_checks_if_query_is_in_buffer(
     with BigWigTable(res, table_definition) as bigwig_table:
         vs = list(bigwig_table.get_records_in_region("chr1", 1001, 1001))
         assert len(vs) == 1
-        assert vs[0].chrom == "chr1"
-        assert vs[0].pos_begin == 1001
-        assert vs[0].pos_end == 1001
+        assert vs[0][CHROM] == "chr1"
+        assert vs[0][POS_BEGIN] == 1001
+        assert vs[0][POS_END] == 1001
         vs = list(bigwig_table.get_records_in_region("chr1", 1002, 1002))
         assert len(vs) == 1
-        assert vs[0].chrom == "chr1"
-        assert vs[0].pos_begin == 1002
-        assert vs[0].pos_end == 1002
+        assert vs[0][CHROM] == "chr1"
+        assert vs[0][POS_BEGIN] == 1002
+        assert vs[0][POS_END] == 1002
         vs = list(bigwig_table.get_records_in_region("chr1", 1004, 1004))
         assert len(vs) == 1
-        assert vs[0].chrom == "chr1"
-        assert vs[0].pos_begin == 1004
-        assert vs[0].pos_end == 1004
+        assert vs[0][CHROM] == "chr1"
+        assert vs[0][POS_BEGIN] == 1004
+        assert vs[0][POS_END] == 1004
 
 
 def test_buffering_correctly_fetches_next_buffer(
@@ -507,25 +590,25 @@ def test_buffering_correctly_fetches_next_buffer(
     with BigWigTable(res, table_definition) as bigwig_table:
         vs = list(bigwig_table.get_records_in_region("chr1", 1001, 1001))
         assert len(vs) == 1
-        assert vs[0].chrom == "chr1"
-        assert vs[0].pos_begin == 1001
-        assert vs[0].pos_end == 1001
+        assert vs[0][CHROM] == "chr1"
+        assert vs[0][POS_BEGIN] == 1001
+        assert vs[0][POS_END] == 1001
         vs = list(bigwig_table.get_records_in_region("chr1", 1002, 1002))
         assert len(vs) == 1
-        assert vs[0].chrom == "chr1"
-        assert vs[0].pos_begin == 1002
-        assert vs[0].pos_end == 1002
+        assert vs[0][CHROM] == "chr1"
+        assert vs[0][POS_BEGIN] == 1002
+        assert vs[0][POS_END] == 1002
         vs = list(bigwig_table.get_records_in_region("chr1", 1003, 1005))
         assert len(vs) == 3
-        assert vs[0].chrom == "chr1"
-        assert vs[0].pos_begin == 1003
-        assert vs[0].pos_end == 1003
-        assert vs[1].chrom == "chr1"
-        assert vs[1].pos_begin == 1004
-        assert vs[1].pos_end == 1004
-        assert vs[2].chrom == "chr1"
-        assert vs[2].pos_begin == 1005
-        assert vs[2].pos_end == 1005
+        assert vs[0][CHROM] == "chr1"
+        assert vs[0][POS_BEGIN] == 1003
+        assert vs[0][POS_END] == 1003
+        assert vs[1][CHROM] == "chr1"
+        assert vs[1][POS_BEGIN] == 1004
+        assert vs[1][POS_END] == 1004
+        assert vs[2][CHROM] == "chr1"
+        assert vs[2][POS_BEGIN] == 1005
+        assert vs[2][POS_END] == 1005
 
 
 def test_bigwig_buffering_switching(
@@ -632,14 +715,14 @@ def test_buffered_pos_begin_to_the_left_of_buffer_start(
     with BigWigTable(res, table_definition) as bigwig_table:
         vs = list(bigwig_table.get_records_in_region("chr1", 1002, 1002))
         assert len(vs) == 1
-        assert vs[0].chrom == "chr1"
-        assert vs[0].pos_begin == 1002
-        assert vs[0].pos_end == 1002
+        assert vs[0][CHROM] == "chr1"
+        assert vs[0][POS_BEGIN] == 1002
+        assert vs[0][POS_END] == 1002
         vs = list(bigwig_table.get_records_in_region("chr1", 1003, 1003))
         assert len(vs) == 1
-        assert vs[0].chrom == "chr1"
-        assert vs[0].pos_begin == 1003
-        assert vs[0].pos_end == 1003
+        assert vs[0][CHROM] == "chr1"
+        assert vs[0][POS_BEGIN] == 1003
+        assert vs[0][POS_END] == 1003
         vs = list(bigwig_table.get_records_in_region("chr1", 1001, 1005))
         assert len(vs) == 5
 
@@ -685,11 +768,11 @@ def test_mini_grr_example(tmp_path: pathlib.Path) -> None:
     with BigWigTable(res, table_definition) as bigwig_table:
         vs = list(bigwig_table.get_records_in_region("chr1", 5, 5))
         assert len(vs) == 1
-        assert vs[0].chrom == "chr1"
-        assert vs[0].pos_begin == 1
-        assert vs[0].pos_end == 5
+        assert vs[0][CHROM] == "chr1"
+        assert vs[0][POS_BEGIN] == 1
+        assert vs[0][POS_END] == 5
         vs = list(bigwig_table.get_records_in_region("chr1", 6, 6))
         assert len(vs) == 1
-        assert vs[0].chrom == "chr1"
-        assert vs[0].pos_begin == 6
-        assert vs[0].pos_end == 10
+        assert vs[0][CHROM] == "chr1"
+        assert vs[0][POS_BEGIN] == 6
+        assert vs[0][POS_END] == 10
