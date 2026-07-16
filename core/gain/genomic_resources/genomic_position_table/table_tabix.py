@@ -233,7 +233,24 @@ class TabixGenomicPositionTable(GenomicPositionTable):
 
     def _gen_from_tabix(
             self, chrom: str, pos: int | None, *_args: Any,
+            from_pos: int | None = None,
             buffering: bool = True) -> Generator[Record, None, None]:
+        """Read forward from the cursor, yielding records up to ``pos``.
+
+        ``pos`` bounds the read from above: reading stops at the first record
+        that begins past it, since the file is sorted by ``pos_begin`` and
+        nothing after it can begin any earlier.
+
+        ``from_pos`` bounds each record from *below*, and is optional because
+        only one caller needs it.  A read that starts from a fresh
+        ``pysam`` fetch does not: tabix has already excluded the records that
+        end before the region.  A read that *continues* an existing cursor
+        does: the cursor can sit among records lying entirely before the new
+        query's start, and yielding those is how a non-overlapping record used
+        to reach the caller (gain#250).  Such a record is skipped, not
+        returned on -- it says nothing about the ones that follow it, whose
+        ``pos_end`` need not be any smaller.
+        """
         try:
             assert self.line_iterator is not None
             while True:
@@ -250,6 +267,8 @@ class TabixGenomicPositionTable(GenomicPositionTable):
                     return
                 if pos is not None and record[POS_BEGIN] > pos:
                     return
+                if from_pos is not None and record[POS_END] < from_pos:
+                    continue
 
                 self.stats["yield from tabix"] += 1
                 yield record
@@ -259,14 +278,30 @@ class TabixGenomicPositionTable(GenomicPositionTable):
     def _gen_from_buffer_and_tabix(
         self, chrom: str, beg: int, end: int,
     ) -> Generator[Record, None, None]:
+        """Serve ``[beg, end]`` from the buffer, then continue from the file.
+
+        The continuation asks one question: can anything still *unread* overlap
+        the query?  The file is sorted by ``pos_begin``, so every unread record
+        begins at or after the last record read -- if that record already begins
+        past ``end``, nothing unread can reach back into the query and the file
+        need not be touched.
+
+        This used to test the last record's ``pos_end`` instead, which answers a
+        different question ("has the cursor been read past the query?") and only
+        coincides with this one when records never overlap.  Where they do, a
+        buffered record ending past ``end`` would cut the continuation short and
+        the still-unread records overlapping the query were never read
+        (gain#250).
+        """
         for record in self.buffer.fetch(chrom, beg, end):
             self.stats["yield from buffer"] += 1
             yield record
         last = self.buffer.peek_last()
-        if end < last[POS_END]:
+        if last[POS_BEGIN] > end:
             return
 
-        yield from self._gen_from_tabix(chrom, end, buffering=True)
+        yield from self._gen_from_tabix(
+            chrom, end, from_pos=beg, buffering=True)
 
     def get_records_in_region(
         self,
@@ -314,10 +349,26 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         else:
             self.stats["with buffering"] += 1
 
-        prev_call_chrom, _, prev_call_end = self._last_call
+        prev_call_chrom, prev_call_begin, prev_call_end = self._last_call
         self._last_call = chrom, pos_begin, pos_end
 
-        if buffering and len(self.buffer) > 0 and prev_call_chrom == chrom:
+        # The buffer can only answer from the previous query's start onwards.
+        # It is pruned to that position once the query has been served (and a
+        # fresh fetch begins there), which evicts the records ending before it
+        # -- so the buffer holds every record overlapping any LATER position,
+        # and is missing records overlapping earlier ones.
+        #
+        # Its left edge does not say so.  Pruning evicts by ``pos_end``, and
+        # only up to the first record that survives; where intervals overlap,
+        # that survivor can begin further left than the records evicted ahead
+        # of it, leaving ``peek_first()`` pointing below the positions the
+        # buffer just stopped being able to answer.  ``contains`` reads that
+        # edge and would wave a backward query through onto a buffer that no
+        # longer holds its records (gain#250).  The query's own start is the
+        # honest watermark, so gate on it rather than on the buffer's shape.
+        if buffering and len(self.buffer) > 0 \
+                and prev_call_chrom == chrom \
+                and pos_begin >= prev_call_begin:
 
             first = self.buffer.peek_first()
             assert pos_end is not None

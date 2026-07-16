@@ -513,13 +513,16 @@ def test_tabix_read_cascade_stats_name_the_same_paths(
         # inside the buffered window, but between two records: empty, no fetch
         assert not list(tab.get_records_in_region("1", 13, 14))
 
-        # a buffer hit
+        # a buffer hit.  The continuation reads on until a record begins past
+        # the query, so this also pulls 100 into the buffer -- the read cannot
+        # know that nothing between 20 and 100 overlaps without looking.
         assert [
             r[POS_BEGIN] for r in tab.get_records_in_region("1", 16, 18)
         ] == [15]
+        assert [r[POS_BEGIN] for r in tab.buffer.deque] == [15, 100]
 
-        # past the buffer but within jump_threshold: seek forward sequentially
-        # rather than re-seek the file
+        # still inside the buffered window -- 100 is already here, so this is a
+        # buffer hit too, and no seek is needed to establish that it is empty
         assert not list(tab.get_records_in_region("1", 21, 30))
         assert [r[POS_BEGIN] for r in tab.buffer.deque] == [100]
 
@@ -528,6 +531,10 @@ def test_tabix_read_cascade_stats_name_the_same_paths(
         # touching the file
         assert not list(tab.get_records_in_region("1", 40, 50))
 
+        # past the buffer but within jump_threshold: seek forward sequentially
+        # rather than re-seek the file
+        assert not list(tab.get_records_in_region("1", 111, 120))
+
         # a region wider than the buffer: served unbuffered, fresh from tabix
         tab.BUFFER_MAXSIZE = 1
         assert [
@@ -535,8 +542,8 @@ def test_tabix_read_cascade_stats_name_the_same_paths(
         ] == [10, 15, 100]
 
         assert dict(tab.stats) == {
-            "calls": 6,
-            "with buffering": 5,
+            "calls": 7,
+            "with buffering": 6,
             "without buffering": 1,
             "tabix fetch": 2,
             "yield from tabix": 4,
