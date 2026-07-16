@@ -219,7 +219,7 @@ class ScoreLineBase(abc.ABC):
     So the cycle has no static defence at all, and
     test_score_lines_are_freed_without_the_cycle_collector is the only one there
     is.  It asserts over real fetched lines, for the whole family, so it holds
-    for backends added later (#238's bigWig migration, #239's adapter removal).
+    for backends migrated onto it (bigWig joined in #238) and any added later.
 
     (For the record: pyright flags :meth:`VCFScoreLine._get_raw` with
     ``reportIncompatibleMethodOverride`` -- the base declares ``_get_raw`` as a
@@ -367,12 +367,14 @@ class ScoreLineBase(abc.ABC):
 
 
 class ScoreLine(ScoreLineBase):
-    """Score line wrapping a line adapter (the bigWig backend).
+    """Score line wrapping a line adapter.
 
     Binds ``self._get_raw`` to the adapter's ``line.get`` and reads the core
-    fields straight off the adapter.  See :class:`ScoreLineBase` for the
-    shared value-extraction contract; #238 migrates the last adapter backend
-    (bigWig) and #239 then removes this class.
+    fields straight off the adapter.  See :class:`ScoreLineBase` for the shared
+    value-extraction contract.  **No backend is routed here any more** -- #238
+    migrated bigWig, the last adapter backend, to records -- so this class is
+    now exercised only by its own direct unit tests, until #239 removes it (and
+    the ``Line``/``BigWigLine`` adapters it wraps) entirely.
     """
 
     def __init__(
@@ -1328,9 +1330,11 @@ class GenomicScore(ResourceConfigValidationMixin):
         # Choose the score line class per backend -- ONE decision, per table,
         # made here rather than per line.  A VCF table's scores are INFO fields,
         # so it goes to the VCFScoreLine that performs the INFO lookup; any
-        # other record-yielding table's scores are columns of the record's raw
-        # row, so it goes to RecordScoreLine; an adapter-yielding table (bigWig,
-        # until #238) to ScoreLine.  This is decided at open time, alongside the
+        # other record-yielding table's scores are read out of the record's
+        # payload by index, so it goes to RecordScoreLine (since #238 that is
+        # every remaining backend -- in-memory, tabix and bigWig); an
+        # adapter-yielding table would go to ScoreLine, but none is left until
+        # #239 removes the class.  This is decided at open time, alongside the
         # table's own parser/transform selection, and the table's yields_records
         # claim is simply believed -- that every backend's claim matches what it
         # really yields is pinned statically, over all four of them, by

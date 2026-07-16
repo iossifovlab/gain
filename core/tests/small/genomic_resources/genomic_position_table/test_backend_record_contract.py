@@ -12,23 +12,29 @@ This test is what lets the score layer route on the claim and simply believe
 it.
 
 ``GenomicScore.open`` makes the matching decision, also once per table, and it
-is a **three-way** one -- because a record's PAYLOAD means whatever the backend
-that built it says it means:
+turns on what a record's PAYLOAD means -- which is whatever the backend that
+built it says it means:
 
-* a record whose payload is a raw tabular row (in-memory, tabix) is wrapped in
+* a record whose payload is a raw tabular row (in-memory, tabix) or the
+  four-element interval of a bigWig line is wrapped in
   :class:`RecordScoreLine`, which reads score columns out of it by index;
 * a **VCF** record, whose payload is a ``(variant record, allele index)`` pair,
   is wrapped in :class:`VCFScoreLine`, which looks INFO fields up by name and
-  selects them by allele;
-* an adapter-yielding table's lines (bigWig) in :class:`ScoreLine`, which reads
-  them through ``line.get``.
+  selects them by allele.
+
+Since #238 migrated bigWig -- the last adapter backend -- every backend in the
+tree yields records, so no live backend is routed to the adapter-era
+:class:`ScoreLine` any more (#239 removes it).  The adapter branch of
+test_a_backend_yields_what_its_yields_records_claim_says therefore no longer
+runs, but is kept: it states what an adapter backend would have to look like,
+and guards a future one added to ``_BACKENDS``.
 
 So each backend below declares BOTH what it yields and which score line it must
 be routed to, and both are checked against the live objects.
 
-**This is the file #238 (bigWig -> records) will trip** (as #237, VCF, tripped
-it).  Flipping ``yields_records`` on a backend without migrating what it yields
-fails here, naming the backend -- which is the one moment this catches anything.
+**This is the file a backend->records migration trips** -- #237 (VCF) and #238
+(bigWig) both did.  Flipping ``yields_records`` on a backend without migrating
+what it yields fails here, naming the backend -- the one moment this catches it.
 """
 from __future__ import annotations
 
@@ -47,7 +53,6 @@ from gain.genomic_resources.genomic_scores import (
     GenomicScore,
     PositionScore,
     RecordScoreLine,
-    ScoreLine,
     ScoreLineBase,
     VCFScoreLine,
 )
@@ -118,7 +123,7 @@ _BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
     pytest.param(_open_inmemory, RecordScoreLine, id="inmemory"),
     pytest.param(_open_tabix, RecordScoreLine, id="tabix"),
     pytest.param(_open_vcf, VCFScoreLine, id="vcf"),
-    pytest.param(_open_bigwig, ScoreLine, id="bigwig"),
+    pytest.param(_open_bigwig, RecordScoreLine, id="bigwig"),
 ]
 
 
@@ -134,15 +139,17 @@ _BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
 #     so has ``__hash__ = None``: raises ``TypeError``;
 #   * VCF -- payload is a ``(pysam.VariantRecord, allele index)`` pair, and a
 #     ``pysam.VariantRecord`` is unhashable for the same reason, so hashing the
-#     pair -- and so the record -- raises ``TypeError``.
+#     pair -- and so the record -- raises ``TypeError``;
+#   * bigWig -- payload is a plain ``(chrom, pos_begin, pos_end, value)`` tuple
+#     of a str, two ints and a float, all hashable: hashes.
 #
-# Only record-yielding backends are listed (bigWig still yields adapters);
 # test_every_record_backend_declares_whether_its_records_hash keeps this list
 # in step with what the backends in _BACKENDS actually claim.
 _HASHABILITY: list[pytest.param] = [  # type: ignore[valid-type]
     pytest.param(_open_inmemory, True, id="inmemory"),
     pytest.param(_open_tabix, False, id="tabix"),
     pytest.param(_open_vcf, False, id="vcf"),
+    pytest.param(_open_bigwig, True, id="bigwig"),
 ]
 
 
@@ -159,11 +166,13 @@ def test_every_record_backend_declares_whether_its_records_hash(
     ``yields_records`` is the claim this whole file exists to hold backends to,
     and it is the same discriminator ``GenomicScore.open`` routes on.  It is
     deliberately NOT read off the score line class each backend is paired with
-    below: a migrating backend whose payload is neither a raw tabular row nor a
-    VCF ``(variant, allele index)`` pair will arrive with a score line class of
-    its own (bigWig, #238, is expected to), and a check written against a list
-    of the score line classes known TODAY would wave exactly that backend
-    through.  Ask the table, and there is nothing to add to but _HASHABILITY.
+    below: a migrating backend can arrive with a score line class of its own
+    (VCF did, at :class:`VCFScoreLine`) or reuse an existing one whose
+    hashability differs from every backend already routed there (bigWig, #238,
+    reuses :class:`RecordScoreLine` but -- unlike tabix, the other backend
+    routed there -- yields hashable records), and a check written against the
+    score line classes rather than the tables would miss both.  Ask the table,
+    and there is nothing to add to but _HASHABILITY.
     """
     record_backends = set()
     for param in _BACKENDS:
