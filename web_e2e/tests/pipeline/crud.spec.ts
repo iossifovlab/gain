@@ -106,7 +106,11 @@ test.describe('Pipeline tests', () => {
 
       model.applyEdits([
         {
-          range: new monaco.Range(19, 1, 88, 1), // clear from line 19 col 1 to line 88 col 1
+          // Delete from line 18 (start of the 2nd annotator) to EOF,
+          // leaving only the first annotator (the MANE effect_annotator).
+          // Uses the model's live line count so it survives the public
+          // pipeline growing/shrinking below line 18.
+          range: new monaco.Range(18, 1, model.getLineCount(), model.getLineMaxColumn(model.getLineCount())),
           text: ''
         }
       ]);
