@@ -134,11 +134,15 @@ class LineBuffer:
       (:attr:`_max_width`) instead of stopping at the first record that fails
       to reach the position.
 
-    The two maxima are the only state beyond the deque, and both may only ever
-    *over*-estimate: an over-wide window costs a few extra comparisons in
-    :meth:`fetch`, which filters exactly, whereas an under-estimate would drop
-    records.  See :meth:`prune` for why ``_max_end`` nevertheless stays exact
-    where it matters.
+    The two maxima are the only state beyond the deque, and neither may ever
+    *under*-estimate -- that would drop records.  Over-estimating is harmless
+    in both, but by different routes, which is why they are worth keeping
+    apart: an over-wide ``_max_width`` only widens :meth:`find_index`'s scan,
+    and :meth:`fetch` filters it exactly; an over-high ``_max_end`` instead
+    lets :meth:`contains` admit a position the buffer cannot answer, and
+    :meth:`find_index` then finds no record to return -- whereupon the read
+    falls through to the file, which is a wasted look rather than a wrong
+    record.  See :meth:`prune` for why ``_max_end`` stays exact anyway.
 
     The VCF backend feeds this buffer too, with records of its own -- whose
     PAYLOAD is a ``(variant record, allele index)`` pair rather than a raw row.
@@ -182,9 +186,6 @@ class LineBuffer:
 
     def peek_first(self) -> Record:
         return self.deque[0]
-
-    def pop_first(self) -> Record:
-        return self.deque.popleft()
 
     def peek_last(self) -> Record:
         return self.deque[-1]
