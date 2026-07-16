@@ -69,28 +69,42 @@ All tests run with `PYTHONHASHSEED=0`.
 
 ### Linting and Type Checking
 
+Run these from `core/`, as CI does — the `core` image's
+WORKDIR is `/workspace/core`, and `gain` is `core/gain`.
+
 ```bash
 # Ruff linting (fast, primary linter)
-ruff check --fix .
+cd core && ruff check --fix .
 
 # Type checking (slow)
-mypy gain --exclude core/docs/ \
-    --exclude core/gain/docs/
+cd core && mypy --config-file ../mypy.ini gain
 
 # Pylint (CI runs this too — see below)
-pylint --rcfile=pylintrc gain
+cd core && pylint --rcfile=../pylintrc gain
 ```
 
 Config: `ruff.toml` (line-length: 80, target: py312),
-`mypy.ini`, `pylintrc`.
+`mypy.ini`, `pylintrc` — all at the **repo root**, hence
+the explicit `--config-file` / `--rcfile`. Ruff needs no
+flag: it searches upward and finds `ruff.toml` on its own.
+
+The cwd matters, and the two tools disagree about why:
+`mypy gain` reads `gain` as a *path*, so it fails from the
+root (`can't read file 'gain'`), while `pylint gain` reads
+it as an installed *module* and works from either. Passing
+`mypy.ini` explicitly is what makes the local run match CI
+— without it, mypy finds no config from `core/` (there is
+no `core/mypy.ini`) and silently falls back to defaults
+looser than the ones CI enforces.
 
 **CI runs three Python linters, not two.** The `Jenkinsfile`
 lint stage runs **ruff + mypy + pylint** on each package
 (plus eslint + stylelint for `web_ui`), and any finding from
 any of them marks the build **UNSTABLE**. Running only
 `ruff` + `mypy` locally is *not* enough to predict the lint
-stage — always run `pylint --rcfile=pylintrc gain` before
-committing too. A common pylint-only catch ruff/mypy miss:
+stage — always run `pylint --rcfile=../pylintrc gain` from
+`core/` before committing too. A common pylint-only catch
+ruff/mypy miss:
 `C0103` on a module-level `UPPER_CASE` constant that is
 *reassigned* (e.g. inside a `try`/`except`), which pylint then
 treats as a snake_case variable — assign such constants
