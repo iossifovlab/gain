@@ -51,14 +51,15 @@ ENV PATH=/opt/gpf/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     DJANGO_SETTINGS_MODULE=web_annotation.settings_daphne
 
-# GRR config files (env var GRR_DEFINITION_FILE selects which
-# one each compose file consumes): the two directory-backed
-# definitions for the on-host GRRs of the production deploys,
-# and the http one the Jenkins e2e stack uses against
-# https://grr.seqpipe.org with a persistent per-agent cache.
+# GRR config files (env var GRR_DEFINITION_FILE selects which one
+# each compose file consumes): grr-definition-dir.yaml is the prod
+# group (main GRR + grr_encode on CSHL's on-host GRR), and
+# grr-definition.yaml is the single main-GRR repo the Jenkins e2e
+# stack selects -- it now reads a node-local grr-sync directory tree
+# (mounted read-only at /grr), the same single-repo shape it used
+# pre-#271, instead of the interim http+cache GRR.
 COPY web_api/scripts/grr-definition.yaml \
-     web_api/scripts/grr-definition-dir.yaml \
-     web_api/scripts/grr-definition-http.yaml /
+     web_api/scripts/grr-definition-dir.yaml /
 
 EXPOSE 9001
 
