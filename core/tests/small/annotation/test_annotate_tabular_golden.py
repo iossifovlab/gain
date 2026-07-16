@@ -79,9 +79,9 @@ TABIX_DATA = """
 """
 
 # tabix allele score: the only resource here that reads reference and
-# alternative as TABLE COLUMNS through Line, rather than off VCFLine's
-# attributes -- so it is what pins ref_key/alt_key resolution and the
-# ref/alt carried on a tabix record.
+# alternative as configured TABLE COLUMNS, rather than off the structural
+# REF/ALT of a VCF variant -- so it is what pins ref_key/alt_key resolution
+# and the ref/alt carried on a tabix record.
 #
 # chr1:10 carries two rows differing only in `alternative`.  The input
 # asks for A>T, so a_score must be 0.9 and never 0.8; picking the wrong
@@ -105,11 +105,11 @@ BIGWIG_DATA = """
 # VCF: VCF_AF is Number=A, exercising the allele-indexed INFO path.
 #
 # VCF_STR is a plain string.  VCF_STR_MULTI is Number=. Type=String,
-# which ``VCFLine.get`` alone collapses to a '|'-joined string -- that
-# join lives in the VCF backend, not in the shared stringify(), and is
-# the sort of backend-local behaviour a record migration can silently
-# drop.  Each string field is absent from one record, so the
-# missing-value path is covered for both shapes.
+# which the VCF INFO lookup (``VCFScoreLine``) collapses to a '|'-joined
+# string -- that join lives in the VCF backend, not in the shared
+# stringify(), and is the sort of backend-local behaviour a record
+# migration can silently drop.  Each string field is absent from one
+# record, so the missing-value path is covered for both shapes.
 VCF_DATA = """
 ##fileformat=VCFv4.1
 ##INFO=<ID=VCF_FLOAT,Number=1,Type=Float,Description="a float">

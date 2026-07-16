@@ -1,8 +1,8 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613,too-many-lines
-import copy
+import gc
 import pathlib
 import textwrap
-from typing import cast
+from typing import Self, cast
 
 import pysam
 import pytest
@@ -13,17 +13,22 @@ from gain.genomic_resources.genomic_position_table import (
     build_genomic_position_table,
     table_tabix,
 )
-from gain.genomic_resources.genomic_position_table.line import VCFLine
 from gain.genomic_resources.genomic_position_table.record import (
     ALT,
     CHROM,
     PAYLOAD,
     POS_BEGIN,
     POS_END,
+    RECORD_SLOTS,
     REF,
+    sort_key,
 )
 from gain.genomic_resources.genomic_position_table.table import (
     GenomicPositionTable,
+)
+from gain.genomic_resources.genomic_position_table.table_vcf import (
+    ALLELE_INDEX,
+    VARIANT,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing import (
@@ -142,11 +147,11 @@ chr1   30   .  A   T,G,C   .    .     A=3;B=31;C=c31,c32,c33,c34;D=d31,d32,d33
 
 @pytest.fixture
 def vcf_res_repeated_alt(tmp_path: pathlib.Path) -> GenomicResource:
-    # A record whose two ALT alleles are *the same string*, with a per-allele
-    # (Number=A) INFO field that scores them differently.  The two VCFLines the
-    # table emits for it agree in all six record slots and differ only in their
-    # allele index -- so they are the case that tells whether the allele index
-    # takes part in a line's identity.
+    # A variant whose two ALT alleles are *the same string*, with a per-allele
+    # (Number=A) INFO field that scores them differently.  The two records the
+    # table emits for it agree in all five decoded slots and share one variant
+    # record -- so they are the case that shows why the payload has to carry the
+    # allele index: it is the only thing that says which allele a record is.
     setup_directories(
         tmp_path, {
             "genomic_resource.yaml": textwrap.dedent("""
@@ -170,11 +175,11 @@ chr1   5   .  A   T,T   .    .       A=1,2
 
 @pytest.fixture
 def vcf_res_same_locus(tmp_path: pathlib.Path) -> GenomicResource:
-    # Two *records* at one locus, with the same REF and the same (missing) ALT
-    # and different INFO -- so the two VCFLines the table emits agree in all
-    # five decoded slots and in their allele index, and differ only in their
-    # PAYLOAD, the one slot that cannot be ordered.  This is the case that
-    # tells whether a line can be ordered at all.
+    # Two *variant records* at one locus, with the same REF and the same
+    # (missing) ALT and different INFO -- so the two records the table emits
+    # agree in all five decoded slots and differ only in their PAYLOAD, the one
+    # slot that cannot be ordered.  This is the case that tells whether records
+    # can be sorted as bare tuples (they cannot -- use record.sort_key).
     setup_directories(
         tmp_path, {
             "genomic_resource.yaml": textwrap.dedent("""
@@ -791,6 +796,77 @@ def test_chrom_mapping_file_with_tabix(tmp_path: pathlib.Path) -> None:
             ["gosho", "pesho"]
         assert [line[CHROM] for line in tab.get_records_in_region("pesho")] == \
             ["pesho"]
+
+
+def test_an_empty_chrom_mapping_file_maps_nothing_and_so_drops_every_record(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A chrom_mapping file with only its header maps NO contig -- so no record.
+
+    This is the degenerate mapping: a well-formed ``chrom_mapping.filename``
+    whose body is empty.  It maps nothing, and a table configured with it
+    therefore *has* no chromosomes -- ``get_chromosomes()`` is empty, because
+    the mapping file is the source of the table's contigs.
+
+    A record whose file contig is absent from a configured map is dropped, and
+    with an empty map that is every record.  The alternative -- treating the
+    empty map as "no mapping at all" and passing the file contigs through --
+    would make the table yield records on contigs it says it does not have, and
+    ``get_records_in_region`` would then raise for the very contig
+    ``get_all_records`` had just handed back.
+
+    Every record backend answers this the same way: the map's *presence* is
+    what selects the mapping path, not its emptiness.
+    """
+    mapping = convert_to_tab_separated("""
+        chrom   file_chrom
+    """)
+
+    inmemory_res = build_inmemory_test_resource({
+        "genomic_resource.yaml": """
+            table:
+                filename: data.mem
+                chrom_mapping:
+                    filename: chrom_map.txt
+            scores:
+            - id: c2
+              name: c2
+              type: float""",
+        "data.mem": convert_to_tab_separated("""
+            chrom    pos_begin pos_end  c2
+            chr1     10        10       3.14"""),
+        "chrom_map.txt": mapping,
+    })
+
+    setup_directories(
+        tmp_path, {
+            "genomic_resource.yaml": textwrap.dedent("""
+                table:
+                    filename: data.vcf.gz
+                    format: vcf_info
+                    chrom_mapping:
+                        filename: chrom_map.txt
+            """),
+            "chrom_map.txt": mapping,
+        })
+    setup_vcf(
+        tmp_path / "data.vcf.gz",
+        textwrap.dedent("""
+##fileformat=VCFv4.1
+##INFO=<ID=A,Number=1,Type=Integer,Description="Score A">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   10  .  A   T   .    .      A=1
+    """),
+    )
+    vcf_res = build_filesystem_test_resource(tmp_path)
+
+    for res in (inmemory_res, vcf_res):
+        assert res.config is not None
+        with build_genomic_position_table(res, res.config["table"]) as tab:
+            assert tab.get_chromosomes() == []
+            assert list(tab.get_all_records()) == []
+            with pytest.raises(ValueError, match="chr1"):
+                list(tab.get_records_in_region("chr1"))
 
 
 def test_invalid_chrom_mapping_file_with_tabix(tmp_path: pathlib.Path) -> None:
@@ -1650,6 +1726,44 @@ def test_vcf_autodetect_format(
         assert len(tuple(tab.get_all_records())) == 1
 
 
+def test_vcf_yields_records_paired_with_an_allele_index(
+    vcf_res: GenomicResource,
+) -> None:
+    # The VCF backend is on the record contract: it yields the same six-slot
+    # plain tuple every other record backend does.  What is VCF-specific is the
+    # PAYLOAD: a VCF record explodes one variant record into one record per ALT
+    # allele, so the payload is the variant record **paired with the allele
+    # index** that says which of its alleles this record stands for.  The header
+    # metadata the INFO lookup needs is reachable from the variant record
+    # itself (``variant.header.info``), so the payload carries nothing else.
+    assert vcf_res.config is not None
+
+    with build_genomic_position_table(
+        vcf_res, vcf_res.config["tabix_table"],
+    ) as tab:
+        assert isinstance(tab, VCFGenomicPositionTable)
+        assert tab.yields_records is True
+
+        record = next(iter(tab.get_all_records()))
+
+        # A record is a PLAIN tuple -- not a subclass with attributes bolted on.
+        assert type(record) is tuple
+        assert len(record) == RECORD_SLOTS
+
+        assert record[CHROM] == "chr1"
+        assert record[POS_BEGIN] == 5
+        assert record[POS_END] == 5
+        assert record[REF] == "A"
+        assert record[ALT] == "T"
+
+        variant, allele_index = record[PAYLOAD]
+        assert isinstance(variant, pysam.VariantRecord)
+        assert allele_index == 0
+        # header metadata: derived from the record, not carried beside it
+        assert isinstance(variant.header.info, pysam.VariantHeaderMetadata)
+        assert isinstance(variant.info, pysam.VariantRecordInfo)
+
+
 def test_vcf_get_all_records(vcf_res: GenomicResource) -> None:
     assert vcf_res.config is not None
 
@@ -1661,258 +1775,86 @@ def test_vcf_get_all_records(vcf_res: GenomicResource) -> None:
         results = tuple(tab.get_all_records())
         assert len(results) == 3
 
-        res0 = results[0]
-        assert res0 is not None
-
-        assert res0.chrom == "chr1"
-        assert res0.pos_begin == 5
-        assert res0.pos_end == 5
-
-        assert res0.ref == "A"
-        assert res0.alt == "T"
-        assert isinstance(res0, VCFLine)
-        assert isinstance(res0.info, pysam.VariantRecordInfo)
-
-        res1 = results[1]
-        assert res1 is not None
-        assert res1.chrom == "chr1"
-        assert res1.pos_begin == 15
-        assert res1.pos_end == 15
-
-        res2 = results[2]
-        assert res2 is not None
-        assert res2.chrom == "chr1"
-        assert res2.pos_begin == 30
-        assert res2.pos_end == 30
+        assert [
+            (r[CHROM], r[POS_BEGIN], r[POS_END], r[REF], r[ALT])
+            for r in results
+        ] == [
+            ("chr1", 5, 5, "A", "T"),
+            ("chr1", 15, 15, "A", "T"),
+            ("chr1", 30, 30, "A", "T"),
+        ]
 
 
-def test_vcf_line_is_hashable(vcf_res: GenomicResource) -> None:
-    # A VCFLine is a public export of the package.  Its PAYLOAD slot holds a
-    # pysam.VariantRecord, which is unhashable -- so the inherited
-    # tuple.__hash__ cannot hash a VCFLine, and the class has to hash itself
-    # over its five decoded slots instead.  Without that, a set(lines) or a
-    # {line: ...} of the kind the adapter era supported raises TypeError.
-    assert vcf_res.config is not None
-
-    with build_genomic_position_table(
-        vcf_res, vcf_res.config["tabix_table"],
-    ) as tab:
-        lines = cast(list[VCFLine], list(tab.get_all_records()))
-
-        assert len({hash(line) for line in lines}) == 3
-        assert len(set(lines)) == 3
-        assert {line: line.pos_begin for line in lines}[lines[0]] == 5
-
-
-def test_vcf_line_equality_is_structural_and_agrees_with_its_hash(
-    vcf_res: GenomicResource,
-) -> None:
-    # A VCFLine is record-shaped, and a record is a value: two lines compare
-    # equal when their six slots do -- which for a VCF line means the same
-    # variant record (pysam.VariantRecord compares structurally too), the same
-    # allele and the same mapped contig.  The hash is taken over the five
-    # decoded slots and so agrees with that equality: equal lines hash equal,
-    # which is what makes a dict lookup by an equal-but-not-identical line
-    # work.
-    assert vcf_res.config is not None
-
-    def read_lines() -> list[VCFLine]:
-        assert vcf_res.config is not None
-        with build_genomic_position_table(
-            vcf_res, vcf_res.config["tabix_table"],
-        ) as tab:
-            return cast(list[VCFLine], list(tab.get_all_records()))
-
-    first, second = read_lines(), read_lines()
-
-    assert first[0] is not second[0]
-    assert first[0] == second[0]
-    assert hash(first[0]) == hash(second[0])
-    assert {first[0]: "value"}[second[0]] == "value"
-
-    assert first[0] != first[1]
-    assert len({*first, *second}) == 3
-
-
-def test_vcf_lines_of_the_same_record_differ_by_allele_index(
+def test_vcf_records_of_one_variant_differ_by_their_allele_index(
     vcf_res_repeated_alt: GenomicResource,
 ) -> None:
-    # An allele -- not a variant record -- is what a VCF line stands for, and
-    # the allele index is the only thing that says which one.  Usually the ALT
-    # slot proxies for it, but when a record repeats an ALT (``A T,T``) the two
-    # lines agree in every record slot and differ only in their allele index --
-    # and they carry *different* per-allele (Number=A) scores.  So the allele
-    # index has to take part in equality and in the hash, or the two alleles
-    # collapse: one of them silently disappears from a set, and a dict keyed on
-    # the first answers lookups made with the second.
-    assert vcf_res_repeated_alt.config is not None
-
-    def read_lines() -> list[VCFLine]:
-        assert vcf_res_repeated_alt.config is not None
-        with build_genomic_position_table(
-            vcf_res_repeated_alt, vcf_res_repeated_alt.config["tabix_table"],
-        ) as tab:
-            return cast(list[VCFLine], list(tab.get_all_records()))
-
-    lines = read_lines()
-
-    assert len(lines) == 2
-    first, second = lines
-
-    # The two lines really are the pathological case: same record slots, same
-    # variant record, different allele -- and different scores.
-    assert tuple(first) == tuple(second)
-    assert first.allele_index == 0
-    assert second.allele_index == 1
-    assert first.get("A") == 1
-    assert second.get("A") == 2
-
-    assert first != second
-    assert second != first
-    assert len({first, second}) == 2
-    assert {first: "value"}.get(second) is None
-
-    # And the hash/equality contract still holds where the lines *are* equal:
-    # equal lines hash equal.  The twin comes from a *second read* of the
-    # table, so it carries a different pysam.VariantRecord object than
-    # ``first`` does -- which is what makes this exercise the structural
-    # comparison of the payload rather than the identity fast path a
-    # ``copy.copy`` (which reuses the very same record object) would take.
-    twin = read_lines()[0]
-    assert twin is not first
-    assert twin[PAYLOAD] is not first[PAYLOAD]
-
-    assert twin == first
-    assert hash(twin) == hash(first)
-    assert {first: "value"}[twin] == "value"
-
-    # ...and the twin is still not the *other* allele of the same record.
-    assert twin != second
-    assert len({first, second, twin}) == 2
-
-    clone = copy.copy(first)
-    assert clone == first
-    assert hash(clone) == hash(first)
-    assert {first: "value"}[clone] == "value"
-
-
-def test_vcf_lines_of_the_same_record_are_not_orderable(
-    vcf_res_repeated_alt: GenomicResource,
-) -> None:
-    # Ordering a VCF line is refused, and refused *loudly*.  The two lines of a
-    # repeated ALT are the case that shows why the inherited tuple ordering had
-    # to go: they agree in all six slots and differ only in their allele index,
-    # so tuple's slot-wise ``<=`` answered True in both directions while
-    # ``__eq__`` said they were different lines -- ``a <= b`` and ``b <= a`` and
-    # ``a != b``, all at once.  A comparison that cannot be answered
-    # consistently is not answered at all.
+    # An allele -- not a variant record -- is what a VCF record stands for, and
+    # the allele index in its payload is the only thing that always says which
+    # one.  Usually the ALT slot proxies for it, but when a variant repeats an
+    # ALT ("A -> T,T") the two records agree in all five decoded slots and share
+    # the very same variant record: the allele index is then the ONLY thing that
+    # tells them apart -- and they carry different per-allele (Number=A) scores.
     assert vcf_res_repeated_alt.config is not None
 
     with build_genomic_position_table(
         vcf_res_repeated_alt, vcf_res_repeated_alt.config["tabix_table"],
     ) as tab:
-        first, second = cast(list[VCFLine], list(tab.get_all_records()))
+        first, second = tuple(tab.get_all_records())
 
-    for left, right in ((first, second), (second, first)):
-        with pytest.raises(TypeError, match="VCFLine is not orderable"):
-            _ = left < right
-        with pytest.raises(TypeError, match="VCFLine is not orderable"):
-            _ = left <= right
-        with pytest.raises(TypeError, match="VCFLine is not orderable"):
-            _ = left > right
-        with pytest.raises(TypeError, match="VCFLine is not orderable"):
-            _ = left >= right
-
-    # Equality is untouched: the two lines are still different lines, and a
-    # line is still equal to itself.
-    assert first != second
-    assert first == first
-    assert len({first, second}) == 2
+        # Same variant record object, same decoded slots...
+        assert first[:PAYLOAD] == second[:PAYLOAD]
+        assert first[PAYLOAD][VARIANT] is second[PAYLOAD][VARIANT]
+        # ...distinguished by the allele index alone.
+        assert first[PAYLOAD][ALLELE_INDEX] == 0
+        assert second[PAYLOAD][ALLELE_INDEX] == 1
 
 
-def test_sorting_vcf_lines_raises_a_clear_error(
+def test_vcf_records_are_ordered_through_sort_key(
     vcf_res_same_locus: GenomicResource,
 ) -> None:
-    # ``sorted``/``min``/``max`` over VCF lines fail -- and they fail with an
-    # error that names the class and says why, rather than with the
-    # "'<' not supported between instances of 'pysam.libcbcf.VariantRecord'"
-    # that the inherited tuple ordering produced once two lines tied on the
-    # five decoded slots and it walked into the PAYLOAD slot.  Two records at
-    # one locus with different INFO are exactly that tie.
+    # VCF records are records, so the record contract's ordering rule applies to
+    # them unchanged: sort them through ``record.sort_key``, never as bare
+    # tuples.  Two *variant records* at one locus with the same REF and the same
+    # (missing) ALT tie on all five decoded slots, so a bare sort walks into the
+    # PAYLOAD -- where a pysam.VariantRecord has no order at all.  This is the
+    # data-dependent trap sort_key exists for, and the VCF payload is one more
+    # unorderable thing in that slot.
     assert vcf_res_same_locus.config is not None
 
     with build_genomic_position_table(
         vcf_res_same_locus, vcf_res_same_locus.config["tabix_table"],
     ) as tab:
-        lines = cast(list[VCFLine], list(tab.get_all_records()))
+        records = list(tab.get_all_records())
 
-    assert len(lines) == 3
+    assert len(records) == 3
 
-    with pytest.raises(TypeError, match="VCFLine is not orderable"):
-        sorted(lines)
-    with pytest.raises(TypeError, match="VCFLine is not orderable"):
-        min(lines)
-    with pytest.raises(TypeError, match="VCFLine is not orderable"):
-        max(lines)
+    with pytest.raises((TypeError, NotImplementedError)):
+        sorted(records)
 
-    # An explicit key is the supported way to order lines, and it still works.
+    # sort_key projects the decoded slots and stops at the payload -- the one
+    # supported way to order any record, VCF ones included.
     assert [
-        line.pos_begin
-        for line in sorted(lines, key=lambda line: line.pos_begin)
+        record[POS_BEGIN] for record in sorted(records, key=sort_key)
     ] == [5, 5, 9]
 
 
-def test_vcf_line_can_be_copied(vcf_res: GenomicResource) -> None:
-    # copy.copy() of a tuple subclass reconstructs it through __new__ with the
-    # arguments __getnewargs__ hands back.  The inherited tuple.__getnewargs__
-    # would hand back the six-slot record itself as ``raw_line``, so a VCFLine
-    # has to spell out its own construction arguments; otherwise copy.copy()
-    # dies with a TypeError about a missing ``allele_index``.
-    assert vcf_res.config is not None
-
-    with build_genomic_position_table(
-        vcf_res, vcf_res.config["tabix_table"],
-    ) as tab:
-        line = cast(VCFLine, next(iter(tab.get_all_records())))
-
-        clone = copy.copy(line)
-
-        assert clone is not line
-        assert isinstance(clone, VCFLine)
-        assert tuple(clone) == tuple(line)
-        assert clone == line
-        assert hash(clone) == hash(line)
-
-        assert clone.chrom == line.chrom
-        assert clone.fchrom == line.fchrom
-        assert clone.pos_begin == line.pos_begin
-        assert clone.pos_end == line.pos_end
-        assert clone.ref == line.ref
-        assert clone.alt == line.alt
-        assert clone.allele_index == line.allele_index
-        assert clone.get("A") == line.get("A")
-
-
-def test_vcf_line_copy_preserves_the_mapped_contig(
+def test_vcf_record_carries_the_mapped_contig(
     vcf_res_chrom_mapping: GenomicResource,
 ) -> None:
-    # The mapped (reference) contig is a __new__ argument, not an attribute
-    # written back afterwards -- so a copy has to carry it, or the clone falls
-    # back to the file contig.
+    # The mapped (reference) contig is resolved by the parser and laid down in
+    # the record's CHROM slot -- the same slot, meaning the same thing, as in
+    # every other backend's records.  That is what lets the inherited buffer and
+    # read cascade window a VCF record without knowing it is one.
     assert vcf_res_chrom_mapping.config is not None
 
     with build_genomic_position_table(
         vcf_res_chrom_mapping, vcf_res_chrom_mapping.config["tabix_table"],
     ) as tab:
-        line = cast(VCFLine, next(iter(tab.get_all_records())))
-        assert line.chrom == "1"
-        assert line.fchrom == "chr1"
+        record = next(iter(tab.get_all_records()))
 
-        clone = copy.copy(line)
-
-        assert clone[CHROM] == "1"
-        assert clone.chrom == "1"
-        assert clone.fchrom == "chr1"
+        assert record[CHROM] == "1"
+        # the file contig is still reachable, from the payload's variant record
+        assert record[PAYLOAD][VARIANT].contig == "chr1"
 
 
 def test_vcf_header_load_silences_htslib_index_probe(
@@ -1964,6 +1906,161 @@ chr1   5   .  A   T   .    .      A=1
     assert mocker.call(0) in spy.call_args_list
 
 
+class _CloseSpyingVariantFile:
+    """Stand-in for a ``pysam.VariantFile`` whose ``close`` can be spied on.
+
+    ``pysam.VariantFile`` is a Cython extension type and an *immutable* one:
+    ``mocker.spy(pysam.VariantFile, "close")`` dies with ``TypeError: cannot
+    set 'close' attribute of immutable type``.  So the spy goes on a
+    pure-Python delegate, injected at the single seam the table opens the
+    sidecar through (``GenomicResource.open_vcf_file``).
+
+    It forwards everything to the real file, including a ``__exit__`` that
+    closes -- which is precisely what ``pysam.HTSFile.__exit__`` does.
+    """
+
+    def __init__(self, wrapped: pysam.VariantFile) -> None:
+        self.wrapped = wrapped
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.wrapped, name)
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_exc_info: object) -> bool:
+        self.close()
+        return False
+
+    def close(self) -> None:
+        self.wrapped.close()
+
+
+def test_vcf_header_load_closes_the_header_file(
+    vcf_res: GenomicResource,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """``_load_vcf_header`` must *close* the sidecar it opens.
+
+    The method reads ``header.info`` out of the ``*.header.vcf.gz`` file and
+    hands the metadata on; the file itself has no further use.  It shuts it
+    explicitly (``with vcf_file:``) rather than dropping the last reference and
+    leaving the descriptor to refcount finalisation -- the deliberate choice
+    this test exists to pin.
+
+    Nothing else can pin it.  The close is invisible to every functional test:
+    the metadata survives it (see the next test), so a version that retained
+    the file forever would return byte-identical results and pass the whole
+    suite.  Hence the spy.
+    """
+    assert vcf_res.config is not None
+    assert vcf_res.config["tabix_table"]["filename"] == "data.vcf.gz"
+    # The sidecar `_load_vcf_header` derives from that table filename, matched
+    # here EXACTLY: a substring test (`".header." in filename`) would also wrap
+    # a main table that happened to carry `.header.` in its own name, and spy
+    # on the wrong file.  If the derivation ever changes, no file is wrapped
+    # and the `len(header_files) == 1` assertion below fails -- loudly.
+    header_filename = "data.header.vcf.gz"
+
+    header_files: list[_CloseSpyingVariantFile] = []
+    real_open_vcf_file = GenomicResource.open_vcf_file
+
+    def open_vcf_file(
+        resource: GenomicResource,
+        filename: str,
+        index_filename: str | None = None,
+    ) -> object:
+        vcf_file = real_open_vcf_file(resource, filename, index_filename)
+        if filename != header_filename:
+            return vcf_file
+        # the sidecar is handed over *open* -- so the `is_open` check at the
+        # bottom is about the close, and not vacuously true
+        assert bool(vcf_file.is_open)
+        spied = _CloseSpyingVariantFile(vcf_file)
+        header_files.append(spied)
+        return spied
+
+    mocker.patch.object(
+        GenomicResource, "open_vcf_file",
+        autospec=True, side_effect=open_vcf_file)
+    close_spy = mocker.spy(_CloseSpyingVariantFile, "close")
+
+    table = build_genomic_position_table(
+        vcf_res, vcf_res.config["tabix_table"])
+    assert isinstance(table, VCFGenomicPositionTable)
+    # the header metadata was read, so the file really was opened and used
+    assert sorted(table.header.keys()) == ["A", "B", "C", "D"]
+
+    # exactly one header sidecar was opened, ...
+    assert len(header_files) == 1
+    # ... `_load_vcf_header` closed it before handing the metadata back, ...
+    close_spy.assert_called_once_with(header_files[0])
+    # ... and it is shut for real -- not merely asked to shut.  (pysam's
+    # `is_open` is a `CallableValue`, not a bool; read its truth value.)
+    assert bool(header_files[0].wrapped.is_open) is False
+
+
+def test_vcf_header_metadata_outlives_the_closed_header_file(
+    vcf_res: GenomicResource,
+) -> None:
+    """``table.header`` must stay readable once the header file is closed.
+
+    ``header.info`` is a ``pysam.VariantHeaderMetadata`` -- a *view*, not a
+    copy.  Closing the file it came from would be a use-after-free if the view
+    borrowed the underlying ``bcf_hdr_t`` from the ``htsFile``.  It does not:
+    the metadata holds a strong reference to its ``pysam.VariantHeader``, which
+    owns the header struct and frees it only on its own collection.  That is
+    what licenses ``_load_vcf_header`` to close the file it opens, and it is
+    load-bearing well beyond ``__init__``: ``GenomicScore._build_scoredefs``
+    autogenerates one score def per INFO field from this metadata, long after
+    the table is constructed.
+
+    So read *every* field the score defs are built from, with the file closed
+    and the heap churned underneath the view.
+    """
+    assert vcf_res.config is not None
+
+    expected = [
+        ("A", 1, "Integer", "Score A"),
+        ("B", 1, "Integer", "Score B"),
+        ("C", ".", "String", "Score C"),
+        ("D", ".", "String", "Score D"),
+    ]
+
+    # `_load_vcf_header` closes the sidecar before it returns (`with
+    # vcf_file:`), so by construction the file behind this metadata is already
+    # shut -- there is no live handle to it anywhere in this test.
+    table = build_genomic_position_table(
+        vcf_res, vcf_res.config["tabix_table"])
+    assert isinstance(table, VCFGenomicPositionTable)
+
+    # The view onto the closed file's header still answers, correctly.
+    def read_everything() -> list[tuple]:
+        meta = table.header
+        assert len(meta) == len(expected)
+        assert sorted(meta.keys()) == [key for key, *_ in expected]
+        assert "A" in meta
+        assert meta.get("B").number == 1
+        return sorted(
+            (key, value.number, value.type, value.description)
+            for key, value in meta.items()
+        )
+
+    assert read_everything() == expected
+
+    # A dangling view often reads fine once and rots later, so re-read it after
+    # forcing collection and churning the allocator that would reuse a freed
+    # bcf_hdr_t.
+    gc.collect()
+    churn = [bytes(4096) for _ in range(5000)]
+    for _ in range(20):
+        build_genomic_position_table(vcf_res, vcf_res.config["tabix_table"])
+    del churn
+    gc.collect()
+
+    assert read_everything() == expected
+
+
 def test_vcf_get_records_in_region(vcf_res: GenomicResource) -> None:
     assert vcf_res.config is not None
 
@@ -1974,40 +2071,33 @@ def test_vcf_get_records_in_region(vcf_res: GenomicResource) -> None:
         assert not tuple(tab.get_records_in_region("chr1", 6, 14))
         assert not tuple(tab.get_records_in_region("chr1", 31, 42))
 
-        results = tuple(tab.get_records_in_region("chr1", 1, 6))
-        assert len(results) == 1
-        assert results[0].chrom == "chr1"
-        assert results[0].pos_begin == 5
-        assert results[0].pos_end == 5
-        results = tuple(tab.get_records_in_region("chr1", 14, 31))
-        assert len(results) == 2
-        assert results[0].chrom == "chr1"
-        assert results[0].pos_begin == 15
-        assert results[0].pos_end == 15
-        assert results[1].chrom == "chr1"
-        assert results[1].pos_begin == 30
-        assert results[1].pos_end == 30
-        results = tuple(tab.get_records_in_region("chr1", 4, 30))
-        assert len(results) == 3
-        assert results[0].chrom == "chr1"
-        assert results[0].pos_begin == 5
-        assert results[0].pos_end == 5
-        assert results[1].chrom == "chr1"
-        assert results[1].pos_begin == 15
-        assert results[1].pos_end == 15
-        assert results[2].chrom == "chr1"
-        assert results[2].pos_begin == 30
-        assert results[2].pos_end == 30
+        def regions(*args: int) -> list[tuple]:
+            return [
+                (r[CHROM], r[POS_BEGIN], r[POS_END])
+                for r in tab.get_records_in_region("chr1", *args)
+            ]
+
+        assert regions(1, 6) == [("chr1", 5, 5)]
+        assert regions(14, 31) == [("chr1", 15, 15), ("chr1", 30, 30)]
+        assert regions(4, 30) == [
+            ("chr1", 5, 5), ("chr1", 15, 15), ("chr1", 30, 30)]
 
 
-def test_vcf_get_info_fields(vcf_res: GenomicResource) -> None:
+def test_vcf_record_payload_reaches_the_info_and_its_metadata(
+    vcf_res: GenomicResource,
+) -> None:
+    # Everything the INFO lookup needs is reachable from the record: the INFO
+    # itself off the payload's variant record, and the metadata that types it
+    # off that same variant's header.  Nothing is carried beside the record --
+    # which is what lets the score layer keep ONE VCF score line class instead
+    # of an object per line.  (The lookup itself lives in VCFScoreLine; this
+    # only pins that a record is enough to perform it.)
     assert vcf_res.config is not None
 
     with build_genomic_position_table(
         vcf_res, vcf_res.config["tabix_table"],
     ) as tab:
-        results = tuple(
-            cast(VCFLine, line) for line in tab.get_all_records())
+        results = tuple(tab.get_all_records())
         assert len(results) == 3
 
         expected_all = [
@@ -2015,11 +2105,13 @@ def test_vcf_get_info_fields(vcf_res: GenomicResource) -> None:
             {"A": 2, "B": 21, "C": ("c21",), "D": ("d21", "d22")},
             {"A": 3, "B": 31, "C": ("c21",), "D": ("d31", "d32")},
         ]
-        for expected, result in zip(expected_all, results, strict=True):
+        for expected, record in zip(expected_all, results, strict=True):
+            variant = record[PAYLOAD][VARIANT]
             for score in "A", "B", "C", "D":
-                assert result.info is not None
-                assert result.info.get(score) == \
+                assert variant.info.get(score) == \
                     expected[score]  # type: ignore
+                # the header metadata, derived from the record itself
+                assert variant.header.info.get(score).number is not None
 
 
 def test_vcf_jump_ahead_optimization_use_sequential(
@@ -2101,7 +2193,7 @@ def test_vcf_multiallelic(vcf_res_multiallelic: GenomicResource) -> None:
         assert isinstance(tab, VCFGenomicPositionTable)
 
         results = [
-            (r.chrom, r.pos_begin, r.pos_end)
+            (r[CHROM], r[POS_BEGIN], r[POS_END])
             for r in tab.get_all_records()
         ]
         assert results == [
@@ -2126,7 +2218,7 @@ def test_vcf_multiallelic_region(
         assert isinstance(tab, VCFGenomicPositionTable)
 
         results = [
-            (r.chrom, r.pos_begin, r.pos_end)
+            (r[CHROM], r[POS_BEGIN], r[POS_END])
             for r in tab.get_records_in_region("chr1", 14, 15)
         ]
         assert results == [
@@ -2135,11 +2227,14 @@ def test_vcf_multiallelic_region(
         ]
 
 
-def test_vcf_multiallelic_info_fields(
+def test_vcf_multiallelic_records_carry_their_allele_index(
         vcf_res_multiallelic: GenomicResource) -> None:
-    """Test accessing an INFO field for multiallelic variants.
+    """One record per ALT allele, each carrying the allele it stands for.
 
-    Should return the correct value for the given allele.
+    The allele index is what the INFO lookup selects a per-allele (Number=A) or
+    per-allele-plus-reference (Number=R) value with -- see VCFScoreLine, and
+    test_genomic_scores.py, which pins the values those numbers resolve to.
+    A variant with no ALT ('.') yields ONE record, with a null allele index.
     """
     assert vcf_res_multiallelic.config is not None
     with build_genomic_position_table(
@@ -2148,31 +2243,21 @@ def test_vcf_multiallelic_info_fields(
     ) as tab:
         assert isinstance(tab, VCFGenomicPositionTable)
 
-        results: list[tuple] = []
-        for line in tab.get_all_records():
-            assert line is not None
-            assert isinstance(line, VCFLine)
+        results = [
+            (r[CHROM], r[POS_BEGIN], r[POS_END], r[REF], r[ALT],
+             r[PAYLOAD][ALLELE_INDEX])
+            for r in tab.get_all_records()
+        ]
 
-            results.append(
-                (line.chrom,
-                 line.pos_begin,
-                 line.pos_end,
-                 line.allele_index,
-                 line.get("A"),
-                 line.get("B"),
-                 line.get("C"),
-                 line.get("D")),
-            )
-
-        # chrom start stop allele_index A B C D
+        # chrom start stop ref alt allele_index
         assert results == [
-            ("chr1", 2, 2, None, 0, (1, 2, 3), "c01", None),
-            ("chr1", 5, 5, 0, 1, (11, 12, 13), "c12", "d11"),
-            ("chr1", 15, 15, 0, 2, (21, 22), "c22", "d21"),
-            ("chr1", 15, 15, 1, 2, (21, 22), "c23", "d22"),
-            ("chr1", 30, 30, 0, 3, (31,), "c32", "d31"),
-            ("chr1", 30, 30, 1, 3, (31,), "c33", "d32"),
-            ("chr1", 30, 30, 2, 3, (31,), "c34", "d33"),
+            ("chr1", 2, 2, "A", None, None),   # no ALT -> null allele index
+            ("chr1", 5, 5, "A", "T", 0),
+            ("chr1", 15, 15, "A", "T", 0),
+            ("chr1", 15, 15, "A", "G", 1),
+            ("chr1", 30, 30, "A", "T", 0),
+            ("chr1", 30, 30, "A", "G", 1),
+            ("chr1", 30, 30, "A", "C", 2),
         ]
 
 
@@ -2342,6 +2427,10 @@ def test_get_ref_alt_by_index_on_no_header(tmp_path: pathlib.Path) -> None:
 
 
 def test_vcf_get_missing_alt(vcf_res_multiallelic: GenomicResource) -> None:
+    # A variant whose ALT is absent ('.') stands for the reference allele: it
+    # explodes into exactly ONE record, whose ALT slot is null and whose payload
+    # carries a null allele index (which is how VCFScoreLine knows to read a
+    # Number=R field at its reference offset).
     assert vcf_res_multiallelic.config is not None
 
     with build_genomic_position_table(
@@ -2349,11 +2438,12 @@ def test_vcf_get_missing_alt(vcf_res_multiallelic: GenomicResource) -> None:
     ) as tab:
         assert isinstance(tab, VCFGenomicPositionTable)
 
-        no_alt_line = next(tab.get_all_records())
-        assert no_alt_line is not None
+        no_alt_record = next(tab.get_all_records())
+        assert no_alt_record is not None
 
-        assert no_alt_line.ref == "A"
-        assert no_alt_line.alt is None
+        assert no_alt_record[REF] == "A"
+        assert no_alt_record[ALT] is None
+        assert no_alt_record[PAYLOAD][ALLELE_INDEX] is None
 
 
 def test_overlapping_nonattribute_columns_config(

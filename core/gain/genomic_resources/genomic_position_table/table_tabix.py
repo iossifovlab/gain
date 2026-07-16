@@ -57,8 +57,8 @@ class TabixGenomicPositionTable(GenomicPositionTable):
     """
 
     # This backend yields records rather than line adapters.  The VCF backend
-    # subclasses this one and still yields VCFLine adapters, so it resets the
-    # flag to False -- see VCFGenomicPositionTable (#237 migrates it).
+    # subclasses this one and yields records too (with a payload of its own),
+    # so it inherits the claim as-is -- see VCFGenomicPositionTable.
     yields_records: ClassVar[bool] = True
 
     BUFFER_MAXSIZE: int = 20_000
@@ -87,8 +87,9 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         self.zero_based = self.definition.get("zero_based", False)
 
         # Built in open(), where the column keys and the chromosome map are
-        # finally known.  The VCF subclass builds its lines itself and leaves
-        # this None.
+        # finally known.  The VCF subclass leaves this None: its records are not
+        # parsed from a tabular row, so it builds a parser of its own (whose
+        # signature takes an allele index as well) and leaves this one unused.
         self.parser: TabularParser | None = None
 
     def _load_header(self) -> tuple[str, ...]:
@@ -276,19 +277,19 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         """Yield the records overlapping the region.
 
         **The PAYLOAD slot is backend-dependent, and the static type does not
-        say so.**  This method's ``Record`` (``tuple[Any, ...]``) is inherited
-        by :class:`VCFGenomicPositionTable`, which yields ``VCFLine``s -- also
-        record-shaped tuples, but whose PAYLOAD is a ``pysam.VariantRecord``,
-        not a raw tabular row.  A ``VCFLine`` *is* a ``tuple[Any, ...]``, so
-        the type checker cannot tell the two apart; the discriminator is the
-        ``yields_records`` ClassVar, which the VCF subclass resets to False.
+        say so.**  This method is inherited by
+        :class:`VCFGenomicPositionTable`, whose records carry a ``(variant
+        record, allele index)`` pair in the slot where a tabix record carries
+        the raw tabular row.  Both are ``tuple[Any, ...]``, so the type checker
+        cannot tell them apart.
 
         So: narrowing a table to this class with ``isinstance`` and then
-        indexing ``record[PAYLOAD][i]`` for a column is **only** valid once you
-        know the table is not a VCF one.  The five decoded slots
-        (CHROM ... ALT) are safe either way -- they mean the same thing in both
-        backends.  #237 migrates the VCF backend to real records and retires
-        the split.
+        indexing ``record[PAYLOAD][i]`` for a *column* is only valid once you
+        know the table is not a VCF one -- which is a question about the table,
+        and the score layer asks it exactly once, when it picks the score line
+        class (``GenomicScore.open``).  The five decoded slots (CHROM ... ALT)
+        are safe either way: they mean the same thing in every backend, which is
+        what lets the buffer and the read cascade below treat all records alike.
         """
         self.stats["calls"] += 1
 

@@ -25,6 +25,22 @@ reference** -- it is deliberately neither copied nor frozen, because that is
 what keeps it lazy.  A mutable raw row therefore stays mutable through the
 record's payload slot.  (Both halves are pinned in test_record_parser.py.)
 
+**A record's hashability is its PAYLOAD's -- do not assume a record can go in
+a set or key a dict.**  A record is a plain tuple, so ``hash(record)`` walks
+the tuple, straight into the payload; whether that succeeds is the backend's
+answer, not the contract's, and today only ONE of the three record backends
+says yes.  The in-memory backend's payload is a ``tuple[str, ...]`` and hashes;
+the tabix backend's is a ``pysam.TupleProxy`` and the VCF backend's is a
+``(pysam.VariantRecord, allele index)`` pair, and *both* of those pysam types
+define ``__eq__`` without ``__hash__``, so hashing such a record raises
+``TypeError: unhashable type``.  The contract deliberately does not promise
+hashability: guaranteeing it would mean wrapping every payload in a hashable
+per-line object, which is the per-line cost records exist to remove.  The five
+decoded slots always hash, so the portable key of a record is
+``sort_key(record)`` -- ``{sort_key(record): ...}``, never ``{record: ...}``.
+(Each backend's answer is declared and pinned in
+test_backend_record_contract.py, so a new backend must state its own.)
+
 **Records are not orderable -- always sort them through** :func:`sort_key`.
 Because the payload sits *inside* the tuple, a plain ``sorted(records)``
 compares payloads whenever two records tie on all five decoded slots, and the

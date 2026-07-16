@@ -11,6 +11,7 @@ from functools import lru_cache
 from threading import Lock
 from types import TracebackType
 from typing import (
+    TYPE_CHECKING,
     Any,
     cast,
 )
@@ -20,7 +21,6 @@ from gain import logging
 from gain.genomic_resources.genomic_position_table import (
     Line,
     VCFGenomicPositionTable,
-    VCFLine,
     build_genomic_position_table,
 )
 from gain.genomic_resources.genomic_position_table.line import (
@@ -35,6 +35,10 @@ from gain.genomic_resources.genomic_position_table.record import (
     POS_END,
     REF,
     Record,
+)
+from gain.genomic_resources.genomic_position_table.table_vcf import (
+    ALLELE_INDEX,
+    VARIANT,
 )
 from gain.genomic_resources.histogram import (
     Histogram,
@@ -56,6 +60,13 @@ from gain.genomic_resources.resource_implementation import (
 )
 
 from .aggregators import AGGREGATOR_SCHEMA, Aggregator
+
+if TYPE_CHECKING:
+    # Only ever needed to type VCFScoreLine's two memoised INFO proxies.  pysam
+    # is a hard runtime dep and is already imported by the VCF table anyway, but
+    # keeping it behind TYPE_CHECKING makes it unambiguous that the annotations
+    # cost nothing at runtime.
+    import pysam
 
 logger = logging.getLogger(__name__)
 
@@ -158,43 +169,93 @@ class _ScoreDef:
 
 
 class ScoreLineBase(abc.ABC):
-    """Shared value extraction for the two per-backend score lines.
+    """Shared value extraction for the three per-backend score lines.
 
-    A genomic score is read through one of two concrete score lines, chosen
-    per backend when the score is opened: :class:`ScoreLine` wraps the line
-    adapter that the tabix/VCF/bigWig backends yield, and
-    :class:`RecordScoreLine` wraps the immutable record tuple that the
-    in-memory backend yields.  They are **siblings**, not parent/child -- the
-    only per-backend difference is where a raw score value comes from, and
-    that is captured by ``self._get_raw``, a per-instance callable each
-    subclass binds once in its own ``__init__`` (the adapter's ``line.get``
-    for :class:`ScoreLine`, the record payload's ``__getitem__`` for
-    :class:`RecordScoreLine`).
+    A genomic score is read through one of **three** concrete score lines,
+    chosen per backend when the score is opened (``GenomicScore.open``, which
+    routes on the table and nothing else):
+
+    * :class:`RecordScoreLine` -- the **tabix** and **in-memory** backends.
+      They yield records whose payload is the raw row, so a score is a column
+      of it, addressed by resolved index.
+    * :class:`VCFScoreLine` -- the **VCF** backend.  It yields records too, but
+      its payload is a ``(variant record, allele index)`` pair and its scores
+      are INFO fields looked up by name, not columns; that is the whole reason
+      it needs a score line of its own.
+    * :class:`ScoreLine` -- the last backend still yielding a line *adapter*:
+      **bigWig**, and only bigWig.  #238 migrates it to records and #239 then
+      removes this class, at which point every score line is record-backed and
+      this base collapses into :class:`RecordScoreLineBase`.
+
+    So at HEAD the split is not adapter-vs-record-backend: three of the four
+    backends yield records, and two *kinds* of record payload (raw row, VCF
+    variant) are already in play.  The three are **siblings**, not
+    parent/child -- the only per-backend difference is where a raw score value
+    comes from, and that is captured by ``self._get_raw(key)``, which each
+    subclass answers in its own way: :class:`ScoreLine` and
+    :class:`RecordScoreLine` bind an instance attribute to a callable that is
+    reachable from the line but is not the line (the adapter's ``line.get``,
+    the record payload's ``__getitem__``), while :class:`VCFScoreLine` --
+    whose lookup needs the line itself -- declares a plain **method**.
+    ``self._get_raw(key)`` below resolves either.
+
+    A subclass whose lookup needs ``self`` must use a method and NOT bind
+    ``self._get_raw = self._something``: a bound method of self, stored on
+    self, is a reference cycle, and one score line is built per line of a
+    fetch.  (Pinned by
+    test_score_lines_are_freed_without_the_cycle_collector.)
+
+    **No type checker will catch you breaking that rule** -- know this before
+    you lean on one.  The two failure modes are not symmetric:
+
+    * *Shadowing* the method (a subclass re-declaring ``_get_raw`` as an
+      attribute over :class:`VCFScoreLine`'s method) IS caught: mypy rejects it
+      with "Cannot assign to a method".
+    * *Re-introducing the cycle* -- a future subclass writing
+      ``self._get_raw = self._something`` in its constructor -- is caught by
+      **nothing**.  It is a perfectly legal assignment against the ``Callable``
+      attribute this base declares below, which is exactly how the bug got in.
+
+    So the cycle has no static defence at all, and
+    test_score_lines_are_freed_without_the_cycle_collector is the only one there
+    is.  It asserts over real fetched lines, for the whole family, so it holds
+    for backends added later (#238's bigWig migration, #239's adapter removal).
+
+    (For the record: pyright flags :meth:`VCFScoreLine._get_raw` with
+    ``reportIncompatibleMethodOverride`` -- the base declares ``_get_raw`` as a
+    ``Callable`` *attribute* and that subclass overrides it with a *method*.
+    mypy accepts it, ``self._get_raw(key)`` resolves either, and CI runs mypy;
+    it is a checker disagreement about the declaration, not a defect.)
 
     Everything downstream of that one lookup -- the five core-field
     properties' contract, NA handling, parsing, logging and the
-    bulk/single value walks -- lives here so it cannot drift between the two.
+    bulk/single value walks -- lives here so it cannot drift between the three.
 
     The base declares no ``__init__`` on purpose: each subclass sets
     ``score_defs`` and binds ``_get_raw`` in its own constructor, with no
     ``super().__init__`` call.  A base constructor (even a trivial one) would
     add a per-**line** Python call on the hot ``fetch_lines`` path -- ~0.055us
     /line, doubling the narrow-table overhead below -- for no benefit, since a
-    record is not substitutable for an adapter and the two constructors share
+    record is not substitutable for an adapter and the three constructors share
     no work.  The substitutability that finding 4 wanted is instead enforced
     structurally: :attr:`GenomicScore._score_line_class` is typed as a callable
-    ``(LineBase | Record, dict) -> ScoreLineBase`` and mypy checks both score
-    line classes -- :class:`ScoreLine` and :class:`RecordScoreLine` -- against
-    that signature.
+    ``(LineBase | Record, dict) -> ScoreLineBase``, every one of the three
+    subclasses is assigned to it by ``GenomicScore.open``, and mypy checks all
+    three -- :class:`ScoreLine`, :class:`RecordScoreLine` and
+    :class:`VCFScoreLine` -- against that signature.
 
-    That a table routed to :class:`RecordScoreLine` really does yield records
-    is a claim about a *backend*, not about a line, so it is not checked at
-    runtime at all: it is pinned once, statically, over all four backends by
-    test_backend_record_contract.py.  The fetch path simply believes
-    ``table.yields_records``.
+    That a table routed to a *record* score line (:class:`RecordScoreLine` or
+    :class:`VCFScoreLine`) really does yield records is a claim about a
+    *backend*, not about a line, so it is not checked at runtime at all: it is
+    pinned once, statically, over all four backends by
+    test_backend_record_contract.py.  The fetch path simply believes the table
+    (``table.yields_records``, and the ``VCFGenomicPositionTable`` isinstance
+    check for the VCF branch).
 
-    Reading a raw value still costs a per-line bound-method allocation
-    (``self._get_raw``).  Measured against a byte-faithful reconstruction of
+    Reading a raw value through one of the two *binding* subclasses still costs
+    a per-line bound-method allocation (:class:`VCFScoreLine`, which reaches
+    ``_get_raw`` as a method, pays nothing for it and allocates nothing).
+    Measured against a byte-faithful reconstruction of
     the pre-refactor ``ScoreLine`` (construct + ``get_values``, min-of-15):
     ~1.06x on a 1-score line, ~1.03x at 5 scores, a wash (~1.01x) by 454
     scores -- largest on the narrow ``position_score`` shape, invisible on
@@ -203,9 +264,12 @@ class ScoreLineBase(abc.ABC):
     :class:`ScoreLine`, at which point this base and the split disappear.
     """
 
-    # Set by each subclass in its own __init__ (no shared base constructor --
-    # see the class docstring).  ``_get_raw`` is bound once per instance to the
-    # raw-value lookup; it is not a method, so each subclass binds it.
+    # ``score_defs`` is set by each subclass in its own __init__ (no shared base
+    # constructor -- see the class docstring).  ``_get_raw`` is declared as a
+    # callable attribute so that the two subclasses which BIND one (to a lookup
+    # of something that is not the line) type-check; VCFScoreLine overrides it
+    # with a plain method of the same signature, which mypy accepts and which
+    # ``self._get_raw(key)`` resolves identically.
     score_defs: dict[str, _ScoreDef]
     _get_raw: Callable[[str | int], Any]
 
@@ -303,17 +367,18 @@ class ScoreLineBase(abc.ABC):
 
 
 class ScoreLine(ScoreLineBase):
-    """Score line wrapping a line adapter (tabix/VCF/bigWig backends).
+    """Score line wrapping a line adapter (the bigWig backend).
 
     Binds ``self._get_raw`` to the adapter's ``line.get`` and reads the core
     fields straight off the adapter.  See :class:`ScoreLineBase` for the
-    shared value-extraction contract; #239 removes this class.
+    shared value-extraction contract; #238 migrates the last adapter backend
+    (bigWig) and #239 then removes this class.
     """
 
     def __init__(
         self, line: LineBase | Record, score_defs: dict[str, _ScoreDef],
     ):
-        assert isinstance(line, (Line, VCFLine, BigWigLine))
+        assert isinstance(line, (Line, BigWigLine))
         self.line = line
         self.score_defs = score_defs
         self._get_raw = line.get
@@ -339,14 +404,91 @@ class ScoreLine(ScoreLineBase):
         return self.line.alt
 
 
-class RecordScoreLine(ScoreLineBase):
-    """Score line wrapping an immutable record tuple (in-memory backend).
+class RecordScoreLineBase(ScoreLineBase):
+    """Core fields of a score line over a record, read from the slots.
 
-    The core fields are read from the record's named slots; a raw score
-    column is read from the opaque payload (the raw row) on demand, so a wide
-    table decodes only the columns a caller asks for.  Value extraction, NA
-    handling and parsing come from :class:`ScoreLineBase`; the only
-    per-backend difference is where the raw value comes from, captured by
+    The five decoded slots of a record mean the same thing whichever backend
+    built it, so every record-backed score line reads its core fields exactly
+    this way -- stated once, here, so the two below cannot drift.  What a
+    record's PAYLOAD holds is *not* shared: it means whatever the backend that
+    built it says it means (a raw tabular row for the tabix and in-memory
+    backends, a ``(variant record, allele index)`` pair for VCF).  So each
+    subclass answers ``_get_raw`` -- and only that -- for the lookup its own
+    payload calls for: :class:`RecordScoreLine` binds it to the payload's
+    indexer, :class:`VCFScoreLine` declares it as a method (its lookup needs
+    the line, and a bound method of self stored on self would make every line
+    of a fetch a reference cycle -- see :class:`ScoreLineBase`).
+
+    Like :class:`ScoreLineBase`, this declares no ``__init__``: each subclass
+    sets ``_record``/``score_defs`` in its own constructor, so a fetched line
+    pays no base-constructor call.
+
+    **A line's record is write-once.**  Both subclasses memoise something
+    derived from their record's payload -- ``RecordScoreLine`` binds
+    ``_get_raw`` to the payload's indexer in its constructor, ``VCFScoreLine``
+    hoists the pysam INFO proxies on its first score read -- and neither memo
+    has an invalidation hook.  Rebinding the record would therefore leave the
+    core fields below (which re-read the slots on every access) reporting the
+    NEW record while the scores still came from the OLD one's payload: the
+    position says one row, the values say another, and nothing raises.
+
+    Detecting that per score read would cost exactly what this class exists to
+    save, so instead the rebinding is refused *at the public surface*:
+    ``record`` is a read-only property over ``_record``, and ``line.record = x``
+    raises ``AttributeError``.  One line reads one record.
+
+    That is a guard-rail, not an impossibility, and it is worth being exact
+    about which: ``_record`` is an ordinary attribute, so ``line._record = x``
+    still stores, and a line rebound that way really does report the new
+    record's position with the old record's scores -- silently.  Nothing here
+    can prevent that; only a per-read check could, at the price this class
+    exists to avoid.  What the property buys is that the stale state cannot be
+    reached through the name a caller is meant to use, and it costs the fetch
+    path nothing.  Score-line *reuse* (which #239 may want) is not forbidden by
+    any of this -- it just has to invalidate both memos deliberately, rather
+    than silently inheriting a stale one.  (The public guard is pinned by
+    test_a_record_score_lines_record_is_write_once.)
+
+    Everything on the hot path reads ``self._record`` directly, so the property
+    is for callers and the fetch path never goes through it.
+    """
+
+    _record: Record
+
+    @property
+    def record(self) -> Record:
+        """The record this line was built over.  Write-once -- see above."""
+        return self._record
+
+    @property
+    def chrom(self) -> str:
+        return cast(str, self._record[CHROM])
+
+    @property
+    def pos_begin(self) -> int:
+        return cast(int, self._record[POS_BEGIN])
+
+    @property
+    def pos_end(self) -> int:
+        return cast(int, self._record[POS_END])
+
+    @property
+    def ref(self) -> str | None:
+        return cast("str | None", self._record[REF])
+
+    @property
+    def alt(self) -> str | None:
+        return cast("str | None", self._record[ALT])
+
+
+class RecordScoreLine(RecordScoreLineBase):
+    """Score line over a record whose payload is a raw row (tabix/in-memory).
+
+    A raw score column is read from the opaque payload (the raw row) on demand,
+    so a wide table decodes only the columns a caller asks for.  Value
+    extraction, NA handling and parsing come from :class:`ScoreLineBase`, the
+    core fields from :class:`RecordScoreLineBase`; the only difference from its
+    sibling :class:`VCFScoreLine` is where a raw value comes from, captured by
     binding ``self._get_raw`` to the payload's indexer.
 
     The constructor does **not** check that ``line`` is a record.  Whether a
@@ -367,34 +509,290 @@ class RecordScoreLine(ScoreLineBase):
         # (yields_records), and that claim is pinned against every backend by
         # test_backend_record_contract.py.  Nothing here may cost more than an
         # attribute store -- a ``cast`` would be a real call, ~15ns.
-        self.record: Record = line  # type: ignore[assignment]
+        self._record: Record = line  # type: ignore[assignment]
         self.score_defs = score_defs
-        self._get_raw = self.record[PAYLOAD].__getitem__
+        self._get_raw = self._record[PAYLOAD].__getitem__
 
-    @property
-    def chrom(self) -> str:
-        return cast(str, self.record[CHROM])
 
-    @property
-    def pos_begin(self) -> int:
-        return cast(int, self.record[POS_BEGIN])
+class VCFScoreLine(RecordScoreLineBase):
+    """Score line over a VCF record: a score is an INFO field, not a column.
 
-    @property
-    def pos_end(self) -> int:
-        return cast(int, self.record[POS_END])
+    The VCF backend is the awkward one, and this class is where the whole of
+    its awkwardness lives.  A VCF score is not addressed by column index: it is
+    an INFO field, looked up **by name** on the variant record, typed by the
+    header metadata, and -- for a per-allele field -- selected by the record's
+    allele index.  That needs all three of the variant, its header and the
+    allele index, which is exactly what a VCF record's PAYLOAD makes reachable:
+    it is the ``(variant record, allele index)`` pair, and the header comes off
+    the variant (``variant.header.info``), so nothing else has to be carried.
 
-    @property
-    def ref(self) -> str | None:
-        return cast("str | None", self.record[REF])
+    **This choice is made once, per table, when the score is opened** -- see
+    ``GenomicScore.open``, which routes a VCF table here and every other record
+    table to :class:`RecordScoreLine`.  Which backend a line came from is a
+    property of the table, so it is asked of the table, once; the fetch path
+    then does no branching at all.  (Before #237 the same polymorphism lived in
+    a per-*line* adapter object, ``VCFLine``, built for every allele of every
+    record read.)
 
-    @property
-    def alt(self) -> str | None:
-        return cast("str | None", self.record[ALT])
+    The INFO number cases, all of them, in :meth:`_get_raw`.
+    """
+
+    # Declared here rather than inline in __init__ so that the annotation does
+    # not have to share a line with the ``type: ignore`` that its null
+    # initialiser needs.  Why it is not Optional: see __init__.
+    _info_meta: pysam.VariantHeaderMetadata
+
+    def __init__(
+        self, line: LineBase | Record, score_defs: dict[str, _ScoreDef],
+    ):
+        # ``line`` is a VCF record -- the table said so, and the claim is pinned
+        # over every backend by test_backend_record_contract.py.  The payload is
+        # unpacked lazily, in _get_raw: a line whose scores are never read (an
+        # allele filtered out by REF/ALT in AlleleScore.fetch_scores, say) pays
+        # nothing beyond the three null stores below.
+        #
+        # Note what is NOT here: a binding of ``self._get_raw``.  Its two
+        # siblings bind theirs to something reachable *from* the line (the
+        # payload's indexer, an adapter's ``get``); this class's lookup needs
+        # the line itself, and storing a bound method of self ON self is a
+        # reference cycle -- one per line, on the hot path.  So this one is a
+        # plain method instead: ``self._get_raw(key)`` in ``_extract_value``
+        # resolves it on the class, allocates nothing per line, and the line
+        # dies by refcount the moment the fetch loop drops it.
+        #
+        # Left as a bound attribute, every line of a scan became cyclic garbage.
+        # Measure it by what the collector has to FREE, not by how often it runs
+        # (the pass count is threshold churn and a poor signal -- see below).
+        # A 3000-row VCF fetch of Number=1/Float INFO scores (fetch_lines +
+        # get_values over every line; identical at every width 1/5/20/50 and on
+        # every run):
+        #
+        #                          objects freed by gc      gen-0/1/2 passes
+        #                          gen-0 / gen-1 / gen-2
+        #     bound (the cycle)    11080 /   880 /  0       28/2/0
+        #     method (this class)      0 /     0 /  0       11/1/0
+        #
+        # 11960 objects freed for 3000 lines: **4 per line**, exactly the four a
+        # single cyclic line hands over (named by ``gc.DEBUG_SAVEALL`` after
+        # dropping one such line):
+        #
+        #     VCFScoreLine                         the line
+        #     builtins.method                      the bound ``self._get_raw``
+        #     pysam.libcbcf.VariantRecordInfo      ``self._info``
+        #     pysam.libcbcf.VariantHeaderMetadata  ``self._info_meta``
+        #
+        # -- the last two both memoised on the line's first score read.
+        #
+        # The last two are the point.  They are the INFO proxies this class
+        # memoises on its first score read (below), and they are what the cycle
+        # RETAINS: a line kept alive by the collector keeps its two live pysam
+        # proxies -- and through them its ``pysam.VariantRecord`` and the header
+        # that record pins -- alive until a GC pass, instead of dropping them at
+        # the end of the loop body.  (The instance ``__dict__`` is NOT among the
+        # four: CPython 3.12 lays these attributes down in a managed dict, which
+        # the collector does not free as a separate object.)
+        #
+        # Read the 4.0 off the TOTAL, not off gen-0.  Roughly 880 of the 11960
+        # survive their first pass and are freed as gen-1, so gen-0 alone reads
+        # ~3.69/line, which undercounts the cycle by the very objects that cost
+        # most -- the promoted ones.  The gen-0/gen-1 split is a promotion
+        # boundary and wobbles by a handful of objects between environments; the
+        # total, and the 4-per-line it gives, do not.  As a method the collector
+        # frees *nothing*: the scan produces no cyclic garbage at all.
+        #
+        # The pass counts do not go to zero, and that is not a leak: CPython
+        # untracks tuples of immutables during a collection, so their later
+        # dealloc never decrements the gen-0 counter, which creeps up even in
+        # allocation-balanced code.  All 11 of the method's gen-0 passes free
+        # zero objects -- they are empty.  Only the "objects freed" column
+        # separates the two designs; it is the one this rests on.  Pinned by
+        # test_score_lines_are_freed_without_the_cycle_collector.
+        self._record: Record = line  # type: ignore[assignment]
+        self.score_defs = score_defs
+        # What an INFO lookup needs, resolved on the first score read of this
+        # line and reused by every later one (see _get_raw).  ``_info`` doubles
+        # as the "not resolved yet" flag -- pysam never hands back a null INFO
+        # proxy, so ``None`` here can only mean unread.  All three are declared
+        # here, null, rather than sprung into existence inside _get_raw, so
+        # every instance of the class lays the same attributes down in the same
+        # order.
+        #
+        # The memo is not free: at ONE score there is nothing to reuse yet, only
+        # the state to set up, so it costs a little; from the second score on it
+        # saves what it costs to allocate the two proxies again.  It therefore
+        # pays for itself at two scores and compounds from there.  Measured on
+        # this code (3000-row VCF of Number=1 Float INFO fields, fetch_lines +
+        # get_values over every line, min-of-9 x 3 interleaved processes,
+        # us/line -- one machine, one fixture; read the RATIOS, the absolute
+        # figures are not portable):
+        #
+        #     scores        1      5     20     50
+        #     no memo     1.31   3.34  10.76  25.82
+        #     memo        1.37   2.84   8.50  19.83
+        #     (pre-#237)  1.52   3.70  11.68  28.31
+        #
+        # The trade rests on those numbers and on nothing else.  In particular
+        # it does NOT rest on a claim about how wide real VCF INFO score
+        # resources are: we have no such measurement -- every vcf_info fixture
+        # in this tree declares 1-4 INFO fields, and no GRR resource definition
+        # here backs a wider figure.  The memo does not need one to be worth it.
+        # Its worst case is exactly one score, where it costs ~0.06us/line and
+        # nothing else regresses; it breaks even at two and wins from three on
+        # (0.85x at 5 scores, 0.79x at 20, 0.77x at 50).  So it is never a
+        # meaningful loss and is a growing win, whatever the width turns out to
+        # be -- and the multi-score case is not exotic: statistics and histogram
+        # generation read every score def of a table.
+        #
+        # The hoist is also what makes the migration a *solid* win at width
+        # rather than a marginal one: against pre-#237 master, the migration
+        # with this memo runs 0.73x at 20 scores and 0.70x at 50; without it,
+        # re-allocating both proxies per score, that shrinks to 0.92x and 0.91x
+        # -- the same order as the noise between machines.  The same is true of
+        # the metadata hoist in _get_raw: drop it and 50 scores go back to
+        # 26.65us/line (0.94x of master).  Neither of the two is optional if the
+        # migration is to pay at width; both together are what buy the 0.70x.
+        #
+        # Resolving on first read rather than in __init__ is the other half of
+        # the trade: an allele filtered out by REF/ALT in
+        # AlleleScore.fetch_scores is never scored at all, and eager resolution
+        # would charge it the two proxies for nothing.
+        #
+        # These are the real pysam types, not Any: they carry the hottest
+        # lookups in the class (``info.get``, and ``self._info_meta.get(key)``
+        # for a tuple value) and typing them is what lets mypy check those.
+        # Annotations cost nothing at runtime.
+        #
+        # Only ``_info`` is Optional, because only ``_info`` is the "unread"
+        # flag.  ``_info_meta`` is written BEFORE that flag flips (see
+        # _get_raw, which writes ``_info`` last precisely so that this holds
+        # even if resolving raises), and is never read before it, so its null
+        # here is a pre-birth value that no reader can observe -- typing it
+        # non-optional states that invariant, and the ordering in _get_raw is
+        # what makes the invariant true rather than merely asserted (pinned by
+        # test_vcf_score_line_that_fails_to_resolve_reports_the_same_error).
+        # The alternative, a None check or a cast in _get_raw, would put real
+        # cost on the hottest path in the class, which is the one thing this
+        # line must not do.
+        self._info: pysam.VariantRecordInfo | None = None
+        self._info_meta = None  # type: ignore[assignment]
+        self._allele_index: int | None = None
+
+    def _get_raw(self, key: str | int) -> Any:
+        """Look one INFO field up on this record's allele.
+
+        The four cases, which are the reason VCF needs a score line of its own:
+
+        * **Number=A** -- one value per ALT allele: select this record's allele.
+          A record whose ALT is absent ('.') has no allele index and no
+          per-allele value; the raw tuple is handed back untouched, as before.
+          That is odd -- read through a ``str`` score it stringifies to the
+          tuple's repr, ``"('d01',)"`` -- and it is preserved bug-for-bug from
+          the pre-record backend, because #237 is a cost change and not a
+          semantic one.  The ``allele_index is not None`` half of the test below
+          is what makes it so: without it the tuple is indexed with ``None`` and
+          the read dies with ``TypeError``.  Both halves -- the value and the
+          crash it guards -- are pinned by
+          test_vcf_score_line_hands_back_a_number_a_field_raw_when_alt_is_absent
+        * **Number=R** -- one value per allele *including the reference*, which
+          occupies offset 0: an ALT allele reads at ``allele_index + 1``, and a
+          record with no ALT reads the **reference** value at offset 0.
+        * **Number=. and Type=String** -- an unbounded string field, joined on
+          '|' into a single value (a VCF-local convention: the shared
+          stringifier never sees the tuple).
+        * anything else -- handed back as pysam decoded it.
+
+        A key that the header **declares** but this record does not carry
+        yields ``None`` rather than raising: ``info.get`` returns ``None``,
+        ``None`` is not a tuple, so the number cases are skipped and
+        ``_extract_value`` turns it into a null score.  Such a key does not
+        reach the metadata at all -- nothing below it does, unless the value is
+        a tuple.
+
+        The declaration is the load-bearing half of that sentence, and it is a
+        real precondition, not a formality: for a key the header does NOT
+        declare, pysam's ``info.get`` does not answer ``None`` at all -- it
+        raises ``ValueError: Invalid header``.  Nothing in this tree can ask for
+        one: a VCF table's score defs are built FROM the header
+        (``_parse_vcf_scoredefs``, over the table's ``header.info``), and a
+        configured score naming an INFO field the header does not declare is
+        rejected when the score is opened (pinned by
+        test_vcf_check_for_missing_score_columns).  So every key that reaches
+        here is declared, by construction.  A caller that hand-built a score def
+        naming an undeclared field would get the ValueError, not a null score.
+
+        **The two pysam proxies are per-LINE, not per-score.**  Neither
+        ``variant.info`` nor ``variant.header.info`` is a cached attribute:
+        pysam allocates a fresh proxy on *every* access (~85ns each, and
+        ``v.info is v.info`` is False).  Obtaining them once per score would
+        therefore put ~170ns of pure re-allocation on every score of every
+        line, which is a per-line cost of exactly the kind the record migration
+        exists to remove, and it grows with the width of the table: measured, a
+        20-score read of a 3000-row VCF goes from 8.50 to 10.76us/line without
+        the memo -- from 0.73x of pre-#237 master to 0.92x, i.e. most of the
+        migration's win at width, gone.  They belong to the line, so they are
+        resolved once, on the first score read, and every later read of the same
+        line reuses them.  See ``__init__`` for the full cost table and the
+        trade.  (Pinned by
+        test_vcf_score_line_reads_the_pysam_proxies_once_per_line.)
+
+        Resolving them on the first read rather than in ``__init__`` keeps the
+        payload unpacking lazy: a line whose scores are never read pays nothing
+        at all.
+        """
+        assert isinstance(key, str)
+        info = self._info
+        if info is None:
+            payload = self._record[PAYLOAD]
+            variant = payload[VARIANT]
+            # The header metadata is derived from the record, not carried with
+            # it.
+            resolved = variant.info
+            self._info_meta = variant.header.info
+            self._allele_index = payload[ALLELE_INDEX]
+            # ``_info`` is the "already resolved" flag, so it is written LAST,
+            # once the state it guards is complete.  Written first, a raise from
+            # either line above would leave the line flagged as resolved with a
+            # null ``_info_meta`` behind it, and the next read of the SAME line
+            # would skip this block and die on the null instead of reporting the
+            # real failure again.  (Pinned by
+            # test_vcf_score_line_that_fails_to_resolve_reports_the_same_error.)
+            info = self._info = resolved
+        allele_index = self._allele_index
+
+        value = info.get(key)
+        if isinstance(value, tuple):
+            # The metadata is read HERE and not above, because this branch is
+            # the only thing that uses it -- and it is not free: ``.get`` builds
+            # a fresh pysam ``VariantMetadata`` for the key, per score, per
+            # line.  A ``Number=1`` field decodes to a scalar, never reaches
+            # this branch, and so must not pay for a metadata object it will
+            # never read; that is the common shape of a score-bearing INFO
+            # field, and hoisting the lookup out of it took a 50-score read of a
+            # 3000-row VCF from 26.65 to 19.83us/line -- 0.74x, and the
+            # difference between a migration that is a wash against pre-#237
+            # master at width (0.94x) and one that is worth doing (0.70x).  A
+            # key the record does not carry is the same story: ``info.get``
+            # answers None, None is not a tuple, and the read costs one dict
+            # miss and nothing else.  (Pinned by
+            # test_vcf_score_line_reads_the_info_metadata_only_for_a_tuple_
+            # value.)
+            meta = self._info_meta.get(key)
+            if meta.number == "A" and allele_index is not None:
+                value = value[allele_index]
+            elif meta.number == "R":
+                return value[
+                    allele_index + 1
+                    if allele_index is not None
+                    else 0  # Get reference allele value if ALT is '.'
+                ]
+            elif meta.number == "." and meta.type == "String":
+                return "|".join(value)
+        return value
 
 
 # What a fetched line is wrapped in: a callable, not a ``type[...]``, so mypy
-# checks both score line classes against one signature.  We never call
-# issubclass on it.
+# checks all three score line classes -- ScoreLine, RecordScoreLine and
+# VCFScoreLine -- against one signature.  We never call issubclass on it.
 _ScoreLineFactory = Callable[
     [LineBase | Record, dict[str, _ScoreDef]], ScoreLineBase,
 ]
@@ -926,12 +1324,16 @@ class GenomicScore(ResourceConfigValidationMixin):
                 self.resource.resource_id)
             return self
         self.table.open()
-        # Choose the score line class per backend: a table that yields records
-        # is wrapped in a RecordScoreLine, one that yields adapters in a
-        # ScoreLine.  This is decided at open time, alongside the table's own
-        # parser/transform selection, and the table's yields_records claim is
-        # simply believed -- that every backend's claim matches what it really
-        # yields is pinned statically, over all four of them, by
+        is_vcf = isinstance(self.table, VCFGenomicPositionTable)
+        # Choose the score line class per backend -- ONE decision, per table,
+        # made here rather than per line.  A VCF table's scores are INFO fields,
+        # so it goes to the VCFScoreLine that performs the INFO lookup; any
+        # other record-yielding table's scores are columns of the record's raw
+        # row, so it goes to RecordScoreLine; an adapter-yielding table (bigWig,
+        # until #238) to ScoreLine.  This is decided at open time, alongside the
+        # table's own parser/transform selection, and the table's yields_records
+        # claim is simply believed -- that every backend's claim matches what it
+        # really yields is pinned statically, over all four of them, by
         # test_backend_record_contract.py, so the fetch path pays nothing.
         #
         # Route BEFORE publishing.  ``table_loaded = True`` is what makes this
@@ -942,15 +1344,27 @@ class GenomicScore(ResourceConfigValidationMixin):
         # __init__ default (ScoreLine) for a record-yielding table -- a record
         # tuple into an adapter score line.  Scores are shared across threads
         # (the process-wide in-memory CNV cache; gain-web-api's thread pool), so
-        # the window is reachable; this ordering closes it.  Pinned by
-        # test_the_score_is_routed_before_it_reports_itself_open.
-        self._score_line_class = (
-            RecordScoreLine if self.table.yields_records else ScoreLine)
+        # the window is reachable; this ordering keeps the ROUTING out of it.
+        # Pinned by test_the_score_is_routed_before_it_reports_itself_open.
+        #
+        # It does not make open() as a whole safe to race, and does not claim
+        # to: the score_index assignment below still runs after the score has
+        # published itself open, so a caller that catches that window reads a
+        # score def whose score_index is still None.  That window is older than
+        # this routing and untouched by it -- open() is not synchronised, and
+        # making it so is a separate change.
+        if is_vcf:
+            self._score_line_class = VCFScoreLine
+        elif self.table.yields_records:
+            self._score_line_class = RecordScoreLine
+        else:
+            self._score_line_class = ScoreLine
         self.table_loaded = True
         if "scores" in self.config:
             self._validate_scoredefs()
 
-        if isinstance(self.table, VCFGenomicPositionTable):
+        if is_vcf:
+            # A VCF score is addressed by INFO key, not by column index.
             for score_def in self.score_definitions.values():
                 assert score_def.col_name is not None
                 score_def.score_index = score_def.col_name

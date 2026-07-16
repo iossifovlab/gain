@@ -8,25 +8,38 @@ out of the per-line loop.  These tests pin it to the single-score
 absent key, ``None`` for a configured NA value, and ``None`` (plus a logged
 parse failure) for an unparseable value.
 
-The value-extraction logic (``_extract_value``) is shared by both score line
-classes, but each reads its raw value through a per-instance ``_get_raw``
-bound to a *different* lookup: ``ScoreLine`` (the VCF/bigWig adapter backends)
-binds it to ``line.get``; ``RecordScoreLine`` (the in-memory and tabix record
-backends) binds it to the record payload's ``__getitem__``.
+The value-extraction logic (``_extract_value``) is shared by all three score
+line classes, but each reaches its raw value through a ``_get_raw`` of its own,
+and they do not all get there the same way.
 
-The NA and parse tests run against **both** record backends, because their
-payloads are different objects: the in-memory backend's payload is a plain
-``tuple`` of cells, the tabix backend's is a lazily-decoding ``pysam`` row.
-``RecordScoreLine`` binds ``_get_raw`` to whichever one it is handed, so a
-binding that works on one and not the other fails here.  ``ScoreLine``'s own
-binding is pinned by the two adapter-backend tests at the bottom of this file.
+Two of them **bind** it, in their constructor, to a callable that is reachable
+*from* the line but is not the line: ``ScoreLine`` (the bigWig adapter backend)
+to the adapter's ``line.get``; ``RecordScoreLine`` (the in-memory and tabix
+record backends) to the record payload's ``__getitem__``.
+
+``VCFScoreLine`` (the VCF record backend, whose payload is a ``(variant, allele
+index)`` pair rather than a row) instead declares ``_get_raw`` as a plain
+**method**, and must: its INFO lookup needs the line *itself*, and binding a
+method of self onto self (``self._get_raw = self._something``) is a reference
+cycle -- one per line, on the hot path, where one score line is built per line
+of a fetch.  A method allocates nothing per line and refers to nothing, so the
+line dies by refcount when the fetch loop drops it.  That rule -- a subclass
+whose lookup needs ``self`` uses a method and does not bind -- is pinned in
+test_genomic_scores.py, by
+test_score_lines_are_freed_without_the_cycle_collector.
+
+The NA and parse tests run against **both** column-payload record backends,
+because their payloads are different objects: the in-memory backend's payload is
+a plain ``tuple`` of cells, the tabix backend's is a lazily-decoding ``pysam``
+row.  ``RecordScoreLine`` binds ``_get_raw`` to whichever one it is handed, so a
+binding that works on one and not the other fails here.  Each class is exercised
+over its own backend by the backend tests at the bottom of this file.
 
 Which class a backend is routed to is therefore load-bearing, so the routing is
-pinned here too, from the score's side: each adapter backend must yield a
-``ScoreLine`` and each record backend a ``RecordScoreLine``.  That every
-backend's ``yields_records`` claim is *true* -- the question a runtime check
-used to ask, per table -- is not a property of a line at all, and is pinned
-statically over all four backends by test_backend_record_contract.py.
+pinned here too, from the score's side.  That every backend's ``yields_records``
+claim is *true* -- the question a runtime check used to ask, per table -- is not
+a property of a line at all, and is pinned statically over all four backends by
+test_backend_record_contract.py.
 """
 from __future__ import annotations
 
@@ -39,6 +52,7 @@ from gain.genomic_resources.genomic_scores import (
     PositionScore,
     RecordScoreLine,
     ScoreLine,
+    VCFScoreLine,
     _ScoreDef,
 )
 from gain.genomic_resources.testing.builders import (
@@ -186,11 +200,12 @@ chr1   11  .  A   T   .    .      scoreA=0.2;scoreB=0.5
         assert None in bulk
 
 
-def test_vcf_backend_yields_the_adapter_score_line(tmp_path) -> None:
-    # The VCF backend keeps its line adapter (``yields_records`` is False), so
-    # GenomicScore.open() must pick ScoreLine -- not RecordScoreLine -- for it,
-    # even though it now subclasses the record-yielding tabix table.
-    # _TABULAR_BACKENDS pins the record backends; this pins an adapter one.
+def test_vcf_backend_yields_the_vcf_score_line(tmp_path) -> None:
+    # The VCF backend yields records, but its scores are INFO fields rather than
+    # columns, so a record payload's __getitem__ is not the lookup it needs: it
+    # is routed to VCFScoreLine, the one class that performs the INFO lookup.
+    # _TABULAR_BACKENDS pins the two column-payload record backends; this pins
+    # the INFO-payload one.
     builder = a_vcf_info_score().with_data("""
 ##fileformat=VCFv4.1
 ##INFO=<ID=scoreA,Number=1,Type=Float,Description="score A">
@@ -200,10 +215,16 @@ chr1   10  .  A   T   .    .      scoreA=0.1
     repo = a_grr().with_resource("vcf", builder).build_repo(tmp_path)
     score = AlleleScore(repo.get_resource("vcf")).open()
     with score:
-        assert score.table.yields_records is False
+        assert score.table.yields_records is True
+        # The class is chosen ONCE, at open -- before a single line is fetched.
+        assert score._score_line_class is VCFScoreLine
+
         line = next(iter(score.fetch_lines("chr1", 10, 10)))
-        assert isinstance(line, ScoreLine)
-        assert not isinstance(line, RecordScoreLine)
+        assert type(line) is VCFScoreLine
+        # ...and it is not the column-payload record score line: reading scoreA
+        # through the record payload's __getitem__ would index the
+        # (variant, allele index) pair, not the INFO field.
+        assert not isinstance(line, (RecordScoreLine, ScoreLine))
         assert line.get_score("scoreA") == pytest.approx(0.1)
 
 
