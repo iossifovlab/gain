@@ -166,9 +166,9 @@ pipeline {
         // grr-sync (iossifovlab/grr-sync#20, deployed by seqpipe/infra#71)
         // materialises the GRR as a node-local `type: directory` tree under
         // a per-agent root — /data/grr on piglet/eyoree, /tank/grr on pooh —
-        // exposing stable per-repo symlinks <root>/grr and <root>/grr_encode.
-        // compose-jenkins.yaml bind-mounts those READ-ONLY at /grr and
-        // /grr_encode, where grr-definition.yaml expects them.
+        // exposing a stable per-repo symlink <root>/grr.
+        // compose-jenkins.yaml bind-mounts that READ-ONLY at /grr,
+        // where grr-definition.yaml expects it.
         //
         // GRR_ROOT reaches compose exactly as the old GRR_CACHE_DIR did:
         // written to web_infra/.env (the compose project dir), passed via
@@ -179,11 +179,12 @@ pipeline {
         // YAML carry NO default on purpose: an unset root must break loudly,
         // not silently mount an empty path.
         //
-        // The symlink assertions are the teeth: a dangling grr-sync symlink
+        // The symlink assertion is the teeth: a dangling grr-sync symlink
         // bind-mounts as an EMPTY dir, and the GRR then dies with
-        // `FileNotFoundError: .CONTENTS.json` deep inside the run. Assert each
-        // required repo symlink resolves to a real dir AND carries its
-        // .CONTENTS.json.gz (gzipped) BEFORE anything starts the stack.
+        // `FileNotFoundError: .CONTENTS.json` deep inside the run. Assert the
+        // grr symlink resolves to a real dir AND carries its catalog
+        // (.CONTENTS.json.gz, or a plain .CONTENTS.json — the loader falls
+        // back to the uncompressed form) BEFORE anything starts the stack.
         stage('GRR pre-flight') {
             steps {
                 sh '''
@@ -191,11 +192,17 @@ pipeline {
 
                     # Detect the node-local grr-sync root. Honour a pre-set
                     # GRR_ROOT (manual override) if given, else probe the
-                    # known per-agent roots.
+                    # known per-agent roots. Pick the first candidate that
+                    # actually holds a materialized grr (its catalog is
+                    # present) — NOT merely the first existing dir, so a
+                    # stray/empty /data/grr on a /tank/grr node can't shadow
+                    # the real root. Accept either catalog form (the loader
+                    # falls back from .CONTENTS.json.gz to .CONTENTS.json).
                     GRR_ROOT="${GRR_ROOT:-}"
                     if [ -z "$GRR_ROOT" ]; then
                         for cand in /data/grr /tank/grr; do
-                            if [ -d "$cand" ]; then
+                            if [ -f "$cand/grr/.CONTENTS.json.gz" ] || \
+                               [ -f "$cand/grr/.CONTENTS.json" ]; then
                                 GRR_ROOT="$cand"
                                 break
                             fi
@@ -203,20 +210,21 @@ pipeline {
                     fi
                     if [ -z "$GRR_ROOT" ]; then
                         echo "GRR not synced on this node yet:" \
-                             "none of /data/grr /tank/grr exist on $(hostname)" >&2
+                             "none of /data/grr /tank/grr hold a materialized grr on $(hostname)" >&2
                         exit 1
                     fi
 
                     # A dangling symlink bind-mounts as an empty dir, so the
                     # GRR reads empty (FileNotFoundError: .CONTENTS.json deep
-                    # in the run). Assert each required repo resolves AND
-                    # carries its gzipped catalog before the stack starts.
-                    for repo in grr grr_encode; do
+                    # in the run). Assert the grr repo resolves AND carries a
+                    # catalog (either form) before the stack starts.
+                    for repo in grr; do
                         link="$GRR_ROOT/$repo"
                         if [ ! -d "$link" ] || \
-                           [ ! -f "$link/.CONTENTS.json.gz" ]; then
+                           { [ ! -f "$link/.CONTENTS.json.gz" ] && \
+                             [ ! -f "$link/.CONTENTS.json" ]; }; then
                             echo "GRR not synced on this node yet:" \
-                                 "$link missing or has no .CONTENTS.json.gz" >&2
+                                 "$link missing or has no .CONTENTS.json[.gz]" >&2
                             exit 1
                         fi
                     done

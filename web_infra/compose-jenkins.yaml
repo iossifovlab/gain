@@ -38,8 +38,8 @@ services:
   # annotation_base_view.py, whose module scope runs
   #     GRR = build_genomic_resource_repository(
   #         file_name=settings.GRR_DEFINITION_PATH)
-  # So it needs both GRR legs (the node-local /grr + /grr_encode bind
-  # and GRR_DEFINITION_FILE) exactly like `backend` does. Without them
+  # So it needs the GRR leg (the node-local /grr bind and
+  # GRR_DEFINITION_FILE) exactly like `backend` does. Without them
   # it silently falls back to the image's baked-in default GRR
   # (grr.iossifovlab.com) over the network -- the gain-web-e2e #1042
   # bug, which surfaced on gpf's instance-import for the same reason.
@@ -57,7 +57,6 @@ services:
         condition: service_healthy
     volumes:
       - ${GRR_ROOT}/grr:/grr:ro
-      - ${GRR_ROOT}/grr_encode:/grr_encode:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_daphne
       GRR_DEFINITION_FILE: /grr-definition.yaml
@@ -94,7 +93,6 @@ services:
         condition: service_healthy
     volumes:
       - ${GRR_ROOT}/grr:/grr:ro
-      - ${GRR_ROOT}/grr_encode:/grr_encode:ro
       - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
@@ -143,7 +141,6 @@ services:
       # grr-definition.yaml expects them (/grr). :ro so a build can
       # never write the shared hardlinked tree.
       - ${GRR_ROOT}/grr:/grr:ro
-      - ${GRR_ROOT}/grr_encode:/grr_encode:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_daphne
       GPFWA_EMAIL_HOST: mail
@@ -167,7 +164,7 @@ services:
 
   # `create_user` / `add_units` are plain BaseCommands, so they take the
   # `requires_system_checks = "__all__"` default outright -- they build a
-  # GRR before they run a single line of their own code. Same three legs
+  # GRR before they run a single line of their own code. Same two legs
   # as `backend-migrate`; see the note there.
   backend-e2e-setup:
     image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
@@ -183,7 +180,6 @@ services:
         condition: service_completed_successfully
     volumes:
       - ${GRR_ROOT}/grr:/grr:ro
-      - ${GRR_ROOT}/grr_encode:/grr_encode:ro
       - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
@@ -232,7 +228,6 @@ services:
       - ./gpfwa-data:/data
       - ./gpfwa-logs:/logs
       - ${GRR_ROOT}/grr:/grr:ro
-      - ${GRR_ROOT}/grr_encode:/grr_encode:ro
       - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
