@@ -38,14 +38,13 @@ services:
   # annotation_base_view.py, whose module scope runs
   #     GRR = build_genomic_resource_repository(
   #         file_name=settings.GRR_DEFINITION_PATH)
-  # So it needs all three GRR legs (cache bind + GRR_DEFINITION_FILE +
-  # non-root user) exactly like `backend` does. Without them it
-  # silently falls back to the image's baked-in default GRR
-  # (grr.iossifovlab.com) and caches nothing -- the gain-web-e2e #1042
+  # So it needs both GRR legs (the node-local /grr + /grr_encode bind
+  # and GRR_DEFINITION_FILE) exactly like `backend` does. Without them
+  # it silently falls back to the image's baked-in default GRR
+  # (grr.iossifovlab.com) over the network -- the gain-web-e2e #1042
   # bug, which surfaced on gpf's instance-import for the same reason.
   backend-migrate:
     image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
-    user: "${AGENT_UID:-0}:${AGENT_GID:-0}"
     # Run from a writable cwd. Several gain CLIs/paths default to a
     # cwd-relative dir (annotate_vcf jobs -> ./work; task-graph ->
     # ./.task-log). The container cwd is /, root-owned, so as a non-root
@@ -57,10 +56,11 @@ services:
       db:
         condition: service_healthy
     volumes:
-      - ${GRR_CACHE_DIR:-./grr_cache}:/grr_cache
+      - ${GRR_ROOT}/grr:/grr:ro
+      - ${GRR_ROOT}/grr_encode:/grr_encode:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_daphne
-      GRR_DEFINITION_FILE: /grr-definition-http.yaml
+      GRR_DEFINITION_FILE: /grr-definition.yaml
       HOME: /tmp
       # Non-root: settings_default.py creates DATA_STORAGE_DIR at
       # import time, and its default lives inside site-packages,
@@ -82,7 +82,6 @@ services:
   # see the note on `backend-migrate` above.
   backend-e2e-migrate:
     image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
-    user: "${AGENT_UID:-0}:${AGENT_GID:-0}"
     # Run from a writable cwd. Several gain CLIs/paths default to a
     # cwd-relative dir (annotate_vcf jobs -> ./work; task-graph ->
     # ./.task-log). The container cwd is /, root-owned, so as a non-root
@@ -94,12 +93,13 @@ services:
       db:
         condition: service_healthy
     volumes:
-      - ${GRR_CACHE_DIR:-./grr_cache}:/grr_cache
+      - ${GRR_ROOT}/grr:/grr:ro
+      - ${GRR_ROOT}/grr_encode:/grr_encode:ro
       - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
       PYTHONPATH: /web_api_src
-      GRR_DEFINITION_FILE: /grr-definition-http.yaml
+      GRR_DEFINITION_FILE: /grr-definition.yaml
       HOME: /tmp
       # Non-root: settings_default.py creates DATA_STORAGE_DIR at
       # import time, and its default lives inside site-packages,
@@ -119,15 +119,6 @@ services:
 
   backend:
     image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
-    # Run as the agent's uid/gid, not root. The GRR cache below is
-    # long-lived and shared across builds (and with gpf-web-e2e); a
-    # root-owned cache tree is one the `jenkins` user can neither
-    # prune nor rewrite -- the EPERM-on-root-owned-artefacts bug this
-    # stack has already hit once. The host bind sources are created by
-    # the Jenkinsfile before compose runs, because dockerd creates a
-    # *missing* bind source as root:root, which a non-root container
-    # then cannot write into.
-    user: "${AGENT_UID:-0}:${AGENT_GID:-0}"
     # Run from a writable cwd. Several gain CLIs/paths default to a
     # cwd-relative dir (annotate_vcf jobs -> ./work; task-graph ->
     # ./.task-log). The container cwd is /, root-owned, so as a non-root
@@ -145,18 +136,18 @@ services:
     volumes:
       - ./gpfwa-data:/data
       - ./gpfwa-logs:/logs
-      # Persistent per-agent GRR cache, replacing the dead
+      # Node-local grr-sync GRR, mounted READ-ONLY. Replaces the dead
       # /mnt/cephfs/seqpipe/grr NFS bind (piglet is decommissioned).
-      # /grr_cache is what grr-definition-http.yaml names as its
-      # cache_dir; the cache lands in /grr_cache/grr.sync/.
-      - ${GRR_CACHE_DIR:-./grr_cache}:/grr_cache
+      # ${GRR_ROOT} is the per-agent grr-sync root (e.g. /data/grr or
+      # /tank/grr); its stable per-repo symlinks are mounted where
+      # grr-definition.yaml expects them (/grr). :ro so a build can
+      # never write the shared hardlinked tree.
+      - ${GRR_ROOT}/grr:/grr:ro
+      - ${GRR_ROOT}/grr_encode:/grr_encode:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_daphne
       GPFWA_EMAIL_HOST: mail
-      GRR_DEFINITION_FILE: /grr-definition-http.yaml
-      # The image has no passwd entry for the agent uid, so HOME would
-      # default to `/` (root-owned, unwritable). Point it somewhere
-      # writable for any library that reaches for a dotfile cache.
+      GRR_DEFINITION_FILE: /grr-definition.yaml
       HOME: /tmp
       GPFWA_DB_NAME: gpfwa
       GPFWA_DB_USER: postgres
@@ -180,7 +171,6 @@ services:
   # as `backend-migrate`; see the note there.
   backend-e2e-setup:
     image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
-    user: "${AGENT_UID:-0}:${AGENT_GID:-0}"
     # Run from a writable cwd. Several gain CLIs/paths default to a
     # cwd-relative dir (annotate_vcf jobs -> ./work; task-graph ->
     # ./.task-log). The container cwd is /, root-owned, so as a non-root
@@ -192,12 +182,13 @@ services:
       backend-e2e-migrate:
         condition: service_completed_successfully
     volumes:
-      - ${GRR_CACHE_DIR:-./grr_cache}:/grr_cache
+      - ${GRR_ROOT}/grr:/grr:ro
+      - ${GRR_ROOT}/grr_encode:/grr_encode:ro
       - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
       PYTHONPATH: /web_api_src
-      GRR_DEFINITION_FILE: /grr-definition-http.yaml
+      GRR_DEFINITION_FILE: /grr-definition.yaml
       HOME: /tmp
       # Non-root: settings_default.py creates DATA_STORAGE_DIR at
       # import time, and its default lives inside site-packages,
@@ -223,8 +214,6 @@ services:
   backend-e2e:
     image: ${BACKEND_IMAGE:-gain-web-api-prod:latest}
     hostname: backend
-    # Same rationale as `backend` above: agent uid, not root.
-    user: "${AGENT_UID:-0}:${AGENT_GID:-0}"
     # Run from a writable cwd. Several gain CLIs/paths default to a
     # cwd-relative dir (annotate_vcf jobs -> ./work; task-graph ->
     # ./.task-log). The container cwd is /, root-owned, so as a non-root
@@ -242,13 +231,14 @@ services:
     volumes:
       - ./gpfwa-data:/data
       - ./gpfwa-logs:/logs
-      - ${GRR_CACHE_DIR:-./grr_cache}:/grr_cache
+      - ${GRR_ROOT}/grr:/grr:ro
+      - ${GRR_ROOT}/grr_encode:/grr_encode:ro
       - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
       PYTHONPATH: /web_api_src
       GPFWA_EMAIL_HOST: mail
-      GRR_DEFINITION_FILE: /grr-definition-http.yaml
+      GRR_DEFINITION_FILE: /grr-definition.yaml
       HOME: /tmp
       GPFWA_DB_NAME: gpfwa
       GPFWA_DB_USER: postgres
