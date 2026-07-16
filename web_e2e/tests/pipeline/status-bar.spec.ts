@@ -155,7 +155,7 @@ test.describe('Pipeline status bar tests', () => {
     await editor.selectPipeline('pipeline/hg38_clinical_annotation');
 
     await expect(editor.statusItem(0)).toHaveText('menu13 annotators');
-    await expect(editor.statusItem(1)).toHaveText('menu_open23 attributes');
+    await expect(editor.statusItem(1)).toHaveText('menu_open22 attributes');
 
     /* eslint-disable */
     await page.evaluate(() => {
@@ -164,7 +164,11 @@ test.describe('Pipeline status bar tests', () => {
 
       model.applyEdits([
         {
-          range: new monaco.Range(19, 1, 88, 1), // clear from line 19 col 1 to line 88 col 1
+          // Delete from line 18 (start of the 2nd annotator) to EOF,
+          // leaving only the first annotator (the MANE effect_annotator).
+          // Uses the model's live line count so it survives the public
+          // pipeline growing/shrinking below line 18.
+          range: new monaco.Range(18, 1, model.getLineCount(), model.getLineMaxColumn(model.getLineCount())),
           text: ''
         }
       ]);
@@ -173,10 +177,10 @@ test.describe('Pipeline status bar tests', () => {
 
     await page.waitForResponse(resp => resp.url().includes('api/editor/pipeline_status'));
 
-    await expect(editor.statusItem(0)).toHaveText('menu3 annotators');
-    await expect(editor.statusItem(1)).toHaveText('menu_open8 attributes');
+    await expect(editor.statusItem(0)).toHaveText('menu1 annotators');
+    await expect(editor.statusItem(1)).toHaveText('menu_open3 attributes');
     await expect(editor.statusItem(2)).toHaveText('edit_note0 annotatables');
-    await expect(editor.statusItem(3)).toHaveText('grain1 gene list');
+    await expect(editor.statusItem(3)).toHaveText('grain0 gene list');
   });
 
   test('should show all zeros for an empty new pipeline', async({ page }) => {

@@ -57,10 +57,10 @@ services:
       db:
         condition: service_healthy
     volumes:
-      - ${GRR_CACHE_DIR:-./grr_cache}:/grr_cache
+      - ${GRR_ROOT:?GRR_ROOT must point at the grr-sync root}/grr:/grr:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_daphne
-      GRR_DEFINITION_FILE: /grr-definition-http.yaml
+      GRR_DEFINITION_FILE: /grr-definition.yaml
       HOME: /tmp
       # Non-root: settings_default.py creates DATA_STORAGE_DIR at
       # import time, and its default lives inside site-packages,
@@ -94,12 +94,12 @@ services:
       db:
         condition: service_healthy
     volumes:
-      - ${GRR_CACHE_DIR:-./grr_cache}:/grr_cache
+      - ${GRR_ROOT:?GRR_ROOT must point at the grr-sync root}/grr:/grr:ro
       - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
       PYTHONPATH: /web_api_src
-      GRR_DEFINITION_FILE: /grr-definition-http.yaml
+      GRR_DEFINITION_FILE: /grr-definition.yaml
       HOME: /tmp
       # Non-root: settings_default.py creates DATA_STORAGE_DIR at
       # import time, and its default lives inside site-packages,
@@ -145,15 +145,19 @@ services:
     volumes:
       - ./gpfwa-data:/data
       - ./gpfwa-logs:/logs
-      # Persistent per-agent GRR cache, replacing the dead
-      # /mnt/cephfs/seqpipe/grr NFS bind (piglet is decommissioned).
-      # /grr_cache is what grr-definition-http.yaml names as its
-      # cache_dir; the cache lands in /grr_cache/grr.sync/.
-      - ${GRR_CACHE_DIR:-./grr_cache}:/grr_cache
+      # Node-local, read-only main GRR published by grr-sync (atomic
+      # mode, iossifovlab/grr-sync#20) and provisioned per agent by
+      # seqpipe/infra#71. Replaces the dead /mnt/cephfs/seqpipe/grr NFS
+      # bind AND the interim http+cache GRR. GRR_ROOT is the node-local
+      # grr-sync root (per-agent: /tank/grr on pooh, /data/grr on
+      # piglet+eyoree), resolved in Jenkinsfile.e2e. This is the same
+      # single-repo grr.sync mount the e2e stack used pre-#271 (only
+      # /grr; grr-definition.yaml, NOT the prod grr+grr_encode group).
+      - ${GRR_ROOT:?GRR_ROOT must point at the grr-sync root}/grr:/grr:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_daphne
       GPFWA_EMAIL_HOST: mail
-      GRR_DEFINITION_FILE: /grr-definition-http.yaml
+      GRR_DEFINITION_FILE: /grr-definition.yaml
       # The image has no passwd entry for the agent uid, so HOME would
       # default to `/` (root-owned, unwritable). Point it somewhere
       # writable for any library that reaches for a dotfile cache.
@@ -192,12 +196,12 @@ services:
       backend-e2e-migrate:
         condition: service_completed_successfully
     volumes:
-      - ${GRR_CACHE_DIR:-./grr_cache}:/grr_cache
+      - ${GRR_ROOT:?GRR_ROOT must point at the grr-sync root}/grr:/grr:ro
       - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
       PYTHONPATH: /web_api_src
-      GRR_DEFINITION_FILE: /grr-definition-http.yaml
+      GRR_DEFINITION_FILE: /grr-definition.yaml
       HOME: /tmp
       # Non-root: settings_default.py creates DATA_STORAGE_DIR at
       # import time, and its default lives inside site-packages,
@@ -242,13 +246,13 @@ services:
     volumes:
       - ./gpfwa-data:/data
       - ./gpfwa-logs:/logs
-      - ${GRR_CACHE_DIR:-./grr_cache}:/grr_cache
+      - ${GRR_ROOT:?GRR_ROOT must point at the grr-sync root}/grr:/grr:ro
       - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
       PYTHONPATH: /web_api_src
       GPFWA_EMAIL_HOST: mail
-      GRR_DEFINITION_FILE: /grr-definition-http.yaml
+      GRR_DEFINITION_FILE: /grr-definition.yaml
       HOME: /tmp
       GPFWA_DB_NAME: gpfwa
       GPFWA_DB_USER: postgres
@@ -271,15 +275,14 @@ services:
     # pipeline_cache.py:get_pipeline until the future resolves;
     # --fail rejects non-2xx, --max-time bounds each call.
     #
-    # start_period is generous because the GRR is now an http repo
-    # with a cache whose unit is a WHOLE FILE, not a byte range:
-    # against the NFS mount a tabix query read a few KB of a score
-    # file, but on a cold cache the first open() downloads the
-    # entire file. While in start_period a failing probe only marks
-    # the container `starting` (it does not burn a retry), so this
-    # is a budget for the cold pipeline build, not added latency:
-    # a warm cache still goes healthy on the first probe. Overall
-    # bound is the Jenkins job timeout.
+    # start_period stays generous as a safety budget for the first
+    # pipeline build. The GRR is now node-local directory reads
+    # (byte-range, no download) rather than the interim http+cache
+    # whole-file materialisation, so there is no cold-download cost
+    # here -- the first build only pays the pipeline construction. A
+    # failing probe while in start_period only marks the container
+    # `starting` (it does not burn a retry), so this is not added
+    # latency on the warm path. Overall bound is the Jenkins timeout.
     healthcheck:
       test: ["CMD", "curl", "--fail", "--max-time", "120",
              "http://localhost:9001/api/editor/pipeline_status?pipeline_id=pipeline/hg38_clinical_annotation"]

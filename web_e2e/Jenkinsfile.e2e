@@ -59,15 +59,11 @@ pipeline {
     }
 
     options {
-        // 4h, not 1h: the GRR is no longer a bind-mounted NFS
-        // directory but https://grr.seqpipe.org behind a
-        // persistent per-agent cache, and the cache's unit is a
-        // whole file rather than a byte range — the first build on
-        // a given agent downloads every resource the suite touches
-        // in full. Cold builds are expected to be slow (and are
-        // allowed to be); warm builds should beat the old NFS
-        // baseline, since they read from local disk. Trim this
-        // back once warm-build times have been measured.
+        // The GRR is node-local, read-only grr-sync directory trees
+        // (byte-range reads off local disk, no per-build download),
+        // so there is no cold-cache penalty. 4h is left as generous
+        // headroom for the Playwright suite + image build; trim once
+        // warm node-local build times have been measured.
         timeout(time: 4, unit: 'HOURS')
         buildDiscarder(logRotator(numToKeepStr: '20'))
     }
@@ -80,22 +76,36 @@ pipeline {
         COMPOSE_NETWORK =
             "gain-web-e2e-${env.BUILD_NUMBER}_default"
 
-        // Persistent across builds, and shared with gpf-web-e2e:
-        // both call the main GRR `grr.sync`, and the cache is keyed
-        // by child repo id (cached_repository.py joins cache_url
-        // with proto_id), so both jobs populate and reuse the same
-        // ${HOME}/grr_cache/grr.sync/ tree. Same shape as
-        // core/Jenkinsfile.integration's grr_seqpipe_cache: anchored
-        // to the agent home (on pooh, /var/lib/jenkins -> ZFS via the
-        // home symlink) rather than a hardcoded mount, bind-mounted
-        // into the containers by web_infra/compose-jenkins.yaml.
-        //
-        // Created here with `mkdir -p` rather than relying on the
-        // agent being pre-provisioned (seqpipe/infra#67 provisions it
-        // on pooh, but this job's label is `!dory`, so it can also
-        // land on eyoree). Concurrent builds on one agent are safe:
-        // the caching protocol takes a per-file lock before copying.
-        GRR_CACHE_DIR = "${env.HOME}/grr_cache"
+        // GRR_ROOT is the node-local grr-sync root holding the stable
+        // per-repo symlink <root>/grr, published by grr-sync (atomic
+        // mode, iossifovlab/grr-sync#20) and provisioned per agent by
+        // seqpipe/infra#71 -- where it is NOT a uniform path: /tank/grr
+        // on pooh (a dedicated ZFS dataset), /data/grr on piglet +
+        // eyoree (the cache-fronted LVM). This job's label is `!dory`,
+        // so it can land on any of them. Resolve per-node: honour an
+        // explicit GRR_ROOT from the agent's node environment if set,
+        // else auto-detect the first candidate that exists. The
+        // `Compose env` pre-flight then asserts /grr resolves under it
+        // with a .CONTENTS manifest, so a wrong/empty root fails loudly
+        // before compose up. The e2e stack reads only the main GRR
+        // (grr.sync, grr-definition.yaml) -- the same single-repo shape
+        // it used pre-#271; grr_encode is prod-only. Shared with
+        // gpf-web-e2e, which reads the same node-local grr tree.
+        GRR_ROOT = sh(
+            script: '''
+                if [ -n "${GRR_ROOT:-}" ]; then
+                    printf '%s' "$GRR_ROOT"; exit 0
+                fi
+                for d in /tank/grr /data/grr; do
+                    [ -d "$d" ] && { printf '%s' "$d"; exit 0; }
+                done
+                # Nothing found: emit a non-resolving sentinel so the
+                # Compose-env pre-flight fails with a clear "GRR not
+                # synced on this node yet" rather than an empty value.
+                printf '%s' "/grr-not-provisioned"
+            ''',
+            returnStdout: true,
+        ).trim()
 
         // The backend containers run as the agent's uid/gid instead
         // of root, so the long-lived cache (and the gpfwa-data /
@@ -156,9 +166,6 @@ pipeline {
                 // scratch: the stack is torn down with `down -v`
                 // and the DB starts empty every build.
                 //
-                // GRR_CACHE_DIR is the one thing that must NOT be
-                // wiped — it is the persistent cross-build cache —
-                // so it is only ever mkdir'd.
                 sh '''
                     docker run --rm -v "$PWD:/wd" -w /wd alpine \
                         rm -rf dist reports web_e2e/reports \
@@ -167,13 +174,6 @@ pipeline {
                     mkdir -p reports/web_e2e \
                              web_infra/gpfwa-logs \
                              web_infra/gpfwa-data
-
-                    # Re-derive rather than trusting the environment{}
-                    # block: see the `Compose env` stage. `mkdir -p ""`
-                    # is an error, so an unset/empty GRR_CACHE_DIR would
-                    # otherwise fail here for a confusing reason.
-                    : "${GRR_CACHE_DIR:=$HOME/grr_cache}"
-                    mkdir -p "$GRR_CACHE_DIR"
                 '''
             }
         }
@@ -198,51 +198,45 @@ pipeline {
             }
         }
 
-        // Make the compose stack's view of GRR_CACHE_DIR / AGENT_UID /
-        // AGENT_GID deterministic, then PROVE it before anything starts.
+        // Make the compose stack's view of GRR_ROOT / AGENT_UID /
+        // AGENT_GID deterministic, then PROVE the GRR is synced on this
+        // node before anything starts.
         //
-        // Build #1042 declared all three in the pipeline `environment{}`
+        // Build #1042 declared these in the pipeline `environment{}`
         // block and `docker compose` still did not see them: `docker
-        // inspect` on the live container showed the bind source as
-        // <workspace>/web_infra/grr_cache (the `${GRR_CACHE_DIR:-./grr_cache}`
-        // FALLBACK, i.e. inside the workspace, wiped by the next build) and
-        // User=0:0 (the `${AGENT_UID:-0}` fallback). Both designs — the
-        // persistent cache and the non-root ownership — were completely
-        // inert, and nothing failed.
+        // inspect` on the live container showed User=0:0 (the
+        // `${AGENT_UID:-0}` fallback) and the bind taking its fallback
+        // too. Both the mount and the non-root ownership were inert, and
+        // nothing failed loudly. So pin the values rather than trust
+        // Jenkins' env export:
         //
-        // Rather than chase Jenkins' env-export semantics, pin it:
+        //   1. Write them to web_infra/.env — the compose PROJECT
+        //      directory (the dir of the first `-f` file), which is
+        //      where Compose auto-loads a .env from.
+        //   2. Pass `--env-file web_infra/.env` explicitly on every
+        //      compose call, so nothing depends on which directory
+        //      Compose decides the project dir is.
+        //   3. `set -a; . ./web_infra/.env` before each compose call,
+        //      because --env-file is NOT enough on its own: the process
+        //      environment OUTRANKS --env-file, so a present-but-EMPTY
+        //      var in the shell still wins and selects the fallback
+        //      (verified against docker compose). Sourcing makes the
+        //      shell agree with the file, which closes that hole.
         //
-        //   1. Re-derive the values HERE, in the shell, from `$HOME` and
-        //      `id -u`/`id -g` — the shell's own view is authoritative and
-        //      cannot be half-exported.
-        //   2. Write them to web_infra/.env — the compose PROJECT directory
-        //      (the dir of the first `-f` file), which is where Compose
-        //      auto-loads a .env from.
-        //   3. Pass `--env-file web_infra/.env` explicitly on every compose
-        //      call anyway, so nothing depends on which directory Compose
-        //      decides the project dir is.
-        //   4. `set -a; . ./web_infra/.env` before each compose call, because
-        //      --env-file is NOT enough on its own: the process environment
-        //      OUTRANKS --env-file, so a var that is present-but-EMPTY in the
-        //      shell still wins and still selects the fallback (verified
-        //      against docker compose). Sourcing makes the shell agree with
-        //      the file, which closes that hole.
-        //
-        // The ${VAR:-default} fallbacks stay in the compose YAML as a
-        // last-resort guard for local `docker compose up` outside CI.
+        // GRR_ROOT is resolved per-agent in the environment{} block
+        // (infra#71 uses non-uniform paths). The compose `${GRR_ROOT:?}`
+        // guard hard-fails on an empty root; the pre-flight below is the
+        // positive check that the trees are actually synced on this node.
         stage('Compose env') {
             steps {
                 sh '''
                     set -eu
 
-                    : "${GRR_CACHE_DIR:=$HOME/grr_cache}"
-                    mkdir -p "$GRR_CACHE_DIR"
-
 # Heredoc body is at column 0 on purpose: compose's dotenv parser
 # takes the line verbatim, and a leading-space "  KEY=value" is not
 # reliably the same thing as "KEY=value".
 cat > web_infra/.env <<EOF
-GRR_CACHE_DIR=$GRR_CACHE_DIR
+GRR_ROOT=$GRR_ROOT
 AGENT_UID=$(id -u)
 AGENT_GID=$(id -g)
 EOF
@@ -251,28 +245,39 @@ EOF
                     cat web_infra/.env
                 '''
 
-                // The teeth. A silent fallback to a workspace-local cache
-                // running as root is EXACTLY the bug above; it must never
-                // pass quietly again. This asserts on the RESOLVED config
-                // (`docker compose config`), not on what we believe we
-                // exported, and fails the build with expected-vs-actual.
+                // Fail fast if grr-sync has not published the node-local
+                // main GRR tree on this agent yet (seqpipe/infra#71). A
+                // dangling symlink or absent tree would otherwise mount as
+                // an empty dir and fail deep in the run with a confusing
+                // `FileNotFoundError: .CONTENTS.json`. The e2e stack reads
+                // only the main GRR (grr.sync); grr_encode is prod-only.
                 sh '''
                     set -eu
                     set -a; . ./web_infra/.env; set +a
 
-                    # Every one of these builds a GRR. The two web services
-                    # do it obviously; the three one-shots do it via Django's
-                    # system checks, which resolve ROOT_URLCONF and thereby
-                    # import annotation_base_view's module-level
-                    # `GRR = build_genomic_resource_repository(...)`. A
-                    # service missing any leg silently uses the image's
-                    # baked-in default GRR and caches nothing.
-                    EXPECT_GRR_SERVICES="backend backend-e2e \
-                                         backend-migrate backend-e2e-migrate \
-                                         backend-e2e-setup" \
-                    ./web_infra/verify-compose-env.sh \
-                        web_infra/.env \
-                        web_infra/compose-jenkins.yaml
+                    for repo in grr; do
+                        tree="$GRR_ROOT/$repo"
+                        resolved="$(readlink -e "$tree" || true)"
+                        if [ -z "$resolved" ]; then
+                            echo "GRR not synced on this node yet: $repo" >&2
+                            echo "  ($tree does not resolve -- grr-sync has" >&2
+                            echo "   not published this repo on this agent;" >&2
+                            echo "   see seqpipe/infra#71)" >&2
+                            exit 1
+                        fi
+                        # Accept EITHER manifest name: gain's directory GRR
+                        # loader (fsspec_protocol.py load_contents) tries
+                        # .CONTENTS.json.gz first and falls back to the
+                        # uncompressed .CONTENTS.json.
+                        if [ ! -f "$tree/.CONTENTS.json.gz" ] \
+                           && [ ! -f "$tree/.CONTENTS.json" ]; then
+                            echo "GRR not synced on this node yet: $repo" >&2
+                            echo "  ($resolved has no .CONTENTS manifest --" >&2
+                            echo "   tree present but incomplete)" >&2
+                            exit 1
+                        fi
+                        echo "OK: $repo -> $resolved"
+                    done
                 '''
             }
         }
