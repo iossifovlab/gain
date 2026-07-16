@@ -397,6 +397,69 @@ class ManifestUpdate:
         return bool(self.entries_to_delete or self.entries_to_update)
 
 
+def parse_dvc_pointer_out(
+    content: str | bytes, basename: str,
+) -> dict[str, Any] | None:
+    """Parse a ``.dvc`` sidecar; return the output entry describing basename.
+
+    A well-formed ``.dvc`` pointer is a mapping with an ``outs`` list of
+    mappings; the output that describes ``basename`` is the one whose
+    ``path`` equals it exactly. Anything else - a mapping without ``outs``,
+    an ``outs`` that is not a list of mappings, an output for some other
+    path, YAML that does not parse, non-UTF-8 bytes - is not a pointer for
+    ``basename`` and yields ``None``.
+
+    Parsing NEVER raises. This is the single place a ``.dvc`` file is
+    interpreted, so that the repository scan
+    (``_is_dvc_managed_leaf``, which must never abort on stray content) and
+    ``grr_manage``'s ``collect_dvc_entries`` cannot classify the same sidecar
+    differently (#251).
+
+    Args:
+        content: raw content of the ``.dvc`` file; bytes are safe to pass -
+            ``yaml`` decodes them itself, so a binary file cannot raise a
+            ``UnicodeDecodeError`` past this function.
+        basename: the base name of the data file the pointer must describe.
+
+    Returns:
+        The matching ``outs`` entry, or None if the content is not a pointer
+        for ``basename``. The entry is NOT validated beyond its ``path``:
+        callers that need an md5 sum and a size must check for them.
+    """
+    try:
+        dvc = yaml.safe_load(content)
+        for out in dvc["outs"]:
+            if out["path"] == basename:
+                return cast(dict[str, Any], out)
+    except (yaml.YAMLError, TypeError, KeyError, OSError, ValueError) as error:
+        logger.debug(
+            "ignoring malformed '.dvc' pointer for <%s>: %s", basename, error)
+        return None
+    return None
+
+
+def is_dvc_directory_out(out: dict[str, Any]) -> bool:
+    """Return True if a ``.dvc`` output describes a ``dvc add <dir>`` output.
+
+    DVC writes two signals for a directory output, and either one on its own
+    is enough to recognise it:
+
+    * its ``md5`` is the hash of a DVC *cache object* - a listing of the
+      directory's files - and carries a ``.dir`` suffix to say so;
+    * it declares ``nfiles``, the number of files in the directory.
+
+    Neither is checked in isolation: an out that lost its ``nfiles`` is still
+    a directory, and so is one whose md5 sum lost its suffix. GAIn does not
+    support directory outputs - it cannot verify a ``.dir`` md5 sum against
+    anything it can read - so ``grr_manage`` refuses a resource that has one
+    (#255).
+    """
+    md5 = out.get("md5")
+    if isinstance(md5, str) and md5.endswith(".dir"):
+        return True
+    return "nfiles" in out
+
+
 class GenomicResource:
     """Represents a single genomic resource with metadata and file access.
 
@@ -924,40 +987,104 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         """
 
     def _update_manifest_entry_and_state(
-            self, resource: GenomicResource, entry: ManifestEntry,
-            prebuild_entries: dict[str, ManifestEntry]) -> None:
-        pre_state = self.load_resource_file_state(resource, entry.name)
-        size = None
-        md5 = None
-        if entry.name in prebuild_entries:
-            ready_entry = prebuild_entries[entry.name]
-            size = ready_entry.size
-            md5 = ready_entry.md5
+            self, resource: GenomicResource, entry: ManifestEntry, *,
+            verify_content: bool = False) -> None:
+        """Fill in md5 and size of a *materialised* file's manifest entry.
 
-        if pre_state is None:
-            state = self.build_resource_file_state(
-                resource, entry.name, size=size, md5=md5)
-            self.save_resource_file_state(resource, state)
-        elif entry.name in prebuild_entries:
-            state = self.build_resource_file_state(
-                resource, entry.name, size=size, md5=md5)
-        else:
-            timestamp = self.get_resource_file_timestamp(resource, entry.name)
-            size = self.get_resource_file_size(resource, entry.name)
-            if abs(timestamp - pre_state.timestamp) <= 1e-2 \
-                    and size == pre_state.size:
-                state = pre_state
-            else:
-                state = self.build_resource_file_state(
-                    resource, entry.name, size=size, md5=md5)
-                self.save_resource_file_state(resource, state)
+        Whenever an md5 has to be *derived* for a file whose bytes are on
+        disk, it is computed from those bytes. A prebuild (``.dvc``) entry is
+        never a source of md5 here: a sidecar cannot be confirmed without
+        reading the bytes it claims to describe. See
+        :meth:`_merge_pointer_only_entries` for the case where the bytes are
+        absent and the sidecar is the only source there is.
+
+        An already-recorded resource file state, however, is authoritative
+        whenever its size and timestamp still match the file - whatever wrote
+        it. A ``ResourceFileState`` does not record how its md5 was derived,
+        and GAIn deliberately does not distinguish: a DVC-declared md5 and a
+        content-derived one are treated as equivalent, because ``dvc add``
+        computes the md5 from the very bytes it stores. A state written by an
+        older GAIn therefore keeps its md5, and such a file is not rehashed.
+
+        The accepted consequence: on a GRR an older GAIn already managed, an
+        in-place edit made *before* the upgrade may already be baked into a
+        state, and re-running ``repo-repair`` will not re-detect it. Force
+        content verification with ``verify_content`` (``grr_manage
+        --without-dvc``), which ignores recorded state entirely.
+
+        With ``verify_content`` the recorded state is not consulted at all and
+        the file's content is hashed - the explicit "verify these bytes"
+        audit mode behind ``grr_manage --without-dvc``.
+        """
+        if not verify_content:
+            pre_state = self.load_resource_file_state(resource, entry.name)
+            if pre_state is not None:
+                timestamp = self.get_resource_file_timestamp(
+                    resource, entry.name)
+                size = self.get_resource_file_size(resource, entry.name)
+                if abs(timestamp - pre_state.timestamp) <= 1e-2 \
+                        and size == pre_state.size:
+                    entry.md5 = pre_state.md5
+                    entry.size = pre_state.size
+                    return
+                logger.debug(
+                    "timestamp (%s) or size (%s) mismatch for %s in %s; "
+                    "recomputing md5...",
+                    pre_state.timestamp - timestamp, pre_state.size - size,
+                    entry.name, resource.resource_id)
+
+        state = self.build_resource_file_state(resource, entry.name)
+        self.save_resource_file_state(resource, state)
 
         entry.md5 = state.md5
         entry.size = state.size
 
+    def _merge_pointer_only_entries(
+        self,
+        resource: GenomicResource,
+        manifest: Manifest,
+        prebuild_entries: dict[str, ManifestEntry],
+    ) -> None:
+        """Merge prebuild entries for the files that are NOT materialised.
+
+        A prebuild (``.dvc``) entry is merged in iff the data it describes is
+        absent from the repository - the pointer-only clone the ``grr``
+        pipeline builds from. There are no bytes to hash, so the sidecar is
+        the sole possible source of md5 and size, whatever the caller asked
+        for, and the entry is never dropped.
+
+        The predicate is "the file is NOT materialised" (``file_exists``), NOT
+        "the scan did not yield it" (gain#255). The two are not the same: the
+        scan skips things that ARE on disk, and every one of them used to be
+        classified pointer-only and handed its sidecar's md5 sum unverified -
+        in every mode, ``--without-dvc`` included. Anything the scan does not
+        yield but that exists on disk is deliberately left out of the manifest
+        rather than certified from a sidecar nobody read the bytes for.
+
+        Entries for materialised files are left as the scan built them; their
+        md5 is derived from the file's content.
+        """
+        for name, entry in prebuild_entries.items():
+            if name in manifest:
+                continue
+            if self.file_exists(resource, name):
+                # On disk, yet not in the scanned manifest. Whatever kept it
+                # out of the scan, its bytes are right there and its sidecar
+                # is not evidence about them: it is left out of the manifest
+                # rather than certified from a claim nobody checked.
+                logger.debug(
+                    "not taking the md5 sum of <%s> in <%s> from its '.dvc' "
+                    "sidecar: it is materialised, and a sidecar is never the "
+                    "md5 sum of bytes that are on disk",
+                    name, resource.resource_id)
+                continue
+            manifest.add(entry)
+
     def build_manifest(
         self, resource: GenomicResource,
         prebuild_entries: dict[str, ManifestEntry] | None = None,
+        *,
+        verify_content: bool = False,
     ) -> Manifest:
         """Build full manifest for the resource."""
         if prebuild_entries is None:
@@ -965,18 +1092,21 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         manifest = Manifest()
         for entry in self.collect_resource_entries(resource):
             self._update_manifest_entry_and_state(
-                resource, entry, prebuild_entries)
+                resource, entry, verify_content=verify_content)
             manifest.add(entry)
-        # Merge prebuild (e.g. DVC pointer-only) entries the scan cannot
-        # see, mirroring check_update_manifest.
-        manifest.update(prebuild_entries)
+        self._merge_pointer_only_entries(
+            resource, manifest, prebuild_entries)
         return manifest
 
     def check_update_manifest(
         self, resource: GenomicResource,
         prebuild_entries: dict[str, ManifestEntry] | None = None,
+        *,
+        verify_content: bool = False,
     ) -> ManifestUpdate:
         """Check if the resource manifest needs update."""
+        if prebuild_entries is None:
+            prebuild_entries = {}
         try:
             current_manifest = self.load_manifest(resource)
         except FileNotFoundError:
@@ -985,51 +1115,16 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         manifest = Manifest()
         entries_to_update = set()
         for entry in self.collect_resource_entries(resource):
+            self._update_manifest_entry_and_state(
+                resource, entry, verify_content=verify_content)
             manifest.add(entry)
-            state = self.load_resource_file_state(resource, entry.name)
-            if state is None:
-                md5 = None
-                size = None
-                if prebuild_entries and entry.name in prebuild_entries:
-                    md5 = prebuild_entries[entry.name].md5
-                    size = prebuild_entries[entry.name].size
-                state = self.build_resource_file_state(
-                    resource, entry.name,
-                    md5=md5, size=size)
-                self.save_resource_file_state(resource, state)
-            if state.filename not in current_manifest:
-                entries_to_update.add(entry.name)
-                continue
-            file_timestamp = self.get_resource_file_timestamp(
-                resource, entry.name)
-            file_size = self.get_resource_file_size(
-                resource, entry.name)
-            if state.timestamp != file_timestamp or \
-                    state.size != file_size:
-                logger.debug(
-                    "timestamp (%s) or size (%s) mismatch for %s in %s; "
-                    "recomputing md5...",
-                    state.timestamp - file_timestamp, state.size - file_size,
-                    entry.name, resource.resource_id)
-                md5 = None
-                if prebuild_entries and entry.name in prebuild_entries:
-                    md5 = prebuild_entries[entry.name].md5
-                state = self.build_resource_file_state(
-                    resource, entry.name, md5=md5)
-                if state.md5 == current_manifest[entry.name].md5:
-                    self.save_resource_file_state(resource, state)
-                else:
-                    entries_to_update.add(entry.name)
-                continue
-            if state.md5 != current_manifest[entry.name].md5:
-                entries_to_update.add(entry.name)
-                continue
 
-            entry.md5 = state.md5
-            entry.size = state.size
+            if entry.name not in current_manifest \
+                    or entry.md5 != current_manifest[entry.name].md5:
+                entries_to_update.add(entry.name)
 
-        if prebuild_entries is not None:
-            manifest.update(prebuild_entries)
+        self._merge_pointer_only_entries(
+            resource, manifest, prebuild_entries)
 
         entries_to_delete = current_manifest.names() - manifest.names()
         return ManifestUpdate(manifest, entries_to_delete, entries_to_update)
@@ -1037,24 +1132,17 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
     def update_manifest(
         self, resource: GenomicResource,
         prebuild_entries: dict[str, ManifestEntry] | None = None,
+        *,
+        verify_content: bool = False,
     ) -> Manifest:
         """Update or create full manifest for the resource."""
+        # `check_update_manifest` already fills in md5 and size of every
+        # materialised entry of the manifest it returns, and merges the
+        # pointer-only entries; the manifest it hands back is the updated one.
         manifest_update = self.check_update_manifest(
-            resource, prebuild_entries)
+            resource, prebuild_entries, verify_content=verify_content)
 
-        if not bool(manifest_update):
-            return manifest_update.manifest
-
-        manifest = manifest_update.manifest
-        if prebuild_entries is None:
-            prebuild_entries = {}
-
-        for filename in manifest_update.entries_to_update:
-            entry = manifest[filename]
-            self._update_manifest_entry_and_state(
-                resource, entry, prebuild_entries)
-
-        return manifest
+        return manifest_update.manifest
 
     def save_manifest(
             self, resource: GenomicResource, manifest: Manifest) -> None:

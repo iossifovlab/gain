@@ -51,6 +51,7 @@ from gain.genomic_resources.repository import (
     ReadWriteRepositoryProtocol,
     ResourceFileState,
     is_gr_id_token,
+    parse_dvc_pointer_out,
     parse_gr_id_version_token,
 )
 from gain.templates import get_template
@@ -723,12 +724,22 @@ class FsspecReadWriteProtocol(
     def _scan_resource_for_files(
         self, resource_path: str, path_array: list[str],
         ancestor_specs: list[tuple[int, pathspec.PathSpec]] | None = None,
-    ) -> Generator[Any, None, None]:
+        *,
+        dvc_managed: bool = False,
+    ) -> Generator[tuple[str, str, bool], None, None]:
+        """Yield ``(name, url, dvc_managed)`` for every file of a resource.
 
+        ``dvc_managed`` marks a file that DVC tracks: a per-file ``dvc add
+        <file>`` output. It never grants the file's ``.dvc`` sidecar any
+        authority over its md5 sum -- the bytes are on disk, so the md5 comes
+        from them. It only says "this is resource data, not a page GAIn
+        generated" (see :meth:`collect_resource_entries`). It is meaningful
+        only for a file; a directory's children each get their own.
+        """
         url = os.path.join(self.url, resource_path, *path_array)
         if not self.filesystem.isdir(url):
             if path_array:
-                yield os.path.join(*path_array), url
+                yield os.path.join(*path_array), url, dvc_managed
             return
 
         path = os.path.join(self.root_path, resource_path, *path_array)
@@ -772,7 +783,6 @@ class FsspecReadWriteProtocol(
         # case -- opens zero `.dvc` files (gain#209).
         sibling_names = set(raw_names)
 
-        content = []
         for name in raw_names:
             if self._is_gitignored(name, path_array, current_specs):
                 # A gitignored leaf named by a genuine sibling `<name>.dvc`
@@ -783,14 +793,21 @@ class FsspecReadWriteProtocol(
                 # line dvc itself writes is still exactly the DVC situation:
                 # the pointer proves the data is DVC-managed, so keeping it
                 # is correct (gain#209).
-                if self._is_dvc_managed_leaf(url, name, sibling_names):
-                    content.append(name)
+                if not self._is_dvc_managed_leaf(url, name, sibling_names):
+                    continue
+                yield from self._scan_resource_for_files(
+                    resource_path, [*path_array, name], current_specs,
+                    dvc_managed=True)
                 continue
-            content.append(name)
 
-        for name in content:
+            # A file that is not gitignored is already in the scan; the cheap
+            # sibling-name test is only used to tell resource data apart from
+            # a generated info page, never to trust a sidecar. Deliberately
+            # NOT `_is_dvc_managed_leaf`: that opens the `.dvc`, and a
+            # directory with nothing gitignored must open none (gain#209).
             yield from self._scan_resource_for_files(
-                resource_path, [*path_array, name], current_specs)
+                resource_path, [*path_array, name], current_specs,
+                dvc_managed=f"{name}.dvc" in sibling_names)
 
     def _is_dvc_managed_leaf(
         self, url: str, name: str, sibling_names: set[str],
@@ -801,18 +818,20 @@ class FsspecReadWriteProtocol(
         manifest despite being gitignored -- iff ALL hold (gain#209):
 
         1. ``name`` is not a directory. Only per-file ``dvc add <file>`` is
-           supported: a gitignored *directory* with a sibling ``<dir>.dvc``
-           stays skipped whole (recursing into it would re-skip its children
-           under the inherited ancestor gitignore spec and silently yield a
-           half-populated subtree).
+           supported: GAIn cannot verify the ``.dir`` md5 sum of a
+           ``dvc add <dir>`` output against anything it can read, so it
+           refuses such a resource outright rather than describe it -- see
+           ``cli.collect_dvc_entries``, which fails the command on the
+           sidecar (gain#255). The directory itself stays out of the scan.
         2. a sibling ``<name>.dvc`` exists in this directory and is a regular
            file (a *directory* literally named ``<name>.dvc`` is not a
            pointer and must not be opened).
         3. that ``<name>.dvc`` parses as a well-formed DVC pointer -- a dict
            with an ``outs`` list of dicts -- that declares ``name`` as one of
-           its outputs (``out["path"] == name``). This mirrors
-           ``cli.collect_dvc_entries``' strict ``out["path"] == basename``
-           comparison, so the scanner and cli classify identically.
+           its outputs (``out["path"] == name``). Both this test and
+           ``cli.collect_dvc_entries`` delegate to
+           :func:`repository.parse_dvc_pointer_out`, so the scanner and the
+           cli cannot classify the same sidecar differently.
 
         Parsing NEVER raises: a binary/non-UTF-8 ``.dvc`` (read in binary and
         handed to ``yaml.safe_load`` as bytes, so no UnicodeDecodeError), a
@@ -834,13 +853,13 @@ class FsspecReadWriteProtocol(
         # (3) it must parse as a genuine pointer declaring `name` as output.
         try:
             with self.filesystem.open(dvc_url, "rb") as infile:
-                dvc = yaml.safe_load(infile.read())
-            return any(out["path"] == name for out in dvc["outs"])
-        except (yaml.YAMLError, TypeError, KeyError, OSError, ValueError) \
-                as error:
+                content = cast(bytes, infile.read())
+        except (OSError, ValueError) as error:
             logger.debug(
-                "ignoring malformed .dvc pointer %s: %s", dvc_url, error)
+                "ignoring unreadable .dvc pointer %s: %s", dvc_url, error)
             return False
+
+        return parse_dvc_pointer_out(content, name) is not None
 
     @staticmethod
     def _is_gitignored(
@@ -898,8 +917,14 @@ class FsspecReadWriteProtocol(
         resource_path = resource.get_genomic_resource_id_version()
 
         result = Manifest()
-        for name, path in self._scan_resource_for_files(resource_path, []):
-            if name.endswith("html"):  # Ignore generated info files
+        for name, path, dvc_managed in self._scan_resource_for_files(
+                resource_path, []):
+            # The info pages GAIn generates for a resource are not resource
+            # data and stay out of the manifest. A DVC-managed `*html` file is
+            # not generated - it is data, `dvc add`ed like any other file - so
+            # the exclusion does not apply to it: it is scanned, and its md5
+            # sum comes from its bytes rather than from its sidecar (gain#255).
+            if name.endswith("html") and not dvc_managed:
                 continue
 
             size = self._get_filepath_size(path)
