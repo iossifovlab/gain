@@ -123,6 +123,7 @@ class _ScoreSpec:
     column_index: int | None = None
     desc: str | None = None
     histogram: dict[str, Any] | None = None
+    na_values: str | list[str] | None = None
 
 
 def _append_score(
@@ -193,6 +194,46 @@ def _set_histogram(
     )
 
 
+def _set_na_values(
+    scores: tuple[_ScoreSpec, ...],
+    na_values: str | list[str], *,
+    score_id: str | None = None,
+) -> tuple[_ScoreSpec, ...]:
+    """Return ``scores`` with ``na_values`` set on one declared score.
+
+    Shared by the table-score builders' ``with_na_values``.  With ``score_id``
+    omitted the sentinel(s) are attached to the most-recently-declared score;
+    passing ``score_id`` targets that specific score.  Setting na_values before
+    any score, or for an unknown score id, is a validation error.  The value is
+    rendered verbatim under ``na_values:`` -- either a scalar (``na_values:
+    "-1"``) or a list -- matching the resource schema's ``["string", "list"]``.
+    """
+    if not scores:
+        raise ResourceValidationError(
+            "with_na_values requires a declared score; "
+            "call with_score first")
+    # Defensive copy of a list so a caller mutating theirs afterward cannot
+    # leak into this immutable builder.
+    if isinstance(na_values, list):
+        na_values = list(na_values)
+    if score_id is None:
+        target_index = len(scores) - 1
+    else:
+        indexes = [
+            i for i, spec in enumerate(scores)
+            if spec.score_id == score_id
+        ]
+        if not indexes:
+            raise ResourceValidationError(
+                f"with_na_values: no score {score_id!r} declared")
+        target_index = indexes[-1]
+    return tuple(
+        dataclasses.replace(spec, na_values=na_values)
+        if i == target_index else spec
+        for i, spec in enumerate(scores)
+    )
+
+
 def _render_score_specs_yaml(scores: tuple[_ScoreSpec, ...]) -> str:
     """Render declared scores as a YAML ``scores:`` list body (0-indent).
 
@@ -212,6 +253,17 @@ def _render_score_specs_yaml(scores: tuple[_ScoreSpec, ...]) -> str:
             f"  type: {spec.value_type}",
             addressing,
         ]
+        if spec.na_values is not None:
+            # Emit through yaml so a scalar renders as ``na_values: '-1'`` and
+            # a list as a block sequence, both indented at the score-entry
+            # level -- the schema permits either (``["string", "list"]``).
+            na_yaml = yaml.safe_dump(
+                {"na_values": spec.na_values}, default_flow_style=False,
+                sort_keys=False)
+            lines.extend(
+                f"  {na_line}" if na_line else ""
+                for na_line in na_yaml.rstrip("\n").split("\n")
+            )
         if spec.desc is not None:
             # Emit desc through yaml so a colon/special char stays valid.
             # A multi-line desc renders as several physical lines; indent
@@ -353,6 +405,23 @@ class _TableScoreBuilder:
             self,
             scores=_set_histogram(
                 self.scores, histogram, score_id=score_id),
+        )
+
+    def with_na_values(
+        self, na_values: str | list[str], *, score_id: str | None = None,
+    ) -> Self:
+        """Declare the NA sentinel(s) for a score.
+
+        With ``score_id`` omitted the sentinel(s) are attached to the
+        most-recently-declared score; passing ``score_id`` targets that score.
+        Accepts either a scalar (``"-1"``) or a list (``["-1", "-999"]``),
+        emitted verbatim under ``na_values:`` -- the resource schema permits
+        both forms.
+        """
+        return dataclasses.replace(
+            self,
+            scores=_set_na_values(
+                self.scores, na_values, score_id=score_id),
         )
 
     def with_data(self, data: str) -> Self:
@@ -626,11 +695,23 @@ class BigWigScoreBuilder:
     data: str | None = None
     chrom_lens: dict[str, int] | None = None
     histogram: dict[str, Any] | None = None
+    na_values: str | list[str] | None = None
 
     def with_score(self, score_id: str, value_type: str = "float") -> Self:
         """Name the single score this bigWig exposes."""
         return dataclasses.replace(
             self, score_id=score_id, value_type=value_type)
+
+    def with_na_values(self, na_values: str | list[str]) -> Self:
+        """Declare the NA sentinel(s) for the single bigWig score.
+
+        A bigWig exposes exactly one score, so no ``score_id`` is needed.
+        Accepts either a scalar (``"-1"``) or a list, emitted verbatim under
+        ``na_values:`` in the resource config -- the schema permits both.
+        """
+        if isinstance(na_values, list):
+            na_values = list(na_values)
+        return dataclasses.replace(self, na_values=na_values)
 
     def with_histogram(self, histogram: dict[str, Any]) -> Self:
         """Attach a histogram block to the single bigWig score.
@@ -702,6 +783,14 @@ class BigWigScoreBuilder:
             f"  type: {self.value_type}\n"
             f"  index: {_BIGWIG_VALUE_INDEX}\n"
         )
+        if self.na_values is not None:
+            na_yaml = yaml.safe_dump(
+                {"na_values": self.na_values}, default_flow_style=False,
+                sort_keys=False)
+            config += "".join(
+                f"  {na_line}\n"
+                for na_line in na_yaml.rstrip("\n").split("\n")
+            )
         if self.histogram is not None:
             config += "  histogram:\n"
             hist_yaml = yaml.safe_dump(
