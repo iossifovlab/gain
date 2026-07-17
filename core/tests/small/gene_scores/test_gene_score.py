@@ -1420,3 +1420,44 @@ def test_gene_column_custom() -> None:
     assert gene_score.get_gene_value("pli", "GENE2") == pytest.approx(0.9)
     assert gene_score.get_gene_value("pli", "MISSING") is None
     assert gene_score.get_genes("pli", score_min=0.6) == {"GENE2"}
+
+
+def test_gene_score_misspelled_histogram_type_fails_validation() -> None:
+    # A typo in the histogram type must be rejected by config validation,
+    # naming the resource -- not surface as a TypeError from score parsing.
+    repo = build_inmemory_test_repository({
+        "BadHistType": {
+            GR_CONF_FILE_NAME: textwrap.dedent("""
+                type: gene_score
+                filename: data.csv
+                scores:
+                  - id: pli
+                    type: float
+                    histogram:
+                      type: nubmer
+            """),
+            "data.csv": "gene,pli\nGENE1,0.5\n",
+        },
+    })
+    with pytest.raises(ValueError, match="Invalid configuration: BadHistType"):
+        build_gene_score_from_resource(repo.get_resource("BadHistType"))
+
+
+def test_gene_score_histogram_without_type_fails_validation() -> None:
+    # A histogram block with no type key must fail validation rather than
+    # raising a bare KeyError out of build_histogram_config.
+    repo = build_inmemory_test_repository({
+        "NoHistType": {
+            GR_CONF_FILE_NAME: textwrap.dedent("""
+                type: gene_score
+                filename: data.csv
+                scores:
+                  - id: pli
+                    type: float
+                    histogram: {}
+            """),
+            "data.csv": "gene,pli\nGENE1,0.5\n",
+        },
+    })
+    with pytest.raises(ValueError, match="Invalid configuration: NoHistType"):
+        build_gene_score_from_resource(repo.get_resource("NoHistType"))

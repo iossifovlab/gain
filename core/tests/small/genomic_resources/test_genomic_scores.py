@@ -22,6 +22,7 @@ from gain.genomic_resources.genomic_position_table.line import (
 from gain.genomic_resources.genomic_position_table.record import PAYLOAD
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
+    CnvCollection,
     GenomicScore,
     RecordScoreLine,
     ScoreLine,
@@ -1778,3 +1779,60 @@ def test_bigwig_position_score_multi_chrom(
     assert len(lines_chr2) == 2
     assert lines_chr2[0].get_score("score") == pytest.approx(0.4)
     assert lines_chr2[1].get_score("score") == pytest.approx(0.5)
+
+
+def test_genomic_score_misspelled_histogram_type_fails_validation() -> None:
+    # A typo in the histogram type must fail validation naming the resource,
+    # rather than being silently swallowed into a null histogram.
+    res = build_inmemory_test_resource({
+        GR_CONF_FILE_NAME: textwrap.dedent("""
+            type: position_score
+            table:
+                filename: data.mem
+            scores:
+                - id: score
+                  type: float
+                  name: score
+                  histogram:
+                    type: nubmer
+        """),
+        "data.mem": convert_to_tab_separated("""
+            chrom pos_begin pos_end score
+            1     10        10      0.1
+        """),
+    })
+    with pytest.raises(ValueError, match="Invalid configuration"):
+        build_score_from_resource(res)
+
+
+def test_genomic_score_histogram_without_type_fails_validation() -> None:
+    # A histogram block with no type key must fail validation rather than
+    # raising a bare KeyError out of build_histogram_config.
+    res = build_inmemory_test_resource({
+        GR_CONF_FILE_NAME: textwrap.dedent("""
+            type: position_score
+            table:
+                filename: data.mem
+            scores:
+                - id: score
+                  type: float
+                  name: score
+                  histogram: {}
+        """),
+        "data.mem": convert_to_tab_separated("""
+            chrom pos_begin pos_end score
+            1     10        10      0.1
+        """),
+    })
+    with pytest.raises(ValueError, match="Invalid configuration"):
+        build_score_from_resource(res)
+
+
+def test_cnv_collection_inherits_histogram_type_constraint() -> None:
+    # CnvCollection deep-copies GenomicScore's schema, so the histogram type
+    # constraint must apply without a separate schema edit.
+    hist_schema = CnvCollection.get_schema()[
+        "scores"]["schema"]["schema"]["histogram"]["schema"]["type"]
+
+    assert hist_schema["allowed"] == ["number", "categorical", "null"]
+    assert hist_schema["required"] is True

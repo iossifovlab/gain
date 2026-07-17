@@ -1059,7 +1059,11 @@ class GenomicScore(ResourceConfigValidationMixin):
                     "large_values_desc": {"type": "string"},
                     "small_values_desc": {"type": "string"},
                     "histogram": {"type": "dict", "schema": {
-                        "type": {"type": "string"},
+                        "type": {
+                            "type": "string",
+                            "allowed": ["number", "categorical", "null"],
+                            "required": True,
+                        },
                         "plot_function": {"type": "string"},
                         "number_of_bins": {
                             "type": "number",

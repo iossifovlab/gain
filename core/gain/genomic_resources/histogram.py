@@ -773,6 +773,9 @@ def build_histogram_config(
         return None
     if "histogram" in config:
         hist_config = config["histogram"]
+        if "type" not in hist_config:
+            return NullHistogramConfig(
+                f"Missing histogram type in configuration {config}")
         hist_type = hist_config["type"]
     else:
         return None
