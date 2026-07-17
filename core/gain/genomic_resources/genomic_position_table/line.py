@@ -111,11 +111,38 @@ class LineBuffer:
     ``record.py``.  Nothing here reads it, so the buffer's own behaviour is
     unaffected either way.
 
-    The semantics are exactly those of the adapter-era buffer: it clears on a
+    The semantics are those of the adapter-era buffer: it clears on a
     chromosome change, clears when it observes a non-monotonic ordering
     (:meth:`region`), prunes from the left, and locates a position by binary
-    search with a linear back-scan over the equal/overlapping intervals that
-    precede the hit.
+    search with a linear scan over the overlapping intervals around the hit.
+
+    **The buffer is ordered by ``pos_begin`` -- and by nothing else.**  That is
+    the file's order, and it is the only ordering this class may assume.  Every
+    method here used to lean on a second, unstated assumption -- that
+    ``pos_end`` is non-decreasing too -- which holds for point records and for
+    strictly-disjoint intervals and fails the moment two intervals overlap: a
+    record can then *contain* the ones that follow it.  Reading a warm buffer
+    through that assumption both hid records that overlap the query and
+    surfaced records that do not (gain#250).  So:
+
+    * the right edge of :meth:`region` is the **maximum** ``pos_end`` in the
+      buffer (:attr:`_max_end`), not the last record's -- the last record is
+      merely the one that begins last;
+    * :meth:`region` judges the ordering by ``pos_begin``, since a ``pos_end``
+      that runs backwards is ordinary nested data rather than corruption;
+    * :meth:`find_index` bounds its scan by the widest interval buffered
+      (:attr:`_max_width`) instead of stopping at the first record that fails
+      to reach the position.
+
+    The two maxima are the only state beyond the deque, and neither may ever
+    *under*-estimate -- that would drop records.  Over-estimating is harmless
+    in both, but by different routes, which is why they are worth keeping
+    apart: an over-wide ``_max_width`` only widens :meth:`find_index`'s scan,
+    and :meth:`fetch` filters it exactly; an over-high ``_max_end`` instead
+    lets :meth:`contains` admit a position the buffer cannot answer, and
+    :meth:`find_index` then finds no record to return -- whereupon the read
+    falls through to the file, which is a wasted look rather than a wrong
+    record.  See :meth:`prune` for why ``_max_end`` stays exact anyway.
 
     The VCF backend feeds this buffer too, with records of its own -- whose
     PAYLOAD is a ``(variant record, allele index)`` pair rather than a raw row.
@@ -126,30 +153,56 @@ class LineBuffer:
 
     def __init__(self) -> None:
         self.deque: deque[Record] = deque()
+        # Maximum pos_end, and maximum interval width, over the buffered
+        # records.  Both are meaningless while the deque is empty and are reset
+        # with it; see the class docstring for what they are for.
+        self._max_end: int = 0
+        self._max_width: int = 0
 
     def __len__(self) -> int:
         return len(self.deque)
 
     def clear(self) -> None:
         self.deque.clear()
+        self._max_end = 0
+        self._max_width = 0
 
     def append(self, record: Record) -> None:
+        """Buffer a record read from the file, maintaining the maxima.
+
+        A record from another contig empties the buffer first: nothing that
+        precedes it can answer a query on the new contig.
+        """
         if len(self.deque) > 0 \
                 and self.peek_first()[CHROM] != record[CHROM]:
             self.clear()
         self.deque.append(record)
+        # A record slot is statically opaque (a record is tuple[Any, ...]);
+        # annotate the reads so the arithmetic stays typed.
+        pos_begin: int = record[POS_BEGIN]
+        pos_end: int = record[POS_END]
+        self._max_end = max(self._max_end, pos_end)
+        self._max_width = max(self._max_width, pos_end - pos_begin)
 
     def peek_first(self) -> Record:
         return self.deque[0]
-
-    def pop_first(self) -> Record:
-        return self.deque.popleft()
 
     def peek_last(self) -> Record:
         return self.deque[-1]
 
     def region(self) -> tuple[str | None, int | None, int | None]:
-        """Return region stored in the buffer."""
+        """Return the region the buffered records span.
+
+        The right edge is the widest ``pos_end`` buffered, not the last
+        record's: the records are ordered by ``pos_begin``, so the last one to
+        *begin* need not be the last one to *end* (see the class docstring).
+
+        Ordering is judged by ``pos_begin`` for the same reason.  A first record
+        that ends after the last one is not evidence of anything -- that is what
+        a nested interval looks like -- but a first record that *begins* after
+        the last one contradicts the one order the buffer is built on, so the
+        buffer discards itself rather than answer from a scrambled window.
+        """
         if len(self.deque) == 0:
             return None, None, None
 
@@ -157,14 +210,29 @@ class LineBuffer:
         last = self.peek_last()
 
         if first[CHROM] != last[CHROM] \
-                or first[POS_END] > last[POS_END]:
+                or first[POS_BEGIN] > last[POS_BEGIN]:
             self.clear()
             return None, None, None
 
-        return first[CHROM], first[POS_BEGIN], last[POS_END]
+        return first[CHROM], first[POS_BEGIN], self._max_end
 
     def prune(self, chrom: str, pos: int) -> None:
-        """Prune the buffer if needed."""
+        """Drop the leading records that can no longer match ``pos`` or later.
+
+        ``_max_end`` survives this exactly, and not by luck.  Pruning stops at
+        the first record whose ``pos_end`` reaches ``pos``, so every record it
+        drops ends *before* ``pos`` while that survivor ends at or after it --
+        a dropped record can therefore never have held the maximum unless there
+        are no survivors at all, and that case empties the deque and resets the
+        maxima with it.  (``_max_width`` is not exact under pruning and is not
+        required to be: it may only over-estimate.)
+
+        Pruning stops at the first survivor, not the last -- so a wide record
+        pins the head and holds behind it the narrow ones it spans, which
+        :meth:`fetch` then rescans on every query.  The buffer therefore grows
+        with the widest interval over a dense region, rather than staying at
+        the query's own width.
+        """
         if len(self.deque) == 0:
             return
 
@@ -180,6 +248,9 @@ class LineBuffer:
                 break
             self.deque.popleft()
 
+        if len(self.deque) == 0:
+            self.clear()
+
     def contains(self, chrom: str, pos: int) -> bool:
         bchrom, bbeg, bend = self.region()
         if bchrom is None or bbeg is None or bend is None:
@@ -187,45 +258,58 @@ class LineBuffer:
         return chrom == bchrom and bend >= pos >= bbeg
 
     def find_index(self, chrom: str, pos: int) -> int:
-        """Find index in line buffer that contains the passed position."""
+        """Find the first index in the buffer relevant to ``pos``.
+
+        Returns the leftmost record that overlaps ``pos`` or, when none does,
+        the leftmost that begins at or after it -- and ``-1`` when the buffer
+        does not span ``pos`` at all.  :meth:`fetch` scans forward from here and
+        filters exactly, so the one thing this must never do is land to the
+        *right* of a record that overlaps.
+
+        Which is what it used to do.  The old back-scan walked left while the
+        predecessor reached ``pos`` and stopped at the first one that did not --
+        sound only if a record that fails to reach ``pos`` proves that
+        everything before it fails too, i.e. only if ``pos_end`` is
+        non-decreasing.  With overlapping intervals a record containing ``pos``
+        can sit to the left of one that does not, behind that stop.
+
+        The bound that does hold: the buffer is sorted by ``pos_begin``, and a
+        record overlapping ``pos`` spans it, so it cannot begin before
+        ``pos - _max_width``.  Binary-searching for that lower bound puts the
+        scan at or left of every record that can overlap, whatever the ends do.
+        The window is as tight as the buffered data's widest interval; a stale
+        ``_max_width`` only widens it, and :meth:`fetch` filters regardless.
+        """
         if len(self.deque) == 0 or not self.contains(chrom, pos):
             return -1
 
         if len(self.deque) == 1:
             return 0
 
+        # Leftmost index whose pos_begin reaches the lower bound.  Binary
+        # search on pos_begin -- the key the deque is actually ordered by.
+        lower_bound = pos - self._max_width
         first_index = 0
-        last_index = len(self.deque) - 1
-        while True:
-            mid_index = (last_index - first_index) // 2 + first_index
-            if last_index <= first_index:
-                break
-
-            mid = self.deque[mid_index]
-            if mid[POS_END] >= pos >= mid[POS_BEGIN]:
-                break
-
-            if pos < mid[POS_BEGIN]:
-                last_index = mid_index - 1
-            else:
+        last_index = len(self.deque)
+        while first_index < last_index:
+            mid_index = (first_index + last_index) // 2
+            if self.deque[mid_index][POS_BEGIN] < lower_bound:
                 first_index = mid_index + 1
+            else:
+                last_index = mid_index
 
-        while mid_index > 0:
-            prev = self.deque[mid_index - 1]
-            if pos > prev[POS_END]:
-                break
-            mid_index -= 1
-
-        for index in range(mid_index, len(self.deque)):
+        for index in range(first_index, len(self.deque)):
             record = self.deque[index]
             if record[POS_END] >= pos >= record[POS_BEGIN]:
-                mid_index = index
-                break
+                return index
             if record[POS_BEGIN] >= pos:
-                mid_index = index
-                break
+                return index
 
-        return mid_index
+        # Unreachable while ``_max_end`` is exact: ``contains`` has already
+        # established that some record reaches ``pos``.  Should it ever
+        # over-estimate, "no record overlaps and none begins after" is the
+        # honest answer, and ``fetch`` yields nothing on -1.
+        return -1
 
     def fetch(
         self, chrom: str, pos_begin: int, pos_end: int,

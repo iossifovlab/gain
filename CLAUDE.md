@@ -236,6 +236,91 @@ Key conftest patterns:
   `pytestarch` to enforce the package's internal
   structure.
 
+### Test data — prefer the builders
+
+**Where a builder exists for the resource type, build
+test resources with the fluent builders in
+`gain.genomic_resources.testing.builders` rather than
+hand-rolling a `genomic_resource.yaml` string next to a
+`setup_tabix`/`setup_directories` call.**
+
+```python
+from gain.genomic_resources.testing.builders import (
+    a_grr, a_position_score,
+)
+
+res = (
+    a_position_score()
+    .with_score("phastCons", "float")
+    .with_data("""
+        chrom  pos_begin  pos_end  phastCons
+        1      10         12       0.1
+    """)
+    .with_tabix()          # omit -> plain .txt table
+    .build_resource(tmp_path)
+)
+```
+
+Factories: `a_position_score`, `a_np_score`,
+`an_allele_score`, `a_bigwig_score`, `a_vcf_info_score`,
+`a_gene_score`, `a_reference_genome`, `a_grr`. Compose a
+multi-resource repo with
+`a_grr().with_resource(id, builder).build_repo(tmp_path)`;
+`build_resource(tmp_path)` is the single-resource
+shorthand.
+
+**That list is the whole of the coverage — the gaps are
+large and structural, not an oversight to work around.**
+There is no builder for `gene_models`, `liftover_chain`,
+`annotation_pipeline`, `cnv_collection` or
+`gene_set_collection`, and no `with_*` for `header_mode`,
+`meta`/`labels`, `default_annotation`, or explicit
+`chrom`/`pos_begin` `column_name`/`column_index`
+mappings. Hand-rolled yaml is still the majority in
+`core/tests` and is the correct answer for all of the
+above — if you cannot find a factory for your resource
+type, it very likely does not exist. Extending the
+builders is welcome; contorting a fixture to avoid yaml
+is not.
+
+Why this is the default where it applies, not a style
+preference:
+- **The config and the data cannot drift, because the
+  data header is the only description of the columns.**
+  The emitted `table:` block names no columns at all
+  (just `filename`/`format`, plus `zero_based` /
+  `chrom_mapping` when asked); the declared scores
+  render the `scores:` block, and tabix's
+  `seq_col`/`start_col`/`end_col` are derived from the
+  data header (`end_col = start_col` when there is no
+  `pos_end`). A hand-written yaml plus an explicit
+  `seq_col=…` states the same table twice, and a test
+  whose two statements drift apart usually still passes
+  — it just stops testing what it says it does.
+- **Builders are immutable** (frozen dataclasses; every
+  `with_*` returns a NEW builder), so a shared base can
+  be specialised per variation without leaking state.
+  This is what makes "same data, two backends" a fact
+  rather than a promise: derive both from one base and
+  let `with_tabix()` be the only difference — see
+  `core/tests/small/genomic_resources/genomic_position_table/test_overlapping_intervals.py`.
+- The `setup_*` helpers in
+  `gain.genomic_resources.testing`
+  (`setup_directories`, `setup_tabix`, `setup_vcf`,
+  `setup_genome`, `convert_to_tab_separated`, …) are the
+  layer the builders delegate to. Reach for them
+  directly only for a shape no builder covers, or when
+  the malformed/handwritten config *is* the thing under
+  test.
+
+For study-import fixtures (pedigrees, denovo/VCF
+studies) use the per-dataset **modules** under
+`gain.testing` — `t4c8_import`, `acgt_import`,
+`alla_import`, `foobar_import` — rather than assembling
+a study by hand. `gain/testing/__init__.py` is empty, so
+import the module, not the package:
+`from gain.testing.t4c8_import import setup_t4c8_grr`.
+
 ### CLI Tools
 
 **core CLIs:**
