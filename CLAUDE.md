@@ -238,11 +238,11 @@ Key conftest patterns:
 
 ### Test data — prefer the builders
 
-**Build test resources with the fluent builders in
-`gain.genomic_resources.testing.builders`. Do not
-hand-roll a `genomic_resource.yaml` string next to a
-`setup_tabix`/`setup_directories` call unless the test
-is *about* something the builders cannot express.**
+**Where a builder exists for the resource type, build
+test resources with the fluent builders in
+`gain.genomic_resources.testing.builders` rather than
+hand-rolling a `genomic_resource.yaml` string next to a
+`setup_tabix`/`setup_directories` call.**
 
 ```python
 from gain.genomic_resources.testing.builders import (
@@ -269,15 +269,34 @@ multi-resource repo with
 `build_resource(tmp_path)` is the single-resource
 shorthand.
 
-Why this is the default, not a style preference:
-- **The config and the data cannot drift.** The builder
-  renders the `table:` block *from* the declared columns
-  and derives tabix's `seq_col`/`start_col`/`end_col`
-  from the data header (and `end_col = start_col` when
-  there is no `pos_end`). A hand-written YAML + explicit
-  `seq_col=…` is two descriptions of one table, and a
-  test that gets them out of step usually still passes —
-  it just stops testing what it says it does.
+**That list is the whole of the coverage — the gaps are
+large and structural, not an oversight to work around.**
+There is no builder for `gene_models`, `liftover_chain`,
+`annotation_pipeline`, `cnv_collection` or
+`gene_set_collection`, and no `with_*` for `header_mode`,
+`meta`/`labels`, `default_annotation`, or explicit
+`chrom`/`pos_begin` `column_name`/`column_index`
+mappings. Hand-rolled yaml is still the majority in
+`core/tests` and is the correct answer for all of the
+above — if you cannot find a factory for your resource
+type, it very likely does not exist. Extending the
+builders is welcome; contorting a fixture to avoid yaml
+is not.
+
+Why this is the default where it applies, not a style
+preference:
+- **The config and the data cannot drift, because the
+  data header is the only description of the columns.**
+  The emitted `table:` block names no columns at all
+  (just `filename`/`format`, plus `zero_based` /
+  `chrom_mapping` when asked); the declared scores
+  render the `scores:` block, and tabix's
+  `seq_col`/`start_col`/`end_col` are derived from the
+  data header (`end_col = start_col` when there is no
+  `pos_end`). A hand-written yaml plus an explicit
+  `seq_col=…` states the same table twice, and a test
+  whose two statements drift apart usually still passes
+  — it just stops testing what it says it does.
 - **Builders are immutable** (frozen dataclasses; every
   `with_*` returns a NEW builder), so a shared base can
   be specialised per variation without leaking state.
@@ -294,10 +313,13 @@ Why this is the default, not a style preference:
   the malformed/handwritten config *is* the thing under
   test.
 
-For study-import fixtures (pedigrees, denovo/VCF studies)
-use the dataset helpers in `gain.testing` — `t4c8_import`,
-`acgt_import`, `alla_import`, `foobar_import` — rather
-than assembling a study by hand.
+For study-import fixtures (pedigrees, denovo/VCF
+studies) use the per-dataset **modules** under
+`gain.testing` — `t4c8_import`, `acgt_import`,
+`alla_import`, `foobar_import` — rather than assembling
+a study by hand. `gain/testing/__init__.py` is empty, so
+import the module, not the package:
+`from gain.testing.t4c8_import import setup_t4c8_grr`.
 
 ### CLI Tools
 
