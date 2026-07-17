@@ -119,10 +119,22 @@ def _normalize_na_values(na_values: Any, value_type: str) -> set[Any]:
     that a numeric backend never presents as a raw value, so they are left as a
     pure-text set -- coercing them would only add a spurious parsed ``nan`` and
     change the default behaviour.
+
+    A ``set`` input is treated as ALREADY normalized and returned as a copy
+    without re-coercion, so normalization is idempotent (a fixed point).  This
+    is what the VCF ``scores``-block merge path relies on: it rebuilds a
+    ``_ScoreDef`` from an already-normalized ``na_values`` set, whose
+    ``__post_init__`` re-runs this function -- a second coercion pass would
+    otherwise grow the set (e.g. parsing the default ``"nan"`` text token into a
+    ``float('nan')``) and silently change the statistics hash.  Config-supplied
+    ``na_values`` never arrive as a ``set`` (the schema permits only ``None``,
+    ``str`` or ``list``), so a ``set`` can only be a prior normalization result.
     """
     if na_values is None:
         return set(_DEFAULT_NA_VALUES.get(value_type, ()))
-    if isinstance(na_values, (list, tuple, set)):
+    if isinstance(na_values, set):
+        return set(na_values)
+    if isinstance(na_values, (list, tuple)):
         raw_sentinels: tuple[Any, ...] = tuple(na_values)
     else:
         # Any bare scalar -- a str ("-1"), or a non-iterable numeric sentinel

@@ -18,6 +18,7 @@ import pytest
 from gain.genomic_resources.genomic_scores import (
     PositionScore,
     _normalize_na_values,
+    _ScoreDef,
 )
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
@@ -225,6 +226,62 @@ def test_bigwig_scalar_na_value_matches_float_payload(
         real_line = next(iter(score.fetch_lines("chr1", 11, 11)))
         assert na_line.get_score("bw") is None
         assert real_line.get_score("bw") == pytest.approx(1.0)
+
+
+def _serialized(na_values: object) -> str:
+    # The exact form GenomicScoreImplementation.calc_statistics_hash uses to
+    # fold na_values into the statistics hash.
+    return str(sorted(str(na) for na in na_values))  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize("value_type", ["float", "int"])
+def test_default_na_values_is_a_fixed_point(value_type: str) -> None:
+    # gain #268 (idempotency): the VCF scores-block merge re-normalizes an
+    # already-normalized set (``_ScoreDef.__post_init__`` runs
+    # ``_normalize_na_values`` on ``config_scoredef.na_values``, which is
+    # itself an already-normalized set).  Re-normalizing the default float/int
+    # set must be a FIXED POINT -- pre-fix the second pass parsed the "nan"
+    # text token and grew the set with a stray ``float('nan')``, changing the
+    # statistics hash of VCF scores that configure no na_values.
+    once = _normalize_na_values(None, value_type)
+    twice = _normalize_na_values(once, value_type)
+    assert twice == once
+    # And the exact serialized form the statistics hash consumes is unchanged.
+    assert _serialized(twice) == _serialized(once)
+
+
+def test_scalar_na_value_is_a_fixed_point() -> None:
+    # gain #268 (idempotency): a configured scalar normalizes to
+    # ``{'-1', -1.0}``; re-normalizing that set must not grow it (pre-fix it
+    # added the ``str(-1.0)`` == '-1.0' text form).
+    once = _normalize_na_values("-1", "float")
+    twice = _normalize_na_values(once, "float")
+    assert twice == once
+    assert _serialized(twice) == _serialized(once)
+
+
+def test_vcf_style_merge_reconstruction_keeps_default_na_values() -> None:
+    # gain #268 end-to-end at the merge site: ``_parse_vcf_scoredefs`` builds a
+    # fresh ``_ScoreDef(na_values=config_scoredef.na_values or ...)`` from an
+    # ALREADY-normalized set, and ``__post_init__`` re-runs normalization on
+    # it.  A VCF float score that configures NO na_values must end up with the
+    # SAME na_values set (and hence the same statistics-hash serialization) as
+    # the non-VCF equivalent -- no stray parsed ``nan``.
+    def _score_def(na_values: object) -> _ScoreDef:
+        return _ScoreDef(
+            score_id="s", desc="", value_type="float",
+            pos_aggregator=None, allele_aggregator=None,
+            small_values_desc=None, large_values_desc=None,
+            hist_conf=None, col_name="s", col_index=None,
+            value_parser=None, na_values=na_values,
+        )
+
+    # Non-VCF score: config na_values absent -> default float set.
+    non_vcf = _score_def(None)
+    # Merge site rebuilds from the already-normalized set (line ~1266).
+    merged = _score_def(non_vcf.na_values)
+    assert merged.na_values == non_vcf.na_values
+    assert _serialized(merged.na_values) == _serialized(non_vcf.na_values)
 
 
 def test_bigwig_scalar_na_value_never_substring_matches(
