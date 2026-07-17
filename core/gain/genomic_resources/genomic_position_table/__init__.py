@@ -36,11 +36,44 @@ remove.  A caller reading coordinates off a ``Line`` reads them from the
 record's slots instead (``record[CHROM]``, ``record[POS_BEGIN]``,
 ``record[POS_END]``, ``record[REF]``, ``record[ALT]``); a caller using
 ``line.get(key)`` for a column indexes the record's payload
-(``record[PAYLOAD][key]``); a caller wanting the whole raw row back takes the
-payload itself (``record[PAYLOAD]``), which is what ``row()`` reconstructed a
-copy of.  For scores, none of this is the intended route at all -- go through
-the score layer's ``RecordScoreLine``/``VCFScoreLine``, which read the same
-slots and additionally handle NA values, parsing and aggregation.
+(``record[PAYLOAD][key]``); a caller wanting the whole raw row back takes
+``tuple(record[PAYLOAD])``.  For scores, none of this is the intended route at
+all -- go through the score layer's ``RecordScoreLine``/``VCFScoreLine``, which
+read the same slots and additionally handle NA values, parsing and aggregation.
+
+**The ``tuple()`` around that last one is the migration, not noise.**
+``row()`` returned ``tuple(self._data)`` in both adapters -- an immutable
+snapshot of the row, taken there and then.  ``record[PAYLOAD]`` is not that:
+the payload is the backend's row held **by reference**, deliberately neither
+copied nor frozen (``record.py``), and for the tabix backend it is a
+``pysam.TupleProxy`` that pysam reuses as the fetch advances and that
+``LineBuffer`` may still be holding.  Retain it past the iteration and its
+cells are whatever pysam has since put there; write to it and you mutate a
+buffered row (see ``line.py``).  ``tuple(record[PAYLOAD])`` reproduces what
+``row()`` handed back, and is what a ``row()`` caller migrates to.
+
+**``fchrom`` has no record equivalent, and is the one ``LineBase`` attribute
+with no slot to move to.**  There is no FCHROM slot, and ``record[CHROM]`` is
+NOT one: ``Line`` carried the file's own contig in ``fchrom`` and the
+reference contig in ``chrom``, and under a configured ``chrom_mapping`` those
+hold *different* values -- the tabix backend overwrote ``chrom`` with the
+mapped reference contig and left ``fchrom`` at the file's.  A record's CHROM
+slot is the mapped one, so migrating ``line.fchrom`` to ``record[CHROM]`` is
+not an error, it is wrong data, on exactly the tables that configure a map.
+
+The file contig is still readable -- but from the **table**, which is why it is
+not a slot.  For the tabular backends it is ``record[PAYLOAD][table.chrom_key]``
+(the raw row's contig cell -- literally the expression ``Line.__init__`` read
+its own ``fchrom`` from), or ``table.unmap_chromosome(record[CHROM])`` back
+through the map.  Both need the table, and a caller holding records has one.
+Adding a sixth decoded slot to spare it that is not on the table here: a record
+is what *every* backend yields, and a file contig is not something every
+backend has to give.  bigWig's payload repeats the already-mapped reference
+contig (``BigWigLine.fchrom`` was set from it -- that adapter's ``fchrom`` was
+never a file contig at all), and a VCF record's payload is a variant, whose
+file contig is ``record[PAYLOAD][VARIANT].contig``.  The slot would mean three
+different things, which is the sort of thing the five decoded slots exist to
+not do.
 
 ``LineBuffer`` is NOT part of that removal and remains exported: it outlived the
 adapters it used to hold and now buffers records (see its own note below).

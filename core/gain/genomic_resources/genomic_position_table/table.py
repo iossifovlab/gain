@@ -19,10 +19,24 @@ logger = logging.getLogger(__name__)
 class GenomicPositionTable(abc.ABC):
     """Abstraction over genomic scores table."""
 
-    # Whether get_all_records/get_records_in_region yield plain record tuples
-    # (the record contract) rather than line adapters.  A backend migrated to
-    # records overrides this to True; the score layer reads it to pick the
-    # score line class.  The remaining adapter backends leave it False.
+    # Whether get_all_records/get_records_in_region yield records -- the plain
+    # six-slot tuples of the record contract (see ``record.py``).  Every
+    # in-tree backend does, and every one of them overrides this to True.  The
+    # False below is the base class's starting value, NOT a supported steady
+    # state for a backend: since #239 removed the line adapters and the
+    # ``ScoreLine`` that read them, there is no second line shape left for a
+    # False to select.
+    #
+    # So the flag's remaining job is to catch a new backend that has not
+    # migrated.  ``GenomicScore.open`` routes on it -- ``RecordScoreLine`` when
+    # it is True, and a ``TypeError`` refusing to open the score when it is
+    # False, rather than route the table to a score line that would misread
+    # whatever it does yield.  (A VCF table is routed to ``VCFScoreLine`` ahead
+    # of this check, by type; it sets the flag too, inheriting the tabix
+    # backend's True.)  A backend author overrides this to True *and* yields
+    # records -- the claim and the yielded shape are held together by
+    # test_backend_record_contract.py, which fails a backend that leaves it
+    # False as much as one whose records do not match its claim.
     yields_records: ClassVar[bool] = False
 
     CHROM = "chrom"
