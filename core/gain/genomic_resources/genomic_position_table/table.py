@@ -228,7 +228,12 @@ class GenomicPositionTable(abc.ABC):
         return chrom
 
     def map_chromosome(self, chromosome: str) -> str | None:
-        """Map a chromosome from reference genome to file chromosome."""
+        """Map a file contig to its reference genome chromosome.
+
+        The inverse of :meth:`unmap_chromosome`.  Returns ``None`` when the
+        table configures a ``chrom_mapping`` that does not cover ``chromosome``,
+        and ``chromosome`` unchanged when it configures none.
+        """
         if self.rev_chrom_map is not None:
             if chromosome in self.rev_chrom_map:
                 return self.rev_chrom_map[chromosome]
@@ -237,7 +242,15 @@ class GenomicPositionTable(abc.ABC):
         return chromosome
 
     def unmap_chromosome(self, chromosome: str) -> str | None:
-        """Map a chromosome file contigs to reference genome chromosome."""
+        """Map a reference genome chromosome to its file contig.
+
+        The inverse of :meth:`map_chromosome`.  Named for what it undoes: the
+        mapping a caller sees is reference-facing, so *un*\\ mapping goes back
+        to the file's own name -- which is why every caller spells the result
+        ``fchrom``.  Returns ``None`` when the table configures a
+        ``chrom_mapping`` that does not cover ``chromosome``, and ``chromosome``
+        unchanged when it configures none.
+        """
         if self.chrom_map is not None:
             if chromosome in self.chrom_map:
                 return self.chrom_map[chromosome]
