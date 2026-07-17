@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import abc
+import contextlib
 import copy
 import enum
 import warnings
@@ -86,6 +87,72 @@ SCORE_TYPE_PARSERS = {
     "bool": bool,
 }
 
+_DEFAULT_NA_VALUES: dict[str, tuple[str, ...]] = {
+    "str": (),
+    "float": ("", "nan", ".", "NA"),
+    "int": ("", "nan", ".", "NA"),
+    "bool": (),
+}
+
+# Value types whose text sentinels are also coerced to the parsed representation
+# so a numeric raw payload (e.g. a bigWig ``float``) matches by value, not text.
+_NA_COERCIBLE_TYPES = ("int", "float")
+
+
+def _normalize_na_values(na_values: Any, value_type: str) -> set[Any]:
+    """Normalize a configured ``na_values`` into a type-aware sentinel set.
+
+    The resource schema permits ``na_values`` as a bare scalar
+    (``na_values: "-1"``) or a list.  A bare ``str`` left un-normalized turns
+    the NA membership test in :meth:`ScoreLineBase._extract_value` into a
+    SUBSTRING test (``"1" in "-1"`` is ``True``) and raises ``TypeError`` when
+    matched against a non-string raw payload (bigWig floats).  This wraps a
+    scalar into a one-element collection and returns a set that carries, for
+    every configured sentinel, both its text form (matched against string
+    backends) and -- for numeric score types -- its parsed form (matched
+    against a ``float``/``int`` raw payload).  So a sentinel is matched against
+    whichever representation the incoming raw value presents, never by
+    substring.
+
+    ``na_values`` of ``None`` selects the per-value-type default set verbatim:
+    the defaults are non-numeric tokens (``""``, ``"nan"``, ``"."``, ``"NA"``)
+    that a numeric backend never presents as a raw value, so they are left as a
+    pure-text set -- coercing them would only add a spurious parsed ``nan`` and
+    change the default behaviour.
+
+    A ``set`` input is treated as ALREADY normalized and returned as a copy
+    without re-coercion, so normalization is idempotent (a fixed point).  This
+    is what the VCF ``scores``-block merge path relies on: it rebuilds a
+    ``_ScoreDef`` from an already-normalized ``na_values`` set, whose
+    ``__post_init__`` re-runs this function -- a second coercion pass would
+    otherwise grow the set (e.g. parsing the default ``"nan"`` text token into a
+    ``float('nan')``) and silently change the statistics hash.  Config-supplied
+    ``na_values`` never arrive as a ``set`` (the schema permits only ``None``,
+    ``str`` or ``list``), so a ``set`` can only be a prior normalization result.
+    """
+    if na_values is None:
+        return set(_DEFAULT_NA_VALUES.get(value_type, ()))
+    if isinstance(na_values, set):
+        return set(na_values)
+    if isinstance(na_values, (list, tuple)):
+        raw_sentinels: tuple[Any, ...] = tuple(na_values)
+    else:
+        # Any bare scalar -- a str ("-1"), or a non-iterable numeric sentinel
+        # built in code -- is wrapped into a one-element collection, as the
+        # docstring promises; iterating it directly would raise TypeError.
+        raw_sentinels = (na_values,)
+
+    sentinels: set[Any] = set()
+    parser = SCORE_TYPE_PARSERS.get(value_type) \
+        if value_type in _NA_COERCIBLE_TYPES else None
+    for sentinel in raw_sentinels:
+        text = str(sentinel)
+        sentinels.add(text)
+        if parser is not None:
+            with contextlib.suppress(ValueError, TypeError):
+                sentinels.add(parser(text))
+    return sentinels
+
 
 @dataclass
 class ScoreDef:
@@ -141,12 +208,6 @@ class _ScoreDef:
     def __post_init__(self) -> None:
         if self.value_type is None:
             return
-        default_na_values = {
-            "str": {},
-            "float": {"", "nan", ".", "NA"},
-            "int": {"", "nan", ".", "NA"},
-            "bool": {},
-        }
         default_pos_aggregators = {
             "float": "mean",
             "int": "mean",
@@ -164,8 +225,8 @@ class _ScoreDef:
         if self.allele_aggregator is None:
             self.allele_aggregator = \
                 default_allele_aggregators[self.value_type]
-        if self.na_values is None:
-            self.na_values = default_na_values[self.value_type]
+        self.na_values = _normalize_na_values(
+            self.na_values, self.value_type)
 
 
 class ScoreLineBase(abc.ABC):
@@ -2194,12 +2255,6 @@ class _CNVScoreDef(_ScoreDef):
     def __post_init__(self) -> None:
         if self.value_type is None:
             return
-        default_na_values = {
-            "str": {},
-            "float": {"", "nan", ".", "NA"},
-            "int": {"", "nan", ".", "NA"},
-            "bool": {},
-        }
         default_pos_aggregators = {
             "float": "mean",
             "int": "mean",
@@ -2217,8 +2272,8 @@ class _CNVScoreDef(_ScoreDef):
         if self.allele_aggregator is None:
             self.allele_aggregator = \
                 default_allele_aggregators[self.value_type]
-        if self.na_values is None:
-            self.na_values = default_na_values[self.value_type]
+        self.na_values = _normalize_na_values(
+            self.na_values, self.value_type)
 
 
 class CnvCollection(GenomicScore):
