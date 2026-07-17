@@ -1420,10 +1420,14 @@ class GenomicScore(ResourceConfigValidationMixin):
             self._score_line_class = RecordScoreLine
         else:
             raise TypeError(
-                f"{type(self.table).__name__} does not yield records, and "
-                f"since #239 removed the line adapters there is no score line "
-                f"that can read it; a genomic position table backend must set "
-                f"yields_records and yield records")
+                f"{type(self.table).__name__} does not yield records, so "
+                f"there is no score line that can read it. A genomic "
+                f"position table backend must set yields_records = True "
+                f"and yield six-slot record tuples: see the record "
+                f"contract in gain.genomic_resources."
+                f"genomic_position_table.record, and "
+                f"test_backend_record_contract.py for what that backend "
+                f"is held to.")
         self.table.open()
         self.table_loaded = True
         if "scores" in self.config:
