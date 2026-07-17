@@ -122,10 +122,13 @@ def _normalize_na_values(na_values: Any, value_type: str) -> set[Any]:
     """
     if na_values is None:
         return set(_DEFAULT_NA_VALUES.get(value_type, ()))
-    if isinstance(na_values, str):
-        raw_sentinels: tuple[Any, ...] = (na_values,)
+    if isinstance(na_values, (list, tuple, set)):
+        raw_sentinels: tuple[Any, ...] = tuple(na_values)
     else:
-        raw_sentinels = tuple(na_values)
+        # Any bare scalar -- a str ("-1"), or a non-iterable numeric sentinel
+        # built in code -- is wrapped into a one-element collection, as the
+        # docstring promises; iterating it directly would raise TypeError.
+        raw_sentinels = (na_values,)
 
     sentinels: set[Any] = set()
     parser = SCORE_TYPE_PARSERS.get(value_type) \

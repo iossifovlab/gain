@@ -15,7 +15,10 @@ both a text/tabix backend and bigWig.
 import pathlib
 
 import pytest
-from gain.genomic_resources.genomic_scores import PositionScore
+from gain.genomic_resources.genomic_scores import (
+    PositionScore,
+    _normalize_na_values,
+)
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
     a_grr,
@@ -54,6 +57,25 @@ def test_scalar_na_value_marks_only_the_sentinel(
             for line in score.fetch_lines("1", 10, 11)
         ]
     assert values == [None, 1]
+
+
+def test_bare_non_string_scalar_sentinel_is_wrapped() -> None:
+    # Defensive-robustness gap found in review (gain #268): the docstring
+    # promises to "wrap a scalar into a one-element collection", but only the
+    # str scalar was special-cased -- a bare non-string scalar (e.g. the Python
+    # int -1, constructible in code though unreachable via config today) fell
+    # into ``tuple(na_values)`` and raised ``TypeError: 'int' object is not
+    # iterable``.  A bare numeric scalar must normalize like the "-1" string:
+    # to a type-aware set that matches by value and never substring-matches.
+    na_values = _normalize_na_values(-1, "int")
+    # (b) matches the sentinel by value (int raw payload and its text form)...
+    assert -1 in na_values
+    assert "-1" in na_values
+    # (a) ...and does NOT substring/partial-match a real 1.
+    assert 1 not in na_values
+    assert "1" not in na_values
+    # A bare int scalar and the equivalent "-1" string normalize identically.
+    assert na_values == _normalize_na_values("-1", "int")
 
 
 @pytest.mark.parametrize("tabix", [False, True])
