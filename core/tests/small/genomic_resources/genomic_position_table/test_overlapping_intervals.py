@@ -25,6 +25,11 @@ below are built around the conditions that expose it:
 * **overlapping intervals**, including nested ones and duplicate loci;
 * and the point/disjoint shapes alongside them, to pin that the shapes that
   always worked still do.
+
+The fixtures come from the builders in
+:mod:`gain.genomic_resources.testing.builders`: the tabix table and its oracle
+are one builder apart (``with_tabix()``), which is what keeps "identical rows"
+a fact about the fixture rather than a promise the test has to keep.
 """
 # pylint: disable=W0621,C0116
 # ruff: noqa: S311
@@ -32,7 +37,6 @@ below are built around the conditions that expose it:
 # rows here, seeded so a failure replays exactly.
 import pathlib
 import random
-import textwrap
 from typing import Any
 
 import pytest
@@ -46,11 +50,10 @@ from gain.genomic_resources.genomic_position_table.record import (
 from gain.genomic_resources.genomic_position_table.table import (
     GenomicPositionTable,
 )
-from gain.genomic_resources.testing import (
-    build_filesystem_test_resource,
-    convert_to_tab_separated,
-    setup_directories,
-    setup_tabix,
+from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.testing.builders import (
+    a_grr,
+    a_position_score,
 )
 
 CHROM = "1"
@@ -59,15 +62,14 @@ Interval = tuple[int, int]
 TablePair = tuple[GenomicPositionTable, GenomicPositionTable]
 
 
-def _content(rows: list[Interval], *, comment_header: bool) -> str:
+def _content(rows: list[Interval]) -> str:
     """Render the rows as a table, one distinct ``c2`` value per row.
 
     ``c2`` is a per-row serial number, so two rows sharing a locus stay
     distinguishable -- a comparison keyed only on the interval could not tell a
     dropped duplicate from a kept one.
     """
-    hash_ = "#" if comment_header else ""
-    lines = [f"{hash_}chrom pos_begin pos_end c2"]
+    lines = ["chrom pos_begin pos_end c2"]
     lines.extend(
         f"{CHROM} {beg} {end} {serial}"
         for serial, (beg, end) in enumerate(rows)
@@ -75,50 +77,40 @@ def _content(rows: list[Interval], *, comment_header: bool) -> str:
     return "\n".join(lines)
 
 
+def _open_table(resource: GenomicResource) -> GenomicPositionTable:
+    assert resource.config is not None
+    table = build_genomic_position_table(resource, resource.config["table"])
+    table.open()
+    return table
+
+
 @pytest.fixture
 def build_tables(tmp_path: pathlib.Path) -> Any:
-    """Return a builder of a (tabix, in-memory) pair over identical rows."""
+    """Return a builder of a (tabix, in-memory) pair over identical rows.
+
+    The two resources come from ONE builder, and differ by exactly one call:
+    ``with_tabix()``.  That is the whole point of the module -- the rows, the
+    header, the declared score and the column order are the same object, so a
+    disagreement between the tables can only be the backend, never a fixture
+    that drifted.  (The builders are immutable, so ``base`` is unharmed by the
+    ``with_tabix()`` derivation.)
+    """
     def builder(rows: list[Interval]) -> TablePair:
-        setup_directories(tmp_path / "tabix", {
-            "genomic_resource.yaml": textwrap.dedent("""
-                table:
-                    format: tabix
-                    filename: data.txt.gz
-                scores:
-                - id: c2
-                  name: c2
-                  type: int"""),
-        })
-        setup_tabix(
-            tmp_path / "tabix" / "data.txt.gz",
-            _content(rows, comment_header=True),
-            seq_col=0, start_col=1, end_col=2)
-
-        setup_directories(tmp_path / "mem", {
-            "genomic_resource.yaml": textwrap.dedent("""
-                table:
-                    format: tsv
-                    filename: data.txt
-                scores:
-                - id: c2
-                  name: c2
-                  type: int"""),
-            "data.txt": convert_to_tab_separated(
-                _content(rows, comment_header=False)),
-        })
-
-        tabix_res = build_filesystem_test_resource(tmp_path / "tabix")
-        mem_res = build_filesystem_test_resource(tmp_path / "mem")
-        assert tabix_res.config is not None
-        assert mem_res.config is not None
-
-        tabix_table = build_genomic_position_table(
-            tabix_res, tabix_res.config["table"])
-        mem_table = build_genomic_position_table(
-            mem_res, mem_res.config["table"])
-        tabix_table.open()
-        mem_table.open()
-        return tabix_table, mem_table
+        base = (
+            a_position_score()
+            .with_score("c2", "int")
+            .with_data(_content(rows))
+        )
+        repo = (
+            a_grr()
+            .with_resource("tabix", base.with_tabix())
+            .with_resource("mem", base)
+            .build_repo(tmp_path)
+        )
+        return (
+            _open_table(repo.get_resource("tabix")),
+            _open_table(repo.get_resource("mem")),
+        )
     return builder
 
 
@@ -345,31 +337,28 @@ def test_point_table_without_a_pos_end_column(tmp_path: pathlib.Path) -> None:
 
     The narrowest statement that the point path is unchanged: there is no
     ``pos_end`` column at all, so every record is a single base and the
-    non-monotonicity this module is about cannot arise.
+    non-monotonicity this module is about cannot arise.  (The builder derives
+    the tabix end column from the header, so omitting ``pos_end`` here is the
+    whole of what makes this a point table -- there is no index to keep in
+    step with the data.)
     """
-    setup_directories(tmp_path, {
-        "genomic_resource.yaml": textwrap.dedent("""
-            table:
-                format: tabix
-                filename: data.txt.gz
-            scores:
-            - id: c2
-              name: c2
-              type: float"""),
-    })
-    setup_tabix(
-        tmp_path / "data.txt.gz",
-        """
-        #chrom pos_begin c2
-        1      10        3.14
-        1      10        4.14
-        1      11        5.14
-        1      14        6.14
-        """, seq_col=0, start_col=1, end_col=1)
-    res = build_filesystem_test_resource(tmp_path)
-    assert res.config is not None
+    resource = (
+        a_position_score()
+        .with_score("c2", "float")
+        .with_data("""
+            chrom  pos_begin  c2
+            1      10         3.14
+            1      10         4.14
+            1      11         5.14
+            1      14         6.14
+        """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    assert resource.config is not None
 
-    with build_genomic_position_table(res, res.config["table"]) as table:
+    with build_genomic_position_table(
+            resource, resource.config["table"]) as table:
         def rows(beg: int, end: int) -> list[tuple[str, ...]]:
             return _answer(table.get_records_in_region(CHROM, beg, end))
 

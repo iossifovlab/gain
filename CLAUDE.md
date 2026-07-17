@@ -236,6 +236,69 @@ Key conftest patterns:
   `pytestarch` to enforce the package's internal
   structure.
 
+### Test data — prefer the builders
+
+**Build test resources with the fluent builders in
+`gain.genomic_resources.testing.builders`. Do not
+hand-roll a `genomic_resource.yaml` string next to a
+`setup_tabix`/`setup_directories` call unless the test
+is *about* something the builders cannot express.**
+
+```python
+from gain.genomic_resources.testing.builders import (
+    a_grr, a_position_score,
+)
+
+res = (
+    a_position_score()
+    .with_score("phastCons", "float")
+    .with_data("""
+        chrom  pos_begin  pos_end  phastCons
+        1      10         12       0.1
+    """)
+    .with_tabix()          # omit -> plain .txt table
+    .build_resource(tmp_path)
+)
+```
+
+Factories: `a_position_score`, `a_np_score`,
+`an_allele_score`, `a_bigwig_score`, `a_vcf_info_score`,
+`a_gene_score`, `a_reference_genome`, `a_grr`. Compose a
+multi-resource repo with
+`a_grr().with_resource(id, builder).build_repo(tmp_path)`;
+`build_resource(tmp_path)` is the single-resource
+shorthand.
+
+Why this is the default, not a style preference:
+- **The config and the data cannot drift.** The builder
+  renders the `table:` block *from* the declared columns
+  and derives tabix's `seq_col`/`start_col`/`end_col`
+  from the data header (and `end_col = start_col` when
+  there is no `pos_end`). A hand-written YAML + explicit
+  `seq_col=…` is two descriptions of one table, and a
+  test that gets them out of step usually still passes —
+  it just stops testing what it says it does.
+- **Builders are immutable** (frozen dataclasses; every
+  `with_*` returns a NEW builder), so a shared base can
+  be specialised per variation without leaking state.
+  This is what makes "same data, two backends" a fact
+  rather than a promise: derive both from one base and
+  let `with_tabix()` be the only difference — see
+  `core/tests/small/genomic_resources/genomic_position_table/test_overlapping_intervals.py`.
+- The `setup_*` helpers in
+  `gain.genomic_resources.testing`
+  (`setup_directories`, `setup_tabix`, `setup_vcf`,
+  `setup_genome`, `convert_to_tab_separated`, …) are the
+  layer the builders delegate to. Reach for them
+  directly only for a shape no builder covers, or when
+  the malformed/handwritten config *is* the thing under
+  test.
+
+For study-import fixtures (pedigrees, denovo/VCF studies)
+use the dataset helpers in `gain.testing` — `t4c8_import`,
+`acgt_import`, `alla_import`, `foobar_import` — rather
+than assembling a study by hand.
+
 ### CLI Tools
 
 **core CLIs:**
