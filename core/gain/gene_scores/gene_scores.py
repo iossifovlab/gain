@@ -14,6 +14,7 @@ from gain import logging
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.histogram import (
     CategoricalHistogramConfig,
+    Histogram,
     HistogramConfig,
     NumberHistogram,
     NumberHistogramConfig,
@@ -374,11 +375,17 @@ class GeneScore(
         return f"statistics/histogram_{score_id}.json"
 
     @lru_cache(maxsize=64)
-    def get_score_histogram(self, score_id: str) -> NumberHistogram:
-        """Return defined histogram for a score."""
+    def get_score_histogram(self, score_id: str) -> Histogram:
+        """Return defined histogram for a score.
+
+        Gene scores may declare a categorical (or null) histogram just as
+        readily as a numeric one, so the honest return type is the full
+        ``Histogram`` union. Callers that need numeric-only attributes
+        (``bars``/``bins``/``min_value``/...) must narrow with
+        ``isinstance(hist, NumberHistogram)`` first.
+        """
         hist_filename = self.get_histogram_filename(score_id)
-        hist = load_histogram(self.resource, hist_filename)
-        return cast(NumberHistogram, hist)
+        return load_histogram(self.resource, hist_filename)
 
     def get_histogram_image_filename(self, score_id: str) -> str:
         return f"statistics/histogram_{score_id}.png"
@@ -413,7 +420,7 @@ class ScoreDesc:
     column_name: str
     value_type: str
 
-    hist: NumberHistogram
+    hist: Histogram
     description: str
     help: str
     small_values_desc: str | None

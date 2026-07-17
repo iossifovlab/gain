@@ -1000,6 +1000,65 @@ def test_get_score_histogram_unknown_score(
 
 
 # ---------------------------------------------------------------------------
+# get_score_histogram - categorical gene score round-trip
+# (mirrors the real-world SFARI_gene_score_2024_Q1 shape)
+# ---------------------------------------------------------------------------
+
+def _build_sfari_shaped_repo() -> GenomicResourceRepo:
+    return build_inmemory_test_repository({
+        "SfariGeneScore": {
+            GR_CONF_FILE_NAME: """
+                type: gene_score
+                filename: sfari.csv
+                scores:
+                - id: SFARI Gene Score
+                  desc: SFARI gene score
+                  histogram:
+                    type: categorical
+                    value_order: [1, 2, 3]
+                """,
+            "sfari.csv": textwrap.dedent("""
+                gene,SFARI Gene Score
+                G1,1
+                G2,2
+                G3,3
+            """),
+            "statistics": {
+                "histogram_SFARI Gene Score.json": json.dumps({
+                    "config": {
+                        "type": "categorical",
+                        "value_order": [1, 2, 3],
+                        "y_log_scale": False,
+                        "label_rotation": 0,
+                    },
+                    "values": {"2": 706, "1": 233, "3": 143},
+                }),
+            },
+        },
+    })
+
+
+def test_get_score_histogram_categorical_round_trip() -> None:
+    res = _build_sfari_shaped_repo().get_resource("SfariGeneScore")
+    gene_score = build_gene_score_from_resource(res)
+
+    hist = gene_score.get_score_histogram("SFARI Gene Score")
+
+    assert isinstance(hist, CategoricalHistogram)
+    assert hist.raw_values == {"2": 706, "1": 233, "3": 143}
+
+
+def test_score_desc_hist_categorical_round_trip() -> None:
+    res = _build_sfari_shaped_repo().get_resource("SfariGeneScore")
+    gene_score = build_gene_score_from_resource(res)
+
+    (score_desc,) = GeneScoresDb.build_descs_from_score(gene_score)
+
+    assert isinstance(score_desc.hist, CategoricalHistogram)
+    assert score_desc.hist.raw_values == {"2": 706, "1": 233, "3": 143}
+
+
+# ---------------------------------------------------------------------------
 # get_x_scale / get_y_scale - categorical and unknown score_id
 # ---------------------------------------------------------------------------
 
