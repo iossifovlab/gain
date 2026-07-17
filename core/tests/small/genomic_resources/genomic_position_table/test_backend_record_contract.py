@@ -22,12 +22,16 @@ built it says it means:
   is wrapped in :class:`VCFScoreLine`, which looks INFO fields up by name and
   selects them by allele.
 
-Since #238 migrated bigWig -- the last adapter backend -- every backend in the
-tree yields records, so no live backend is routed to the adapter-era
-:class:`ScoreLine` any more (#239 removes it).  The adapter branch of
-test_a_backend_yields_what_its_yields_records_claim_says therefore no longer
-runs, but is kept: it states what an adapter backend would have to look like,
-and guards a future one added to ``_BACKENDS``.
+#238 migrated bigWig -- the last adapter backend -- and #239 then deleted the
+line adapters, the ``LineBase`` protocol and the adapter-era ``ScoreLine``
+outright.  So ``yields_records`` no longer selects between two shapes: records
+are the only shape, and a backend that leaves the flag False selects no score
+line at all -- ``GenomicScore.open`` refuses to open it.  That is why
+test_a_backend_yields_what_its_yields_records_claim_says now *asserts* the
+claim rather than branching on it, and why the fixtures below hand back an
+**unopened** score: the flag is a ClassVar, so the claim can be -- and is --
+checked before open() gets to reject it, which is what keeps a failing backend
+pointed at this file rather than at a routing TypeError.
 
 So each backend below declares BOTH what it yields and which score line it must
 be routed to, and both are checked against the live objects.
@@ -42,7 +46,6 @@ import pathlib
 from collections.abc import Callable
 
 import pytest
-from gain.genomic_resources.genomic_position_table.line import LineBase
 from gain.genomic_resources.genomic_position_table.record import (
     PAYLOAD,
     RECORD_SLOTS,
@@ -64,11 +67,18 @@ from gain.genomic_resources.testing.builders import (
 )
 
 # A region each backend's fixture data answers with at least one line.
+#
+# The score comes back UNOPENED, and each test opens it itself.  That is what
+# lets a test look at ``table.yields_records`` -- a ClassVar, known at
+# construction -- *before* ``GenomicScore.open`` gets to route on it and refuse.
+# Built the other way round, with the helper opening, every check of the claim
+# below would sit downstream of the open() that already rejects a backend
+# leaving it False, and so could never run.
 Region = tuple[str, int, int]
-OpenedBackend = tuple[GenomicScore, Region]
+Backend = tuple[GenomicScore, Region]
 
 
-def _open_tabular(tmp_path: pathlib.Path, *, tabix: bool) -> OpenedBackend:
+def _build_tabular(tmp_path: pathlib.Path, *, tabix: bool) -> Backend:
     builder = (
         a_position_score()
         .with_score("s_float", "float")
@@ -80,18 +90,18 @@ def _open_tabular(tmp_path: pathlib.Path, *, tabix: bool) -> OpenedBackend:
     if tabix:
         builder = builder.with_tabix()
     repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
-    return PositionScore(repo.get_resource("pos")).open(), ("1", 10, 10)
+    return PositionScore(repo.get_resource("pos")), ("1", 10, 10)
 
 
-def _open_inmemory(tmp_path: pathlib.Path) -> OpenedBackend:
-    return _open_tabular(tmp_path, tabix=False)
+def _build_inmemory(tmp_path: pathlib.Path) -> Backend:
+    return _build_tabular(tmp_path, tabix=False)
 
 
-def _open_tabix(tmp_path: pathlib.Path) -> OpenedBackend:
-    return _open_tabular(tmp_path, tabix=True)
+def _build_tabix(tmp_path: pathlib.Path) -> Backend:
+    return _build_tabular(tmp_path, tabix=True)
 
 
-def _open_vcf(tmp_path: pathlib.Path) -> OpenedBackend:
+def _build_vcf(tmp_path: pathlib.Path) -> Backend:
     builder = a_vcf_info_score().with_data("""
 ##fileformat=VCFv4.1
 ##INFO=<ID=scoreA,Number=1,Type=Float,Description="score A">
@@ -99,10 +109,10 @@ def _open_vcf(tmp_path: pathlib.Path) -> OpenedBackend:
 chr1   10  .  A   T   .    .      scoreA=0.1
 """)
     repo = a_grr().with_resource("vcf", builder).build_repo(tmp_path)
-    return AlleleScore(repo.get_resource("vcf")).open(), ("chr1", 10, 10)
+    return AlleleScore(repo.get_resource("vcf")), ("chr1", 10, 10)
 
 
-def _open_bigwig(tmp_path: pathlib.Path) -> OpenedBackend:
+def _build_bigwig(tmp_path: pathlib.Path) -> Backend:
     builder = (
         a_bigwig_score()
         .with_score("bw", "float")
@@ -112,7 +122,7 @@ def _open_bigwig(tmp_path: pathlib.Path) -> OpenedBackend:
         .with_chrom_lens({"chr1": 1000})
     )
     repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
-    return PositionScore(repo.get_resource("bw")).open(), ("chr1", 5, 5)
+    return PositionScore(repo.get_resource("bw")), ("chr1", 5, 5)
 
 
 # All four position-table backends, each opened over a resource of its own
@@ -120,10 +130,10 @@ def _open_bigwig(tmp_path: pathlib.Path) -> OpenedBackend:
 # to.  Every backend in the tree is here: a fifth one must be added, or nothing
 # checks that its claim is true.
 _BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
-    pytest.param(_open_inmemory, RecordScoreLine, id="inmemory"),
-    pytest.param(_open_tabix, RecordScoreLine, id="tabix"),
-    pytest.param(_open_vcf, VCFScoreLine, id="vcf"),
-    pytest.param(_open_bigwig, RecordScoreLine, id="bigwig"),
+    pytest.param(_build_inmemory, RecordScoreLine, id="inmemory"),
+    pytest.param(_build_tabix, RecordScoreLine, id="tabix"),
+    pytest.param(_build_vcf, VCFScoreLine, id="vcf"),
+    pytest.param(_build_bigwig, RecordScoreLine, id="bigwig"),
 ]
 
 
@@ -146,10 +156,10 @@ _BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
 # test_every_record_backend_declares_whether_its_records_hash keeps this list
 # in step with what the backends in _BACKENDS actually claim.
 _HASHABILITY: list[pytest.param] = [  # type: ignore[valid-type]
-    pytest.param(_open_inmemory, True, id="inmemory"),
-    pytest.param(_open_tabix, False, id="tabix"),
-    pytest.param(_open_vcf, False, id="vcf"),
-    pytest.param(_open_bigwig, True, id="bigwig"),
+    pytest.param(_build_inmemory, True, id="inmemory"),
+    pytest.param(_build_tabix, False, id="tabix"),
+    pytest.param(_build_vcf, False, id="vcf"),
+    pytest.param(_build_bigwig, True, id="bigwig"),
 ]
 
 
@@ -162,9 +172,13 @@ def test_every_record_backend_declares_whether_its_records_hash(
     contract -- so a record backend that does not declare it leaves
     test_a_records_hashability_is_its_payloads with nothing to check.
 
-    Which backends must declare is asked of the **live tables**:
+    Which backends must declare is asked of the **tables themselves**:
     ``yields_records`` is the claim this whole file exists to hold backends to,
-    and it is the same discriminator ``GenomicScore.open`` routes on.  It is
+    and it is the same discriminator ``GenomicScore.open`` routes on.  Asking a
+    built-but-unopened table is deliberate -- the flag is a ClassVar, so it
+    needs no open handle, and a backend that leaves it False is one
+    ``GenomicScore.open`` refuses outright.  Opening first would mean this loop
+    could only ever see backends that already passed that gate.  It is
     deliberately NOT read off the score line class each backend is paired with
     below: a migrating backend can arrive with a score line class of its own
     (VCF did, at :class:`VCFScoreLine`) or reuse an existing one whose
@@ -176,14 +190,13 @@ def test_every_record_backend_declares_whether_its_records_hash(
     """
     record_backends = set()
     for param in _BACKENDS:
-        open_backend, _score_line_cls = param.values
+        build_backend, _score_line_cls = param.values
         # A repo per backend: two of them build a resource under the same name.
         backend_dir = tmp_path / str(param.id)
         backend_dir.mkdir()
-        score, _region = open_backend(backend_dir)
-        with score:
-            if score.table.yields_records:
-                record_backends.add(str(param.id))
+        score, _region = build_backend(backend_dir)
+        if score.table.yields_records:
+            record_backends.add(str(param.id))
 
     declared = {str(param.id) for param in _HASHABILITY}
 
@@ -198,14 +211,14 @@ def test_every_record_backend_declares_whether_its_records_hash(
     stale = declared - record_backends
     assert not stale, (
         f"{sorted(stale)} declare their records' hashability in _HASHABILITY "
-        f"but no longer set yields_records -- they yield line adapters, whose "
-        f"hashability is not a record fact. Drop them from _HASHABILITY")
+        f"but no longer set yields_records, so they no longer yield records "
+        f"whose hashability is a fact about them. Drop them from _HASHABILITY")
 
 
-@pytest.mark.parametrize(("open_backend", "records_hash"), _HASHABILITY)
+@pytest.mark.parametrize(("build_backend", "records_hash"), _HASHABILITY)
 def test_a_records_hashability_is_its_payloads(
     tmp_path: pathlib.Path,
-    open_backend: Callable[[pathlib.Path], OpenedBackend],
+    build_backend: Callable[[pathlib.Path], Backend],
     records_hash: bool,
 ) -> None:
     """A record hashes exactly when its backend's payload does.
@@ -218,8 +231,8 @@ def test_a_records_hashability_is_its_payloads(
     keyed by one, must key it on ``sort_key(record)`` and not on the record --
     on two of the three record backends the record itself raises.
     """
-    score, region = open_backend(tmp_path)
-    with score:
+    score, region = build_backend(tmp_path)
+    with score.open():
         records = list(score.table.get_records_in_region(*region))
         first = records[0]
         backend = type(score.table).__name__
@@ -239,82 +252,79 @@ def test_a_records_hashability_is_its_payloads(
                 _ = {first: 0}
 
 
-@pytest.mark.parametrize(("open_backend", "score_line_cls"), _BACKENDS)
+@pytest.mark.parametrize(("build_backend", "score_line_cls"), _BACKENDS)
 def test_a_backend_yields_what_its_yields_records_claim_says(
     tmp_path: pathlib.Path,
-    open_backend: Callable[[pathlib.Path], OpenedBackend],
+    build_backend: Callable[[pathlib.Path], Backend],
     score_line_cls: type[ScoreLineBase],
 ) -> None:
+    score, region = build_backend(tmp_path)
+    table = score.table
+    backend = type(table).__name__
+
+    # Records are the only shape there is.  #239 deleted the line adapters and
+    # the ``ScoreLine`` that read them, so a backend leaving ``yields_records``
+    # False no longer selects an alternative implementation -- it selects none,
+    # and ``GenomicScore.open`` refuses to open it (TypeError).
+    #
+    # This runs BEFORE the open() below, which is the whole point: it is the
+    # requirement stated where a new backend meets it, rather than an open()
+    # failure it has to work backwards from.  The score arrives unopened for
+    # exactly this reason -- ``yields_records`` is a ClassVar, so the claim is
+    # answerable with no handle at all, and asserting it here means a backend
+    # that leaves it False fails naming itself and saying what to do, instead of
+    # tripping open()'s routing TypeError first.
+    assert table.yields_records, (
+        f"{backend} leaves yields_records False. Since #239 there is no "
+        f"line-adapter score line to be routed to, so a backend must set "
+        f"yields_records and yield records; GenomicScore.open raises on "
+        f"one that does not")
+
     # The claim, against the first thing the backend actually produces --
     # which is the earliest moment a claim about records can be contradicted.
-    score, region = open_backend(tmp_path)
-    with score:
-        table = score.table
-        backend = type(table).__name__
+    with score.open():
         first = next(iter(table.get_records_in_region(*region)))
 
-        if table.yields_records:
-            # A record is a PLAIN tuple -- exact type, not isinstance: a tuple
-            # *subclass* with attributes bolted on (which is what the retired
-            # VCFLine bridge was) is an adapter wearing a record's shape, and an
-            # isinstance check would wave it through.
-            assert type(first) is tuple, (
-                f"{backend} sets yields_records, so GenomicScore.open routes "
-                f"it to a record score line -- but it yields a "
-                f"{type(first).__name__}, not a plain record tuple")
-            assert len(first) == RECORD_SLOTS, (
-                f"{backend} sets yields_records but yields a "
-                f"{len(first)}-slot tuple; a record has {RECORD_SLOTS} slots")
-            payload = first[PAYLOAD]
-            # Both record score lines index the payload -- RecordScoreLine binds
-            # _get_raw to payload.__getitem__ for a score column, VCFScoreLine
-            # reads the (variant, allele index) pair out of it -- so a payload
-            # must be indexable...
-            assert hasattr(payload, "__getitem__"), (
-                f"{backend} sets yields_records but its record's PAYLOAD is a "
-                f"{type(payload).__name__}, which is not indexable")
-            # ...and must not be a str/bytes: those are indexable, but index
-            # to *characters*, so every score would silently parse to None
-            # rather than raise.
-            assert not isinstance(payload, (str, bytes)), (
-                f"{backend} sets yields_records but its record's PAYLOAD is a "
-                f"{type(payload).__name__} -- indexing it yields characters, "
-                f"not cells")
-        else:
-            # An adapter backend yields a ``LineBase``: ScoreLine reads its
-            # values through ``line.get`` and its coordinates off the named
-            # attributes.  ``LineBase`` is a bare ``Protocol`` (not
-            # runtime-checkable), so it is checked the way a protocol is
-            # satisfied -- structurally, member by member, which is also
-            # exactly the surface ScoreLine uses.
-            assert type(first) is not tuple, (
-                f"{backend} leaves yields_records False, so GenomicScore.open "
-                f"routes it to ScoreLine -- but it yields a plain record "
-                f"tuple, which has no .get and no named attributes. A "
-                f"backend that yields records must set yields_records")
-            missing = [
-                member for member in LineBase.__protocol_attrs__
-                if not hasattr(first, member)
-            ]
-            assert not missing, (
-                f"{backend} leaves yields_records False, so GenomicScore.open "
-                f"routes it to ScoreLine -- but it yields a "
-                f"{type(first).__name__}, which is not a line adapter: it is "
-                f"missing {missing}")
+        # A record is a PLAIN tuple -- exact type, not isinstance: a tuple
+        # *subclass* with attributes bolted on (which is what the retired
+        # VCFLine bridge was) is an adapter wearing a record's shape, and an
+        # isinstance check would wave it through.
+        assert type(first) is tuple, (
+            f"{backend} sets yields_records, so GenomicScore.open routes "
+            f"it to a record score line -- but it yields a "
+            f"{type(first).__name__}, not a plain record tuple")
+        assert len(first) == RECORD_SLOTS, (
+            f"{backend} sets yields_records but yields a "
+            f"{len(first)}-slot tuple; a record has {RECORD_SLOTS} slots")
+        payload = first[PAYLOAD]
+        # Both record score lines index the payload -- RecordScoreLine binds
+        # _get_raw to payload.__getitem__ for a score column, VCFScoreLine
+        # reads the (variant, allele index) pair out of it -- so a payload
+        # must be indexable...
+        assert hasattr(payload, "__getitem__"), (
+            f"{backend} sets yields_records but its record's PAYLOAD is a "
+            f"{type(payload).__name__}, which is not indexable")
+        # ...and must not be a str/bytes: those are indexable, but index
+        # to *characters*, so every score would silently parse to None
+        # rather than raise.
+        assert not isinstance(payload, (str, bytes)), (
+            f"{backend} sets yields_records but its record's PAYLOAD is a "
+            f"{type(payload).__name__} -- indexing it yields characters, "
+            f"not cells")
 
 
-@pytest.mark.parametrize(("open_backend", "score_line_cls"), _BACKENDS)
+@pytest.mark.parametrize(("build_backend", "score_line_cls"), _BACKENDS)
 def test_open_routes_a_backend_to_the_score_line_its_payload_needs(
     tmp_path: pathlib.Path,
-    open_backend: Callable[[pathlib.Path], OpenedBackend],
+    build_backend: Callable[[pathlib.Path], Backend],
     score_line_cls: type[ScoreLineBase],
 ) -> None:
     # The other half: ``GenomicScore.open`` must route each backend to the score
     # line that can actually read ITS payload.  Together with the test above --
     # the claim about what is yielded is true -- this is what makes the routing
     # correct for every backend, without any per-line check.
-    score, region = open_backend(tmp_path)
-    with score:
+    score, region = build_backend(tmp_path)
+    with score.open():
         # The choice is made once, at open: it is already installed before a
         # single line is fetched.
         assert score._score_line_class is score_line_cls, (

@@ -20,13 +20,8 @@ from urllib.parse import quote
 
 from gain import logging
 from gain.genomic_resources.genomic_position_table import (
-    Line,
     VCFGenomicPositionTable,
     build_genomic_position_table,
-)
-from gain.genomic_resources.genomic_position_table.line import (
-    BigWigLine,
-    LineBase,
 )
 from gain.genomic_resources.genomic_position_table.record import (
     ALT,
@@ -230,35 +225,43 @@ class _ScoreDef:
 
 
 class ScoreLineBase(abc.ABC):
-    """Shared value extraction for the three per-backend score lines.
+    """Shared value extraction for the per-backend score lines.
 
-    A genomic score is read through one of **three** concrete score lines,
+    A genomic score is read through one of **two** concrete score lines,
     chosen per backend when the score is opened (``GenomicScore.open``, which
     routes on the table and nothing else):
 
-    * :class:`RecordScoreLine` -- the **tabix** and **in-memory** backends.
-      They yield records whose payload is the raw row, so a score is a column
-      of it, addressed by resolved index.
+    * :class:`RecordScoreLine` -- the **tabix**, **in-memory** and **bigWig**
+      backends.  They yield records whose payload is the raw row, so a score is
+      a column of it, addressed by resolved index.
     * :class:`VCFScoreLine` -- the **VCF** backend.  It yields records too, but
       its payload is a ``(variant record, allele index)`` pair and its scores
       are INFO fields looked up by name, not columns; that is the whole reason
       it needs a score line of its own.
-    * :class:`ScoreLine` -- the last backend still yielding a line *adapter*:
-      **bigWig**, and only bigWig.  #238 migrates it to records and #239 then
-      removes this class, at which point every score line is record-backed and
-      this base collapses into :class:`RecordScoreLineBase`.
 
-    So at HEAD the split is not adapter-vs-record-backend: three of the four
-    backends yield records, and two *kinds* of record payload (raw row, VCF
-    variant) are already in play.  The three are **siblings**, not
-    parent/child -- the only per-backend difference is where a raw score value
-    comes from, and that is captured by ``self._get_raw(key)``, which each
-    subclass answers in its own way: :class:`ScoreLine` and
-    :class:`RecordScoreLine` bind an instance attribute to a callable that is
-    reachable from the line but is not the line (the adapter's ``line.get``,
-    the record payload's ``__getitem__``), while :class:`VCFScoreLine` --
-    whose lookup needs the line itself -- declares a plain **method**.
-    ``self._get_raw(key)`` below resolves either.
+    Every backend yields records -- #237 (VCF) and #238 (bigWig) were the last
+    two migrations, and #239 deleted the line adapters and the adapter-era
+    ``ScoreLine`` with them.  So the split is no longer adapter-vs-record: it is
+    entirely about what a record's PAYLOAD means, and the two *kinds* in play
+    (raw row, VCF variant) are what the two classes below answer to.
+
+    The two are **siblings**, not parent/child -- the only per-backend
+    difference is where a raw score value comes from, and that is captured by
+    ``self._get_raw(key)``, which each subclass answers in its own way:
+    :class:`RecordScoreLine` binds an instance attribute to a callable that is
+    reachable from the line but is not the line (the record payload's
+    ``__getitem__``), while :class:`VCFScoreLine` -- whose lookup needs the line
+    itself -- declares a plain **method**.  ``self._get_raw(key)`` below
+    resolves either.
+
+    This base did not collapse into :class:`RecordScoreLineBase` when
+    ``ScoreLine`` went, though the pre-#239 note here predicted it would.  The
+    two still say different things: this one is *how a configured score value is
+    extracted and parsed* from whatever ``_get_raw`` reaches, and that is shared
+    by both siblings; :class:`RecordScoreLineBase` is *how the five core fields
+    are read off a record's slots*, which is shared only because both siblings
+    happen to be record-backed.  Merging them would state the second as though
+    it were the first.
 
     A subclass whose lookup needs ``self`` must use a method and NOT bind
     ``self._get_raw = self._something``: a bound method of self, stored on
@@ -280,7 +283,7 @@ class ScoreLineBase(abc.ABC):
     So the cycle has no static defence at all, and
     test_score_lines_are_freed_without_the_cycle_collector is the only one there
     is.  It asserts over real fetched lines, for the whole family, so it holds
-    for backends migrated onto it (bigWig joined in #238) and any added later.
+    for every backend (all four are on it) and any added later.
 
     (For the record: pyright flags :meth:`VCFScoreLine._get_raw` with
     ``reportIncompatibleMethodOverride`` -- the base declares ``_get_raw`` as a
@@ -290,19 +293,17 @@ class ScoreLineBase(abc.ABC):
 
     Everything downstream of that one lookup -- the five core-field
     properties' contract, NA handling, parsing, logging and the
-    bulk/single value walks -- lives here so it cannot drift between the three.
+    bulk/single value walks -- lives here so it cannot drift between the two.
 
     The base declares no ``__init__`` on purpose: each subclass sets
     ``score_defs`` and binds ``_get_raw`` in its own constructor, with no
     ``super().__init__`` call.  A base constructor (even a trivial one) would
     add a per-**line** Python call on the hot ``fetch_lines`` path -- ~0.055us
-    /line, doubling the narrow-table overhead below -- for no benefit, since a
-    record is not substitutable for an adapter and the three constructors share
-    no work.  The substitutability that finding 4 wanted is instead enforced
-    structurally: :attr:`GenomicScore._score_line_class` is typed as a callable
-    ``(LineBase | Record, dict) -> ScoreLineBase``, every one of the three
-    subclasses is assigned to it by ``GenomicScore.open``, and mypy checks all
-    three -- :class:`ScoreLine`, :class:`RecordScoreLine` and
+    /line, doubling the narrow-table overhead below -- for no benefit, since the
+    two constructors share no work.  Substitutability is enforced structurally
+    instead: :attr:`GenomicScore._score_line_class` is typed as a callable
+    ``(Record, dict) -> ScoreLineBase``, both subclasses are assigned to it by
+    ``GenomicScore.open``, and mypy checks each -- :class:`RecordScoreLine` and
     :class:`VCFScoreLine` -- against that signature.
 
     That a table routed to a *record* score line (:class:`RecordScoreLine` or
@@ -313,16 +314,17 @@ class ScoreLineBase(abc.ABC):
     (``table.yields_records``, and the ``VCFGenomicPositionTable`` isinstance
     check for the VCF branch).
 
-    Reading a raw value through one of the two *binding* subclasses still costs
-    a per-line bound-method allocation (:class:`VCFScoreLine`, which reaches
-    ``_get_raw`` as a method, pays nothing for it and allocates nothing).
-    Measured against a byte-faithful reconstruction of
-    the pre-refactor ``ScoreLine`` (construct + ``get_values``, min-of-15):
-    ~1.06x on a 1-score line, ~1.03x at 5 scores, a wash (~1.01x) by 454
-    scores -- largest on the narrow ``position_score`` shape, invisible on
-    wide tables.  In absolute terms ~0.035us/line against a ~200us/record
-    end-to-end fetch, i.e. invisible in production.  #239 removes
-    :class:`ScoreLine`, at which point this base and the split disappear.
+    Reading a raw value through the *binding* subclass still costs a per-line
+    bound-method allocation (:class:`VCFScoreLine`, which reaches ``_get_raw``
+    as a method, pays nothing for it and allocates nothing).  Measured against
+    a byte-faithful reconstruction of the pre-refactor ``ScoreLine`` (construct
+    + ``get_values``, min-of-15): ~1.06x on a 1-score line, ~1.03x at 5 scores,
+    a wash (~1.01x) by 454 scores -- largest on the narrow ``position_score``
+    shape, invisible on wide tables.  In absolute terms ~0.035us/line against a
+    ~200us/record end-to-end fetch, i.e. invisible in production.  (The
+    ``ScoreLine`` those figures were measured against no longer exists -- #239
+    deleted it -- so they are a record of what the record migration cost, not a
+    benchmark that can be re-run from the tree.)
     """
 
     # ``score_defs`` is set by each subclass in its own __init__ (no shared base
@@ -427,46 +429,6 @@ class ScoreLineBase(abc.ABC):
         return tuple(self.score_defs.keys())
 
 
-class ScoreLine(ScoreLineBase):
-    """Score line wrapping a line adapter.
-
-    Binds ``self._get_raw`` to the adapter's ``line.get`` and reads the core
-    fields straight off the adapter.  See :class:`ScoreLineBase` for the shared
-    value-extraction contract.  **No backend is routed here any more** -- #238
-    migrated bigWig, the last adapter backend, to records -- so this class is
-    now exercised only by its own direct unit tests, until #239 removes it (and
-    the ``Line``/``BigWigLine`` adapters it wraps) entirely.
-    """
-
-    def __init__(
-        self, line: LineBase | Record, score_defs: dict[str, _ScoreDef],
-    ):
-        assert isinstance(line, (Line, BigWigLine))
-        self.line = line
-        self.score_defs = score_defs
-        self._get_raw = line.get
-
-    @property
-    def chrom(self) -> str:
-        return self.line.chrom
-
-    @property
-    def pos_begin(self) -> int:
-        return self.line.pos_begin
-
-    @property
-    def pos_end(self) -> int:
-        return self.line.pos_end
-
-    @property
-    def ref(self) -> str | None:
-        return self.line.ref
-
-    @property
-    def alt(self) -> str | None:
-        return self.line.alt
-
-
 class RecordScoreLineBase(ScoreLineBase):
     """Core fields of a score line over a record, read from the slots.
 
@@ -564,15 +526,17 @@ class RecordScoreLine(RecordScoreLineBase):
     """
 
     def __init__(
-        self, line: LineBase | Record, score_defs: dict[str, _ScoreDef],
+        self, line: Record, score_defs: dict[str, _ScoreDef],
     ):
         # Bind the raw-value lookup to the payload's __getitem__ (score
-        # columns are addressed by resolved integer index), the record-backed
-        # counterpart of ``line.get``.  ``line`` is a record: the table said so
-        # (yields_records), and that claim is pinned against every backend by
-        # test_backend_record_contract.py.  Nothing here may cost more than an
-        # attribute store -- a ``cast`` would be a real call, ~15ns.
-        self._record: Record = line  # type: ignore[assignment]
+        # columns are addressed by resolved integer index).  ``line`` is a
+        # record: the table said so (yields_records), and that claim is pinned
+        # against every backend by test_backend_record_contract.py.  Nothing
+        # here may cost more than an attribute store -- a ``cast`` would be a
+        # real call, ~15ns.  (No ``type: ignore`` needed since #239: with the
+        # adapters gone the parameter is a ``Record``, not a union, so this is
+        # a plain assignment.)
+        self._record: Record = line
         self.score_defs = score_defs
         self._get_raw = self._record[PAYLOAD].__getitem__
 
@@ -606,7 +570,7 @@ class VCFScoreLine(RecordScoreLineBase):
     _info_meta: pysam.VariantHeaderMetadata
 
     def __init__(
-        self, line: LineBase | Record, score_defs: dict[str, _ScoreDef],
+        self, line: Record, score_defs: dict[str, _ScoreDef],
     ):
         # ``line`` is a VCF record -- the table said so, and the claim is pinned
         # over every backend by test_backend_record_contract.py.  The payload is
@@ -670,7 +634,7 @@ class VCFScoreLine(RecordScoreLineBase):
         # zero objects -- they are empty.  Only the "objects freed" column
         # separates the two designs; it is the one this rests on.  Pinned by
         # test_score_lines_are_freed_without_the_cycle_collector.
-        self._record: Record = line  # type: ignore[assignment]
+        self._record: Record = line
         self.score_defs = score_defs
         # What an INFO lookup needs, resolved on the first score read of this
         # line and reused by every later one (see _get_raw).  ``_info`` doubles
@@ -865,10 +829,10 @@ class VCFScoreLine(RecordScoreLineBase):
 
 
 # What a fetched line is wrapped in: a callable, not a ``type[...]``, so mypy
-# checks all three score line classes -- ScoreLine, RecordScoreLine and
-# VCFScoreLine -- against one signature.  We never call issubclass on it.
+# checks both score line classes -- RecordScoreLine and VCFScoreLine -- against
+# one signature.  We never call issubclass on it.
 _ScoreLineFactory = Callable[
-    [LineBase | Record, dict[str, _ScoreDef]], ScoreLineBase,
+    [Record, dict[str, _ScoreDef]], ScoreLineBase,
 ]
 
 
@@ -1016,6 +980,18 @@ class GenomicScore(ResourceConfigValidationMixin):
         - GenomicPositionTable: Table format abstraction
     """
 
+    # What each fetched line is wrapped in.  Installed by :meth:`open`, from
+    # the table's ``yields_records`` claim, and declared here with NO default
+    # on purpose: there is no longer a score line that suits an unrouted score.
+    # Every backend yields records (#239 deleted the adapters), but a record's
+    # payload still means two different things -- a raw row or a VCF
+    # (variant, allele index) pair -- so there is no class that reads both, and
+    # a default would have to be wrong for one of them.  Unset until open()
+    # routes, an unopened score raises AttributeError rather than silently
+    # reading a VCF record as a row; open() installs it *before* publishing
+    # table_loaded, so no caller can observe the gap (see open()).
+    _score_line_class: _ScoreLineFactory
+
     def __init__(self, resource: GenomicResource):
         self.resource = resource
         self.resource_id = resource.resource_id
@@ -1030,11 +1006,6 @@ class GenomicScore(ResourceConfigValidationMixin):
             self.resource, self.config["table"],
         )
         self.score_definitions = self._build_scoredefs()
-        # What each fetched line is wrapped in; the record-yielding backends use
-        # RecordScoreLine, the adapter-yielding ones ScoreLine.  Selected in
-        # open(), from the table's yields_records claim -- this default holds
-        # only until then.
-        self._score_line_class: _ScoreLineFactory = ScoreLine
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
@@ -1397,31 +1368,45 @@ class GenomicScore(ResourceConfigValidationMixin):
                 "opening already opened genomic score: %s",
                 self.resource.resource_id)
             return self
-        self.table.open()
         is_vcf = isinstance(self.table, VCFGenomicPositionTable)
         # Choose the score line class per backend -- ONE decision, per table,
         # made here rather than per line.  A VCF table's scores are INFO fields,
         # so it goes to the VCFScoreLine that performs the INFO lookup; any
         # other record-yielding table's scores are read out of the record's
-        # payload by index, so it goes to RecordScoreLine (since #238 that is
-        # every remaining backend -- in-memory, tabix and bigWig); an
-        # adapter-yielding table would go to ScoreLine, but none is left until
-        # #239 removes the class.  This is decided at open time, alongside the
-        # table's own parser/transform selection, and the table's yields_records
-        # claim is simply believed -- that every backend's claim matches what it
-        # really yields is pinned statically, over all four of them, by
-        # test_backend_record_contract.py, so the fetch path pays nothing.
+        # payload by index, so it goes to RecordScoreLine (that is every other
+        # backend -- in-memory, tabix and bigWig).  This is decided at open
+        # time, alongside the table's own parser/transform selection, and the
+        # table's yields_records claim is simply believed -- that every
+        # backend's claim matches what it really yields is pinned statically,
+        # over all four of them, by test_backend_record_contract.py, so the
+        # fetch path pays nothing.
         #
-        # Route BEFORE publishing.  ``table_loaded = True`` is what makes this
-        # score look open to everyone else: from that write on, another caller's
-        # open() takes the is_open() early return above and reads
-        # _score_line_class straight away.  Written the other way round, that
-        # caller can catch the score published-but-unrouted and read the
-        # __init__ default (ScoreLine) for a record-yielding table -- a record
-        # tuple into an adapter score line.  Scores are shared across threads
-        # (the process-wide in-memory CNV cache; gain-web-api's thread pool), so
-        # the window is reachable; this ordering keeps the ROUTING out of it.
-        # Pinned by test_the_score_is_routed_before_it_reports_itself_open.
+        # A table that claims neither is a programming error, not a data error:
+        # since #239 there is no adapter score line to fall back to, so a
+        # backend that leaves yields_records False has nothing that can read it
+        # and we refuse to open rather than guess.  (Nothing in the tree reaches
+        # this: it guards a backend added later without its migration.)
+        #
+        # Route BEFORE opening, and so before publishing.  Both inputs are
+        # known at construction -- the table's class, and yields_records, a
+        # ClassVar -- so routing needs nothing from the open handle and can
+        # precede it.  Two things fall out of that order:
+        #
+        # * the refusal below costs no handle.  Routing after ``table.open()``
+        #   would leave a caller that is not using the ``with`` form holding an
+        #   opened pysam handle it can no longer reach: ``table_loaded`` would
+        #   still be False, so ``close()`` would not have been reached.
+        #   Raising first means there is nothing to leak.
+        # * ``table_loaded = True`` is what makes this score look open to
+        #   everyone else: from that write on, another caller's open() takes the
+        #   is_open() early return above and reads _score_line_class straight
+        #   away.  Routed last, that caller can catch the score
+        #   published-but-unrouted -- and since #239 left _score_line_class with
+        #   no default at all, that caller reads an AttributeError.  Scores are
+        #   shared across threads (the process-wide in-memory CNV cache;
+        #   gain-web-api's thread pool), so the window is reachable; this
+        #   ordering keeps the ROUTING out of it.  Pinned by
+        #   test_the_score_is_routed_before_it_reports_itself_open.
         #
         # It does not make open() as a whole safe to race, and does not claim
         # to: the score_index assignment below still runs after the score has
@@ -1434,7 +1419,12 @@ class GenomicScore(ResourceConfigValidationMixin):
         elif self.table.yields_records:
             self._score_line_class = RecordScoreLine
         else:
-            self._score_line_class = ScoreLine
+            raise TypeError(
+                f"{type(self.table).__name__} does not yield records, and "
+                f"since #239 removed the line adapters there is no score line "
+                f"that can read it; a genomic position table backend must set "
+                f"yields_records and yield records")
+        self.table.open()
         self.table_loaded = True
         if "scores" in self.config:
             self._validate_scoredefs()

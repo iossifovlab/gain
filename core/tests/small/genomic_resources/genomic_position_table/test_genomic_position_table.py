@@ -4,6 +4,7 @@ import pathlib
 import textwrap
 from typing import Self, cast
 
+import gain.genomic_resources.genomic_position_table as gpt
 import pysam
 import pytest
 import pytest_mock
@@ -321,6 +322,30 @@ def scores_tabix_res(tmp_path: pathlib.Path) -> GenomicResource:
         1     21        30       5.14
         """, seq_col=0, start_col=1, end_col=2)
     return build_filesystem_test_resource(tmp_path)
+
+
+def test_the_package_exports_only_what_still_exists() -> None:
+    # ``__all__`` is this package's public surface -- a name listed here is a
+    # public name of ``gain``, and dropping one is a breaking change for every
+    # importer.  So the list is pinned, exactly, rather than merely spot-checked
+    # for the names of the day: an equality assert is what makes an *addition*
+    # deliberate too, and what stops a name being removed from the module while
+    # a stale entry keeps ``from ... import *`` claiming it exists.
+    #
+    # ``Line``/``BigWigLine`` are deliberately absent (#239 deleted the line
+    # adapters; see the package docstring).  ``LineBuffer`` stays: it survived
+    # the migration and now holds records.
+    assert gpt.__all__ == [
+        "BigWigTable",
+        "LineBuffer",
+        "TabixGenomicPositionTable",
+        "VCFGenomicPositionTable",
+        "build_genomic_position_table",
+    ]
+    # Every listed name resolves -- an ``__all__`` entry with nothing behind it
+    # is an ImportError that only a star-import finds.
+    for name in gpt.__all__:
+        assert hasattr(gpt, name), name
 
 
 def test_tabix_table_yields_records_with_a_lazy_payload(

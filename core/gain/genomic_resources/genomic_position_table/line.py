@@ -1,6 +1,5 @@
 from collections import deque
 from collections.abc import Generator
-from typing import Any, Protocol
 
 from .record import (
     CHROM,
@@ -8,87 +7,6 @@ from .record import (
     POS_END,
     Record,
 )
-
-Key = str | int
-
-
-class LineBase(Protocol):
-    """Protocol for genomic position table lines."""
-
-    chrom: str
-    fchrom: str
-    pos_begin: int
-    pos_end: int
-    ref: str | None
-    alt: str | None
-
-    def get(self, key: Key) -> Any:
-        ...
-
-    def row(self) -> tuple:
-        ...
-
-
-class Line:
-    """Represents a line read from a genomic position table.
-
-    Provides attribute access to a number of important columns - chromosome,
-    start position, end position, reference allele and alternative allele.
-    """
-    __slots__ = (  # noqa: RUF023
-        "_data",
-        "chrom",
-        "fchrom",
-        "pos_begin",
-        "pos_end",
-        "ref",
-        "alt",
-    )
-
-    def __init__(
-        self,
-        raw_line: tuple,
-        chrom_key: int = 0,
-        pos_begin_key: int = 1,
-        pos_end_key: int = 2, *,
-        ref_key: int | None = None,
-        alt_key: int | None = None,
-    ):
-        self._data: tuple[str, ...] = raw_line
-
-        self.chrom: str = self._data[chrom_key]
-        self.fchrom: str = self._data[chrom_key]
-        self.pos_begin: int = int(self._data[pos_begin_key])
-        self.pos_end: int = int(self._data[pos_end_key])
-        self.ref: str | None = \
-            self._data[ref_key] if ref_key is not None else None
-        self.alt: str | None = \
-            self._data[alt_key] if alt_key is not None else None
-
-    def get(self, key: Key) -> str:
-        return self._data[key]  # type: ignore
-
-    def row(self) -> tuple:
-        return tuple(self._data)
-
-
-class BigWigLine:
-    """Represents a line read from a bigWig file."""
-
-    def __init__(self, raw_line: tuple):
-        self._data: tuple[str, int, int, float] = raw_line
-        self.chrom: str = self._data[0]
-        self.fchrom: str = self._data[0]
-        self.pos_begin: int = self._data[1]
-        self.pos_end: int = self._data[2]
-        self.ref: str | None = None
-        self.alt: str | None = None
-
-    def get(self, key: Key) -> str | int | int | float:
-        return self._data[key]  # type: ignore
-
-    def row(self) -> tuple:
-        return tuple(self._data)
 
 
 class LineBuffer:

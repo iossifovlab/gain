@@ -15,16 +15,11 @@ from gain.genomic_resources.fsspec_protocol import (
 from gain.genomic_resources.genomic_position_table import (
     VCFGenomicPositionTable,
 )
-from gain.genomic_resources.genomic_position_table.line import (
-    BigWigLine,
-    Line,
-)
 from gain.genomic_resources.genomic_position_table.record import PAYLOAD
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     GenomicScore,
     RecordScoreLine,
-    ScoreLine,
     ScoreLineBase,
     VCFScoreLine,
     _ScoreDef,
@@ -112,14 +107,6 @@ chr1   30   .  A   T,G,C   .    .      A=3;B=31;C=c31,c32,c33,c34;D=d31,d32,d33
     res = build_filesystem_test_resource(tmp_path)
     score = build_score_from_resource(res)
     return cast(AlleleScore, score)
-
-
-def test_scoreline_init() -> None:
-    # ScoreLine wraps the remaining line adapters.  The VCF backend is no longer
-    # one of them: it yields records, and its INFO lookup lives in VCFScoreLine.
-    raw_line = ("chr1", 1, 10, 0.123)
-    assert ScoreLine(Line(raw_line), {})
-    assert ScoreLine(BigWigLine(raw_line), {})
 
 
 def test_default_annotation_pre_normalize_validates() -> None:
@@ -1617,8 +1604,13 @@ def test_fetch_region_lines_checks_available_chromosomes() -> None:
 
 
 def test_line_to_begin_end_validates_order() -> None:
-    bad_line = ScoreLine(
-        Line(("1", "20", "10")),
+    # A record whose interval runs backwards -- pos_end (10) before pos_begin
+    # (20).  Built as a record rather than through the retired Line adapter
+    # (#239): _line_to_begin_end reads the score line's core-field properties,
+    # which RecordScoreLine serves off the record's slots, so this is the same
+    # check over the shape every backend now yields.
+    bad_line = RecordScoreLine(
+        ("1", 20, 10, None, None, ("1", "20", "10")),
         {},
     )
 

@@ -11,7 +11,6 @@ from box import Box
 from gain import logging
 from gain.genomic_resources.repository import GenomicResource
 
-from .line import LineBase
 from .record import Record
 
 logger = logging.getLogger(__name__)
@@ -183,7 +182,7 @@ class GenomicPositionTable(abc.ABC):
         """Close the resource."""
 
     @abc.abstractmethod
-    def get_all_records(self) -> Generator[LineBase | Record, None, None]:
+    def get_all_records(self) -> Generator[Record, None, None]:
         """Return generator of all records in the table."""
 
     @abc.abstractmethod
@@ -192,7 +191,7 @@ class GenomicPositionTable(abc.ABC):
         chrom: str | None = None,
         pos_begin: int | None = None,
         pos_end: int | None = None,
-    ) -> Generator[LineBase | Record, None, None]:
+    ) -> Generator[Record, None, None]:
         """Return an iterable over the records in the specified range.
 
         The interval is closed on both sides and 1-based.

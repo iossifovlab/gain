@@ -1,5 +1,4 @@
 * Misc
-    - remove the ScoreLine class
     - Implement the assert for the correct resrouce_type for PositionScore and AlleleScore
     - Categorical histogram
     - Range column in the genomic scores' index.html.

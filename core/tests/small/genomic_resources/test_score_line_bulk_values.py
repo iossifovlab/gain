@@ -1,23 +1,23 @@
-"""Equivalence tests for the bulk value-extraction path on ``ScoreLine``.
+"""Equivalence tests for the bulk value-extraction path on the score lines.
 
-``ScoreLine.get_values`` extracts the values for a whole line given a list
+``ScoreLineBase.get_values`` extracts the values for a whole line given a list
 of already-resolved score definitions, hoisting the name->definition lookup
 out of the per-line loop.  These tests pin it to the single-score
-``ScoreLine.get_score`` path: for every input the bulk method must return
+``get_score`` path: for every input the bulk method must return
 *exactly* what looping ``get_score`` returns -- including ``None`` for an
 absent key, ``None`` for a configured NA value, and ``None`` (plus a logged
 parse failure) for an unparseable value.
 
-The value-extraction logic (``_extract_value``) is shared by all three score
+The value-extraction logic (``_extract_value``) is shared by both score
 line classes, but each reaches its raw value through a ``_get_raw`` of its own,
-and they do not all get there the same way.
+and they do not get there the same way.
 
-Two of them **bind** it, in their constructor, to a callable that is reachable
-*from* the line but is not the line: ``RecordScoreLine`` (the in-memory, tabix
-and -- since #238 -- bigWig record backends) to the record payload's
-``__getitem__``; ``ScoreLine`` (the adapter path, which now has no backend
-routed to it -- bigWig was the last, and #239 removes the class) to an
-adapter's ``line.get``.
+``RecordScoreLine`` (the in-memory, tabix and -- since #238 -- bigWig record
+backends) **binds** it, in its constructor, to a callable that is reachable
+*from* the line but is not the line: the record payload's ``__getitem__``.
+(#239 deleted the third class, the adapter-era ``ScoreLine``, which bound
+``_get_raw`` to an adapter's ``line.get``; no backend had been routed to it
+since bigWig migrated.)
 
 ``VCFScoreLine`` (the VCF record backend, whose payload is a ``(variant, allele
 index)`` pair rather than a row) instead declares ``_get_raw`` as a plain
@@ -53,7 +53,6 @@ from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     PositionScore,
     RecordScoreLine,
-    ScoreLine,
     VCFScoreLine,
     _ScoreDef,
 )
@@ -226,7 +225,7 @@ chr1   10  .  A   T   .    .      scoreA=0.1
         # ...and it is not the column-payload record score line: reading scoreA
         # through the record payload's __getitem__ would index the
         # (variant, allele index) pair, not the INFO field.
-        assert not isinstance(line, (RecordScoreLine, ScoreLine))
+        assert not isinstance(line, RecordScoreLine)
         assert line.get_score("scoreA") == pytest.approx(0.1)
 
 
@@ -256,9 +255,9 @@ def test_the_score_is_routed_before_it_reports_itself_open(tmp_path) -> None:
     # on, a second caller's ``open()`` takes the ``is_open()`` early return and
     # goes straight to reading ``_score_line_class``.  So the routing must
     # already be installed at that instant, or the second caller reads the
-    # ``__init__`` default -- ``ScoreLine`` -- and hands it a record tuple,
-    # which asserts (or under -O dies with "'tuple' object has no attribute
-    # 'get'").
+    # unrouted score.  Since #239 deleted the adapter ``ScoreLine`` that used
+    # to be the ``__init__`` default, ``_score_line_class`` has no default at
+    # all, so that reader gets an AttributeError.
     #
     # Scores are shared (the in-memory CNV cache hands the same instance to
     # every caller in the process; gain-web-api serves from a thread pool), so
@@ -296,8 +295,8 @@ def test_bigwig_backend_yields_the_record_score_line(tmp_path) -> None:
     # Since #238 the bigWig backend is on the record contract too: it yields
     # records whose payload is the four-element interval, so the score is routed
     # to RecordScoreLine and read by index (``index: 3`` -> the value cell), not
-    # to the retired adapter ScoreLine.  It is the third backend on that leg,
-    # alongside in-memory and tabix.
+    # to the retired adapter ScoreLine (deleted in #239).  It is the third
+    # backend on that leg, alongside in-memory and tabix.
     builder = (
         a_bigwig_score()
         .with_score("bw", "float")
