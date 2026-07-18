@@ -88,7 +88,7 @@ from gain.genomic_resources.testing.builders import (
 )
 
 # Fixture sizes.  The wide shape carries ~454 scores to mirror the real
-# resource the ``Line``->tuple and score-def-hoist optimisations target
+# resource the adapter->record-tuple and score-def-hoist optimisations target
 # (dbNSFP, ~454 scores); the hoist's payoff scales with the score count, so
 # a 60-score fixture would understate it.  Row counts are set so each timed
 # pass runs long enough (tens to ~200 ms) that its microseconds-per-record
@@ -236,11 +236,11 @@ def _scan_pass(score: GenomicScore, n_rows: int) -> Callable[[], int]:
     """
     expected_checksum = n_rows * (n_rows + 1) // 2
 
-    # Narrow the backend: ``GenomicPositionTable.get_all_records`` yields
-    # ``LineBase | Record``, and reading a position off the un-narrowed union is
-    # a type error.  The tabix backend -- which this benchmark times -- is on
-    # the record contract since #236, so the position comes out of the record's
-    # named slot rather than off an adapter attribute.
+    # Pin the backend: this benchmark times the *tabix* read path specifically,
+    # so assert it is the one open rather than silently timing whatever
+    # build_genomic_position_table picked.  It is on the record contract since
+    # #236, so the position comes out of the record's named slot rather than
+    # off an adapter attribute (#239 deleted the adapters altogether).
     table = score.table
     assert isinstance(table, TabixGenomicPositionTable)
 

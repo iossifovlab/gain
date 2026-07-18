@@ -5,14 +5,13 @@ from typing import cast
 
 import pytest
 from gain.genomic_resources import GenomicResource
-from gain.genomic_resources.genomic_position_table.line import Line
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     AlleleScoreQuery,
     CnvCollection,
     PositionScore,
     PositionScoreQuery,
-    ScoreLine,
+    RecordScoreLine,
     _ScoreDef,
     build_score_from_resource,
 )
@@ -44,12 +43,19 @@ def test_score_def_to_public() -> None:
 def test_score_line_get_score_value_parser_exception(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Test ScoreLine.get_score() when value parser raises exception."""
+    """Test get_score() when the configured value parser raises.
+
+    The behaviour under test is ``ScoreLineBase._extract_value``'s: a value
+    parser that raises is logged and yields ``None`` rather than propagating.
+    Read here through ``RecordScoreLine`` -- since #239 deleted the ``Line``
+    adapter and ``ScoreLine``, a record is the only shape a score line wraps,
+    and the score column is a cell of the record's payload.
+    """
 
     def bad_parser(value: str) -> float:
         raise ValueError("Parse error")
 
-    raw_line = ("chr1", 1, 10, "invalid")
+    raw_row = ("chr1", "1", "10", "invalid")
     score_defs = {
         "test_score": _ScoreDef(
             score_id="test_score",
@@ -67,7 +73,7 @@ def test_score_line_get_score_value_parser_exception(
             score_index=3,
         ),
     }
-    line = ScoreLine(Line(raw_line), score_defs)
+    line = RecordScoreLine(("chr1", 1, 10, None, None, raw_row), score_defs)
 
     result = line.get_score("test_score")
     assert result is None

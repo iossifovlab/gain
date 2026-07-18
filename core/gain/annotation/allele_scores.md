@@ -123,13 +123,13 @@ Supported syntax:
 | `expr and expr` | `freq > 0.01 and freq < 0.1` |
 | `expr or expr` | `freq < 0.01 or freq > 0.9` |
 
-Variables resolve to score values via `ScoreLine.get_score(name)`.
+Variables resolve to score values via `ScoreLineBase.get_score(name)`.
 
 ### Methods
 
 | Method | Visibility | Description |
 |---|---|---|
-| `AlleleScoreAnnotator._build_allele_filter_func` | class method | Recursively compiles a Lark parse tree into a `ScoreLine → bool` callable. |
+| `AlleleScoreAnnotator._build_allele_filter_func` | class method | Recursively compiles a Lark parse tree into a `ScoreLineBase → bool` callable. |
 | `AlleleScoreAnnotator.get_all_attribute_descriptions` | override | Extends the parent implementation to add the virtual `"allele"` attribute with `default=False`. |
 | `AlleleScoreAnnotator._annotate_allele` | private | Exact chrom/pos/ref/alt lookup; used in `allele` mode. |
 | `AlleleScoreAnnotator._annotate_region` | private | Aggregates scores for all allele lines overlapping the annotatable span; used in `region` mode. |
