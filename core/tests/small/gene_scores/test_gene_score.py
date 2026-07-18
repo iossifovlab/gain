@@ -24,6 +24,7 @@ from gain.genomic_resources.fsspec_protocol import (
 )
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
+    NullHistogramConfig,
     NumberHistogram,
     NumberHistogramConfig,
 )
@@ -1510,6 +1511,33 @@ def test_gene_score_misspelled_histogram_type_fails_validation() -> None:
     })
     with pytest.raises(ValueError, match="Invalid configuration: BadHistType"):
         build_gene_score_from_resource(repo.get_resource("BadHistType"))
+
+
+def test_gene_score_accepts_null_histogram_config() -> None:
+    # A gene score whose histogram declares type "null" (with a reason) is
+    # valid per the config schema and must build -- matching the genomic
+    # plane, which stores the same NullHistogramConfig into its _ScoreDef
+    # without complaint. Constructing it must not raise a TypeError.
+    repo = build_inmemory_test_repository({
+        "NullHist": {
+            GR_CONF_FILE_NAME: textwrap.dedent("""
+                type: gene_score
+                filename: data.csv
+                scores:
+                  - id: pli
+                    type: float
+                    histogram:
+                      type: "null"
+                      reason: "histogram intentionally omitted"
+            """),
+            "data.csv": "gene,pli\nGENE1,0.5\nGENE2,0.9\n",
+        },
+    })
+    gene_score = build_gene_score_from_resource(repo.get_resource("NullHist"))
+
+    hist_conf = gene_score.score_definitions["pli"].hist_conf
+    assert isinstance(hist_conf, NullHistogramConfig)
+    assert hist_conf.reason == "histogram intentionally omitted"
 
 
 def test_gene_score_histogram_without_type_fails_validation() -> None:

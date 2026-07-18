@@ -16,6 +16,7 @@ from gain.genomic_resources.histogram import (
     CategoricalHistogramConfig,
     Histogram,
     HistogramConfig,
+    NullHistogramConfig,
     NumberHistogram,
     NumberHistogramConfig,
     build_default_histogram_conf,
@@ -115,7 +116,8 @@ class GeneScore(
 
             if not isinstance(
                     hist_conf,
-                    NumberHistogramConfig | CategoricalHistogramConfig):
+                    NumberHistogramConfig | CategoricalHistogramConfig
+                    | NullHistogramConfig):
                 raise TypeError(
                     f"Missing histogram config for {score_id} in "
                     f"{self.resource.resource_id}")
