@@ -1171,6 +1171,16 @@ def test_get_histogram_filename_yaml() -> None:
     assert filename == "statistics/histogram_score1.yaml"
 
 
+def test_get_histogram_filename_unknown_score(
+    scores_repo: GenomicResourceRepo,
+) -> None:
+    res = scores_repo.get_resource("LinearHist")
+    gene_score = build_gene_score_from_resource(res)
+
+    with pytest.raises(ValueError, match="unknown score nonexistent"):
+        gene_score.get_histogram_filename("nonexistent")
+
+
 # ---------------------------------------------------------------------------
 # Deprecated 'name' field in score config
 # ---------------------------------------------------------------------------

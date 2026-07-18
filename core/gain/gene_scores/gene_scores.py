@@ -354,10 +354,24 @@ class GeneScore(
             }},
         }
 
+    def _guard_score_id(self, score_id: str) -> None:
+        """Raise if ``score_id`` is not a defined score.
+
+        Guards on ``score_definitions`` rather than the ``lru_cache``d
+        ``get_all_scores()`` so it does not depend on a memoisation that
+        #301 removes. Kept identical to the genomic-score sibling so #301
+        can lift a single implementation into the shared base.
+        """
+        if score_id not in self.score_definitions:
+            raise ValueError(
+                f"unknown score {score_id}; "
+                f"available scores are {list(self.score_definitions.keys())}")
+
     @lru_cache(maxsize=64)
     def get_score_range(
             self, score_id: str) -> tuple[float, float] | None:
         """Return the value range for a numeric score."""
+        self._guard_score_id(score_id)
         hist = self.get_score_histogram(score_id)
         if isinstance(hist, NumberHistogram):
             return (hist.min_value, hist.max_value)
@@ -365,10 +379,7 @@ class GeneScore(
 
     def get_histogram_filename(self, score_id: str) -> str:
         """Return the histogram filename for a gene score."""
-        if score_id not in self.get_all_scores():
-            raise ValueError(
-                f"unknown score {score_id}; "
-                f"available scores are {self.get_all_scores()}")
+        self._guard_score_id(score_id)
         filename = f"statistics/histogram_{score_id}.yaml"
         if filename in self.resource.get_manifest():
             return filename

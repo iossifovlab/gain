@@ -1547,6 +1547,14 @@ def test_get_score_range_unknown_score_raises() -> None:
         score.get_score_range("missing")
 
 
+def test_get_histogram_filename_unknown_score_raises() -> None:
+    score = build_score_from_resource(build_simple_position_score_resource())
+    score.open()
+
+    with pytest.raises(ValueError, match="unknown score missing"):
+        score.get_histogram_filename("missing")
+
+
 def test_get_histogram_filename_prefers_yaml_from_manifest() -> None:
     manifest_content = textwrap.dedent(
         """
