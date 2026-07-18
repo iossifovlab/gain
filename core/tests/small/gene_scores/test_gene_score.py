@@ -353,7 +353,7 @@ def test_load_linear_gene_scores_from_resource(
     assert res.get_type() == "gene_score"
 
     result = build_gene_score_from_resource(res)
-    scores = result.get_scores()
+    scores = result.get_all_scores()
     assert len(scores) == 1
     score_id = scores[0]
 
@@ -376,7 +376,7 @@ def test_load_log_gene_scores_from_resource(
     assert res.get_type() == "gene_score"
 
     result = build_gene_score_from_resource(res)
-    scores = result.get_scores()
+    scores = result.get_all_scores()
     assert len(scores) == 1
     score_id = scores[0]
 
@@ -398,7 +398,7 @@ def test_load_log_gene_scores_from_resource_with_e_notation(
     assert res.get_type() == "gene_score"
 
     result = build_gene_score_from_resource(res)
-    scores = result.get_scores()
+    scores = result.get_all_scores()
     assert len(scores) == 1
     score_id = scores[0]
 
@@ -526,7 +526,7 @@ def test_build_gene_scores_from_resource_id(
 ) -> None:
     gs = build_gene_score_from_resource_id("LinearHist", scores_repo)
     assert gs is not None
-    assert len(gs.get_scores()) == 1
+    assert len(gs.get_all_scores()) == 1
 
 
 def test_build_gene_score_help(scores_repo: GenomicResourceRepo) -> None:
@@ -1226,7 +1226,7 @@ def test_deprecated_name_field(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING):
         gene_score = build_gene_score_from_resource(res)
 
-    assert gene_score.get_scores() == ["my_score"]
+    assert gene_score.get_all_scores() == ["my_score"]
     assert gene_score.get_gene_value("my_score", "G1") == 1.0
     assert any("deprecated" in record.message for record in caplog.records)
 

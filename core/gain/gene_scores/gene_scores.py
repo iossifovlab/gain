@@ -153,11 +153,6 @@ class GeneScore(
                 for score_id in self.score_definitions
             }
 
-    def open(self) -> GeneScore:
-        """Open the gene score resource."""
-
-        return self
-
     def get_min(self, score_id: str) -> float:
         """Return minimal score value."""
         return float(self.df[score_id].min())
@@ -232,9 +227,6 @@ class GeneScore(
                 score_value_df[score_id].isin([float(v) for v in values])
             ].gene
         return set(genes.values)
-
-    def get_scores(self) -> list[str]:
-        return self.get_all_scores()
 
     @lru_cache(maxsize=64)
     def get_all_scores(self) -> list[str]:

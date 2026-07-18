@@ -6,7 +6,7 @@ np_score_annotator, and allele_score_annotator.
 import abc
 import textwrap
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any
 
 from lark import Lark, Token, Tree
 
@@ -31,8 +31,8 @@ from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     GenomicScore,
     PositionScore,
-    ScoreDef,
     ScoreLineBase,
+    _ScoreDef,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.templates import get_template
@@ -165,7 +165,7 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
             },
         }
         aggregators_score_def_att: \
-            dict[str, Callable[[ScoreDef], str | None]] = {
+            dict[str, Callable[[_ScoreDef], str | None]] = {
                 "position_aggregator":
                 lambda sc: sc.pos_aggregator,
                 "allele_aggregator":
@@ -174,8 +174,7 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
         if attribute_conf_agg is None:
             score_def = self.score.get_score_definition(attr.source)
             assert score_def is not None
-            value = aggregators_score_def_att[aggregator](
-                cast(ScoreDef, score_def))
+            value = aggregators_score_def_att[aggregator](score_def)
             if value is not None:
                 value_str = f"`{value}` [default]"
             else:

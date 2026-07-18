@@ -59,7 +59,6 @@ class GeneScoreAnnotator(AnnotatorBase):
 
         self.gene_score_resource = gene_score_resource
         self.score = build_gene_score_from_resource(self.gene_score_resource)
-        self._resource_gene_aggregators: dict[str, str] = {}
         info.resources += [gene_score_resource]
         self.input_gene_list = input_gene_list
         super().__init__(pipeline, info)

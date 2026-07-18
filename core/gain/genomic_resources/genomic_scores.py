@@ -155,22 +155,6 @@ def _normalize_na_values(na_values: Any, value_type: str) -> set[Any]:
 
 
 @dataclass
-class ScoreDef:
-    """Score configuration definition."""
-
-    score_id: str
-    desc: str  # string that will be interpretted as md
-    value_type: str  # "str", "int", "float"
-    pos_aggregator: str | None     # a valid aggregator type
-    allele_aggregator: str | None  # a valid aggregator type
-
-    small_values_desc: str | None
-    large_values_desc: str | None
-
-    hist_conf: HistogramConfig | None
-
-
-@dataclass
 class _ScoreDef:
     """Private score configuration definition. Includes internals."""
 
@@ -192,18 +176,6 @@ class _ScoreDef:
     value_parser: Any                             # internal
     na_values: Any                                # internal
     score_index: int | str | None = None       # internal
-
-    def to_public(self) -> ScoreDef:
-        return ScoreDef(
-            self.score_id,
-            self.desc,
-            self.value_type,
-            self.pos_aggregator,
-            self.allele_aggregator,
-            self.small_values_desc,
-            self.large_values_desc,
-            self.hist_conf,
-        )
 
     def __post_init__(self) -> None:
         if self.value_type is None:

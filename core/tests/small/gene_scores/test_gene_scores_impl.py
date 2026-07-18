@@ -118,7 +118,7 @@ def test_init_builds_gene_score(
     res = inmemory_repo.get_resource("LinearScore")
     impl = GeneScoreImplementation(res)
     assert impl.gene_score is not None
-    assert impl.gene_score.get_scores() == ["score1"]
+    assert impl.gene_score.get_all_scores() == ["score1"]
 
 
 # ---------------------------------------------------------------------------
