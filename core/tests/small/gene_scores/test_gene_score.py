@@ -1576,7 +1576,7 @@ def test_gene_score_accepts_null_histogram_config(
 ) -> None:
     # A gene score whose histogram declares type "null" (with a reason) is
     # valid per the config schema and must build -- matching the genomic
-    # plane, which stores the same NullHistogramConfig into its _ScoreDef
+    # plane, which stores the same NullHistogramConfig into its GenomicScoreDef
     # without complaint. Constructing it must not raise a TypeError.
     repo = (
         a_grr()

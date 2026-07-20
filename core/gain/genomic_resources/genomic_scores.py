@@ -8,7 +8,6 @@ import enum
 import warnings
 from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass
-from functools import lru_cache
 from threading import Lock
 from types import TracebackType
 from typing import (
@@ -16,7 +15,6 @@ from typing import (
     Any,
     cast,
 )
-from urllib.parse import quote
 
 from gain import logging
 from gain.genomic_resources.genomic_position_table import (
@@ -37,11 +35,7 @@ from gain.genomic_resources.genomic_position_table.table_vcf import (
     VARIANT,
 )
 from gain.genomic_resources.histogram import (
-    Histogram,
-    HistogramConfig,
-    NumberHistogram,
     build_histogram_config,
-    load_histogram,
 )
 from gain.genomic_resources.repository import (
     GenomicResource,
@@ -51,9 +45,9 @@ from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
 from gain.genomic_resources.resource_implementation import (
-    ResourceConfigValidationMixin,
     get_base_resource_schema,
 )
+from gain.genomic_resources.score_resource import ScoreDef, ScoreResource
 
 from .aggregators import AGGREGATOR_SCHEMA, Aggregator
 
@@ -118,7 +112,7 @@ def _normalize_na_values(na_values: Any, value_type: str) -> set[Any]:
     A ``set`` input is treated as ALREADY normalized and returned as a copy
     without re-coercion, so normalization is idempotent (a fixed point).  This
     is what the VCF ``scores``-block merge path relies on: it rebuilds a
-    ``_ScoreDef`` from an already-normalized ``na_values`` set, whose
+    ``GenomicScoreDef`` from an already-normalized ``na_values`` set, whose
     ``__post_init__`` re-runs this function -- a second coercion pass would
     otherwise grow the set (e.g. parsing the default ``"nan"`` text token into a
     ``float('nan')``) and silently change the statistics hash.  Config-supplied
@@ -150,20 +144,18 @@ def _normalize_na_values(na_values: Any, value_type: str) -> set[Any]:
 
 
 @dataclass
-class _ScoreDef:
-    """Private score configuration definition. Includes internals."""
+class GenomicScoreDef(ScoreDef):
+    """A genomic score definition. Includes backend loading internals.
+
+    Extends the shared :class:`ScoreDef` (score id, value type, description
+    and histogram config) with the concerns that are genomic-only: the
+    per-position and per-allele default aggregators, and the internal column
+    addressing / parsing state used when reading a value off a table backend.
+    """
 
     # pylint: disable=too-many-instance-attributes
-    score_id: str
-    desc: str  # string that will be interpretted as md
-    value_type: str  # "str", "int", "float"
     pos_aggregator: str | None     # a valid aggregator type
     allele_aggregator: str | None  # a valid aggregator type
-
-    small_values_desc: str | None
-    large_values_desc: str | None
-
-    hist_conf: HistogramConfig | None
 
     col_name: str | None                       # internal
     col_index: int | None                      # internal
@@ -305,7 +297,7 @@ class ScoreLineBase(abc.ABC):
     # of something that is not the line) type-check; VCFScoreLine overrides it
     # with a plain method of the same signature, which mypy accepts and which
     # ``self._get_raw(key)`` resolves identically.
-    score_defs: dict[str, _ScoreDef]
+    score_defs: dict[str, GenomicScoreDef]
     _get_raw: Callable[[str | int], Any]
 
     @property
@@ -349,7 +341,7 @@ class ScoreLineBase(abc.ABC):
             f"({self.chrom}:{self.pos_begin}-{self.pos_end}{ref_alt})"
         )
 
-    def _extract_value(self, score_def: _ScoreDef) -> ScoreValue:
+    def _extract_value(self, score_def: GenomicScoreDef) -> ScoreValue:
         """Get and parse one score from the line using a resolved def.
 
         A null raw value (e.g. an absent VCF INFO key) or a configured NA
@@ -375,15 +367,15 @@ class ScoreLineBase(abc.ABC):
         return parsed
 
     def get_values(
-        self, score_defs: list[_ScoreDef],
+        self, score_defs: list[GenomicScoreDef],
     ) -> list[ScoreValue]:
         """Extract the values for this line for already-resolved score defs.
 
         The bulk counterpart of :meth:`get_score`: the caller resolves score
-        names to :class:`_ScoreDef` objects once per fetch, and this walks the
-        resolved defs per line, so the name->definition lookup is hoisted out
-        of the per-line loop.  Returns one value per def, in order, applying
-        the same NA handling and parsing as :meth:`get_score`.
+        names to :class:`GenomicScoreDef` objects once per fetch, and this
+        walks the resolved defs per line, so the name->definition lookup is
+        hoisted out of the per-line loop.  Returns one value per def, in
+        order, applying the same NA handling and parsing as :meth:`get_score`.
 
         Resolving the score names to definitions is the whole win of the
         hoist (it drops three dict lookups per score, per line); the
@@ -498,7 +490,7 @@ class RecordScoreLine(RecordScoreLineBase):
     """
 
     def __init__(
-        self, line: Record, score_defs: dict[str, _ScoreDef],
+        self, line: Record, score_defs: dict[str, GenomicScoreDef],
     ):
         # Bind the raw-value lookup to the payload's __getitem__ (score
         # columns are addressed by resolved integer index).  ``line`` is a
@@ -542,7 +534,7 @@ class VCFScoreLine(RecordScoreLineBase):
     _info_meta: pysam.VariantHeaderMetadata
 
     def __init__(
-        self, line: Record, score_defs: dict[str, _ScoreDef],
+        self, line: Record, score_defs: dict[str, GenomicScoreDef],
     ):
         # ``line`` is a VCF record -- the table said so, and the claim is pinned
         # over every backend by test_backend_record_contract.py.  The payload is
@@ -804,7 +796,7 @@ class VCFScoreLine(RecordScoreLineBase):
 # checks both score line classes -- RecordScoreLine and VCFScoreLine -- against
 # one signature.  We never call issubclass on it.
 _ScoreLineFactory = Callable[
-    [Record, dict[str, _ScoreDef]], ScoreLineBase,
+    [Record, dict[str, GenomicScoreDef]], ScoreLineBase,
 ]
 
 
@@ -847,7 +839,7 @@ class AlleleScoreAggr:
 ScoreQuery = PositionScoreQuery | AlleleScoreQuery
 
 
-class GenomicScore(ResourceConfigValidationMixin):
+class GenomicScore(ScoreResource[GenomicScoreDef]):
     """Base class for genomic score resources.
 
     GenomicScore provides a unified interface for accessing and managing
@@ -926,7 +918,7 @@ class GenomicScore(ResourceConfigValidationMixin):
         resource_id (str): Unique identifier for the resource
         config (dict): Validated and normalized configuration dictionary
         table (GenomicPositionTable): Data access abstraction layer
-        score_definitions (dict[str, _ScoreDef]): Mapping of score IDs to
+        score_definitions (dict[str, GenomicScoreDef]): Mapping of score IDs to
             their internal definitions including parsers and metadata
         table_loaded (bool): Flag indicating if the table is currently open
 
@@ -1001,57 +993,7 @@ class GenomicScore(ResourceConfigValidationMixin):
                     "na_values": {"type": ["string", "list"]},
                     "large_values_desc": {"type": "string"},
                     "small_values_desc": {"type": "string"},
-                    "histogram": {"type": "dict", "schema": {
-                        "type": {
-                            "type": "string",
-                            "allowed": ["number", "categorical", "null"],
-                            "required": True,
-                        },
-                        "plot_function": {"type": "string"},
-                        "number_of_bins": {
-                            "type": "number",
-                            "dependencies": {"type": "number"},
-                        },
-                        "view_range": {"type": "dict", "schema": {
-                            "min": {"type": "number"},
-                            "max": {"type": "number"},
-                        }, "dependencies": {"type": "number"}},
-                        "x_log_scale": {
-                            "type": "boolean",
-                            "dependencies": {"type": "number"},
-                        },
-                        "y_log_scale": {
-                            "type": "boolean",
-                            "dependencies": {
-                                "type": ["number", "categorical"]},
-                        },
-                        "x_min_log": {
-                            "type": "number",
-                            "dependencies": {
-                                "type": ["number", "categorical"]},
-                        },
-                        "label_rotation": {
-                            "type": "integer",
-                            "dependencies": {"type": "categorical"},
-                        },
-                        "value_order": {
-                            "type": "list",
-                            "schema": {"type": ["string", "integer"]},
-                            "dependencies": {"type": "categorical"},
-                        },
-                        "displayed_values_count": {
-                            "type": "integer",
-                            "dependencies": {"type": "categorical"},
-                        },
-                        "displayed_values_percent": {
-                            "type": "number",
-                            "dependencies": {"type": "categorical"},
-                        },
-                        "reason": {
-                            "type": "string",
-                            "dependencies": {"type": "null"},
-                        },
-                    }},
+                    "histogram": ScoreResource.histogram_schema(),
                 },
             },
         }
@@ -1119,7 +1061,7 @@ class GenomicScore(ResourceConfigValidationMixin):
     @staticmethod
     def _parse_scoredef_config(
         config: dict[str, Any],
-    ) -> dict[str, _ScoreDef]:
+    ) -> dict[str, GenomicScoreDef]:
         """Parse ScoreDef configuration."""
         scores = {}
 
@@ -1142,7 +1084,7 @@ class GenomicScore(ResourceConfigValidationMixin):
                 assert allele_aggregator is None
                 allele_aggregator = nuc_aggregator
 
-            score_def = _ScoreDef(
+            score_def = GenomicScoreDef(
                 score_id=score_conf["id"],
                 desc=score_conf.get("desc", ""),
                 value_type=score_conf.get("type"),
@@ -1163,9 +1105,9 @@ class GenomicScore(ResourceConfigValidationMixin):
     def _parse_vcf_scoredefs(
         self,
         vcf_header_info: dict[str, Any] | None,
-        config_scoredefs: dict[str, _ScoreDef] | None, *,
+        config_scoredefs: dict[str, GenomicScoreDef] | None, *,
         merge: bool = False,
-    ) -> dict[str, _ScoreDef]:
+    ) -> dict[str, GenomicScoreDef]:
         def converter(val: Any) -> Any:
             try:
                 if isinstance(val, tuple):
@@ -1184,7 +1126,7 @@ class GenomicScore(ResourceConfigValidationMixin):
             if value.number in (1, "A", "R"):
                 value_parser = None
 
-            vcf_scoredefs[key] = _ScoreDef(
+            vcf_scoredefs[key] = GenomicScoreDef(
                 score_id=key,
                 col_name=key,
                 col_index=None,
@@ -1208,7 +1150,7 @@ class GenomicScore(ResourceConfigValidationMixin):
 
             value_type = config_scoredef.value_type or vcf_scoredef.value_type
 
-            scoredef = _ScoreDef(
+            scoredef = GenomicScoreDef(
                 score_id=vcf_scoredef.score_id,
                 desc=config_scoredef.desc or vcf_scoredef.desc,
                 value_type=value_type,
@@ -1272,7 +1214,7 @@ class GenomicScore(ResourceConfigValidationMixin):
                     raise AssertionError("Either an index or name must"
                                          " be configured for scores!")
 
-    def _build_scoredefs(self) -> dict[str, _ScoreDef]:
+    def _build_scoredefs(self) -> dict[str, GenomicScoreDef]:
         config_scoredefs = None
         if "scores" in self.config:
             config_scoredefs = self._parse_scoredef_config(self.config)
@@ -1326,9 +1268,6 @@ class GenomicScore(ResourceConfigValidationMixin):
         if result:
             return ",".join(result)
         return None
-
-    def get_score_definition(self, score_id: str) -> _ScoreDef | None:
-        return self.score_definitions.get(score_id)
 
     def close(self) -> None:
         self.table.close()
@@ -1478,9 +1417,6 @@ class GenomicScore(ResourceConfigValidationMixin):
 
         return self.table.get_chromosomes()
 
-    def get_all_scores(self) -> list[str]:
-        return list(self.score_definitions)
-
     def _fetch_region_lines(
         self,
         chrom: str | None,
@@ -1505,7 +1441,7 @@ class GenomicScore(ResourceConfigValidationMixin):
         # line so that an empty region does not touch score_definitions --
         # matching the base behaviour where an unknown score id is only
         # rejected when there is a line to extract it from.
-        score_defs: list[_ScoreDef] | None = None
+        score_defs: list[GenomicScoreDef] | None = None
 
         for line in self.fetch_lines(chrom, pos_begin, pos_end):
             line_chrom, line_begin, line_end = self._line_to_begin_end(line)
@@ -1537,68 +1473,6 @@ class GenomicScore(ResourceConfigValidationMixin):
 
         This method is used for calculation of score statistics.
         """
-
-    def _guard_score_id(self, score_id: str) -> None:
-        """Raise if ``score_id`` is not a defined score.
-
-        Guards on ``score_definitions`` rather than the ``lru_cache``d
-        ``get_all_scores()`` so it does not depend on a memoisation that
-        #301 removes. Kept identical to the gene-score sibling so #301 can
-        lift a single implementation into the shared base.
-        """
-        if score_id not in self.score_definitions:
-            raise ValueError(
-                f"unknown score {score_id}; "
-                f"available scores are {list(self.score_definitions.keys())}")
-
-    @lru_cache(maxsize=64)
-    def get_score_range(
-        self, score_id: str,
-    ) -> tuple[float, float] | None:
-        """Return the value range for a numeric score."""
-        self._guard_score_id(score_id)
-        hist = self.get_score_histogram(score_id)
-        if isinstance(hist, NumberHistogram):
-            return (hist.min_value, hist.max_value)
-        return None
-
-    def get_histogram_filename(self, score_id: str) -> str:
-        """Return the histogram filename for a genomic score."""
-        self._guard_score_id(score_id)
-        filename = f"statistics/histogram_{score_id}.yaml"
-        if filename in self.resource.get_manifest():
-            return filename
-        return f"statistics/histogram_{score_id}.json"
-
-    @lru_cache(maxsize=64)
-    def get_score_histogram(self, score_id: str) -> Histogram:
-        """Return defined histogram for a score."""
-        self._guard_score_id(score_id)
-        hist_filename = self.get_histogram_filename(score_id)
-        return load_histogram(self.resource, hist_filename)
-
-    def get_histogram_image_filename(self, score_id: str) -> str:
-        return f"statistics/histogram_{score_id}.png"
-
-    def _histogram_image_url(self, score_id: str, repo_url: str) -> str:
-        return (
-            f"{repo_url}/"
-            f"{quote(self.get_histogram_image_filename(score_id))}"
-        )
-
-    def get_histogram_image_url(self, score_id: str) -> str | None:
-        return self._histogram_image_url(
-            score_id, self.resource.get_url())
-
-    def get_histogram_image_public_url(self, score_id: str) -> str:
-        """Return the histogram image URL on the resource's public mirror.
-
-        Unlike :meth:`get_histogram_image_url`, this is built from the
-        resource's public URL so it is reachable from a browser even when
-        the GRR is a local directory repository.
-        """
-        return self._histogram_image_url(
-            score_id, self.resource.get_public_url())
 
 
 class PositionScore(GenomicScore):
@@ -2227,7 +2101,7 @@ class CNV:
 
 
 @dataclass
-class _CNVScoreDef(_ScoreDef):
+class _CNVScoreDef(GenomicScoreDef):
 
     def __post_init__(self) -> None:
         if self.value_type is None:
@@ -2318,7 +2192,7 @@ class CnvCollection(GenomicScore):
     @staticmethod
     def _parse_scoredef_config(
         config: dict[str, Any],
-    ) -> dict[str, _ScoreDef]:
+    ) -> dict[str, GenomicScoreDef]:
         """Parse ScoreDef configuration."""
         scores = {}
 
@@ -2357,7 +2231,7 @@ class CnvCollection(GenomicScore):
             )
 
             scores[score_conf["id"]] = score_def
-        return cast(dict[str, _ScoreDef], scores)
+        return cast(dict[str, GenomicScoreDef], scores)
 
 
 _INMEMORY_CNV_CACHE: dict[str, GenomicScore] = {}

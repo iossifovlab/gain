@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from functools import lru_cache
 from io import StringIO
 from threading import Lock
 from typing import Any, cast
-from urllib.parse import quote
 
 import numpy as np
 import pandas as pd
@@ -16,46 +14,37 @@ from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.histogram import (
     CategoricalHistogramConfig,
     Histogram,
-    HistogramConfig,
     NullHistogramConfig,
-    NumberHistogram,
     NumberHistogramConfig,
     build_default_histogram_conf,
     build_histogram_config,
-    load_histogram,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
 from gain.genomic_resources.resource_implementation import (
-    ResourceConfigValidationMixin,
     get_base_resource_schema,
 )
+from gain.genomic_resources.score_resource import ScoreDef, ScoreResource
 from gain.templates import get_template
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ScoreDef:
-    """Class used to represent a gene score definition."""
+class GeneScoreDef(ScoreDef):
+    """A gene score definition.
 
-    resource_id: str
-    score_id: str
+    Extends the shared :class:`ScoreDef` with the one loading detail a gene
+    score needs: the name of the source column the score is read from (the
+    ``df`` column, later renamed to ``score_id``).
+    """
+
     column_name: str
-    value_type: str
-
-    desc: str
-
-    hist_conf: HistogramConfig | None
-    small_values_desc: str | None
-    large_values_desc: str | None
 
 
-class GeneScore(
-    ResourceConfigValidationMixin,
-):
+class GeneScore(ScoreResource[GeneScoreDef]):
     """Class used to represent gene scores."""
 
     def __init__(self, resource: GenomicResource) -> None:
@@ -96,7 +85,7 @@ class GeneScore(
         if self.config.get("scores") is None:
             raise ValueError(f"missing scores config in {resource.get_id()}")
 
-        self.score_definitions: dict[str, ScoreDef] = {}
+        self.score_definitions: dict[str, GeneScoreDef] = {}
 
         for score_conf in self.config["scores"]:
             score_id = score_conf["id"]
@@ -129,8 +118,7 @@ class GeneScore(
                 max_value = self.get_max(score_name)
                 hist_conf.view_range = (min_value, max_value)
 
-            self.score_definitions[score_conf["id"]] = ScoreDef(
-                resource_id=self.resource.resource_id,
+            self.score_definitions[score_conf["id"]] = GeneScoreDef(
                 score_id=score_conf["id"],
                 column_name=score_name,
                 value_type=score_conf.get("type", "float"),
@@ -231,10 +219,6 @@ class GeneScore(
             ].gene
         return set(genes.values)
 
-    @lru_cache(maxsize=64)
-    def get_all_scores(self) -> list[str]:
-        return list(self.score_definitions.keys())
-
     def to_dict(self, score_id: str) -> dict[str, float]:
         """Return {gene_symbol: value} for a score, with NaN rows dropped."""
         df = self.get_score_df(score_id)
@@ -314,125 +298,10 @@ class GeneScore(
                     "desc": {"type": "string"},
                     "large_values_desc": {"type": "string"},
                     "small_values_desc": {"type": "string"},
-                    "histogram": {"type": "dict", "schema": {
-                        "type": {
-                            "type": "string",
-                            "allowed": ["number", "categorical", "null"],
-                            "required": True,
-                        },
-                        "plot_function": {"type": "string"},
-                        "number_of_bins": {
-                            "type": "number",
-                            "dependencies": {"type": "number"},
-                        },
-                        "view_range": {"type": "dict", "schema": {
-                            "min": {"type": "number"},
-                            "max": {"type": "number"},
-                        }, "dependencies": {"type": "number"}},
-                        "x_log_scale": {
-                            "type": "boolean",
-                            "dependencies": {"type": "number"},
-                        },
-                        "y_log_scale": {
-                            "type": "boolean",
-                            "dependencies": {"type": ["number", "categorical"]},
-                        },
-                        "x_min_log": {
-                            "type": "number",
-                            "dependencies": {"type": ["number", "categorical"]},
-                        },
-                        "label_rotation": {
-                            "type": "integer",
-                            "dependencies": {"type": "categorical"},
-                        },
-                        "value_order": {
-                            "type": "list",
-                            "schema": {"type": ["string", "integer"]},
-                            "dependencies": {"type": "categorical"},
-                        },
-                        "displayed_values_count": {
-                            "type": "integer",
-                            "dependencies": {"type": "categorical"},
-                        },
-                        "displayed_values_percent": {
-                            "type": "number",
-                            "dependencies": {"type": "categorical"},
-                        },
-                        "reason": {
-                            "type": "string",
-                            "dependencies": {"type": "null"},
-                        },
-                    }},
+                    "histogram": ScoreResource.histogram_schema(),
                 },
             }},
         }
-
-    def _guard_score_id(self, score_id: str) -> None:
-        """Raise if ``score_id`` is not a defined score.
-
-        Guards on ``score_definitions`` rather than the ``lru_cache``d
-        ``get_all_scores()`` so it does not depend on a memoisation that
-        #301 removes. Kept identical to the genomic-score sibling so #301
-        can lift a single implementation into the shared base.
-        """
-        if score_id not in self.score_definitions:
-            raise ValueError(
-                f"unknown score {score_id}; "
-                f"available scores are {list(self.score_definitions.keys())}")
-
-    @lru_cache(maxsize=64)
-    def get_score_range(
-            self, score_id: str) -> tuple[float, float] | None:
-        """Return the value range for a numeric score."""
-        self._guard_score_id(score_id)
-        hist = self.get_score_histogram(score_id)
-        if isinstance(hist, NumberHistogram):
-            return (hist.min_value, hist.max_value)
-        return None
-
-    def get_histogram_filename(self, score_id: str) -> str:
-        """Return the histogram filename for a gene score."""
-        self._guard_score_id(score_id)
-        filename = f"statistics/histogram_{score_id}.yaml"
-        if filename in self.resource.get_manifest():
-            return filename
-        return f"statistics/histogram_{score_id}.json"
-
-    @lru_cache(maxsize=64)
-    def get_score_histogram(self, score_id: str) -> Histogram:
-        """Return defined histogram for a score.
-
-        Gene scores may declare a categorical (or null) histogram just as
-        readily as a numeric one, so the honest return type is the full
-        ``Histogram`` union. Callers that need numeric-only attributes
-        (``bars``/``bins``/``min_value``/...) must narrow with
-        ``isinstance(hist, NumberHistogram)`` first.
-        """
-        hist_filename = self.get_histogram_filename(score_id)
-        return load_histogram(self.resource, hist_filename)
-
-    def get_histogram_image_filename(self, score_id: str) -> str:
-        return f"statistics/histogram_{score_id}.png"
-
-    def _histogram_image_url(self, score_id: str, repo_url: str) -> str:
-        return (
-            f"{repo_url}/"
-            f"{quote(self.get_histogram_image_filename(score_id))}"
-        )
-
-    def get_histogram_image_url(self, score_id: str) -> str | None:
-        return self._histogram_image_url(
-            score_id, self.resource.get_url())
-
-    def get_histogram_image_public_url(self, score_id: str) -> str:
-        """Return the histogram image URL on the resource's public mirror.
-
-        Unlike :meth:`get_histogram_image_url`, this is built from the
-        resource's public URL so it is reachable from a browser even when
-        the GRR is a local directory repository.
-        """
-        return self._histogram_image_url(
-            score_id, self.resource.get_public_url())
 
 
 @dataclass

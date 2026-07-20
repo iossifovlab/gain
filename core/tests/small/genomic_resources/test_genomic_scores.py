@@ -20,10 +20,10 @@ from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     CnvCollection,
     GenomicScore,
+    GenomicScoreDef,
     RecordScoreLine,
     ScoreLineBase,
     VCFScoreLine,
-    _ScoreDef,
     build_score_from_resource,
     build_score_from_resource_id,
 )
@@ -706,7 +706,7 @@ class _CountingVariant:
 
 
 def _count_line(
-    line: ScoreLineBase, score_defs: dict[str, _ScoreDef],
+    line: ScoreLineBase, score_defs: dict[str, GenomicScoreDef],
 ) -> tuple[VCFScoreLine, _CountingVariant]:
     """Rebuild a VCF score line over a counting stand-in for its variant."""
     assert isinstance(line, VCFScoreLine)

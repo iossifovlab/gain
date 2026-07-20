@@ -4,7 +4,7 @@ import pathlib
 import textwrap
 
 import pytest
-from gain.gene_scores.gene_scores import ScoreDef
+from gain.gene_scores.gene_scores import GeneScoreDef
 from gain.gene_scores.implementations.gene_scores_impl import (
     GeneScoreImplementation,
 )
@@ -200,8 +200,7 @@ def test_create_statistics_build_tasks_skips_null_histogram(
     # NullHistogramConfig is rejected by GeneScore.__init__, so we must
     # inject it into score_definitions to exercise the skip branch.
 
-    linear_impl.score.score_definitions["null_score"] = ScoreDef(
-        resource_id=linear_impl.resource.resource_id,
+    linear_impl.score.score_definitions["null_score"] = GeneScoreDef(
         score_id="null_score",
         column_name="null_score",
         desc="injected null",

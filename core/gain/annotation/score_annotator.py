@@ -30,9 +30,9 @@ from gain.genomic_resources.aggregators import AggregatorSource
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     GenomicScore,
+    GenomicScoreDef,
     PositionScore,
     ScoreLineBase,
-    _ScoreDef,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.templates import get_template
@@ -165,7 +165,7 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
             },
         }
         aggregators_score_def_att: \
-            dict[str, Callable[[_ScoreDef], str | None]] = {
+            dict[str, Callable[[GenomicScoreDef], str | None]] = {
                 "position_aggregator":
                 lambda sc: sc.pos_aggregator,
                 "allele_aggregator":

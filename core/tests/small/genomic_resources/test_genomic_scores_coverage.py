@@ -9,10 +9,10 @@ from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     AlleleScoreQuery,
     CnvCollection,
+    GenomicScoreDef,
     PositionScore,
     PositionScoreQuery,
     RecordScoreLine,
-    _ScoreDef,
     build_score_from_resource,
 )
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME
@@ -36,7 +36,7 @@ def test_score_line_get_score_value_parser_exception(
 
     raw_row = ("chr1", "1", "10", "invalid")
     score_defs = {
-        "test_score": _ScoreDef(
+        "test_score": GenomicScoreDef(
             score_id="test_score",
             desc="",
             value_type="float",
