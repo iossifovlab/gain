@@ -184,7 +184,7 @@ class AnnotationEffect:  # pylint: disable=too-many-instance-attributes
                     continue
                 result.append(gene)
 
-        return list(set(result))
+        return list(dict.fromkeys(result))
 
     @classmethod
     def gene_effects(cls, effects: list[AnnotationEffect]) -> list[list[str]]:
@@ -305,7 +305,7 @@ class AnnotationEffect:  # pylint: disable=too-many-instance-attributes
     ) -> list[str]:
         """Filter genes by effect type or group."""
         gene_effects = cls.filter_gene_effects(effects, effect_type)
-        return list(set(gene_effects[0]))
+        return list(dict.fromkeys(gene_effects[0]))
 
     @classmethod
     def effects_description(
