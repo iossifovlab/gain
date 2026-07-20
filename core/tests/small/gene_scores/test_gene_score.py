@@ -520,7 +520,9 @@ def test_to_dict_private_alias_still_delegates(
     )
     gene_score = build_gene_score_from_resource(res)
 
-    assert gene_score._to_dict("pli") == gene_score.to_dict("pli")
+    with pytest.warns(DeprecationWarning, match="_to_dict is deprecated"):
+        legacy = gene_score._to_dict("pli")
+    assert legacy == gene_score.to_dict("pli")
 
 
 def test_calculate_histogram(scores_repo: GenomicResourceRepo) -> None:

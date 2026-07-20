@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from functools import lru_cache
 from io import StringIO
@@ -244,10 +245,19 @@ class GeneScore(
     def _to_dict(self, score_id: str) -> dict[str, Any]:
         """Return dictionary of all defined scores keyed by gene symbol.
 
-        Thin compatibility alias for :meth:`to_dict`. gpf still calls this
-        across the repo boundary until iossifovlab/gpf#983 switches to the
-        public accessor; removing it here would break that live consumer.
+        .. deprecated::
+            Use the public :meth:`to_dict` instead. Retained as a thin
+            compatibility alias because gpf still calls it across the repo
+            boundary until iossifovlab/gpf#983 switches to ``to_dict``;
+            removing it before then would break that live consumer.
         """
+        warnings.warn(
+            "GeneScore._to_dict is deprecated; use the public "
+            "GeneScore.to_dict instead. It is retained only until "
+            "gpf#983 migrates off it.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.to_dict(score_id)
 
     def get_gene_value(
