@@ -24,6 +24,7 @@ from gain.genomic_resources.fsspec_protocol import (
 )
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
+    NullHistogram,
     NullHistogramConfig,
     NumberHistogram,
     NumberHistogramConfig,
@@ -1547,6 +1548,55 @@ def test_gene_score_accepts_null_histogram_config(
     hist_conf = gene_score.score_definitions["pli"].hist_conf
     assert isinstance(hist_conf, NullHistogramConfig)
     assert hist_conf.reason == "histogram intentionally omitted"
+
+
+def test_gene_score_null_histogram_get_score_histogram_returns_null(
+    tmp_path: pathlib.Path,
+) -> None:
+    # #302: a gene score that declares an explicit null histogram must return
+    # a NullHistogram from get_score_histogram (not a NumberHistogram, and not
+    # a crash), mirroring the genomic side. A null-config score writes no
+    # statistics JSON, so load_histogram degrades to a NullHistogram.
+    repo = (
+        a_grr()
+        .with_resource(
+            "NullHist",
+            a_gene_score()
+            .with_score("pli", "float")
+            .with_histogram({"type": "null", "reason": "opt out"})
+            .with_data("gene pli\nGENE1 0.5\nGENE2 0.9\n"),
+        )
+        .build_repo(tmp_path)
+    )
+    gene_score = build_gene_score_from_resource(repo.get_resource("NullHist"))
+
+    assert isinstance(gene_score.get_score_histogram("pli"), NullHistogram)
+
+
+def test_gene_score_bool_typed_score_loads(
+    tmp_path: pathlib.Path,
+) -> None:
+    # #302: a bool-typed gene score has no default histogram config, so
+    # build_default_histogram_conf yields a NullHistogramConfig. GeneScore
+    # construction must accept it (not raise TypeError), the score must load,
+    # and get_score_histogram must return a NullHistogram -- matching how the
+    # genomic side already handles a bool-typed score.
+    repo = (
+        a_grr()
+        .with_resource(
+            "BoolScore",
+            a_gene_score()
+            .with_score("flag", "bool")
+            .with_data("gene flag\nGENE1 True\nGENE2 False\n"),
+        )
+        .build_repo(tmp_path)
+    )
+    gene_score = build_gene_score_from_resource(repo.get_resource("BoolScore"))
+
+    assert "flag" in gene_score.score_definitions
+    hist_conf = gene_score.score_definitions["flag"].hist_conf
+    assert isinstance(hist_conf, NullHistogramConfig)
+    assert isinstance(gene_score.get_score_histogram("flag"), NullHistogram)
 
 
 def test_gene_score_histogram_without_type_fails_validation() -> None:
