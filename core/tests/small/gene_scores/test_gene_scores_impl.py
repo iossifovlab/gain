@@ -10,6 +10,7 @@ from gain.gene_scores.implementations.gene_scores_impl import (
 )
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
+    NullHistogram,
     NullHistogramConfig,
     NumberHistogram,
 )
@@ -21,6 +22,10 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     build_inmemory_test_repository,
     setup_directories,
+)
+from gain.genomic_resources.testing.builders import (
+    a_gene_score,
+    a_grr,
 )
 from gain.task_graph.graph import TaskDesc
 
@@ -117,7 +122,7 @@ def test_init_builds_gene_score(
     res = inmemory_repo.get_resource("LinearScore")
     impl = GeneScoreImplementation(res)
     assert impl.gene_score is not None
-    assert impl.gene_score.get_scores() == ["score1"]
+    assert impl.gene_score.get_all_scores() == ["score1"]
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +216,101 @@ def test_create_statistics_build_tasks_skips_null_histogram(
     # score1 -> 2 tasks; null_score -> 0 tasks (skipped)
     assert len(histograms) == 1
     assert not any("null_score" in score_id for score_id in histograms)
+
+
+# ---------------------------------------------------------------------------
+# Runtime histogram-build failure: nullify + serialize the reason (#305)
+# ---------------------------------------------------------------------------
+
+def _failing_histogram_repo(
+    tmp_path: pathlib.Path,
+) -> GenomicResourceRepo:
+    # A str-typed score with no explicit histogram config falls back to the
+    # default categorical config (enforce_type=False). Feeding it >100 distinct
+    # integer values raises HistogramError at runtime (add_value's
+    # UNIQUE_VALUES_LIMIT guard). HistogramError is a BaseException, so a plain
+    # ``except ValueError``/``except Exception`` cannot catch it.
+    rows = "".join(f"G{i} {i}\n" for i in range(150))
+    return (
+        a_grr()
+        .with_resource(
+            "FailScore",
+            a_gene_score()
+            .with_score("fail", "str", desc="too many uniques")
+            .with_data("gene fail\n" + rows),
+        )
+        .build_repo(tmp_path)
+    )
+
+
+def test_build_histograms_nullifies_runtime_failure(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = _failing_histogram_repo(tmp_path).get_resource("FailScore")
+
+    histograms = GeneScoreImplementation._build_histograms(res)
+
+    assert isinstance(histograms["fail"], NullHistogram)
+
+    hist_path = tmp_path / "FailScore" / "statistics" / "histogram_fail.json"
+    assert hist_path.exists()
+    content = json.loads(hist_path.read_text())
+    assert content["config"]["type"] == "null"
+    assert "unique values" in content["config"]["reason"]
+
+
+def test_build_histograms_runtime_failure_writes_no_png(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = _failing_histogram_repo(tmp_path).get_resource("FailScore")
+
+    GeneScoreImplementation._build_histograms(res)
+
+    png_path = tmp_path / "FailScore" / "statistics" / "histogram_fail.png"
+    assert not png_path.exists()
+
+
+def test_build_histograms_histogram_error_does_not_escape(
+    tmp_path: pathlib.Path,
+) -> None:
+    # HistogramError is a BaseException; it must be caught rather than escape
+    # _build_histograms and fail the task-graph task.
+    res = _failing_histogram_repo(tmp_path).get_resource("FailScore")
+
+    histograms = GeneScoreImplementation._build_histograms(res)
+
+    assert isinstance(histograms["fail"], NullHistogram)
+
+
+def test_build_histograms_null_config_writes_no_json(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A null histogram *config* (as opposed to a runtime failure) is still
+    # dropped with no JSON written, matching the genomic side. This is distinct
+    # from the runtime-failure path, which does serialize a NullHistogram.
+    # Since #305 GeneScore.__init__ accepts a NullHistogramConfig, so this is
+    # driven by a real resource declaring ``histogram: {type: null}``:
+    # _calc_histogram returns None for it and _build_histograms skips it.
+    repo = (
+        a_grr()
+        .with_resource(
+            "NullConfigScore",
+            a_gene_score()
+            .with_score("s")
+            .with_histogram({"type": "null", "reason": "disabled"})
+            .with_data("gene s\nG1 1\nG2 2\nG3 3\n"),
+        )
+        .build_repo(tmp_path)
+    )
+    res = repo.get_resource("NullConfigScore")
+
+    histograms = GeneScoreImplementation._build_histograms(res)
+
+    assert histograms == {}
+    json_path = (
+        tmp_path / "NullConfigScore" / "statistics" / "histogram_s.json"
+    )
+    assert not json_path.exists()
 
 
 def test_create_statistics_build_tasks_multiple_scores() -> None:

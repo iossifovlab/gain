@@ -14,7 +14,9 @@ from gain import logging
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.histogram import (
     CategoricalHistogramConfig,
+    Histogram,
     HistogramConfig,
+    NullHistogramConfig,
     NumberHistogram,
     NumberHistogramConfig,
     build_default_histogram_conf,
@@ -114,7 +116,8 @@ class GeneScore(
 
             if not isinstance(
                     hist_conf,
-                    NumberHistogramConfig | CategoricalHistogramConfig):
+                    NumberHistogramConfig | CategoricalHistogramConfig
+                    | NullHistogramConfig):
                 raise TypeError(
                     f"Missing histogram config for {score_id} in "
                     f"{self.resource.resource_id}")
@@ -151,11 +154,6 @@ class GeneScore(
                 score_id: record[score_id]
                 for score_id in self.score_definitions
             }
-
-    def open(self) -> GeneScore:
-        """Open the gene score resource."""
-
-        return self
 
     def get_min(self, score_id: str) -> float:
         """Return minimal score value."""
@@ -232,9 +230,6 @@ class GeneScore(
             ].gene
         return set(genes.values)
 
-    def get_scores(self) -> list[str]:
-        return self.get_all_scores()
-
     @lru_cache(maxsize=64)
     def get_all_scores(self) -> list[str]:
         return list(self.score_definitions.keys())
@@ -301,7 +296,11 @@ class GeneScore(
                     "large_values_desc": {"type": "string"},
                     "small_values_desc": {"type": "string"},
                     "histogram": {"type": "dict", "schema": {
-                        "type": {"type": "string"},
+                        "type": {
+                            "type": "string",
+                            "allowed": ["number", "categorical", "null"],
+                            "required": True,
+                        },
                         "plot_function": {"type": "string"},
                         "number_of_bins": {
                             "type": "number",
@@ -349,10 +348,24 @@ class GeneScore(
             }},
         }
 
+    def _guard_score_id(self, score_id: str) -> None:
+        """Raise if ``score_id`` is not a defined score.
+
+        Guards on ``score_definitions`` rather than the ``lru_cache``d
+        ``get_all_scores()`` so it does not depend on a memoisation that
+        #301 removes. Kept identical to the genomic-score sibling so #301
+        can lift a single implementation into the shared base.
+        """
+        if score_id not in self.score_definitions:
+            raise ValueError(
+                f"unknown score {score_id}; "
+                f"available scores are {list(self.score_definitions.keys())}")
+
     @lru_cache(maxsize=64)
     def get_score_range(
             self, score_id: str) -> tuple[float, float] | None:
         """Return the value range for a numeric score."""
+        self._guard_score_id(score_id)
         hist = self.get_score_histogram(score_id)
         if isinstance(hist, NumberHistogram):
             return (hist.min_value, hist.max_value)
@@ -360,21 +373,24 @@ class GeneScore(
 
     def get_histogram_filename(self, score_id: str) -> str:
         """Return the histogram filename for a gene score."""
-        if score_id not in self.get_all_scores():
-            raise ValueError(
-                f"unknown score {score_id}; "
-                f"available scores are {self.get_all_scores()}")
+        self._guard_score_id(score_id)
         filename = f"statistics/histogram_{score_id}.yaml"
         if filename in self.resource.get_manifest():
             return filename
         return f"statistics/histogram_{score_id}.json"
 
     @lru_cache(maxsize=64)
-    def get_score_histogram(self, score_id: str) -> NumberHistogram:
-        """Return defined histogram for a score."""
+    def get_score_histogram(self, score_id: str) -> Histogram:
+        """Return defined histogram for a score.
+
+        Gene scores may declare a categorical (or null) histogram just as
+        readily as a numeric one, so the honest return type is the full
+        ``Histogram`` union. Callers that need numeric-only attributes
+        (``bars``/``bins``/``min_value``/...) must narrow with
+        ``isinstance(hist, NumberHistogram)`` first.
+        """
         hist_filename = self.get_histogram_filename(score_id)
-        hist = load_histogram(self.resource, hist_filename)
-        return cast(NumberHistogram, hist)
+        return load_histogram(self.resource, hist_filename)
 
     def get_histogram_image_filename(self, score_id: str) -> str:
         return f"statistics/histogram_{score_id}.png"
@@ -409,7 +425,7 @@ class ScoreDesc:
     column_name: str
     value_type: str
 
-    hist: NumberHistogram
+    hist: Histogram
     description: str
     help: str
     small_values_desc: str | None

@@ -19,27 +19,6 @@ from gain.genomic_resources.repository import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import build_inmemory_test_resource
 
 
-def test_score_def_to_public() -> None:
-    """Test _ScoreDef.to_public() method."""
-    score_def = _ScoreDef(
-        score_id="test_score",
-        desc="Test description",
-        value_type="float",
-        pos_aggregator="mean",
-        allele_aggregator="max",
-        small_values_desc="Less is better",
-        large_values_desc="More is better",
-        col_name="score_col",
-        col_index=None,
-        hist_conf=None,
-        value_parser=None,
-        na_values=None,
-    )
-    public_def = score_def.to_public()
-    assert public_def.score_id == "test_score"
-    assert public_def.desc == "Test description"
-
-
 def test_score_line_get_score_value_parser_exception(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

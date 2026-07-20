@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 import yaml
 from gain.genomic_resources.histogram import (
+    NullHistogramConfig,
     NumberHistogram,
     NumberHistogramConfig,
     build_histogram_config,
@@ -245,3 +246,13 @@ def test_histogram_serialize_deserialize() -> None:
 def test_build_number_histogram_config(conf: dict[str, Any]) -> None:
     hist_conf = build_histogram_config(conf)
     assert isinstance(hist_conf, NumberHistogramConfig)
+
+
+def test_build_histogram_config_without_type_is_not_a_key_error() -> None:
+    # Validated call sites can no longer reach this, but a direct caller
+    # passing a histogram block with no type must get a null config carrying
+    # a reason -- not a bare KeyError.
+    hist_conf = build_histogram_config({"histogram": {}})
+
+    assert isinstance(hist_conf, NullHistogramConfig)
+    assert "type" in hist_conf.reason

@@ -150,22 +150,6 @@ def _normalize_na_values(na_values: Any, value_type: str) -> set[Any]:
 
 
 @dataclass
-class ScoreDef:
-    """Score configuration definition."""
-
-    score_id: str
-    desc: str  # string that will be interpretted as md
-    value_type: str  # "str", "int", "float"
-    pos_aggregator: str | None     # a valid aggregator type
-    allele_aggregator: str | None  # a valid aggregator type
-
-    small_values_desc: str | None
-    large_values_desc: str | None
-
-    hist_conf: HistogramConfig | None
-
-
-@dataclass
 class _ScoreDef:
     """Private score configuration definition. Includes internals."""
 
@@ -187,18 +171,6 @@ class _ScoreDef:
     value_parser: Any                             # internal
     na_values: Any                                # internal
     score_index: int | str | None = None       # internal
-
-    def to_public(self) -> ScoreDef:
-        return ScoreDef(
-            self.score_id,
-            self.desc,
-            self.value_type,
-            self.pos_aggregator,
-            self.allele_aggregator,
-            self.small_values_desc,
-            self.large_values_desc,
-            self.hist_conf,
-        )
 
     def __post_init__(self) -> None:
         if self.value_type is None:
@@ -1030,7 +1002,11 @@ class GenomicScore(ResourceConfigValidationMixin):
                     "large_values_desc": {"type": "string"},
                     "small_values_desc": {"type": "string"},
                     "histogram": {"type": "dict", "schema": {
-                        "type": {"type": "string"},
+                        "type": {
+                            "type": "string",
+                            "allowed": ["number", "categorical", "null"],
+                            "required": True,
+                        },
                         "plot_function": {"type": "string"},
                         "number_of_bins": {
                             "type": "number",
@@ -1562,15 +1538,25 @@ class GenomicScore(ResourceConfigValidationMixin):
         This method is used for calculation of score statistics.
         """
 
+    def _guard_score_id(self, score_id: str) -> None:
+        """Raise if ``score_id`` is not a defined score.
+
+        Guards on ``score_definitions`` rather than the ``lru_cache``d
+        ``get_all_scores()`` so it does not depend on a memoisation that
+        #301 removes. Kept identical to the gene-score sibling so #301 can
+        lift a single implementation into the shared base.
+        """
+        if score_id not in self.score_definitions:
+            raise ValueError(
+                f"unknown score {score_id}; "
+                f"available scores are {list(self.score_definitions.keys())}")
+
     @lru_cache(maxsize=64)
     def get_score_range(
         self, score_id: str,
     ) -> tuple[float, float] | None:
         """Return the value range for a numeric score."""
-        if score_id not in self.get_all_scores():
-            raise ValueError(
-                f"unknown score {score_id}; "
-                f"available scores are {self.get_all_scores()}")
+        self._guard_score_id(score_id)
         hist = self.get_score_histogram(score_id)
         if isinstance(hist, NumberHistogram):
             return (hist.min_value, hist.max_value)
@@ -1578,6 +1564,7 @@ class GenomicScore(ResourceConfigValidationMixin):
 
     def get_histogram_filename(self, score_id: str) -> str:
         """Return the histogram filename for a genomic score."""
+        self._guard_score_id(score_id)
         filename = f"statistics/histogram_{score_id}.yaml"
         if filename in self.resource.get_manifest():
             return filename
@@ -1586,11 +1573,7 @@ class GenomicScore(ResourceConfigValidationMixin):
     @lru_cache(maxsize=64)
     def get_score_histogram(self, score_id: str) -> Histogram:
         """Return defined histogram for a score."""
-        if score_id not in self.score_definitions:
-            raise ValueError(
-                f"unexpected score ID {score_id}; available scores are: "
-                f"{self.score_definitions.keys()}")
-
+        self._guard_score_id(score_id)
         hist_filename = self.get_histogram_filename(score_id)
         return load_histogram(self.resource, hist_filename)
 

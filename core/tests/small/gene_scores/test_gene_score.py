@@ -24,6 +24,7 @@ from gain.genomic_resources.fsspec_protocol import (
 )
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
+    NullHistogramConfig,
     NumberHistogram,
     NumberHistogramConfig,
 )
@@ -35,6 +36,10 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     build_inmemory_test_repository,
     setup_directories,
+)
+from gain.genomic_resources.testing.builders import (
+    a_gene_score,
+    a_grr,
 )
 from gain.task_graph.graph import TaskDesc
 
@@ -353,7 +358,7 @@ def test_load_linear_gene_scores_from_resource(
     assert res.get_type() == "gene_score"
 
     result = build_gene_score_from_resource(res)
-    scores = result.get_scores()
+    scores = result.get_all_scores()
     assert len(scores) == 1
     score_id = scores[0]
 
@@ -376,7 +381,7 @@ def test_load_log_gene_scores_from_resource(
     assert res.get_type() == "gene_score"
 
     result = build_gene_score_from_resource(res)
-    scores = result.get_scores()
+    scores = result.get_all_scores()
     assert len(scores) == 1
     score_id = scores[0]
 
@@ -398,7 +403,7 @@ def test_load_log_gene_scores_from_resource_with_e_notation(
     assert res.get_type() == "gene_score"
 
     result = build_gene_score_from_resource(res)
-    scores = result.get_scores()
+    scores = result.get_all_scores()
     assert len(scores) == 1
     score_id = scores[0]
 
@@ -526,7 +531,7 @@ def test_build_gene_scores_from_resource_id(
 ) -> None:
     gs = build_gene_score_from_resource_id("LinearHist", scores_repo)
     assert gs is not None
-    assert len(gs.get_scores()) == 1
+    assert len(gs.get_all_scores()) == 1
 
 
 def test_build_gene_score_help(scores_repo: GenomicResourceRepo) -> None:
@@ -1000,6 +1005,71 @@ def test_get_score_histogram_unknown_score(
 
 
 # ---------------------------------------------------------------------------
+# get_score_histogram - categorical gene score round-trip
+# (mirrors the real-world SFARI_gene_score_2024_Q1 shape)
+# ---------------------------------------------------------------------------
+
+def _build_sfari_shaped_repo(
+    tmp_path: pathlib.Path,
+) -> GenomicResourceRepo:
+    # Mirrors the real SFARI_gene_score_2024_Q1 shape: a categorical gene
+    # score whose id carries spaces, carrying a precomputed statistics
+    # histogram (counts 706/233/143) that must round-trip on read. The builder
+    # authors the config + gene table; the precomputed statistics JSON has no
+    # builder support (there is no with_* for a serialized histogram), so it is
+    # written by hand into the realized resource directory.
+    (
+        a_gene_score()
+        .with_score("SFARI Gene Score", column_name="score",
+                    desc="SFARI gene score")
+        .with_histogram({"type": "categorical", "value_order": [1, 2, 3]})
+        .with_data("""
+            gene   score
+            G1     1
+            G2     2
+            G3     3
+        """)
+        .realize_into(tmp_path / "SfariGeneScore")
+    )
+    setup_directories(tmp_path / "SfariGeneScore" / "statistics", {
+        "histogram_SFARI Gene Score.json": json.dumps({
+            "config": {
+                "type": "categorical",
+                "value_order": [1, 2, 3],
+                "y_log_scale": False,
+                "label_rotation": 0,
+            },
+            "values": {"2": 706, "1": 233, "3": 143},
+        }),
+    })
+    return build_filesystem_test_repository(tmp_path)
+
+
+def test_get_score_histogram_categorical_round_trip(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = _build_sfari_shaped_repo(tmp_path).get_resource("SfariGeneScore")
+    gene_score = build_gene_score_from_resource(res)
+
+    hist = gene_score.get_score_histogram("SFARI Gene Score")
+
+    assert isinstance(hist, CategoricalHistogram)
+    assert hist.raw_values == {"2": 706, "1": 233, "3": 143}
+
+
+def test_score_desc_hist_categorical_round_trip(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = _build_sfari_shaped_repo(tmp_path).get_resource("SfariGeneScore")
+    gene_score = build_gene_score_from_resource(res)
+
+    (score_desc,) = GeneScoresDb.build_descs_from_score(gene_score)
+
+    assert isinstance(score_desc.hist, CategoricalHistogram)
+    assert score_desc.hist.raw_values == {"2": 706, "1": 233, "3": 143}
+
+
+# ---------------------------------------------------------------------------
 # get_x_scale / get_y_scale - categorical and unknown score_id
 # ---------------------------------------------------------------------------
 
@@ -1112,6 +1182,16 @@ def test_get_histogram_filename_yaml() -> None:
     assert filename == "statistics/histogram_score1.yaml"
 
 
+def test_get_histogram_filename_unknown_score(
+    scores_repo: GenomicResourceRepo,
+) -> None:
+    res = scores_repo.get_resource("LinearHist")
+    gene_score = build_gene_score_from_resource(res)
+
+    with pytest.raises(ValueError, match="unknown score nonexistent"):
+        gene_score.get_histogram_filename("nonexistent")
+
+
 # ---------------------------------------------------------------------------
 # Deprecated 'name' field in score config
 # ---------------------------------------------------------------------------
@@ -1157,7 +1237,7 @@ def test_deprecated_name_field(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING):
         gene_score = build_gene_score_from_resource(res)
 
-    assert gene_score.get_scores() == ["my_score"]
+    assert gene_score.get_all_scores() == ["my_score"]
     assert gene_score.get_gene_value("my_score", "G1") == 1.0
     assert any("deprecated" in record.message for record in caplog.records)
 
@@ -1420,3 +1500,70 @@ def test_gene_column_custom() -> None:
     assert gene_score.get_gene_value("pli", "GENE2") == pytest.approx(0.9)
     assert gene_score.get_gene_value("pli", "MISSING") is None
     assert gene_score.get_genes("pli", score_min=0.6) == {"GENE2"}
+
+
+def test_gene_score_misspelled_histogram_type_fails_validation() -> None:
+    # A typo in the histogram type must be rejected by config validation,
+    # naming the resource -- not surface as a TypeError from score parsing.
+    repo = build_inmemory_test_repository({
+        "BadHistType": {
+            GR_CONF_FILE_NAME: textwrap.dedent("""
+                type: gene_score
+                filename: data.csv
+                scores:
+                  - id: pli
+                    type: float
+                    histogram:
+                      type: nubmer
+            """),
+            "data.csv": "gene,pli\nGENE1,0.5\n",
+        },
+    })
+    with pytest.raises(ValueError, match="Invalid configuration: BadHistType"):
+        build_gene_score_from_resource(repo.get_resource("BadHistType"))
+
+
+def test_gene_score_accepts_null_histogram_config(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A gene score whose histogram declares type "null" (with a reason) is
+    # valid per the config schema and must build -- matching the genomic
+    # plane, which stores the same NullHistogramConfig into its _ScoreDef
+    # without complaint. Constructing it must not raise a TypeError.
+    repo = (
+        a_grr()
+        .with_resource(
+            "NullHist",
+            a_gene_score()
+            .with_score("pli", "float")
+            .with_histogram(
+                {"type": "null", "reason": "histogram intentionally omitted"})
+            .with_data("gene pli\nGENE1 0.5\nGENE2 0.9\n"),
+        )
+        .build_repo(tmp_path)
+    )
+    gene_score = build_gene_score_from_resource(repo.get_resource("NullHist"))
+
+    hist_conf = gene_score.score_definitions["pli"].hist_conf
+    assert isinstance(hist_conf, NullHistogramConfig)
+    assert hist_conf.reason == "histogram intentionally omitted"
+
+
+def test_gene_score_histogram_without_type_fails_validation() -> None:
+    # A histogram block with no type key must fail validation rather than
+    # raising a bare KeyError out of build_histogram_config.
+    repo = build_inmemory_test_repository({
+        "NoHistType": {
+            GR_CONF_FILE_NAME: textwrap.dedent("""
+                type: gene_score
+                filename: data.csv
+                scores:
+                  - id: pli
+                    type: float
+                    histogram: {}
+            """),
+            "data.csv": "gene,pli\nGENE1,0.5\n",
+        },
+    })
+    with pytest.raises(ValueError, match="Invalid configuration: NoHistType"):
+        build_gene_score_from_resource(repo.get_resource("NoHistType"))

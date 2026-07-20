@@ -13,6 +13,8 @@ from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
     CategoricalHistogramConfig,
+    HistogramError,
+    NullHistogram,
     NullHistogramConfig,
     NumberHistogram,
     NumberHistogramConfig,
@@ -68,19 +70,28 @@ class GeneScoreImplementation(
     @staticmethod
     def _build_histograms(
         resource: GenomicResource,
-    ) -> dict[str, NumberHistogram | CategoricalHistogram]:
-        histograms = {}
+    ) -> dict[str, NumberHistogram | CategoricalHistogram | NullHistogram]:
+        histograms: dict[
+            str, NumberHistogram | CategoricalHistogram | NullHistogram] = {}
         gene_score = build_gene_score_from_resource(resource)
         for score_id in gene_score.score_definitions:
+            histogram: (
+                NumberHistogram | CategoricalHistogram | NullHistogram | None
+            )
+            # A runtime histogram-build failure is recorded as a serialized
+            # NullHistogram carrying the reason, matching the genomic score
+            # implementation. HistogramError is a BaseException, so it is
+            # caught explicitly here; a plain ``except ValueError`` or
+            # ``except Exception`` would let it escape and fail the task.
             try:
                 histogram = GeneScoreImplementation._calc_histogram(
                     gene_score, score_id)
-            except ValueError as e:
+            except (ValueError, TypeError, HistogramError) as e:
                 logger.warning(
-                    "Error calculating histogram for score %s in %s: %s",
+                    "Histogram for score %s in %s nullified: %s",
                     score_id, resource.resource_id, e,
                 )
-                continue
+                histogram = NullHistogram(NullHistogramConfig(str(e)))
 
             if histogram is None:
                 logger.warning(
