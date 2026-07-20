@@ -260,13 +260,19 @@ def test_effect_annotator_attributes(
         assert attr.internal == expected
 
 
+# ``expected_genes`` is the deterministic worst-effect-first order of the
+# ``genes`` column: ``AnnotationEffect.genes`` sorts by severity descending
+# (SEVERITY: CNV+/CNV- = 35, frame-shift = 22, nonsense = 21), so for
+# ["frame-shift", "CNV+"] the CNV+ gene (gene2) precedes the frame-shift gene
+# (gene1). Equal-severity effects keep source order (stable sort).
 @pytest.mark.parametrize(
-    "effects, target_effect, expected_target_genes", [
-        (["CNV+", "frame-shift"], "CNV", ["gene1"]),
-        (["frame-shift", "CNV+"], "CNV", ["gene2"]),
-        (["CNV-", "CNV+"], "CNV", ["gene1", "gene2"]),
-        (["CNV-", "CNV+"], "CNV+", ["gene2"]),
-        (["frame-shift", "nonsense"], "LGDs", ["gene1", "gene2"]),
+    "effects, target_effect, expected_target_genes, expected_genes", [
+        (["CNV+", "frame-shift"], "CNV", ["gene1"], ["gene1", "gene2"]),
+        (["frame-shift", "CNV+"], "CNV", ["gene2"], ["gene2", "gene1"]),
+        (["CNV-", "CNV+"], "CNV", ["gene1", "gene2"], ["gene1", "gene2"]),
+        (["CNV-", "CNV+"], "CNV+", ["gene2"], ["gene1", "gene2"]),
+        (["frame-shift", "nonsense"], "LGDs", ["gene1", "gene2"],
+         ["gene1", "gene2"]),
     ],
 )
 def test_effect_annotator_gene_lists_aggregator(
@@ -275,6 +281,7 @@ def test_effect_annotator_gene_lists_aggregator(
     effects: list[str],
     target_effect: str,
     expected_target_genes: list[str],
+    expected_genes: list[str],
 ) -> None:
     genome_id = "t4c8_genome_implicit_B"
     gene_models = "t4c8_genes_ALT"
@@ -311,6 +318,4 @@ def test_effect_annotator_gene_lists_aggregator(
         result = annotator.annotate(annotatable, annotate_context)
         assert result[
             f"{target_effect}_genes"] == "|".join(expected_target_genes)
-        assert result["genes"] == "|".join([
-            f"gene{idx}" for idx in range(1, len(effects) + 1)
-        ])
+        assert result["genes"] == "|".join(expected_genes)

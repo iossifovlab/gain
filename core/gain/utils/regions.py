@@ -389,7 +389,7 @@ def all_regions_from_chrom(regions: list[Region], chrom: str) -> list[Region]:
 
 def unique_regions(regions: list[Region]) -> list[Region]:
     """Remove duplicated regions."""
-    return list(set(regions))
+    return list(dict.fromkeys(regions))
 
 
 def connected_component(regions: list[BedRegion]) -> Any:
