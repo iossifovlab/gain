@@ -234,12 +234,21 @@ class GeneScore(
     def get_all_scores(self) -> list[str]:
         return list(self.score_definitions.keys())
 
-    def _to_dict(self, score_id: str) -> dict[str, Any]:
-        """Return dictionary of all defined scores keyed by gene symbol."""
+    def to_dict(self, score_id: str) -> dict[str, float]:
+        """Return {gene_symbol: value} for a score, with NaN rows dropped."""
         df = self.get_score_df(score_id)
         return cast(
-            dict[str, Any],
+            dict[str, float],
             df.set_index("gene")[score_id].to_dict())
+
+    def _to_dict(self, score_id: str) -> dict[str, Any]:
+        """Return dictionary of all defined scores keyed by gene symbol.
+
+        Thin compatibility alias for :meth:`to_dict`. gpf still calls this
+        across the repo boundary until iossifovlab/gpf#983 switches to the
+        public accessor; removing it here would break that live consumer.
+        """
+        return self.to_dict(score_id)
 
     def get_gene_value(
         self, score_id: str, gene_symbol: str,

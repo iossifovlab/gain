@@ -478,6 +478,28 @@ def test_gene_score_nan(scores_repo: GenomicResourceRepo) -> None:
     assert gene_score.get_gene_value("score1", "G3") is None
 
 
+def test_to_dict_returns_gene_value_mapping_excluding_nan(
+    tmp_path: pathlib.Path,
+) -> None:
+    # #334: the public to_dict accessor returns {gene: value} for a score,
+    # with NaN/missing genes excluded -- the pandas-free seam gpf consumes.
+    res = (
+        a_gene_score()
+        .with_score("pli", "float")
+        .with_data("""
+            gene   pli
+            G1     1.0
+            G2     2.0
+            G3     nan
+            G4     4.0
+        """)
+        .build_resource(tmp_path)
+    )
+    gene_score = build_gene_score_from_resource(res)
+
+    assert gene_score.to_dict("pli") == {"G1": 1.0, "G2": 2.0, "G4": 4.0}
+
+
 def test_calculate_histogram(scores_repo: GenomicResourceRepo) -> None:
     res = scores_repo.get_resource("LinearHist")
     result = build_gene_score_from_resource(res)
