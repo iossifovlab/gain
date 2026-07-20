@@ -121,8 +121,8 @@ def test_init_builds_gene_score(
 ) -> None:
     res = inmemory_repo.get_resource("LinearScore")
     impl = GeneScoreImplementation(res)
-    assert impl.gene_score is not None
-    assert impl.gene_score.get_all_scores() == ["score1"]
+    assert impl.score is not None
+    assert impl.score.get_all_scores() == ["score1"]
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +142,7 @@ def test_get_template_data_contains_gene_score(
 ) -> None:
     data = linear_impl._get_template_data()
     assert "gene_score" in data
-    assert data["gene_score"] is linear_impl.gene_score
+    assert data["gene_score"] is linear_impl.score
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +200,7 @@ def test_create_statistics_build_tasks_skips_null_histogram(
     # NullHistogramConfig is rejected by GeneScore.__init__, so we must
     # inject it into score_definitions to exercise the skip branch.
 
-    linear_impl.gene_score.score_definitions["null_score"] = ScoreDef(
+    linear_impl.score.score_definitions["null_score"] = ScoreDef(
         resource_id=linear_impl.resource.resource_id,
         score_id="null_score",
         column_name="null_score",
@@ -656,3 +656,20 @@ def test_collect_index_info_row_length_matches_header(
 ) -> None:
     header, row = linear_impl.collect_index_info()
     assert len(header) == len(row)
+
+
+def test_collect_index_info_identical_to_genomic_impl() -> None:
+    # #307 acceptance criterion: the gene and genomic collect_index_info
+    # implementations must be textually identical so #309 can lift the
+    # method to a shared base verbatim.
+    import inspect
+
+    from gain.genomic_resources.implementations.genomic_scores_impl import (
+        GenomicScoreImplementation,
+    )
+
+    gene_src = inspect.getsource(GeneScoreImplementation.collect_index_info)
+    genomic_src = inspect.getsource(
+        GenomicScoreImplementation.collect_index_info,
+    )
+    assert textwrap.dedent(gene_src) == textwrap.dedent(genomic_src)

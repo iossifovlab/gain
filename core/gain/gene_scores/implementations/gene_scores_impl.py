@@ -37,7 +37,7 @@ class GeneScoreImplementation(
 
     def __init__(self, resource: GenomicResource) -> None:
         super().__init__(resource)
-        self.gene_score: GeneScore = build_gene_score_from_resource(
+        self.score: GeneScore = build_gene_score_from_resource(
             resource,
         )
 
@@ -46,7 +46,7 @@ class GeneScoreImplementation(
 
     def _get_template_data(self) -> dict[str, Any]:
         data = {}
-        data["gene_score"] = self.gene_score
+        data["gene_score"] = self.score
         return data
 
     def get_info(self, **kwargs: Any) -> str:  # noqa: ARG002
@@ -152,10 +152,10 @@ class GeneScoreImplementation(
         self,
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
         header, row = super().collect_index_info()
-        score_ids = " ".join(self.gene_score.score_definitions.keys())
+        score_ids = " ".join(self.score.score_definitions.keys())
         score_descriptions = " ".join(
             sd.desc
-            for sd in self.gene_score.score_definitions.values()
+            for sd in self.score.score_definitions.values()
             if sd.desc
         )
         return (
@@ -177,7 +177,7 @@ class GeneScoreImplementation(
                     "hist_conf": score_def.hist_conf.to_dict()
                     if score_def.hist_conf else "null",
                 }
-                for score_def in self.gene_score.score_definitions.values()
+                for score_def in self.score.score_definitions.values()
             ],
             "score_file": manifest[score_filename].md5,
         }, sort_keys=True, indent=2).encode()
