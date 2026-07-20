@@ -18,21 +18,19 @@ from gain.genomic_resources.histogram import (
     NullHistogramConfig,
     NumberHistogram,
     NumberHistogramConfig,
-    plot_histogram,
 )
 from gain.genomic_resources.resource_implementation import (
-    GenomicResourceImplementation,
     InfoImplementationMixin,
+)
+from gain.genomic_resources.score_implementation import (
+    ScoreImplementationBase,
 )
 from gain.task_graph.graph import TaskDesc, TaskGraph
 
 logger = logging.getLogger(__name__)
 
 
-class GeneScoreImplementation(
-    GenomicResourceImplementation,
-    InfoImplementationMixin,
-):
+class GeneScoreImplementation(ScoreImplementationBase):
     """Class used to represent gene score resource implementations."""
 
     def __init__(self, resource: GenomicResource) -> None:
@@ -100,24 +98,10 @@ class GeneScoreImplementation(
                 )
                 continue
 
-            with resource.proto.open_raw_file(
-                resource,
-                gene_score.get_histogram_filename(score_id),
-                mode="wt",
-            ) as outfile:
-                outfile.write(histogram.serialize())
-            score_def = gene_score.score_definitions[score_id]
-            small_values_desc = score_def.small_values_desc
-            large_values_desc = score_def.large_values_desc
-            plot_histogram(
-                resource,
-                gene_score.get_histogram_image_filename(score_id),
-                histogram,
-                score_id,
-                small_values_desc,
-                large_values_desc,
-            )
             histograms[score_id] = histogram
+
+        GeneScoreImplementation._save_and_plot_histograms(
+            resource, gene_score, histograms)
         return histograms
 
     @staticmethod
@@ -147,21 +131,6 @@ class GeneScoreImplementation(
         else:
             raise TypeError(f"Unknown histogram config: {hist_conf}")
         return histogram
-
-    def collect_index_info(
-        self,
-    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-        header, row = super().collect_index_info()
-        score_ids = " ".join(self.score.score_definitions.keys())
-        score_descriptions = " ".join(
-            sd.desc
-            for sd in self.score.score_definitions.values()
-            if sd.desc
-        )
-        return (
-            (*header, "score_ids", "score_descriptions"),
-            (*row, score_ids, score_descriptions),
-        )
 
     def calc_info_hash(self) -> bytes:
         return b"placeholder"
