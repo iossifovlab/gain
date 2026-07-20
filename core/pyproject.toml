@@ -83,6 +83,7 @@ gene_score = "gain.gene_scores.implementations.gene_scores_impl:GeneScoreImpleme
 gene_set_collection = "gain.gene_sets.implementations.gene_sets_impl:GeneSetCollectionImpl"
 gene_set = "gain.gene_sets.implementations.gene_sets_impl:GeneSetCollectionImpl"
 basic = "gain.genomic_resources.implementations.basic_resource_impl:BasicResourceImplementation"
+data_frame = "gain.genomic_resources.implementations.data_frame_resource_impl:DataFrameResourceImplementation"
 
 [project.entry-points."gain.annotation.annotators"]
 allele_score = "gain.annotation.score_annotator:build_allele_score_annotator"
