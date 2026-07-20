@@ -23,6 +23,10 @@ from gain.genomic_resources.testing import (
     build_inmemory_test_repository,
     setup_directories,
 )
+from gain.genomic_resources.testing.builders import (
+    a_gene_score,
+    a_grr,
+)
 from gain.task_graph.graph import TaskDesc
 
 # ---------------------------------------------------------------------------
@@ -218,34 +222,31 @@ def test_create_statistics_build_tasks_skips_null_histogram(
 # Runtime histogram-build failure: nullify + serialize the reason (#305)
 # ---------------------------------------------------------------------------
 
-def _failing_histogram_grr() -> dict:
+def _failing_histogram_repo(
+    tmp_path: pathlib.Path,
+) -> GenomicResourceRepo:
     # A str-typed score with no explicit histogram config falls back to the
     # default categorical config (enforce_type=False). Feeding it >100 distinct
     # integer values raises HistogramError at runtime (add_value's
     # UNIQUE_VALUES_LIMIT guard). HistogramError is a BaseException, so a plain
     # ``except ValueError``/``except Exception`` cannot catch it.
-    rows = "".join(f"G{i},{i}\n" for i in range(150))
-    return {
-        "FailScore": {
-            GR_CONF_FILE_NAME: textwrap.dedent("""
-                type: gene_score
-                filename: fail.csv
-                scores:
-                - id: fail
-                  type: str
-                  desc: too many uniques
-            """),
-            "fail.csv": "gene,fail\n" + rows,
-        },
-    }
+    rows = "".join(f"G{i} {i}\n" for i in range(150))
+    return (
+        a_grr()
+        .with_resource(
+            "FailScore",
+            a_gene_score()
+            .with_score("fail", "str", desc="too many uniques")
+            .with_data("gene fail\n" + rows),
+        )
+        .build_repo(tmp_path)
+    )
 
 
 def test_build_histograms_nullifies_runtime_failure(
     tmp_path: pathlib.Path,
 ) -> None:
-    setup_directories(tmp_path, _failing_histogram_grr())
-    repo = build_filesystem_test_repository(tmp_path)
-    res = repo.get_resource("FailScore")
+    res = _failing_histogram_repo(tmp_path).get_resource("FailScore")
 
     histograms = GeneScoreImplementation._build_histograms(res)
 
@@ -261,9 +262,7 @@ def test_build_histograms_nullifies_runtime_failure(
 def test_build_histograms_runtime_failure_writes_no_png(
     tmp_path: pathlib.Path,
 ) -> None:
-    setup_directories(tmp_path, _failing_histogram_grr())
-    repo = build_filesystem_test_repository(tmp_path)
-    res = repo.get_resource("FailScore")
+    res = _failing_histogram_repo(tmp_path).get_resource("FailScore")
 
     GeneScoreImplementation._build_histograms(res)
 
@@ -271,11 +270,12 @@ def test_build_histograms_runtime_failure_writes_no_png(
     assert not png_path.exists()
 
 
-def test_build_histograms_histogram_error_does_not_escape() -> None:
+def test_build_histograms_histogram_error_does_not_escape(
+    tmp_path: pathlib.Path,
+) -> None:
     # HistogramError is a BaseException; it must be caught rather than escape
     # _build_histograms and fail the task-graph task.
-    repo = build_inmemory_test_repository(_failing_histogram_grr())
-    res = repo.get_resource("FailScore")
+    res = _failing_histogram_repo(tmp_path).get_resource("FailScore")
 
     histograms = GeneScoreImplementation._build_histograms(res)
 
@@ -288,38 +288,28 @@ def test_build_histograms_null_config_writes_no_json(
     # A null histogram *config* (as opposed to a runtime failure) is still
     # dropped with no JSON written, matching the genomic side. This is distinct
     # from the runtime-failure path, which does serialize a NullHistogram.
-    # A null config surfaces as ``_calc_histogram`` returning ``None``; patch
-    # it to model that branch (a naturally-built gene score never carries a
-    # NullHistogramConfig, since GeneScore.__init__ rejects one).
-    import unittest.mock as mock
-    setup_directories(tmp_path, {
-        "NoStatsScore": {
-            GR_CONF_FILE_NAME: textwrap.dedent("""
-                type: gene_score
-                filename: s.csv
-                scores:
-                - id: s
-                  desc: score
-                  histogram:
-                    type: number
-                    number_of_bins: 3
-                    x_log_scale: false
-                    y_log_scale: false
-            """),
-            "s.csv": "gene,s\nG1,1\nG2,2\nG3,3\n",
-        },
-    })
-    repo = build_filesystem_test_repository(tmp_path)
-    res = repo.get_resource("NoStatsScore")
+    # Since #305 GeneScore.__init__ accepts a NullHistogramConfig, so this is
+    # driven by a real resource declaring ``histogram: {type: null}``:
+    # _calc_histogram returns None for it and _build_histograms skips it.
+    repo = (
+        a_grr()
+        .with_resource(
+            "NullConfigScore",
+            a_gene_score()
+            .with_score("s")
+            .with_histogram({"type": "null", "reason": "disabled"})
+            .with_data("gene s\nG1 1\nG2 2\nG3 3\n"),
+        )
+        .build_repo(tmp_path)
+    )
+    res = repo.get_resource("NullConfigScore")
 
-    with mock.patch.object(
-        GeneScoreImplementation, "_calc_histogram",
-        staticmethod(lambda _gene_score, _score_id: None),
-    ):
-        histograms = GeneScoreImplementation._build_histograms(res)
+    histograms = GeneScoreImplementation._build_histograms(res)
 
     assert histograms == {}
-    json_path = tmp_path / "NoStatsScore" / "statistics" / "histogram_s.json"
+    json_path = (
+        tmp_path / "NullConfigScore" / "statistics" / "histogram_s.json"
+    )
     assert not json_path.exists()
 
 
