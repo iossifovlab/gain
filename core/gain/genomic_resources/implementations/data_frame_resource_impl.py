@@ -1,21 +1,23 @@
-"""Provides the catch-all ``basic`` resource implementation."""
+"""Provides the ``data_frame`` resource implementation."""
 
 from __future__ import annotations
 
 import copy
 from typing import Any, ClassVar
-import pandas as pd
 
+import pandas as pd
 from markdown2 import markdown
 
 from gain import logging
+from gain.genomic_resources.data_frame_resource import (
+    load_data_frame_from_resource,
+)
+from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_implementation import (
     GenomicResourceImplementation,
     InfoImplementationMixin,
 )
 from gain.task_graph.graph import TaskDesc, TaskGraph
-from gain.genomic_resources.data_frame_resource import load_data_frame_from_resource
-
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +26,7 @@ class DataFrameResourceImplementation(
     GenomicResourceImplementation,
     InfoImplementationMixin,
 ):
-    """
-        DataFrame implementation. 
-    """
+    """DataFrame resource implementation."""
 
     template_name: ClassVar[str] = "data_frame.jinja"
 
@@ -48,10 +48,10 @@ class DataFrameResourceImplementation(
         if "meta" in info:
             info["meta"] = markdown(str(info["meta"]))
         with self.resource.proto.open_raw_file(
-            self.resource, "statistics/describe.csv", mode="rt"
+            self.resource, "statistics/describe.csv", mode="rt",
         ) as stats_file:
             df_description = pd.read_csv(stats_file)
-        info['df_description'] = df_description.to_html(index=False)
+        info["df_description"] = df_description.to_html(index=False)
         return info
 
     def get_info(self, **kwargs: Any) -> str:  # noqa: ARG002
@@ -64,17 +64,20 @@ class DataFrameResourceImplementation(
         return b"placeholder"
 
     def calc_statistics_hash(self) -> bytes:
-        return (self.config["file"] +
-                self.config.get("format", "csv") +
-                str(self.config.get("parameters", {}))).encode('utf-8')
+        payload = (
+            str(self.config["file"])
+            + str(self.config.get("format", "csv"))
+            + str(self.config.get("parameters", {}))
+        )
+        return payload.encode("utf-8")
 
     @staticmethod
-    def _stats_for_data_frame(resource: GenomicResource):
+    def _stats_for_data_frame(resource: GenomicResource) -> None:
         df = load_data_frame_from_resource(resource)
-        dsk = df.describe(include='all')
+        dsk = df.describe(include="all")
 
         with resource.proto.open_raw_file(
-            resource, "statistics/describe.csv", mode="wt"
+            resource, "statistics/describe.csv", mode="wt",
         ) as outfile:
             dsk.to_csv(outfile)
 
@@ -85,5 +88,5 @@ class DataFrameResourceImplementation(
             TaskGraph.make_task(
                 f"data_frame_{self.resource}",
                 self._stats_for_data_frame,
-                args=[self.resource])
+                args=[self.resource]),
         ]

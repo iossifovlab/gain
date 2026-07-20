@@ -1,54 +1,20 @@
+"""Loading helpers for ``data_frame`` genomic resources."""
+
 import pandas as pd
+
 from gain import logging
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
 )
 
-# def build_gene_models_from_resource(
-#     resource: GenomicResource | None,
-# ) -> GeneModels:
-#     """Load gene models from a genomic resource."""
-#     # pylint: disable=import-outside-toplevel
-#     from .gene_models import GeneModels
-
-#     if resource is None:
-#         raise ValueError(f"missing resource {resource}")
-
-#     if resource.get_type() != "gene_models":
-#         logger.error(
-#             "trying to open a resource %s of type "
-#             "%s as gene models", resource.resource_id, resource.get_type())
-#         raise ValueError(f"wrong resource type: {resource.resource_id}")
-
-#     cache_id = (resource.get_full_id(), resource.get_repo_url())
-#     with _INMEMORY_CACHE_LOCK:
-#         if cache_id in _INMEMORY_CACHE:
-#             return _INMEMORY_CACHE[cache_id]
-
-#         gene_models = GeneModels(resource)
-#         _INMEMORY_CACHE[cache_id] = gene_models
-#         return gene_models
-
-
-# def build_gene_models_from_resource_id(
-#     resource_id: str, grr: GenomicResourceRepo | None = None,
-# ) -> GeneModels:
-#     """Load gene models from a genomic resource id."""
-#     # pylint: disable=import-outside-toplevel
-#     from gain.genomic_resources.repository_factory import (
-#         build_genomic_resource_repository,
-#     )
-#     if grr is None:
-#         grr = build_genomic_resource_repository()
-
-#     return build_gene_models_from_resource(grr.get_resource(resource_id))
-
-
 logger = logging.getLogger(__name__)
 
 
-def load_data_frame_from_resource(resource: GenomicResource | None) -> pd.DataFrame:
+def load_data_frame_from_resource(
+    resource: GenomicResource | None,
+) -> pd.DataFrame:
+    """Load a pandas DataFrame from a ``data_frame`` genomic resource."""
     if resource is None:
         raise ValueError(f"missing resource {resource}")
 
@@ -63,23 +29,31 @@ def load_data_frame_from_resource(resource: GenomicResource | None) -> pd.DataFr
     try:
         file_name = config["file"]
     except KeyError as exc:
-        logger.error(f"The data_frame resource {resource.resource_id} need a file parameter")
-        raise ValueError(f"missing file parameter for: {resource.resource_id}") from exc
+        logger.exception(
+            "the data_frame resource %s needs a file parameter",
+            resource.resource_id)
+        raise ValueError(
+            f"missing file parameter for: {resource.resource_id}") from exc
 
     file_format = config.get("format", "csv")
     params = config.get("parameters", {})
 
-    if file_format in {'csv', 'tsv'}:
-        return pd.read_csv(file_name, **params)
-    else:
-        logger.error(f"Unknown format {file_format} for the dataframe {resource.resource_id}")
-        raise ValueError(f"Unknown format {file_format} for the dataframe {resource.resource_id}")
+    if file_format not in {"csv", "tsv"}:
+        logger.error(
+            "unknown format %s for the data_frame %s",
+            file_format, resource.resource_id)
+        raise ValueError(
+            f"Unknown format {file_format} "
+            f"for the dataframe {resource.resource_id}")
+
+    result: pd.DataFrame = pd.read_csv(file_name, **params)
+    return result
 
 
 def load_data_frame_from_resource_id(
     resource_id: str, grr: GenomicResourceRepo | None = None,
 ) -> pd.DataFrame:
-    """Load data_frame from a genomic resource id."""
+    """Load a data_frame from a genomic resource id."""
     # pylint: disable=import-outside-toplevel
     from gain.genomic_resources.repository_factory import (
         build_genomic_resource_repository,

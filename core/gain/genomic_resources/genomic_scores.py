@@ -1844,7 +1844,8 @@ class PositionScore(GenomicScore):
                 right = (
                     min(pos_end, line_end)
                 )
-                sagg.position_aggregator.add(val, right - left + 1)
+                for _ in range(left, right + 1):
+                    sagg.position_aggregator.add(val)
 
         return [squery.position_aggregator for squery in score_aggs]
 
