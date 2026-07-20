@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from functools import lru_cache
 from io import StringIO
@@ -234,12 +235,30 @@ class GeneScore(
     def get_all_scores(self) -> list[str]:
         return list(self.score_definitions.keys())
 
-    def _to_dict(self, score_id: str) -> dict[str, Any]:
-        """Return dictionary of all defined scores keyed by gene symbol."""
+    def to_dict(self, score_id: str) -> dict[str, float]:
+        """Return {gene_symbol: value} for a score, with NaN rows dropped."""
         df = self.get_score_df(score_id)
         return cast(
-            dict[str, Any],
+            dict[str, float],
             df.set_index("gene")[score_id].to_dict())
+
+    def _to_dict(self, score_id: str) -> dict[str, Any]:
+        """Return dictionary of all defined scores keyed by gene symbol.
+
+        .. deprecated::
+            Use the public :meth:`to_dict` instead. Retained as a thin
+            compatibility alias because gpf still calls it across the repo
+            boundary until iossifovlab/gpf#983 switches to ``to_dict``;
+            removing it before then would break that live consumer.
+        """
+        warnings.warn(
+            "GeneScore._to_dict is deprecated; use the public "
+            "GeneScore.to_dict instead. It is retained only until "
+            "gpf#983 migrates off it.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.to_dict(score_id)
 
     def get_gene_value(
         self, score_id: str, gene_symbol: str,

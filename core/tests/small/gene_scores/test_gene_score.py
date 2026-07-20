@@ -478,6 +478,53 @@ def test_gene_score_nan(scores_repo: GenomicResourceRepo) -> None:
     assert gene_score.get_gene_value("score1", "G3") is None
 
 
+def test_to_dict_returns_gene_value_mapping_excluding_nan(
+    tmp_path: pathlib.Path,
+) -> None:
+    # #334: the public to_dict accessor returns {gene: value} for a score,
+    # with NaN/missing genes excluded -- the pandas-free seam gpf consumes.
+    res = (
+        a_gene_score()
+        .with_score("pli", "float")
+        .with_data("""
+            gene   pli
+            G1     1.0
+            G2     2.0
+            G3     nan
+            G4     4.0
+        """)
+        .build_resource(tmp_path)
+    )
+    gene_score = build_gene_score_from_resource(res)
+
+    assert gene_score.to_dict("pli") == {"G1": 1.0, "G2": 2.0, "G4": 4.0}
+
+
+def test_to_dict_private_alias_still_delegates(
+    tmp_path: pathlib.Path,
+) -> None:
+    # #334 sequencing guard: gpf still calls the private _to_dict across the
+    # repo boundary until gpf#983 lands. Pin that _to_dict stays callable and
+    # delegates to to_dict, so a later in-gain "dead code" removal turns this
+    # RED here instead of silently breaking gpf at the meta-repo SHA bump
+    # (gain's suite cannot import gpf, so this is the one catchable facet).
+    res = (
+        a_gene_score()
+        .with_score("pli", "float")
+        .with_data("""
+            gene   pli
+            G1     1.0
+            G2     2.0
+        """)
+        .build_resource(tmp_path)
+    )
+    gene_score = build_gene_score_from_resource(res)
+
+    with pytest.warns(DeprecationWarning, match="_to_dict is deprecated"):
+        legacy = gene_score._to_dict("pli")
+    assert legacy == gene_score.to_dict("pli")
+
+
 def test_calculate_histogram(scores_repo: GenomicResourceRepo) -> None:
     res = scores_repo.get_resource("LinearHist")
     result = build_gene_score_from_resource(res)
