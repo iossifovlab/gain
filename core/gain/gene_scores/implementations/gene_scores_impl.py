@@ -154,9 +154,9 @@ class GeneScoreImplementation(
         header, row = super().collect_index_info()
         score_ids = " ".join(self.gene_score.score_definitions.keys())
         score_descriptions = " ".join(
-            sd.description
+            sd.desc
             for sd in self.gene_score.score_definitions.values()
-            if sd.description
+            if sd.desc
         )
         return (
             (*header, "score_ids", "score_descriptions"),

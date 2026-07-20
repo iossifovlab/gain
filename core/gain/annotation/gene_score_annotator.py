@@ -69,7 +69,7 @@ class GeneScoreAnnotator(AnnotatorBase):
             specs[score_id] = AttributeSpec(
                 source=score_id,
                 value_type="object",
-                description=score_def.description,
+                description=score_def.desc,
                 supports_aggregation=True,
             )
 

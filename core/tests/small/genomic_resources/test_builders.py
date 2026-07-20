@@ -553,7 +553,7 @@ def test_gene_score_desc_reads_back(
         .build_resource(tmp_path)
     )
     gene_score = build_gene_score_from_resource(res)
-    assert gene_score.score_definitions["pli"].description == (
+    assert gene_score.score_definitions["pli"].desc == (
         "pLI probability")
 
 
@@ -576,7 +576,7 @@ def test_gene_score_desc_with_colon_renders_valid_yaml(
     assert config is not None
     assert config["scores"][0]["desc"] == desc
     gene_score = build_gene_score_from_resource(res)
-    assert gene_score.score_definitions["pli"].description == desc
+    assert gene_score.score_definitions["pli"].desc == desc
 
 
 def test_gene_score_column_name_defaults_to_id(
@@ -1362,7 +1362,7 @@ def test_gene_score_multiline_desc_renders_valid_yaml(
     assert config is not None
     assert config["scores"][0]["desc"] == desc
     gene_score = build_gene_score_from_resource(res)
-    assert gene_score.score_definitions["pli"].description == desc
+    assert gene_score.score_definitions["pli"].desc == desc
 
 
 def test_multiline_desc_blank_line_has_no_trailing_whitespace(
@@ -1391,7 +1391,7 @@ def test_multiline_desc_blank_line_has_no_trailing_whitespace(
     assert config is not None
     assert config["scores"][0]["desc"] == desc
     gene_score = build_gene_score_from_resource(res)
-    assert gene_score.score_definitions["pli"].description == desc
+    assert gene_score.score_definitions["pli"].desc == desc
 
 
 # ---------------------------------------------------------------------------

@@ -204,7 +204,7 @@ def test_create_statistics_build_tasks_skips_null_histogram(
         resource_id=linear_impl.resource.resource_id,
         score_id="null_score",
         column_name="null_score",
-        description="injected null",
+        desc="injected null",
         value_type="float",
         hist_conf=NullHistogramConfig(reason="disabled"),
         small_values_desc=None,

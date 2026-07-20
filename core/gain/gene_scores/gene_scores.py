@@ -46,7 +46,7 @@ class ScoreDef:
     column_name: str
     value_type: str
 
-    description: str
+    desc: str
 
     hist_conf: HistogramConfig | None
     small_values_desc: str | None
@@ -135,7 +135,7 @@ class GeneScore(
                 column_name=score_name,
                 value_type=score_conf.get("type", "float"),
 
-                description=score_conf.get("desc", ""),
+                desc=score_conf.get("desc", ""),
 
                 hist_conf=hist_conf,
                 small_values_desc=score_conf.get("small_values_desc"),
@@ -466,7 +466,7 @@ def _build_gene_score_help(
 
     data = {
         "name": score_def.score_id,
-        "description": score_def.description,
+        "description": score_def.desc,
         "resource_id": gene_score.resource.resource_id,
         "resource_summary": gene_score.resource.get_summary(),
         "resource_url": f"{gene_score.resource.get_public_url()}/index.html",
@@ -505,7 +505,7 @@ class GeneScoresDb:
                 column_name=score_def.column_name,
                 value_type=score_def.value_type,
                 hist=gene_score.get_score_histogram(score_id),
-                description=score_def.description,
+                description=score_def.desc,
                 help=help_doc,
                 small_values_desc=score_def.small_values_desc,
                 large_values_desc=score_def.large_values_desc,
