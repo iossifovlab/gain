@@ -570,21 +570,41 @@ AGGREGATOR_CLASS_DICT: dict[str, type[Aggregator]] = {
     "value_count": CounterAggregator,
 }
 
-AGGREGATOR_SCHEMA = {
-    "type": "string",
-    "oneof": [
-        {"regex": "^min$"},
-        {"regex": "^max$"},
-        {"regex": "^mean$"},
-        {"regex": "^concatenate$"},
-        {"regex": "^median$"},
-        {"regex": "^mode$"},
-        {"regex": "^join\\(.+\\)$"},
-        {"regex": "^list$"},
-        {"regex": "^bool$"},
-        {"regex": "^value_count$"},
-    ],
-}
+
+def _build_aggregator_schema() -> dict[str, Any]:
+    """Derive the resource-config aggregator schema from the registry.
+
+    The cerberus fragment that validates a score's ``position_aggregator`` /
+    ``allele_aggregator`` / ``nucleotide_aggregator`` in a
+    ``genomic_resource.yaml``.  Generated from ``AGGREGATOR_CLASS_DICT`` --
+    it was once a second, hand-maintained list of names, and it drifted
+    (``count`` was registered, buildable and documented, yet rejected in a
+    resource YAML).  Registering an aggregator is now the only edit needed.
+
+    A parametrized aggregator (``join``) is configured as ``name(parameter)``:
+    its class needs the parameter, so the bare name cannot be built and is not
+    accepted.  An empty separator -- ``join()`` -- is accepted, matching the
+    definition parser, which builds it as the ``concatenate`` equivalent.
+
+    The resource level is string-only, deliberately.  The ``{aggregator_type:
+    ..., parameters: [...]}`` dict form is an annotation-pipeline spelling; a
+    resource-level aggregator flows straight into ``ScoreDef``'s ``str | None``
+    fields, so a resource configures an aggregator by its string form.
+    """
+    return {
+        "type": "string",
+        "oneof": [
+            {
+                "regex": rf"^{re.escape(name)}\(.*\)$"
+                if aggregator_class.parametrized
+                else rf"^{re.escape(name)}$",
+            }
+            for name, aggregator_class in AGGREGATOR_CLASS_DICT.items()
+        ],
+    }
+
+
+AGGREGATOR_SCHEMA = _build_aggregator_schema()
 
 
 def get_aggregator_class(aggregator: str) -> Callable[[], Aggregator]:
