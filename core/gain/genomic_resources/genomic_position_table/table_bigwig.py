@@ -251,6 +251,18 @@ class BigWigTable(GenomicPositionTable):
                 self._buffer[-1][1])
 
     def _find(self, chrom: str, pos_begin: int, pos_end: int) -> int:
+        """Return the buffer index the query starts at, or -1 to refill.
+
+        On a hit, that is the first buffered interval overlapping the query.
+        On a miss -- the query falls in an unscored gap *between* two buffered
+        intervals -- it is the insertion point: the first interval that is not
+        entirely to the LEFT of the query.  Returning the left-hand neighbour
+        instead would make :meth:`_fetch_buffered`, which bounds only the right
+        side of what it yields, emit a record from before the query.  That is a
+        real score value at a position the track does not cover, and the wider
+        the fill window, the more often a query lands inside the buffer's span
+        rather than outside it.
+        """
 
         def _left_right_helper(
             q_start: int, q_stop: int,
@@ -267,11 +279,10 @@ class BigWigTable(GenomicPositionTable):
             return -1
 
         # do binary search on buffer, get idx
-        idx: int = len(self._buffer) // 2
         l_bound = 0
         r_bound = len(self._buffer) - 1
         while l_bound <= r_bound:
-            idx = (r_bound + l_bound) // 2
+            idx: int = (r_bound + l_bound) // 2
             line = self._buffer[idx]
             res = _left_right_helper(
                 pos_begin, pos_end, line[0], line[1])
@@ -289,7 +300,11 @@ class BigWigTable(GenomicPositionTable):
                     r_bound = idx - 1
                 else:
                     return idx
-        return idx
+        # No overlap: ``l_bound`` is the insertion point.  It is always a valid
+        # index here -- the query intersects the buffer's region, so the last
+        # buffered interval cannot be entirely to the query's left, and only an
+        # entirely-left interval advances ``l_bound`` past its index.
+        return l_bound
 
     def _fetch_buffered(
         self, chrom: str, pos_begin: int, pos_end: int,

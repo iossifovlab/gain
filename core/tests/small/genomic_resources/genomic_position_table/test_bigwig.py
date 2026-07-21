@@ -905,6 +905,75 @@ def test_sparse_region_fetch_crosses_an_unscored_gap_in_few_queries(
     assert len(recorder.calls) <= 10
 
 
+def test_buffered_region_fetch_crosses_an_unscored_gap_in_few_queries(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+) -> None:
+    # The same gap, crossed by the *buffered* strategy -- the one a sequential
+    # annotation run takes, since every query after the first lands within
+    # ``use_buffered_threshold`` of the last.  The buffer is refilled by its own
+    # walk, so it needs its own budget: filling across a ~1 Mb gap must take a
+    # handful of widening strides, not one fixed probe per 500 bp of it.
+    with _recorded_bigwig(
+        tmp_path, _sparse_bedgraph(), {"chr1": _SPARSE_LEN},
+    ) as (table, recorder):
+        # The first fetch of a fresh table takes the direct strategy; it is
+        # only here to bring ``_last_pos`` next to the second fetch's start.
+        primer = list(table.get_records_in_region("chr1", 1, 60))
+        calls_after_primer = len(recorder.calls)
+
+        buffered_fetch = mocker.spy(BigWigTable, "_fetch_buffered")
+        records = list(table.get_records_in_region("chr1", 1, _SPARSE_LEN))
+        buffered_calls = len(recorder.calls) - calls_after_primer
+
+    assert buffered_fetch.call_count == 1
+    assert len(primer) == 1
+    assert len(records) == 2
+    assert buffered_calls <= 10
+
+
+# A gapped fixture: three short scored runs with wide unscored gaps between
+# them, so that a buffer filled at one of them spans -- and reaches well past --
+# positions the track does not cover.
+def _gapped_bedgraph() -> str:
+    return _bedgraph([(300, 350), (3100, 3150), (6700, 6750)])
+
+
+def test_buffered_fetch_yields_nothing_at_a_position_inside_a_gap(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+) -> None:
+    # A buffer spans as far as its fill window reached, so a later query can
+    # land in an unscored gap *inside* the buffered range.  The buffer's binary
+    # search finds no record there and must say so -- it must not fall back to
+    # the nearest record on its left, which would emit a score at a position
+    # the track does not cover.  Positions inside a scored run are queried in
+    # the same sweep, so the answer is pinned in both directions.
+    positions = [1, 201, 320, 401, 601, 1001]
+
+    buffered_fetch = mocker.spy(BigWigTable, "_fetch_buffered")
+    with _recorded_bigwig(
+        tmp_path, _gapped_bedgraph(), {"chr1": _SPARSE_LEN},
+    ) as (table, recorder):
+        expected = {
+            pos: [
+                ("chr1", start + 1, stop, None, None,
+                 ("chr1", start + 1, stop, value))
+                for start, stop, value in (
+                    recorder.raw.intervals("chr1", pos - 1, pos) or [])
+            ]
+            for pos in positions
+        }
+        # Queried in ascending order and closer together than
+        # ``use_buffered_threshold``, so every query but the first is served
+        # from the buffer.
+        found = {
+            pos: list(table.get_records_in_region("chr1", pos, pos))
+            for pos in positions
+        }
+
+    assert buffered_fetch.call_count == len(positions) - 1
+    assert found == expected
+
+
 # A per-base fixture -- the shape of the canonical position scores (phyloP,
 # phastCons) and the one that makes the chunking load bearing: one interval per
 # base, so a single unchunked whole-chromosome call would materialise one
