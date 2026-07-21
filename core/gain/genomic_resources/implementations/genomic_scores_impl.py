@@ -33,7 +33,6 @@ from gain.genomic_resources.histogram import (
     NumberHistogramConfig,
     build_default_histogram_conf,
     build_empty_histogram,
-    plot_histogram,
 )
 from gain.genomic_resources.reference_genome import (
     ReferenceGenome,
@@ -44,8 +43,10 @@ from gain.genomic_resources.repository import (
     GenomicResourceRepo,
 )
 from gain.genomic_resources.resource_implementation import (
-    GenomicResourceImplementation,
     InfoImplementationMixin,
+)
+from gain.genomic_resources.score_implementation import (
+    ScoreImplementationBase,
 )
 from gain.genomic_resources.statistics.min_max import MinMaxValue
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph
@@ -58,10 +59,7 @@ from gain.utils.regions import (
 logger = logging.getLogger(__name__)
 
 
-class GenomicScoreImplementation(
-    GenomicResourceImplementation,
-    InfoImplementationMixin,
-):
+class GenomicScoreImplementation(ScoreImplementationBase):
     # pylint: disable=too-many-public-methods
     """Genomic scores base class."""
 
@@ -494,24 +492,8 @@ class GenomicScoreImplementation(
         resource: GenomicResource, merged_histograms: dict[str, Histogram],
     ) -> dict[str, Histogram]:
         impl = build_score_implementation_from_resource(resource)
-        proto = resource.proto
-        for score_id, score_histogram in merged_histograms.items():
-            with proto.open_raw_file(
-                resource,
-                impl.score.get_histogram_filename(score_id),
-                mode="wt",
-            ) as outfile:
-                outfile.write(score_histogram.serialize())
-
-            if not isinstance(score_histogram, NullHistogram):
-                plot_histogram(
-                    resource,
-                    impl.score.get_histogram_image_filename(score_id),
-                    score_histogram,
-                    score_id,
-                    impl.score.score_definitions[score_id].small_values_desc,
-                    impl.score.score_definitions[score_id].large_values_desc,
-                )
+        GenomicScoreImplementation._save_and_plot_histograms(
+            resource, impl.score, merged_histograms)
         del impl
         return merged_histograms
 
@@ -524,21 +506,6 @@ class GenomicScoreImplementation(
             resource, *calculated_histograms)
         return GenomicScoreImplementation._save_histograms(
             resource, merged_histograms)
-
-    def collect_index_info(
-        self,
-    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-        header, row = super().collect_index_info()
-        score_ids = " ".join(self.score.score_definitions.keys())
-        score_descriptions = " ".join(
-            sd.desc
-            for sd in self.score.score_definitions.values()
-            if sd.desc
-        )
-        return (
-            (*header, "score_ids", "score_descriptions"),
-            (*row, score_ids, score_descriptions),
-        )
 
     def calc_info_hash(self) -> bytes:
         """Compute and return the info hash."""

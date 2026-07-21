@@ -16,9 +16,9 @@ import pathlib
 
 import pytest
 from gain.genomic_resources.genomic_scores import (
+    GenomicScoreDef,
     PositionScore,
     _normalize_na_values,
-    _ScoreDef,
 )
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
@@ -237,7 +237,7 @@ def _serialized(na_values: object) -> str:
 @pytest.mark.parametrize("value_type", ["float", "int"])
 def test_default_na_values_is_a_fixed_point(value_type: str) -> None:
     # gain #268 (idempotency): the VCF scores-block merge re-normalizes an
-    # already-normalized set (``_ScoreDef.__post_init__`` runs
+    # already-normalized set (``GenomicScoreDef.__post_init__`` runs
     # ``_normalize_na_values`` on ``config_scoredef.na_values``, which is
     # itself an already-normalized set).  Re-normalizing the default float/int
     # set must be a FIXED POINT -- pre-fix the second pass parsed the "nan"
@@ -262,13 +262,13 @@ def test_scalar_na_value_is_a_fixed_point() -> None:
 
 def test_vcf_style_merge_reconstruction_keeps_default_na_values() -> None:
     # gain #268 end-to-end at the merge site: ``_parse_vcf_scoredefs`` builds a
-    # fresh ``_ScoreDef(na_values=config_scoredef.na_values or ...)`` from an
-    # ALREADY-normalized set, and ``__post_init__`` re-runs normalization on
+    # fresh ``GenomicScoreDef(na_values=config_scoredef.na_values or ...)``
+    # from an ALREADY-normalized set, and ``__post_init__`` re-runs it on
     # it.  A VCF float score that configures NO na_values must end up with the
     # SAME na_values set (and hence the same statistics-hash serialization) as
     # the non-VCF equivalent -- no stray parsed ``nan``.
-    def _score_def(na_values: object) -> _ScoreDef:
-        return _ScoreDef(
+    def _score_def(na_values: object) -> GenomicScoreDef:
+        return GenomicScoreDef(
             score_id="s", desc="", value_type="float",
             pos_aggregator=None, allele_aggregator=None,
             small_values_desc=None, large_values_desc=None,

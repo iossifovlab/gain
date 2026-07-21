@@ -18,26 +18,24 @@ from gain.genomic_resources.histogram import (
     NullHistogramConfig,
     NumberHistogram,
     NumberHistogramConfig,
-    plot_histogram,
 )
 from gain.genomic_resources.resource_implementation import (
-    GenomicResourceImplementation,
     InfoImplementationMixin,
+)
+from gain.genomic_resources.score_implementation import (
+    ScoreImplementationBase,
 )
 from gain.task_graph.graph import TaskDesc, TaskGraph
 
 logger = logging.getLogger(__name__)
 
 
-class GeneScoreImplementation(
-    GenomicResourceImplementation,
-    InfoImplementationMixin,
-):
+class GeneScoreImplementation(ScoreImplementationBase):
     """Class used to represent gene score resource implementations."""
 
     def __init__(self, resource: GenomicResource) -> None:
         super().__init__(resource)
-        self.gene_score: GeneScore = build_gene_score_from_resource(
+        self.score: GeneScore = build_gene_score_from_resource(
             resource,
         )
 
@@ -46,7 +44,7 @@ class GeneScoreImplementation(
 
     def _get_template_data(self) -> dict[str, Any]:
         data = {}
-        data["gene_score"] = self.gene_score
+        data["gene_score"] = self.score
         return data
 
     def get_info(self, **kwargs: Any) -> str:  # noqa: ARG002
@@ -100,24 +98,10 @@ class GeneScoreImplementation(
                 )
                 continue
 
-            with resource.proto.open_raw_file(
-                resource,
-                gene_score.get_histogram_filename(score_id),
-                mode="wt",
-            ) as outfile:
-                outfile.write(histogram.serialize())
-            score_def = gene_score.score_definitions[score_id]
-            small_values_desc = score_def.small_values_desc
-            large_values_desc = score_def.large_values_desc
-            plot_histogram(
-                resource,
-                gene_score.get_histogram_image_filename(score_id),
-                histogram,
-                score_id,
-                small_values_desc,
-                large_values_desc,
-            )
             histograms[score_id] = histogram
+
+        GeneScoreImplementation._save_and_plot_histograms(
+            resource, gene_score, histograms)
         return histograms
 
     @staticmethod
@@ -148,21 +132,6 @@ class GeneScoreImplementation(
             raise TypeError(f"Unknown histogram config: {hist_conf}")
         return histogram
 
-    def collect_index_info(
-        self,
-    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-        header, row = super().collect_index_info()
-        score_ids = " ".join(self.gene_score.score_definitions.keys())
-        score_descriptions = " ".join(
-            sd.description
-            for sd in self.gene_score.score_definitions.values()
-            if sd.description
-        )
-        return (
-            (*header, "score_ids", "score_descriptions"),
-            (*row, score_ids, score_descriptions),
-        )
-
     def calc_info_hash(self) -> bytes:
         return b"placeholder"
 
@@ -177,7 +146,7 @@ class GeneScoreImplementation(
                     "hist_conf": score_def.hist_conf.to_dict()
                     if score_def.hist_conf else "null",
                 }
-                for score_def in self.gene_score.score_definitions.values()
+                for score_def in self.score.score_definitions.values()
             ],
             "score_file": manifest[score_filename].md5,
         }, sort_keys=True, indent=2).encode()

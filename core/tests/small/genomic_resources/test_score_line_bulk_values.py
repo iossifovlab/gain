@@ -51,10 +51,10 @@ from typing import Any
 import pytest
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
+    GenomicScoreDef,
     PositionScore,
     RecordScoreLine,
     VCFScoreLine,
-    _ScoreDef,
 )
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
@@ -75,7 +75,7 @@ _TABULAR_BACKENDS = [
 ]
 
 
-def _defs(score: PositionScore | AlleleScore) -> list[_ScoreDef]:
+def _defs(score: PositionScore | AlleleScore) -> list[GenomicScoreDef]:
     return [
         score.score_definitions[score_id]
         for score_id in score.get_all_scores()
