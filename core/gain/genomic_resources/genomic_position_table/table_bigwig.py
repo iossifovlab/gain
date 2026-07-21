@@ -26,6 +26,75 @@ BigWigInterval = tuple[int, int, float]
 # in from the query, so it has a signature of its own (as the VCF parser does).
 BigWigParser = Callable[[str, BigWigInterval], Record]
 
+# --- adaptive chunking -----------------------------------------------------
+#
+# A region fetch is served in chunks, and the chunking is NOT optional: it is
+# the memory guard.  ``pyBigWig.intervals()`` materialises its whole range as a
+# Python list (~160 bytes per interval), and the resource-statistics and
+# histogram scans ask for a region with no bounds, which expands to a whole
+# chromosome -- a single unchunked call on a per-base score (phyloP,
+# phastCons) would be ~40 GB on chr1.
+#
+# What IS wrong is sizing the chunk in base pairs.  Base pairs say nothing
+# about how many records a call will return: density varies by orders of
+# magnitude between resources, so any fixed window is either fatal on a dense
+# track or absurdly chatty on a sparse one.  The old 50 bp default was the
+# chatty end -- one range query per 50 bp, ~20,000 of them for a 1 Mb region,
+# and 20,000 *empty* ones to cross a 1 Mb gap in a sparse track.
+#
+# So the budget is a RECORD COUNT, and the base-pair window is the variable
+# retuned toward it: issue a call, see how many records came back, scale the
+# next window by ``target / observed``.  Density-independent by construction --
+# dense ranges converge to a small window (bounding memory), sparse ranges to a
+# large one (collapsing the empty-gap walk).
+
+# Records per ``intervals()`` call the window is retuned toward.  At ~160 bytes
+# per interval this is ~0.8 MB of live intervals per call, and it is what both
+# fetch strategies default to.
+DEFAULT_FETCH_TARGET_RECORDS = 5_000
+
+# Base-pair window the retuning starts from, before any density is observed.
+# On a per-base track the first call overshoots to this many records (~1.6 MB)
+# and the window then converges; on a sparse one it grows away from here.
+INITIAL_FETCH_WINDOW = 10_000
+
+# Hard clamps on the window.  The maximum is the real memory bound: a window
+# can be at most this many base pairs, so even a per-base track hit right after
+# a sparse stretch materialises at most ~1M intervals (~160 MB) in one call
+# before the retune reacts.  The minimum keeps a pathologically dense track
+# from degenerating into per-base queries.
+MIN_FETCH_WINDOW = 50
+MAX_FETCH_WINDOW = 1_000_000
+
+# Per-step clamps on the retune, so a single unrepresentative call cannot slam
+# the window to a clamp and back.  An empty call carries no density signal at
+# all, so it simply takes the maximum growth.
+MAX_WINDOW_GROWTH = 8.0
+MAX_WINDOW_SHRINK = 0.125
+
+
+class AdaptiveFetchWindow:
+    """A base-pair window retuned toward a target records-per-call budget.
+
+    Owned by a :class:`BigWigTable` and kept across region fetches on purpose:
+    density is a property of the *resource*, so what one fetch learns about a
+    track is exactly what the next fetch should start from.
+    """
+
+    def __init__(self, target_records: int) -> None:
+        self.target = max(1, int(target_records))
+        self.window = INITIAL_FETCH_WINDOW
+
+    def retune(self, records_fetched: int) -> None:
+        """Rescale the window from the record count the last call returned."""
+        if records_fetched <= 0:
+            scale = MAX_WINDOW_GROWTH
+        else:
+            scale = self.target / records_fetched
+        scale = min(max(scale, MAX_WINDOW_SHRINK), MAX_WINDOW_GROWTH)
+        self.window = int(min(
+            max(self.window * scale, MIN_FETCH_WINDOW), MAX_FETCH_WINDOW))
+
 
 def build_bigwig_parser() -> BigWigParser:
     """Build a (chrom, interval) -> record parser for the bigWig backend.
@@ -83,10 +152,19 @@ class BigWigTable(GenomicPositionTable):
         self._buffer: list[tuple[int, int, float]] = []
         self._buffer_region: Region = Region("?", -1, -1)
 
-        self.direct_fetch_size = self.definition.get("direct_fetch_size", 50)
-        self.buffer_fetch_size = self.definition.get("buffer_fetch_size", 500)
+        # Both fetch sizes are budgets in RECORDS per ``intervals()`` call --
+        # not in base pairs, which is what they used to mean and what made a
+        # region fetch cost one range query per 50 bp (see the module notes on
+        # adaptive chunking).  Both are accepted by the table schema.
+        self.direct_fetch_size = self.definition.get(
+            "direct_fetch_size", DEFAULT_FETCH_TARGET_RECORDS)
+        self.buffer_fetch_size = self.definition.get(
+            "buffer_fetch_size", DEFAULT_FETCH_TARGET_RECORDS)
         self.use_buffered_threshold = \
             self.definition.get("use_buffered_threshold", 500)
+
+        self._direct_window = AdaptiveFetchWindow(self.direct_fetch_size)
+        self._buffer_window = AdaptiveFetchWindow(self.buffer_fetch_size)
 
         # this forces the initial fetch to be made directly
         self._last_pos = -(self.use_buffered_threshold + 1)
@@ -112,30 +190,60 @@ class BigWigTable(GenomicPositionTable):
         self._bw_file = None
         self.parser = None
 
+    def _fetch_chunk(
+        self, window: AdaptiveFetchWindow,
+        chrom: str, pos: int, scan_stop: int, hard_stop: int,
+    ) -> tuple[list[BigWigInterval], int]:
+        """Return the first non-empty chunk of intervals at or after ``pos``.
+
+        Issues ``intervals()`` calls of ``window`` base pairs, retuning the
+        window from each call's record count, until one comes back non-empty or
+        ``pos`` reaches ``scan_stop``.  Windows never extend past ``hard_stop``.
+
+        Returns the chunk together with the position to resume from.  That
+        resume position is ``max(window_end, last_interval_end)``: an interval
+        straddling the window end is returned whole by ``intervals()``, so
+        resuming at its end is what keeps it from being yielded twice, while
+        resuming at the window end (rather than at an earlier last-interval
+        end) skips re-scanning a tail already known to be empty.
+
+        An empty return means the range is exhausted -- ``intervals()`` returns
+        every interval overlapping its range, so a call that comes back empty
+        proves the whole window it covered holds no records.  That is what
+        makes the adaptive stride safe over gaps: one growing query per gap
+        instead of one fixed-size query per 50 bp of it.
+        """
+        assert self._bw_file is not None
+        while pos < scan_stop:
+            end = min(pos + window.window, hard_stop)
+            intervals = self._bw_file.intervals(chrom, pos, end)
+            window.retune(len(intervals) if intervals else 0)
+            if intervals:
+                return list(intervals), max(end, intervals[-1][1])
+            if end <= pos:
+                break
+            pos = end
+        return [], pos
+
     def _fill(self, chrom: str, start: int, stop: int) -> None:
         """
         Attempts to fill the buffer with records for the given range.
 
-        Will fetch in ranges of length ``buffer_fetch_size`` starting from
-        ``start`` until either results are found or ``stop`` is reached.
+        Fetches adaptively-sized ranges starting from ``start`` until either
+        results are found or ``stop`` is reached.  As before, a range may
+        reach past ``stop`` (up to the end of the contig), so the buffer can
+        hold records beyond the requested end -- it is a buffer, and
+        :meth:`_fetch_buffered` bounds what it yields out of it.
         """
         assert self._bw_file is not None
         self._buffer = []
         self._buffer_region = Region("?", -1, -1)
 
         chromlen = self.chroms[chrom]
-        range_start = start
-        range_stop = min(chromlen, range_start + self.buffer_fetch_size)
-        stop = min(stop, chromlen)
+        res, _ = self._fetch_chunk(
+            self._buffer_window, chrom, start, min(stop, chromlen), chromlen)
 
-        res = self._bw_file.intervals(chrom, range_start, range_stop)
-        while not res and range_stop < stop:
-            range_start = range_stop
-            range_stop = range_start + self.buffer_fetch_size
-            range_stop = min(chromlen, range_stop)
-            res = self._bw_file.intervals(chrom, range_start, range_stop)
-
-        self._buffer = res or []
+        self._buffer = res
         if res:
             self._buffer_region = Region(
                 chrom,
@@ -220,18 +328,11 @@ class BigWigTable(GenomicPositionTable):
         pos_end = min(pos_end, chrom_len)
 
         start = pos_begin
-        stop = min(start + self.direct_fetch_size, pos_end)
         while start < pos_end:
-            intervals = self._bw_file.intervals(chrom, start, stop)
-            while intervals is None:
-                start = stop
-                stop = min(start + self.direct_fetch_size, pos_end)
-                if start >= pos_end:
-                    return
-                intervals = self._bw_file.intervals(chrom, start, stop)
-            start = intervals[-1][1]
-            stop = min(start + self.direct_fetch_size, pos_end)
-
+            intervals, start = self._fetch_chunk(
+                self._direct_window, chrom, start, pos_end, pos_end)
+            if not intervals:
+                return
             for interval in intervals:
                 yield (interval[0] + 1, interval[1], interval[2])
 

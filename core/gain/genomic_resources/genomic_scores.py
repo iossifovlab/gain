@@ -1051,6 +1051,15 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                     "add_prefix": {"type": "string"},
                     "del_prefix": {"type": "string", "excludes": "add_prefix"},
                 }},
+                # bigWig fetch tuning.  The two ``*_fetch_size`` keys are
+                # budgets in RECORDS per range query -- the bigWig backend
+                # adapts its base-pair window toward them (see
+                # ``table_bigwig``).  The backend has always read all three off
+                # the table definition; before #259 the schema rejected them as
+                # unknown fields, so configuring one failed validation outright.
+                "direct_fetch_size": {"type": "integer", "min": 1},
+                "buffer_fetch_size": {"type": "integer", "min": 1},
+                "use_buffered_threshold": {"type": "integer", "min": 0},
             }},
             "scores": scores_schema,
             "default_annotation": {
