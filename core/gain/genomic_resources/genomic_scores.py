@@ -1051,6 +1051,15 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                     "add_prefix": {"type": "string"},
                     "del_prefix": {"type": "string", "excludes": "add_prefix"},
                 }},
+                # bigWig fetch tuning.  The two ``*_fetch_size`` keys are
+                # budgets in RECORDS per range query -- the bigWig backend
+                # adapts its base-pair window toward them (see
+                # ``table_bigwig``).  The backend has always read all three off
+                # the table definition; before #259 the schema rejected them as
+                # unknown fields, so configuring one failed validation outright.
+                "direct_fetch_size": {"type": "integer", "min": 1},
+                "buffer_fetch_size": {"type": "integer", "min": 1},
+                "use_buffered_threshold": {"type": "integer", "min": 0},
             }},
             "scores": scores_schema,
             "default_annotation": {
@@ -1575,6 +1584,31 @@ class PositionScore(GenomicScore):
         """Return position score values in a region."""
         yield from self.fetch_region_values(chrom, pos_begin, pos_end, scores)
 
+    def fetch_region_weighted_values(
+        self,
+        chrom: str | None = None,
+        pos_begin: int | None = None,
+        pos_end: int | None = None,
+        scores: list[str] | None = None,
+    ) -> Generator[
+            tuple[list[ScoreValue] | None, int], None, None]:
+        """Yield ``(values, weight)`` for every record touching the region.
+
+        The weight of a position-score record is the number of base pairs
+        of the queried region it covers -- how many times its value counts
+        when the region is aggregated.  It is derived here, from the
+        clipped bounds this layer already computes, so that a caller
+        aggregating a region never re-clips a record nor materialises one
+        copy of a value per base pair.
+        """
+        for left, right, values in self.fetch_region_values(
+            chrom, pos_begin, pos_end, scores,
+        ):
+            weight = right - left + 1
+            if weight <= 0:
+                continue
+            yield (values, weight)
+
     def get_region_scores(
         self,
         chrom: str,
@@ -1695,8 +1729,9 @@ class PositionScore(GenomicScore):
                 right = (
                     min(pos_end, line_end)
                 )
-                for _ in range(left, right + 1):
-                    sagg.position_aggregator.add(val)
+                # The record counts once per base pair of the region it
+                # covers -- weighted, not replicated.
+                sagg.position_aggregator.add(val, right - left + 1)
 
         return [squery.position_aggregator for squery in score_aggs]
 

@@ -1,6 +1,9 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613,too-many-lines
+import contextlib
 import pathlib
 import textwrap
+from collections.abc import Iterator
+from typing import Any
 
 import pytest
 import pytest_mock
@@ -14,6 +17,7 @@ from gain.genomic_resources.genomic_position_table.record import (
     REF,
 )
 from gain.genomic_resources.genomic_position_table.table_bigwig import (
+    DEFAULT_FETCH_TARGET_RECORDS,
     BigWigTable,
     build_bigwig_parser,
 )
@@ -776,3 +780,293 @@ def test_mini_grr_example(tmp_path: pathlib.Path) -> None:
         assert vs[0][CHROM] == "chr1"
         assert vs[0][POS_BEGIN] == 6
         assert vs[0][POS_END] == 10
+
+
+class _IntervalCallRecorder:
+    """An open bigWig handle that records every ``intervals()`` call made.
+
+    The chunking strategy is not observable through the records a fetch
+    yields -- by design, since the records must stay identical -- so it is
+    observed where it actually shows up: in the range queries the backend
+    issues against the file.  Each entry is ``(start, stop, n_intervals)``.
+    Everything other than ``intervals`` delegates to the real handle.
+    """
+
+    def __init__(self, bw_file: Any) -> None:
+        self._bw_file = bw_file
+        self.calls: list[tuple[int, int, int]] = []
+
+    def intervals(self, chrom: str, start: int, stop: int) -> Any:
+        res = self._bw_file.intervals(chrom, start, stop)
+        self.calls.append((start, stop, len(res) if res else 0))
+        return res
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._bw_file, name)
+
+    @property
+    def raw(self) -> Any:
+        """The unwrapped handle, for computing an unchunked ground truth."""
+        return self._bw_file
+
+    @property
+    def widest_call(self) -> int:
+        """The most intervals any single ``intervals()`` call materialised."""
+        return max((n for _, _, n in self.calls), default=0)
+
+
+@contextlib.contextmanager
+def _recorded_bigwig(
+    tmp_path: pathlib.Path,
+    data: str,
+    chrom_lens: dict[str, int],
+    **definition: Any,
+) -> Iterator[tuple[BigWigTable, _IntervalCallRecorder]]:
+    """Open a bigWig table over ``data`` with its range queries recorded."""
+    builder = (
+        a_bigwig_score()
+        .with_score("bw", "float")
+        .with_data(data)
+        .with_chrom_lens(chrom_lens)
+    )
+    repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
+    res = repo.get_resource("bw")
+    table = BigWigTable(res, {**res.get_config()["table"], **definition}).open()
+    recorder = _IntervalCallRecorder(table._bw_file)
+    table._bw_file = recorder
+    try:
+        yield table, recorder
+    finally:
+        table.close()
+
+
+def _bedgraph(
+    intervals: list[tuple[int, int]], chrom: str = "chr1",
+) -> str:
+    """Render ``(start, stop)`` pairs as bedGraph rows with distinct values."""
+    return "\n".join(
+        f"{chrom}  {start}  {stop}  {i % 97 / 100.0 + 0.01:.2f}"
+        for i, (start, stop) in enumerate(intervals)
+    )
+
+
+# A dense fixture: back-to-back 50 bp runs over 100 kb.  Under the old fixed
+# 50 bp chunking this is exactly one range query per interval.
+_DENSE_WIDTH = 50
+_DENSE_COUNT = 2000
+_DENSE_LEN = _DENSE_WIDTH * _DENSE_COUNT
+
+
+def _dense_bedgraph() -> str:
+    return _bedgraph([
+        (i * _DENSE_WIDTH, (i + 1) * _DENSE_WIDTH)
+        for i in range(_DENSE_COUNT)
+    ])
+
+
+def test_dense_region_fetch_scales_with_records_not_region_length(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A dense 100 kb region carrying 2000 records must be served in a number
+    # of range queries proportional to its 2000 records, not to its length in
+    # 50 bp chunks (which is also 2000 -- the two are told apart by the
+    # bound: a records-proportional fetch needs an order of magnitude fewer).
+    with _recorded_bigwig(
+        tmp_path, _dense_bedgraph(), {"chr1": _DENSE_LEN},
+    ) as (table, recorder):
+        records = list(table.get_records_in_region("chr1", 1, _DENSE_LEN))
+
+    assert len(records) == _DENSE_COUNT
+    assert len(recorder.calls) < _DENSE_COUNT // 20
+
+
+# A sparse fixture: two scored 50 bp runs separated by a ~1 Mb unscored gap.
+# Under the old fixed chunking, crossing that gap cost one *empty* range query
+# per 50 bp of it.
+_SPARSE_LEN = 1_000_000
+
+
+def _sparse_bedgraph() -> str:
+    return _bedgraph([(0, 50), (_SPARSE_LEN - 50, _SPARSE_LEN)])
+
+
+def test_sparse_region_fetch_crosses_an_unscored_gap_in_few_queries(
+    tmp_path: pathlib.Path,
+) -> None:
+    # An ``intervals()`` call that comes back empty proves its whole window
+    # holds no records, so the window may grow -- a ~1 Mb gap is crossed in a
+    # handful of widening strides rather than 20,000 fixed 50 bp probes.
+    with _recorded_bigwig(
+        tmp_path, _sparse_bedgraph(), {"chr1": _SPARSE_LEN},
+    ) as (table, recorder):
+        records = list(table.get_records_in_region("chr1", 1, _SPARSE_LEN))
+
+    assert len(records) == 2
+    assert len(recorder.calls) <= 10
+
+
+def test_buffered_region_fetch_crosses_an_unscored_gap_in_few_queries(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+) -> None:
+    # The same gap, crossed by the *buffered* strategy -- the one a sequential
+    # annotation run takes, since every query after the first lands within
+    # ``use_buffered_threshold`` of the last.  The buffer is refilled by its own
+    # walk, so it needs its own budget: filling across a ~1 Mb gap must take a
+    # handful of widening strides, not one fixed probe per 500 bp of it.
+    with _recorded_bigwig(
+        tmp_path, _sparse_bedgraph(), {"chr1": _SPARSE_LEN},
+    ) as (table, recorder):
+        # The first fetch of a fresh table takes the direct strategy; it is
+        # only here to bring ``_last_pos`` next to the second fetch's start.
+        primer = list(table.get_records_in_region("chr1", 1, 60))
+        calls_after_primer = len(recorder.calls)
+
+        buffered_fetch = mocker.spy(BigWigTable, "_fetch_buffered")
+        records = list(table.get_records_in_region("chr1", 1, _SPARSE_LEN))
+        buffered_calls = len(recorder.calls) - calls_after_primer
+
+    assert buffered_fetch.call_count == 1
+    assert len(primer) == 1
+    assert len(records) == 2
+    assert buffered_calls <= 10
+
+
+# A gapped fixture: three short scored runs with wide unscored gaps between
+# them, so that a buffer filled at one of them spans -- and reaches well past --
+# positions the track does not cover.
+def _gapped_bedgraph() -> str:
+    return _bedgraph([(300, 350), (3100, 3150), (6700, 6750)])
+
+
+def test_buffered_fetch_yields_nothing_at_a_position_inside_a_gap(
+    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+) -> None:
+    # A buffer spans as far as its fill window reached, so a later query can
+    # land in an unscored gap *inside* the buffered range.  The buffer's binary
+    # search finds no record there and must say so -- it must not fall back to
+    # the nearest record on its left, which would emit a score at a position
+    # the track does not cover.  Positions inside a scored run are queried in
+    # the same sweep, so the answer is pinned in both directions.
+    positions = [1, 201, 320, 401, 601, 1001]
+
+    buffered_fetch = mocker.spy(BigWigTable, "_fetch_buffered")
+    with _recorded_bigwig(
+        tmp_path, _gapped_bedgraph(), {"chr1": _SPARSE_LEN},
+    ) as (table, recorder):
+        expected = {
+            pos: [
+                ("chr1", start + 1, stop, None, None,
+                 ("chr1", start + 1, stop, value))
+                for start, stop, value in (
+                    recorder.raw.intervals("chr1", pos - 1, pos) or [])
+            ]
+            for pos in positions
+        }
+        # Queried in ascending order and closer together than
+        # ``use_buffered_threshold``, so every query but the first is served
+        # from the buffer.
+        found = {
+            pos: list(table.get_records_in_region("chr1", pos, pos))
+            for pos in positions
+        }
+
+    assert buffered_fetch.call_count == len(positions) - 1
+    assert found == expected
+
+
+# A per-base fixture -- the shape of the canonical position scores (phyloP,
+# phastCons) and the one that makes the chunking load bearing: one interval per
+# base, so a single unchunked whole-chromosome call would materialise one
+# Python interval per base of the contig.
+_PER_BASE_LEN = 100_000
+
+# ``pyBigWig.intervals()`` materialises its range as a list of Python tuples,
+# measured at roughly this many bytes per interval.
+_BYTES_PER_INTERVAL = 160
+
+
+def _per_base_bedgraph() -> str:
+    return _bedgraph([(i, i + 1) for i in range(_PER_BASE_LEN)])
+
+
+def test_whole_chromosome_scan_of_per_base_bigwig_stays_memory_bounded(
+    tmp_path: pathlib.Path,
+) -> None:
+    # ``get_all_records`` delegates to an unbounded region fetch, which expands
+    # to the whole contig -- the path the resource-statistics and histogram
+    # scans take.  On a per-base track a single call over that range would be
+    # one interval per base (~40 GB on a real chr1), so what is asserted here
+    # is the *widest single call*: no ``intervals()`` call may materialise more
+    # than a few times the records-per-call budget, however long the contig is.
+    with _recorded_bigwig(
+        tmp_path, _per_base_bedgraph(), {"chr1": _PER_BASE_LEN},
+    ) as (table, recorder):
+        count = sum(1 for _ in table.get_all_records())
+
+    assert count == _PER_BASE_LEN
+    assert recorder.widest_call <= 4 * DEFAULT_FETCH_TARGET_RECORDS
+    # Restated as the bound that actually matters: live intervals per call.
+    assert recorder.widest_call * _BYTES_PER_INTERVAL < 8 * 1024 * 1024
+
+
+@pytest.mark.parametrize("shape", ["dense", "sparse"])
+@pytest.mark.parametrize("budget", [1, 7, 500, 5_000, 10_000_000])
+def test_chunking_is_invisible_in_the_records_yielded(
+    tmp_path: pathlib.Path, shape: str, budget: int,
+) -> None:
+    # The chunking exists only to bound memory, so it must not be observable in
+    # the result: whatever the records-per-call budget, and whichever fetch
+    # strategy runs, a region fetch must yield exactly the records of a single
+    # unchunked ``intervals()`` call over the same range -- same values, same
+    # order, same closed one-based coordinates.
+    data, chrom_len = (
+        (_dense_bedgraph(), _DENSE_LEN) if shape == "dense"
+        else (_sparse_bedgraph(), _SPARSE_LEN)
+    )
+    with _recorded_bigwig(
+        tmp_path, data, {"chr1": chrom_len},
+        direct_fetch_size=budget, buffer_fetch_size=budget,
+    ) as (table, recorder):
+        expected = [
+            ("chr1", start + 1, stop, None, None,
+             ("chr1", start + 1, stop, value))
+            for start, stop, value in recorder.raw.intervals(
+                "chr1", 0, chrom_len)
+        ]
+        # The first fetch of a fresh table takes the direct strategy; a second
+        # fetch of the same region is within ``use_buffered_threshold`` of the
+        # first, so it takes the buffered one.  Both are checked.
+        direct = list(table.get_records_in_region("chr1", 1, chrom_len))
+        buffered = list(table.get_records_in_region("chr1", 1, chrom_len))
+
+    assert direct == expected
+    assert buffered == expected
+
+
+def test_table_schema_accepts_the_fetch_budget_keys(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The fetch budgets are read off the table definition, so they must be
+    # spellable in a ``genomic_resource.yaml``: a knob the code reads and the
+    # schema rejects is not a knob.  Configuring all three must validate, and
+    # the configured values must reach the table.
+    builder = (
+        a_bigwig_score()
+        .with_score("score_one", "float")
+        .with_data("chr1  0  10  0.11")
+        .with_chrom_lens({"chr1": 1000})
+        .with_fetch_budgets(
+            direct_fetch_size=1000,
+            buffer_fetch_size=2000,
+            use_buffered_threshold=100,
+        )
+    )
+    grr = a_grr().with_resource("test_score", builder).build_repo(tmp_path)
+
+    score = PositionScore(grr.get_resource("test_score"))
+
+    table = score.table
+    assert isinstance(table, BigWigTable)
+    assert table.direct_fetch_size == 1000
+    assert table.buffer_fetch_size == 2000
+    assert table.use_buffered_threshold == 100

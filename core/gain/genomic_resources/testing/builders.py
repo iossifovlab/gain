@@ -648,6 +648,25 @@ class AlleleScoreBuilder(_TableScoreBuilder):
     DEFAULT_DATA: ClassVar[str] = _NP_ALLELE_DEFAULT_DATA
 
 
+@dataclasses.dataclass(frozen=True)
+class CnvCollectionBuilder(_TableScoreBuilder):
+    """Immutable builder for a single ``cnv_collection`` resource.
+
+    Shares the tabular-score machinery with the position/np/allele
+    builders, differing only in the type value.  A CNV is a region rather
+    than a point, so the default data carries the optional ``pos_end``
+    column.  Reads back through ``CnvCollection``, which weights every
+    record 1 however long it is.
+    """
+
+    SCORE_TYPE: ClassVar[str] = "cnv_collection"
+    DEFAULT_DATA: ClassVar[str] = """
+        chrom  pos_begin  pos_end  score
+        1      10         19       0.1
+        1      20         200      0.2
+    """
+
+
 _BIGWIG_FILENAME = "data.bw"
 
 # A bedGraph row is ``chrom start end value``, so the score column is
@@ -696,6 +715,30 @@ class BigWigScoreBuilder:
     chrom_lens: dict[str, int] | None = None
     histogram: dict[str, Any] | None = None
     na_values: str | list[str] | None = None
+    fetch_budgets: dict[str, int] | None = None
+
+    def with_fetch_budgets(
+        self, *,
+        direct_fetch_size: int | None = None,
+        buffer_fetch_size: int | None = None,
+        use_buffered_threshold: int | None = None,
+    ) -> Self:
+        """Emit the bigWig fetch-tuning keys in the ``table:`` config.
+
+        The fetch sizes are budgets in *records per range query*, not base
+        pairs; ``use_buffered_threshold`` is the region width above which
+        the direct strategy gives way to the buffered one.  Only the keys
+        passed are emitted, so a test can pin one without implying the
+        others.
+        """
+        budgets = {
+            key: value for key, value in (
+                ("direct_fetch_size", direct_fetch_size),
+                ("buffer_fetch_size", buffer_fetch_size),
+                ("use_buffered_threshold", use_buffered_threshold),
+            ) if value is not None
+        }
+        return dataclasses.replace(self, fetch_budgets=budgets)
 
     def with_score(self, score_id: str, value_type: str = "float") -> Self:
         """Name the single score this bigWig exposes."""
@@ -774,10 +817,15 @@ class BigWigScoreBuilder:
                     f"declared length; call with_chrom_lens for it")
 
     def _render_config(self) -> str:
+        budget_lines = "".join(
+            f"    {key}: {value}\n"
+            for key, value in (self.fetch_budgets or {}).items()
+        )
         config = (
             "type: position_score\n"
             "table:\n"
             f"    filename: {_BIGWIG_FILENAME}\n"
+            f"{budget_lines}"
             "scores:\n"
             f"- id: {self.score_id}\n"
             f"  type: {self.value_type}\n"
@@ -1397,6 +1445,11 @@ def a_np_score() -> NPScoreBuilder:
 def an_allele_score() -> AlleleScoreBuilder:
     """Return an immutable allele-score builder."""
     return AlleleScoreBuilder()
+
+
+def a_cnv_collection() -> CnvCollectionBuilder:
+    """Return an immutable cnv-collection builder."""
+    return CnvCollectionBuilder()
 
 
 def a_bigwig_score() -> BigWigScoreBuilder:

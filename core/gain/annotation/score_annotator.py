@@ -26,7 +26,10 @@ from gain.annotation.annotation_pipeline import (
     AttributeSpec,
 )
 from gain.annotation.annotator_base import AnnotatorBase
-from gain.genomic_resources.aggregators import AggregatorSource
+from gain.genomic_resources.aggregators import (
+    AggregatorSource,
+    WeightedValues,
+)
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     GenomicScore,
@@ -295,18 +298,24 @@ phastCons, phyloP, FitCons2, etc.
     def _fetch_raw_region_scores(
         self, chrom: str, pos_begin: int, pos_end: int,
         sources: list[str],
-    ) -> dict[str, list[Any]]:
-        raw: dict[str, list[Any]] = {source: [] for source in sources}
-        fetch = self.position_score.fetch_region_values(
+    ) -> dict[str, WeightedValues]:
+        """Collect the region's records as weighted values, one per record.
+
+        The weight of a record -- how many base pairs of the region it
+        covers -- comes from the score layer, which has already clipped
+        the record to the query window.  Nothing here is materialised per
+        base pair.
+        """
+        raw: dict[str, WeightedValues] = {
+            source: WeightedValues() for source in sources}
+        fetch = self.position_score.fetch_region_weighted_values(
             chrom, pos_begin, pos_end, sources,
         )
-        for row_left, row_right, values in fetch:
+        for values, weight in fetch:
             if values is None:
                 continue
-            n = max(pos_begin, row_left), min(pos_end, row_right)
-            n_positions = n[1] - n[0] + 1
             for i, source in enumerate(sources):
-                raw[source].extend([values[i]] * n_positions)
+                raw[source].add(values[i], weight)
         return raw
 
     def _do_annotate(
