@@ -150,6 +150,79 @@ def test_line_buffer_records_are_not_mutated_by_the_buffer() -> None:
         fetched[POS_BEGIN] = 42  # type: ignore[index]
 
 
+def test_prune_evicts_the_dead_records_a_wide_one_spans() -> None:
+    # gain#287.  A record wide enough to span the whole scan stays live for all
+    # of it, and pruning that stopped at the first survivor stopped on it --
+    # holding behind it every narrow record it spanned, all of them long dead.
+    # ``fetch`` then rescanned that pile on every query.
+    #
+    # Only two records can match ``pos`` at any point here: the spanning one
+    # and the point record at ``pos``.  The buffer must stay near that live
+    # set rather than growing with the scan.
+    buffer = LineBuffer()
+    buffer.append(rec("1", 1, 20000))
+
+    max_len = 0
+    for pos in range(1, 20001):
+        buffer.append(rec("1", pos, pos))
+        buffer.prune("1", pos)
+        max_len = max(max_len, len(buffer))
+
+    # Bounded by the compaction policy, NOT by the length of the scan -- which
+    # is the whole point: before the fix this reached 20001.  The bound is on
+    # the buffer's *size*, not its contents: eviction is amortized, so records
+    # that died since the last compaction are still held, and ``fetch``
+    # filters them out exactly as it always did.
+    assert max_len <= LineBuffer.COMPACT_FLOOR
+    assert len(buffer) <= LineBuffer.COMPACT_FLOOR
+    assert len(list(buffer.fetch("1", 20000, 20000))) == 2
+
+
+def test_prune_rebuilds_the_maxima_exactly_from_the_survivors() -> None:
+    # Compaction has to leave both maxima consistent with what is left, or
+    # ``contains`` starts admitting positions the buffer cannot answer and
+    # ``find_index`` searches a window justified by a record that is gone.
+    buffer = LineBuffer()
+    buffer.append(rec("1", 1, 4000))  # spans the prune position, pins the head
+    for pos in range(2, 60):
+        width = 500 if pos % 10 == 0 else 1
+        buffer.append(rec("1", pos, pos + width))
+
+    buffer.prune("1", 500)
+
+    survivors = list(buffer.deque)
+    assert survivors
+    # Every record that cannot match 500 or later is gone, wherever it sat --
+    # before the fix all 59 survived, pinned behind the head.
+    assert all(record[POS_END] >= 500 for record in survivors)
+    assert buffer._max_end == max(r[POS_END] for r in survivors)
+    assert buffer._max_width == max(
+        r[POS_END] - r[POS_BEGIN] for r in survivors)
+
+
+def test_prune_answers_the_same_queries_after_compacting() -> None:
+    # Compaction may only drop records that can no longer match.  Reading every
+    # position of the scan back out of the buffer must therefore give exactly
+    # what the same records give when none are ever evicted.
+    records = [rec("1", 1, 300), *(
+        rec("1", pos, pos + (pos % 7)) for pos in range(2, 200)
+    )]
+
+    buffer = LineBuffer()
+    reference = LineBuffer()
+    for record in records:
+        buffer.append(record)
+        reference.append(record)
+
+    for pos in range(1, 200):
+        buffer.prune("1", pos)
+        expected = [
+            r for r in reference.deque
+            if r[POS_BEGIN] <= pos <= r[POS_END]
+        ]
+        assert list(buffer.fetch("1", pos, pos)) == expected, pos
+
+
 @pytest.mark.parametrize("pos,index", [
     (1847882, 6),
     (1847880, 0),
