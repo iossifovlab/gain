@@ -5,7 +5,7 @@ import abc
 import os
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
@@ -25,6 +25,22 @@ from gain.genomic_resources.aggregators import (
     WeightedValues,
     validate_aggregator,
 )
+
+
+class _Unmeasured:
+    """Marker for a source the annotator never looked up.
+
+    Distinct from ``None``, which stands for a source that *was* looked
+    up and carried nothing.  For a score value the two absences are the
+    same; for its coverage they are not -- nothing found is a coverage of
+    ``0``, while nothing looked up is no coverage at all.
+    """
+
+    def __repr__(self) -> str:
+        return "UNMEASURED"
+
+
+UNMEASURED: Final = _Unmeasured()
 
 
 class AnnotatorBase(Annotator):
@@ -132,6 +148,21 @@ class AnnotatorBase(Annotator):
             return attr.spec.coverage_of
         return attr.source
 
+    def _unmeasured_result(self) -> dict[str, Any]:
+        """Return the result of an annotatable that was never looked up.
+
+        :meth:`_empty_result` says every source was consulted and carried
+        nothing -- which for a coverage attribute is the measurement
+        ``0``.  This says the lookup did not happen at all: a region past
+        the annotator's length cutoff, or no annotatable to speak of.  A
+        value is absent either way, but a coverage is only ``0`` when
+        something was actually measured.
+        """
+        return {
+            self._value_source(attr): UNMEASURED
+            for attr in self._attributes
+        }
+
     def get_attribute_defaults(
         self, spec: AttributeSpec,  # noqa: ARG002
     ) -> dict[str, Any]:
@@ -172,7 +203,9 @@ class AnnotatorBase(Annotator):
                     attr, values.get(attr.spec.coverage_of))
                 continue
             value = values.get(attr.source)
-            if isinstance(value, WeightedValues):
+            if value is UNMEASURED:
+                result[attr.name] = None
+            elif isinstance(value, WeightedValues):
                 result[attr.name] = (
                     attr.aggregator_instance.aggregate_weighted(value)
                     if attr.aggregator_instance is not None
@@ -186,15 +219,21 @@ class AnnotatorBase(Annotator):
         return result
 
     @staticmethod
-    def _aggregate_coverage(attr: Attribute, raw: Any) -> int:
+    def _aggregate_coverage(attr: Attribute, raw: Any) -> int | None:
         """Return how much of ``raw`` was not ``None``.
 
         ``raw`` is the measured source's own raw values, in whichever of
         the three shapes ``_do_annotate`` produced: weighted values for a
         region, a plain list, or a single value for a point query.  A
-        source that produced nothing at all counts as zero -- an
-        uncovered region is a measurement, not a missing one.
+        source that was consulted and produced nothing at all counts as
+        zero -- an uncovered region is a measurement, not a missing one.
+
+        A source that was never consulted (``UNMEASURED``) is the one case
+        that is not zero: there is no measurement to report, so the
+        coverage is as absent as the value it would have described.
         """
+        if raw is UNMEASURED:
+            return None
         aggregator = attr.aggregator_instance
         assert isinstance(aggregator, CoverageAggregator)
         if isinstance(raw, WeightedValues):
@@ -207,7 +246,7 @@ class AnnotatorBase(Annotator):
         self, annotatable: Annotatable | None, context: dict[str, Any],
     ) -> dict[str, Any]:
         if annotatable is None:
-            values = self._empty_result()
+            values = self._unmeasured_result()
         else:
             values = self._do_annotate(annotatable, context)
         return self._apply_aggregators(values)
@@ -234,4 +273,9 @@ class AnnotatorBase(Annotator):
         inner_output = self._do_batch_annotate(
             annotatables, contexts, batch_work_dir=batch_work_dir,
         )
-        return [self._apply_aggregators(result) for result in inner_output]
+        return [
+            self._apply_aggregators(
+                self._unmeasured_result() if annotatable is None else result)
+            for annotatable, result in zip(
+                annotatables, inner_output, strict=True)
+        ]

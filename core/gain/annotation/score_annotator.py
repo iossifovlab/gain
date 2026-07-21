@@ -384,7 +384,11 @@ phastCons, phyloP, FitCons2, etc.
             return dict(zip(sources, point_scores, strict=True))
 
         if len(annotatable) > self._region_length_cutoff:
-            return self._empty_result()
+            # Nothing is fetched for a region this long, so nothing can be
+            # said about it -- not even that it carried no score.  A
+            # coverage of 0 here would be a claim about exactly the large
+            # CNVs the cutoff refuses to measure.
+            return self._unmeasured_result()
         raw = self._fetch_raw_region_scores(
             annotatable.chrom, annotatable.pos, annotatable.pos_end, sources)
         if not any(raw.values()):

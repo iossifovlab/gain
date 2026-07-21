@@ -16,7 +16,12 @@ import textwrap
 
 import pyBigWig
 import pytest
-from gain.annotation.annotatable import Region, VCFAllele
+from gain.annotation.annotatable import (
+    Annotatable,
+    CNVAllele,
+    Region,
+    VCFAllele,
+)
 from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
@@ -266,6 +271,89 @@ def test_a_coverage_attribute_has_help_of_its_own(
 
     assert "covered" in help_text
     assert "base pairs" in help_text
+
+
+def _cutoff_pipeline(
+    fixture_repo: GenomicResourceRepo, cutoff: int,
+) -> AnnotationPipeline:
+    return load_pipeline_from_yaml(textwrap.dedent(f"""
+        - position_score:
+            resource_id: position_score1
+            region_length_cutoff: {cutoff}
+            attributes:
+            - source: test100way
+              name: test100
+            - source: test100way_coverage
+              name: covered
+        """), fixture_repo)
+
+
+def test_a_region_too_long_to_measure_reports_no_coverage(
+    fixture_repo: GenomicResourceRepo,
+) -> None:
+    """Above the cutoff nothing is looked up, so nothing can be claimed.
+
+    chr1 10-39 is fully scored except for its 20-29 gap, so a confident
+    ``0`` here would be plainly false -- and false in exactly the way that
+    matters, since the cutoff exists for the large CNVs this attribute was
+    added to describe.
+    """
+    with _cutoff_pipeline(fixture_repo, cutoff=5) as pipeline:
+        result = pipeline.annotate(Region("chr1", 10, 39))
+
+    assert result["test100"] is None
+    assert result["covered"] is None
+
+
+def test_the_cutoff_boundary_separates_a_measurement_from_no_measurement(
+    fixture_repo: GenomicResourceRepo,
+) -> None:
+    """One base either side of the cutoff: a figure, then nothing."""
+    with _cutoff_pipeline(fixture_repo, cutoff=10) as pipeline:
+        measured = pipeline.annotate(Region("chr1", 10, 19))
+        unmeasured = pipeline.annotate(Region("chr1", 10, 20))
+
+    assert measured["covered"] == 10
+    assert unmeasured["covered"] is None
+
+
+def test_a_cnv_too_long_to_measure_reports_no_coverage(
+    fixture_repo: GenomicResourceRepo,
+) -> None:
+    with _cutoff_pipeline(fixture_repo, cutoff=5) as pipeline:
+        result = pipeline.annotate(CNVAllele(
+            "chr1", 10, 39, Annotatable.Type.LARGE_DUPLICATION))
+
+    assert result["covered"] is None
+
+
+def test_a_missing_annotatable_reports_no_coverage(
+    fixture_repo: GenomicResourceRepo,
+) -> None:
+    """There is no region to measure, so there is no coverage to report."""
+    with _pipeline(fixture_repo, """
+            - source: test100way_coverage
+              name: covered
+    """) as pipeline:
+        result = pipeline.annotate(None)
+
+    assert result["covered"] is None
+
+
+def test_a_batch_reports_no_coverage_for_a_missing_annotatable(
+    fixture_repo: GenomicResourceRepo,
+) -> None:
+    with _pipeline(fixture_repo, """
+            - source: test100way_coverage
+              name: covered
+    """) as pipeline:
+        results = pipeline.batch_annotate([
+            Region("chr1", 10, 39),
+            None,
+            Region("chr1", 20, 29),
+        ])
+
+    assert [result["covered"] for result in results] == [20, None, 0]
 
 
 def test_a_bigwig_backed_score_agrees_with_a_native_coverage_query(

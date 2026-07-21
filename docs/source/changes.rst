@@ -12,10 +12,12 @@ Release Notes
       apart. It counts base pairs and not records, ignores positions whose
       value is one of the score's ``na_values``, reports ``0`` (never an
       empty value) for a region that carried nothing, and may be requested
-      on its own without the score it measures. Divide it by the length of
-      the annotatable for the covered fraction. Nothing changes for a
-      pipeline that does not ask for it: a coverage attribute is never
-      part of a resource's default annotation.
+      on its own without the score it measures. A region the annotator does
+      not look up -- one longer than ``region_length_cutoff`` -- reports no
+      coverage at all rather than ``0``: there is no measurement to report.
+      Divide it by the length of the annotatable for the covered fraction.
+      Nothing changes for a pipeline that does not ask for it: a coverage
+      attribute is never part of a resource's default annotation.
     * A resource may now configure ``position_aggregator: count`` /
       ``allele_aggregator: count`` (#261). ``count`` has always been a
       registered aggregator — buildable, accepted in a pipeline

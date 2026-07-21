@@ -213,6 +213,11 @@ Notes:
   or where its value is one of the score's ``na_values``, are not covered.
 * A region that carried nothing reports ``0``, not an empty value -- a
   fully-uncovered region is a measurement, not a missing one.
+* A region the annotator does not look up at all has no coverage to report,
+  and the attribute is empty rather than ``0``. That is the case for a region
+  longer than the annotator's ``region_length_cutoff`` (500 kb by default),
+  and when there is no annotatable to measure. Zero would be a claim about
+  precisely the large CNVs the cutoff declines to measure.
 * For a substitution, the figure is ``1`` when the position is scored and
   ``0`` when it is not.
 * For the *fraction* of the region that was covered, divide by the length of
