@@ -31,8 +31,9 @@ class LineBuffer:
 
     The semantics are those of the adapter-era buffer: it clears on a
     chromosome change, clears when it observes a non-monotonic ordering
-    (:meth:`region`), prunes from the left, and locates a position by binary
-    search with a linear scan over the overlapping intervals around the hit.
+    (:meth:`region`), evicts records it can no longer be asked about
+    (:meth:`prune`), and locates a position by binary search with a linear scan
+    over the overlapping intervals around the hit.
 
     **The buffer is ordered by ``pos_begin`` -- and by nothing else.**  That is
     the file's order, and it is the only ordering this class may assume.  Every
@@ -52,15 +53,22 @@ class LineBuffer:
       (:attr:`_max_width`) instead of stopping at the first record that fails
       to reach the position.
 
-    The two maxima are the only state beyond the deque, and neither may ever
-    *under*-estimate -- that would drop records.  Over-estimating is harmless
-    in both, but by different routes, which is why they are worth keeping
-    apart: an over-wide ``_max_width`` only widens :meth:`find_index`'s scan,
-    and :meth:`fetch` filters it exactly; an over-high ``_max_end`` instead
-    lets :meth:`contains` admit a position the buffer cannot answer, and
-    :meth:`find_index` then finds no record to return -- whereupon the read
-    falls through to the file, which is a wasted look rather than a wrong
-    record.  See :meth:`prune` for why ``_max_end`` stays exact anyway.
+    Neither maximum may ever *under*-estimate -- that would drop records.
+    Over-estimating is harmless in both, but by different routes, which is why
+    they are worth keeping apart: an over-wide ``_max_width`` only widens
+    :meth:`find_index`'s scan, and :meth:`fetch` filters it exactly; an
+    over-high ``_max_end`` instead lets :meth:`contains` admit a position the
+    buffer cannot answer, and :meth:`find_index` then finds no record to
+    return -- whereupon the read falls through to the file, which is a wasted
+    look rather than a wrong record.  ``_max_end`` stays exact under every
+    eviction (see :meth:`prune`), and both are rebuilt exactly whenever
+    :meth:`prune` walks the whole deque -- which is what lets ``_max_width``
+    shrink back after a wide record dies rather than widening every subsequent
+    search for the rest of the buffer's life.
+
+    The maxima and ``_compact_size`` -- the deque's length as of that last walk
+    -- are the only state beyond the deque itself, and all three are reset with
+    it.
 
     The VCF backend feeds this buffer too, with records of its own -- whose
     PAYLOAD is a ``(variant record, allele index)`` pair rather than a raw row.
@@ -69,6 +77,27 @@ class LineBuffer:
     three slots above, and those mean the same thing in all of them.
     """
 
+    # Compaction policy -- see :meth:`prune`.  The deque is walked only once it
+    # has grown past ``COMPACT_GROWTH`` times its size at the last walk, which
+    # keeps the walk amortized O(1) per buffered record.
+    #
+    # The bound that buys is ``COMPACT_GROWTH`` times the survivor count *at
+    # the last walk* -- not times the live set as it stands.  Only a walk
+    # lowers that baseline, so a scan leaving a dense region behind one
+    # spanning record (which stops the leading pop from firing) can hold a
+    # buffer sized for the density it has left until the next walk corrects
+    # it.  Bounded and self-correcting, one walk later; do not read it as a
+    # bound on the *current* live set.
+    #
+    # 1.5 was measured, not guessed: on a real scATAC fragments table (4.2M
+    # records on chr21, 99.7% overlapping, widest interval ~2kb) a 1bp scan of
+    # the densest region runs at the same speed for every factor from 1.1 to
+    # 2.0 and degrades above it, so the smallest buffer within that flat band
+    # is free.  A deque shorter than ``COMPACT_FLOOR`` is never walked at all:
+    # the scan it would save is already trivial, and prune runs on every query.
+    COMPACT_GROWTH: float = 1.5
+    COMPACT_FLOOR: int = 32
+
     def __init__(self) -> None:
         self.deque: deque[Record] = deque()
         # Maximum pos_end, and maximum interval width, over the buffered
@@ -76,6 +105,9 @@ class LineBuffer:
         # with it; see the class docstring for what they are for.
         self._max_end: int = 0
         self._max_width: int = 0
+        # Deque length as of the last compaction -- the baseline the growth
+        # rule in ``prune`` measures against.
+        self._compact_size: int = 0
 
     def __len__(self) -> int:
         return len(self.deque)
@@ -84,6 +116,7 @@ class LineBuffer:
         self.deque.clear()
         self._max_end = 0
         self._max_width = 0
+        self._compact_size = 0
 
     def append(self, record: Record) -> None:
         """Buffer a record read from the file, maintaining the maxima.
@@ -135,21 +168,31 @@ class LineBuffer:
         return first[CHROM], first[POS_BEGIN], self._max_end
 
     def prune(self, chrom: str, pos: int) -> None:
-        """Drop the leading records that can no longer match ``pos`` or later.
+        """Drop the records that can no longer match ``pos`` or later.
 
-        ``_max_end`` survives this exactly, and not by luck.  Pruning stops at
-        the first record whose ``pos_end`` reaches ``pos``, so every record it
-        drops ends *before* ``pos`` while that survivor ends at or after it --
-        a dropped record can therefore never have held the maximum unless there
-        are no survivors at all, and that case empties the deque and resets the
-        maxima with it.  (``_max_width`` is not exact under pruning and is not
-        required to be: it may only over-estimate.)
+        A record is dead once its ``pos_end`` falls below ``pos``: every query
+        from here on starts at ``pos`` or later, so nothing it could overlap
+        will ever be asked for again.
 
-        Pruning stops at the first survivor, not the last -- so a wide record
-        pins the head and holds behind it the narrow ones it spans, which
-        :meth:`fetch` then rescans on every query.  The buffer therefore grows
-        with the widest interval over a dense region, rather than staying at
-        the query's own width.
+        ``_max_end`` survives either pass exactly, and not by luck.  Every
+        record dropped ends *before* ``pos`` while at least one survivor ends
+        at or after it, so a dropped record can never have held the maximum
+        unless there are no survivors at all -- and that case empties the deque
+        and resets the maxima with it.  That exactness is what keeps
+        :meth:`contains` from admitting a position the buffer cannot answer.
+        ``_max_width`` is *not* exact between compactions and is not required
+        to be: it may only over-estimate, which merely widens
+        :meth:`find_index`'s search.  A compaction rebuilds both exactly.
+
+        Pruning drops **every** record that fails that test, not just the
+        leading run of them.  Stopping at the first survivor -- which is what
+        this did -- let a wide record pin the head and hold behind it every
+        narrow record it spans, which :meth:`fetch` then rescanned on every
+        query; the buffer grew with the widest interval over a dense region
+        rather than staying at the live set (gain#287).  Dropping the dead
+        records wherever they sit keeps the deque at the records that can
+        actually match, and :meth:`fetch`'s scan is bounded by the deque, so
+        the two shrink together.
         """
         if len(self.deque) == 0:
             return
@@ -160,14 +203,67 @@ class LineBuffer:
             self.clear()
             return
 
+        # Cheap pass first: drop the leading dead run.  Each record is popped
+        # at most once over the buffer's life, so this is O(1) amortized, and
+        # it is all that is needed wherever ``pos_end`` is non-decreasing --
+        # point tables and disjoint intervals never buffer a spanning record,
+        # so the head is the only place a dead one can be.
         while len(self.deque) > 0:
-            first = self.peek_first()
-            if pos <= first[POS_END]:
+            if pos <= self.peek_first()[POS_END]:
                 break
             self.deque.popleft()
 
         if len(self.deque) == 0:
             self.clear()
+            return
+
+        # Expensive pass: the dead records *behind* a spanning one.  Reaching
+        # them means walking the whole deque, so doing it on every prune costs
+        # more than the rescan it saves -- measured, and it is a real loss, not
+        # a wash.  Let the deque grow past a multiple of its post-walk size
+        # instead, which keeps the walk amortized O(1) per buffered record.
+        # See ``COMPACT_GROWTH`` for what that does and does not bound.
+        threshold = max(
+            int(self.COMPACT_GROWTH * self._compact_size), self.COMPACT_FLOOR)
+        if len(self.deque) >= threshold:
+            self._compact(pos)
+
+    def _compact(self, pos: int) -> None:
+        """Drop every record ending before ``pos``, wherever it sits.
+
+        One pass, rebuilding both maxima from the survivors.  Recomputing them
+        is free -- every survivor is visited anyway -- and it is what lets
+        ``_max_width`` shrink back after a wide record dies: a stale
+        ``_max_width`` keeps widening :meth:`find_index`'s search window long
+        after the record that justified it has gone.
+        """
+        survivors: deque[Record] = deque()
+        max_end = 0
+        max_width = 0
+        last_index = len(self.deque) - 1
+        for index, record in enumerate(self.deque):
+            pos_end: int = record[POS_END]
+            # The tail is kept even when it is already dead.  It is the last
+            # record read from the file, and ``table_tabix`` reads it back
+            # through :meth:`peek_last` as a stand-in for the file cursor --
+            # to decide whether anything unread can still reach the query
+            # (``_gen_from_buffer_and_tabix``) and whether to seek forward or
+            # re-fetch (``_should_use_sequential_seek_forward``).  Dropping it
+            # would leave those two reading an *earlier* record as the cursor.
+            # Holding one dead record costs nothing: ``fetch`` filters exactly.
+            if pos_end < pos and index != last_index:
+                continue
+            pos_begin: int = record[POS_BEGIN]
+            survivors.append(record)
+            max_end = max(max_end, pos_end)
+            max_width = max(max_width, pos_end - pos_begin)
+
+        # Never empty: the tail is always kept, and the caller has already
+        # established that the head survives.
+        self.deque = survivors
+        self._max_end = max_end
+        self._max_width = max_width
+        self._compact_size = len(survivors)
 
     def contains(self, chrom: str, pos: int) -> bool:
         bchrom, bbeg, bend = self.region()

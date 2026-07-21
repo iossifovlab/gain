@@ -150,6 +150,144 @@ def test_line_buffer_records_are_not_mutated_by_the_buffer() -> None:
         fetched[POS_BEGIN] = 42  # type: ignore[index]
 
 
+def test_prune_evicts_the_dead_records_a_wide_one_spans() -> None:
+    # gain#287.  A record wide enough to span the whole scan stays live for all
+    # of it, and pruning that stopped at the first survivor stopped on it --
+    # holding behind it every narrow record it spanned, all of them long dead.
+    # ``fetch`` then rescanned that pile on every query.
+    #
+    # Only two records can match ``pos`` at any point here: the spanning one
+    # and the point record at ``pos``.  The buffer must stay near that live
+    # set rather than growing with the scan.
+    buffer = LineBuffer()
+    buffer.append(rec("1", 1, 20000))
+
+    max_len = 0
+    for pos in range(1, 20001):
+        buffer.append(rec("1", pos, pos))
+        buffer.prune("1", pos)
+        max_len = max(max_len, len(buffer))
+
+    # Bounded by the compaction policy, NOT by the length of the scan -- which
+    # is the whole point: before the fix this reached 20001.  The bound is on
+    # the buffer's *size*, not its contents: eviction is amortized, so records
+    # that died since the last compaction are still held, and ``fetch``
+    # filters them out exactly as it always did.
+    # The bound is an absolute number on purpose.  Written as
+    # ``<= LineBuffer.COMPACT_FLOOR`` it moves with the constant, so raising
+    # the floor -- which restores the defect outright, the buffer growing to
+    # ~20,000 against a live set of 2 -- would leave this test green.
+    # COMPACT_FLOOR is 32 today; 64 leaves room to retune it without hiding a
+    # regression three orders of magnitude away.
+    assert max_len <= 64
+    assert len(buffer) <= 64
+    assert len(list(buffer.fetch("1", 20000, 20000))) == 2
+
+
+def test_prune_rebuilds_the_maxima_exactly_from_the_survivors() -> None:
+    # Compaction has to leave both maxima consistent with what is left, or
+    # ``contains`` starts admitting positions the buffer cannot answer and
+    # ``find_index`` searches a window justified by a record that is gone.
+    #
+    # For ``_max_width`` to have anything to shrink, the widest record has to
+    # be one of the dying ones -- and that puts it at the head: a *surviving*
+    # head begins before every other record and reaches past the prune
+    # position, so it is always at least as wide as anything the prune drops.
+    buffer = LineBuffer()
+    buffer.append(rec("1", 1, 499))    # the widest buffered, and dead at 500
+    buffer.append(rec("1", 450, 600))  # spans the prune position, pins the head
+    for pos in range(451, 500):
+        buffer.append(rec("1", pos, pos + 10))  # 451..489 are dead at 500
+    assert buffer._max_width == 498  # held by the record about to die
+
+    buffer.prune("1", 500)
+
+    survivors = list(buffer.deque)
+    assert survivors
+    # Every record that cannot match 500 or later is gone, wherever it sat --
+    # before the fix the 39 dead ones behind the spanning record all stayed.
+    assert all(record[POS_END] >= 500 for record in survivors)
+    assert buffer._max_end == max(r[POS_END] for r in survivors)
+    # 498 -> 150: the dead head's width stops widening find_index's scan.
+    assert buffer._max_width == max(
+        r[POS_END] - r[POS_BEGIN] for r in survivors)
+
+
+def test_prune_answers_the_same_queries_while_compacting() -> None:
+    # Compaction may only drop records that can no longer match -- and between
+    # compactions the buffer knowingly holds records that already cannot, which
+    # ``fetch`` has to filter out exactly as it always did.  So read every
+    # position of the scan back out of a buffer pruned the way the tabix read
+    # path prunes it -- append, then prune to the query -- and compare against
+    # the same records with nothing ever evicted.
+    scan_end = 600
+    records = [rec("1", 1, scan_end)]  # spans the whole scan, pins the head
+
+    buffer = LineBuffer()
+    buffer.append(records[0])
+
+    max_dead = 0
+    max_len = 0
+    for pos in range(1, scan_end + 1):
+        record = rec("1", pos, pos + (pos % 7))
+        records.append(record)
+        buffer.append(record)
+        buffer.prune("1", pos)
+
+        expected = [r for r in records if r[POS_BEGIN] <= pos <= r[POS_END]]
+        assert list(buffer.fetch("1", pos, pos)) == expected, pos
+
+        max_dead = max(
+            max_dead, sum(1 for r in buffer.deque if r[POS_END] < pos))
+        max_len = max(max_len, len(buffer))
+
+    # The scan really did run in the amortized regime those assertions are
+    # there for: dead records were held -- so ``fetch`` had something to filter
+    # -- but never more than a compaction's worth.  Before the fix the spanning
+    # head pinned every one of them and the buffer grew with the scan.
+    assert 0 < max_dead < 64
+    assert max_len <= 64
+
+
+def test_compaction_never_evicts_the_tail() -> None:
+    # ``table_tabix`` reads ``peek_last()`` as a stand-in for the file cursor,
+    # in ``_gen_from_buffer_and_tabix`` and in
+    # ``_should_use_sequential_seek_forward``.  Evicting a dead tail would
+    # silently hand both of them an *earlier* record as the cursor, so
+    # compaction keeps it however dead it is.
+    buffer = LineBuffer()
+    buffer.append(rec("1", 1, 10000))  # spans everything; pins the head
+    for pos in range(2, 2 + LineBuffer.COMPACT_FLOOR):
+        buffer.append(rec("1", pos, pos))
+    # The tail begins last but died long ago -- exactly the record at risk.
+    tail = buffer.peek_last()
+    assert tail[POS_END] < 9000
+
+    buffer.prune("1", 9000)
+
+    assert buffer.peek_last() is tail
+    # ...and keeping it may not corrupt the maxima it contributes to.
+    survivors = list(buffer.deque)
+    assert buffer._max_end == max(r[POS_END] for r in survivors)
+    assert buffer._max_width == max(
+        r[POS_END] - r[POS_BEGIN] for r in survivors)
+
+
+def test_clear_resets_the_compaction_baseline() -> None:
+    # ``_compact_size`` is the growth rule's baseline.  Carried across a
+    # contig change, it would let the new contig's buffer grow to a multiple
+    # of the OLD contig's live set before the first walk.
+    buffer = LineBuffer()
+    for pos in range(1, 200):
+        buffer.append(rec("1", pos, pos + 400))
+    buffer.prune("1", 300)
+    assert buffer._compact_size > 0
+
+    buffer.clear()
+
+    assert buffer._compact_size == 0
+
+
 @pytest.mark.parametrize("pos,index", [
     (1847882, 6),
     (1847880, 0),

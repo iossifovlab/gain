@@ -358,14 +358,17 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         # -- so the buffer holds every record overlapping any LATER position,
         # and is missing records overlapping earlier ones.
         #
-        # Its left edge does not say so.  Pruning evicts by ``pos_end``, and
-        # only up to the first record that survives; where intervals overlap,
-        # that survivor can begin further left than the records evicted ahead
-        # of it, leaving ``peek_first()`` pointing below the positions the
+        # Its left edge does not say so.  Pruning evicts by ``pos_end``, so a
+        # record that survives can begin further left than the records evicted
+        # around it, leaving ``peek_first()`` pointing below the positions the
         # buffer just stopped being able to answer.  ``contains`` reads that
         # edge and would wave a backward query through onto a buffer that no
         # longer holds its records (gain#250).  The query's own start is the
         # honest watermark, so gate on it rather than on the buffer's shape.
+        #
+        # Eviction is also amortized (gain#287): between walks the buffer
+        # knowingly holds records that already died, which only ever makes it
+        # answer *more* than it must -- ``fetch`` filters exactly.
         if buffering and len(self.buffer) > 0 \
                 and prev_call_chrom == chrom \
                 and pos_begin >= prev_call_begin:
