@@ -173,8 +173,14 @@ def test_prune_evicts_the_dead_records_a_wide_one_spans() -> None:
     # the buffer's *size*, not its contents: eviction is amortized, so records
     # that died since the last compaction are still held, and ``fetch``
     # filters them out exactly as it always did.
-    assert max_len <= LineBuffer.COMPACT_FLOOR
-    assert len(buffer) <= LineBuffer.COMPACT_FLOOR
+    # The bound is an absolute number on purpose.  Written as
+    # ``<= LineBuffer.COMPACT_FLOOR`` it moves with the constant, so raising
+    # the floor -- which restores the defect outright, the buffer growing to
+    # ~20,000 against a live set of 2 -- would leave this test green.
+    # COMPACT_FLOOR is 32 today; 64 leaves room to retune it without hiding a
+    # regression three orders of magnitude away.
+    assert max_len <= 64
+    assert len(buffer) <= 64
     assert len(list(buffer.fetch("1", 20000, 20000))) == 2
 
 
@@ -239,8 +245,47 @@ def test_prune_answers_the_same_queries_while_compacting() -> None:
     # there for: dead records were held -- so ``fetch`` had something to filter
     # -- but never more than a compaction's worth.  Before the fix the spanning
     # head pinned every one of them and the buffer grew with the scan.
-    assert 0 < max_dead < LineBuffer.COMPACT_FLOOR
-    assert max_len <= LineBuffer.COMPACT_FLOOR
+    assert 0 < max_dead < 64
+    assert max_len <= 64
+
+
+def test_compaction_never_evicts_the_tail() -> None:
+    # ``table_tabix`` reads ``peek_last()`` as a stand-in for the file cursor,
+    # in ``_gen_from_buffer_and_tabix`` and in
+    # ``_should_use_sequential_seek_forward``.  Evicting a dead tail would
+    # silently hand both of them an *earlier* record as the cursor, so
+    # compaction keeps it however dead it is.
+    buffer = LineBuffer()
+    buffer.append(rec("1", 1, 10000))  # spans everything; pins the head
+    for pos in range(2, 2 + LineBuffer.COMPACT_FLOOR):
+        buffer.append(rec("1", pos, pos))
+    # The tail begins last but died long ago -- exactly the record at risk.
+    tail = buffer.peek_last()
+    assert tail[POS_END] < 9000
+
+    buffer.prune("1", 9000)
+
+    assert buffer.peek_last() is tail
+    # ...and keeping it may not corrupt the maxima it contributes to.
+    survivors = list(buffer.deque)
+    assert buffer._max_end == max(r[POS_END] for r in survivors)
+    assert buffer._max_width == max(
+        r[POS_END] - r[POS_BEGIN] for r in survivors)
+
+
+def test_clear_resets_the_compaction_baseline() -> None:
+    # ``_compact_size`` is the growth rule's baseline.  Carried across a
+    # contig change, it would let the new contig's buffer grow to a multiple
+    # of the OLD contig's live set before the first walk.
+    buffer = LineBuffer()
+    for pos in range(1, 200):
+        buffer.append(rec("1", pos, pos + 400))
+    buffer.prune("1", 300)
+    assert buffer._compact_size > 0
+
+    buffer.clear()
+
+    assert buffer._compact_size == 0
 
 
 @pytest.mark.parametrize("pos,index", [

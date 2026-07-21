@@ -83,9 +83,11 @@ below, so this too is a breaking change to a public name of ``gain``, recorded
 here for the same reason.  It had no caller anywhere in the stack (gain or gpf)
 and no replacement is wanted: #250 gave the buffer an invariant that a bare
 ``popleft`` cannot keep.  Eviction has to go through :meth:`LineBuffer.prune`,
-which stops at the first record whose ``pos_end`` reaches the query -- that gate
-is what makes the buffer *complete* from the pruned-to position onwards, and
-completeness is what the read path's buffer-hit answer rests on.  ``pop_first``
+which drops a record only when its ``pos_end`` has fallen below the query --
+wherever that record sits (gain#287), not merely while it is at the head.  That
+rule is what makes the buffer *complete* from the pruned-to position onwards,
+and completeness is what the read path's buffer-hit answer rests on.
+``pop_first``
 dropped the leftmost record unconditionally, so it could evict one that still
 overlapped later queries and leave the buffer answering from a hole -- silently,
 and with no fall-through to the file to rescue it.  (It would also leave

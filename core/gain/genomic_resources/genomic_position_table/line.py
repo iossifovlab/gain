@@ -77,10 +77,17 @@ class LineBuffer:
     three slots above, and those mean the same thing in all of them.
     """
 
-    # Compaction policy -- see :meth:`prune`.  The deque is walked only once
-    # it has grown past ``COMPACT_GROWTH`` times its size at the last walk,
-    # which keeps the walk amortized O(1) per buffered record while bounding
-    # the buffer at that same multiple of the live set.
+    # Compaction policy -- see :meth:`prune`.  The deque is walked only once it
+    # has grown past ``COMPACT_GROWTH`` times its size at the last walk, which
+    # keeps the walk amortized O(1) per buffered record.
+    #
+    # The bound that buys is ``COMPACT_GROWTH`` times the survivor count *at
+    # the last walk* -- not times the live set as it stands.  Only a walk
+    # lowers that baseline, so a scan leaving a dense region behind one
+    # spanning record (which stops the leading pop from firing) can hold a
+    # buffer sized for the density it has left until the next walk corrects
+    # it.  Bounded and self-correcting, one walk later; do not read it as a
+    # bound on the *current* live set.
     #
     # 1.5 was measured, not guessed: on a real scATAC fragments table (4.2M
     # records on chr21, 99.7% overlapping, widest interval ~2kb) a 1bp scan of
@@ -214,8 +221,8 @@ class LineBuffer:
         # them means walking the whole deque, so doing it on every prune costs
         # more than the rescan it saves -- measured, and it is a real loss, not
         # a wash.  Let the deque grow past a multiple of its post-walk size
-        # instead: the scan ``fetch`` pays stays bounded by that multiple of
-        # the live set, while the walk is amortized O(1) per buffered record.
+        # instead, which keeps the walk amortized O(1) per buffered record.
+        # See ``COMPACT_GROWTH`` for what that does and does not bound.
         threshold = max(
             int(self.COMPACT_GROWTH * self._compact_size), self.COMPACT_FLOOR)
         if len(self.deque) >= threshold:
@@ -233,19 +240,26 @@ class LineBuffer:
         survivors: deque[Record] = deque()
         max_end = 0
         max_width = 0
-        for record in self.deque:
+        last_index = len(self.deque) - 1
+        for index, record in enumerate(self.deque):
             pos_end: int = record[POS_END]
-            if pos_end < pos:
+            # The tail is kept even when it is already dead.  It is the last
+            # record read from the file, and ``table_tabix`` reads it back
+            # through :meth:`peek_last` as a stand-in for the file cursor --
+            # to decide whether anything unread can still reach the query
+            # (``_gen_from_buffer_and_tabix``) and whether to seek forward or
+            # re-fetch (``_should_use_sequential_seek_forward``).  Dropping it
+            # would leave those two reading an *earlier* record as the cursor.
+            # Holding one dead record costs nothing: ``fetch`` filters exactly.
+            if pos_end < pos and index != last_index:
                 continue
             pos_begin: int = record[POS_BEGIN]
             survivors.append(record)
             max_end = max(max_end, pos_end)
             max_width = max(max_width, pos_end - pos_begin)
 
-        if len(survivors) == 0:
-            self.clear()
-            return
-
+        # Never empty: the tail is always kept, and the caller has already
+        # established that the head survives.
         self.deque = survivors
         self._max_end = max_end
         self._max_width = max_width
