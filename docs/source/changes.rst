@@ -2,6 +2,20 @@ Release Notes
 =============
 
 * 2026.7.2
+    * A ``position_score_annotator`` can now report **how much of the
+      annotated region actually carried a score** (#266). For every score
+      ``S`` a position score resource defines, the annotator offers an
+      opt-in attribute ``S_coverage``: the number of base pairs of the
+      annotatable that carried a value for ``S``. A ``mean`` over a 500 kb
+      CNV of which 5% is scored and one of which 100% is scored used to be
+      reported identically; the coverage attribute is what tells them
+      apart. It counts base pairs and not records, ignores positions whose
+      value is one of the score's ``na_values``, reports ``0`` (never an
+      empty value) for a region that carried nothing, and may be requested
+      on its own without the score it measures. Divide it by the length of
+      the annotatable for the covered fraction. Nothing changes for a
+      pipeline that does not ask for it: a coverage attribute is never
+      part of a resource's default annotation.
     * A resource may now configure ``position_aggregator: count`` /
       ``allele_aggregator: count`` (#261). ``count`` has always been a
       registered aggregator — buildable, accepted in a pipeline

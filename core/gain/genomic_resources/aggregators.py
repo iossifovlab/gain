@@ -317,6 +317,35 @@ class CountAggregator(Aggregator):
         return None
 
 
+class CoverageAggregator(Aggregator):
+    """Total weight of the non-``None`` values -- how much data there was.
+
+    For a position score queried over a region, a record's weight is the
+    number of base pairs of the region it covers, so this is exactly the
+    number of base pairs that carried a value: the region's *coverage*.
+
+    Deliberately **not** registered in :data:`AGGREGATOR_CLASS_DICT`.  It
+    is not an alternative way of summarising a score -- it summarises how
+    much of the score there was -- so it is not something a resource or a
+    pipeline names in a ``position_aggregator``; it backs the dedicated
+    coverage attribute an annotator declares.  Unlike ``count`` it reports
+    ``0`` rather than ``None`` for a region that carried nothing: a
+    fully-uncovered region is a measurement, not a missing one.
+    """
+
+    output_value_type: ClassVar[str | None] = "int"
+
+    def _add_internal(self, value: Any, count: int) -> None:
+        if value is not None:
+            self.used_count += count
+
+    def _clear_internal(self) -> None:
+        """Keep no state beyond ``used_count``, which the base clears."""
+
+    def get_final(self) -> int:
+        return self.used_count
+
+
 class ConcatAggregator(Aggregator):
     """Aggregator that concatenates all passed values.
 

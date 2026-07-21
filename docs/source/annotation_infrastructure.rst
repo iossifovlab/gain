@@ -185,6 +185,42 @@ The example below uses an ``aggregator`` and also renames the output attribute t
           name: <renamed_score_attribute>
           aggregator: <aggregator>
 
+**Region coverage**
+
+An aggregated value says nothing about how much of the annotatable actually
+carried data: a ``mean`` over a 500 kb CNV of which 5% is scored and one of
+which 100% is scored are reported identically. For every score
+``<source_score_attribute>`` it defines, a position score resource therefore
+also offers the virtual attribute ``<source_score_attribute>_coverage`` --
+**the number of base pairs of the annotated region that carried a value for
+that score**.
+
+.. code:: yaml
+
+    - position_score_annotator:
+        resource_id: <position score resource ID>
+        attributes:
+        - source: <source_score_attribute>
+        - source: <source_score_attribute>_coverage
+          name: <renamed_coverage_attribute>
+
+Notes:
+
+* It is strictly opt-in. A coverage attribute is never part of a resource's
+  default annotation, so a pipeline that does not name one is unaffected.
+* It is a count of base pairs, not of records: a score record covering ten
+  bases of the region contributes ten. Positions where the score is missing,
+  or where its value is one of the score's ``na_values``, are not covered.
+* A region that carried nothing reports ``0``, not an empty value -- a
+  fully-uncovered region is a measurement, not a missing one.
+* For a substitution, the figure is ``1`` when the position is scored and
+  ``0`` when it is not.
+* For the *fraction* of the region that was covered, divide by the length of
+  the annotatable. The attribute is deliberately a base-pair count so that it
+  stays exact and remains a whole number.
+* The coverage attribute takes no ``aggregator``; a coverage is a total, and
+  configuring one is an error.
+
 
 allele_score_annotator
 ************************

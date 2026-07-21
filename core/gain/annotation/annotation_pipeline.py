@@ -242,9 +242,22 @@ class AttributeSpec:
     internal_default: bool = False
     supports_aggregation: bool = True
     attribute_type: str = "attribute"
+    coverage_of: str | None = None
+    """Source this attribute reports the coverage of, if it is a coverage one.
+
+    A coverage attribute does not carry values of its own: it reports how
+    much data backed another source over the annotated region -- for a
+    position score, the number of base pairs of the region that carried a
+    value.  It is derived from that source's raw values, so it can be
+    requested whether or not the value attribute itself is.
+    """
 
     def __post_init__(self) -> None:
         if self.attribute_type == "annotatable":
+            self.supports_aggregation = False
+        if self.coverage_of is not None:
+            # There is nothing to choose: a coverage is a total, not a
+            # summary of values that an aggregator could reduce differently.
             self.supports_aggregation = False
 
     def as_dict(self) -> dict[str, Any]:

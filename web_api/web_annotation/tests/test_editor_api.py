@@ -134,9 +134,12 @@ def test_annotator_creation_workflow(
     }, content_type="application/json")
     assert response.status_code == 200
     json = response.json()
-    assert len(json["attributes"]) == 1
-    assert json["attributes"][0]["name"] == "pos1"
-    json["attributes"][0]["name"] = "pos1_score"
+    # The score, plus the opt-in coverage attribute offered alongside it.
+    assert [attr["source"] for attr in json["attributes"]] == [
+        "pos1", "pos1_coverage"]
+    score_attribute = json["attributes"][0]
+    assert score_attribute["name"] == "pos1"
+    score_attribute["name"] = "pos1_score"
 
     # Step 5: Get annotator YAML
     response = client.post("/api/editor/annotator_yaml", data={
@@ -149,7 +152,7 @@ def test_annotator_creation_workflow(
                 "source": attr["source"],
                 "internal": attr["internal"],
             }
-            for attr in json["attributes"]
+            for attr in [score_attribute]
         ],
     }, content_type="application/json")
     assert response.status_code == 200
@@ -223,9 +226,12 @@ def test_annotator_creation_resource_workflow(
     }, content_type="application/json")
     assert response.status_code == 200
     json = response.json()
-    assert len(json["attributes"]) == 1
-    assert json["attributes"][0]["name"] == "pos1"
-    json["attributes"][0]["name"] = "pos1_score"
+    # The score, plus the opt-in coverage attribute offered alongside it.
+    assert [attr["source"] for attr in json["attributes"]] == [
+        "pos1", "pos1_coverage"]
+    score_attribute = json["attributes"][0]
+    assert score_attribute["name"] == "pos1"
+    score_attribute["name"] = "pos1_score"
 
     # Step 6: Get annotator YAML
     response = client.post("/api/editor/annotator_yaml", data={
@@ -238,7 +244,7 @@ def test_annotator_creation_resource_workflow(
                 "source": attr["source"],
                 "internal": attr["internal"],
             }
-            for attr in json["attributes"]
+            for attr in [score_attribute]
         ],
     }, content_type="application/json")
     assert response.status_code == 200

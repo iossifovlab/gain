@@ -5,7 +5,7 @@ import abc
 import os
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
@@ -21,6 +21,7 @@ from gain.annotation.annotation_pipeline import (
 )
 from gain.genomic_resources.aggregators import (
     Aggregator,
+    CoverageAggregator,
     WeightedValues,
     validate_aggregator,
 )
@@ -99,6 +100,8 @@ class AnnotatorBase(Annotator):
                     self._aggregator_value_type(attr),
                 )
                 attr.aggregator_instance = Aggregator.build(aggregator)
+            if spec.coverage_of is not None:
+                attr.aggregator_instance = CoverageAggregator()
             self._attributes.append(attr)
 
         work_dir = info.parameters.get("work_dir")
@@ -114,6 +117,20 @@ class AnnotatorBase(Annotator):
 
     def _aggregator_value_type(self, attr: Attribute) -> str | None:
         return attr.spec.value_type if attr.spec else None
+
+    @staticmethod
+    def _value_source(attr: Attribute) -> str:
+        """Return the source whose raw values back ``attr``.
+
+        For a coverage attribute that is the source it measures, not its
+        own name -- there are no values filed under a coverage source.
+        A ``_do_annotate`` implementation that resolves what to fetch from
+        the configured attributes must go through this, so that asking
+        only for a coverage still fetches the values it counts.
+        """
+        if attr.spec is not None and attr.spec.coverage_of is not None:
+            return attr.spec.coverage_of
+        return attr.source
 
     def get_attribute_defaults(
         self, spec: AttributeSpec,  # noqa: ARG002
@@ -148,8 +165,12 @@ class AnnotatorBase(Annotator):
         across annotate calls; each call clears it first.  This is
         correct single-threaded and is not thread-safe.
         """
-        result = {}
+        result: dict[str, Any] = {}
         for attr in self._attributes:
+            if attr.spec is not None and attr.spec.coverage_of is not None:
+                result[attr.name] = self._aggregate_coverage(
+                    attr, values.get(attr.spec.coverage_of))
+                continue
             value = values.get(attr.source)
             if isinstance(value, WeightedValues):
                 result[attr.name] = (
@@ -163,6 +184,24 @@ class AnnotatorBase(Annotator):
             else:
                 result[attr.name] = value
         return result
+
+    @staticmethod
+    def _aggregate_coverage(attr: Attribute, raw: Any) -> int:
+        """Return how much of ``raw`` was not ``None``.
+
+        ``raw`` is the measured source's own raw values, in whichever of
+        the three shapes ``_do_annotate`` produced: weighted values for a
+        region, a plain list, or a single value for a point query.  A
+        source that produced nothing at all counts as zero -- an
+        uncovered region is a measurement, not a missing one.
+        """
+        aggregator = attr.aggregator_instance
+        assert isinstance(aggregator, CoverageAggregator)
+        if isinstance(raw, WeightedValues):
+            return cast(int, aggregator.aggregate_weighted(raw))
+        if isinstance(raw, list):
+            return cast(int, aggregator.aggregate(raw))
+        return cast(int, aggregator.aggregate([raw]))
 
     def annotate(
         self, annotatable: Annotatable | None, context: dict[str, Any],

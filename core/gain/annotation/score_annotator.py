@@ -43,6 +43,14 @@ from gain.templates import get_template
 logger = logging.getLogger(__name__)
 
 
+COVERAGE_ATTRIBUTE_SUFFIX = "_coverage"
+"""Suffix of the coverage attribute a position score offers per score.
+
+``phastCons100way`` is accompanied by ``phastCons100way_coverage``: the
+number of base pairs of the annotated region that carried a value.
+"""
+
+
 def get_genomic_resource(
         pipeline: AnnotationPipeline, info: AnnotatorInfo,
         resource_types: set[str]) -> GenomicResource:
@@ -207,16 +215,24 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
 
     def build_attribute_help(self, attr: Attribute) -> str:
         """Build attribute help."""
-        hist_url = self.score.get_histogram_image_public_url(attr.source)
-        score_def = self.score.get_score_definition(attr.source)
-        assert score_def is not None
-
-        histogram = get_template("score_histogram.jinja").render(
-            hist_url=hist_url,
-            score_def=score_def,
-        )
-
         assert attr.spec is not None
+        if attr.spec.coverage_of is not None:
+            # A coverage attribute has no score line of its own: it counts
+            # how much of another score there was, so there is neither a
+            # value distribution to plot nor an aggregator to describe.
+            histogram = ""
+            aggregators: list[str] = []
+        else:
+            hist_url = self.score.get_histogram_image_public_url(attr.source)
+            score_def = self.score.get_score_definition(attr.source)
+            assert score_def is not None
+
+            histogram = get_template("score_histogram.jinja").render(
+                hist_url=hist_url,
+                score_def=score_def,
+            )
+            aggregators = self.build_score_aggregator_documentation(attr)
+
         data = {
             "name": attr.name,
             "description": attr.spec.description,
@@ -227,9 +243,7 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
             "resource_type": self.score.resource.get_type(),
             "histogram": histogram,
             "source": attr.source,
-            "aggregators": self.build_score_aggregator_documentation(
-                attr,
-            ),
+            "aggregators": aggregators,
             "annotator_type": self.get_info().type,
             "annotator_doc": self.get_info().documentation,
         }
@@ -274,6 +288,8 @@ phastCons, phyloP, FitCons2, etc.
         for attr, attr_config in zip(
             self._attributes, self.get_info().attributes, strict=True,
         ):
+            if attr.spec is not None and attr.spec.coverage_of is not None:
+                continue
             self.add_score_aggregator_documentation(
                 attr, "position_aggregator", attr_config.aggregator)
 
@@ -286,6 +302,36 @@ phastCons, phyloP, FitCons2, etc.
             if score_def is not None and score_def.pos_aggregator is not None:
                 defaults["aggregator"] = score_def.pos_aggregator
         return defaults
+
+    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
+        """Return score attribute specs plus a coverage one for each.
+
+        A score's aggregated value over a region says nothing about how
+        much of that region carried data: a ``mean`` over a CNV that was
+        5% scored and one that was fully scored read identically.  Every
+        score therefore also offers ``<score>_coverage`` -- the number of
+        base pairs of the annotated region that carried a value for it.
+        Never a default: a pipeline that does not ask for it sees no
+        change.
+        """
+        specs = super().get_attribute_specs()
+        for source in list(specs):
+            coverage_source = f"{source}{COVERAGE_ATTRIBUTE_SUFFIX}"
+            if coverage_source in specs:
+                continue
+            specs[coverage_source] = AttributeSpec(
+                source=coverage_source,
+                value_type="int",
+                description=(
+                    "The number of base pairs of the annotated region that"
+                    f" carried a value for '{source}'. Divide by the length"
+                    " of the region for the covered fraction."
+                ),
+                is_default=False,
+                internal_default=False,
+                coverage_of=source,
+            )
+        return specs
 
     def build_score_aggregator_documentation(
         self, attr: Attribute,
@@ -327,7 +373,7 @@ phastCons, phyloP, FitCons2, etc.
             return self._empty_result()
 
         sources = list(dict.fromkeys(
-            attr.source for attr in self._attributes))
+            self._value_source(attr) for attr in self._attributes))
 
         if annotatable.type == Annotatable.Type.SUBSTITUTION:
             assert isinstance(annotatable, VCFAllele)

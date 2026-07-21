@@ -74,7 +74,7 @@ async def test_async_annotator_attributes_anonymous_returns_200() -> None:
     assert response.json() == {
         "page": 0,
         "total_pages": 1,
-        "total_attributes": 1,
+        "total_attributes": 2,
         "attributes": [{
             "name": "pos1",
             "source": "pos1",
@@ -84,6 +84,20 @@ async def test_async_annotator_attributes_anonymous_returns_200() -> None:
             "internal": False,
             "attribute_type": "attribute",
             "supports_aggregation": True,
+        }, {
+            # Opt-in: offered by the annotator, never a default.
+            "name": "pos1_coverage",
+            "source": "pos1_coverage",
+            "type": "int",
+            "description": (
+                "The number of base pairs of the annotated region that"
+                " carried a value for 'pos1'. Divide by the length of the"
+                " region for the covered fraction."
+            ),
+            "default": False,
+            "internal": False,
+            "attribute_type": "attribute",
+            "supports_aggregation": False,
         }],
     }
 
