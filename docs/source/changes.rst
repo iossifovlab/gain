@@ -2,6 +2,34 @@ Release Notes
 =============
 
 * 2026.7.2
+    * **Behavior change:** a region is now aggregated per **record**, not
+      per base pair (#260). A position-score record that covers N base
+      pairs of the annotated region used to be turned into N identical
+      copies of its value and aggregated one copy at a time; it now
+      reaches the aggregator once, carrying N as its weight, which the
+      aggregator applies in closed form. Aggregating a region therefore
+      costs one step per record instead of one per base — a 500 kb region
+      backed by 2,000 records drops from tens of milliseconds to single
+      digits, and no longer allocates one list element per base.
+      ``Aggregator.add(value, count)`` has always taken a ``count``; it
+      previously added it to a bookkeeping counter and otherwise ignored
+      it, so a caller that passed one got a correct ``total_count`` and a
+      silently wrong mean. It now weights the value.
+
+      **Float position scores may move in their last bits on large
+      regions**, toward the more accurate value. ``mean`` is the only
+      aggregator affected, because it is the only one that accumulates
+      floats: summing a value N times is not the same operation as
+      multiplying it by N, and the weighted form rounds once per record
+      rather than once per base pair. The error of the old form grew with
+      the region — over a 500 kb region a true ``0.51`` came out as
+      ``0.5099999999965371`` (~6.8e-12 relative); it is now ``0.51``.
+      ``min``, ``max``, ``count``, ``median``, ``mode``, ``value_count``,
+      ``bool``, ``list``, ``join`` and ``concatenate`` are bit-identical
+      to before. Annotation **output files are unchanged**, since values
+      are written to three significant figures; a consumer that reads an
+      annotation at full float precision (writing parquet, say) will see
+      the difference.
     * **Behavior change:** a ``.dvc`` sidecar is no longer accepted as the
       md5 sum of a resource file whose bytes are on disk (#251, #255). The
       rule ``grr_manage`` now follows is:

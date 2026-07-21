@@ -21,6 +21,7 @@ from gain.annotation.annotation_pipeline import (
 )
 from gain.genomic_resources.aggregators import (
     Aggregator,
+    WeightedValues,
     validate_aggregator,
 )
 
@@ -136,10 +137,28 @@ class AnnotatorBase(Annotator):
     def _apply_aggregators(
         self, values: dict[str, Any],
     ) -> dict[str, Any]:
+        """Reduce each attribute's raw values with its aggregator.
+
+        A ``_do_annotate`` implementation may hand over either a plain
+        list -- every value counting once -- or a
+        :class:`WeightedValues`, in which each value carries the number of
+        times it counts.
+
+        The aggregator instance is the attribute's own and is reused
+        across annotate calls; each call clears it first.  This is
+        correct single-threaded and is not thread-safe.
+        """
         result = {}
         for attr in self._attributes:
             value = values.get(attr.source)
-            if attr.aggregator_instance is not None and isinstance(value, list):
+            if isinstance(value, WeightedValues):
+                result[attr.name] = (
+                    attr.aggregator_instance.aggregate_weighted(value)
+                    if attr.aggregator_instance is not None
+                    else value.expand()
+                )
+            elif attr.aggregator_instance is not None and isinstance(
+                    value, list):
                 result[attr.name] = attr.aggregator_instance.aggregate(value)
             else:
                 result[attr.name] = value
