@@ -9,7 +9,11 @@ from gain.genomic_resources.genomic_position_table.record import (
     POS_BEGIN,
     POS_END,
 )
-from gain.genomic_resources.genomic_scores import AlleleScore, PositionScore
+from gain.genomic_resources.genomic_scores import (
+    AlleleScore,
+    CnvCollection,
+    PositionScore,
+)
 from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
 )
@@ -17,6 +21,7 @@ from gain.genomic_resources.repository import GenomicResourceProtocolRepo
 from gain.genomic_resources.testing.builders import (
     ResourceValidationError,
     a_bigwig_score,
+    a_cnv_collection,
     a_gene_score,
     a_grr,
     a_np_score,
@@ -1648,6 +1653,73 @@ def test_bigwig_rejects_malformed_bedgraph_row(tmp_path: pathlib.Path) -> None:
     )
     with pytest.raises(ResourceValidationError, match="4 columns"):
         builder.build_resource(tmp_path)
+
+
+def test_bigwig_fetch_budgets_reach_the_table(tmp_path: pathlib.Path) -> None:
+    res = (
+        a_bigwig_score()
+        .with_data("chr1  0  10  0.11")
+        .with_chrom_lens({"chr1": 1000})
+        .with_fetch_budgets(
+            direct_fetch_size=1000,
+            buffer_fetch_size=2000,
+            use_buffered_threshold=100,
+        )
+        .build_resource(tmp_path)
+    )
+    table = res.get_config()["table"]
+
+    assert table["direct_fetch_size"] == 1000
+    assert table["buffer_fetch_size"] == 2000
+    assert table["use_buffered_threshold"] == 100
+
+
+def test_bigwig_emits_only_the_budgets_it_was_given(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Pinning one knob must not imply a value for the others -- an omitted
+    # key has to stay absent so the backend's own default still applies.
+    res = (
+        a_bigwig_score()
+        .with_data("chr1  0  10  0.11")
+        .with_chrom_lens({"chr1": 1000})
+        .with_fetch_budgets(direct_fetch_size=7)
+        .build_resource(tmp_path)
+    )
+    table = res.get_config()["table"]
+
+    assert table["direct_fetch_size"] == 7
+    assert "buffer_fetch_size" not in table
+    assert "use_buffered_threshold" not in table
+
+
+def test_bare_cnv_collection_is_readable_minimal(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = a_cnv_collection().build_resource(tmp_path)
+
+    assert res.get_type() == "cnv_collection"
+    cnvs = CnvCollection(res).open().fetch_cnvs("1", 10, 200)
+    assert len(cnvs) == 2
+
+
+def test_cnv_collection_reads_back_its_regions(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_cnv_collection()
+        .with_score("frequency", "float", desc="population frequency")
+        .with_data("""
+            chrom  pos_begin  pos_end  frequency
+            chr1   10         19       0.1
+            chr1   20         200      0.2
+        """)
+        .build_resource(tmp_path)
+    )
+    cnvs = CnvCollection(res).open().fetch_cnvs("chr1", 10, 200)
+
+    assert [(c.pos_begin, c.pos_end) for c in cnvs] == [(10, 19), (20, 200)]
+    assert [c.attributes["frequency"] for c in cnvs] == [0.1, 0.2]
 
 
 def test_vcf_info_score_reads_back(tmp_path: pathlib.Path) -> None:

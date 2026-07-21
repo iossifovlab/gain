@@ -1050,37 +1050,18 @@ def test_table_schema_accepts_the_fetch_budget_keys(
     # spellable in a ``genomic_resource.yaml``: a knob the code reads and the
     # schema rejects is not a knob.  Configuring all three must validate, and
     # the configured values must reach the table.
-    root_path = tmp_path
-    setup_directories(
-        root_path,
-        {
-            "grr.yaml": textwrap.dedent(f"""
-                id: test_grr
-                type: directory
-                directory: {root_path!s}
-            """),
-            "test_score": {
-                "genomic_resource.yaml": textwrap.dedent("""
-                        type: position_score
-                        table:
-                            filename: data.bw
-                            format: bigWig
-                            direct_fetch_size: 1000
-                            buffer_fetch_size: 2000
-                            use_buffered_threshold: 100
-                        scores:
-                        - id: score_one
-                          type: float
-                          index: 3
-                """),
-            },
-        },
+    builder = (
+        a_bigwig_score()
+        .with_score("score_one", "float")
+        .with_data("chr1  0  10  0.11")
+        .with_chrom_lens({"chr1": 1000})
+        .with_fetch_budgets(
+            direct_fetch_size=1000,
+            buffer_fetch_size=2000,
+            use_buffered_threshold=100,
+        )
     )
-    setup_bigwig(
-        root_path / "test_score" / "data.bw",
-        "chr1  0  10  0.11", {"chr1": 1000},
-    )
-    grr = build_filesystem_test_repository(root_path)
+    grr = a_grr().with_resource("test_score", builder).build_repo(tmp_path)
 
     score = PositionScore(grr.get_resource("test_score"))
 

@@ -12,6 +12,7 @@ That is pinned here too, because it is what the weighted seam must *not*
 change.
 """
 
+import pathlib
 import textwrap
 from typing import Any
 
@@ -20,73 +21,54 @@ from gain.annotation.annotatable import Region
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.genomic_resources.repository import GenomicResourceRepo
-from gain.genomic_resources.testing import (
-    build_inmemory_test_repository,
-    convert_to_tab_separated,
+from gain.genomic_resources.testing.builders import (
+    a_cnv_collection,
+    a_grr,
+    a_position_score,
+    an_allele_score,
 )
 
 
 @pytest.fixture
-def fixture_repo() -> GenomicResourceRepo:
-    return build_inmemory_test_repository({
-        "position_score1": {
-            "genomic_resource.yaml": textwrap.dedent("""
-            type: position_score
-            table:
-                filename: data.mem
-            scores:
-            - id: test100way
-              type: float
-              desc: "test values"
-              name: 100way
-            """),
-            "data.mem": """
+def fixture_repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
+    return (
+        a_grr()
+        .with_resource(
+            "position_score1",
+            a_position_score()
+            .with_score("test100way", "float", column_name="100way",
+                        desc="test values")
+            .with_data("""
                 chrom  pos_begin  pos_end  100way
                 chr1   10         19       1.0
                 chr1   20         29       2.0
                 chr1   30         39       3.0
-            """,
-        },
-        "allele_score1": {
-            "genomic_resource.yaml": textwrap.dedent("""
-            type: allele_score
-            table:
-                filename: data.mem
-                reference:
-                  name: reference
-                alternative:
-                  name: alternative
-            scores:
-            - id: freq
-              type: float
-              desc: "test values"
-              name: freq
             """),
-            "data.mem": convert_to_tab_separated("""
+        )
+        .with_resource(
+            "allele_score1",
+            an_allele_score()
+            .with_score("freq", "float", desc="test values")
+            .with_data("""
                 chrom  pos_begin  reference  alternative  freq
                 chr1   10         A          C            0.1
                 chr1   10         A          G            0.2
                 chr1   11         C          A            0.3
             """),
-        },
-        "cnvs": {
-            "genomic_resource.yaml": textwrap.dedent("""
-            type: cnv_collection
-            table:
-                filename: data.mem
-            scores:
-            - id: frequency
-              name: frequency
-              type: float
-              desc: some population frequency
-            """),
-            "data.mem": convert_to_tab_separated("""
+        )
+        .with_resource(
+            "cnvs",
+            a_cnv_collection()
+            .with_score("frequency", "float",
+                        desc="some population frequency")
+            .with_data("""
                 chrom  pos_begin  pos_end  frequency
                 chr1   10         19       0.1
                 chr1   20         200      0.2
             """),
-        },
-    })
+        )
+        .build_repo(tmp_path)
+    )
 
 
 def _pipeline(

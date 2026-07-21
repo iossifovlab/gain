@@ -1,35 +1,29 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 """The score layer owns the weight of a region record (#260)."""
 
+import pathlib
 from typing import Any
 
 import pytest
-from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.aggregators import Aggregator
 from gain.genomic_resources.genomic_scores import PositionScore
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME
-from gain.genomic_resources.testing import build_inmemory_test_resource
+from gain.genomic_resources.testing.builders import a_position_score
 
 
 @pytest.fixture
-def position_score() -> PositionScore:
-    res: GenomicResource = build_inmemory_test_resource({
-        GR_CONF_FILE_NAME: """
-            type: position_score
-            table:
-                filename: data.mem
-            scores:
-              - id: test100way
-                type: float
-                desc: "test values"
-                name: s1""",
-        "data.mem": """
+def position_score(tmp_path: pathlib.Path) -> PositionScore:
+    res = (
+        a_position_score()
+        .with_score("test100way", "float", column_name="s1",
+                    desc="test values")
+        .with_data("""
             chrom  pos_begin  pos_end  s1
             1      10         19       1.0
             1      20         29       2.0
             1      30         39       3.0
-            """,
-    })
+        """)
+        .build_resource(tmp_path)
+    )
     return PositionScore(res).open()
 
 
