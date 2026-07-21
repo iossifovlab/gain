@@ -182,45 +182,65 @@ def test_prune_rebuilds_the_maxima_exactly_from_the_survivors() -> None:
     # Compaction has to leave both maxima consistent with what is left, or
     # ``contains`` starts admitting positions the buffer cannot answer and
     # ``find_index`` searches a window justified by a record that is gone.
+    #
+    # For ``_max_width`` to have anything to shrink, the widest record has to
+    # be one of the dying ones -- and that puts it at the head: a *surviving*
+    # head begins before every other record and reaches past the prune
+    # position, so it is always at least as wide as anything the prune drops.
     buffer = LineBuffer()
-    buffer.append(rec("1", 1, 4000))  # spans the prune position, pins the head
-    for pos in range(2, 60):
-        width = 500 if pos % 10 == 0 else 1
-        buffer.append(rec("1", pos, pos + width))
+    buffer.append(rec("1", 1, 499))    # the widest buffered, and dead at 500
+    buffer.append(rec("1", 450, 600))  # spans the prune position, pins the head
+    for pos in range(451, 500):
+        buffer.append(rec("1", pos, pos + 10))  # 451..489 are dead at 500
+    assert buffer._max_width == 498  # held by the record about to die
 
     buffer.prune("1", 500)
 
     survivors = list(buffer.deque)
     assert survivors
     # Every record that cannot match 500 or later is gone, wherever it sat --
-    # before the fix all 59 survived, pinned behind the head.
+    # before the fix the 39 dead ones behind the spanning record all stayed.
     assert all(record[POS_END] >= 500 for record in survivors)
     assert buffer._max_end == max(r[POS_END] for r in survivors)
+    # 498 -> 150: the dead head's width stops widening find_index's scan.
     assert buffer._max_width == max(
         r[POS_END] - r[POS_BEGIN] for r in survivors)
 
 
-def test_prune_answers_the_same_queries_after_compacting() -> None:
-    # Compaction may only drop records that can no longer match.  Reading every
-    # position of the scan back out of the buffer must therefore give exactly
-    # what the same records give when none are ever evicted.
-    records = [rec("1", 1, 300), *(
-        rec("1", pos, pos + (pos % 7)) for pos in range(2, 200)
-    )]
+def test_prune_answers_the_same_queries_while_compacting() -> None:
+    # Compaction may only drop records that can no longer match -- and between
+    # compactions the buffer knowingly holds records that already cannot, which
+    # ``fetch`` has to filter out exactly as it always did.  So read every
+    # position of the scan back out of a buffer pruned the way the tabix read
+    # path prunes it -- append, then prune to the query -- and compare against
+    # the same records with nothing ever evicted.
+    scan_end = 600
+    records = [rec("1", 1, scan_end)]  # spans the whole scan, pins the head
 
     buffer = LineBuffer()
-    reference = LineBuffer()
-    for record in records:
-        buffer.append(record)
-        reference.append(record)
+    buffer.append(records[0])
 
-    for pos in range(1, 200):
+    max_dead = 0
+    max_len = 0
+    for pos in range(1, scan_end + 1):
+        record = rec("1", pos, pos + (pos % 7))
+        records.append(record)
+        buffer.append(record)
         buffer.prune("1", pos)
-        expected = [
-            r for r in reference.deque
-            if r[POS_BEGIN] <= pos <= r[POS_END]
-        ]
+
+        expected = [r for r in records if r[POS_BEGIN] <= pos <= r[POS_END]]
         assert list(buffer.fetch("1", pos, pos)) == expected, pos
+
+        max_dead = max(
+            max_dead, sum(1 for r in buffer.deque if r[POS_END] < pos))
+        max_len = max(max_len, len(buffer))
+
+    # The scan really did run in the amortized regime those assertions are
+    # there for: dead records were held -- so ``fetch`` had something to filter
+    # -- but never more than a compaction's worth.  Before the fix the spanning
+    # head pinned every one of them and the buffer grew with the scan.
+    assert 0 < max_dead < LineBuffer.COMPACT_FLOOR
+    assert max_len <= LineBuffer.COMPACT_FLOOR
 
 
 @pytest.mark.parametrize("pos,index", [
