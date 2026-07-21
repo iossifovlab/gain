@@ -2,6 +2,18 @@ Release Notes
 =============
 
 * 2026.7.2
+    * A resource may now configure ``position_aggregator: count`` /
+      ``allele_aggregator: count`` (#261). ``count`` has always been a
+      registered aggregator — buildable, accepted in a pipeline
+      configuration and documented — but the resource-config schema was a
+      second, hand-written list of names that had drifted, and it rejected
+      ``count`` outright. The schema is now derived from the aggregator
+      registry, so registering an aggregator is the only edit needed for it
+      to be configurable everywhere. ``join()`` with an empty separator is
+      accepted too, matching the definition parser. A resource-level
+      aggregator remains **string-only**: the
+      ``{aggregator_type: ..., parameters: [...]}`` dict form is a
+      pipeline-configuration spelling.
     * **Behavior change:** a region is now aggregated per **record**, not
       per base pair (#260). A position-score record that covers N base
       pairs of the annotated region used to be turned into N identical

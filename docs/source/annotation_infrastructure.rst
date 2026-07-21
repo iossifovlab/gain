@@ -143,6 +143,12 @@ The available aggregators are:
 The ``aggregator`` field accepts either the string form (``join(,)``) or a dict
 (``{aggregator_type: join, parameters: [","]}``), both are equivalent.
 
+Every one of these names is equally available as a resource-level default —
+``position_aggregator`` / ``allele_aggregator`` on a score in a
+``genomic_resource.yaml`` — with one difference: a resource configures its
+aggregator by the **string form only**. The dict form is a pipeline-configuration
+spelling.
+
 position_score_annotator
 ************************
 

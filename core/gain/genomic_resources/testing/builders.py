@@ -61,18 +61,16 @@ from gain.genomic_resources.testing import (
     setup_tabix,
     setup_vcf,
 )
-
-
-class ResourceValidationError(ValueError):
-    """Raised for a builder-owned validation error.
-
-    Subclasses ``ValueError`` so existing ``pytest.raises(ValueError, ...)``
-    call sites keep matching.  ``GRRBuilder.build_repo`` catches only this
-    type when annotating an error with the resource id, so a genuine,
-    non-validation ``ValueError`` surfacing from ``realize_into`` (e.g. a
-    lower-level failure inside a ``setup_*`` helper) passes through
-    un-relabeled instead of being silently recast as a validation error.
-    """
+from gain.genomic_resources.testing.score_specs import (
+    ResourceValidationError,
+    ScoreSpec,
+    append_score,
+    render_score_specs_yaml,
+    scores_or_default,
+    set_aggregator,
+    set_histogram,
+    set_na_values,
+)
 
 
 @runtime_checkable
@@ -99,216 +97,9 @@ _GRR_DEFINITION_FILENAME = "grr.yaml"
 _GRR_RESOURCES_DIRNAME = "grr"
 
 
-@dataclasses.dataclass(frozen=True)
-class _ScoreSpec:
-    """A single declared score column.
-
-    The shared score-declaration representation used by BOTH the
-    position-score and the gene-score builders: an ``id``, a ``column_name``
-    (defaulting to the id), a value ``type``, an optional ``desc`` and an
-    optional ``histogram`` block.  The two builders differ only in the base
-    (non-score) columns their data tables require; the score declarations,
-    their ``column_name`` defaulting, duplicate-id / duplicate-column_name
-    validation and YAML rendering are all shared through this type.
-
-    A score is addressed EITHER by ``column_name`` or by ``column_index``,
-    never both.  When ``column_index`` is set, ``column_name`` is ``None``
-    and the column the index points at is resolved from the data header at
-    realize time (see :func:`_resolve_column_names`).
-    """
-
-    score_id: str
-    value_type: str
-    column_name: str | None
-    column_index: int | None = None
-    desc: str | None = None
-    histogram: dict[str, Any] | None = None
-    na_values: str | list[str] | None = None
-
-
-def _append_score(
-    scores: tuple[_ScoreSpec, ...], score_id: str, value_type: str, *,
-    column_name: str | None = None, column_index: int | None = None,
-    desc: str | None = None,
-) -> tuple[_ScoreSpec, ...]:
-    """Return ``scores`` with one more declared score appended.
-
-    Shared by both builders' ``with_score``.  With neither addressing mode
-    given, ``column_name`` defaults to ``score_id``; the two modes are
-    mutually exclusive, matching the resource schema, which declares
-    ``column_index`` as excluding ``name``/``column_name``/``index``.
-    """
-    if column_name is not None and column_index is not None:
-        raise ResourceValidationError(
-            f"score {score_id!r}: column_name and column_index are "
-            f"mutually exclusive; address the column one way or the other")
-    if column_index is not None and column_index < 0:
-        raise ResourceValidationError(
-            f"score {score_id!r}: column_index must be non-negative, "
-            f"got {column_index}")
-    if column_index is None and column_name is None:
-        column_name = score_id
-    spec = _ScoreSpec(
-        score_id=score_id,
-        value_type=value_type,
-        column_name=column_name,
-        column_index=column_index,
-        desc=desc,
-    )
-    return (*scores, spec)
-
-
-def _set_histogram(
-    scores: tuple[_ScoreSpec, ...], histogram: dict[str, Any], *,
-    score_id: str | None = None,
-) -> tuple[_ScoreSpec, ...]:
-    """Return ``scores`` with ``histogram`` set on one declared score.
-
-    Shared by both builders' ``with_histogram``.  With ``score_id`` omitted
-    the histogram is attached to the most-recently-declared score; passing
-    ``score_id`` targets that specific score.  Declaring a histogram before
-    any score, or for an unknown score id, is a validation error.
-    """
-    if not scores:
-        raise ResourceValidationError(
-            "with_histogram requires a declared score; "
-            "call with_score first")
-    # Defensive copy: capture the histogram by value so a caller mutating
-    # their dict afterward cannot leak into this immutable builder.
-    histogram = copy.deepcopy(histogram)
-    if score_id is None:
-        target_index = len(scores) - 1
-    else:
-        indexes = [
-            i for i, spec in enumerate(scores)
-            if spec.score_id == score_id
-        ]
-        if not indexes:
-            raise ResourceValidationError(
-                f"with_histogram: no score {score_id!r} declared")
-        target_index = indexes[-1]
-    return tuple(
-        dataclasses.replace(spec, histogram=histogram)
-        if i == target_index else spec
-        for i, spec in enumerate(scores)
-    )
-
-
-def _set_na_values(
-    scores: tuple[_ScoreSpec, ...],
-    na_values: str | list[str], *,
-    score_id: str | None = None,
-) -> tuple[_ScoreSpec, ...]:
-    """Return ``scores`` with ``na_values`` set on one declared score.
-
-    Shared by the table-score builders' ``with_na_values``.  With ``score_id``
-    omitted the sentinel(s) are attached to the most-recently-declared score;
-    passing ``score_id`` targets that specific score.  Setting na_values before
-    any score, or for an unknown score id, is a validation error.  The value is
-    rendered verbatim under ``na_values:`` -- either a scalar (``na_values:
-    "-1"``) or a list -- matching the resource schema's ``["string", "list"]``.
-    """
-    if not scores:
-        raise ResourceValidationError(
-            "with_na_values requires a declared score; "
-            "call with_score first")
-    # Defensive copy of a list so a caller mutating theirs afterward cannot
-    # leak into this immutable builder.
-    if isinstance(na_values, list):
-        na_values = list(na_values)
-    if score_id is None:
-        target_index = len(scores) - 1
-    else:
-        indexes = [
-            i for i, spec in enumerate(scores)
-            if spec.score_id == score_id
-        ]
-        if not indexes:
-            raise ResourceValidationError(
-                f"with_na_values: no score {score_id!r} declared")
-        target_index = indexes[-1]
-    return tuple(
-        dataclasses.replace(spec, na_values=na_values)
-        if i == target_index else spec
-        for i, spec in enumerate(scores)
-    )
-
-
-def _render_score_specs_yaml(scores: tuple[_ScoreSpec, ...]) -> str:
-    """Render declared scores as a YAML ``scores:`` list body (0-indent).
-
-    Optional ``desc``/``histogram`` are emitted only when set, so a score
-    with neither renders exactly the three ``id``/``type``/``column_name``
-    lines the position-score builder emitted before the shared base.
-    """
-    blocks: list[str] = []
-    for spec in scores:
-        addressing = (
-            f"  column_index: {spec.column_index}"
-            if spec.column_index is not None
-            else f"  column_name: {spec.column_name}"
-        )
-        lines = [
-            f"- id: {spec.score_id}",
-            f"  type: {spec.value_type}",
-            addressing,
-        ]
-        if spec.na_values is not None:
-            # Emit through yaml so a scalar renders as ``na_values: '-1'`` and
-            # a list as a block sequence, both indented at the score-entry
-            # level -- the schema permits either (``["string", "list"]``).
-            na_yaml = yaml.safe_dump(
-                {"na_values": spec.na_values}, default_flow_style=False,
-                sort_keys=False)
-            lines.extend(
-                f"  {na_line}" if na_line else ""
-                for na_line in na_yaml.rstrip("\n").split("\n")
-            )
-        if spec.desc is not None:
-            # Emit desc through yaml so a colon/special char stays valid.
-            # A multi-line desc renders as several physical lines; indent
-            # EVERY line at the 2-space score-entry level (like histogram),
-            # not just the first, so continuation lines never land at col 0.
-            desc_yaml = yaml.safe_dump(
-                {"desc": spec.desc}, default_flow_style=False,
-                sort_keys=False)
-            lines.extend(
-                # An otherwise-empty continuation line (a blank line inside a
-                # multi-line desc) is emitted empty rather than as bare
-                # indentation, so no line carries trailing whitespace; YAML
-                # ignores the indentation of blank scalar-continuation lines,
-                # so this still round-trips.
-                f"  {desc_line}" if desc_line else ""
-                for desc_line in desc_yaml.rstrip("\n").split("\n")
-            )
-        if spec.histogram is not None:
-            lines.append("  histogram:")
-            hist_yaml = yaml.safe_dump(
-                spec.histogram, default_flow_style=False, sort_keys=False)
-            lines.extend(
-                f"    {hist_line}"
-                for hist_line in hist_yaml.rstrip("\n").split("\n")
-            )
-        blocks.append("\n".join(lines))
-    return "\n".join(blocks) + "\n"
-
-
 # The tabix table filename used when a table score is realized as tabix
 # (``.txt.gz`` + ``.tbi``) instead of the plain ``.txt`` default.
 _TABIX_FILENAME = "data.txt.gz"
-
-
-def _scores_or_default(
-    scores: tuple[_ScoreSpec, ...],
-) -> tuple[_ScoreSpec, ...]:
-    """Return ``scores`` or, when empty, a single default ``float`` score.
-
-    Shared fallback for every score builder (position/np/allele/gene): a bare
-    builder with no declared score realizes one ``"score"`` float column.
-    """
-    if scores:
-        return scores
-    return (_ScoreSpec("score", "float", "score"),)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -316,7 +107,7 @@ class _TableScoreBuilder:
     """Immutable base for the tabular position/np/allele score builders.
 
     The three table-score resource types share nearly everything: score
-    declaration (:class:`_ScoreSpec`), header validation, YAML rendering,
+    declaration (:class:`ScoreSpec`), header validation, YAML rendering,
     the ``with_data`` / typed ``with_score_line`` authoring modes and the
     plain-``.txt`` / tabix realize paths.  They differ only in a handful of
     class-level knobs supplied by each subclass:
@@ -330,7 +121,7 @@ class _TableScoreBuilder:
     * ``DEFAULT_DATA`` -- the bare-builder default data block.
     """
 
-    scores: tuple[_ScoreSpec, ...] = ()
+    scores: tuple[ScoreSpec, ...] = ()
     data: str | None = None
     rows: tuple[tuple[tuple[str, str], ...], ...] = ()
     tabix: bool = False
@@ -365,7 +156,7 @@ class _TableScoreBuilder:
         """
         return dataclasses.replace(
             self,
-            scores=_append_score(
+            scores=append_score(
                 self.scores, score_id, value_type,
                 column_name=column_name, column_index=column_index,
                 desc=desc),
@@ -403,7 +194,7 @@ class _TableScoreBuilder:
         """
         return dataclasses.replace(
             self,
-            scores=_set_histogram(
+            scores=set_histogram(
                 self.scores, histogram, score_id=score_id),
         )
 
@@ -420,8 +211,41 @@ class _TableScoreBuilder:
         """
         return dataclasses.replace(
             self,
-            scores=_set_na_values(
+            scores=set_na_values(
                 self.scores, na_values, score_id=score_id),
+        )
+
+    def with_position_aggregator(
+        self, aggregator: str, *, score_id: str | None = None,
+    ) -> Self:
+        """Declare the score's default per-position aggregator.
+
+        Emitted under ``position_aggregator:`` -- the resource-level default a
+        pipeline uses when an attribute does not name one of its own.  With
+        ``score_id`` omitted it attaches to the most-recently-declared score.
+        The value is rendered verbatim, so an invalid one can be authored on
+        purpose to watch the resource schema reject it.
+        """
+        return dataclasses.replace(
+            self,
+            scores=set_aggregator(
+                self.scores, "position_aggregator", aggregator,
+                score_id=score_id),
+        )
+
+    def with_allele_aggregator(
+        self, aggregator: str, *, score_id: str | None = None,
+    ) -> Self:
+        """Declare the score's default per-allele aggregator.
+
+        The allele-level counterpart of :meth:`with_position_aggregator`,
+        emitted under ``allele_aggregator:``.
+        """
+        return dataclasses.replace(
+            self,
+            scores=set_aggregator(
+                self.scores, "allele_aggregator", aggregator,
+                score_id=score_id),
         )
 
     def with_data(self, data: str) -> Self:
@@ -479,7 +303,7 @@ class _TableScoreBuilder:
         Raises a ``ResourceValidationError`` on invalid content;
         ``GRRBuilder`` annotates it with the resource id.
         """
-        scores = _scores_or_default(self.scores)
+        scores = scores_or_default(self.scores)
         data = self._effective_data(scores)
         _validate_score_specs(scores)
         _validate_data_header(
@@ -507,7 +331,7 @@ class _TableScoreBuilder:
         """
         return _build_single_resource(self, tmp_path)
 
-    def _effective_data(self, scores: tuple[_ScoreSpec, ...]) -> str:
+    def _effective_data(self, scores: tuple[ScoreSpec, ...]) -> str:
         if self.data is not None and self.rows:
             raise ResourceValidationError(
                 "with_data and with_score_line are mutually exclusive; "
@@ -518,7 +342,7 @@ class _TableScoreBuilder:
             return self._synthesize_rows(scores)
         return self.DEFAULT_DATA
 
-    def _synthesize_rows(self, scores: tuple[_ScoreSpec, ...]) -> str:
+    def _synthesize_rows(self, scores: tuple[ScoreSpec, ...]) -> str:
         """Render the accumulated typed rows as a whitespace data block."""
         indexed = [s.score_id for s in scores if s.column_index is not None]
         if indexed:
@@ -558,7 +382,7 @@ class _TableScoreBuilder:
         return "\n".join(lines) + "\n"
 
     def _render_config(
-        self, scores: tuple[_ScoreSpec, ...], filename: str,
+        self, scores: tuple[ScoreSpec, ...], filename: str,
     ) -> str:
         lines = [
             f"type: {self.SCORE_TYPE}",
@@ -580,7 +404,7 @@ class _TableScoreBuilder:
         config = "\n".join(lines) + "\n"
         config += self.TABLE_EXTRA_CONFIG
         config += "scores:\n"
-        return config + _render_score_specs_yaml(scores)
+        return config + render_score_specs_yaml(scores)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -925,7 +749,7 @@ _DEFAULT_GENE_COLUMN = "gene"
 class GeneScoreBuilder:
     """Immutable builder for a single ``gene_score`` resource.
 
-    Built on the shared score-declaration base (:class:`_ScoreSpec`): scores
+    Built on the shared score-declaration base (:class:`ScoreSpec`): scores
     are declared with :meth:`with_score` (``column_name`` defaults to the
     score id) and validated for duplicate ids / column names exactly like a
     position score.  The gene→value table is authored with :meth:`with_data`
@@ -939,7 +763,7 @@ class GeneScoreBuilder:
     (the numeric default histogram is auto-built when the score is read).
     """
 
-    scores: tuple[_ScoreSpec, ...] = ()
+    scores: tuple[ScoreSpec, ...] = ()
     data: str | None = None
     gene_column: str = _DEFAULT_GENE_COLUMN
     gzipped: bool = False
@@ -951,7 +775,7 @@ class GeneScoreBuilder:
         """Declare a gene score; ``column_name`` defaults to ``score_id``."""
         return dataclasses.replace(
             self,
-            scores=_append_score(
+            scores=append_score(
                 self.scores, score_id, value_type,
                 column_name=column_name, desc=desc),
         )
@@ -969,7 +793,7 @@ class GeneScoreBuilder:
         """
         return dataclasses.replace(
             self,
-            scores=_set_histogram(
+            scores=set_histogram(
                 self.scores, histogram, score_id=score_id),
         )
 
@@ -1140,7 +964,7 @@ def _parse_header(data: str) -> list[str]:
 
 
 def _validate_score_specs(
-    scores: tuple[_ScoreSpec, ...],
+    scores: tuple[ScoreSpec, ...],
 ) -> None:
     """Validate the declared scores for duplicate ids or column names.
 
@@ -1178,7 +1002,7 @@ def _validate_score_specs(
 
 
 def _resolve_column_names(
-    scores: tuple[_ScoreSpec, ...], header: list[str],
+    scores: tuple[ScoreSpec, ...], header: list[str],
 ) -> set[str]:
     """Return the data-header column each declared score reads.
 
@@ -1204,7 +1028,7 @@ def _resolve_column_names(
 
 
 def _validate_data_header(
-    data: str, scores: tuple[_ScoreSpec, ...], *,
+    data: str, scores: tuple[ScoreSpec, ...], *,
     base_required: tuple[str, ...],
     base_optional: tuple[str, ...] = (),
 ) -> None:
@@ -1269,7 +1093,7 @@ def _build_gene_score_content(
     (``GRRBuilder``) annotates it with the resource id, so messages here
     stay id-free.
     """
-    scores = _scores_or_default(builder.scores)
+    scores = scores_or_default(builder.scores)
     data = _effective_gene_data(builder)
     _validate_score_specs(scores)
     colliding = [
@@ -1294,7 +1118,7 @@ def _build_gene_score_content(
         """)
     if builder.gene_column != _DEFAULT_GENE_COLUMN:
         config += f"gene_column: {builder.gene_column}\n"
-    config += "scores:\n" + _render_score_specs_yaml(scores)
+    config += "scores:\n" + render_score_specs_yaml(scores)
     tsv = convert_to_tab_separated(data)
     table_content: str | bytes = (
         gzip.compress(tsv.encode()) if builder.gzipped else tsv)
