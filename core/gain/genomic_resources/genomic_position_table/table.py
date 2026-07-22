@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Generator
-from functools import cache
 from types import TracebackType
 from typing import ClassVar, cast
 
@@ -54,6 +53,11 @@ class GenomicPositionTable(abc.ABC):
         self.chrom_order: list[str] | None = None
         self.rev_chrom_map: dict[str, str] | None = None
 
+        # Per-instance memo for get_file_chromosomes; see that method for why
+        # it is not a functools cache.  Reset by _build_chrom_mapping, so a
+        # table reopened over changed data re-reads its contigs.
+        self._file_chromosomes: list[str] | None = None
+
         self.chrom_key: int
         self.pos_begin_key: int
         self.pos_end_key: int
@@ -81,6 +85,9 @@ class GenomicPositionTable(abc.ABC):
 
     def _build_chrom_mapping(self) -> None:
         self.chrom_map = None
+        # Called from every backend's open(), and so the point at which a
+        # reopened table must forget what the previous open() read.
+        self._file_chromosomes = None
         self.chrom_order = self.get_file_chromosomes()
         if "chrom_mapping" in self.definition:
             mapping = self.definition.chrom_mapping
@@ -266,11 +273,41 @@ class GenomicPositionTable(abc.ABC):
         Returned value is guarnteed to be larget than the actual contig length.
         """
 
-    @cache  # pylint: disable=method-cache-max-size-none
-    @abc.abstractmethod
+    # Memoised PER INSTANCE, and deliberately not with functools.cache: that
+    # decorator keeps its memo on the class-level function object and keys it
+    # by the call arguments, self included, so it is a strong reference to
+    # every table it is ever called on -- held for the life of the process,
+    # with no eviction.  _build_chrom_mapping calls this from every backend's
+    # open(), so it pinned EVERY table that was ever opened, and a whole-genome
+    # `grr_manage resource-repair` opens one per region task (gain#345).
+    #
+    # It also bought nothing there: each task builds a fresh table, so a
+    # class-level memo keyed by self never saw a hit.  What a memo is actually
+    # for here is the repeated calls WITHIN one table's life -- get_chromosomes
+    # and get_chromosome_length both call this -- and an instance attribute
+    # serves those and dies with the instance.
+    #
+    # Pinned by test_table_lifetime.py, which asserts both that a closed and
+    # dropped table is collected and that no table method carries a
+    # class-level memo at all.
     def get_file_chromosomes(self) -> list[str]:
-        """Return chromosomes in a genomic table file.
+        """Return the chromosomes in the table file, in the file's own order.
+
+        The result is cached for the lifetime of the open table; reopening
+        re-reads it.
+        """
+        if self._file_chromosomes is None:
+            self._file_chromosomes = self._load_file_chromosomes()
+        return self._file_chromosomes
+
+    @abc.abstractmethod
+    def _load_file_chromosomes(self) -> list[str]:
+        """Read the chromosomes out of the table file.
 
         This is to be overwritten by the subclass. It should return a list of
         the chromosomes in the file in the order determinted by the file.
+
+        Called at most once per open table -- :meth:`get_file_chromosomes`
+        holds the result -- so an implementation may read the open handle
+        directly and need not memoise on its own.
         """

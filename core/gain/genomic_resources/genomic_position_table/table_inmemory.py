@@ -1,6 +1,5 @@
 import collections
 from collections.abc import Generator
-from functools import cache
 from typing import IO, ClassVar, cast
 
 from gain.genomic_resources.repository import GenomicResource
@@ -59,7 +58,7 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
         self.format = file_format
         self.str_stream: IO | None = None
         self.records_by_chr: dict[str, list[Record]] = {}
-        self._file_chromosomes: list[str] = []
+        self._scanned_chromosomes: list[str] = []
         self.zero_based = table_definition.get("zero_based", False)
         super().__init__(genomic_resource, table_definition)
 
@@ -115,7 +114,7 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
             raw_rows.append(columns)
             seen_chromosomes.add(columns[self.chrom_key])
 
-        self._file_chromosomes = sorted(seen_chromosomes)
+        self._scanned_chromosomes = sorted(seen_chromosomes)
         self._build_chrom_mapping()
 
         parser = build_tabular_parser(
@@ -143,9 +142,12 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
         }
         return self
 
-    @cache  # pylint: disable=method-cache-max-size-none
-    def get_file_chromosomes(self) -> list[str]:
-        return self._file_chromosomes
+    def _load_file_chromosomes(self) -> list[str]:
+        # Scanned out of the rows by open(), which is the only
+        # place this backend ever sees the file; kept under a
+        # name of its own so it is not confused with the base
+        # class's get_file_chromosomes memo (gain#345).
+        return self._scanned_chromosomes
 
     def get_all_records(self) -> Generator[Record, None, None]:
         # A known contig with no records (e.g. mapped onto an empty file

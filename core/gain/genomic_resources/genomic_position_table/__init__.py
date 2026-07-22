@@ -93,6 +93,25 @@ overlapped later queries and leave the buffer answering from a hole -- silently,
 and with no fall-through to the file to rescue it.  (It would also leave
 ``_max_end``/``_max_width`` stale, but only ever *high*, which is the harmless
 direction -- see :class:`LineBuffer`.  The completeness break is the real one.)
+**Changed extension point: a backend now implements
+``_load_file_chromosomes``, not ``get_file_chromosomes``.**  Neither name is in
+``__all__`` below, so this breaks no public name of ``gain`` -- it is recorded
+here because ``get_file_chromosomes`` was an *abstract* method whose docstring
+named it the thing "to be overwritten by the subclass", which makes it the
+documented way to write a backend, and an out-of-tree backend that overrides
+the old name now fails to instantiate (the new abstract hook is unimplemented).
+No such backend exists anywhere in the stack; every in-tree one was migrated
+with the change.
+
+``get_file_chromosomes`` still exists, unchanged in name, signature and
+meaning.  What changed is that it is now CONCRETE on ``GenomicPositionTable``,
+memoising per instance over the new hook.  It carried ``functools.cache``
+before, which keyed a class-level memo by ``self`` and so pinned every table
+that was ever opened for the life of the process -- unbounded growth under
+``grr_manage resource-repair``, which builds one table per region task
+(gain#345).  A backend migrates by renaming its override and deleting the
+decorator; it must not memoise on its own, since the base class now does.
+
 """
 from .line import LineBuffer
 from .table_bigwig import BigWigTable

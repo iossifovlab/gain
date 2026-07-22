@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Generator
-from functools import cache
 from typing import ClassVar
 
 from gain.genomic_resources.genomic_position_table.record import Record
@@ -182,6 +181,14 @@ class BigWigTable(GenomicPositionTable):
         self._set_core_column_keys()
         self._build_chrom_mapping()
         self.parser = build_bigwig_parser()
+        # A reopened table must not answer out of the previous open's buffer.
+        # The buffer is keyed by region, not by file, so a table closed and
+        # reopened over CHANGED data served the old file's values for any query
+        # landing in the retained span -- silently, since a buffer hit never
+        # falls through to the file.  This is the invariant's home: close()
+        # clears the buffer as well, but only to release the memory, and a
+        # caller is not required to have called it.
+        self._discard_buffer()
         return self
 
     def close(self) -> None:
@@ -189,6 +196,17 @@ class BigWigTable(GenomicPositionTable):
             self._bw_file.close()
         self._bw_file = None
         self.parser = None
+        # Release the fetched intervals too.  open() re-establishes this
+        # anyway, so what the clearing here buys is memory, not correctness: a
+        # closed table that still holds its last chunk keeps up to a full fetch
+        # window of intervals alive for as long as anything holds the table,
+        # which is what made gain#345 expensive rather than merely untidy.
+        self._discard_buffer()
+
+    def _discard_buffer(self) -> None:
+        """Drop the buffered intervals and the region they cover."""
+        self._buffer = []
+        self._buffer_region = Region("?", -1, -1)
 
     def _fetch_chunk(
         self, window: AdaptiveFetchWindow,
@@ -322,7 +340,19 @@ class BigWigTable(GenomicPositionTable):
             # in the buffer to yield (since _fill is called with pos_end)
             idx = 0
 
-        while self._buffer:
+        while True:
+            # A generator that outlives close() must not look like a complete,
+            # shorter result set.  The handle is what says the table is still
+            # usable, and the check has to come BEFORE the buffer is consulted:
+            # close() empties the buffer as well as nulling the handle, so a
+            # ``while self._buffer:`` header falls out of the loop on resume --
+            # a silently truncated scan, and an unreachable guard behind it.
+            # A fetch *started* after close already raises on the parser assert
+            # in get_records_in_region.
+            assert self._bw_file is not None, \
+                "bigWig table closed while a region fetch was in flight"
+            if not self._buffer:
+                return
             line = self._buffer[idx]
             if line[0] + 1 > pos_end:
                 return
@@ -420,7 +450,6 @@ class BigWigTable(GenomicPositionTable):
             )
         return self.chroms[fchrom]
 
-    @cache  # pylint: disable=method-cache-max-size-none
-    def get_file_chromosomes(self) -> list[str]:
+    def _load_file_chromosomes(self) -> list[str]:
         assert self._bw_file is not None
         return list(self.chroms.keys())
