@@ -175,6 +175,52 @@ def _all_subclasses(klass: type) -> list[type]:
     return subs + [s for sub in subs for s in _all_subclasses(sub)]
 
 
+def test_a_bigwig_fetch_in_flight_when_close_lands_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A fetch straddling close() must fail loudly, not come back short.
+
+    Consuming a fetch lazily outside the block that opened the table is easy to
+    write by accident -- ``gen = score.fetch_region(...)`` inside a ``with``,
+    ``list(gen)`` after it -- and the buffered bigWig path resumes from a
+    buffer, so it does not have to touch the closed file handle to keep going.
+    Whatever it does then, it must not be *silently* short: a truncated score
+    list is indistinguishable from a complete one at the call site, and for an
+    annotation read that is wrong data rather than an error.
+
+    This is a live risk of the gain#345 fix specifically.  ``close()`` now
+    discards the buffer, and the fetch loop's guard was the buffer itself, so
+    an interrupted scan stopped looking exhausted-and-correct rather than
+    hitting the file and raising.  The handle, not the buffer, is what says the
+    table is still usable.
+    """
+    chrom_lens = {"chr1": 1000}
+    data = "\n".join(f"chr1  {i * 10}  {i * 10 + 10}  0.5" for i in range(50))
+    builder = (
+        a_bigwig_score()
+        .with_score("score", "float")
+        .with_data(data)
+        .with_chrom_lens(chrom_lens)
+    )
+    repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
+    table = PositionScore(repo.get_resource("bw")).table
+
+    table.open()
+    # the first fetch takes _fetch_direct, which never touches the buffer;
+    # warming it -- so that the interrupted fetch below is the buffered one --
+    # takes a second, nearby query (see the reopen test for the routing rule)
+    list(table.get_records_in_region("chr1", 1, 20))
+
+    records = table.get_records_in_region("chr1", 21, 500)
+    next(records)
+    assert table._buffer, "buffer not warm: the fetch would not be resumable"
+
+    table.close()
+
+    with pytest.raises(AssertionError, match="in flight"):
+        list(records)
+
+
 def test_a_reopened_bigwig_table_does_not_answer_from_the_old_buffer(
     tmp_path: pathlib.Path,
 ) -> None:

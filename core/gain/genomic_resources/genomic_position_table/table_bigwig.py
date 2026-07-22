@@ -340,15 +340,19 @@ class BigWigTable(GenomicPositionTable):
             # in the buffer to yield (since _fill is called with pos_end)
             idx = 0
 
-        while self._buffer:
+        while True:
             # A generator that outlives close() must not look like a complete,
-            # shorter result set.  The loop guard is the buffer, and close()
-            # empties it, so without this the consumer of a fetch straddling a
-            # close gets a silently truncated scan instead of an error; a fetch
-            # *started* after close already raises on the parser assert in
-            # get_records_in_region.
+            # shorter result set.  The handle is what says the table is still
+            # usable, and the check has to come BEFORE the buffer is consulted:
+            # close() empties the buffer as well as nulling the handle, so a
+            # ``while self._buffer:`` header falls out of the loop on resume --
+            # a silently truncated scan, and an unreachable guard behind it.
+            # A fetch *started* after close already raises on the parser assert
+            # in get_records_in_region.
             assert self._bw_file is not None, \
                 "bigWig table closed while a region fetch was in flight"
+            if not self._buffer:
+                return
             line = self._buffer[idx]
             if line[0] + 1 > pos_end:
                 return
