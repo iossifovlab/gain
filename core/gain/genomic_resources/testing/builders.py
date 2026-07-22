@@ -101,6 +101,13 @@ _GRR_RESOURCES_DIRNAME = "grr"
 # (``.txt.gz`` + ``.tbi``) instead of the plain ``.txt`` default.
 _TABIX_FILENAME = "data.txt.gz"
 
+# The ``header_mode`` values a table score may declare.  ``"file"`` is the
+# backend default and the builder's default realize path: the authored header
+# line is written into the data file and read back from it.  ``"none"`` and
+# ``"list"`` both realize a HEADERLESS data file and describe the columns in
+# the config instead.
+_HEADER_MODES = ("file", "none", "list")
+
 
 @dataclasses.dataclass(frozen=True)
 class _TableScoreBuilder:
@@ -117,7 +124,10 @@ class _TableScoreBuilder:
       columns (``reference``/``alternative`` for np/allele; none for
       position).
     * ``TABLE_EXTRA_CONFIG`` -- extra lines spliced into the ``table:`` block
-      (the ``reference``/``alternative`` name mapping for np/allele).
+      (the ``reference``/``alternative`` name mapping for np/allele).  Under
+      ``header_mode: none`` there is no header for a name to match, so those
+      base columns are rendered by index instead -- see
+      :meth:`with_header_mode`.
     * ``DEFAULT_DATA`` -- the bare-builder default data block.
     """
 
@@ -127,6 +137,10 @@ class _TableScoreBuilder:
     tabix: bool = False
     chrom_mapping: dict[str, Any] | None = None
     zero_based: bool = False
+    header_mode: str | None = None
+    # Suppresses the ``header_mode:`` key while keeping everything else the
+    # ``"none"`` mode realizes -- see :meth:`with_missing_header_mode`.
+    omit_header_mode: bool = False
 
     # Subclass-provided knobs.
     SCORE_TYPE: ClassVar[str] = ""
@@ -181,6 +195,56 @@ class _TableScoreBuilder:
         realize paths.
         """
         return dataclasses.replace(self, zero_based=True)
+
+    def with_header_mode(self, header_mode: str) -> Self:
+        """Declare how the table's column names are described.
+
+        ``"file"`` -- the backend default and the builder's default -- keeps
+        the authored header line in the realized data file (as a ``#``
+        comment on the tabix path) and lets the backend read the columns
+        from it.
+
+        ``"none"`` and ``"list"`` realize a HEADERLESS data file: the file
+        carries data rows only, and the config describes the columns
+        instead -- explicit ``column_index:`` mappings for ``"none"``, a
+        ``header:`` list for ``"list"``.
+
+        This is one of the knobs that reintroduces a SECOND description of
+        the columns, which is what the builders otherwise exist to prevent
+        (see the module docstring of :mod:`.builders` and gain#318).  It is
+        kept honest by deriving everything from ONE declaration: the header
+        line authored in :meth:`with_data` stays the single source, feeding
+        the rendered config's column indices, the tabix
+        ``seq_col``/``start_col``/``end_col``, and the header validation --
+        even in the modes where it is not written into the file.
+
+        With ``"none"`` there is no header to resolve a name against, so
+        every declared score must address its column by ``column_index``
+        (:meth:`with_score`); a name-addressed score is rejected at realize
+        time rather than left to fail inside the score implementation.
+        """
+        if header_mode not in _HEADER_MODES:
+            raise ResourceValidationError(
+                f"unsupported header_mode {header_mode!r}; "
+                f"expected one of {list(_HEADER_MODES)}")
+        return dataclasses.replace(
+            self, header_mode=header_mode, omit_header_mode=False)
+
+    def with_missing_header_mode(self) -> Self:
+        """Realize the misconfiguration behind gain#364.
+
+        Everything ``with_header_mode("none")`` realizes -- a headerless
+        data file with index-addressed columns -- except the
+        ``header_mode:`` key itself, which the config forgets.  The backend
+        therefore falls back to its ``"file"`` default and looks for a
+        header the file does not have.
+
+        The resulting resource does NOT open; it exists so a test can watch
+        that failure be reported.  Do not reach for it to build a working
+        headerless resource -- that is :meth:`with_header_mode`.
+        """
+        return dataclasses.replace(
+            self, header_mode="none", omit_header_mode=True)
 
     def with_histogram(
         self, histogram: dict[str, Any], *, score_id: str | None = None,
@@ -310,17 +374,48 @@ class _TableScoreBuilder:
             data, scores,
             base_required=self.LEADING_COLUMNS + self.TRAILING_COLUMNS,
             base_optional=self.OPTIONAL_COLUMNS)
+        self._validate_header_mode(scores)
+        # The authored header is the single column declaration; the modes
+        # that do not write it into the file still resolve their indices
+        # from it.
+        write_header = self._effective_header_mode() == "file"
         if self.tabix:
             setup_directories(
                 resource_dir,
                 {GR_CONF_FILE_NAME: self._render_config(
-                    scores, _TABIX_FILENAME)})
-            _realize_tabix_table(resource_dir / _TABIX_FILENAME, data)
+                    scores, _TABIX_FILENAME, data)})
+            _realize_tabix_table(
+                resource_dir / _TABIX_FILENAME, data,
+                write_header=write_header)
         else:
+            file_data = data if write_header else _strip_header(data)
             setup_directories(resource_dir, {
-                GR_CONF_FILE_NAME: self._render_config(scores, _DATA_FILENAME),
-                _DATA_FILENAME: convert_to_tab_separated(data),
+                GR_CONF_FILE_NAME: self._render_config(
+                    scores, _DATA_FILENAME, data),
+                _DATA_FILENAME: convert_to_tab_separated(file_data),
             })
+
+    def _effective_header_mode(self) -> str:
+        """Return the header mode the realized DATA is authored for.
+
+        ``with_missing_header_mode`` realizes the data of the ``"none"``
+        mode without the config key that declares it, so this is not the
+        mode the config states -- it is the one the file is written in.
+        """
+        return self.header_mode or "file"
+
+    def _validate_header_mode(self, scores: tuple[ScoreSpec, ...]) -> None:
+        """Reject a score addressing a column that will not be resolvable."""
+        if self._effective_header_mode() != "none":
+            return
+        named = [
+            spec.score_id for spec in scores if spec.column_index is None
+        ]
+        if named:
+            raise ResourceValidationError(
+                f"header_mode 'none' leaves no header to resolve a column "
+                f"name against; score(s) {sorted(named)} must be declared "
+                f"with column_index")
 
     def build_resource(
         self, tmp_path: pathlib.Path,
@@ -382,8 +477,9 @@ class _TableScoreBuilder:
         return "\n".join(lines) + "\n"
 
     def _render_config(
-        self, scores: tuple[ScoreSpec, ...], filename: str,
+        self, scores: tuple[ScoreSpec, ...], filename: str, data: str,
     ) -> str:
+        header = _parse_header(data)
         lines = [
             f"type: {self.SCORE_TYPE}",
             "table:",
@@ -391,6 +487,11 @@ class _TableScoreBuilder:
         ]
         if self.tabix:
             lines.append("    format: tabix")
+        if self.header_mode is not None and not self.omit_header_mode:
+            lines.append(f"    header_mode: {self.header_mode}")
+        if self.header_mode == "list":
+            lines.append("    header:")
+            lines.extend(f"    - {column}" for column in header)
         if self.zero_based:
             lines.append("    zero_based: true")
         if self.chrom_mapping is not None:
@@ -402,9 +503,30 @@ class _TableScoreBuilder:
                 for mapping_line in mapping_yaml.rstrip("\n").split("\n")
             )
         config = "\n".join(lines) + "\n"
-        config += self.TABLE_EXTRA_CONFIG
+        if self._effective_header_mode() == "none":
+            # No header to match a column name against, so the base columns
+            # are addressed by index -- resolved from the same authored
+            # header the tabix index columns come from.
+            config += self._render_column_indexes(header)
+        else:
+            config += self.TABLE_EXTRA_CONFIG
         config += "scores:\n"
         return config + render_score_specs_yaml(scores)
+
+    def _render_column_indexes(self, header: list[str]) -> str:
+        """Render the base columns as explicit ``column_index:`` mappings."""
+        columns = [
+            *self.LEADING_COLUMNS,
+            *(column for column in self.OPTIONAL_COLUMNS if column in header),
+            *self.TRAILING_COLUMNS,
+        ]
+        lines: list[str] = []
+        for column in columns:
+            lines.extend((
+                f"    {column}:",
+                f"        column_index: {header.index(column)}",
+            ))
+        return "\n".join(lines) + "\n"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -920,24 +1042,39 @@ def _build_single_resource(
 
 
 def _realize_tabix_table(
-    tabix_path: pathlib.Path, data: str,
+    tabix_path: pathlib.Path, data: str, *, write_header: bool = True,
 ) -> None:
     """Realize ``data`` as a tabix table (``.txt.gz`` + ``.tbi``).
 
-    The header line is emitted as a ``#`` comment so the tabix table reads
-    its column names from the file.  ``_render_config`` does not emit a
-    ``header_mode`` key, so this relies on the tabix backend's default
-    ``header_mode`` rather than setting it explicitly; the seq/start/end
-    column indices are derived from the header so an arbitrary column order
-    still indexes correctly.
+    With ``write_header`` (the default, the ``header_mode: file`` path) the
+    header line is emitted as a ``#`` comment so the tabix table reads its
+    column names from the file; ``_render_config`` then emits no
+    ``header_mode`` key, relying on the tabix backend's default.  Without
+    it (``header_mode`` ``none``/``list``) the header line is dropped and
+    the realized file carries data rows only.
+
+    Either way the seq/start/end column indices are derived from the SAME
+    authored header the config is rendered from, so an arbitrary column
+    order still indexes correctly and the two cannot drift.
     """
     header = _parse_header(data)
     chrom_col = header.index("chrom")
     start_col = header.index("pos_begin")
     end_col = header.index("pos_end") if "pos_end" in header else start_col
+    content = _comment_header(data) if write_header else _strip_header(data)
     setup_tabix(
-        tabix_path, _comment_header(data),
+        tabix_path, content,
         seq_col=chrom_col, start_col=start_col, end_col=end_col)
+
+
+def _strip_header(data: str) -> str:
+    """Return ``data`` without its header line."""
+    lines = data.split("\n")
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        return "\n".join(lines[:index] + lines[index + 1:])
+    return data
 
 
 def _comment_header(data: str) -> str:

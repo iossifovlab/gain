@@ -1991,3 +1991,136 @@ def test_with_allele_aggregator_unknown_score_raises() -> None:
             .with_score("freq", "float")
             .with_allele_aggregator("count", score_id="nope")
         )
+
+
+# ---------------------------------------------------------------------------
+# gain#318 (header_mode bullet): with_header_mode / with_missing_header_mode
+# ---------------------------------------------------------------------------
+
+def test_header_mode_none_tabix_reads_back_by_index(
+    tmp_path: pathlib.Path,
+) -> None:
+    # header_mode: none realizes a HEADERLESS data file; the authored header
+    # survives only as the single declaration the config's column indices and
+    # the tabix index columns are both derived from.
+    resource = (
+        a_position_score()
+        .with_score("phastCons", "float", column_index=3)
+        .with_tabix()
+        .with_header_mode("none")
+        .with_data("""
+            chrom  pos_begin  pos_end  phastCons
+            1      10         12       0.02
+            1      20         22       0.03
+        """)
+        .build_resource(tmp_path)
+    )
+
+    config = yaml.safe_load(resource.get_file_content("genomic_resource.yaml"))
+    assert config["table"]["header_mode"] == "none"
+
+    score = PositionScore(resource).open()
+    assert score.fetch_scores("1", 11) == [0.02]
+    assert score.fetch_scores("1", 21) == [0.03]
+
+
+def test_header_mode_none_plain_matches_tabix_readback(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The headerless realize path applies to the plain .txt table too, and
+    # both backends read the same authored values back.
+    def build(tabix: bool) -> PositionScore:
+        builder = (
+            a_position_score()
+            .with_score("v", "float", column_index=2)
+            .with_header_mode("none")
+            .with_data("""
+                chrom  pos_begin  v
+                1      10         0.5
+                1      11         0.6
+            """)
+        )
+        if tabix:
+            builder = builder.with_tabix()
+        sub = "t" if tabix else "p"
+        return PositionScore(builder.build_resource(tmp_path / sub)).open()
+
+    plain = build(tabix=False)
+    tabix = build(tabix=True)
+    assert plain.fetch_scores("1", 10) == [0.5]
+    assert plain.fetch_scores("1", 11) == [0.6]
+    assert tabix.fetch_scores("1", 10) == plain.fetch_scores("1", 10)
+    assert tabix.fetch_scores("1", 11) == plain.fetch_scores("1", 11)
+    assert "chrom" not in (tmp_path / "p" / "data.txt").read_text()
+
+
+def test_header_mode_none_np_score_addresses_ref_alt_by_index(
+    tmp_path: pathlib.Path,
+) -> None:
+    # np/allele locate reference/alternative by NAME by default; with no
+    # header there is no name to locate, so the mapping is rendered by index
+    # -- from the same authored header.
+    resource = (
+        a_np_score()
+        .with_score("freq", "float", column_index=4)
+        .with_header_mode("none")
+        .with_data("""
+            chrom  pos_begin  reference  alternative  freq
+            1      10         A          G            0.1
+            1      10         A          C            0.2
+        """)
+        .build_resource(tmp_path)
+    )
+
+    config = yaml.safe_load(resource.get_file_content("genomic_resource.yaml"))
+    assert config["table"]["reference"] == {"column_index": 2}
+    assert config["table"]["alternative"] == {"column_index": 3}
+
+    score = AlleleScore(resource).open()
+    assert score.fetch_scores("1", 10, "A", "G") == {"freq": 0.1}
+    assert score.fetch_scores("1", 10, "A", "C") == {"freq": 0.2}
+
+
+def test_header_mode_none_rejects_a_name_addressed_score() -> None:
+    # There is no header to resolve the name against; the builder says so
+    # instead of leaving it to fail inside the score implementation.
+    with pytest.raises(ResourceValidationError, match="column_index"):
+        (
+            a_position_score()
+            .with_score("v", "float")
+            .with_header_mode("none")
+            .with_data("""
+                chrom  pos_begin  v
+                1      10         0.5
+            """)
+            .realize_into(pathlib.Path("/nonexistent"))
+        )
+
+
+def test_with_header_mode_rejects_an_unknown_mode() -> None:
+    with pytest.raises(ResourceValidationError, match="unsupported"):
+        a_position_score().with_header_mode("filee")
+
+
+def test_header_mode_list_moves_the_header_into_the_config(
+    tmp_path: pathlib.Path,
+) -> None:
+    # 'list' also realizes a headerless file, but the column names move into
+    # the config -- so scores stay addressable by name.
+    resource = (
+        a_position_score()
+        .with_score("v", "float")
+        .with_tabix()
+        .with_header_mode("list")
+        .with_data("""
+            chrom  pos_begin  v
+            1      10         0.5
+        """)
+        .build_resource(tmp_path)
+    )
+
+    config = yaml.safe_load(resource.get_file_content("genomic_resource.yaml"))
+    assert config["table"]["header"] == ["chrom", "pos_begin", "v"]
+
+    score = PositionScore(resource).open()
+    assert score.fetch_scores("1", 10) == [0.5]
