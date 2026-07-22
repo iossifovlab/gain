@@ -107,23 +107,39 @@ Release Notes
       unchanged (values are written to three significant figures), but a
       consumer that reads an annotation at full float precision will see
       the difference.
-    * **Behavior change:** a ``.dvc`` sidecar is no longer accepted as the
-      md5 sum of a resource file whose bytes are on disk (#251, #255). A
-      **materialised** file's md5 sum is always computed from its content;
-      only a file that is not materialised — a pointer-only clone, where
-      the sidecar is all that is checked out — still takes its md5 sum and
-      size from its sidecar, and keeps its manifest entry. Previously,
-      editing a DVC-managed file in place without ``dvc add`` /
-      ``dvc commit`` left ``resource-repair`` reporting the resource up to
-      date with the *old* md5 sum certified. "Materialised" now means the
-      file exists, not that the repository scan yielded it (#255): a
-      DVC-managed ``*html`` file is manifested from its content (non-DVC
-      ``*html`` files are still excluded), and a file the scan skips but
-      that is on disk is left out of the manifest rather than certified
-      from an unchecked sidecar. The **first** manifest build of a
-      fully-materialised GRR therefore hashes each DVC-managed file once;
-      afterwards the recorded state's size-and-timestamp fast path applies
-      as before, and a pointer-only clone hashes nothing.
+    * **Behavior change:** a ``.dvc`` sidecar is now the authoritative md5
+      sum and size of the file it describes, and ``grr_manage --without-dvc``
+      (``-D``) is the one command that checks that claim against the bytes
+      on disk (#251, #255, #373). In the default mode ``grr_manage`` never
+      hashes a DVC-managed file: a file GAIn has already hashed keeps its
+      recorded md5 sum while its size and timestamp are unchanged,
+      otherwise the sidecar supplies both the md5 sum and the size, and
+      otherwise the file is hashed. **No** ``.grr/*.state`` file is written
+      for a sidecar-derived md5 sum — a state keeps the single meaning
+      "GAIn hashed these bytes". A sidecar that declares a size other than
+      the file's is reported as a ``WARNING`` naming the file, and still
+      wins both fields. The accepted consequence: editing a DVC-managed
+      file in place without ``dvc add`` / ``dvc commit`` leaves the
+      manifest certifying the published DVC cache object — which is what
+      clients download and verify — rather than the working tree.
+
+      ``--without-dvc`` is the verifier: it ignores every recorded state,
+      hashes every materialised file, reports **every** file whose content
+      disagrees with its sidecar, and exits non-zero writing no manifest
+      for the resources they belong to. It never records an md5 sum that
+      contradicts a sidecar: a ``.MANIFEST`` is a committed artefact and
+      must not become a function of which machine last ran the command.
+      Fix the drift with ``dvc add`` / ``dvc commit``, after which every
+      machine — pointer-only or fully materialised — produces the identical
+      manifest.
+
+      Manifest membership is now decided by path rather than by extension:
+      the two pages ``resource-info`` generates, ``index.html`` and
+      ``statistics/index.html``, are excluded (whether or not DVC manages
+      them), and **every other file is manifested whatever its extension**
+      — including an html file a resource carries as data, which the
+      previous "drop every name ending in ``html``" rule silently dropped.
+      No manifest in any existing GRR changes.
     * **Behavior change:** ``grr_manage`` now **refuses** a resource with a
       ``dvc add <dir>`` output — a ``.dvc`` sidecar declaring a directory
       (a ``.dir`` md5 sum and/or an ``nfiles`` count) — instead of
@@ -138,11 +154,10 @@ Release Notes
     * **Behavior change:** the ``--with-dvc`` (default) / ``-D``,
       ``--without-dvc`` option group is restored on the manifest, stats,
       repair and info subcommands (#251) — its removal in 2026.7.1 left no
-      way to verify a resource file's bytes against its recorded md5 sum.
-      ``--without-dvc`` ignores the recorded state and computes every
-      materialised file's md5 sum from its content, reading each file
-      exactly once; it does not discard sidecars for files that are not
-      materialised, which would delete their manifest entries.
+      way to check a resource file's bytes against the md5 sum published
+      for them. ``--without-dvc`` reads each file exactly once, and does
+      not discard the sidecars of files that are not materialised, which
+      would delete their manifest entries.
     * A malformed, unreadable or incomplete ``.dvc`` file no longer aborts
       ``grr_manage`` with a traceback (#251): it is reported as a warning
       and ignored, through the same parser the repository scan uses. A
