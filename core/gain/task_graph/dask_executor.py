@@ -1,10 +1,10 @@
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from copy import copy
 from typing import Any
 
-from dask.distributed import Client, Future, wait
+from dask.distributed import Client, Future
 
 from gain import logging
 from gain.task_graph.base_executor import TaskGraphExecutorBase
@@ -45,6 +45,7 @@ class DaskExecutor(TaskGraphExecutorBase):
         submit_condition: threading.Condition,
         running: dict[Future, Task],
         running_lock: threading.Lock,
+        on_done: Callable[[Future], None],
     ) -> None:
         start = time.time()
         submit_count = 0
@@ -85,6 +86,13 @@ class DaskExecutor(TaskGraphExecutorBase):
                     submit_count += 1
                     running[future] = task.task
                     total_running = len(running)
+
+            # Registered only once `running` already knows every future, so
+            # a callback firing immediately (a future that is already done)
+            # can never reach the main loop before its task mapping exists.
+            for future in futures:
+                future.add_done_callback(on_done)
+
             elapsed = time.time() - start
             logger.debug(
                 "submitted %s tasks in %.2f seconds; %.2f tasks/s",
@@ -167,17 +175,37 @@ class DaskExecutor(TaskGraphExecutorBase):
         running_lock: threading.Lock = threading.Lock()
         running: dict[Future, Task] = {}
 
+        done_queue: list[Future] = []
+        done_condition: threading.Condition = threading.Condition()
+
         completed_queue: list[tuple[Future, Task] | None] = []
         completed_condition: threading.Condition = threading.Condition()
 
         results_queue: list[tuple[Task, Any]] = []
         results_lock: threading.Lock = threading.Lock()
 
+        def on_done(future: Future) -> None:
+            """Hand a finished future to the run loop.
+
+            Runs on a dask callback thread. Registered ONCE per future, at
+            submit time -- which is the whole point. The poll this replaced,
+            ``wait(running, return_when="FIRST_COMPLETED", timeout=0.05)``,
+            rebuilt a waiter for EVERY still-pending future about twenty
+            times a second, and ``distributed.utils.Any`` never cancels the
+            waiters it loses the race to. Each abandoned waiter pins an
+            asyncio Task, a coroutine, a Timeout and a weakref until its
+            future resolves -- ~220MB/min of driver RSS on a long repair
+            (gain#355).
+            """
+            with done_condition:
+                done_queue.append(future)
+                done_condition.notify_all()
+
         submit_worker = threading.Thread(
             target=self._submit_worker_func,
             args=(
                 submit_queue, submit_condition,
-                running, running_lock),
+                running, running_lock, on_done),
             daemon=True)
         submit_worker.start()
 
@@ -189,7 +217,6 @@ class DaskExecutor(TaskGraphExecutorBase):
             daemon=True)
         results_worker.start()
 
-        not_completed: set[Future] = set()
         is_done: bool = graph.empty()
 
         finished_tasks = 0
@@ -207,29 +234,30 @@ class DaskExecutor(TaskGraphExecutorBase):
                         submit_queue.extend(ready_tasks)
                         submit_condition.notify_all()
 
-            with running_lock:
-                not_completed = set(running.keys())
+            # Block until a future actually finishes.  The timeout only
+            # bounds how long we go without re-checking the graph for newly
+            # ready tasks; unlike the wait() poll it replaced, waking up
+            # costs nothing per pending future.
+            completed: list[Future] = []
+            with done_condition:
+                if not done_queue:
+                    done_condition.wait(timeout=0.05)
+                if done_queue:
+                    completed = copy(done_queue)
+                    done_queue.clear()
 
-            if not not_completed:
-                time.sleep(0.05)
-                completed = set()
-            else:
-                try:
-                    completed, not_completed = wait(
-                        not_completed,
-                        return_when="FIRST_COMPLETED",
-                        timeout=0.05,
-                    )
-                    logger.debug(
-                        "waited for completed tasks return %s futures",
-                        len(completed))
-                except TimeoutError:
-                    completed = set()
+            if completed:
+                logger.debug(
+                    "collected %s completed futures", len(completed))
 
             with running_lock, completed_condition:
                 for future in completed:
-                    task = running[future]
-                    del running[future]
+                    task = running.pop(future, None)
+                    if task is None:
+                        # Already accounted for; a future is only ever
+                        # handed over once, but never trust a callback
+                        # thread to guarantee that.
+                        continue
                     completed_queue.append((future, task))
                 completed_condition.notify_all()
 
