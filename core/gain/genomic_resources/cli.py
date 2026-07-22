@@ -1,6 +1,7 @@
 """Provides CLI for management of genomic resources repositories."""
 import argparse
 import copy
+import dataclasses
 import fnmatch
 import gzip
 import os
@@ -59,6 +60,60 @@ from gain.utils.helpers import convert_size
 from gain.utils.verbosity_configuration import VerbosityConfiguration
 
 logger = logging.getLogger("grr_manage")
+
+
+@dataclasses.dataclass(frozen=True)
+class CommandResult:
+    """What a repository-management command found and what it could not do.
+
+    Two independent outcomes, deliberately kept apart (gain#364):
+
+    * ``needs_update`` -- how many resources are OUT OF DATE.  Only a
+      ``--dry-run`` reports this; a real run repairs them instead of
+      counting them.  This is the meaning the plain ``int`` these commands
+      used to return carried.
+    * ``failed`` -- the ids of the resources that are BROKEN: whatever
+      GAIn was asked to do to them raised.  A run collects these rather
+      than aborting on the first one, so a single broken resource cannot
+      stop the healthy ones from being repaired.
+
+    An ``int`` could express only the first, which is why non-dry-run
+    repair was structurally incapable of reporting failure.
+    """
+
+    needs_update: int = 0
+    failed: frozenset[str] = frozenset()
+
+
+# The exceptions that mean the RESOURCE (or its configuration) is at fault:
+# a malformed config, a schema violation, a file that is not there.  They
+# are reported as one line carrying the cause, with the traceback demoted to
+# DEBUG.  Anything else is a defect in GAIn and keeps its traceback at ERROR.
+_RESOURCE_ERRORS = (ValueError, SchemaError, FileNotFoundError)
+
+
+def _report_resource_failure(
+    err: Exception, action: str, resource_id: str,
+) -> None:
+    """Report a failed operation on one resource, at the right tier.
+
+    ``action`` names what could not be done -- never the phase the failure
+    happened in.  A handler that wraps several operations cannot know which
+    one raised, and naming the wrong one sends the reader looking in the
+    wrong place (gain#364); the cause, which is always carried, says it.
+    """
+    # LOG014 is suppressed rather than obeyed: every caller is an exception
+    # handler, which is exactly what makes `exc_info` meaningful here -- the
+    # linter cannot see that through the call.
+    if isinstance(err, _RESOURCE_ERRORS):
+        logger.error("%s <%s>: %s", action, resource_id, err)
+        logger.debug(
+            "%s <%s> failed", action, resource_id,
+            exc_info=True)  # noqa: LOG014
+        return
+    logger.error(
+        "%s <%s>: unexpected internal error", action, resource_id,
+        exc_info=True)  # noqa: LOG014
 
 
 def _add_repository_resource_parameters_group(
@@ -563,11 +618,9 @@ def _create_contents_db(
         try:
             impl = build_resource_implementation(res)
             index_infos.append(impl.collect_index_info())
-        except Exception:  # noqa: BLE001
-            logger.warning(
-                "Skipping FTS index for <%s>: could not build implementation",
-                res.resource_id,
-            )
+        except Exception as err:  # noqa: BLE001
+            _report_resource_failure(
+                err, "skipping FTS index for", res.resource_id)
 
     all_columns: dict[str, None] = {}
     for header, _ in index_infos:
@@ -711,10 +764,9 @@ def _store_stats_hash(
         ) as outfile:
             stats_hash = impl.calc_statistics_hash()
             outfile.write(stats_hash)
-    except Exception:  # noqa: BLE001
-        logger.warning(
-            "Couldn't store stats hash for %s",
-            resource.resource_id)
+    except Exception as err:  # noqa: BLE001
+        _report_resource_failure(
+            err, "couldn't store statistics hash for", resource.resource_id)
         return False
     return True
 
@@ -777,23 +829,28 @@ def _run_repo_stats_command(
         repo: GenomicResourceRepo,
         proto: ReadWriteRepositoryProtocol,
         resources: Sequence[GenomicResource],
-        **kwargs: bool | int | str) -> int:
+        **kwargs: bool | int | str) -> CommandResult:
     dry_run = cast(bool, kwargs.get("dry_run", False))
     force = cast(bool, kwargs.get("force", False))
     region_size = cast(int, kwargs.get("region_size", 3_000_000))
 
     if dry_run and force:
         logger.warning("please choose one of 'dry_run' and 'force' options")
-        return 0
+        return CommandResult()
 
     updates_needed = _run_repo_manifest_command_internal(
         proto, resources, **kwargs)
 
     graph = TaskGraph()
 
-    status = 0
+    needs_update = 0
+    failed: set[str] = set()
     stats_resources: list[GenomicResource] = []
     for res in resources:
+        # Four operations under one `try` -- building the implementation,
+        # looking up the manifest update, comparing the statistics hash and
+        # collecting the statistics tasks -- so the message names none of
+        # them and carries the cause instead (gain#364).
         try:
             impl = build_resource_implementation(res)
             manifest_updated = updates_needed[res.resource_id]
@@ -802,20 +859,22 @@ def _run_repo_stats_command(
                 if needs_rebuild:
                     logger.info(
                         "Statistics of <%s> needs update", res.resource_id)
-                    status += 1
+                    needs_update += 1
             elif force or needs_rebuild:
                 _collect_impl_stats_tasks(
                     graph, proto, impl, repo,
                     region_size=region_size)
                 stats_resources.append(res)
-        except Exception:  # noqa: BLE001
-            logger.warning(
-                "Skipping stats for <%s>: could not build implementation",
-                res.resource_id,
-            )
+        except Exception as err:  # noqa: BLE001
+            # Collected, not raised: the resources after this one in the
+            # repository are still repaired.
+            _report_resource_failure(
+                err, "skipping statistics for", res.resource_id)
+            failed.add(res.resource_id)
 
     if dry_run:
-        return status
+        return CommandResult(
+            needs_update=needs_update, failed=frozenset(failed))
 
     if len(graph.tasks) > 0:
         modified_kwargs = copy.copy(kwargs)
@@ -846,14 +905,14 @@ def _run_repo_stats_command(
     assert isinstance(proto, FsspecReadWriteProtocol)
     _build_content_file(proto)
     _create_contents_db(proto)
-    return 0
+    return CommandResult(failed=frozenset(failed))
 
 
 def _run_repo_repair_command(
         repo: GenomicResourceRepo,
         proto: ReadWriteRepositoryProtocol,
         resources: Sequence[GenomicResource],
-        **kwargs: str | bool | int) -> int:
+        **kwargs: str | bool | int) -> CommandResult:
     return _run_repo_info_command(repo, proto, resources, **kwargs)
 
 
@@ -861,34 +920,32 @@ def _run_repo_info_command(
         repo: GenomicResourceRepo,
         proto: ReadWriteRepositoryProtocol,
         resources: Sequence[GenomicResource],
-        **kwargs: str | bool | int) -> int:
-    status = _run_repo_stats_command(repo, proto, resources, **kwargs)
+        **kwargs: str | bool | int) -> CommandResult:
+    result = _run_repo_stats_command(repo, proto, resources, **kwargs)
 
     dry_run = cast(bool, kwargs.get("dry_run", False))
     if dry_run:
-        return status
+        return result
 
     assert isinstance(proto, FsspecReadWriteProtocol)
     proto.build_index_info()
+    failed = set(result.failed)
     for res in resources:
+        if res.resource_id in failed:
+            # Its statistics could not be built, so its info page would be
+            # rendered from placeholder histograms -- overwriting whatever
+            # good page is already there (gain#364).
+            logger.warning(
+                "not regenerating the info page of <%s>: "
+                "its statistics could not be built", res.resource_id)
+            continue
         try:
             _do_resource_info_command(repo, proto, res)
-        except ValueError:
-            logger.exception(
-                "Failed to generate repo index for %s",
-                res.resource_id,
-            )
-        except SchemaError:
-            logger.exception(
-                "Resource %s has an invalid configuration",
-                res.resource_id,
-            )
-        except BaseException:  # pylint: disable=broad-except
-            logger.exception(
-                "Failed to load %s",
-                res.resource_id,
-            )
-    return 0
+        except Exception as err:  # noqa: BLE001
+            _report_resource_failure(
+                err, "skipping info page for", res.resource_id)
+            failed.add(res.resource_id)
+    return dataclasses.replace(result, failed=frozenset(failed))
 
 
 def _write_resource_file_if_changed(
@@ -926,9 +983,20 @@ def _do_resource_info_command(
         implementation.get_statistics_info(repo=repo))
 
 
+# The repository-scoped and resource-scoped commands differ only in how they
+# choose the resources they work on; everything after that -- which command
+# function runs, how a failure is reported, and what the process exits with
+# -- is shared, so it is written once (see _run_management_command and
+# _exit_with).
+_REPO_COMMANDS = frozenset({
+    "repo-manifest", "repo-stats", "repo-info", "repo-repair"})
+_RESOURCE_COMMANDS = frozenset({
+    "resource-manifest", "resource-stats",
+    "resource-info", "resource-repair"})
+
+
 def cli_manage(cli_args: list[str] | None = None) -> None:
     """Provide CLI for repository management."""
-    # flake8: noqa: C901
     # pylint: disable=too-many-branches,too-many-statements
     if cli_args is None:
         cli_args = sys.argv[1:]
@@ -983,87 +1051,85 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
 
     resources: Sequence[GenomicResource]
 
-    if command in {"repo-manifest", "repo-stats", "repo-info", "repo-repair"}:
-        status = 0
+    if command in _REPO_COMMANDS:
         resources = list(proto.get_all_resources())
         if len(resources) == 0:
             logger.info("repository <%s> has no resources", repo_url)
             sys.exit(0)
-
-        try:
-            if command == "repo-manifest":
-                status = _run_repo_manifest_command(
-                    proto, resources, **vars(args))
-            elif command == "repo-stats":
-                status = _run_repo_stats_command(
-                    repo, proto, resources, **vars(args))
-            elif command == "repo-info":
-                status = _run_repo_info_command(
-                    repo, proto, resources, **vars(args))
-            elif command == "repo-repair":
-                status = _run_repo_repair_command(
-                    repo, proto, resources, **vars(args))
-            else:
-                logger.error(
-                    "Unknown command %s.", command)
-                sys.exit(1)
-            if status == 0:
-                logger.info("GRR <%s> is consistent", repo_url)
-                return
-        except UnsupportedDvcDirectoryOutputError as ex:
-            # A resource GAIn cannot verify: refuse it outright, loudly.
-            logger.error("%s", ex)  # noqa: TRY400
-            sys.exit(1)
-        except ValueError as ex:
-            logger.error(  # noqa: TRY400
-                "Misconfigured repository %s; %s", repo_url, ex)
-            status = 1
-
-        logger.warning("inconsistent GRR <%s> state", repo_url)
-        sys.exit(status)
-    elif command in {
-            "resource-manifest", "resource-stats",
-            "resource-info", "resource-repair"}:
-        status = 0
+    elif command in _RESOURCE_COMMANDS:
         resources = _find_resources(proto, repo_url, **vars(args))
         if not resources:
             logger.error("resource not found...")
             sys.exit(1)
-        assert resources
-        try:
-            if command == "resource-manifest":
-                status = _run_repo_manifest_command(
-                    proto, resources, **vars(args))
-            elif command == "resource-stats":
-                status = _run_repo_stats_command(
-                    repo, proto, resources, **vars(args))
-            elif command == "resource-info":
-                status = _run_repo_info_command(
-                    repo, proto, resources, **vars(args))
-            elif command == "resource-repair":
-                status = _run_repo_repair_command(
-                    repo, proto, resources, **vars(args))
-            else:
-                logger.error(
-                    "Unknown command %s.", command)
-                sys.exit(1)
-            if status == 0:
-                logger.info("GRR <%s> is consistent", repo_url)
-                return
-        except UnsupportedDvcDirectoryOutputError as ex:
-            # A resource GAIn cannot verify: refuse it outright, loudly.
-            logger.error("%s", ex)  # noqa: TRY400
-            sys.exit(1)
-        except ValueError:
-            logger.exception("unexpected exception")
-            status = 1
-        logger.warning("inconsistent GRR <%s> state", repo_url)
-        sys.exit(status)
     else:
         logger.error(
             "Unknown command %s. The known commands are index, "
             "list and histogram", command)
         sys.exit(1)
+
+    _exit_with(
+        _run_management_command(repo, proto, resources, repo_url, **vars(args)),
+        repo_url)
+
+
+def _run_management_command(
+    repo: GenomicResourceRepo,
+    proto: ReadWriteRepositoryProtocol,
+    resources: Sequence[GenomicResource],
+    repo_url: str,
+    **kwargs: Any,
+) -> CommandResult:
+    """Run one repository-management command over ``resources``.
+
+    The command name is read out of ``kwargs`` rather than taken as a
+    parameter: the whole parsed argument namespace is forwarded to the
+    command functions (the task-graph options live in it), ``command``
+    included.
+    """
+    command = cast(str, kwargs["command"])
+    try:
+        if command.endswith("-manifest"):
+            return CommandResult(
+                needs_update=_run_repo_manifest_command(
+                    proto, resources, **kwargs))
+        if command.endswith("-stats"):
+            return _run_repo_stats_command(
+                repo, proto, resources, **kwargs)
+        if command.endswith("-info"):
+            return _run_repo_info_command(
+                repo, proto, resources, **kwargs)
+        return _run_repo_repair_command(
+            repo, proto, resources, **kwargs)
+    except UnsupportedDvcDirectoryOutputError as ex:
+        # A resource GAIn cannot verify: refuse it outright, loudly.
+        logger.error("%s", ex)  # noqa: TRY400
+        sys.exit(1)
+    except ValueError as ex:
+        # The repository itself, rather than one of its resources, is
+        # unusable -- there is no resource id to attribute this to.
+        logger.error(  # noqa: TRY400
+            "Misconfigured repository %s; %s", repo_url, ex)
+        logger.debug("repository %s is misconfigured", repo_url, exc_info=True)
+        logger.warning("inconsistent GRR <%s> state", repo_url)
+        sys.exit(1)
+
+
+def _exit_with(result: CommandResult, repo_url: str) -> None:
+    """Turn a command result into a message and an exit status.
+
+    The one place that decides what the process says and exits with, so the
+    repository-scoped and resource-scoped commands cannot drift apart.
+    """
+    if result.failed:
+        logger.error(
+            "%s resource(s) failed in GRR <%s>: %s",
+            len(result.failed), repo_url, ", ".join(sorted(result.failed)))
+        logger.warning("inconsistent GRR <%s> state", repo_url)
+        sys.exit(1)
+    if result.needs_update:
+        logger.warning("inconsistent GRR <%s> state", repo_url)
+        sys.exit(result.needs_update)
+    logger.info("GRR <%s> is consistent", repo_url)
 
 
 def _create_grr_repo(

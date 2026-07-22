@@ -2,6 +2,36 @@ Release Notes
 =============
 
 * 2026.7.2
+    * **Behavior change:** ``grr_manage`` repository management now reports a
+      resource it could not process, and exits non-zero (#364). A resource
+      whose statistics could not be built used to be skipped with a
+      ``WARNING`` that named the wrong cause ("could not build
+      implementation" — which had succeeded), discarded the exception, had
+      its ``index.html`` regenerated from placeholder histograms anyway, and
+      left the command logging ``GRR <...> is consistent`` and exiting ``0``:
+      non-dry-run repair was structurally incapable of reporting failure.
+      Now:
+
+      * failures are collected per resource — one broken resource does not
+        stop the healthy ones from being repaired — and the command ends with
+        an ``N resource(s) failed`` summary and a non-zero exit status;
+      * ``GRR <...> is consistent`` is logged only when nothing failed;
+      * a failed resource's generated ``index.html`` is left alone;
+      * a configuration error (bad config, schema violation, missing file) is
+        reported as ONE ``ERROR`` line carrying the cause, with the traceback
+        demoted to ``DEBUG`` (``-vv`` still recovers it); any other exception
+        is a defect in GAIn and keeps its traceback at ``ERROR``;
+      * a tabix table left on the default ``header_mode`` over a file with no
+        ``#`` header line now raises a ``ValueError`` naming the resource, the
+        table file and the remedy (``header_mode: none``) instead of tripping
+        a message-less ``assert`` that ``python -O`` removed entirely;
+      * a missing histogram file logs at ``WARNING`` without a traceback — the
+        condition is handled (a null histogram is returned), and its traceback
+        was the only one a repair run printed, pointing away from the fault.
+
+      **A repository that was silently failing will now fail loudly**, which
+      includes CI that gates on ``grr_manage repo-repair``. The ``--dry-run``
+      path is unchanged in what it writes; only what it exits with changes.
     * **Removed:** the in-resource aggregation engine (#267) — a second
       aggregation path that had outlived its callers, in GAIn and in GPF.
       Gone from ``gain.genomic_resources.genomic_scores``:
