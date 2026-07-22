@@ -204,11 +204,11 @@ def double(x: int) -> int:
     return x * 2
 
 
-class _SlowSubmitClient:
-    """A client whose ``map()`` takes longer than the run loop's wait.
+class _SlowClient:
+    """A real client with one of its calls artificially slowed down.
 
-    Stands in for a loaded machine, where handing a batch of tasks to the
-    scheduler is not instant. Everything else is the real client.
+    Stands in for a loaded machine, where talking to the scheduler is not
+    instant. Everything not overridden is the real client.
     """
 
     def __init__(self, client: Client, delay: float) -> None:
@@ -218,9 +218,21 @@ class _SlowSubmitClient:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
 
+
+class _SlowSubmitClient(_SlowClient):
+    """A client whose ``map()`` takes longer than the run loop's wait."""
+
     def map(self, *args: Any, **kwargs: Any) -> Any:
         time.sleep(self._delay)
         return self._client.map(*args, **kwargs)
+
+
+class _SlowGatherClient(_SlowClient):
+    """A client whose ``gather()`` takes longer than the run loop's wait."""
+
+    def gather(self, *args: Any, **kwargs: Any) -> Any:
+        time.sleep(self._delay)
+        return self._client.gather(*args, **kwargs)
 
 
 def test_slow_submission_does_not_end_the_run_early(
@@ -258,6 +270,45 @@ def test_slow_submission_does_not_end_the_run_early(
     assert len(results) == num_tasks, (
         f"executor yielded {len(results)} of {num_tasks} results; a run "
         f"whose submission outlasts the loop's wait ended early (gain#365)"
+    )
+    for i in range(num_tasks):
+        assert results[f"WideTask{i}"] == i * 2
+
+
+def test_slow_gather_does_not_end_the_run_early(
+    dask_client: Client,
+) -> None:
+    """A gather slower than the run loop's wait must not end the run.
+
+    Regression for iossifovlab/gain#367, and the mirror image of
+    ``test_slow_submission_does_not_end_the_run_early``. A finished task
+    stops being *running* the moment its callback fires and only becomes a
+    *result* once ``Client.gather()`` has returned; for the whole width of
+    that call it is in neither. Termination must still see it -- the
+    results worker holds it in an explicit in-flight gather state, so the
+    run loop counts it as outstanding the entire time.
+
+    The window is as wide as ``gather()`` and the run loop reaches its
+    termination check every 0.05s, so this only bites when gathering
+    outlasts that wait; delaying ``gather()`` past it makes it certain.
+    The test is only meaningful because no lock is held across the gather:
+    an implementation that pulls the batch out of the completed collection
+    and then releases its lock for the round trip yields 1 of 50 here.
+    """
+    graph = TaskGraph()
+    num_tasks = 50
+    for i in range(num_tasks):
+        graph.create_task(f"WideTask{i}", double, args=[i], deps=[])
+
+    executor = DaskExecutor(_SlowGatherClient(dask_client, delay=0.2))
+
+    results = {
+        task.task_id: result for task, result in executor.execute(graph)
+    }
+
+    assert len(results) == num_tasks, (
+        f"executor yielded {len(results)} of {num_tasks} results; a run "
+        f"whose gather outlasts the loop's wait ended early (gain#367)"
     )
     for i in range(num_tasks):
         assert results[f"WideTask{i}"] == i * 2

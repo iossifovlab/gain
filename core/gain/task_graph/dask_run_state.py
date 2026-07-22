@@ -1,0 +1,253 @@
+"""Single owner of the Dask run loop's "is anything still outstanding?"."""
+from __future__ import annotations
+
+import itertools
+import threading
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any
+
+from dask.distributed import Future
+
+from gain import logging
+from gain.task_graph.graph import Task, TaskDesc
+
+logger = logging.getLogger(__name__)
+
+WAIT_TIMEOUT = 0.05
+
+
+@dataclass(frozen=True)
+class SubmitBatch:
+    """Tasks the submit worker is handing to the cluster.
+
+    Held by the worker for the whole width of ``Client.map()``. It is in no
+    collection during that call -- being in flight IS its state.
+    """
+
+    batch_id: int
+    tasks: tuple[TaskDesc, ...]
+
+
+@dataclass(frozen=True)
+class GatherBatch:
+    """Finished futures the results worker is collecting from the cluster.
+
+    Held by the worker for the whole width of ``Client.gather()``, the
+    mirror image of :class:`SubmitBatch`.
+    """
+
+    batch_id: int
+    entries: tuple[tuple[Future, Task], ...]
+
+    @property
+    def futures(self) -> tuple[Future, ...]:
+        """Futures in this batch, in order."""
+        return tuple(future for future, _ in self.entries)
+
+    @property
+    def tasks(self) -> tuple[Task, ...]:
+        """Tasks in this batch, in the same order as :attr:`futures`."""
+        return tuple(task for _, task in self.entries)
+
+
+class RunState:
+    """All the state one Dask run needs, behind one lock.
+
+    A task the run loop takes out of the graph is in exactly one of six
+    states until the run loop yields it::
+
+        queued -> in-flight submit -> running
+               -> completed -> in-flight gather -> gathered
+
+    Every hand-off between two threads -- run loop, submit worker, dask
+    callback thread, results worker -- is a transition here, and each
+    transition enters the next state and leaves the previous one under a
+    single lock. A task therefore cannot be invisible by being absent from
+    every collection, which is what let a run declare itself finished while
+    a submission was still in flight (gain#365).
+
+    The two in-flight states exist for exactly that reason: the workers
+    must not hold a lock across ``Client.map()`` or ``Client.gather()``, so
+    a batch that has left one collection and not yet reached the next is
+    represented explicitly, by the worker's batch handle, rather than by
+    its absence from both.
+
+    :meth:`has_outstanding` is the single query all of this exists to
+    answer, and the run loop's termination decision is that one call.
+    """
+
+    def __init__(self) -> None:
+        # One condition -- so one lock -- for every state below. Every
+        # public method here is short and never calls into dask, so no
+        # thread can be held up behind a network round trip.
+        self._condition = threading.Condition()
+        self._batch_ids = itertools.count()
+
+        self._queued: list[TaskDesc] = []
+        self._submitting: dict[int, SubmitBatch] = {}
+        self._running: dict[Future, Task] = {}
+        self._completed: list[tuple[Future, Task]] = []
+        self._gathering: dict[int, GatherBatch] = {}
+        self._gathered: list[tuple[Task, Any]] = []
+        self._shutdown = False
+
+    def _outstanding_count(self) -> int:
+        """Count everything not yet yielded. Caller holds the lock."""
+        return (
+            len(self._queued)
+            + sum(len(batch.tasks) for batch in self._submitting.values())
+            + len(self._running)
+            + len(self._completed)
+            + sum(len(batch.entries) for batch in self._gathering.values())
+            + len(self._gathered)
+        )
+
+    def has_outstanding(self) -> bool:
+        """Answer whether any task is still on its way to being yielded.
+
+        The single query, under the single lock: true from the instant a
+        task is enqueued until the instant its result is taken by the run
+        loop, with no gap in between.
+        """
+        with self._condition:
+            return self._outstanding_count() > 0
+
+    # -- run loop ---------------------------------------------------------
+
+    def enqueue(self, tasks: Sequence[TaskDesc]) -> None:
+        """Hand tasks extracted from the graph to the submit worker."""
+        if not tasks:
+            return
+        with self._condition:
+            self._queued.extend(tasks)
+            self._condition.notify_all()
+
+    def unfinished_count(self) -> int:
+        """Count tasks the cluster still owes a result for.
+
+        Queued, in-flight submit and running -- what the run loop throttles
+        new submissions on. Tasks whose result is already computed but not
+        yet gathered or yielded are not counted: they take no cluster slot.
+        """
+        with self._condition:
+            return (
+                len(self._queued)
+                + sum(len(batch.tasks) for batch in self._submitting.values())
+                + len(self._running)
+            )
+
+    def wait_for_results(self, timeout: float = WAIT_TIMEOUT) -> None:
+        """Block until a result is ready to yield, or ``timeout`` elapses.
+
+        The timeout bounds how long the run loop goes without re-checking
+        the graph for newly ready tasks.
+        """
+        with self._condition:
+            if not self._gathered:
+                self._condition.wait(timeout)
+
+    def take_results(self) -> list[tuple[Task, Any]]:
+        """Take every gathered result, in completion order.
+
+        The results stop being outstanding here, so the caller must feed
+        them back to the graph and yield them before it asks
+        :meth:`has_outstanding` again.
+        """
+        with self._condition:
+            gathered = self._gathered
+            self._gathered = []
+            return gathered
+
+    def shutdown(self) -> None:
+        """Tell both workers the run is over."""
+        with self._condition:
+            self._shutdown = True
+            self._condition.notify_all()
+
+    # -- submit worker ----------------------------------------------------
+
+    def claim_for_submit(self) -> SubmitBatch | None:
+        """Take the queued tasks into the in-flight submit state.
+
+        Blocks until there is something to submit. Returns ``None`` once
+        the run is shutting down, which is the worker's cue to stop.
+        """
+        with self._condition:
+            while not self._queued and not self._shutdown:
+                self._condition.wait(WAIT_TIMEOUT)
+
+            if self._shutdown:
+                if self._queued:
+                    logger.warning(
+                        "submit worker shutting down with %s task(s) still "
+                        "queued; skipping them...", len(self._queued))
+                return None
+
+            batch = SubmitBatch(next(self._batch_ids), tuple(self._queued))
+            self._queued.clear()
+            self._submitting[batch.batch_id] = batch
+            return batch
+
+    def submitted(
+        self, batch: SubmitBatch, futures: Sequence[Future],
+    ) -> None:
+        """Move a submitted batch from in-flight submit to running.
+
+        ``running`` knows every future before the batch leaves the
+        in-flight state, so there is no instant at which the batch is in
+        neither -- and the caller may only register completion callbacks
+        after this returns, so a future that is already done cannot be
+        reported before its task mapping exists (gain#355).
+        """
+        with self._condition:
+            for future, task in zip(futures, batch.tasks, strict=True):
+                self._running[future] = task.task
+            del self._submitting[batch.batch_id]
+            self._condition.notify_all()
+
+    # -- dask callback thread ---------------------------------------------
+
+    def task_finished(self, future: Future) -> None:
+        """Move a finished future from running to completed.
+
+        Called on a dask callback thread, once per future. Futures are
+        handed over only once, but a callback thread is not trusted to
+        guarantee that: a second report of the same future is ignored.
+        """
+        with self._condition:
+            task = self._running.pop(future, None)
+            if task is None:
+                return
+            self._completed.append((future, task))
+            self._condition.notify_all()
+
+    # -- results worker ---------------------------------------------------
+
+    def claim_for_gather(self) -> GatherBatch | None:
+        """Take the completed futures into the in-flight gather state.
+
+        Blocks until something has completed. Returns ``None`` once the run
+        is shutting down and everything completed has been claimed, which
+        is the worker's cue to stop.
+        """
+        with self._condition:
+            while not self._completed and not self._shutdown:
+                self._condition.wait(WAIT_TIMEOUT)
+
+            if not self._completed:
+                return None
+
+            batch = GatherBatch(next(self._batch_ids), tuple(self._completed))
+            self._completed.clear()
+            self._gathering[batch.batch_id] = batch
+            return batch
+
+    def gathered(
+        self, batch: GatherBatch, results: Sequence[tuple[Task, Any]],
+    ) -> None:
+        """Move a gathered batch from in-flight gather to results."""
+        with self._condition:
+            self._gathered.extend(results)
+            del self._gathering[batch.batch_id]
+            self._condition.notify_all()
