@@ -202,3 +202,39 @@ def test_repo_dry_run_manifest_update(
 
     # Then
     assert bool(proto.check_update_manifest(res))
+
+
+def test_repo_manifest_dry_run_on_a_settled_repo_is_consistent(
+    proto_fixture: tuple[pathlib.Path, FsspecReadWriteProtocol],
+) -> None:
+    # `--dry-run` exits with the number of resources that need an update.
+    # It used to exit with the SIZE OF THE REPOSITORY instead: the count
+    # came from `len(updates_needed)`, a dict keyed by every resource and
+    # valued by whether that one is stale (gain#364).  A settled repository
+    # was therefore always reported inconsistent.
+    path, proto = proto_fixture
+    cli_manage(["repo-manifest", "-R", str(path)])
+    resources = list(proto.get_all_resources())
+    assert len(resources) > 1
+    assert all(
+        not bool(proto.check_update_manifest(res)) for res in resources)
+
+    # returns normally -- i.e. exits 0 -- rather than raising SystemExit
+    cli_manage(["repo-manifest", "--dry-run", "-R", str(path)])
+
+
+def test_repo_manifest_dry_run_status_counts_only_the_stale_resources(
+    proto_fixture: tuple[pathlib.Path, FsspecReadWriteProtocol],
+) -> None:
+    path, proto = proto_fixture
+    cli_manage(["repo-manifest", "-R", str(path)])
+    assert len(list(proto.get_all_resources())) > 1
+
+    res = proto.get_resource("one")
+    with res.open_raw_file("data.txt", "wt") as outfile:
+        outfile.write("alabala2")
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_manage(["repo-manifest", "--dry-run", "-R", str(path)])
+
+    assert excinfo.value.code == 1

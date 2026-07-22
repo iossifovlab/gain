@@ -66,16 +66,22 @@ logger = logging.getLogger("grr_manage")
 class CommandResult:
     """What a repository-management command found and what it could not do.
 
-    Two independent outcomes, deliberately kept apart (gain#364):
+    Three outcomes, deliberately kept apart (gain#364):
 
     * ``needs_update`` -- how many resources are OUT OF DATE.  Only a
       ``--dry-run`` reports this; a real run repairs them instead of
       counting them.  This is the meaning the plain ``int`` these commands
       used to return carried.
     * ``failed`` -- the ids of the resources that are BROKEN: whatever
-      GAIn was asked to do to them raised.  A run collects these rather
-      than aborting on the first one, so a single broken resource cannot
-      stop the healthy ones from being repaired.
+      GAIn was asked to do to them raised, or silently did not happen.  A
+      run collects these rather than aborting on the first one, so a
+      single broken resource cannot stop the healthy ones from being
+      repaired.
+    * ``repo_failed`` -- something failed that no single resource can be
+      blamed for: the repository's own configuration, or a statistics task
+      graph whose failure the per-resource check could not pin on any
+      resource.  Inventing a resource id for it would be a lie, but it
+      still has to make the run exit non-zero.
 
     An ``int`` could express only the first, which is why non-dry-run
     repair was structurally incapable of reporting failure.
@@ -83,6 +89,12 @@ class CommandResult:
 
     needs_update: int = 0
     failed: frozenset[str] = frozenset()
+    repo_failed: bool = False
+
+    @property
+    def has_failures(self) -> bool:
+        """Whether anything failed at all, attributable or not."""
+        return bool(self.failed) or self.repo_failed
 
 
 # The exceptions that mean the RESOURCE (or its configuration) is at fault:
@@ -106,7 +118,13 @@ def _report_resource_failure(
     # handler, which is exactly what makes `exc_info` meaningful here -- the
     # linter cannot see that through the call.
     if isinstance(err, _RESOURCE_ERRORS):
-        logger.error("%s <%s>: %s", action, resource_id, err)
+        # `str(err)` is empty for an exception raised without a message --
+        # `raise ValueError()`, or a bare `assert` under `python -O`. The
+        # class name is then the only thing left that says anything about
+        # the cause, and this issue is exactly about losing it (gain#364).
+        logger.error(
+            "%s <%s>: %s", action, resource_id,
+            str(err) or type(err).__name__)
         logger.debug(
             "%s <%s> failed", action, resource_id,
             exc_info=True)  # noqa: LOG014
@@ -578,12 +596,14 @@ def _build_content_file(proto: FsspecReadWriteProtocol) -> None:
 
 def _create_contents_db(
     proto: FsspecReadWriteProtocol,
-) -> None:
+) -> frozenset[str]:
     """Build the FTS SQLite index for the repository.
 
     Calls collect_index_info() on each resource's implementation to get
-    field names and values. If an implementation cannot be constructed,
-    falls back to the standard meta fields from the resource config.
+    field names and values.  Returns the ids of the resources that could
+    not be indexed -- the index is repository-wide, so this walks EVERY
+    resource, not only the ones the command selected; the ids returned are
+    always the offending ones, never the selected one (gain#364).
     """
     sqlite_filepath = os.path.join(proto.root_path, ".CONTENTS.sqlite3")
     gzip_sqlite_filepath = os.path.join(
@@ -601,7 +621,7 @@ def _create_contents_db(
                 "WHERE key = 'contents_md5'",
             ).fetchone()
             if row and row[0] == current_md5:
-                return
+                return frozenset()
         except Exception:  # noqa: BLE001
             logger.debug(
                 "Could not read existing contents db; rebuilding",
@@ -614,6 +634,7 @@ def _create_contents_db(
         os.remove(gzip_sqlite_filepath)
 
     index_infos: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+    failed: set[str] = set()
     for res in proto.get_all_resources():
         try:
             impl = build_resource_implementation(res)
@@ -621,6 +642,7 @@ def _create_contents_db(
         except Exception as err:  # noqa: BLE001
             _report_resource_failure(
                 err, "skipping FTS index for", res.resource_id)
+            failed.add(res.resource_id)
 
     all_columns: dict[str, None] = {}
     for header, _ in index_infos:
@@ -665,25 +687,34 @@ def _create_contents_db(
     gz = gz[:9] + b"\xff" + gz[10:]
     pathlib.Path(gzip_sqlite_filepath).write_bytes(gz)
     os.remove(sqlite_filepath)
+    return frozenset(failed)
 
 
 def _run_repo_manifest_command(
     proto: ReadWriteRepositoryProtocol,
     resources: Sequence[GenomicResource],
     **kwargs: bool | int | str,
-) -> int:
+) -> CommandResult:
     dry_run = cast(bool, kwargs.get("dry_run", False))
     force = cast(bool, kwargs.get("force", False))
     if dry_run and force:
+        # A usage error, not a count of anything.
         logger.warning("please choose one of 'dry_run' and 'force' options")
-        return 1
+        return CommandResult(repo_failed=True)
     updates_needed = _run_repo_manifest_command_internal(
         proto, resources, **kwargs)
     if dry_run:
-        return len(updates_needed)
+        # `updates_needed` is keyed by EVERY resource and valued by whether
+        # that resource's manifest is stale, so its LENGTH is the size of
+        # the repository -- which made `--dry-run` report a fully settled
+        # repository as inconsistent, with a status equal to its resource
+        # count.  Count the stale ones (gain#364).
+        return CommandResult(
+            needs_update=sum(
+                1 for stale in updates_needed.values() if stale))
     assert isinstance(proto, FsspecReadWriteProtocol)
     _build_content_file(proto)
-    return 0
+    return CommandResult()
 
 
 def _find_resources(
@@ -825,6 +856,39 @@ def _stats_need_rebuild(
     return False
 
 
+def _statistics_not_built(
+    proto: ReadWriteRepositoryProtocol,
+    resources: Sequence[GenomicResource],
+) -> frozenset[str]:
+    """Return the ids of resources whose statistics did not get built.
+
+    ``TaskGraphCli.process_graph`` reports only whether SOME task failed,
+    and ``_store_stats_hash`` reports its own failure by returning
+    ``False`` from inside a worker -- neither can name a resource.  So the
+    repository itself is asked instead: the last task of every resource
+    writes its ``stats_hash``, so a resource whose stored hash is still
+    missing or stale after the graph has run is a resource whose
+    statistics were not built (gain#364).
+
+    This is the ONLY per-resource attribution available for an execution
+    failure, and it is exact: it observes the outcome rather than
+    guessing at the cause.
+    """
+    not_built: set[str] = set()
+    for res in resources:
+        try:
+            impl = build_resource_implementation(res)
+            if _read_stats_hash(proto, impl) != impl.calc_statistics_hash():
+                logger.error(
+                    "statistics of <%s> were not built", res.resource_id)
+                not_built.add(res.resource_id)
+        except Exception as err:  # noqa: BLE001
+            _report_resource_failure(
+                err, "could not check the statistics of", res.resource_id)
+            not_built.add(res.resource_id)
+    return frozenset(not_built)
+
+
 def _run_repo_stats_command(
         repo: GenomicResourceRepo,
         proto: ReadWriteRepositoryProtocol,
@@ -836,7 +900,7 @@ def _run_repo_stats_command(
 
     if dry_run and force:
         logger.warning("please choose one of 'dry_run' and 'force' options")
-        return CommandResult()
+        return CommandResult(repo_failed=True)
 
     updates_needed = _run_repo_manifest_command_internal(
         proto, resources, **kwargs)
@@ -873,9 +937,15 @@ def _run_repo_stats_command(
             failed.add(res.resource_id)
 
     if dry_run:
+        # A resource that could not even be checked is certainly not up to
+        # date, so it counts towards the "how many need an update" status a
+        # dry run exits with -- that keeps the status a COUNT rather than
+        # collapsing it to a bare 1 (gain#364).
         return CommandResult(
-            needs_update=needs_update, failed=frozenset(failed))
+            needs_update=needs_update + len(failed),
+            failed=frozenset(failed))
 
+    repo_failed = False
     if len(graph.tasks) > 0:
         modified_kwargs = copy.copy(kwargs)
         modified_kwargs["command"] = "run"
@@ -885,10 +955,26 @@ def _run_repo_stats_command(
             modified_kwargs["task_log_dir"] = \
                 fs_utils.join(repo_url, ".task-log")
 
-        TaskGraphCli.process_graph(
-            graph, task_progress_mode=False, **modified_kwargs)
+        # `keep_going=True` means a failing task does not raise -- the
+        # only report of it is this return value, and discarding it was
+        # the whole of gain#364 for an execution failure.
+        if not TaskGraphCli.process_graph(
+                graph, task_progress_mode=False, **modified_kwargs):
+            logger.error("building the statistics of GRR <%s> failed",
+                         proto.get_url())
+            repo_failed = True
 
     if stats_resources:
+        # Run unconditionally, not only when the graph reported failure: a
+        # task can also fail SILENTLY (`_store_stats_hash` catches its own
+        # exception and returns False), and the outcome is what matters.
+        not_built = _statistics_not_built(proto, stats_resources)
+        failed |= not_built
+        if not_built:
+            # Attributed, so the repository-level flag would say nothing
+            # the per-resource list does not say better.
+            repo_failed = False
+
         # Rebuilding the statistics wrote new files into these resources, so
         # their manifests have to be rebuilt. `use_dvc=True` (the size and
         # timestamp fast path) is deliberate even under `--without-dvc`: the
@@ -904,8 +990,13 @@ def _run_repo_stats_command(
 
     assert isinstance(proto, FsspecReadWriteProtocol)
     _build_content_file(proto)
-    _create_contents_db(proto)
-    return CommandResult(failed=frozenset(failed))
+    # The FTS index walks the whole repository, so the ids it returns may
+    # name resources this command did not select -- they are reported
+    # under their own ids, and the run fails, but the selected resource is
+    # not blamed for them.
+    failed |= _create_contents_db(proto)
+    return CommandResult(
+        failed=frozenset(failed), repo_failed=repo_failed)
 
 
 def _run_repo_repair_command(
@@ -932,12 +1023,13 @@ def _run_repo_info_command(
     failed = set(result.failed)
     for res in resources:
         if res.resource_id in failed:
-            # Its statistics could not be built, so its info page would be
-            # rendered from placeholder histograms -- overwriting whatever
-            # good page is already there (gain#364).
+            # Something GAIn was asked to do to it already failed -- most
+            # often building its statistics, which would make its info
+            # page render from placeholder histograms, overwriting
+            # whatever good page is already there (gain#364).
             logger.warning(
                 "not regenerating the info page of <%s>: "
-                "its statistics could not be built", res.resource_id)
+                "it already failed in this run", res.resource_id)
             continue
         try:
             _do_resource_info_command(repo, proto, res)
@@ -974,13 +1066,16 @@ def _do_resource_info_command(
         res: GenomicResource) -> None:
     implementation = build_resource_implementation(res)
 
-    _write_resource_file_if_changed(
-        proto, res, "index.html",
-        implementation.get_info(repo=repo))
+    # Both pages are rendered BEFORE either is written: writing index.html
+    # first and only then rendering the statistics page left a rewritten
+    # page behind whenever the second render raised, while the run
+    # reported the page had been protected (gain#364).
+    info = implementation.get_info(repo=repo)
+    statistics_info = implementation.get_statistics_info(repo=repo)
 
+    _write_resource_file_if_changed(proto, res, "index.html", info)
     _write_resource_file_if_changed(
-        proto, res, "statistics/index.html",
-        implementation.get_statistics_info(repo=repo))
+        proto, res, "statistics/index.html", statistics_info)
 
 
 # The repository-scoped and resource-scoped commands differ only in how they
@@ -1089,17 +1184,21 @@ def _run_management_command(
     command = cast(str, kwargs["command"])
     try:
         if command.endswith("-manifest"):
-            return CommandResult(
-                needs_update=_run_repo_manifest_command(
-                    proto, resources, **kwargs))
+            return _run_repo_manifest_command(proto, resources, **kwargs)
         if command.endswith("-stats"):
             return _run_repo_stats_command(
                 repo, proto, resources, **kwargs)
         if command.endswith("-info"):
             return _run_repo_info_command(
                 repo, proto, resources, **kwargs)
-        return _run_repo_repair_command(
-            repo, proto, resources, **kwargs)
+        if command.endswith("-repair"):
+            return _run_repo_repair_command(
+                repo, proto, resources, **kwargs)
+        # Never fall through: repair is destructive, and a command name
+        # added to _REPO_COMMANDS/_RESOURCE_COMMANDS but not handled here
+        # would otherwise silently run a full repair.
+        logger.error("Unknown command %s.", command)
+        sys.exit(1)
     except UnsupportedDvcDirectoryOutputError as ex:
         # A resource GAIn cannot verify: refuse it outright, loudly.
         logger.error("%s", ex)  # noqa: TRY400
@@ -1120,15 +1219,20 @@ def _exit_with(result: CommandResult, repo_url: str) -> None:
     The one place that decides what the process says and exits with, so the
     repository-scoped and resource-scoped commands cannot drift apart.
     """
-    if result.failed:
-        logger.error(
-            "%s resource(s) failed in GRR <%s>: %s",
-            len(result.failed), repo_url, ", ".join(sorted(result.failed)))
+    if result.has_failures:
+        if result.failed:
+            logger.error(
+                "failed resources in GRR <%s>: %s",
+                repo_url, ", ".join(sorted(result.failed)))
+        else:
+            logger.error(
+                "GRR <%s> could not be processed; "
+                "no single resource can be blamed", repo_url)
+    if result.needs_update or result.has_failures:
         logger.warning("inconsistent GRR <%s> state", repo_url)
-        sys.exit(1)
-    if result.needs_update:
-        logger.warning("inconsistent GRR <%s> state", repo_url)
-        sys.exit(result.needs_update)
+        # `needs_update` is a count and only a `--dry-run` produces one; a
+        # real run reports failure with a bare 1.
+        sys.exit(result.needs_update or 1)
     logger.info("GRR <%s> is consistent", repo_url)
 
 
