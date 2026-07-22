@@ -230,8 +230,12 @@ class GenomicPositionTable(abc.ABC):
         :meth:`_build_chrom_mapping` derives from it, which that method rebuilds
         -- memo included -- on every ``open()``.  **A backend's ``close()`` must
         call up into this one**; what each backend releases on top of it is its
-        own, and ``test_table_lifetime.py`` holds all four to the policy by
-        diffing what ``open()`` established against what ``close()`` gave up.
+        own, and ``test_table_lifetime.py`` holds all four to the policy: it
+        opens a table, *reads* through it, closes it, and then requires both
+        that everything the open rebound was given up and that nothing the
+        closed table still holds has anything in it -- the second of which is
+        what catches a container filled in place, and the read is what reaches
+        the buffers a fetch establishes.
         """
         self.chrom_map = None
         self.chrom_order = None

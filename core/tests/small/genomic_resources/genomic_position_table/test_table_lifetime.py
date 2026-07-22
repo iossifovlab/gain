@@ -7,7 +7,10 @@ what ``open()`` cannot rebuild, so that what a caching holder retains is a
 shell rather than a copy of the file (gain#350 --
 test_a_closed_table_releases_what_open_established and the two
 retention-shape tests are the release policy stated on
-``GenomicPositionTable.close()``, checked against all four backends).
+``GenomicPositionTable.close()``, checked against all four backends, plus two
+chromosome-MAPPED fixtures without which the base class's ``chrom_map`` and
+``rev_chrom_map`` are ``None`` throughout and every question asked of them is
+answered vacuously).
 
 The second half only matters because the first can be satisfied without it: a
 table can be perfectly collectable and still be several megabytes that nobody
@@ -53,10 +56,15 @@ from __future__ import annotations
 import gc
 import pathlib
 import weakref
+from collections.abc import Sized
 
 import pytest
 from gain.genomic_resources.genomic_position_table.record import PAYLOAD
-from gain.genomic_resources.genomic_scores import GenomicScore, PositionScore
+from gain.genomic_resources.genomic_scores import (
+    GenomicScore,
+    PositionScore,
+    RecordScoreLine,
+)
 from gain.genomic_resources.testing import setup_bigwig
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
@@ -64,7 +72,65 @@ from gain.genomic_resources.testing.builders import (
     a_position_score,
 )
 
-from .test_backend_record_contract import _BACKENDS
+from .test_backend_record_contract import _BACKENDS, Backend
+
+
+def _build_mapped_tabular(
+    tmp_path: pathlib.Path, *, tabix: bool,
+) -> Backend:
+    """A tabular score whose file contigs are PREFIXED into reference space.
+
+    The four backend fixtures this file borrows from
+    test_backend_record_contract.py all configure no ``chrom_mapping``, and a
+    table without one never builds ``chrom_map``/``rev_chrom_map`` at all --
+    they are ``None`` before its open, after it and after its close.  Every
+    question this file asks about the chromosome map is therefore answered
+    vacuously by those four: the release policy passes because the field was
+    never populated, and the reopen check passes because a map that was never
+    built cannot fail to be rebuilt.
+
+    ``add_prefix: chr`` over a file whose contig is ``1`` is the cheapest
+    resource that populates both maps, and it makes the two failures visible.
+    A closed table that kept them would be caught, and -- the sharper half -- a
+    reopened table that failed to rebuild them would answer
+    ``unmap_chromosome('chr1') -> 'chr1'`` against a file that has no ``chr1``,
+    and return no records at all.
+    """
+    builder = (
+        a_position_score()
+        .with_score("s_float", "float")
+        .with_chrom_mapping(add_prefix="chr")
+        .with_data("""
+            chrom  pos_begin  s_float
+            1      10         0.5
+        """)
+    )
+    if tabix:
+        builder = builder.with_tabix()
+    repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
+    return PositionScore(repo.get_resource("pos")), ("chr1", 10, 10)
+
+
+def _build_mapped_inmemory(tmp_path: pathlib.Path) -> Backend:
+    return _build_mapped_tabular(tmp_path, tabix=False)
+
+
+def _build_mapped_tabix(tmp_path: pathlib.Path) -> Backend:
+    return _build_mapped_tabular(tmp_path, tabix=True)
+
+
+# The four backends, plus the two chromosome-MAPPED tabular fixtures that make
+# the base class's ``chrom_map``/``rev_chrom_map`` non-vacuous.  Kept here
+# rather than in _BACKENDS: that list is "every backend in the tree", which the
+# record-contract file it lives in reads as an exhaustiveness claim, and a
+# mapped in-memory table is not a sixth backend.
+_MAPPED_BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
+    pytest.param(_build_mapped_inmemory, RecordScoreLine, id="inmemory-mapped"),
+    pytest.param(_build_mapped_tabix, RecordScoreLine, id="tabix-mapped"),
+]
+_LIFETIME_BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
+    *_BACKENDS, *_MAPPED_BACKENDS,
+]
 
 
 def _open_scan_close(build: object, tmp_path: pathlib.Path) -> weakref.ref:
@@ -86,7 +152,7 @@ def _open_scan_close(build: object, tmp_path: pathlib.Path) -> weakref.ref:
     return ref
 
 
-@pytest.mark.parametrize("build,_score_line", _BACKENDS)
+@pytest.mark.parametrize("build,_score_line", _LIFETIME_BACKENDS)
 def test_a_closed_and_dropped_table_is_collected(
     build: object,
     _score_line: object,
@@ -111,7 +177,7 @@ def test_a_closed_and_dropped_table_is_collected(
     )
 
 
-@pytest.mark.parametrize("build,_score_line", _BACKENDS)
+@pytest.mark.parametrize("build,_score_line", _LIFETIME_BACKENDS)
 def test_tables_do_not_accumulate_over_repeated_open_close_cycles(
     build: object,
     _score_line: object,
@@ -196,13 +262,14 @@ def _all_subclasses(klass: type) -> list[type]:
     return subs + [s for sub in subs for s in _all_subclasses(sub)]
 
 
-# The fields ``open()`` establishes that a CLOSED table is still allowed to
-# hold, each with the reason it is exempt.  This list is the release policy
-# stated on ``GenomicPositionTable.close()``, written out as data: everything
-# else ``open()`` sets is file-derived and must be released.
+# The fields a CLOSED table is still allowed to hold, each with the reason it
+# is exempt.  This list is the release policy stated on
+# ``GenomicPositionTable.close()``, written out as data: everything else a
+# table picks up between construction and close is file-derived and must be
+# released.
 #
-# It is an ALLOW-LIST on purpose.  A field added to a backend's ``open()``
-# without a matching release fails
+# It is an ALLOW-LIST on purpose.  A field added to a backend's ``open()`` or
+# fetch path without a matching release fails
 # test_a_closed_table_releases_what_open_established, and the only way to make
 # that pass without releasing it is to name it here with a reason -- which is a
 # decision recorded in a diff, rather than a field that quietly joined what a
@@ -219,11 +286,27 @@ _MAY_SURVIVE_CLOSE = {
     "pos_end_key": "core column key: resolved from the definition and header",
     "ref_key": "core column key: resolved from the definition and header",
     "alt_key": "core column key: resolved from the definition and header",
+    "definition": (
+        "the table's own definition -- configuration, handed in at "
+        "construction and never read from the file. get_column_key writes a "
+        "resolved column_index back into it, which is why it shows up as "
+        "changed at all. Bounded by the config."
+    ),
+    "_last_call": (
+        "the previous query's (chrom, pos_begin, pos_end) -- three values "
+        "describing a CALL, not file content, and the tabix read cascade's "
+        "own cursor. Bounded at three."
+    ),
+    "_last_pos": (
+        "the previous query's start position -- one int, describing a call "
+        "rather than the file, which only routes the next bigWig fetch "
+        "between the buffered and direct strategies. Bounded at one."
+    ),
 }
 
 
 def _is_released(value: object, before_open: object) -> bool:
-    """Whether a field ``open()`` established has been given up by ``close()``.
+    """Whether a field the open/read established has been given up by close().
 
     Released means one of: ``None``; an empty container; or back to the value
     the table was constructed with -- the three shapes the backends' releases
@@ -233,12 +316,30 @@ def _is_released(value: object, before_open: object) -> bool:
     """
     if value is None:
         return True
-    if isinstance(value, list | tuple | dict | set | str) and len(value) == 0:
+    if _held(value) == 0:
         return True
     return value == before_open
 
 
-@pytest.mark.parametrize("build,_score_line", _BACKENDS)
+def _held(value: object) -> int | None:
+    """How many things a field holds, or ``None`` if it is not a container.
+
+    ``len()`` and nothing cleverer, which is what makes this answerable for
+    *anything* a backend might hold: a list, a dict, a ``Counter``, a ``Box``
+    -- and a table's own helper objects, which define ``__len__`` precisely
+    because they are collections (``LineBuffer`` is a deque of records).  A
+    str/bytes is not a container of records and is excluded, as is anything
+    whose ``len()`` refuses.
+    """
+    if isinstance(value, str | bytes) or not isinstance(value, Sized):
+        return None
+    try:
+        return len(value)
+    except TypeError:  # pragma: no cover - a Sized that will not measure
+        return None
+
+
+@pytest.mark.parametrize("build,_score_line", _LIFETIME_BACKENDS)
 def test_a_closed_table_releases_what_open_established(
     build: object,
     _score_line: object,
@@ -247,28 +348,58 @@ def test_a_closed_table_releases_what_open_established(
     """The release policy, asked of every backend at once.
 
     A closed table holds only what ``open()`` does not rebuild -- its
-    resource, its definition and its configured parameters -- so the check is
-    written as the *difference* the open makes: snapshot the constructed
-    table's attributes, open it, take every attribute the open established,
-    and require ``close()`` to have given all of them up.
+    resource, its definition and its configured parameters -- and the check is
+    the field NOBODY thought about: a new backend field, or a new one on the
+    base class, arrives and is caught here on the day it is added, with
+    ``_MAY_SURVIVE_CLOSE`` as the only escape and a written reason as its cost.
 
-    Written this way rather than as a list of field names because the
-    interesting failure is the field NOBODY thought about: a new backend
-    field, or a new one on the base class, arrives in ``open()`` and is caught
-    here on the day it is added.  ``_MAY_SURVIVE_CLOSE`` is the only escape,
-    and it costs a written reason.
+    Catching that field takes **two** questions, because a table acquires what
+    it holds in two ways and either one alone is a hole big enough to drive the
+    whole payload through:
 
-    This is what makes the base class's own chromosome state -- the
+    * what the open **rebound** -- the difference between the constructed
+      table's attributes and the opened one's -- must be released.  This is the
+      question about handles and parsers, which are replaced wholesale.
+    * what the closed table still **holds** -- every attribute that is a
+      container -- must be empty.  This is the question about payload, and it
+      is the one that does not care *how* the payload arrived: a dict filled by
+      ``update()`` is the same object it was at construction, so the rebinding
+      diff never sees it, and it is precisely how a contig dict or a fetch
+      buffer grows.
+
+    And the table is **read** before it is closed, not merely opened -- twice
+    over the same region.  The bigWig interval buffer, the tabix line buffer
+    and the read cascade's counters are all populated by a fetch and by nothing
+    before it, so an open-then-close test inspects them while they are still
+    empty and finds them released whatever ``close()`` does or does not do.
+    The repeat is what reaches the *buffered* fetch strategies: a bigWig table
+    routes on the distance from the previous query and starts far enough back
+    to force the first fetch down the direct path, which never touches the
+    buffer at all (see the reopen test for the same rule stated as routing).
+
+    This is also what makes the base class's own chromosome state -- the
     ``get_file_chromosomes`` memo, ``chrom_order`` and the maps
     ``_build_chrom_mapping`` builds -- everyone's problem rather than nobody's:
     it is established by ``open()`` on all four backends, so all four fail
-    here if it survives a close.
+    here if it survives a close.  The two ``-mapped`` fixtures are what make
+    ``chrom_map``/``rev_chrom_map`` part of that: without a configured
+    ``chrom_mapping`` both stay ``None`` from construction to close, and the
+    policy holds for them vacuously.
     """
-    score, _region = build(tmp_path)  # type: ignore[operator]
+    score, region = build(tmp_path)  # type: ignore[operator]
     table = score.table
     before = dict(vars(table))
 
     table.open()
+    # READ, don't just open, and read TWICE: the buffers and counters below
+    # exist only once a fetch has run through them, and the buffered fetch
+    # strategies only once a second, nearby query has been asked.
+    assert list(table.get_records_in_region(*region)), (
+        f"the fixture region yields no records from a "
+        f"{type(table).__name__}: the fetch-path state this test exists to "
+        f"inspect was never established")
+    list(table.get_records_in_region(*region))
+
     established = {
         name: value for name, value in vars(table).items()
         if name not in before or before[name] is not value
@@ -282,19 +413,51 @@ def test_a_closed_table_releases_what_open_established(
 
     table.close()
 
-    after = vars(table)
+    rebound_but_kept = {
+        name for name, value in vars(table).items()
+        if name in established and not _is_released(value, before.get(name))
+    }
+    still_holding = {
+        name: _held(value) for name, value in vars(table).items()
+        if _held(value)
+    }
     retained = sorted(
-        name for name in established
-        if name not in _MAY_SURVIVE_CLOSE
-        and not _is_released(after[name], before.get(name))
-    )
+        (rebound_but_kept | still_holding.keys()) - set(_MAY_SURVIVE_CLOSE))
+    sizes = {name: still_holding[name]
+             for name in retained if name in still_holding}
     assert not retained, (
-        f"{type(table).__name__}.close() left {retained} holding what "
-        f"open() read from the file. A closed table keeps only its resource, "
-        f"its definition and its configured parameters -- release these in "
-        f"close(), or add them to _MAY_SURVIVE_CLOSE with the reason they "
-        f"are exempt (gain#350)."
+        f"{type(table).__name__}.close() left {retained} holding what the "
+        f"open and the read took out of the file (sizes: {sizes}). "
+        f"A closed table keeps only its resource, its definition and its "
+        f"configured parameters -- release these in close(), or add them to "
+        f"_MAY_SURVIVE_CLOSE with the reason they are exempt (gain#350)."
     )
+
+
+@pytest.mark.parametrize("build,_score_line", _MAPPED_BACKENDS)
+def test_the_mapped_fixtures_really_build_a_chromosome_map(
+    build: object,
+    _score_line: object,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Keep the ``-mapped`` fixtures from decaying into ordinary ones.
+
+    Everything the two tests above claim about ``chrom_map``/``rev_chrom_map``
+    rests on these fixtures actually configuring a ``chrom_mapping``: a table
+    with none never builds either map, and both tests then pass for those
+    fields without checking anything at all.  That is exactly the hole the
+    ``-mapped`` fixtures were added to close, and it would reopen silently --
+    a builder rename, a dropped ``with_chrom_mapping`` -- so the premise is
+    asserted rather than assumed.
+    """
+    score, region = build(tmp_path)  # type: ignore[operator]
+    table = score.table
+    with table:
+        assert table.chrom_map, "fixture builds no chromosome map"
+        assert table.rev_chrom_map, "fixture builds no reverse chromosome map"
+        # and the mapping is the one that MATTERS: reference space differs
+        # from the file's, so a lost map cannot answer by accident
+        assert table.unmap_chromosome(region[0]) != region[0]
 
 
 def _read_region(
@@ -321,7 +484,7 @@ def _read_region(
     return records, values
 
 
-@pytest.mark.parametrize("build,_score_line", _BACKENDS)
+@pytest.mark.parametrize("build,_score_line", _LIFETIME_BACKENDS)
 def test_a_reopened_table_answers_exactly_as_before_it_was_closed(
     build: object,
     _score_line: object,
