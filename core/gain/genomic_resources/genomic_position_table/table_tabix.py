@@ -127,6 +127,7 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         return self
 
     def close(self) -> None:
+        super().close()
         self.buffer.clear()
         if self.pysam_file is not None:
             if self.line_iterator:

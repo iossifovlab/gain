@@ -193,6 +193,32 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
         self.vcf_parser = None
 
     def _load_file_chromosomes(self) -> list[str]:
+        """Read the file's contigs off its TABIX INDEX, not its VCF header.
+
+        The index lists the contigs the file actually carries records on, which
+        is what every caller of this means by "the file's chromosomes"; the VCF
+        header's ``##contig`` lines are a declaration and may name contigs with
+        no records (or none at all).  So this opens the file a second time, as a
+        tabix file -- ``self.pysam_file`` is a ``VariantFile`` and cannot answer
+        it.
+
+        Which is why the open table is a **precondition** here, rather than
+        something this can quietly do without.  Unlike its three siblings, an
+        implementation that opens the file itself can still answer after
+        ``close()`` -- and answer *wrongly*: ``close()`` releases the chromosome
+        map along with the memo in front of this method (see
+        :meth:`GenomicPositionTable.close`), so ``get_chromosomes()`` would map
+        the contigs read here through nothing and hand back the FILE's names
+        where an open table hands back reference-space ones, with no error to
+        notice it by -- plus a file or network open on a table the caller
+        believes is closed.  Refusing keeps a closed VCF table saying exactly
+        what a closed tabix one says (gain#350).
+        """
+        if self.pysam_file is None:
+            raise ValueError(
+                f"vcf table not open: "
+                f"{self.genomic_resource.resource_id}: "
+                f"{self.definition}")
         with self.genomic_resource.open_tabix_file(
                 self.definition.filename) as pysam_file_tabix:
             contigs = pysam_file_tabix.contigs
