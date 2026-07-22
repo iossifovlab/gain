@@ -262,8 +262,12 @@ def return_42() -> int:
     return 42
 
 
-@pytest.mark.xfail(reason="This test is flaky. Needs fixing.")
 def test_single_task_graph(executor: TaskGraphExecutor) -> None:
+    # Was xfailed as "flaky. Needs fixing." until gain#365: a one-task
+    # graph is the shape most exposed to the run loop's termination race,
+    # because it has exactly one submission to lose. Under the same
+    # delayed-``map()`` probe that the gain#365 regression test uses, this
+    # graph yielded 0 of 1 results before the fix and 1 of 1 after.
     graph = TaskGraph()
     graph.create_task("Only", return_42, args=[], deps=[])
 
