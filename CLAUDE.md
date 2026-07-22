@@ -262,8 +262,9 @@ res = (
 ```
 
 Factories: `a_position_score`, `a_np_score`,
-`an_allele_score`, `a_bigwig_score`, `a_vcf_info_score`,
-`a_gene_score`, `a_reference_genome`, `a_grr`. Compose a
+`an_allele_score`, `a_cnv_collection`, `a_bigwig_score`,
+`a_vcf_info_score`, `a_gene_score`, `a_reference_genome`,
+`a_grr`. Compose a
 multi-resource repo with
 `a_grr().with_resource(id, builder).build_repo(tmp_path)`;
 `build_resource(tmp_path)` is the single-resource
@@ -272,8 +273,8 @@ shorthand.
 **That list is the whole of the coverage — the gaps are
 large and structural, not an oversight to work around.**
 There is no builder for `gene_models`, `liftover_chain`,
-`annotation_pipeline`, `cnv_collection` or
-`gene_set_collection`, and no `with_*` for
+`annotation_pipeline` or `gene_set_collection`, and no
+`with_*` for
 `meta`/`labels`, `default_annotation`, or explicit
 `chrom`/`pos_begin` `column_name`/`column_index`
 mappings. Hand-rolled yaml is still the majority in
