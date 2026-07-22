@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Generator
-from functools import cache
 
 import pysam
 
@@ -193,8 +192,7 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
         # resolves from the file; a closed table must not keep it.
         self.vcf_parser = None
 
-    @cache  # pylint: disable=method-cache-max-size-none
-    def get_file_chromosomes(self) -> list[str]:
+    def _load_file_chromosomes(self) -> list[str]:
         with self.genomic_resource.open_tabix_file(
                 self.definition.filename) as pysam_file_tabix:
             contigs = pysam_file_tabix.contigs

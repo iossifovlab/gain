@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Generator
-from functools import cache
 from typing import ClassVar
 
 from gain.genomic_resources.genomic_position_table.record import Record
@@ -189,6 +188,13 @@ class BigWigTable(GenomicPositionTable):
             self._bw_file.close()
         self._bw_file = None
         self.parser = None
+        # Release the fetched intervals too.  Not required for correctness --
+        # nothing reads the buffer without an open handle -- but a closed table
+        # that still holds its last chunk keeps up to a full fetch window of
+        # intervals alive for as long as anything holds the table, which is
+        # what made gain#345 expensive rather than merely untidy.
+        self._buffer = []
+        self._buffer_region = Region("?", -1, -1)
 
     def _fetch_chunk(
         self, window: AdaptiveFetchWindow,
@@ -420,7 +426,6 @@ class BigWigTable(GenomicPositionTable):
             )
         return self.chroms[fchrom]
 
-    @cache  # pylint: disable=method-cache-max-size-none
-    def get_file_chromosomes(self) -> list[str]:
+    def _load_file_chromosomes(self) -> list[str]:
         assert self._bw_file is not None
         return list(self.chroms.keys())
