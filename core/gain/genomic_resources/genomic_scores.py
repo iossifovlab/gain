@@ -5,7 +5,6 @@ import abc
 import contextlib
 import copy
 import enum
-import warnings
 from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass
 from threading import Lock
@@ -49,7 +48,7 @@ from gain.genomic_resources.resource_implementation import (
 )
 from gain.genomic_resources.score_resource import ScoreDef, ScoreResource
 
-from .aggregators import AGGREGATOR_SCHEMA, Aggregator
+from .aggregators import AGGREGATOR_SCHEMA
 
 if TYPE_CHECKING:
     # Only ever needed to type VCFScoreLine's two memoised INFO proxies.  pysam
@@ -800,45 +799,6 @@ _ScoreLineFactory = Callable[
 ]
 
 
-@dataclass
-class PositionScoreQuery:
-    score: str
-    position_aggregator: str | None = None
-
-
-@dataclass
-class AlleleScoreQuery:
-    """Deprecated. Use annotator-level aggregators instead."""
-
-    score: str
-    position_aggregator: str | None = None
-    allele_aggregator: str | None = None
-
-    def __post_init__(self) -> None:
-        warnings.warn(
-            "AlleleScoreQuery is deprecated and will be removed in a future "
-            "version. Use annotator-level aggregators instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-
-@dataclass
-class PositionScoreAggr:
-    score: str
-    position_aggregator: Aggregator
-
-
-@dataclass
-class AlleleScoreAggr:
-    score: str
-    position_aggregator: Aggregator
-    allele_aggregator: Aggregator
-
-
-ScoreQuery = PositionScoreQuery | AlleleScoreQuery
-
-
 class GenomicScore(ScoreResource[GenomicScoreDef]):
     """Base class for genomic score resources.
 
@@ -1517,8 +1477,11 @@ class PositionScore(GenomicScore):
         ...         "chr1", 10000, 20000
         ...     ):
         ...         print(f"{pos_begin}-{pos_end}: {scores}")
-        ...     # Aggregate scores over a region
-        ...     aggs = score.fetch_scores_agg("chr1", 10000, 20000)
+
+    Aggregating those values over the region is the *annotator's* job, not the
+    resource's -- see ``gain.annotation.score_annotator``.  What the resource
+    contributes is ``fetch_region_weighted_values``, which pairs every record
+    with the number of queried bases it covers.
 
     Attributes:
         resource: The underlying GenomicResource object
@@ -1530,8 +1493,8 @@ class PositionScore(GenomicScore):
     Key Methods:
         fetch_scores: Get score values at a specific position
         fetch_region: Iterate over score values in a genomic region
-        fetch_scores_agg: Aggregate score values over a region
-        get_region_scores: Get all scores in a region for a specific score ID
+        fetch_region_weighted_values: Iterate over ``(values, weight)`` pairs
+            in a genomic region, for a caller that aggregates it
     """
 
     @staticmethod
@@ -1609,24 +1572,6 @@ class PositionScore(GenomicScore):
                 continue
             yield (values, weight)
 
-    def get_region_scores(
-        self,
-        chrom: str,
-        pos_beg: int,
-        pos_end: int,
-        score_id: str,
-    ) -> list[ScoreValue]:
-        """Return score values in a region."""
-        result: list[ScoreValue | None] = [None] * (pos_end - pos_beg + 1)
-        for b, e, v in self.fetch_region(
-                chrom, pos_beg, pos_end, [score_id]):
-            e = min(e, pos_end)
-            if v is None:
-                continue
-            result[b - pos_beg:e - pos_beg + 1] = [v[0]] * (e - b + 1)
-
-        return result
-
     def fetch_scores(
         self, chrom: str, position: int,
         scores: list[str] | None = None,
@@ -1638,10 +1583,6 @@ class PositionScore(GenomicScore):
 
         if scores is None:
             scores = self.get_all_scores()
-        else:
-            scores = [
-                s.score if isinstance(s, PositionScoreQuery) else s
-                for s in scores]
         assert all(isinstance(s, str) for s in scores)
 
         lines = list(self.fetch_lines(chrom, position, position))
@@ -1663,77 +1604,6 @@ class PositionScore(GenomicScore):
         score_defs = [
             self.score_definitions[scr] for scr in requested_scores]
         return line.get_values(score_defs)
-
-    def _build_scores_agg(
-        self, scores: list[str] | list[PositionScoreQuery],
-    ) -> list[PositionScoreAggr]:
-        score_aggs = []
-        aggregator_type: str | None
-        for score in scores:
-            if isinstance(score, str):
-                aggregator_type = self.score_definitions[score].pos_aggregator
-                assert aggregator_type is not None
-                score_aggs.append(PositionScoreAggr(
-                    score,
-                    Aggregator.build(aggregator_type),
-                ))
-                continue
-
-            assert isinstance(score, PositionScoreQuery)
-            if score.position_aggregator is not None:
-                aggregator_type = score.position_aggregator
-            else:
-                aggregator_type = \
-                    self.score_definitions[score.score].pos_aggregator
-            assert aggregator_type is not None
-            score_aggs.append(
-                PositionScoreAggr(
-                    score.score,
-                    Aggregator.build(aggregator_type)),
-            )
-        return score_aggs
-
-    def fetch_scores_agg(  # pylint: disable=too-many-arguments,too-many-locals
-            self, chrom: str, pos_begin: int, pos_end: int,
-            scores: list[str] | list[PositionScoreQuery] | None = None,
-    ) -> list[Aggregator]:
-        """Fetch score values in a region and aggregates them.
-
-        Case 1:
-           res.fetch_scores_agg("1", 10, 20) -->
-              all score with default aggregators
-        Case 2:
-           res.fetch_scores_agg("1", 10, 20,
-                                non_default_aggregators={"bla":"max"}) -->
-              all score with default aggregators but 'bla' should use 'max'
-        """
-        if chrom not in self.get_all_chromosomes():
-            raise ValueError(
-                f"{chrom} is not among the "
-                f"available chromosomes.")
-        if scores is None:
-            scores = [
-                PositionScoreQuery(score_id)
-                for score_id in self.get_all_scores()]
-
-        score_aggs = self._build_scores_agg(scores)
-
-        for line in self.fetch_lines(chrom, pos_begin, pos_end):
-            _line_chrom, line_begin, line_end = self._line_to_begin_end(line)
-            for sagg in score_aggs:
-                val = line.get_score(sagg.score)
-
-                left = (
-                    max(pos_begin, line_begin)
-                )
-                right = (
-                    min(pos_end, line_end)
-                )
-                # The record counts once per base pair of the region it
-                # covers -- weighted, not replicated.
-                sagg.position_aggregator.add(val, right - left + 1)
-
-        return [squery.position_aggregator for squery in score_aggs]
 
 
 class AlleleScore(GenomicScore):
@@ -1783,20 +1653,9 @@ class AlleleScore(GenomicScore):
         ...         "chr1", 10000, 20000
         ...     ):
         ...         print(f"{pos} {ref}>{alt}: {scores}")
-        ...     # Aggregate scores over a region
-        ...     from gain.genomic_resources.genomic_scores import (
-        ...         AlleleScoreQuery
-        ...     )
-        ...     queries = [
-        ...         AlleleScoreQuery(
-        ...             "cadd_raw",
-        ...             position_aggregator="mean",
-        ...             allele_aggregator="max"
-        ...         )
-        ...     ]
-        ...     aggs = score.fetch_scores_agg(
-        ...         "chr1", 10000, 20000, queries
-        ...     )
+
+    Aggregating those values over the region is the *annotator's* job, not the
+    resource's -- see ``gain.annotation.score_annotator``.
 
     Attributes:
         resource: The underlying GenomicResource object
@@ -1809,8 +1668,6 @@ class AlleleScore(GenomicScore):
     Key Methods:
         fetch_scores: Get score values for a specific variant
         fetch_region: Iterate over variant scores in a genomic region
-        fetch_scores_agg: Aggregate scores over a region with position and
-                         allele aggregation
         substitutions_mode: Check if operating in SUBSTITUTIONS mode
         alleles_mode: Check if operating in ALLELES mode
 
@@ -2034,91 +1891,6 @@ class AlleleScore(GenomicScore):
             requested_scores,
             selected_line.get_values(score_defs),
             strict=True))
-
-    def build_scores_agg(
-        self, score_queries: list[AlleleScoreQuery],
-    ) -> dict[str, AlleleScoreAggr]:
-        """Deprecated. Use annotator-level aggregators instead."""
-        warnings.warn(
-            "build_scores_agg is deprecated and will be removed in a future "
-            "version. Use annotator-level aggregators instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        score_aggs = {}
-        for squery in score_queries:
-            scr_def = self.score_definitions[squery.score]
-
-            if squery.position_aggregator is not None:
-                aggregator_type = squery.position_aggregator
-            else:
-                assert scr_def.pos_aggregator is not None
-                aggregator_type = scr_def.pos_aggregator
-            position_aggregator = Aggregator.build(aggregator_type)
-
-            if squery.allele_aggregator is not None:
-                aggregator_type = squery.allele_aggregator
-            else:
-                assert scr_def.allele_aggregator is not None
-                aggregator_type = scr_def.allele_aggregator
-            allele_aggregator = Aggregator.build(aggregator_type)
-            score_aggs[squery.score] = AlleleScoreAggr(
-                squery.score, position_aggregator, allele_aggregator)
-        return score_aggs
-
-    def fetch_scores_agg(
-            self, chrom: str, pos_begin: int, pos_end: int,
-            scores: list[AlleleScoreQuery] | None = None,
-    ) -> list[Aggregator]:
-        """Deprecated. Use annotator-level aggregators instead."""
-        warnings.warn(
-            "fetch_scores_agg is deprecated and will be removed in a future "
-            "version. Use annotator-level aggregators instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        # pylint: disable=too-many-locals
-        if chrom not in self.get_all_chromosomes():
-            raise ValueError(
-                f"{chrom} is not among the available chromosomes for "
-                f"NP Score resource {self.resource_id}")
-
-        if scores is None:
-            scores = [
-                AlleleScoreQuery(score_id)
-                for score_id in self.get_all_scores()]
-
-        score_aggs = self.build_scores_agg(scores)
-
-        score_lines = list(self.fetch_lines(chrom, pos_begin, pos_end))
-        if not score_lines:
-            return [sagg.position_aggregator for sagg in score_aggs.values()]
-
-        def aggregate_alleles() -> None:
-            for sagg in score_aggs.values():
-                sagg.position_aggregator.add(
-                    sagg.allele_aggregator.get_final())
-                sagg.allele_aggregator.clear()
-
-        last_pos: int = score_lines[0].pos_begin
-        for line in score_lines:
-            if line.pos_begin != last_pos:
-                aggregate_alleles()
-
-            for sagg in score_aggs.values():
-                val = line.get_score(sagg.score)
-                left = (
-                    max(pos_begin, line.pos_begin)
-                )
-                right = (
-                    min(pos_end, line.pos_end)
-                )
-                for _ in range(left, right + 1):
-                    sagg.allele_aggregator.add(val)
-            last_pos = line.pos_begin
-        aggregate_alleles()
-
-        return [sagg.position_aggregator for sagg in score_aggs.values()]
 
 
 @dataclass

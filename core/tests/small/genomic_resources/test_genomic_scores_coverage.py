@@ -7,11 +7,9 @@ import pytest
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
-    AlleleScoreQuery,
     CnvCollection,
     GenomicScoreDef,
     PositionScore,
-    PositionScoreQuery,
     RecordScoreLine,
     build_score_from_resource,
 )
@@ -266,70 +264,6 @@ def test_position_score_fetch_scores_multiple_lines() -> None:
         score.fetch_scores("1", 10)
 
 
-def test_position_score_fetch_scores_agg_invalid_chromosome() -> None:
-    """Test fetch_scores_agg with invalid chromosome."""
-    res: GenomicResource = build_inmemory_test_resource({
-        GR_CONF_FILE_NAME: """
-            type: position_score
-            table:
-                filename: data.mem
-            scores:
-                - id: score
-                  type: float
-                  name: score
-                  position_aggregator: mean
-        """,
-        "data.mem": """
-            chrom  pos_begin  score
-            1      10         0.1
-        """,
-    })
-
-    score = PositionScore(res)
-    score.open()
-
-    with pytest.raises(ValueError, match="not among the available"):
-        score.fetch_scores_agg("chr99", 10, 20)
-
-
-def test_position_score_build_scores_agg_with_query() -> None:
-    """Test _build_scores_agg with PositionScoreQuery objects."""
-    res: GenomicResource = build_inmemory_test_resource({
-        GR_CONF_FILE_NAME: """
-            type: position_score
-            table:
-                filename: data.mem
-            scores:
-                - id: score1
-                  type: float
-                  name: score1
-                  position_aggregator: mean
-                - id: score2
-                  type: float
-                  name: score2
-                  position_aggregator: max
-        """,
-        "data.mem": """
-            chrom  pos_begin  score1  score2
-            1      10         0.1     0.5
-            1      11         0.2     0.6
-        """,
-    })
-
-    score = PositionScore(res)
-    score.open()
-
-    result = score.fetch_scores_agg(
-        "1",
-        10,
-        11,
-        [PositionScoreQuery("score1", "max"), PositionScoreQuery("score2")],
-    )
-    assert len(result) == 2
-    assert result[0].get_final() == 0.2
-    assert result[1].get_final() == 0.6
-
-
 def test_allele_score_invalid_resource_type() -> None:
     """Test AlleleScore with invalid resource type."""
     res: GenomicResource = build_inmemory_test_resource({
@@ -419,77 +353,6 @@ def test_allele_score_fetch_region_overlapping_positions(
 
     result = list(score.fetch_region("1", 10, 11, ["freq"]))
     assert len(result) == 2
-
-
-def test_allele_score_fetch_scores_agg_with_queries() -> None:
-    """Test fetch_scores_agg with AlleleScoreQuery objects."""
-    res: GenomicResource = build_inmemory_test_resource({
-        GR_CONF_FILE_NAME: """
-            type: allele_score
-            table:
-                filename: data.mem
-                reference:
-                  name: reference
-                alternative:
-                  name: alternative
-            scores:
-                - id: freq
-                  type: float
-                  desc: ""
-                  name: freq
-                  position_aggregator: mean
-                  allele_aggregator: max
-        """,
-        "data.mem": """
-            chrom  pos_begin  reference  alternative  freq
-            1      10         A          G            0.02
-            1      10         A          C            0.04
-            1      11         A          T            0.06
-        """,
-    })
-
-    score = AlleleScore(res)
-    score.open()
-
-    result = score.fetch_scores_agg(
-        "1",
-        10,
-        11,
-        [AlleleScoreQuery("freq", "max", "min")],
-    )
-    assert len(result) == 1
-
-
-def test_allele_score_fetch_scores_agg_empty_lines() -> None:
-    """Test fetch_scores_agg with no lines in region."""
-    res: GenomicResource = build_inmemory_test_resource({
-        GR_CONF_FILE_NAME: """
-            type: allele_score
-            table:
-                filename: data.mem
-                reference:
-                  name: reference
-                alternative:
-                  name: alternative
-            scores:
-                - id: freq
-                  type: float
-                  desc: ""
-                  name: freq
-                  position_aggregator: mean
-                  allele_aggregator: max
-        """,
-        "data.mem": """
-            chrom  pos_begin  reference  alternative  freq
-            1      10         A          G            0.02
-        """,
-    })
-
-    score = AlleleScore(res)
-    score.open()
-
-    result = score.fetch_scores_agg("1", 100, 200)
-    assert len(result) == 1
 
 
 def test_cnv_collection_invalid_resource_type() -> None:
@@ -663,39 +526,6 @@ def test_validate_scoredefs_no_column_name_or_index() -> None:
     score = PositionScore(res)
     with pytest.raises(AssertionError, match="Either an index or name"):
         score.open()
-
-
-def test_position_score_get_region_scores() -> None:
-    """Test PositionScore.get_region_scores method."""
-    res: GenomicResource = build_inmemory_test_resource({
-        GR_CONF_FILE_NAME: """
-            type: position_score
-            table:
-                filename: data.mem
-            scores:
-                - id: score
-                  type: float
-                  name: score
-        """,
-        "data.mem": """
-            chrom  pos_begin  pos_end  score
-            1      10         12       0.1
-            1      15         16       0.2
-        """,
-    })
-
-    score = PositionScore(res)
-    score.open()
-
-    result = score.get_region_scores("1", 10, 16, "score")
-    assert len(result) == 7
-    assert result[0] == 0.1
-    assert result[1] == 0.1
-    assert result[2] == 0.1
-    assert result[3] is None
-    assert result[4] is None
-    assert result[5] == 0.2
-    assert result[6] == 0.2
 
 
 def test_deprecated_name_and_index_config(

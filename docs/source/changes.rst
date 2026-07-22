@@ -2,6 +2,30 @@ Release Notes
 =============
 
 * 2026.7.2
+    * **Removed:** the in-resource aggregation engine (#267). Aggregation
+      belongs to the annotators — the annotator fetches raw values from the
+      resource and applies the configured aggregator to them — but an earlier
+      design also aggregated *inside* the score resources, and that second
+      engine outlived its callers. It had none left, in GAIn or in GPF. The
+      following public names are gone from
+      ``gain.genomic_resources.genomic_scores``:
+
+      * ``PositionScore.fetch_scores_agg``
+      * ``PositionScore.get_region_scores``
+      * ``AlleleScore.fetch_scores_agg`` (already deprecated)
+      * ``AlleleScore.build_scores_agg`` (already deprecated)
+      * the query and aggregate-holder types that only that engine used:
+        ``PositionScoreQuery``, ``AlleleScoreQuery`` (already deprecated),
+        ``PositionScoreAggr``, ``AlleleScoreAggr``, and the ``ScoreQuery``
+        union alias
+
+      Configure aggregation on the annotation pipeline attribute, or as the
+      resource's ``position_aggregator`` / ``allele_aggregator`` default —
+      both are unchanged, and the aggregators themselves are untouched. A
+      caller that fetched-and-aggregated a region by hand should use
+      ``PositionScore.fetch_region_weighted_values``, which pairs each record
+      with the number of queried bases it covers, and feed those pairs to an
+      ``Aggregator`` it owns.
     * A resource may now configure ``position_aggregator: count`` /
       ``allele_aggregator: count`` (#261). ``count`` has always been a
       registered aggregator — buildable, accepted in a pipeline

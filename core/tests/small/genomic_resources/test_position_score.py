@@ -1,10 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 
 from gain.genomic_resources import GenomicResource
-from gain.genomic_resources.genomic_scores import (
-    PositionScore,
-    PositionScoreQuery,
-)
+from gain.genomic_resources.genomic_scores import PositionScore
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import build_inmemory_test_resource
 
@@ -39,11 +36,6 @@ def test_the_simplest_position_score() -> None:
     assert score.fetch_scores("2", 8) == [0.01]
     assert score.fetch_scores("1", 10) == [0.02]
     assert score.fetch_scores("1", 12) is None
-
-    assert score.fetch_scores_agg("1", 10, 11) == [0.025]
-    assert score.fetch_scores_agg(
-        "1", 10, 11, [PositionScoreQuery("phastCons100way", "max")]) \
-        == [0.03]
 
 
 def test_region_score() -> None:
@@ -85,18 +77,6 @@ def test_region_score() -> None:
 
     assert score.fetch_scores("1", 12) == [0.02, None]
 
-    assert score.fetch_scores_agg(
-        "1", 13, 18, [PositionScoreQuery("phastCons100way")]) == \
-        [(3 * 0.02 + 2 * 0.03) / 5.]
-    assert score.fetch_scores_agg(
-        "1", 13, 18, [PositionScoreQuery("phastCons100way", "max")]) == [0.03]
-
-    assert score.fetch_scores_agg(
-        "1", 13, 18, [PositionScoreQuery("phastCons5way")]) == [0]
-    assert score.fetch_scores_agg(
-        "1", 13, 18, [PositionScoreQuery("phastCons5way", "mean")]) == \
-        [0 / 2]
-
 
 def test_phastcons100way() -> None:
     res: GenomicResource = build_inmemory_test_resource({
@@ -130,16 +110,6 @@ def test_phastcons100way() -> None:
     assert score.get_all_scores() == ["phastCons100way"]
 
     assert score.fetch_scores("1", 54773) == [0]
-
-    # chr1 54773 TTCCTCC->T
-    #
-    # 73     74     75     76     77     78     79     80
-    # 0.000  0.001  0.000  0.000  0.001  0.001  0.001  0.001
-    # T      T      C      C      T      C      C      T
-    #        ^      ^      ^      ^      ^      ^
-    assert score.fetch_scores_agg(
-        "1", 54773, 54780, [PositionScoreQuery("phastCons100way")]) == \
-        [0.000625]
 
 
 def test_position_score_fetch_region() -> None:
