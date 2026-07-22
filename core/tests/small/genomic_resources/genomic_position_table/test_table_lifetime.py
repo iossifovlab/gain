@@ -63,7 +63,10 @@ import pytest
 from gain.genomic_resources.genomic_position_table import (
     build_genomic_position_table,
 )
-from gain.genomic_resources.genomic_position_table.record import PAYLOAD
+from gain.genomic_resources.genomic_position_table.record import (
+    PAYLOAD,
+    POS_BEGIN,
+)
 from gain.genomic_resources.genomic_position_table.table import (
     GenomicPositionTable,
 )
@@ -636,6 +639,56 @@ def test_a_closed_inmemory_table_retains_no_records(
         f"{n_records} records; open() rebuilds them from the file, so the "
         f"retention buys nothing and a cached closed score pins the whole "
         f"file (gain#350)")
+
+
+def test_an_inmemory_scan_in_flight_when_close_lands_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A full scan straddling close() must fail loudly, not come back short.
+
+    The same hazard the bigWig fetch loop guards against, arriving at the
+    in-memory backend by the same route: ``close()`` now empties
+    ``records_by_chr``, and ``get_all_records`` re-reads that dict once per
+    contig -- *after* ``get_chromosomes()`` has been evaluated into the
+    for-loop's own list, which the release cannot reach.  So a scan interrupted
+    by a close resumes over a contig list it still has and a record store that
+    is now empty, and runs to a clean end: a shorter result set that is
+    indistinguishable from a complete one at the call site.
+
+    Consuming a scan lazily outside the block that opened the table is easy to
+    write by accident -- ``gen = score.fetch_region(...)`` inside a ``with``,
+    ``list(gen)`` after it -- and the in-memory backend is the one deliberately
+    shared past a close: ``_INMEMORY_CNV_CACHE`` hands the same score to every
+    holder in the process, so one pipeline's teardown can close it while
+    another scan is mid-flight.  For an annotation read a silently truncated
+    scan is wrong data rather than an error (gain#350).
+    """
+    builder = (
+        a_position_score()
+        .with_score("s_float", "float")
+        .with_data("""
+            chrom  pos_begin  s_float
+            1      10         0.5
+            1      20         0.5
+            2      10         0.5
+            2      20         0.5
+        """)
+    )
+    repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
+    table = PositionScore(repo.get_resource("pos")).table
+
+    table.open()
+    assert len(list(table.get_all_records())) == 4
+
+    records = table.get_all_records()
+    # consume contig 1 entirely, so the scan is suspended between contigs --
+    # exactly where the next records_by_chr lookup happens
+    assert [next(records)[POS_BEGIN], next(records)[POS_BEGIN]] == [10, 20]
+
+    table.close()
+
+    with pytest.raises(AssertionError, match="in flight"):
+        list(records)
 
 
 def _a_bigwig_score(

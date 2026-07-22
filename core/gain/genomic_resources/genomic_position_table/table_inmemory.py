@@ -153,6 +153,17 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
         # A known contig with no records (e.g. mapped onto an empty file
         # contig) is skipped -- see the class docstring's policy.
         for chrom in self.get_chromosomes():
+            # A scan that outlives close() must not look like a complete,
+            # shorter result set.  The contig list is evaluated once, into this
+            # loop, and so survives a close; records_by_chr is re-read per
+            # contig and close() empties it -- so without this check the
+            # remainder of an interrupted scan yields nothing, cleanly, and the
+            # caller cannot tell it from a finished one.  The stream is what
+            # says the table is still usable, exactly as the handle is for the
+            # bigWig backend (gain#350).  A scan *started* after close already
+            # raises in get_chromosomes(), whose chrom_order close() releases.
+            assert self.str_stream is not None, \
+                "in-memory table closed while a scan was in flight"
             yield from self.records_by_chr.get(chrom, [])
 
     def get_records_in_region(
