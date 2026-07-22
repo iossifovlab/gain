@@ -53,11 +53,15 @@ class DaskExecutor(TaskGraphExecutorBase):
         while True:
             tasks: list[TaskDesc | None] = []
 
+            # Read without removing. A task stays on `submit_queue` until
+            # `running` knows its future, so that it is never absent from
+            # BOTH -- which is what termination reads (gain#365). The main
+            # loop only ever appends, so the batch taken here stays at the
+            # front of the queue and can be dropped by length afterwards.
             with submit_condition:
                 if not submit_queue:
                     submit_condition.wait()
                 tasks = copy(submit_queue)
-                submit_queue.clear()
 
             if any(t is None for t in tasks):
                 logger.warning(
@@ -92,6 +96,12 @@ class DaskExecutor(TaskGraphExecutorBase):
             # can never reach the main loop before its task mapping exists.
             for future in futures:
                 future.add_done_callback(on_done)
+
+            # Only now is the batch accounted for in `running`, so only now
+            # may it leave the queue. A shutdown sentinel appended while
+            # `map()` was in flight sits behind the batch and survives this.
+            with submit_condition:
+                del submit_queue[:len(tasks)]
 
             elapsed = time.time() - start
             logger.debug(

@@ -4,6 +4,7 @@ import gc
 import pathlib
 import threading
 import time
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -197,3 +198,66 @@ def test_execute_does_not_accumulate_asyncio_waiters(
         f"live asyncio Task count went {baseline} -> {peak} while running "
         f"8 tasks: waiters are accumulating (gain#355)"
     )
+
+
+def double(x: int) -> int:
+    return x * 2
+
+
+class _SlowSubmitClient:
+    """A client whose ``map()`` takes longer than the run loop's wait.
+
+    Stands in for a loaded machine, where handing a batch of tasks to the
+    scheduler is not instant. Everything else is the real client.
+    """
+
+    def __init__(self, client: Client, delay: float) -> None:
+        self._client = client
+        self._delay = delay
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client, name)
+
+    def map(self, *args: Any, **kwargs: Any) -> Any:
+        time.sleep(self._delay)
+        return self._client.map(*args, **kwargs)
+
+
+def test_slow_submission_does_not_end_the_run_early(
+    dask_client: Client,
+) -> None:
+    """A submission slower than the run loop's wait must not end the run.
+
+    Regression for iossifovlab/gain#365. The run loop calls a graph done
+    when the graph is empty and nothing sits in ``submit_queue``,
+    ``running``, ``completed_queue`` or ``results_queue``. The submit
+    worker used to take its tasks off ``submit_queue`` and clear it
+    *before* calling ``Client.map()``, and only recorded the futures in
+    ``running`` once ``map()`` returned -- so for the whole width of that
+    call a submitted task was in none of the four. A run loop that
+    evaluated the check inside that window declared itself finished and
+    returned having yielded NOTHING: not a wrong answer, an empty one,
+    which the caller cannot tell from a graph with no work in it.
+
+    The window is as wide as ``map()`` and the check is reached every
+    0.05s, so on an unloaded machine this almost never happens -- CI hit
+    it once in 23 builds. Delaying ``map()`` past that 0.05s makes it
+    certain.
+    """
+    graph = TaskGraph()
+    num_tasks = 50
+    for i in range(num_tasks):
+        graph.create_task(f"WideTask{i}", double, args=[i], deps=[])
+
+    executor = DaskExecutor(_SlowSubmitClient(dask_client, delay=0.2))
+
+    results = {
+        task.task_id: result for task, result in executor.execute(graph)
+    }
+
+    assert len(results) == num_tasks, (
+        f"executor yielded {len(results)} of {num_tasks} results; a run "
+        f"whose submission outlasts the loop's wait ended early (gain#365)"
+    )
+    for i in range(num_tasks):
+        assert results[f"WideTask{i}"] == i * 2
