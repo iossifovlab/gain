@@ -100,7 +100,17 @@ class TabixGenomicPositionTable(GenomicPositionTable):
                 if line[0] != "#":
                     break
                 header_lines.append(line)
-        assert len(header_lines) > 0
+        if not header_lines:
+            # A raise, not an assert: an assert carries no message (so
+            # nothing that catches it can report the cause) and `python -O`
+            # drops the check altogether, leaving the header silently wrong
+            # instead of failing (gain#364).
+            raise ValueError(
+                f"the table of resource "
+                f"<{self.genomic_resource.get_full_id()}> is configured to "
+                f"read its column names from {self.definition.filename}, "
+                f"which has no '#' header line; add 'header_mode: none' to "
+                f"the table definition and address the columns by index")
         return tuple(header_lines[-1].strip("#\n").split("\t"))
 
     def open(self) -> TabixGenomicPositionTable:
