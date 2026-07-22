@@ -55,17 +55,29 @@ from __future__ import annotations
 
 import gc
 import pathlib
+import textwrap
 import weakref
 from collections.abc import Sized
 
 import pytest
+from gain.genomic_resources.genomic_position_table import (
+    build_genomic_position_table,
+)
 from gain.genomic_resources.genomic_position_table.record import PAYLOAD
+from gain.genomic_resources.genomic_position_table.table import (
+    GenomicPositionTable,
+)
 from gain.genomic_resources.genomic_scores import (
     GenomicScore,
     PositionScore,
     RecordScoreLine,
 )
-from gain.genomic_resources.testing import setup_bigwig
+from gain.genomic_resources.testing import (
+    build_filesystem_test_resource,
+    setup_bigwig,
+    setup_directories,
+    setup_vcf,
+)
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
     a_grr,
@@ -515,6 +527,66 @@ def test_a_reopened_table_answers_exactly_as_before_it_was_closed(
         f"{type(score.table).__name__} answered differently after a close/"
         f"reopen cycle: {after} != {before}. open() must rebuild everything "
         f"close() releases (gain#350).")
+
+
+def _a_mapped_vcf_table(tmp_path: pathlib.Path) -> GenomicPositionTable:
+    """A ``vcf_info`` table whose file contig ``chr1`` maps to ``1``.
+
+    The mapping is what makes the answer *checkable*: without one, the file's
+    contigs and the reference-space names a caller is handed are the same
+    strings, and a table answering from the file rather than from the mapping it
+    no longer has looks identical to one answering correctly.
+    """
+    setup_directories(tmp_path, {"genomic_resource.yaml": textwrap.dedent("""
+        tabix_table:
+            filename: data.vcf.gz
+            format: vcf_info
+            chrom_mapping:
+                del_prefix: chr
+    """)})
+    setup_vcf(tmp_path / "data.vcf.gz", textwrap.dedent("""
+##fileformat=VCFv4.1
+##INFO=<ID=A,Number=1,Type=Integer,Description="Score A">
+##contig=<ID=chr1>
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      A=1
+    """))
+    res = build_filesystem_test_resource(tmp_path)
+    assert res.config is not None
+    return build_genomic_position_table(res, res.config["tabix_table"])
+
+
+def test_a_closed_vcf_table_does_not_answer_its_contigs_from_the_file(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Releasing the chromosome state must not make a closed VCF table LIE.
+
+    ``get_chromosomes()`` on the tabix family goes through the
+    ``get_file_chromosomes`` memo and maps each contig into reference space --
+    and ``close()`` now releases both the memo and the map, so a closed table
+    has to reach for the file to answer at all.  Every other backend's
+    ``_load_file_chromosomes`` reads the open handle and so refuses (the tabix
+    one raises ``ValueError``, the bigWig one asserts); the VCF one opened the
+    resource's ``.vcf.gz`` *itself*, which is the one implementation that can
+    still produce an answer after a close -- an answer with no chromosome map
+    left to map it through, so ``map_chromosome`` passes the FILE's contigs
+    back unmapped.
+
+    ``['chr1']`` where an open table says ``['1']``: wrong data with no error
+    to notice it by, plus a file (or network) open on a table the caller
+    believes is closed.  A closed table refuses instead, exactly as its three
+    siblings do -- what a closed table does when read is not this issue's to
+    change, but answering *differently from every other backend, and wrongly*
+    is (gain#350).
+    """
+    table = _a_mapped_vcf_table(tmp_path)
+
+    table.open()
+    assert table.get_chromosomes() == ["1"]
+    table.close()
+
+    with pytest.raises(ValueError, match="not open"):
+        table.get_chromosomes()
 
 
 def _an_inmemory_score(
