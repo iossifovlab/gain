@@ -55,18 +55,6 @@ Release Notes
       fully-materialised GRR therefore hashes each DVC-managed file once;
       afterwards the recorded state's size-and-timestamp fast path applies
       as before, and a pointer-only clone hashes nothing.
-    * **Upgrading an existing GRR — please read.** The rule above governs
-      how an md5 sum is *derived*. md5 sums already recorded in a resource
-      file state (``<resource>/.grr/<file>.state``) are not re-verified and
-      stay authoritative while their size and timestamp match the file — so
-      a DVC-managed file edited in place *before* the upgrade keeps its
-      stale md5 sum certified. The recommended one-off step when upgrading
-      a GRR that an earlier GAIn managed::
-
-          grr_manage repo-repair --without-dvc
-
-      which ignores recorded state and hashes every materialised file from
-      its content. (Deleting the ``.grr`` directories has the same effect.)
     * **Behavior change:** ``grr_manage`` now **refuses** a resource with a
       ``dvc add <dir>`` output — a ``.dvc`` sidecar declaring a directory
       (a ``.dir`` md5 sum and/or an ``nfiles`` count) — instead of
