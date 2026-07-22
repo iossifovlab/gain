@@ -2,10 +2,8 @@
 """The score layer owns the weight of a region record (#260)."""
 
 import pathlib
-from typing import Any
 
 import pytest
-from gain.genomic_resources.aggregators import Aggregator
 from gain.genomic_resources.genomic_scores import PositionScore
 from gain.genomic_resources.testing.builders import a_position_score
 
@@ -43,22 +41,3 @@ def test_a_records_weight_counts_only_the_queried_part(
         "1", 15, 24, ["test100way"])) == [
             ([1.0], 5), ([2.0], 5),
     ]
-
-
-def test_fetch_scores_agg_adds_each_record_once(
-    position_score: PositionScore,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[tuple[Any, int]] = []
-    original_add = Aggregator.add
-
-    def spy(self: Aggregator, value: Any, count: int = 1) -> None:
-        calls.append((value, count))
-        original_add(self, value, count)
-
-    monkeypatch.setattr(Aggregator, "add", spy)
-
-    aggregators = position_score.fetch_scores_agg("1", 15, 24)
-
-    assert calls == [(1.0, 5), (2.0, 5)]
-    assert aggregators[0].get_final() == 1.5

@@ -3,12 +3,7 @@
 import textwrap
 
 import pytest
-from gain.genomic_resources.aggregators import (
-    MaxAggregator,
-    MeanAggregator,
-    MinAggregator,
-)
-from gain.genomic_resources.genomic_scores import AlleleScore, AlleleScoreQuery
+from gain.genomic_resources.genomic_scores import AlleleScore
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME, GenomicResource
 from gain.genomic_resources.testing import build_inmemory_test_resource
 
@@ -137,56 +132,6 @@ def test_allele_score_missing_alt() -> None:
     assert score.fetch_scores("1", 10, "A", "G", ["freq"]) is None
     assert score.fetch_scores("1", 10, "A", "T", ["freq"]) is None
     assert score.fetch_scores("1", 10, "A", "C", ["freq"]) is None
-
-
-@pytest.mark.parametrize("region,pos_aggregator,allele_aggregator,expected", [
-    (("1", 10, 13), "max", "max", 0.4),
-    (("1", 10, 13), "min", "min", 0.2),
-    (("1", 10, 16), "min", "min", 0.03),
-    (("1", 10, 16), None, None, (0.4 + 0.05) / 2.0),
-])
-def test_allele_score_fetch_agg(
-        region: tuple[str, int, int],
-        pos_aggregator: str | None, allele_aggregator: str | None,
-        expected: float) -> None:
-    res: GenomicResource = build_inmemory_test_resource({
-        GR_CONF_FILE_NAME: """
-            type: allele_score
-            allele_score_mode: alleles
-            table:
-                filename: data.mem
-                reference:
-                  name: reference
-                alternative:
-                  name: alternative
-            scores:
-                - id: freq
-                  type: float
-                  desc: ""
-                  name: freq
-        """,
-        "data.mem": """
-            chrom  pos_begin  reference  alternative  freq
-            1      10         A          C            0.2
-            1      10         A          G            0.3
-            1      10         A          T            0.4
-            1      16         C          A            0.03
-            1      16         C          AG           0.04
-            1      16         C          G            0.05
-            2      16         C          GA           0.06
-            2      16         C          T            0.07
-            2      16         C          TA           0.08
-        """,
-    })
-    score = AlleleScore(res)
-    score.open()
-
-    result = score.fetch_scores_agg(
-        *region,
-        [AlleleScoreQuery("freq", pos_aggregator, allele_aggregator)])
-    assert result is not None
-    assert len(result) == 1
-    assert result[0].get_final() == expected
 
 
 def test_allele_score_mode_defaults_to_alleles() -> None:
@@ -335,66 +280,3 @@ def test_allele_score_fetch_region_spanning_record_at_pos_begin() -> None:
 
     result = list(score.fetch_region("1", 10, 12, ["freq"]))
     assert result == [(10, "A", "G", [0.02])]
-
-
-def test_allele_score_build_scores_agg_defaults() -> None:
-    res = build_allele_resource(
-        """
-        type: allele_score
-        table:
-            filename: data.mem
-            reference:
-                name: reference
-            alternative:
-                name: alternative
-        scores:
-            - id: freq
-              type: float
-              desc: ""
-              name: freq
-        """,
-        """
-        chrom  pos_begin  reference  alternative  freq
-        1      10         A          G            0.02
-        """,
-    )
-
-    score = AlleleScore(res)
-
-    aggs = list(score.build_scores_agg([AlleleScoreQuery("freq")]).values())
-    assert len(aggs) == 1
-    assert isinstance(aggs[0].position_aggregator, MeanAggregator)
-    assert isinstance(aggs[0].allele_aggregator, MaxAggregator)
-
-
-def test_allele_score_build_scores_agg_overrides() -> None:
-    res = build_allele_resource(
-        """
-        type: allele_score
-        table:
-            filename: data.mem
-            reference:
-                name: reference
-            alternative:
-                name: alternative
-        scores:
-            - id: freq
-              type: float
-              desc: ""
-              name: freq
-        """,
-        """
-        chrom  pos_begin  reference  alternative  freq
-        1      10         A          G            0.02
-        """,
-    )
-
-    score = AlleleScore(res)
-
-    aggs = list(score.build_scores_agg([
-        AlleleScoreQuery("freq", position_aggregator="min",
-                         allele_aggregator="mean"),
-    ]).values())
-    assert len(aggs) == 1
-    assert isinstance(aggs[0].position_aggregator, MinAggregator)
-    assert isinstance(aggs[0].allele_aggregator, MeanAggregator)

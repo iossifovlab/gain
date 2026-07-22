@@ -1761,17 +1761,6 @@ def test_bigwig_position_score_fetch_scores_at_position(
     assert result[0] == pytest.approx(0.2)
 
 
-def test_bigwig_position_score_fetch_scores_agg(
-    bigwig_position_score: GenomicScore,
-) -> None:
-    from gain.genomic_resources.genomic_scores import PositionScore
-    ps = cast(PositionScore, bigwig_position_score)
-    # Positions 1-20: [1,10] → 0.1, [11,20] → 0.2; mean = 0.15
-    aggs = ps.fetch_scores_agg("chr1", 1, 20)
-    assert len(aggs) == 1
-    assert aggs[0].get_final() == pytest.approx(0.15)
-
-
 def test_bigwig_position_score_multi_chrom(
     bigwig_position_score: GenomicScore,
 ) -> None:

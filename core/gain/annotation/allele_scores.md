@@ -11,10 +11,11 @@
   `dict[str, ScoreValue]` (score_id → value). This makes it easier for callers
   to look up individual scores by name without maintaining a parallel index list.
 
-- `AlleleScore._build_scores_agg` renamed to `build_scores_agg` (public) and
-  return type changed from `list[AlleleScoreAggr]` to `dict[str, AlleleScoreAggr]`
-  (score_id → aggregator). Used by the new `aggregate_scores` method in the
-  annotator.
+- `AlleleScore._build_scores_agg` was briefly made public as `build_scores_agg`
+  for the annotator to reuse. **It no longer exists** (#267): aggregation moved
+  entirely up into the annotators, and the whole in-resource aggregation engine
+  — `build_scores_agg`, `fetch_scores_agg` and their query / aggregate-holder
+  types — was removed. A score resource fetches records; it does not aggregate.
 
 ---
 

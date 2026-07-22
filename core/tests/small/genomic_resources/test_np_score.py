@@ -1,6 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 from gain.genomic_resources import GenomicResource
-from gain.genomic_resources.genomic_scores import AlleleScore, AlleleScoreQuery
+from gain.genomic_resources.genomic_scores import AlleleScore
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import (
     build_inmemory_test_resource,
@@ -40,72 +40,6 @@ def test_the_simplest_np_score() -> None:
 
     assert score.get_all_scores() == ["cadd_raw"]
     assert score.fetch_scores("1", 10, "A", "C") == {"cadd_raw": 0.03}
-
-    assert [
-        agg.get_final() for agg in score.fetch_scores_agg("1", 10, 11)
-    ] == [0.04]
-    assert [
-        agg.get_final() for agg in score.fetch_scores_agg("1", 15, 16)
-    ] == [0.05]
-
-
-def test_np_score_aggregation() -> None:
-    res: GenomicResource = build_inmemory_test_resource({
-        GR_CONF_FILE_NAME: """
-            type: np_score
-            table:
-                filename: data.mem
-                reference:
-                  name: reference
-                alternative:
-                  name: alternative
-            scores:
-                - id: cadd_raw
-                  type: float
-                  desc: ""
-                  name: s1
-
-                - id: cadd_test
-                  type: int
-                  position_aggregator: max
-                  allele_aggregator: mean
-                  na_values: "-1"
-                  desc: ""
-                  name: s2
-        """,
-        "data.mem": convert_to_tab_separated("""
-            chrom  pos_begin  reference  alternative  s1    s2
-            1      10         A          G            0.02  2
-            1      10         A          C            0.03  -1
-            1      10         A          T            0.04  4
-            1      16         C          G            0.03  3
-            1      16         C          T            0.04  EMPTY
-            1      16         C          A            0.05  0
-        """),
-    })
-
-    assert res.get_type() == "np_score"
-    score = AlleleScore(res)
-    score.open()
-
-    assert score.table.chrom_key == 0  # "chrom"
-    assert score.table.pos_begin_key == 1  # "pos_begin"
-    assert score.table.pos_end_key == 1  # "pos_end"
-
-    assert score.fetch_scores_agg(
-        "1", 1, 18, [AlleleScoreQuery("cadd_raw")]) == [0.045]
-
-    assert score.fetch_scores_agg(
-        "1", 1, 18, [AlleleScoreQuery("cadd_raw", "max")]) == [0.05]
-
-    assert score.fetch_scores_agg(
-        "1", 1, 18, [AlleleScoreQuery("cadd_test")]) == [3.0]
-
-    assert score.fetch_scores_agg(
-        "1", 1, 18, [AlleleScoreQuery("cadd_test", "min")]) == [1.5]
-
-    assert score.fetch_scores_agg(
-        "1", 1, 18, [AlleleScoreQuery("cadd_test", "min", "min")]) == [0]
 
 
 def test_np_score_fetch_region() -> None:
