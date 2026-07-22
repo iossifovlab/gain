@@ -2,296 +2,195 @@ Release Notes
 =============
 
 * 2026.7.2
-    * **Removed:** the in-resource aggregation engine (#267). Aggregation
-      belongs to the annotators — the annotator fetches raw values from the
-      resource and applies the configured aggregator to them — but an earlier
-      design also aggregated *inside* the score resources, and that second
-      engine outlived its callers. It had none left, in GAIn or in GPF. The
-      following public names are gone from
-      ``gain.genomic_resources.genomic_scores``:
-
-      * ``PositionScore.fetch_scores_agg``
-      * ``PositionScore.get_region_scores``
-      * ``AlleleScore.fetch_scores_agg`` (already deprecated)
-      * ``AlleleScore.build_scores_agg`` (already deprecated)
-      * the query and aggregate-holder types that only that engine used:
-        ``PositionScoreQuery``, ``AlleleScoreQuery`` (already deprecated),
-        ``PositionScoreAggr``, ``AlleleScoreAggr``, and the ``ScoreQuery``
-        union alias
-
-      Configure aggregation on the annotation pipeline attribute, or as the
-      resource's ``position_aggregator`` / ``allele_aggregator`` default —
-      both are unchanged, and the aggregators themselves are untouched. A
-      caller that fetched-and-aggregated a region by hand should use
-      ``PositionScore.fetch_region_weighted_values``, which pairs each record
-      with the number of queried bases it covers, and feed those pairs to an
-      ``Aggregator`` it owns.
+    * **Removed:** the in-resource aggregation engine (#267) — a second
+      aggregation path that had outlived its callers, in GAIn and in GPF.
+      Gone from ``gain.genomic_resources.genomic_scores``:
+      ``PositionScore.fetch_scores_agg``,
+      ``PositionScore.get_region_scores``,
+      ``AlleleScore.fetch_scores_agg``, ``AlleleScore.build_scores_agg``,
+      ``PositionScoreQuery``, ``AlleleScoreQuery``, ``PositionScoreAggr``,
+      ``AlleleScoreAggr`` and the ``ScoreQuery`` alias. Aggregation belongs
+      to the annotators: configure it on the pipeline attribute or as the
+      resource's ``position_aggregator`` / ``allele_aggregator`` default,
+      both unchanged. A caller that aggregated a region by hand should feed
+      the (value, weight) pairs from
+      ``PositionScore.fetch_region_weighted_values`` to its own
+      ``Aggregator``.
     * A resource may now configure ``position_aggregator: count`` /
-      ``allele_aggregator: count`` (#261). ``count`` has always been a
-      registered aggregator — buildable, accepted in a pipeline
-      configuration and documented — but the resource-config schema was a
-      second, hand-written list of names that had drifted, and it rejected
-      ``count`` outright. The schema is now derived from the aggregator
-      registry, so registering an aggregator is the only edit needed for it
-      to be configurable everywhere. ``join()`` with an empty separator is
-      accepted too, matching the definition parser. A resource-level
-      aggregator remains **string-only**: the
-      ``{aggregator_type: ..., parameters: [...]}`` dict form is a
-      pipeline-configuration spelling.
-    * **Behavior change:** a region is now aggregated per **record**, not
-      per base pair (#260). A position-score record that covers N base
-      pairs of the annotated region used to be turned into N identical
-      copies of its value and aggregated one copy at a time; it now
-      reaches the aggregator once, carrying N as its weight, which the
-      aggregator applies in closed form. Aggregating a region therefore
-      costs one step per record instead of one per base — a 500 kb region
-      backed by 2,000 records drops from tens of milliseconds to single
-      digits, and no longer allocates one list element per base.
-      ``Aggregator.add(value, count)`` has always taken a ``count``; it
-      previously added it to a bookkeeping counter and otherwise ignored
-      it, so a caller that passed one got a correct ``total_count`` and a
-      silently wrong mean. It now weights the value.
-
-      **Float position scores may move in their last bits on large
-      regions**, toward the more accurate value. ``mean`` is the only
-      aggregator affected, because it is the only one that accumulates
-      floats: summing a value N times is not the same operation as
-      multiplying it by N, and the weighted form rounds once per record
-      rather than once per base pair. The error of the old form grew with
-      the region — over a 500 kb region a true ``0.51`` came out as
-      ``0.5099999999965371`` (~6.8e-12 relative); it is now ``0.51``.
-      ``min``, ``max``, ``count``, ``median``, ``mode``, ``value_count``,
-      ``bool``, ``list``, ``join`` and ``concatenate`` are bit-identical
-      to before. Annotation **output files are unchanged**, since values
-      are written to three significant figures; a consumer that reads an
-      annotation at full float precision (writing parquet, say) will see
+      ``allele_aggregator: count``, and ``join()`` with an empty separator
+      (#261): the resource-config schema is now derived from the aggregator
+      registry rather than a hand-written list that had drifted, so
+      registering an aggregator is the only edit needed to make it
+      configurable everywhere. A resource-level aggregator remains
+      **string-only** — the ``{aggregator_type: ..., parameters: [...]}``
+      dict form is a pipeline-configuration spelling.
+    * **Behavior change:** a region is now aggregated per **record**
+      instead of per base pair (#260). A record covering N base pairs
+      reaches the aggregator once carrying N as its weight, rather than as
+      N identical copies, so a 500 kb region backed by 2,000 records drops
+      from tens of milliseconds to single digits.
+      ``Aggregator.add(value, count)`` now weights the value by ``count``,
+      where it previously only counted it — a caller that passed one got a
+      correct ``total_count`` and a silently wrong mean. **Float position
+      scores may move in their last bits on large regions**, toward the
+      more accurate value; ``mean`` is the only affected aggregator, as the
+      only one that accumulates floats. Annotation output files are
+      unchanged (values are written to three significant figures), but a
+      consumer that reads an annotation at full float precision will see
       the difference.
     * **Behavior change:** a ``.dvc`` sidecar is no longer accepted as the
-      md5 sum of a resource file whose bytes are on disk (#251, #255). The
-      rule ``grr_manage`` now follows is:
-
-      * whenever an md5 sum has to be **derived** for a file that is
-        **materialised** (its bytes are on disk), it is computed from those
-        bytes. The file's ``.dvc`` sidecar is not consulted;
-      * a file that is **not materialised** (only a ``.dvc`` sidecar is
-        checked out, as in the pointer-only clone the ``grr`` pipeline
-        builds from) has no bytes to hash, so its sidecar remains the sole
-        source of its md5 sum and size, and its manifest entry is never
-        dropped.
-
-      A sidecar cannot be confirmed without reading the bytes it claims to
-      describe, so it is only trusted where there is no alternative.
-      Previously, editing a DVC-managed file in place without ``dvc add`` /
-      ``dvc commit`` and running ``resource-repair`` reported the resource
-      as up to date and left the manifest certifying the *old* md5 — even
-      when the edit preserved the file's size, which no later ``--force``
-      run could recover from.
-
-    * **Upgrading an existing GRR — please read.** The rule above governs how
-      an md5 sum is *derived*. It does not retroactively re-verify md5 sums
-      that are **already recorded** in a resource file state
-      (``<resource>/.grr/<file>.state``). Such a state stays authoritative for
-      as long as its size and timestamp match the file, whatever wrote it.
-
-      A ``ResourceFileState`` does not record how its md5 sum was derived, and
-      GAIn deliberately does not distinguish: a DVC-declared md5 sum and a
-      content-derived one are treated as **equivalent**, since ``dvc add``
-      computes the md5 sum from the very bytes it stores. States written by an
-      earlier GAIn carry sidecar-derived md5 sums and are kept — they are not
-      invalidated, and their files are not rehashed on upgrade.
-
-      The accepted consequence: if a DVC-managed file was edited in place
-      *before* the upgrade and an earlier GAIn already recorded that edit's
-      size and timestamp alongside the sidecar's md5 sum, the manifest keeps
-      certifying the stale md5 sum, and ``repo-repair`` will not re-detect it.
-      To force content verification of a GRR — the recommended one-off step
-      when upgrading a GRR that an earlier GAIn managed — run::
+      md5 sum of a resource file whose bytes are on disk (#251, #255). A
+      **materialised** file's md5 sum is always computed from its content;
+      only a file that is not materialised — a pointer-only clone, where
+      the sidecar is all that is checked out — still takes its md5 sum and
+      size from its sidecar, and keeps its manifest entry. Previously,
+      editing a DVC-managed file in place without ``dvc add`` /
+      ``dvc commit`` left ``resource-repair`` reporting the resource up to
+      date with the *old* md5 sum certified. "Materialised" now means the
+      file exists, not that the repository scan yielded it (#255): a
+      DVC-managed ``*html`` file is manifested from its content (non-DVC
+      ``*html`` files are still excluded), and a file the scan skips but
+      that is on disk is left out of the manifest rather than certified
+      from an unchecked sidecar. The **first** manifest build of a
+      fully-materialised GRR therefore hashes each DVC-managed file once;
+      afterwards the recorded state's size-and-timestamp fast path applies
+      as before, and a pointer-only clone hashes nothing.
+    * **Upgrading an existing GRR — please read.** The rule above governs
+      how an md5 sum is *derived*. md5 sums already recorded in a resource
+      file state (``<resource>/.grr/<file>.state``) are not re-verified and
+      stay authoritative while their size and timestamp match the file — so
+      a DVC-managed file edited in place *before* the upgrade keeps its
+      stale md5 sum certified. The recommended one-off step when upgrading
+      a GRR that an earlier GAIn managed::
 
           grr_manage repo-repair --without-dvc
 
-      which ignores recorded state and hashes every materialised file from its
-      content. (Deleting the ``.grr`` directories has the same effect.)
-
-      "Materialised" means the file exists, not "the repository scan yielded
-      it" (#255). The two are not the same, and the difference used to be a
-      hole in the rule: everything the scan skipped but that was nonetheless
-      on disk was classified as a pointer and handed its sidecar's md5 sum
-      unverified, in every mode. A file the scan does not yield but that
-      exists on disk is now left out of the manifest rather than certified
-      from a sidecar whose claim nobody checked. Two kinds of resource data
-      fell through the hole:
-
-      * a **DVC-managed ``*html`` file** is resource data, not one of the
-        info pages GAIn generates for a resource, and the scan's blanket
-        ``*html`` exclusion no longer applies to it. It is manifested with an
-        md5 sum derived from its content. ``*html`` files that are not
-        DVC-managed are still excluded, as before;
-      * a **``dvc add <dir>`` output** — see the next entry: it is now
-        refused, not described.
-
-      The cost is that the **first** manifest build of a fully-materialised
-      GRR hashes each DVC-managed file once, where it previously read the
-      md5 sum out of the sidecar. Afterwards the recorded file state's
-      size-and-timestamp fast path applies as before, so repeated
-      ``repo-repair`` runs do not rehash unchanged files, and the
-      pointer-only clone hashes nothing at all.
-
-      Every ``.dvc`` sidecar in the GRRs is a per-file ``dvc add <file>``
-      output, and the manifest of such a resource is byte-for-byte unchanged
-      — whether its data is materialised or not.
-    * **Behavior change:** ``grr_manage`` now **refuses** a resource that has
-      a ``dvc add <dir>`` output — a ``.dvc`` sidecar declaring a directory
-      (a ``.dir`` md5 sum and/or an ``nfiles`` count) — instead of describing
-      it (#255). Every subcommand that builds or checks a manifest
-      (``repo-manifest``, ``resource-manifest``, ``repo-stats``,
-      ``resource-stats``, ``repo-repair``, ``resource-repair``,
-      ``repo-info``, ``resource-info``) fails with a non-zero exit and an
-      error naming the resource and the offending ``.dvc`` file. The refusal
-      applies whether or not the directory's data is materialised.
-
-      GAIn cannot verify a ``.dir`` md5 sum: it hashes a DVC *cache object*
-      listing the directory's files, not any file GAIn can read from the
-      resource. Accepting it into the manifest — which is what used to
-      happen — was a false clean bill of health: a file inside such a
-      directory could be tampered with and the resource was still reported up
-      to date, ``--without-dvc`` included. Silently skipping the directory
-      would be no better, since its data would then be neither manifested nor
-      verified. Fix such a resource by DVC-managing its individual files
-      (``dvc add <file>``). No GRR uses ``dvc add <dir>``: all 344 ``.dvc``
-      sidecars in ``iossifovlab/grr`` are per-file outputs, so nothing in
-      production is refused today.
-    * **Behavior change:** the ``--with-dvc`` (default) /
-      ``-D``, ``--without-dvc`` option group is restored on
-      ``repo-manifest``, ``resource-manifest``, ``repo-stats``,
-      ``resource-stats``, ``repo-repair``, ``resource-repair``,
-      ``repo-info`` and ``resource-info`` (#251). It was removed in
-      2026.7.1, which left no way to ask ``grr_manage`` to verify a
-      resource file's bytes against its recorded md5 sum.
-      ``--without-dvc`` is that audit mode: it ignores the recorded
-      resource file state and computes from its content the md5 sum of every
-      materialised resource file. It does **not** discard ``.dvc`` sidecars
-      for files that are not materialised — those have no content to hash, so
-      dropping them would delete their entries from the manifest. Each file
-      is read exactly once per command.
+      which ignores recorded state and hashes every materialised file from
+      its content. (Deleting the ``.grr`` directories has the same effect.)
+    * **Behavior change:** ``grr_manage`` now **refuses** a resource with a
+      ``dvc add <dir>`` output — a ``.dvc`` sidecar declaring a directory
+      (a ``.dir`` md5 sum and/or an ``nfiles`` count) — instead of
+      describing it (#255). Every manifest-building subcommand (``repo-``
+      and ``resource-`` ``manifest`` / ``stats`` / ``repair`` / ``info``)
+      exits non-zero naming the offending file, materialised or not. GAIn
+      cannot verify a ``.dir`` md5 sum — it hashes a DVC cache object, not
+      a file GAIn can read — so accepting it was a false clean bill of
+      health. Fix such a resource by DVC-managing its individual files
+      (``dvc add <file>``); no GRR uses ``dvc add <dir>`` today, so nothing
+      in production is refused.
+    * **Behavior change:** the ``--with-dvc`` (default) / ``-D``,
+      ``--without-dvc`` option group is restored on the manifest, stats,
+      repair and info subcommands (#251) — its removal in 2026.7.1 left no
+      way to verify a resource file's bytes against its recorded md5 sum.
+      ``--without-dvc`` ignores the recorded state and computes every
+      materialised file's md5 sum from its content, reading each file
+      exactly once; it does not discard sidecars for files that are not
+      materialised, which would delete their manifest entries.
     * A malformed, unreadable or incomplete ``.dvc`` file no longer aborts
-      ``grr_manage`` with a traceback (#251). It is reported as a warning and
-      ignored, exactly as the repository scan already ignored it — both now
-      interpret a sidecar through the same parser, so they cannot classify
-      one differently. A sidecar that declares no usable md5 sum and size is
-      ignored rather than written into the ``.MANIFEST`` as ``md5: null``.
+      ``grr_manage`` with a traceback (#251): it is reported as a warning
+      and ignored, through the same parser the repository scan uses. A
+      sidecar that declares no usable md5 sum and size is no longer written
+      into the ``.MANIFEST`` as ``md5: null``.
 
 * 2026.7.1
     * **Behavior change:** a completed anonymous annotation job and its
       result file are no longer deleted when the user's last WebSocket
-      disconnects (#216), so a captured download link no longer 404s
-      after a socket drop. Stale anonymous jobs are reaped by age
-      instead, by the new ``cleanup_anonymous_jobs`` management command
-      (``ANONYMOUS_JOB_TTL_HOURS``, environment variable
-      ``GPFWA_ANONYMOUS_JOB_TTL_HOURS``, default 24; overridden per run
-      by ``--older-than-hours``), which never touches a ``WAITING`` or
-      ``IN_PROGRESS`` job. **Nothing in gain schedules the command** — a
-      deployment that does not run it periodically will accumulate
-      anonymous jobs and result files without bound.
+      disconnects (#216), so a captured download link no longer 404s after
+      a socket drop. Stale anonymous jobs are reaped by age instead, by the
+      new ``cleanup_anonymous_jobs`` management command
+      (``ANONYMOUS_JOB_TTL_HOURS`` / ``GPFWA_ANONYMOUS_JOB_TTL_HOURS``,
+      default 24; per-run ``--older-than-hours``), which never touches a
+      ``WAITING`` or ``IN_PROGRESS`` job. **Nothing in gain schedules the
+      command** — a deployment that does not run it periodically will
+      accumulate anonymous jobs and result files without bound.
     * Closed the GRR credential-leak paths the 2026.7.0 redaction missed
       (#202): ``grr_browse`` no longer prints the raw definition, the
       definition models mask ``user`` / ``password`` in ``model_dump()``
       and ``model_dump_json()`` as well as ``repr()``, and a credential
       embedded in a repository URL (``scheme://user:pass@host``) is
       stripped from log lines, fetch failures and scheme-mismatch errors.
-    * **Behavior change:** ``get_url()`` and ``get_public_url()`` no
-      longer return a credential embedded in a repository URL (#202).
-      The credential-bearing URL is kept privately and still drives the
-      fetch, so authentication is unaffected.
-    * **Behavior change:** an invalid GRR definition now raises a plain
-      ``ValueError`` with a redacted message, instead of a pydantic
-      ``ValidationError`` that embedded the plaintext password (#202).
-      Code catching ``ValidationError`` around
+      **Behavior changes:** ``get_url()`` / ``get_public_url()`` no longer
+      return such a credential (the credential-bearing URL is kept
+      privately and still drives the fetch), and an invalid GRR definition
+      now raises a plain ``ValueError`` with a redacted message instead of
+      a pydantic ``ValidationError`` that embedded the plaintext password —
+      code catching ``ValidationError`` around
       ``build_genomic_resource_repository`` must catch ``ValueError``.
     * **Behavior change:** ``GPFWA_EMAIL_USE_TLS`` is now parsed as a
-      string rather than tested for truthiness, so setting it to
-      ``False`` no longer *enables* STARTTLS. Only a literal ``true``
+      string rather than tested for truthiness, so setting it to ``False``
+      no longer *enables* STARTTLS. Only a literal ``true``
       (case-insensitive) enables TLS; a deployment that relied on the old
       truthiness to keep TLS on must set the variable to ``true``.
     * Fixed the 2026.7.0 ``.gitignore``-aware resource scan silently
-      dropping the data files of a DVC-managed GRR (#209/#211):
-      ``dvc add`` gitignores exactly those files, so they vanished from
-      the resource manifest and from caching. A gitignored file is now
-      re-included when a sibling ``<name>.dvc`` declares it an output.
+      dropping the data files of a DVC-managed GRR (#209/#211): ``dvc add``
+      gitignores exactly those files, so they vanished from the resource
+      manifest and from caching. A gitignored file is now re-included when
+      a sibling ``<name>.dvc`` declares it an output.
     * ``grr_browse`` can now filter its listing through the GRR full-text
       search index: ``-s``/``--search`` runs an SQLite FTS5 match against
       the repository's ``.CONTENTS.sqlite3.gz`` metadata database,
       ``-t``/``--type`` restricts the listing to one resource type, and
       ``--summary`` prints each resource's summary beneath its line.
-    * Reworked the notifications WebSocket reconnection (#204). It now
+    * Reworked the notifications WebSocket reconnection (#204): it now
       retries with exponential backoff (200 ms, doubling to a 10 s cap,
       then a 30 s cooldown) and never gives up, where it previously died
-      permanently after five attempts. A graceful server close, an
-      abnormal drop delivered as a bare ``Event``, and a sign-in or
-      sign-out no longer leave notifications dead or churn the socket.
-      This supersedes the flat 2 s transport-error retry of 2026.5.6.
-    * Fixed the notifications WebSocket being closed by navigating to a
-      page with no notification consumer, such as About (#215). For an
-      anonymous user the backend read that close as "left the site" and
-      deleted the completed jobs (the backend half is #216, above). The
-      socket is now held open across route changes.
-    * A pipeline whose build failed is now rebuilt on the next save,
-      instead of re-reporting the cached failure indefinitely:
+      permanently after five attempts — superseding the flat 2 s
+      transport-error retry of 2026.5.6. It is also no longer closed by
+      navigating to a page with no notification consumer, such as About
+      (#215), which for an anonymous user the backend read as "left the
+      site" (the backend half is #216, above).
+    * A pipeline whose build failed is now rebuilt on the next save:
       ``LRUPipelineCache.put_pipeline`` returned the existing — possibly
       failed — build future whenever the config hash matched, so an
       unchanged config kept surfacing the ``failed`` load status added in
       2026.6.9 even after a transient GRR problem had cleared.
     * Added ``gain.logging``, a drop-in proxy for the standard library's
-      ``logging`` module. ``from gain import logging`` guarantees the
+      ``logging`` module: ``from gain import logging`` guarantees the
       ``TRACE`` and ``USER_INFO`` levels added in 2026.7.0 are installed
       before any logger is created, so ``logger.trace()`` /
-      ``logger.user_info()`` are always available and type-check. gain's
-      own modules were migrated onto it.
-    * **Behavior change:** ``-vvv`` now selects the ``TRACE`` level
-      rather than ``DEBUG``, and the effect checkers' diagnostics moved
-      from ``DEBUG`` to ``TRACE``. ``-v`` (INFO) and ``-vv`` (DEBUG) are
-      unchanged, but a run at ``-vv`` no longer prints the effect-checker
-      trace — pass ``-vvv`` for it.
+      ``logger.user_info()`` always work and type-check. gain's own modules
+      were migrated onto it. **Behavior change:** ``-vvv`` now selects
+      ``TRACE`` rather than ``DEBUG``, and the effect checkers' diagnostics
+      moved from ``DEBUG`` to ``TRACE``, so a run at ``-vv`` no longer
+      prints the effect-checker trace.
     * The single-allele annotation response now reports
       ``preserves_domain: true``, rather than ``null``, for an attribute
       that is not aggregated at all, so the flag added in 2026.7.0 is
-      always an explicit boolean. The Web UI already treated ``null`` as
-      domain-preserving, so the rendered histogram is unchanged.
+      always an explicit boolean. The rendered histogram is unchanged.
     * Web UI: fixed three annotation-pipeline editor bugs — a late
-      ``pipeline_status`` response no longer overwrites the status bar
-      with stale annotator and attribute counts, a browser refresh no
-      longer resurrects the stale temporary pipeline over the default
-      one, and the annotatables table tracks its rows by their stable id,
-      so a history refresh no longer trips Angular's ``NG0956``
-      duplicate-key warning.
+      ``pipeline_status`` response overwriting the status bar with stale
+      annotator and attribute counts, a browser refresh resurrecting the
+      stale temporary pipeline over the default one, and the annotatables
+      table tripping Angular's ``NG0956`` duplicate-key warning on a
+      history refresh (its rows are now tracked by their stable id).
     * ``gain.genomic_resources.testing`` became a package and gained a
       ``builders`` module: a fluent DSL for authoring test GRRs —
       ``a_grr()``, ``a_position_score()``, ``a_np_score()``,
       ``an_allele_score()``, ``a_gene_score()`` and
       ``a_reference_genome()``. Every name previously importable from
       ``gain.genomic_resources.testing`` still is.
-    * Documented the ``user`` and ``password`` basic-authentication keys
-      of an ``http`` repository on the GRR configuration page.
+    * Documented the ``user`` and ``password`` basic-authentication keys of
+      an ``http`` repository on the GRR configuration page.
     * CI: ``tests/integration`` moved out of the ``core`` build into a
       dedicated ``gain-core-integration`` downstream job, which resolves
       real resources against the ``grr-seqpipe`` GRR and runs on every
       branch without failing the parent build (#222).
 
 * 2026.7.0
-    * Hardened HTTP basic-auth credential handling for GRR definitions.
-      The ``user`` / ``password`` of an authed ``http`` repository are no
-      longer written to the logs when a repository is built, and are
-      masked in the definition model's ``repr()`` / ``str()``.
-      Configuring basic-auth credentials on a plain ``http://`` URL to a
-      non-local host now emits a loud warning (the credentials would
-      travel unencrypted); the request still works, and ``https://`` and
-      ``localhost`` stay quiet.
+    * Hardened HTTP basic-auth credential handling for GRR definitions: the
+      ``user`` / ``password`` of an authed ``http`` repository are no
+      longer written to the logs when a repository is built, and are masked
+      in the definition model's ``repr()`` / ``str()``. Configuring them on
+      a plain ``http://`` URL to a non-local host now emits a loud warning
+      (the credentials would travel unencrypted); the request still works,
+      and ``https://`` and ``localhost`` stay quiet.
     * **Behavior change:** repository definitions are now strictly
       validated — an unknown key in *any* repository definition (in
       ``~/.grr_definition.yaml`` or a group's ``children``) is rejected
       rather than silently ignored. This guards against auth typos (e.g.
       ``pasword`` or ``username``) but can reject a previously-accepted
-      deployed definition that carried a stray key; remove any such keys
-      to upgrade.
+      deployed definition that carried a stray key; remove any such keys to
+      upgrade.
     * Untyped genomic resources now resolve to a dedicated ``basic``
       resource type with its own implementation (#185). A resource whose
       config carries no ``type`` previously had no implementation at all;
@@ -304,43 +203,41 @@ Release Notes
       its own ``.gitignore`` root, so ignored files are excluded from the
       resource manifest and from caching. ``pathspec`` is now a runtime
       dependency of ``gain-core`` (#184).
-    * Score aggregators now declare whether they preserve the source
-      value domain: a new ``Aggregator.preserves_domain(value_type=…)``
-      returns ``True`` for ``min``/``max``/``mean``/``median``/``mode``
-      and ``False`` otherwise. The editor's aggregator-list endpoint and
-      the single-allele annotation response carry this flag per
-      attribute.
-    * Web UI: the single-annotation report now hides the score histogram
-      for an attribute whose chosen aggregator does not preserve the
-      score domain, since the resource's own histogram no longer
-      describes the aggregated value.
+    * Score aggregators now declare whether they preserve the source value
+      domain: a new ``Aggregator.preserves_domain(value_type=…)`` returns
+      ``True`` for ``min``/``max``/``mean``/``median``/``mode`` and
+      ``False`` otherwise. The editor's aggregator-list endpoint and the
+      single-allele annotation response carry this flag per attribute, and
+      the Web UI's single-annotation report now hides the score histogram
+      for an attribute whose aggregator does not preserve the domain, since
+      the resource's own histogram no longer describes the aggregated
+      value.
     * Fixed the annotation-pipeline editor still getting stuck on
       "loading" after a WebSocket reconnect in a case the 2026.6.9 fix
       (#160) missed. A successful (200) response from the blocking
-      ``GET /api/editor/pipeline_status`` means the GRR build finished,
-      so it is now treated as the authoritative ``loaded`` signal and the
+      ``GET /api/editor/pipeline_status`` means the GRR build finished, so
+      it is now treated as the authoritative ``loaded`` signal and the
       editor converges regardless of WebSocket attach order or churn.
     * Fixed a flaky ``FileExistsError`` when creating the task-graph log
       directory under concurrency (#186): ``ensure_log_dir`` now uses the
       atomic, idempotent ``makedirs(exist_ok=True)`` instead of a
       check-then-create with an ineffective ``exists_ok`` kwarg.
-    * Added two custom logging levels, ``TRACE`` and ``USER_INFO``, and
-      the matching ``logger.trace()`` / ``logger.user_info()`` helper
-      methods, installed when the ``gain`` package is imported.
-      ``USER_INFO`` (25, between INFO and WARNING) is for messages aimed
-      at end users; ``TRACE`` is for fine-grained diagnostic output.
+    * Added two custom logging levels, ``TRACE`` and ``USER_INFO``, and the
+      matching ``logger.trace()`` / ``logger.user_info()`` helper methods,
+      installed when the ``gain`` package is imported. ``USER_INFO`` (25,
+      between INFO and WARNING) is for messages aimed at end users;
+      ``TRACE`` is for fine-grained diagnostic output.
     * Fixed generated pipeline documentation leaving a resource or
-      histogram link unset when the resource is referenced from outside
-      the managed GRR: it now falls back to the resource's public URL
+      histogram link unset when the resource is referenced from outside the
+      managed GRR: it now falls back to the resource's public URL
       (``get_public_url`` / ``get_histogram_image_public_url``).
     * Enlarged the axis and note-label font on generated score-histogram
       images to a shared ``HISTOGRAM_LABELS_FONT_SIZE`` constant, and
       applied it to the categorical histogram's bar labels too.
     * Web UI: fixed several annotation-pipeline editor and new-annotator
-      dialog layout issues — the aggregators table now hugs its rows
-      while keeping the footer visible, scrollable tables render their
-      rounded corners correctly, and assorted editor styling was cleaned
-      up.
+      dialog layout issues — the aggregators table now hugs its rows while
+      keeping the footer visible, scrollable tables render their rounded
+      corners correctly, and assorted editor styling was cleaned up.
     * Corrected the "creating an annotator plugin" documentation example:
       the sample rule read ``clinical_significance`` with ``.lower()``
       where ``.strip()`` was intended, and its inline literals are now
