@@ -14,13 +14,16 @@ answered vacuously).
 
 And a shell that **refuses to be read**: what a closed table answers is the
 other side of what it releases, so it is pinned here too --
-test_a_closed_table_refuses_its_file_chromosomes holds all four backends to one
-``ValueError``, and the header-only fixture beside it holds the guard to being
-about the missing handle rather than about an empty contig list, which an open
-table may legitimately have (gain#358).  The in-memory
-``get_chromosome_length`` half of that contract is pinned where its
-empty/unknown-contig policy already lives, in
-test_inmemory_genomic_position_table.py.
+test_a_closed_table_refuses_its_file_chromosomes and
+test_a_closed_table_refuses_a_chromosome_length hold every backend to one
+``ValueError``, and the header-only fixture beside them holds the guard to
+being about the missing handle rather than about an empty contig list, which an
+open table may legitimately have (gain#358).  Both are asked over
+``_LIFETIME_BACKENDS`` rather than the four bare backends, so the mapped
+fixtures ask them through a populated ``chrom_map`` as well as a vacant one.
+The in-memory ``get_chromosome_length``'s OPEN-table diagnostic -- which
+contigs the message must name -- stays where its empty/unknown-contig policy
+already lives, in test_inmemory_genomic_position_table.py.
 
 The second half only matters because the first can be satisfied without it: a
 table can be perfectly collectable and still be several megabytes that nobody
@@ -629,13 +632,13 @@ def test_a_never_opened_vcf_table_does_not_answer_its_contigs_either(
         table.get_file_chromosomes()
 
 
-@pytest.mark.parametrize("build,_score_line", _BACKENDS)
+@pytest.mark.parametrize("build,_score_line", _LIFETIME_BACKENDS)
 def test_a_closed_table_refuses_its_file_chromosomes(
     build: object,
     _score_line: object,
     tmp_path: pathlib.Path,
 ) -> None:
-    """One answer to a closed ``get_file_chromosomes()``, from all four.
+    """One answer to a closed ``get_file_chromosomes()``, from every backend.
 
     What a closed table does when read is the contract gain#358 settles: it
     **refuses** the reads that depend on what ``open()`` took out of the file,
@@ -698,6 +701,44 @@ def test_an_open_inmemory_table_with_no_data_rows_answers_no_contigs(
     with table:
         assert table.get_file_chromosomes() == []
         assert table.get_chromosomes() == []
+
+
+@pytest.mark.parametrize("build,_score_line", _LIFETIME_BACKENDS)
+def test_a_closed_table_refuses_a_chromosome_length(
+    build: object,
+    _score_line: object,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The same refusal, said the same way, for a contig's length.
+
+    ``get_chromosome_length`` is the other read every backend implements over
+    file-derived state, and the one whose diagnostics are built out of it: each
+    implementation answers an unknown contig by naming the contigs the table
+    does have, which is itself a read a closed table refuses.  So a closed
+    table must be turned away by the *first* guard, before any of that -- and
+    with a ``ValueError`` naming the resource, as
+    :meth:`GenomicPositionTable.close` states and the sibling
+    ``get_file_chromosomes`` test above pins for the other read.
+
+    bigWig is why this is parametrised rather than written once: it guarded
+    with a bare ``assert`` where its siblings raise, so a closed
+    ``get_chromosome_length`` gave a message-less ``AssertionError`` -- and,
+    under ``python -O`` which strips the assert, fell through into the
+    contig-naming branch and raised out of the middle of it (gain#358).
+    """
+    score, region = build(tmp_path)  # type: ignore[operator]
+    chrom = region[0]
+    table = score.table
+
+    table.open()
+    assert table.get_chromosome_length(chrom) > 0, (
+        f"the fixture yields no length for {chrom} from a "
+        f"{type(table).__name__}: a closed table refusing it would prove "
+        f"nothing")
+    table.close()
+
+    with pytest.raises(ValueError, match="not open"):
+        table.get_chromosome_length(chrom)
 
 
 def _an_inmemory_score(

@@ -265,7 +265,14 @@ def test_get_chromosome_length_empty_mapped_contig_raises(
     # heard of or about one it knows and has no rows for.  It is only buildable
     # on an OPEN table -- get_chromosomes() refuses on a closed one -- which is
     # why the closed case is guarded ahead of this branch (gain#358).
-    assert "['kept', 'empty']" in str(err.value)
+    # Asserted by NAME against the list the message ends with, rather than
+    # against its exact repr: what the diagnostic owes the caller is the names,
+    # not a particular rendering or ordering of them.  Sliced at "contigs:"
+    # because "empty" is also the contig asked about, and so appears in the
+    # first half of the message either way.
+    contigs_listed = str(err.value).split("contigs:")[-1]
+    assert "kept" in contigs_listed
+    assert "empty" in contigs_listed
     # the populated contig still reports a length.
     assert tab.get_chromosome_length("kept") == 13
 

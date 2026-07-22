@@ -222,17 +222,31 @@ class GenomicPositionTable(abc.ABC):
         everything released here, and answers exactly as a table that was never
         closed.  Until it is reopened it **refuses the reads that depend on
         what it read out of the file** -- that is the contract, and it is what
-        releasing the state above amounts to at the call site:
-        :meth:`get_chromosomes` raises once ``chrom_order`` is released,
-        :meth:`get_file_chromosomes` raises on every backend (each guarding the
-        handle its ``open()`` establishes and this ``close()`` drops), and
-        ``get_chromosome_length`` and the record reads go the same way.  This
-        paragraph used to claim the opposite -- that reading a closed table was
-        unchanged -- which was never true of the code it documents (gain#358).
-        No in-tree caller reads a table it has not opened: every read sits
-        behind ``GenomicScore.is_open()``, and the asserts in the fetch paths
-        (``assert self._bw_file is not None``) are there for the other case, a
-        scan already in flight when the close lands.
+        releasing the state above amounts to at the call site.  Three of those
+        reads refuse in one stated way, ``ValueError``, on all four backends:
+        :meth:`get_chromosomes` once ``chrom_order`` is released, and
+        :meth:`get_file_chromosomes` and ``get_chromosome_length`` off the
+        handle their ``open()`` establishes and this ``close()`` drops.  Those
+        three are what a caller may write an ``except ValueError`` around.
+
+        **The record reads refuse too, but not in one way, and their exception
+        type is not part of the contract.**  Neither ``get_all_records`` nor
+        ``get_records_in_region`` carries a not-open guard of its own: measured
+        on a closed table, some backend/method pairs raise the same
+        ``ValueError`` on their way through :meth:`get_chromosomes`, and the
+        rest run into a pre-existing ``assert`` in the fetch path
+        (``assert self._bw_file is not None``, ``assert isinstance(
+        self.pysam_file, pysam.TabixFile | pysam.VariantFile)``,
+        ``assert self.parser is not None``) and hand the caller a message-less
+        ``AssertionError`` -- or, under ``python -O`` which strips asserts,
+        whatever the next line makes of the released state (``AttributeError``
+        on ``None``, ``KeyError`` off an emptied contig dict).  Those asserts
+        are there for a different case, a scan already in flight when the close
+        lands; do not catch on them.  This whole paragraph used to claim the
+        opposite of all of it -- that reading a closed table was unchanged --
+        which was never true of the code it documents (gain#358).  No in-tree
+        caller reads a table it has not opened: every read sits behind
+        ``GenomicScore.is_open()``.
 
         **The one read that does not refuse is chromosome mapping, and it is
         left that way deliberately.**  :meth:`map_chromosome` and
@@ -380,12 +394,12 @@ class GenomicPositionTable(abc.ABC):
         directly and need not memoise on its own.
 
         **An implementation with no open handle raises ``ValueError``**, in the
-        shape its four siblings use (``"<backend> table not open: <resource
-        id>: <definition>"``).  That is the closed-table contract stated where
-        a backend meets it: the memo in front of this method caches whatever it
-        returns, so a backend that answers a closed table with what is left of
-        its released state hands that answer out for the rest of the table's
-        life -- and an empty contig list is a legitimate answer from an OPEN
-        table, so it cannot double as the refusal (gain#358; see
-        :meth:`close`).
+        shape the four in-tree backends use (``"<backend> table not open:
+        <resource id>: <definition>"``).  That is the closed-table contract
+        stated where a backend meets it: the memo in front of this method
+        caches whatever it returns, so a backend that answers a closed table
+        with what is left of its released state hands that answer out for the
+        rest of the table's life -- and an empty contig list is a legitimate
+        answer from an OPEN table, so it cannot double as the refusal
+        (gain#358; see :meth:`close`).
         """

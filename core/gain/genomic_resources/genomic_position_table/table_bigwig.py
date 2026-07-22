@@ -199,8 +199,11 @@ class BigWigTable(GenomicPositionTable):
         self.parser = None
         # The file's whole contig dictionary -- ~600 entries on hg38.  open()
         # reads it back off the handle unconditionally, and every reader of it
-        # is already behind an `assert self._bw_file is not None`, so a closed
-        # table holds a copy nothing can reach (gain#350).
+        # is already behind a not-open guard -- `get_chromosome_length` and
+        # `_load_file_chromosomes` raise ValueError off `_bw_file` (gain#358),
+        # the fetch paths assert on `_bw_file` or on the `parser` this method
+        # also drops -- so a closed table holds a copy nothing can reach
+        # (gain#350).
         self.chroms = {}
         # Release the fetched intervals too.  open() re-establishes this
         # anyway, so what the clearing here buys is memory, not correctness: a
@@ -438,7 +441,18 @@ class BigWigTable(GenomicPositionTable):
         self, chrom: str,
         step: int = 100_000_000,  # noqa: ARG002
     ) -> int:
-        assert self._bw_file is not None
+        # A closed table FIRST, in the words the other three backends use --
+        # this carried a bare ``assert`` where the tabix backend raises, so a
+        # closed table's caller got a message-less AssertionError from the
+        # backend whose siblings all name the resource; and under ``python -O``,
+        # which strips the assert, control fell through into the branch below,
+        # whose message interpolates get_chromosomes() -- a read a closed table
+        # refuses, so the intended diagnostic could not be built (gain#358).
+        if self._bw_file is None:
+            raise ValueError(
+                f"bigwig table not open: "
+                f"{self.genomic_resource.resource_id}: "
+                f"{self.definition}")
         if chrom not in self.get_chromosomes():
             raise ValueError(
                 f"contig {chrom} not present in the table's contigs: "

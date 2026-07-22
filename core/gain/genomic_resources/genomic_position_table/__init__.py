@@ -119,10 +119,23 @@ recorded here for the same reason as the removals above, because nothing else
 records it.  #350 made
 ``close()`` release everything a table read out of its file, the contig order,
 the chromosome map and the ``get_file_chromosomes`` memo included, and the
-reads that used to be answered out of that retained state now raise
-``ValueError`` instead: ``get_chromosomes()``, ``get_file_chromosomes()``,
-``get_chromosome_length()`` and the record reads.  For an out-of-tree caller
-that is the difference between an answer and an exception; the migration is to
+reads that used to be answered out of that retained state now fail instead.
+Three of them fail in one stated way, ``ValueError``, on all four backends:
+``get_chromosomes()``, ``get_file_chromosomes()`` and
+``get_chromosome_length()``.  Those three are what an out-of-tree caller may
+write an ``except ValueError`` around.  **The record reads
+(``get_all_records()``, ``get_records_in_region()``) refuse as well, but their
+exception type is NOT part of the contract**: neither carries a not-open guard
+of its own, so measured on a closed table some backend/method pairs raise the
+same ``ValueError`` on their way through ``get_chromosomes()`` while the rest
+run into a pre-existing ``assert`` in the fetch path and raise a message-less
+``AssertionError`` -- or, under ``python -O``, which strips asserts, whatever
+the next line makes of the released state (``AttributeError`` on ``None``,
+``KeyError`` off an emptied contig dict).  Those asserts are older than this
+contract and were left alone; do not catch on them, and do not read the
+uniformity of the first three as covering the record reads.  For an
+out-of-tree caller all of it is the difference between an answer and an
+exception; the migration is to
 read inside the open table's lifetime, or to reopen -- ``open()``
 re-establishes all of it, and a reopened table answers exactly as one that was
 never closed.  Nothing in-tree was affected, which is why the ledger entry is
@@ -139,11 +152,13 @@ which ``python -O`` strips, leaving it answering ``[]`` from an emptied contig
 dict.  Both now raise the ``ValueError`` the tabix and VCF backends already
 raised, so a caller catches one thing from all four (and a closed VCF table
 refuses for a never-opened one's reason too: its guard is the absent handle,
-which covers both states).  In the same vein
-``InmemoryGenomicPositionTable.get_chromosome_length`` now reports that the
-table is not open, where it used to raise out of the middle of a message it
-could not finish building -- every contig takes the no-records branch on a
-closed table, and that branch interpolates ``get_chromosomes()``.
+which covers both states).  ``get_chromosome_length`` was brought into line the
+same way in the two backends that were not: the in-memory one used to raise out
+of the middle of a message it could not finish building -- every contig takes
+the no-records branch on a closed table, and that branch interpolates
+``get_chromosomes()`` -- and the bigWig one guarded with the same bare
+``assert``, which under ``python -O`` let a closed table fall through into that
+very branch.  Both now say the table is not open, as tabix and VCF already did.
 
 **Deliberately NOT changed: ``map_chromosome``/``unmap_chromosome`` pass
 through on a closed table.**  Both return their argument unchanged when the
