@@ -220,10 +220,38 @@ class GenomicPositionTable(abc.ABC):
 
         A closed table stays **reopenable**: ``open()`` re-establishes
         everything released here, and answers exactly as a table that was never
-        closed.  Reading a closed table is unchanged -- releasing state is not
-        a new way to fail, and the guards that already stand in front of the
-        read paths (``assert self._bw_file is not None``,
-        ``GenomicScore.is_open()``) are what those paths are held to.
+        closed.  Until it is reopened it **refuses the reads that depend on
+        what it read out of the file** -- that is the contract, and it is what
+        releasing the state above amounts to at the call site:
+        :meth:`get_chromosomes` raises once ``chrom_order`` is released,
+        :meth:`get_file_chromosomes` raises on every backend (each guarding the
+        handle its ``open()`` establishes and this ``close()`` drops), and
+        ``get_chromosome_length`` and the record reads go the same way.  This
+        paragraph used to claim the opposite -- that reading a closed table was
+        unchanged -- which was never true of the code it documents (gain#358).
+        No in-tree caller reads a table it has not opened: every read sits
+        behind ``GenomicScore.is_open()``, and the asserts in the fetch paths
+        (``assert self._bw_file is not None``) are there for the other case, a
+        scan already in flight when the close lands.
+
+        **The one read that does not refuse is chromosome mapping, and it is
+        left that way deliberately.**  :meth:`map_chromosome` and
+        :meth:`unmap_chromosome` return their argument unchanged when
+        ``rev_chrom_map``/``chrom_map`` are ``None`` -- which is how a table
+        that configures no ``chrom_mapping`` answers, and is exactly the state
+        this method leaves behind.  So a closed *mapped* table passes
+        reference-space names through as if they were the file's, silently, and
+        nothing left on the table can tell the two apart:
+        :meth:`_build_chrom_mapping` sets ``chrom_map = None`` on an OPEN table
+        with no mapping configured, so the field does not distinguish closed
+        from mapping-free, and there is no open/closed flag to consult.  Adding
+        one was considered and rejected (gain#358): it is an invariant every
+        backend would have to maintain, bought at the price of a new way for
+        the read path to fail -- which is what the release policy above set out
+        not to introduce.  Recorded rather than fixed, here and in this
+        package's ``__init__`` ledger, so that a reader who finds a closed
+        table mapping a name through knows it is a decision and not an
+        oversight.
 
         Released here is the base class's own file-derived state: the
         ``get_file_chromosomes`` memo and the chromosome mapping
@@ -350,4 +378,14 @@ class GenomicPositionTable(abc.ABC):
         Called at most once per open table -- :meth:`get_file_chromosomes`
         holds the result -- so an implementation may read the open handle
         directly and need not memoise on its own.
+
+        **An implementation with no open handle raises ``ValueError``**, in the
+        shape its four siblings use (``"<backend> table not open: <resource
+        id>: <definition>"``).  That is the closed-table contract stated where
+        a backend meets it: the memo in front of this method caches whatever it
+        returns, so a backend that answers a closed table with what is left of
+        its released state hands that answer out for the rest of the table's
+        life -- and an empty contig list is a legitimate answer from an OPEN
+        table, so it cannot double as the refusal (gain#358; see
+        :meth:`close`).
         """

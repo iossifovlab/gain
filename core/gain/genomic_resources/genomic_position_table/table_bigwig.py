@@ -457,5 +457,21 @@ class BigWigTable(GenomicPositionTable):
         return self.chroms[fchrom]
 
     def _load_file_chromosomes(self) -> list[str]:
-        assert self._bw_file is not None
+        """Return the contigs ``open()`` read off the handle.
+
+        A closed table refuses, in the words its three siblings use: the
+        contract is that a closed table does not answer reads derived from the
+        file (see :meth:`GenomicPositionTable.close`), and it is stated as a
+        ``ValueError`` rather than the bare ``assert`` this used to carry so
+        that all four backends refuse the same way and a caller can catch one
+        thing (gain#358).  ``self.chroms`` cannot be the guard -- ``close()``
+        empties it, and an empty dict would otherwise be handed back as an
+        answer -- so this reads the handle, which ``open()`` establishes before
+        it calls ``_build_chrom_mapping`` and ``close()`` drops.
+        """
+        if self._bw_file is None:
+            raise ValueError(
+                f"bigwig table not open: "
+                f"{self.genomic_resource.resource_id}: "
+                f"{self.definition}")
         return list(self.chroms.keys())

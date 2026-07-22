@@ -37,6 +37,15 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
     * :meth:`get_chromosome_length` raises ``ValueError`` when the contig is
       unknown *or* known-but-empty (there is no maximum end position to
       report).
+
+    A CLOSED table is not a case of that policy and is refused ahead of it:
+    ``close()`` empties ``records_by_chr`` and releases the contig list, so
+    every contig would otherwise look known-but-empty and no diagnostic naming
+    the table's contigs could be built at all.  Both
+    :meth:`get_chromosome_length` and :meth:`_load_file_chromosomes` therefore
+    check ``str_stream`` first and say
+    the table is not open, as the other three backends do (gain#358; the
+    contract is stated on :meth:`GenomicPositionTable.close`).
     """
 
     # This backend yields and stores records rather than line adapters.
@@ -143,10 +152,28 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
         return self
 
     def _load_file_chromosomes(self) -> list[str]:
-        # Scanned out of the rows by open(), which is the only
-        # place this backend ever sees the file; kept under a
-        # name of its own so it is not confused with the base
-        # class's get_file_chromosomes memo (gain#345).
+        """Return the contigs ``open()`` scanned out of the rows.
+
+        Scanned by ``open()``, which is the only place this backend ever sees
+        the file; kept under a name of its own so it is not confused with the
+        base class's ``get_file_chromosomes`` memo (gain#345).
+
+        **The guard is the stream, not the emptiness of the list.**  A closed
+        table refuses this read, like its three siblings (see
+        :meth:`GenomicPositionTable.close`) -- and the only signal that says so
+        is the open handle, which ``open()`` establishes before it calls
+        ``_build_chrom_mapping`` (the in-open call that reaches this method) and
+        ``close()`` drops.  ``self._scanned_chromosomes`` cannot say it:
+        ``close()`` empties it, but so does an *open* table over a file with no
+        data rows, and answering that one with a ``ValueError`` -- or the closed
+        one with ``[]``, which is what this used to do -- confuses two different
+        states through one overloaded value (gain#358).
+        """
+        if self.str_stream is None:
+            raise ValueError(
+                f"in-memory table not open: "
+                f"{self.genomic_resource.resource_id}: "
+                f"{self.definition}")
         return self._scanned_chromosomes
 
     def get_all_records(self) -> Generator[Record, None, None]:
@@ -201,8 +228,22 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
         self, chrom: str,
         step: int = 0,  # noqa: ARG002
     ) -> int:
+        # The closed table FIRST, as the tabix backend does it: close() empties
+        # records_by_chr, so on a closed table every contig -- a populated one
+        # included -- falls into the no-records branch below, whose message
+        # interpolates get_chromosomes(), which a closed table refuses.  The
+        # intended diagnostic was therefore never built: what reached the caller
+        # came out of the middle of building it, on its way to a "has no
+        # records" claim that was false (gain#358).
+        if self.str_stream is None:
+            raise ValueError(
+                f"in-memory table not open: "
+                f"{self.genomic_resource.resource_id}: "
+                f"{self.definition}")
         # Unknown or known-but-empty contigs have no maximum end position to
         # report -- raise a clear ValueError rather than KeyError/max() on [].
+        # Reachable only on an OPEN table, so get_chromosomes() answers and the
+        # message can name the contigs the table does have.
         records = self.records_by_chr.get(chrom)
         if not records:
             raise ValueError(
