@@ -262,8 +262,9 @@ res = (
 ```
 
 Factories: `a_position_score`, `a_np_score`,
-`an_allele_score`, `a_bigwig_score`, `a_vcf_info_score`,
-`a_gene_score`, `a_reference_genome`, `a_grr`. Compose a
+`an_allele_score`, `a_cnv_collection`, `a_bigwig_score`,
+`a_vcf_info_score`, `a_gene_score`, `a_reference_genome`,
+`a_grr`. Compose a
 multi-resource repo with
 `a_grr().with_resource(id, builder).build_repo(tmp_path)`;
 `build_resource(tmp_path)` is the single-resource
@@ -272,8 +273,8 @@ shorthand.
 **That list is the whole of the coverage — the gaps are
 large and structural, not an oversight to work around.**
 There is no builder for `gene_models`, `liftover_chain`,
-`annotation_pipeline`, `cnv_collection` or
-`gene_set_collection`, and no `with_*` for `header_mode`,
+`annotation_pipeline` or `gene_set_collection`, and no
+`with_*` for
 `meta`/`labels`, `default_annotation`, or explicit
 `chrom`/`pos_begin` `column_name`/`column_index`
 mappings. Hand-rolled yaml is still the majority in
@@ -286,9 +287,9 @@ is not.
 Why this is the default where it applies, not a style
 preference:
 - **The config and the data cannot drift, because the
-  data header is the only description of the columns.**
-  The emitted `table:` block names no columns at all
-  (just `filename`/`format`, plus `zero_based` /
+  authored data header is the only description of the
+  columns.** The emitted `table:` block names no columns
+  at all (just `filename`/`format`, plus `zero_based` /
   `chrom_mapping` when asked); the declared scores
   render the `scores:` block, and tabix's
   `seq_col`/`start_col`/`end_col` are derived from the
@@ -297,6 +298,16 @@ preference:
   `seq_col=…` states the same table twice, and a test
   whose two statements drift apart usually still passes
   — it just stops testing what it says it does.
+  `with_header_mode("none"/"list")` is the one knob that
+  moves the column description into the config — it
+  realizes a *headerless* data file — and it still
+  derives the config's `column_index:` mappings (or
+  `header:` list) and the tabix index columns from that
+  same authored header, so there is still only one
+  declaration. `with_missing_header_mode()` deliberately
+  realizes the gain#364 misconfiguration (headerless
+  file, no `header_mode` key); the resource it builds
+  does not open.
 - **Builders are immutable** (frozen dataclasses; every
   `with_*` returns a NEW builder), so a shared base can
   be specialised per variation without leaking state.

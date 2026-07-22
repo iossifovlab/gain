@@ -2,6 +2,75 @@ Release Notes
 =============
 
 * 2026.7.2
+    * **Behavior change:** ``grr_manage`` repository management now reports a
+      resource it could not process, and exits non-zero (#364). A resource
+      whose statistics could not be built used to be skipped with a
+      ``WARNING`` that named the wrong cause ("could not build
+      implementation" — which had succeeded), discarded the exception, had
+      its ``index.html`` regenerated from placeholder histograms anyway, and
+      left the command logging ``GRR <...> is consistent`` and exiting ``0``:
+      non-dry-run repair was structurally incapable of reporting failure.
+      Now:
+
+      * failures are collected per resource — one broken resource does not
+        stop the healthy ones from being repaired — and the command ends with
+        a summary naming every failed resource and a non-zero exit status;
+      * a statistics task that fails while the task graph RUNS now fails the
+        run too.  ``TaskGraphCli.process_graph`` runs with
+        ``keep_going=True``, so a failing task does not raise and its return
+        value was the only report of it — and it was discarded.  The
+        resource is identified by checking, after the graph has run, whether
+        its ``stats_hash`` actually landed; if the graph reports a failure
+        that no resource can be pinned with, the run still exits non-zero
+        under a repository-level message rather than blaming a resource;
+      * the FTS-index builder and the statistics-hash writer now fail the run
+        instead of logging an ``ERROR`` line and letting it end in
+        ``GRR <...> is consistent`` and exit ``0``.  The FTS index walks the
+        WHOLE repository, so under a ``resource-*`` command it can report a
+        resource that was not selected — it is reported under its own id,
+        never the selected one's;
+      * ``GRR <...> is consistent`` is logged only when nothing failed;
+      * a failed resource's generated ``index.html`` is left alone — and
+        both generated pages are now rendered BEFORE either is written, so a
+        failure rendering the statistics page can no longer leave a rewritten
+        ``index.html`` behind;
+      * an unrecognised management command is refused instead of falling
+        through to a full (destructive) repair;
+      * an exception raised with no message — ``raise ValueError()``, or an
+        ``assert`` that ``python -O`` stripped — is reported with its class
+        name, which is all that is left of the cause;
+      * a configuration error (bad config, schema violation, missing file) is
+        reported as ONE ``ERROR`` line carrying the cause, with the traceback
+        demoted to ``DEBUG`` (``-vv`` still recovers it); any other exception
+        is a defect in GAIn and keeps its traceback at ``ERROR``;
+      * a tabix table left on the default ``header_mode`` over a file with no
+        ``#`` header line now raises a ``ValueError`` naming the resource, the
+        table file and the remedy (``header_mode: none``) instead of tripping
+        a message-less ``assert`` that ``python -O`` removed entirely;
+      * a missing histogram file logs at ``WARNING`` without a traceback — the
+        condition is handled (a null histogram is returned), and its traceback
+        was the only one a repair run printed, pointing away from the fault.
+
+      **A repository that was silently failing will now fail loudly**, which
+      includes CI that gates on ``grr_manage repo-repair``.
+
+      Exit statuses, precisely: a ``--dry-run`` still exits with the COUNT of
+      resources that need an update, and a resource that could not even be
+      checked now counts towards it — it is certainly not up to date — so a
+      dry run over a repository with two stale resources and one broken one
+      exits ``3`` where it used to exit ``2``, having silently dropped the
+      broken one. Any other run exits ``1`` when anything failed and ``0``
+      otherwise. ``--dry-run`` is unchanged in what it WRITES.
+    * **Fixed:** ``grr_manage repo-manifest --dry-run`` reported a fully
+      settled repository as inconsistent (#364). Its exit status is
+      documented as the number of resources needing an update, but it was
+      computed as ``len(updates_needed)`` — a dict keyed by EVERY resource
+      and valued by whether that one is stale — so it was the size of the
+      repository, and a settled three-resource repository exited ``3`` and
+      logged ``inconsistent GRR <...> state``. It now counts the stale
+      resources, so a settled repository exits ``0``. ``--dry-run --force``,
+      a usage error, is likewise no longer reported as "one resource needs
+      an update".
     * **Removed:** the in-resource aggregation engine (#267) — a second
       aggregation path that had outlived its callers, in GAIn and in GPF.
       Gone from ``gain.genomic_resources.genomic_scores``:

@@ -840,7 +840,13 @@ def load_histogram(
         with resource.open_raw_file(filename) as infile:
             content = infile.read()
     except FileNotFoundError:
-        logger.exception(
+        # Handled, not fatal: a null histogram is returned.  So no
+        # traceback -- during a repair run this is an expected consequence
+        # of statistics that have not been built yet, and its traceback was
+        # the only one the user saw, pointing away from the real fault
+        # (gain#364).  WARNING rather than DEBUG keeps a genuinely missing
+        # histogram on an otherwise healthy resource visible.
+        logger.warning(
             "unable to load histogram file: %s; file not found", filename)
         return NullHistogram(NullHistogramConfig(
             "Histogram file not found.",

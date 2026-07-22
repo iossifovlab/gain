@@ -1,15 +1,20 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import logging
+import pathlib
 from typing import Any
 
 import numpy as np
 import pytest
 import yaml
 from gain.genomic_resources.histogram import (
+    NullHistogram,
     NullHistogramConfig,
     NumberHistogram,
     NumberHistogramConfig,
     build_histogram_config,
+    load_histogram,
 )
+from gain.genomic_resources.testing.builders import a_position_score
 
 
 def test_histogram_simple_input() -> None:
@@ -256,3 +261,29 @@ def test_build_histogram_config_without_type_is_not_a_key_error() -> None:
 
     assert isinstance(hist_conf, NullHistogramConfig)
     assert "type" in hist_conf.reason
+
+
+def test_load_histogram_missing_file_warns_without_traceback(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # gain#364: the missing-histogram case is HANDLED (a null histogram is
+    # returned), so its traceback is noise -- and during a repair run it was
+    # the only traceback shown, pointing away from the actual fault.  It
+    # stays at WARNING, not DEBUG, so a missing histogram on an otherwise
+    # healthy resource remains visible.
+    resource = a_position_score().build_resource(tmp_path)
+
+    with caplog.at_level(
+            logging.DEBUG, logger="gain.genomic_resources.histogram"):
+        histogram = load_histogram(
+            resource, "statistics/histogram_score.json")
+
+    assert isinstance(histogram, NullHistogram)
+    records = [
+        record for record in caplog.records
+        if "unable to load histogram file" in record.getMessage()
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    assert records[0].exc_info is None

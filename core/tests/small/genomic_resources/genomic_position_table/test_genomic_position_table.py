@@ -40,6 +40,10 @@ from gain.genomic_resources.testing import (
     setup_tabix,
     setup_vcf,
 )
+from gain.genomic_resources.testing.builders import (
+    a_grr,
+    a_position_score,
+)
 
 
 @pytest.fixture
@@ -2664,3 +2668,37 @@ def test_tabix_get_records_in_region_without_chrom(
     table = cast(TabixGenomicPositionTable, tabix_table)
     res = list(table.get_records_in_region())
     assert len(res) == 12
+
+
+def test_headerless_tabix_on_the_default_header_mode_names_the_remedy(
+    tmp_path: pathlib.Path,
+) -> None:
+    # gain#364: the default header_mode reads the column names from the
+    # file's leading '#' lines.  A file with none of them used to trip a
+    # message-less assert, whose str() is empty -- so nothing that caught it
+    # could say what went wrong, and `python -O` dropped the check entirely.
+    repo = (
+        a_grr()
+        .with_resource(
+            "scores/headerless",
+            a_position_score()
+            .with_score("v", "float", column_index=2)
+            .with_tabix()
+            .with_missing_header_mode()
+            .with_data("""
+                chrom  pos_begin  v
+                1      10         0.5
+            """))
+        .build_repo(tmp_path)
+    )
+    res = repo.get_resource("scores/headerless")
+    assert res.config is not None
+    table = build_genomic_position_table(res, res.config["table"])
+
+    with pytest.raises(ValueError) as excinfo:
+        table.open()
+
+    message = str(excinfo.value)
+    assert "scores/headerless" in message
+    assert "data.txt.gz" in message
+    assert "header_mode: none" in message
