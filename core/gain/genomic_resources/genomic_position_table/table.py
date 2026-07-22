@@ -198,9 +198,45 @@ class GenomicPositionTable(abc.ABC):
     def open(self) -> GenomicPositionTable:
         pass
 
-    @abc.abstractmethod
     def close(self) -> None:
-        """Close the resource."""
+        """Close the file and release everything read out of it.
+
+        THE RELEASE POLICY, for every backend: **after ``close()`` a table
+        holds only what ``open()`` does not rebuild** -- its resource, its
+        definition, and its configured parameters (the header when it is
+        configured rather than read from the file, and the core column keys
+        resolved from it).  Everything derived from the open file is given up:
+        the handle, the parser built around the file's header and contigs, any
+        buffered or fully-loaded records, and the chromosome state below.
+
+        Stated once, here, because the alternative is deciding it per field --
+        and per field the answer always looks like "this one is small".  It is
+        not about tidiness: closed tables are deliberately kept alive.
+        ``_INMEMORY_CNV_CACHE`` holds ``CnvCollection`` scores process-wide
+        while an annotation pipeline's teardown closes them, so whatever a
+        closed table retains is retained for the life of the process -- and
+        retained for nothing, since ``open()`` rebuilds all of it from the file
+        rather than reusing it (gain#350).
+
+        A closed table stays **reopenable**: ``open()`` re-establishes
+        everything released here, and answers exactly as a table that was never
+        closed.  Reading a closed table is unchanged -- releasing state is not
+        a new way to fail, and the guards that already stand in front of the
+        read paths (``assert self._bw_file is not None``,
+        ``GenomicScore.is_open()``) are what those paths are held to.
+
+        Released here is the base class's own file-derived state: the
+        ``get_file_chromosomes`` memo and the chromosome mapping
+        :meth:`_build_chrom_mapping` derives from it, which that method rebuilds
+        -- memo included -- on every ``open()``.  **A backend's ``close()`` must
+        call up into this one**; what each backend releases on top of it is its
+        own, and ``test_table_lifetime.py`` holds all four to the policy by
+        diffing what ``open()`` established against what ``close()`` gave up.
+        """
+        self.chrom_map = None
+        self.chrom_order = None
+        self.rev_chrom_map = None
+        self._file_chromosomes = None
 
     @abc.abstractmethod
     def get_all_records(self) -> Generator[Record, None, None]:

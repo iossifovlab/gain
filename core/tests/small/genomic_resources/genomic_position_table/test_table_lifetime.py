@@ -1,6 +1,22 @@
-"""A closed and dropped position table must be collectable.
+"""What a position table may hold, while it is closed and after it is dropped.
 
-The repair path builds a table **per region task** --
+Two halves of one question, and this file holds both.  **Dropped**: a closed
+and dropped table must be collectable -- nothing may pin it (gain#345, below).
+**Closed**: a table that is closed but deliberately kept alive must hold only
+what ``open()`` cannot rebuild, so that what a caching holder retains is a
+shell rather than a copy of the file (gain#350 --
+test_a_closed_table_releases_what_open_established and the two
+retention-shape tests are the release policy stated on
+``GenomicPositionTable.close()``, checked against all four backends).
+
+The second half only matters because the first can be satisfied without it: a
+table can be perfectly collectable and still be several megabytes that nobody
+will ever read again, for as long as its holder lives.
+``_INMEMORY_CNV_CACHE`` is exactly such a holder -- it keeps ``CnvCollection``
+scores process-wide, while an annotation pipeline's teardown closes them.
+
+**Why collectability is pinned at all.** The repair path builds a table
+**per region task** --
 ``GenomicScoreImplementation._do_min_max`` and ``._do_histogram`` each call
 ``build_score_implementation_from_resource``, so a whole-genome
 ``grr_manage resource-repair`` opens and drops thousands of tables in one
@@ -39,9 +55,14 @@ import pathlib
 import weakref
 
 import pytest
-from gain.genomic_resources.genomic_scores import PositionScore
+from gain.genomic_resources.genomic_position_table.record import PAYLOAD
+from gain.genomic_resources.genomic_scores import GenomicScore, PositionScore
 from gain.genomic_resources.testing import setup_bigwig
-from gain.genomic_resources.testing.builders import a_bigwig_score, a_grr
+from gain.genomic_resources.testing.builders import (
+    a_bigwig_score,
+    a_grr,
+    a_position_score,
+)
 
 from .test_backend_record_contract import _BACKENDS
 
@@ -173,6 +194,257 @@ def test_no_table_method_is_memoised_at_class_level() -> None:
 def _all_subclasses(klass: type) -> list[type]:
     subs = list(klass.__subclasses__())
     return subs + [s for sub in subs for s in _all_subclasses(sub)]
+
+
+# The fields ``open()`` establishes that a CLOSED table is still allowed to
+# hold, each with the reason it is exempt.  This list is the release policy
+# stated on ``GenomicPositionTable.close()``, written out as data: everything
+# else ``open()`` sets is file-derived and must be released.
+#
+# It is an ALLOW-LIST on purpose.  A field added to a backend's ``open()``
+# without a matching release fails
+# test_a_closed_table_releases_what_open_established, and the only way to make
+# that pass without releasing it is to name it here with a reason -- which is a
+# decision recorded in a diff, rather than a field that quietly joined what a
+# closed table retains.
+_MAY_SURVIVE_CLOSE = {
+    "header": (
+        "the column names -- a *configured* parameter for header_mode 'list' "
+        "(set in __init__, never rebuilt by open()) and for the VCF backend, "
+        "which reads its INFO metadata at construction; releasing it would "
+        "make those two unreopenable. Bounded by the column count."
+    ),
+    "chrom_key": "core column key: resolved from the definition and header",
+    "pos_begin_key": "core column key: resolved from the definition and header",
+    "pos_end_key": "core column key: resolved from the definition and header",
+    "ref_key": "core column key: resolved from the definition and header",
+    "alt_key": "core column key: resolved from the definition and header",
+}
+
+
+def _is_released(value: object, before_open: object) -> bool:
+    """Whether a field ``open()`` established has been given up by ``close()``.
+
+    Released means one of: ``None``; an empty container; or back to the value
+    the table was constructed with -- the three shapes the backends' releases
+    actually take (``self.parser = None``, ``self.records_by_chr = {}``,
+    ``self._buffer_region = Region("?", -1, -1)``).  What they have in common
+    is that the field no longer holds anything read out of the file.
+    """
+    if value is None:
+        return True
+    if isinstance(value, list | tuple | dict | set | str) and len(value) == 0:
+        return True
+    return value == before_open
+
+
+@pytest.mark.parametrize("build,_score_line", _BACKENDS)
+def test_a_closed_table_releases_what_open_established(
+    build: object,
+    _score_line: object,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The release policy, asked of every backend at once.
+
+    A closed table holds only what ``open()`` does not rebuild -- its
+    resource, its definition and its configured parameters -- so the check is
+    written as the *difference* the open makes: snapshot the constructed
+    table's attributes, open it, take every attribute the open established,
+    and require ``close()`` to have given all of them up.
+
+    Written this way rather than as a list of field names because the
+    interesting failure is the field NOBODY thought about: a new backend
+    field, or a new one on the base class, arrives in ``open()`` and is caught
+    here on the day it is added.  ``_MAY_SURVIVE_CLOSE`` is the only escape,
+    and it costs a written reason.
+
+    This is what makes the base class's own chromosome state -- the
+    ``get_file_chromosomes`` memo, ``chrom_order`` and the maps
+    ``_build_chrom_mapping`` builds -- everyone's problem rather than nobody's:
+    it is established by ``open()`` on all four backends, so all four fail
+    here if it survives a close.
+    """
+    score, _region = build(tmp_path)  # type: ignore[operator]
+    table = score.table
+    before = dict(vars(table))
+
+    table.open()
+    established = {
+        name: value for name, value in vars(table).items()
+        if name not in before or before[name] is not value
+    }
+    # guard against a vacuous pass: the base class's chromosome state is
+    # established by every backend's open(), so it must be under test here
+    assert {"chrom_order", "_file_chromosomes"} <= set(established), (
+        f"{type(table).__name__}.open() no longer establishes the base "
+        f"class's chromosome state; this test would be checking less than it "
+        f"claims: {sorted(established)}")
+
+    table.close()
+
+    after = vars(table)
+    retained = sorted(
+        name for name in established
+        if name not in _MAY_SURVIVE_CLOSE
+        and not _is_released(after[name], before.get(name))
+    )
+    assert not retained, (
+        f"{type(table).__name__}.close() left {retained} holding what "
+        f"open() read from the file. A closed table keeps only its resource, "
+        f"its definition and its configured parameters -- release these in "
+        f"close(), or add them to _MAY_SURVIVE_CLOSE with the reason they "
+        f"are exempt (gain#350)."
+    )
+
+
+def _read_region(
+    score: GenomicScore, region: tuple[str, int, int],
+) -> tuple[list[tuple], list]:
+    """Read one region twice over: as records, and as score values.
+
+    Only the five DECODED record slots are compared, not the payload: a
+    payload is the backend's own object -- a ``pysam.TupleProxy``, a
+    ``(VariantRecord, allele index)`` pair -- and two reads of the same file
+    hand back two different such objects, which compare unequal (or, for the
+    proxies, not at all).  What the payload MEANS is instead compared through
+    ``fetch_region``, which is the read the score layer actually performs:
+    it resolves each score value out of the payload, so identical values are
+    identical payload reads.
+    """
+    chrom, pos_begin, pos_end = region
+    records = [
+        record[:PAYLOAD]
+        for record in score.table.get_records_in_region(
+            chrom, pos_begin, pos_end)
+    ]
+    values = list(score.fetch_region(chrom, pos_begin, pos_end, None))
+    return records, values
+
+
+@pytest.mark.parametrize("build,_score_line", _BACKENDS)
+def test_a_reopened_table_answers_exactly_as_before_it_was_closed(
+    build: object,
+    _score_line: object,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Releasing state on close() must cost a reopened table nothing.
+
+    The other half of the release policy, and the half that makes it safe: a
+    closed table is a table that has given up everything it read, so the only
+    thing standing between it and being *wrong* on reopen is that ``open()``
+    rebuilds all of it.  Asked as open -> read -> close -> open -> read on
+    every backend, comparing the two reads, because the failure this guards
+    against is silent -- a field released but not rebuilt does not raise, it
+    answers with less (an empty contig list yields no records at all, a
+    half-rebuilt chromosome map drops the records of the contigs it lost).
+    """
+    score, region = build(tmp_path)  # type: ignore[operator]
+    score.open()
+    before = _read_region(score, region)
+    assert before[0], "the fixture region yields no records: nothing compared"
+    score.close()
+
+    score.open()
+    after = _read_region(score, region)
+    score.close()
+
+    assert after == before, (
+        f"{type(score.table).__name__} answered differently after a close/"
+        f"reopen cycle: {after} != {before}. open() must rebuild everything "
+        f"close() releases (gain#350).")
+
+
+def _an_inmemory_score(
+    tmp_path: pathlib.Path, n_records: int,
+) -> PositionScore:
+    """Build an in-memory position score over ``n_records`` rows."""
+    rows = "\n".join(
+        f"1  {pos}  0.5" for pos in range(1, 10 * n_records + 1, 10))
+    builder = (
+        a_position_score()
+        .with_score("s_float", "float")
+        .with_data(f"chrom  pos_begin  s_float\n{rows}")
+    )
+    repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
+    return PositionScore(repo.get_resource("pos"))
+
+
+@pytest.mark.parametrize("n_records", [10, 2000])
+def test_a_closed_inmemory_table_retains_no_records(
+    n_records: int,
+    tmp_path: pathlib.Path,
+) -> None:
+    """What a closed in-memory table costs must not scale with its file.
+
+    The in-memory backend loads the WHOLE file into ``records_by_chr``, so
+    until it releases them a closed table costs one live record tuple per row
+    of the file -- and that is not merely untidy, because closed scores are
+    deliberately kept alive: ``_INMEMORY_CNV_CACHE`` holds ``CnvCollection``
+    scores process-wide while an annotation pipeline's teardown closes them,
+    so a cached-and-closed collection pinned every record of its file for the
+    life of the process.
+
+    Parametrised over two file sizes two orders of magnitude apart, and
+    asserting the same number for both, because the claim is about the
+    *shape* of the retention (constant, not proportional) rather than about
+    any one file.  ``open()`` rebuilds ``records_by_chr`` from the raw file
+    regardless, so the retained copy was never read.
+    """
+    score = _an_inmemory_score(tmp_path, n_records)
+    with score.open():
+        assert len(list(score.table.get_all_records())) == n_records
+    table = score.table
+
+    retained = sum(len(recs) for recs in table.records_by_chr.values())
+    assert retained == 0, (
+        f"a closed in-memory table still holds {retained} of its "
+        f"{n_records} records; open() rebuilds them from the file, so the "
+        f"retention buys nothing and a cached closed score pins the whole "
+        f"file (gain#350)")
+
+
+def _a_bigwig_score(
+    tmp_path: pathlib.Path, n_contigs: int,
+) -> PositionScore:
+    """Build a bigWig position score over ``n_contigs`` contigs."""
+    contigs = [f"chr{i}" for i in range(1, n_contigs + 1)]
+    builder = (
+        a_bigwig_score()
+        .with_score("score", "float")
+        .with_data("\n".join(f"{chrom}  0  10  0.5" for chrom in contigs))
+        .with_chrom_lens(dict.fromkeys(contigs, 1000))
+    )
+    repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
+    return PositionScore(repo.get_resource("bw"))
+
+
+@pytest.mark.parametrize("n_contigs", [1, 200])
+def test_a_closed_bigwig_table_retains_no_contigs(
+    n_contigs: int,
+    tmp_path: pathlib.Path,
+) -> None:
+    """What a closed bigWig table costs must not scale with its file either.
+
+    ``BigWigTable.chroms`` is the file's whole contig dictionary -- one entry
+    per contig, which on a real hg38 track is ~600 of them, and on an
+    assembly with unplaced scaffolds a good deal more.  ``open()`` reads it
+    back off the handle unconditionally, so a closed table that keeps it is
+    holding a copy nothing will ever read.
+
+    Parametrised over two contig counts for the same reason as the in-memory
+    test above: the claim is that the retention is constant rather than
+    proportional to the file, which one file size cannot state.
+    """
+    score = _a_bigwig_score(tmp_path, n_contigs)
+    with score.open():
+        assert len(score.table.get_chromosomes()) == n_contigs
+    table = score.table
+
+    assert len(table.chroms) == 0, (
+        f"a closed bigWig table still holds {len(table.chroms)} contigs; "
+        f"open() reads the contig dict off the handle every time, and every "
+        f"reader of it is already behind an `assert self._bw_file is not "
+        f"None` (gain#350)")
 
 
 def test_a_bigwig_fetch_in_flight_when_close_lands_raises(

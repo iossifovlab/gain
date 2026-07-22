@@ -203,5 +203,14 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
         ) + 1
 
     def close(self) -> None:
+        super().close()
         if self.str_stream is not None:
             self.str_stream.close()
+        self.str_stream = None
+        # The whole file, held as records.  open() re-reads the raw file and
+        # rebuilds this from scratch, so nothing ever read the retained copy --
+        # and a closed table that keeps it costs one record per row of the file
+        # for as long as anything holds it (gain#350).
+        self.records_by_chr = {}
+        # Scanned off the rows by open(), and re-scanned by the next one.
+        self._scanned_chromosomes = []

@@ -192,10 +192,16 @@ class BigWigTable(GenomicPositionTable):
         return self
 
     def close(self) -> None:
+        super().close()
         if self._bw_file is not None:
             self._bw_file.close()
         self._bw_file = None
         self.parser = None
+        # The file's whole contig dictionary -- ~600 entries on hg38.  open()
+        # reads it back off the handle unconditionally, and every reader of it
+        # is already behind an `assert self._bw_file is not None`, so a closed
+        # table holds a copy nothing can reach (gain#350).
+        self.chroms = {}
         # Release the fetched intervals too.  open() re-establishes this
         # anyway, so what the clearing here buys is memory, not correctness: a
         # closed table that still holds its last chunk keeps up to a full fetch
