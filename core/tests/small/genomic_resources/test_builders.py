@@ -1939,3 +1939,55 @@ def test_build_definition_writes_a_usable_grr_yaml(
     assert (tmp_path / "grr" / "scores" / "pos" / "genomic_resource.yaml"
             ).is_file()
     assert not (tmp_path / "grr" / "grr.yaml").exists()
+
+
+def test_with_position_aggregator_emits_the_field(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        a_position_score()
+        .with_score("phastCons", "float")
+        .with_position_aggregator("join(, )")
+        .with_score_line(chrom="1", pos_begin="10", phastCons="0.1")
+        .build_resource(tmp_path)
+    )
+
+    config = yaml.safe_load(resource.get_file_content("genomic_resource.yaml"))
+
+    assert config["scores"][0]["position_aggregator"] == "join(, )"
+
+
+def test_with_allele_aggregator_targets_a_named_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        an_allele_score()
+        .with_score("freq", "float")
+        .with_score("qual", "float")
+        .with_allele_aggregator("count", score_id="freq")
+        .with_score_line(
+            chrom="1", pos_begin="10", reference="A", alternative="G",
+            freq="0.1", qual="10")
+        .build_resource(tmp_path)
+    )
+
+    config = yaml.safe_load(resource.get_file_content("genomic_resource.yaml"))
+
+    by_id = {score["id"]: score for score in config["scores"]}
+    assert by_id["freq"]["allele_aggregator"] == "count"
+    assert "allele_aggregator" not in by_id["qual"]
+
+
+def test_with_position_aggregator_before_any_score_raises() -> None:
+    with pytest.raises(
+            ResourceValidationError, match="call with_score first"):
+        a_position_score().with_position_aggregator("count")
+
+
+def test_with_allele_aggregator_unknown_score_raises() -> None:
+    with pytest.raises(ResourceValidationError, match="no score 'nope'"):
+        (
+            an_allele_score()
+            .with_score("freq", "float")
+            .with_allele_aggregator("count", score_id="nope")
+        )
