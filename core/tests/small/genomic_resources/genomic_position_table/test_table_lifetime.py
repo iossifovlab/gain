@@ -39,6 +39,9 @@ import pathlib
 import weakref
 
 import pytest
+from gain.genomic_resources.genomic_scores import PositionScore
+from gain.genomic_resources.testing import setup_bigwig
+from gain.genomic_resources.testing.builders import a_bigwig_score, a_grr
 
 from .test_backend_record_contract import _BACKENDS
 
@@ -125,11 +128,28 @@ def test_no_table_method_is_memoised_at_class_level() -> None:
     call site a test never reaches -- ``functools`` marks every memoised
     wrapper with a ``cache_info`` attribute, so the ban is checkable directly.
 
+    ``staticmethod``/``classmethod`` are unwrapped before the check because
+    the descriptor hides the wrapper's attributes: neither keys on ``self``
+    and so neither reproduces gain#345 on its own, but
+    ``@staticmethod @lru_cache def f(table)`` takes a table as its argument
+    and pins it exactly as the original did.
+
     Per-instance memoisation is unaffected and is the intended replacement:
     ``cached_property`` stores into the instance ``__dict__`` and a plain
     attribute set in ``open()`` is not a wrapper at all, so neither is caught
     here.
     """
+    # __subclasses__ only sees classes whose module has been imported, so the
+    # backends are imported by name rather than left to whatever an earlier
+    # import happened to pull in.  Without this the ban silently becomes
+    # vacuous for exactly the case it exists to catch: a new backend in a
+    # module no test in this file touches.
+    from gain.genomic_resources.genomic_position_table import (  # noqa: F401
+        table_bigwig,
+        table_inmemory,
+        table_tabix,
+        table_vcf,
+    )
     from gain.genomic_resources.genomic_position_table.table import (
         GenomicPositionTable,
     )
@@ -137,7 +157,8 @@ def test_no_table_method_is_memoised_at_class_level() -> None:
     offenders = []
     for klass in [GenomicPositionTable, *_all_subclasses(GenomicPositionTable)]:
         for name, attr in vars(klass).items():
-            if hasattr(attr, "cache_info"):
+            target = getattr(attr, "__func__", attr)
+            if hasattr(target, "cache_info"):
                 offenders.append(f"{klass.__name__}.{name}")
 
     assert not offenders, (
@@ -152,3 +173,62 @@ def test_no_table_method_is_memoised_at_class_level() -> None:
 def _all_subclasses(klass: type) -> list[type]:
     subs = list(klass.__subclasses__())
     return subs + [s for sub in subs for s in _all_subclasses(sub)]
+
+
+def test_a_reopened_bigwig_table_does_not_answer_from_the_old_buffer(
+    tmp_path: pathlib.Path,
+) -> None:
+    """open() must not serve the previous open's buffered values.
+
+    ``BigWigTable`` buffers fetched intervals and keys that buffer by
+    **region**, not by file or by open handle -- and a buffer hit never falls
+    through to the file.  So a table reopened over changed data answered any
+    query landing inside the retained span from the old data, silently and
+    with no error to attach a report to.
+
+    Driven against the **table**, and reopening WITHOUT an intervening
+    ``close()``, which is what makes this a test of ``open()``.  Routed through
+    ``GenomicScore`` instead it would prove nothing about ``open()`` at all:
+    ``score.open()`` early-returns on an already-open score, so the only way to
+    reach a second open is via the ``with`` block's ``close()`` -- and
+    ``close()`` discards the buffer too, for memory. That variant passes with
+    the ``open()`` discard removed, which is exactly why it is not the test
+    written here.
+    """
+    chrom_lens = {"chr1": 1000}
+    builder = (
+        a_bigwig_score()
+        .with_score("score", "float")
+        .with_data("chr1  0  100  0.11")
+        .with_chrom_lens(chrom_lens)
+    )
+    repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
+    table = PositionScore(repo.get_resource("bw")).table
+
+    def values_at(begin: int, end: int) -> list[float]:
+        return [
+            rec[5][3]
+            for rec in table.get_records_in_region("chr1", begin, end)
+        ]
+
+    table.open()
+    # The FIRST fetch takes _fetch_direct, which never touches _buffer:
+    # get_records_in_region routes on `pos_begin - _last_pos`, and _last_pos
+    # starts below -use_buffered_threshold precisely to force that.  So warming
+    # the buffer -- what this test is about -- takes a second, nearby query.
+    assert values_at(5, 10) == [pytest.approx(0.11)]
+    assert values_at(20, 30) == [pytest.approx(0.11)]
+    assert table._buffer, "buffer not warm: the test would prove nothing"
+
+    # same table object, different data underneath, and NO close()
+    setup_bigwig(next(tmp_path.rglob("*.bw")), "chr1  0  100  0.99",
+                 chrom_lens)
+
+    table.open()
+    after = values_at(20, 30)
+    table.close()
+
+    assert after == [pytest.approx(0.99)], (
+        f"reopened table served {after} -- the previous open's buffered "
+        f"intervals, not the current file (gain#345)."
+    )

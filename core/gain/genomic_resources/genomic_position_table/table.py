@@ -273,27 +273,28 @@ class GenomicPositionTable(abc.ABC):
         Returned value is guarnteed to be larget than the actual contig length.
         """
 
+    # Memoised PER INSTANCE, and deliberately not with functools.cache: that
+    # decorator keeps its memo on the class-level function object and keys it
+    # by the call arguments, self included, so it is a strong reference to
+    # every table it is ever called on -- held for the life of the process,
+    # with no eviction.  _build_chrom_mapping calls this from every backend's
+    # open(), so it pinned EVERY table that was ever opened, and a whole-genome
+    # `grr_manage resource-repair` opens one per region task (gain#345).
+    #
+    # It also bought nothing there: each task builds a fresh table, so a
+    # class-level memo keyed by self never saw a hit.  What a memo is actually
+    # for here is the repeated calls WITHIN one table's life -- get_chromosomes
+    # and get_chromosome_length both call this -- and an instance attribute
+    # serves those and dies with the instance.
+    #
+    # Pinned by test_table_lifetime.py, which asserts both that a closed and
+    # dropped table is collected and that no table method carries a
+    # class-level memo at all.
     def get_file_chromosomes(self) -> list[str]:
-        """Return chromosomes in a genomic table file.
+        """Return the chromosomes in the table file, in the file's own order.
 
-        Memoised **per instance**, in ``_file_chromosomes``, and deliberately
-        not with ``functools.cache``: that decorator keeps its memo on the
-        class-level function object and keys it by the call arguments, ``self``
-        included, so it is a strong reference to every table it is ever called
-        on -- held for the life of the process, with no eviction.  Since
-        :meth:`_build_chrom_mapping` calls this from every backend's ``open()``,
-        that pinned *every* table that was ever opened, and a whole-genome
-        ``grr_manage resource-repair`` opens one per region task (gain#345).
-
-        It also bought nothing there: each task builds a fresh table, so a
-        class-level memo keyed by ``self`` never saw a hit.  What the memo is
-        actually for is the repeated calls *within* one table's life --
-        ``get_chromosomes`` and ``get_chromosome_length`` both call this -- and
-        an instance attribute serves those and dies with the instance.
-
-        Pinned by test_table_lifetime.py, which asserts both that a closed and
-        dropped table is collected and that no table method carries a
-        class-level memo at all.
+        The result is cached for the lifetime of the open table; reopening
+        re-reads it.
         """
         if self._file_chromosomes is None:
             self._file_chromosomes = self._load_file_chromosomes()

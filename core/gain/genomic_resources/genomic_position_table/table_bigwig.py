@@ -181,6 +181,14 @@ class BigWigTable(GenomicPositionTable):
         self._set_core_column_keys()
         self._build_chrom_mapping()
         self.parser = build_bigwig_parser()
+        # A reopened table must not answer out of the previous open's buffer.
+        # The buffer is keyed by region, not by file, so a table closed and
+        # reopened over CHANGED data served the old file's values for any query
+        # landing in the retained span -- silently, since a buffer hit never
+        # falls through to the file.  This is the invariant's home: close()
+        # clears the buffer as well, but only to release the memory, and a
+        # caller is not required to have called it.
+        self._discard_buffer()
         return self
 
     def close(self) -> None:
@@ -188,11 +196,15 @@ class BigWigTable(GenomicPositionTable):
             self._bw_file.close()
         self._bw_file = None
         self.parser = None
-        # Release the fetched intervals too.  Not required for correctness --
-        # nothing reads the buffer without an open handle -- but a closed table
-        # that still holds its last chunk keeps up to a full fetch window of
-        # intervals alive for as long as anything holds the table, which is
-        # what made gain#345 expensive rather than merely untidy.
+        # Release the fetched intervals too.  open() re-establishes this
+        # anyway, so what the clearing here buys is memory, not correctness: a
+        # closed table that still holds its last chunk keeps up to a full fetch
+        # window of intervals alive for as long as anything holds the table,
+        # which is what made gain#345 expensive rather than merely untidy.
+        self._discard_buffer()
+
+    def _discard_buffer(self) -> None:
+        """Drop the buffered intervals and the region they cover."""
         self._buffer = []
         self._buffer_region = Region("?", -1, -1)
 
@@ -329,6 +341,14 @@ class BigWigTable(GenomicPositionTable):
             idx = 0
 
         while self._buffer:
+            # A generator that outlives close() must not look like a complete,
+            # shorter result set.  The loop guard is the buffer, and close()
+            # empties it, so without this the consumer of a fetch straddling a
+            # close gets a silently truncated scan instead of an error; a fetch
+            # *started* after close already raises on the parser assert in
+            # get_records_in_region.
+            assert self._bw_file is not None, \
+                "bigWig table closed while a region fetch was in flight"
             line = self._buffer[idx]
             if line[0] + 1 > pos_end:
                 return
