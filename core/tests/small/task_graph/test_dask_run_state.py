@@ -118,3 +118,31 @@ def test_only_tasks_the_cluster_still_owes_a_result_are_unfinished() -> None:
     state.task_finished(future)
     assert state.unfinished_count() == 0, "computed; only its result is left"
     assert state.has_outstanding()
+
+
+def test_shutdown_discards_tasks_that_never_reached_the_cluster() -> None:
+    """The mirror of the gather side, and deliberately not the same answer.
+
+    A task still on the submit queue has cost the run nothing, so shutdown
+    drops it; a future that already finished holds work the run has paid
+    for, so shutdown still hands it over (see
+    ``test_the_results_worker_gathers_what_completed_before_shutdown``).
+
+    What neither side may do is leave the queue in limbo -- neither
+    delivered nor discarded. ``claim_for_submit`` used to return ``None``
+    and leave the tasks sitting in ``_queued``, where nothing would ever
+    take them and ``has_outstanding()`` would keep answering "yes" about
+    them for as long as the state object lived.
+
+    This is not hypothetical: a consumer that abandons the result iterator
+    shuts the run down with the queue still full.
+    """
+    state = RunState()
+    state.enqueue([a_task_desc("A"), a_task_desc("B")])
+
+    state.shutdown()
+
+    assert state.claim_for_submit() is None
+    assert not state.has_outstanding(), (
+        "tasks discarded at shutdown are still counted as outstanding"
+    )

@@ -120,6 +120,8 @@ class RunState:
         if not tasks:
             return
         with self._condition:
+            assert not self._shutdown, \
+                "cannot enqueue tasks after the run has been shut down"
             self._queued.extend(tasks)
             self._condition.notify_all()
 
@@ -160,9 +162,28 @@ class RunState:
             return gathered
 
     def shutdown(self) -> None:
-        """Tell both workers the run is over."""
+        """Tell both workers the run is over, and drop unstarted work.
+
+        A run can be shut down with the queue still full -- a consumer that
+        stops iterating results abandons the run loop's generator part way.
+        Those tasks never reached the cluster and nobody will collect them,
+        so they are discarded here, under the same lock that sets the flag.
+        Discarding them is what keeps :meth:`has_outstanding` truthful: a
+        task left on the queue that no worker will ever claim would be
+        counted as outstanding for as long as this object lived.
+
+        Deliberately not what the gather side does -- see
+        :meth:`claim_for_gather`. A completed future holds work the run has
+        already paid for, so it is still handed over; a queued task has
+        cost nothing yet.
+        """
         with self._condition:
             self._shutdown = True
+            if self._queued:
+                logger.warning(
+                    "run shutting down with %s task(s) never submitted; "
+                    "discarding them...", len(self._queued))
+                self._queued.clear()
             self._condition.notify_all()
 
     # -- submit worker ----------------------------------------------------
@@ -178,10 +199,12 @@ class RunState:
                 self._condition.wait(WAIT_TIMEOUT)
 
             if self._shutdown:
-                if self._queued:
-                    logger.warning(
-                        "submit worker shutting down with %s task(s) still "
-                        "queued; skipping them...", len(self._queued))
+                # Nothing can be queued here: :meth:`shutdown` empties the
+                # queue under this lock and :meth:`enqueue` refuses to add
+                # to it afterwards. Silently walking away from a non-empty
+                # queue is what this asserts against -- those tasks would
+                # stay outstanding forever.
+                assert not self._queued
                 return None
 
             batch = SubmitBatch(next(self._batch_ids), tuple(self._queued))

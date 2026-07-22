@@ -19,6 +19,11 @@ from gain.task_graph.logging import (
 NO_TASK_CACHE = NoTaskCache()
 logger = logging.getLogger(__name__)
 
+# Named so a leaked run is identifiable in a thread dump -- and so a test
+# can assert that a run really did tear its workers down.
+SUBMIT_WORKER_THREAD_NAME = "gain-dask-submit-worker"
+RESULTS_WORKER_THREAD_NAME = "gain-dask-results-worker"
+
 
 class DaskExecutor(TaskGraphExecutorBase):
     """Dask-based task graph executor."""
@@ -98,7 +103,14 @@ class DaskExecutor(TaskGraphExecutorBase):
             # the submit worker. The batch is in the in-flight gather state
             # for the whole round trip, so a run whose gather outlasts the
             # loop's wait cannot be called finished under it (gain#367).
-            results = self._dask_client.gather(batch.futures, errors="skip")
+            # A *list*, deliberately: ``errors="skip"`` only drops failed
+            # futures when the container it is handed is a list. Given a
+            # tuple, ``distributed`` packs the failures back in as ``None``
+            # and returns the same length -- the check below would always
+            # match and a crashed task would be delivered as a successful
+            # ``None`` result, with nothing raised anywhere.
+            results = self._dask_client.gather(
+                list(batch.futures), errors="skip")
 
             if len(results) == len(batch.tasks):
                 gathered = list(zip(batch.tasks, results, strict=True))
@@ -134,48 +146,65 @@ class DaskExecutor(TaskGraphExecutorBase):
         state = RunState()
 
         submit_worker = threading.Thread(
-            target=self._submit_worker_func, args=(state,), daemon=True)
+            target=self._submit_worker_func, args=(state,),
+            name=SUBMIT_WORKER_THREAD_NAME, daemon=True)
         submit_worker.start()
 
         results_worker = threading.Thread(
-            target=self._results_worker_func, args=(state,), daemon=True)
+            target=self._results_worker_func, args=(state,),
+            name=RESULTS_WORKER_THREAD_NAME, daemon=True)
         results_worker.start()
 
         finished_tasks = 0
         initial_task_count = len(graph)
 
-        # The run is over when the graph has nothing left to hand out and
-        # the state has nothing outstanding. One query, one lock, one
-        # owner: a task is outstanding from the moment it leaves the graph
-        # until the moment its result is taken below, with no gap for it to
-        # be invisible in -- so there is nothing for a re-read to catch up
-        # with. Only this thread takes tasks out of the graph or puts
-        # results back, so the two reads cannot race each other.
-        while not graph.empty() or state.has_outstanding():
-            unfinished = state.unfinished_count()
-            if unfinished < self.MAX_RUNNING_TASKS:
-                limit = max(self.MAX_RUNNING_TASKS - unfinished, 1)
-                state.enqueue(
-                    graph.extract_tasks(graph.ready_tasks(limit=limit)))
+        # The teardown belongs in a finally: this is a generator, and a
+        # consumer that stops early -- `task_graph_run_with_results` raises
+        # out of its `for` loop on the first error unless --keep-going --
+        # throws GeneratorExit in at the yield below. Without the finally
+        # that skips the shutdown, both joins and the flag, leaking two
+        # threads and leaving the executor permanently "executing".
+        try:
+            # The run is over when the graph has nothing left to hand out
+            # and the state has nothing outstanding. One query, one lock,
+            # one owner: a task is outstanding from the moment it leaves
+            # the graph until the moment its result is taken below, with no
+            # gap for it to be invisible in -- so there is nothing for a
+            # re-read to catch up with. Only this thread takes tasks out of
+            # the graph or puts results back, so the two reads cannot race
+            # each other.
+            while not graph.empty() or state.has_outstanding():
+                unfinished = state.unfinished_count()
+                if unfinished < self.MAX_RUNNING_TASKS:
+                    limit = max(self.MAX_RUNNING_TASKS - unfinished, 1)
+                    # Two steps, and the tasks are in neither the graph nor
+                    # the state in between. Safe only because this thread
+                    # is the sole evaluator of the loop condition above:
+                    # nothing can observe the gap. Top the queue up from a
+                    # second thread, or evaluate termination anywhere else,
+                    # and this reopens gain#365 right here -- enqueue and
+                    # extract would then have to happen under one lock.
+                    state.enqueue(
+                        graph.extract_tasks(graph.ready_tasks(limit=limit)))
 
-            # Block until a result is ready. The timeout only bounds how
-            # long we go without re-checking the graph for newly ready
-            # tasks; unlike the wait() poll it replaced, waking up costs
-            # nothing per pending future (gain#355).
-            state.wait_for_results()
+                # Block until a result is ready. The timeout only bounds
+                # how long we go without re-checking the graph for newly
+                # ready tasks; unlike the wait() poll it replaced, waking
+                # up costs nothing per pending future (gain#355).
+                state.wait_for_results()
 
-            for task, result in state.take_results():
-                graph.process_completed_tasks([(task, result)])
-                finished_tasks += 1
-                logger.info(
-                    "finished %s/%s", finished_tasks, initial_task_count)
-                yield task, result
+                for task, result in state.take_results():
+                    graph.process_completed_tasks([(task, result)])
+                    finished_tasks += 1
+                    logger.info(
+                        "finished %s/%s", finished_tasks, initial_task_count)
+                    yield task, result
+        finally:
+            state.shutdown()
 
-        state.shutdown()
-
-        results_worker.join()
-        submit_worker.join()
-        self._executing = False
+            results_worker.join()
+            submit_worker.join()
+            self._executing = False
 
     def close(self) -> None:
         """Close the Dask executor."""
