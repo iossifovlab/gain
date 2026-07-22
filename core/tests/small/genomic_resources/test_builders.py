@@ -2054,14 +2054,16 @@ def test_header_mode_none_plain_matches_tabix_readback(
     assert "chrom" not in (tmp_path / "p" / "data.txt").read_text()
 
 
-def test_header_mode_none_np_score_addresses_ref_alt_by_index(
+def test_header_mode_none_allele_score_addresses_ref_alt_by_index(
     tmp_path: pathlib.Path,
 ) -> None:
     # np/allele locate reference/alternative by NAME by default; with no
     # header there is no name to locate, so the mapping is rendered by index
-    # -- from the same authored header.
+    # -- from the same authored header.  Built and read back as an
+    # `allele_score`: reading an `a_np_score()` resource back through
+    # `AlleleScore` works, but only through a deprecation warning.
     resource = (
-        a_np_score()
+        an_allele_score()
         .with_score("freq", "float", column_index=4)
         .with_header_mode("none")
         .with_data("""
