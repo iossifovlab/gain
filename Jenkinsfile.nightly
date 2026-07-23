@@ -83,6 +83,23 @@ pipeline {
             }
         }
 
+        stage('Run gain-spliceai-integration') {
+            // Unconditional nightly re-run: this is what catches drift in the
+            // real hg38/GENCODE resources against the frozen #320 baseline (the
+            // whole point of the #321 real tier), even when spliceai_annotator/
+            // hasn't changed on master.
+            steps {
+                catchError(buildResult: 'FAILURE',
+                           stageResult: 'FAILURE') {
+                    build(
+                        job: '/gain-spliceai-integration',
+                        wait: true,
+                        propagate: true,
+                    )
+                }
+            }
+        }
+
         stage('Run gain-python-matrix') {
             steps {
                 catchError(buildResult: 'FAILURE',

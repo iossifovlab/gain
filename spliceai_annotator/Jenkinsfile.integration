@@ -1,26 +1,37 @@
 // Dedicated Jenkins pipeline for the gain-spliceai-annotator integration
 // suite: the slow differential harness (`-m integration`) that the fast
-// per-PR spliceai_annotator step skips. It pins all 16 spliceai_annotator
-// attributes of today's TensorFlow output against a frozen hg38/GENCODE
-// fixture corpus (issue gain#320), so it needs no external GRR — the fixture
-// and baseline are committed and TensorFlow ships in the CI image.
+// per-PR spliceai_annotator step skips. Two tiers run here, both under
+// TensorFlow (shipped in the CI image):
+//
+//   - #320 fixture tier: pins all 16 attributes against a frozen hg38/GENCODE
+//     fixture corpus committed to the tree (needs no external GRR).
+//   - #321 real tier: replays the corpus (de-rebased to real coordinates) plus
+//     extra loci against the node-local *real* GRR (real hg38 + GENCODE),
+//     catching drift the frozen fixture cannot see. It reads the grr-sync
+//     materialized tree mounted read-only at /grr.
 //
 // Expected Jenkins job setup:
 //   - Script path: spliceai_annotator/Jenkinsfile.integration
 //   - Job DSL: spliceai_annotator/jenkins-jobs/integration.groovy
 //     (pipelineJob 'gain-spliceai-integration'), seeded by gain-seed.
-//   - Triggered downstream from iossifovlab/gain/<branch> on every branch
-//     (see the 'Trigger spliceai integration' stage in the root Jenkinsfile),
+//   - Triggered downstream from iossifovlab/gain/master when
+//     spliceai_annotator/** changes (see the 'Trigger spliceai integration'
+//     stage in the root Jenkinsfile), re-run nightly from Jenkinsfile.nightly,
 //     and safe to run manually.
+//   - Agent env GRR_ROOT must point at the grr-sync LVM root (seqpipe/infra#71
+//     provisioned this on the piglet agent); this pipeline mounts
+//     ${GRR_ROOT}/grr:/grr:ro.
 
 pipeline {
-    // Pinned to `pooh` to match the other integration jobs (docker daemon +
-    // enough cores for `pytest -n 5` on the TensorFlow corpus). No persistent
-    // cache is needed — the corpus + baseline are committed to the tree.
-    agent { label 'pooh' }
+    // Pinned to `piglet`: it carries the node-local grr-sync tree (GRR_ROOT)
+    // that the #321 real tier reads, and has the compute to run real SpliceAI
+    // TensorFlow inference over the corpus. The #320 fixture tier runs here
+    // too. No persistent cache is needed — the fixture + baselines are
+    // committed and the real resources come from the mounted /grr.
+    agent { label 'piglet' }
 
     options {
-        timeout(time: 1, unit: 'HOURS')
+        timeout(time: 2, unit: 'HOURS')
         buildDiscarder(logRotator(numToKeepStr: '20'))
     }
 
@@ -104,8 +115,18 @@ pipeline {
             steps {
                 // The image WORKDIR is /workspace/spliceai_annotator, so the
                 // committed fixture + corpus under tests/ resolve directly.
+                //
+                // The node-local real GRR is bind-mounted read-only at /grr
+                // (matching tests/integration_grr_definition.yaml). `:?` fails
+                // the build loudly if the agent has no GRR_ROOT provisioned
+                // instead of running a falsely-green fixture-only suite.
+                // SPLICEAI_INTEGRATION_REQUIRE_GRR turns a missing /grr into a
+                // hard error inside the real tier too (it would pytest.skip on
+                // a dev box, but must never skip on the agent).
                 sh '''
                     docker run --rm \
+                        -e SPLICEAI_INTEGRATION_REQUIRE_GRR=1 \
+                        -v "${GRR_ROOT:?GRR_ROOT must point at the grr-sync LVM root}/grr:/grr:ro" \
                         -v "$PWD/reports/integration:/reports" \
                         ${IMAGE_TAG} \
                         sh -c '

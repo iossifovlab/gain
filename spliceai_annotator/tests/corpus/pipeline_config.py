@@ -49,13 +49,23 @@ DELTA_DS_TOL = 2e-2
 DS_MAX_GATE = 0.01
 
 
-def make_pipeline_yaml(distance: int) -> str:
-    """Return the annotation-pipeline YAML pinning all 16 attributes."""
+def make_pipeline_yaml(
+    distance: int,
+    genome: str = GENOME_RESOURCE,
+    gene_models: str = GENE_MODELS_RESOURCE,
+) -> str:
+    """Return the annotation-pipeline YAML pinning all 16 attributes.
+
+    ``genome``/``gene_models`` default to the committed fixture GRR resource
+    ids; the node-local-real-GRR tier (#321) passes the real ids
+    (``hg38/genomes/GRCh38.p14`` / ``hg38/gene_models/GENCODE/49/comprehensive/
+    CHR``) so the same pipeline shape runs against either GRR.
+    """
     attrs = "\n".join(f"        - source: {a}" for a in ATTRIBUTES)
     return textwrap.dedent(f"""
     - spliceai_annotator:
-        genome: {GENOME_RESOURCE}
-        gene_models: {GENE_MODELS_RESOURCE}
+        genome: {genome}
+        gene_models: {gene_models}
         distance: {distance}
         attributes:
 """) + attrs + "\n"
