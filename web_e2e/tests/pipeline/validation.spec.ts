@@ -36,10 +36,16 @@ test.describe('Pipeline validation tests', () => {
     await editor.newPipeline();
     await utils.typeInPipelineEditor(page, '- allele_score');
 
+    // The default work_dir is minted lazily via tempfile.mkdtemp (see gain#331),
+    // so its value is an absolute path with a random suffix that changes every
+    // run. Assert the stable head and tail around it rather than pinning the
+    // volatile work_dir path.
     await expect(editor.errorMessage).toContainText(
       'Invalid configuration, reason: The A0 annotator configuration is incorrect:  ' +
       'The AnnotatorInfo(annotator_id=\'A0\', type=\'allele_score\', attributes=[], ' +
-      'parameters={\'work_dir\': \'work/A0_allele_score\'}, documentation=\'\', resources=[]) ' +
+      'parameters={\'work_dir\': \'');
+    await expect(editor.errorMessage).toContainText(
+      'A0_allele_score\'}, documentation=\'\', resources=[]) ' +
       'has not \'resource_id\' parameters');
   });
 
