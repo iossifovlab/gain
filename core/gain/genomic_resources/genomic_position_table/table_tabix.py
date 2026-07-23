@@ -134,19 +134,47 @@ class TabixGenomicPositionTable(GenomicPositionTable):
             self.rev_chrom_map,
             zero_based=self.zero_based,
         )
+        # A reopened table must not answer out of the previous open's buffer.
+        # The buffer is keyed by region -- through ``_last_call``, the read
+        # cascade's own cursor -- not by file or handle, so a table reopened
+        # over CHANGED data served the old file's lines for any query landing in
+        # the retained span, silently, since a buffer hit never falls through to
+        # the file.  This is the invariant's home, exactly as in
+        # ``BigWigTable.open()``: ``close()`` clears the buffer too, but only to
+        # release memory, and a caller is not required to have called it.
+        self._discard_buffer()
         return self
 
-    def close(self) -> None:
-        super().close()
+    def _discard_buffer(self) -> None:
+        """Drop the buffered lines and the read cursor keyed to them.
+
+        The two are one cache: ``_last_call`` decides whether the next query is
+        answered from ``buffer``, so a cursor left pointing into a discarded
+        buffer is as wrong as the buffer itself.  Reset them together.
+        """
         self.buffer.clear()
+        self._last_call = "", -1, -1
+
+    def close(self) -> None:
+        # Release the handle BEFORE the base class's chromosome state, not
+        # after.  super().close() drops chrom_map/chrom_order/_file_chromosomes,
+        # and get_chromosomes() falls back to the file's own contig names once
+        # the map is gone (gain#358) -- so if the map were released first and
+        # anything here then raised, the table would be left with a LIVE handle
+        # and no map, answering its contigs wrongly.  Handle first, and nulled
+        # before super().close() runs, so the "live handle + released map" state
+        # never exists: a partial failure leaves the table "still open" rather
+        # than "open but unmapped".
         if self.pysam_file is not None:
             if self.line_iterator:
                 self.line_iterator.close()
             self.pysam_file.close()
-
-        self.stats = Counter()
         self.pysam_file = None
         self.line_iterator = None
+
+        super().close()
+        self.buffer.clear()
+        self.stats = Counter()
         # The parser closes over the column keys and the reverse chromosome
         # map, both of which open() resolves from the file; a closed table must
         # not keep them, and re-opening rebuilds it.

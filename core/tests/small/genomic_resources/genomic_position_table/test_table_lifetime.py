@@ -92,6 +92,7 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_resource,
     setup_bigwig,
     setup_directories,
+    setup_tabix,
     setup_vcf,
 )
 from gain.genomic_resources.testing.builders import (
@@ -987,3 +988,112 @@ def test_a_reopened_bigwig_table_does_not_answer_from_the_old_buffer(
         f"reopened table served {after} -- the previous open's buffered "
         f"intervals, not the current file (gain#345)."
     )
+
+
+def test_a_reopened_tabix_table_does_not_answer_from_the_old_buffer(
+    tmp_path: pathlib.Path,
+) -> None:
+    """open() must not serve the previous open's buffered lines.
+
+    The tabix twin of the bigWig test above, and the same silent failure: the
+    #346 bug, never given to this backend.  ``TabixGenomicPositionTable``
+    buffers the lines it reads and keys that buffer -- through ``_last_call``,
+    the read cascade's own cursor -- by **region**, not by open handle.  A
+    buffer hit never falls through to the file, so a table reopened over changed
+    data answered any query landing in the retained span from the OLD data,
+    with no error to attach a report to.
+
+    Driven against the **table**, reopening WITHOUT an intervening ``close()``,
+    which is what makes this a test of ``open()``.  Routed through
+    ``GenomicScore`` it would prove nothing: ``score.open()`` early-returns on
+    an already-open score, so the only second open reachable through it is the
+    ``with`` block's ``close()`` -- and ``close()`` clears the buffer too.  That
+    variant passes with the ``open()`` discard removed, which is exactly why it
+    is not the test written here.
+    """
+    builder = (
+        a_position_score()
+        .with_score("s_float", "float")
+        .with_data("""
+            chrom  pos_begin  pos_end  s_float
+            1      1          100      0.11
+        """)
+        .with_tabix()
+    )
+    repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
+    table = PositionScore(repo.get_resource("pos")).table
+
+    def values_at(begin: int, end: int) -> list[float]:
+        # the payload is the raw tabix row; s_float is its 4th column, after
+        # chrom then pos_begin then pos_end -- so payload index 3
+        return [
+            float(rec[PAYLOAD][3])
+            for rec in table.get_records_in_region("1", begin, end)
+        ]
+
+    table.open()
+    # A single buffered fetch warms both the buffer and _last_call: unlike
+    # bigWig, tabix buffers on the FIRST query (the range is under
+    # BUFFER_MAXSIZE), so no second, nearby query is needed to reach the buffer.
+    assert values_at(20, 30) == [pytest.approx(0.11)]
+    assert table.buffer, "buffer not warm: the test would prove nothing"
+
+    # same table object, different data underneath, and NO close()
+    tabix_path = next(tmp_path.rglob("data.txt.gz"))
+    setup_tabix(
+        tabix_path,
+        "#chrom  pos_begin  pos_end  s_float\n1  1  100  0.99",
+        seq_col=0, start_col=1, end_col=2, force=True)
+
+    table.open()
+    after = values_at(20, 30)
+    table.close()
+
+    assert after == [pytest.approx(0.99)], (
+        f"reopened table served {after} -- the previous open's buffered "
+        f"lines, not the current file (#346)."
+    )
+
+
+def test_a_tabix_close_that_fails_partway_leaves_it_open_not_unmapped(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A close() that raises mid-teardown must leave it open, not unmapped.
+
+    ``TabixGenomicPositionTable.close()`` does two things whose order matters:
+    it releases the base class's chromosome map (``super().close()``) and it
+    closes the pysam handle.  Release the map first and let the handle close
+    then raise, and the table is left with a LIVE handle and no map -- which is
+    exactly the state in which ``get_chromosomes()`` hands back the file's own
+    contig names instead of reference-space ones (gain#358).  Ordered
+    handle-first, a partial failure instead leaves the table "still open": the
+    map is intact and ``get_chromosomes()`` still answers in reference space.
+
+    Forced by making the line-iterator close raise -- the step that in the old
+    ordering sat between ``super().close()`` and the handle close, i.e. inside
+    the very window the reorder closes.  The fixture maps file contig ``1`` to
+    ``chr1``, so a table answering from the file (map gone) says ``['1']`` where
+    a still-mapped one says ``['chr1']``.
+    """
+    score, region = _build_mapped_tabix(tmp_path)  # type: ignore[misc]
+    table = score.table
+    table.open()
+    # read so a fetch cursor exists, then answer contigs off the populated memo
+    list(table.get_records_in_region(*region))
+    assert table.get_chromosomes() == ["chr1"]
+
+    class _RaisingCloser:
+        def close(self) -> None:
+            raise OSError("teardown boom")
+
+    table.line_iterator = _RaisingCloser()  # type: ignore[assignment]
+
+    with pytest.raises(OSError, match="teardown boom"):
+        table.close()
+
+    # still open, not open-but-unmapped: the chromosome map survived the failed
+    # teardown, so the contigs are reference-space names, not the file's own
+    assert table.get_chromosomes() == ["chr1"], (
+        "a close() that raised mid-teardown released the chromosome map while "
+        "the pysam handle was still live -- get_chromosomes() then answers "
+        "from the file's contigs (gain#358)")
