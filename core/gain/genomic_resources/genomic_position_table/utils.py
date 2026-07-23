@@ -31,6 +31,24 @@ def build_genomic_position_table(
 
     table_fmt = table_definition.get("format", default_format)
 
+    # Only the in-memory (mem/csv/tsv) and tabix backends honour zero_based;
+    # both default a missing key to False (1-based).  That default is a silent
+    # off-by-one for a 0-based/BED-derived table whose config omits the flag --
+    # every position reads one base over, with no crash.  Warn, naming the
+    # resource, when the key is absent, so the omission is no longer silent;
+    # stating the flag (either value) silences it.  The default is deliberately
+    # NOT flipped -- that would shift every currently-correct 1-based table
+    # (gain#379).  VCF/bigwig ignore zero_based entirely and are not warned.
+    if (table_fmt in ("mem", "csv", "tsv", "tabix")
+            and "zero_based" not in table_definition):
+        logger.warning(
+            "the table of resource <%s> omits 'zero_based'; assuming 1-based "
+            "(False). If this table is 0-based/BED-derived set "
+            "'zero_based: true'; otherwise set 'zero_based: false' to confirm "
+            "1-based and silence this warning",
+            resource.get_full_id(),
+        )
+
     if table_fmt in ("mem", "csv", "tsv"):
         return InmemoryGenomicPositionTable(resource, table_definition,
                                             table_fmt)

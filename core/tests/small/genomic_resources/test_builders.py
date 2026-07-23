@@ -9,6 +9,9 @@ from gain.genomic_resources.genomic_position_table.record import (
     POS_BEGIN,
     POS_END,
 )
+from gain.genomic_resources.genomic_position_table.utils import (
+    build_genomic_position_table,
+)
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     CnvCollection,
@@ -1873,6 +1876,119 @@ def test_zero_based_no_pos_end_column_end_to_end(
             (1, 1), (6, 6), (100, 100),
         ]
         assert score.table.get_chromosome_length("1") == 101
+
+
+def test_missing_zero_based_warns_inmemory(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # An in-memory (tsv) table that omits zero_based no longer resolves
+    # silently: it warns, naming the resource, that it is assuming 1-based.
+    # gain#379 -- warn-only strategy, the default stays False.
+    res = (
+        a_position_score()
+        .with_score("v", "float")
+        .with_data("""
+            chrom  pos_begin  pos_end  v
+            1      10         12       0.5
+        """)
+        .build_resource(tmp_path)
+    )
+    with caplog.at_level("WARNING"):
+        PositionScore(res)
+    assert "zero_based" in caplog.text
+    assert res.get_full_id() in caplog.text
+
+
+def test_missing_zero_based_warns_tabix(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The tabix realize path warns identically -- the two honouring backends
+    # stay consistent (gain#379).
+    res = (
+        a_position_score()
+        .with_score("v", "float")
+        .with_tabix()
+        .with_data("""
+            chrom  pos_begin  pos_end  v
+            1      10         12       0.5
+        """)
+        .build_resource(tmp_path)
+    )
+    with caplog.at_level("WARNING"):
+        PositionScore(res)
+    assert "zero_based" in caplog.text
+    assert res.get_full_id() in caplog.text
+
+
+def test_explicit_zero_based_true_silences_warning(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Stating the flag -- either value -- silences the warning; the warning
+    # fires only when the KEY is absent (gain#379).
+    res = (
+        a_position_score()
+        .with_score("v", "float")
+        .with_zero_based()
+        .with_data("""
+            chrom  pos_begin  pos_end  v
+            1      10         12       0.5
+        """)
+        .build_resource(tmp_path)
+    )
+    with caplog.at_level("WARNING"):
+        PositionScore(res)
+    assert "zero_based" not in caplog.text
+
+
+def test_explicit_zero_based_false_silences_warning(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # An explicit ``zero_based: false`` is also a stated choice and silences
+    # the warning -- the builder only emits the key for true, so this drives
+    # build_genomic_position_table directly with a false-valued definition.
+    res = (
+        a_position_score()
+        .with_score("v", "float")
+        .with_data("""
+            chrom  pos_begin  pos_end  v
+            1      10         12       0.5
+        """)
+        .build_resource(tmp_path)
+    )
+    with caplog.at_level("WARNING"):
+        build_genomic_position_table(
+            res, {"filename": "data.txt", "format": "tsv",
+                  "zero_based": False})
+    assert "zero_based" not in caplog.text
+
+
+def test_missing_zero_based_silent_for_non_honouring_backends(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # VCF and bigWig ignore zero_based entirely (gain#378), so omitting it on
+    # those backends is not a footgun and must not warn.
+    vcf = a_vcf_info_score().with_data("""
+        ##fileformat=VCFv4.1
+        ##INFO=<ID=v,Number=1,Type=Float,Description="v">
+        #CHROM POS ID REF ALT QUAL FILTER INFO
+        1 10 . A T . . v=0.5
+    """).build_resource(tmp_path / "vcf")
+    bw = (
+        a_bigwig_score()
+        .with_score("v", "float")
+        .with_data("1  10  12  0.5")
+        .with_chrom_lens({"1": 100})
+        .build_resource(tmp_path / "bw")
+    )
+    with caplog.at_level("WARNING"):
+        build_genomic_position_table(vcf, vcf.get_config()["table"])
+        build_genomic_position_table(bw, bw.get_config()["table"])
+    assert "zero_based" not in caplog.text
 
 
 def test_bigwig_score_with_histogram_emits_block(
