@@ -46,9 +46,12 @@ dev = [
     # .h5 today. `onnx` provides onnx.checker; `onnxruntime` runs the .onnx in
     # the equivalence test; `tf2onnx` is imported by Keras' model.export(
     # format="onnx"). The equivalence test skips cleanly when they are absent.
-    "onnx",
-    "onnxruntime",
-    "tf2onnx",
+    # Pinned: the committed .onnx artifacts were validated against these exact
+    # versions, so a floated onnxruntime/onnx must not silently redefine what
+    # "reproduces the .h5" means without an intentional bump here.
+    "onnx==1.22.0",
+    "onnxruntime==1.27.0",
+    "tf2onnx==1.17.0",
 ]
 
 [tool.hatch.version]
