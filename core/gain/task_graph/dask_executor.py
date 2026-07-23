@@ -1,10 +1,10 @@
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from copy import copy
 from typing import Any
 
-from dask.distributed import Client
+from dask.distributed import Client, Future
 
 from gain import logging
 from gain.task_graph.base_executor import TaskGraphExecutorBase
@@ -62,21 +62,69 @@ class DaskExecutor(TaskGraphExecutorBase):
             # No lock is held across map(). The batch does not need one: it
             # sits in the in-flight submit state for the whole width of the
             # call, so termination counts it the entire time (gain#365).
-            futures = self._dask_client.map(
-                self._exec, tasks,
-                key=task_ids,
-                pure=False,
-                params=self._params,
-            )
+            #
+            # map() can raise -- a dead scheduler connection, a
+            # serialization error -- and this worker is a daemon joined only
+            # after the run loop, so an escaping exception would kill it with
+            # the batch stranded in the in-flight submit state:
+            # has_outstanding() would answer "yes" forever and the run loop
+            # would spin at its wait timeout without end (gain#372). The
+            # failure is delivered as the result of every task in the batch
+            # instead, so the run loop yields it as an error -- exactly as it
+            # already does for a task that dies on the worker -- and then
+            # terminates.
+            try:
+                futures = self._dask_client.map(
+                    self._exec, tasks,
+                    key=task_ids,
+                    pure=False,
+                    params=self._params,
+                )
+            except BaseException as ex:
+                # Deliberately broad: in this non-main worker thread a
+                # transport fault of any type -- including a non-Exception
+                # BaseException such as a dask CancelledError -- must end the
+                # run as a delivered task error rather than silently kill the
+                # worker and strand the batch. KeyboardInterrupt/GeneratorExit
+                # cannot reach here.
+                # pylint: disable=broad-except
+                logger.exception(
+                    "submit worker failed to hand %s task(s) to the "
+                    "cluster; delivering the failure as their result",
+                    len(tasks))
+                state.submit_failed(batch, ex)
+                continue
 
-            state.submitted(batch, futures)
-
-            # Registered only once `running` already knows every future, so
-            # a callback firing immediately (a future that is already done)
-            # can never reach the run loop before its task mapping exists
-            # (gain#355).
-            for future in futures:
-                future.add_done_callback(state.task_finished)
+            # map() returned, but wiring the batch up -- moving it to running
+            # and registering completion callbacks -- can raise too, and the
+            # same stranding applies: submitted() has already emptied the
+            # in-flight submit state, so a future left in running with no
+            # callback is outstanding forever and the run loop spins without
+            # end (gain#372). Future.add_done_callback, unlike release(), does
+            # not swallow a client tearing down under it. The whole batch is
+            # delivered as a per-task error and its futures cleared from
+            # running, so the run yields the failure and terminates.
+            #
+            # Callbacks are still registered only after submitted() populates
+            # running, so a callback firing immediately can never reach the
+            # run loop before its task mapping exists (gain#355).
+            try:
+                state.submitted(batch, futures)
+                for future in futures:
+                    future.add_done_callback(state.task_finished)
+            except BaseException as ex:
+                # Deliberately broad: in this non-main worker thread a fault of
+                # any type -- including a non-Exception BaseException such as a
+                # dask CancelledError -- must end the run as a delivered task
+                # error rather than silently kill the worker and strand the
+                # batch. KeyboardInterrupt/GeneratorExit cannot reach here.
+                # pylint: disable=broad-except
+                logger.exception(
+                    "submit worker failed to wire up %s task(s) after "
+                    "handing them to the cluster; delivering the failure as "
+                    "their result", len(tasks))
+                state.submit_aborted(batch, futures, ex)
+                continue
 
             submit_count += len(tasks)
             elapsed = time.time() - start
@@ -109,25 +157,54 @@ class DaskExecutor(TaskGraphExecutorBase):
             # and returns the same length -- the check below would always
             # match and a crashed task would be delivered as a successful
             # ``None`` result, with nothing raised anywhere.
-            results = self._dask_client.gather(
-                list(batch.futures), errors="skip")
+            #
+            # gather() -- and future.result() in the fallback below -- can
+            # raise a transport error that errors="skip" does not suppress
+            # (it only skips task errors). This worker is a daemon joined
+            # only after the run loop, so an escaping exception would kill it
+            # with the batch stranded in the in-flight gather state and its
+            # futures never released: the run loop would spin without end
+            # (gain#372). The failure is delivered as the result of every
+            # task in the batch instead -- and the batch's futures released
+            # -- so the run loop yields it as an error and then terminates.
+            try:
+                results = self._dask_client.gather(
+                    list(batch.futures), errors="skip")
 
-            if len(results) == len(batch.tasks):
-                gathered = list(zip(batch.tasks, results, strict=True))
-            else:
-                logger.error(
-                    "failed to gather results for all %s tasks; "
-                    "looking for exceptions in futures...",
-                    len(batch.tasks))
-                gathered = []
-                for future, task in zip(
-                        batch.futures, batch.tasks, strict=True):
-                    try:
-                        result = future.result()
-                    except Exception as ex:  # noqa: BLE001
-                        # pylint: disable=broad-except
-                        result = ex
-                    gathered.append((task, result))
+                if len(results) == len(batch.tasks):
+                    gathered = list(zip(batch.tasks, results, strict=True))
+                else:
+                    logger.error(
+                        "failed to gather results for all %s tasks; "
+                        "looking for exceptions in futures...",
+                        len(batch.tasks))
+                    gathered = []
+                    for future, task in zip(
+                            batch.futures, batch.tasks, strict=True):
+                        try:
+                            result = future.result()
+                        except Exception as ex:  # noqa: BLE001
+                            # pylint: disable=broad-except
+                            result = ex
+                        gathered.append((task, result))
+            except BaseException as ex:
+                # Deliberately broad, as in the submit worker: this non-main
+                # thread's death would strand the batch, so a transport fault
+                # of any type -- including a non-Exception BaseException such
+                # as a dask CancelledError -- must end the run as a delivered
+                # task error. KeyboardInterrupt/GeneratorExit cannot reach here.
+                # pylint: disable=broad-except
+                logger.exception(
+                    "results worker failed to gather %s task(s); delivering "
+                    "the failure as their result", len(batch.tasks))
+                state.gather_failed(batch, ex)
+                # Release on the failure path too -- the batch has left the
+                # gather state, so nothing else will (gain#372). Guarded: this
+                # runs on the very dead-client condition that caused the
+                # failure, and a raising release() here would kill this worker
+                # and re-strand any later batch.
+                self._release_futures(batch.futures)
+                continue
 
             state.gathered(batch, gathered)
             for future in batch.futures:
@@ -135,6 +212,30 @@ class DaskExecutor(TaskGraphExecutorBase):
             processed_results += len(gathered)
 
         logger.info("results worker processed %s results", processed_results)
+
+    @staticmethod
+    def _release_futures(futures: Sequence[Future]) -> None:
+        """Release each future, surviving a ``release()`` that raises.
+
+        Used only on the gather-failure path, where the loop runs on the very
+        dead-client condition that caused the failure. ``distributed``'s
+        ``release()`` is effectively non-throwing, so this is robustness --
+        but were one to raise, an unguarded loop would kill the results worker
+        and re-strand any batch that completes after this one, the hang
+        gain#372 exists to prevent. Each release stands alone.
+        """
+        for future in futures:
+            try:
+                future.release()
+            except BaseException:
+                # Deliberately broad, and swallowed: this is cleanup on a
+                # thread whose death would re-strand the run. A fault of any
+                # type must be logged and stepped over, never let to kill the
+                # worker. KeyboardInterrupt/GeneratorExit cannot reach here.
+                # pylint: disable=broad-except
+                logger.exception(
+                    "failed to release a future after a gather failure; "
+                    "continuing with the rest")
 
     MAX_RUNNING_TASKS = 700
 
