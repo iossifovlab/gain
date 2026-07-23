@@ -10,8 +10,9 @@ from __future__ import annotations
 import pathlib
 
 import pysam
-from gain.genomic_resources.gene_models.transcript_models import (
-    TranscriptModel,
+from gain.genomic_resources.gene_models.gene_models import GeneModels
+from gain.genomic_resources.gene_models.serialization import (
+    save_as_default_gene_models,
 )
 
 
@@ -36,50 +37,20 @@ def write_genome_resource(
     )
 
 
-def _format_default_row(transcript: TranscriptModel) -> str:
-    exon_starts = ",".join(str(e.start) for e in transcript.exons)
-    exon_ends = ",".join(str(e.stop) for e in transcript.exons)
-    exon_frames = ",".join(
-        str(e.frame if e.frame is not None else -1)
-        for e in transcript.exons
-    )
-    atts = ";".join(
-        f"{k}:{str(v).replace(':', '_')}"
-        for k, v in transcript.attributes.items()
-    )
-    columns = [
-        transcript.chrom,
-        transcript.tr_id,
-        transcript.tr_name,
-        transcript.gene,
-        transcript.strand,
-        transcript.tx[0],
-        transcript.tx[1],
-        transcript.cds[0],
-        transcript.cds[1],
-        exon_starts,
-        exon_ends,
-        exon_frames,
-        atts,
-    ]
-    return "\t".join(str(x) if x != "" else "" for x in columns)
-
-
 def write_gene_models_resource(
     resource_dir: pathlib.Path,
     filename: str,
-    transcripts: list[TranscriptModel],
+    gene_models: GeneModels,
 ) -> None:
-    """Write a ``gene_models`` resource in GAIn's ``default`` format."""
+    """Write a ``gene_models`` resource in GAIn's ``default`` format.
+
+    Serialization is delegated to GAIn's own ``save_as_default_gene_models``
+    so the fixture can never drift from the format GAIn actually parses.
+    ``gene_models.transcript_models`` supplies the rows.
+    """
     resource_dir.mkdir(parents=True, exist_ok=True)
-    header = "\t".join([
-        "chr", "trID", "trOrigId", "gene", "strand",
-        "tsBeg", "txEnd", "cdsStart", "cdsEnd",
-        "exonStarts", "exonEnds", "exonFrames", "atts",
-    ])
-    lines = [header]
-    lines.extend(_format_default_row(t) for t in transcripts)
-    (resource_dir / filename).write_text("\n".join(lines) + "\n")
+    save_as_default_gene_models(
+        gene_models, str(resource_dir / filename), gzipped=False)
     (resource_dir / "genomic_resource.yaml").write_text(
         f"type: gene_models\nfilename: {filename}\nformat: default\n",
     )

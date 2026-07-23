@@ -29,6 +29,9 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from gain.genomic_resources.gene_models.gene_models import (
+    GeneModels,
+)
 from gain.genomic_resources.gene_models.gene_models_factory import (
     build_gene_models_from_resource,
 )
@@ -421,8 +424,11 @@ def main() -> None:
         all_transcripts.extend(locus.transcripts)
     all_transcripts.extend(col.transcripts)
     all_transcripts.extend(synth_tms)
+    fixture_gene_models = GeneModels(grr.get_resource(GENE_MODELS_ID))
+    fixture_gene_models.transcript_models = {
+        t.tr_id: t for t in all_transcripts}
     write_gene_models_resource(
-        GENE_MODELS_DIR, GENE_MODELS_FILENAME, all_transcripts)
+        GENE_MODELS_DIR, GENE_MODELS_FILENAME, fixture_gene_models)
 
     manifest = {
         "genome_resource": "hg38/genome",
