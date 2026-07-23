@@ -8,8 +8,16 @@
     5000
   ],
   "contigs": {
-    "sondonson": 66578,
-    "col6a2": 56730
+    "sondonson": {
+      "length": 66578,
+      "real_chrom": "chr21",
+      "window_start": 33532738
+    },
+    "col6a2": {
+      "length": 56730,
+      "real_chrom": "chr21",
+      "window_start": 46086422
+    }
   },
   "variants": [
     {

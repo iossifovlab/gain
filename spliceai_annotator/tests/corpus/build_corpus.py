@@ -430,11 +430,24 @@ def main() -> None:
     write_gene_models_resource(
         GENE_MODELS_DIR, GENE_MODELS_FILENAME, fixture_gene_models)
 
+    # Persist each local contig's real hg38 origin so a downstream consumer
+    # (e.g. the #321 integration tier) can de-rebase a corpus variant back to
+    # real coordinates: real_pos = local_pos + window_start - 1 (the inverse of
+    # rebase_pos). The fixture tier reads only manifest["variants"], so this
+    # richer contigs schema is inert here.
+    real_chrom_by_local = {spec["local_chrom"]: spec["chrom"] for spec in LOCI}
     manifest = {
         "genome_resource": "hg38/genome",
         "gene_models_resource": "hg38/gene_models",
         "distances": DISTANCES,
-        "contigs": {name: len(seq) for name, seq in contigs.items()},
+        "contigs": {
+            name: {
+                "length": len(seq),
+                "real_chrom": real_chrom_by_local[name],
+                "window_start": loci[name].window_start,
+            }
+            for name, seq in contigs.items()
+        },
         "variants": [asdict(v) for v in variants],
     }
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2) + "\n")
