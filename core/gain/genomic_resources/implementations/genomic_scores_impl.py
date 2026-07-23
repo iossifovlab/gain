@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import itertools
 import json
 from typing import Any, ClassVar, cast
 
 import numpy as np
+import pandas as pd
 
 from gain import logging
 from gain.genomic_resources.genomic_position_table import (
     TabixGenomicPositionTable,
+    VCFGenomicPositionTable,
 )
 from gain.genomic_resources.genomic_position_table.record import (
+    PAYLOAD,
+    POS_BEGIN,
     POS_END,
 )
 from gain.genomic_resources.genomic_position_table.table_bigwig import (
@@ -29,6 +34,7 @@ from gain.genomic_resources.histogram import (
     HistogramError,
     NullHistogram,
     NullHistogramConfig,
+    NumberHistogram,
     NumberHistogramConfig,
     build_default_histogram_conf,
     build_empty_histogram,
@@ -180,7 +186,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 task = TaskGraph.make_task(
                     f"{self.resource.get_full_id()}_calculate_histogram_"
                     f"{chrom}_{start}_{end}",
-                    GenomicScoreImplementation._do_histogram,
+                    GenomicScoreImplementation._do_histogram_task,
                     args=[
                         self.resource,
                         merge_min_max_task,
@@ -458,6 +464,168 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                             NullHistogramConfig(str(err)),
                         )
         return result
+
+    _SCAN_BATCH_SIZE: ClassVar[int] = 100_000
+
+    @staticmethod
+    def _do_histogram_bulk(
+        resource: GenomicResource,
+        all_hist_confs: dict[str, HistogramConfig],
+        chrom: str | None,
+        start: int | None,
+        end: int | None,
+    ) -> dict[str, Histogram]:
+        """Vectorized equivalent of :meth:`_do_histogram`.
+
+        Reads the region's records in batches and accumulates each score's
+        histogram with :meth:`NumberHistogram.add_batch` rather than a
+        per-record ``add_value``.  It draws records from the SAME
+        ``get_records_in_region`` the per-record path uses, so a record's
+        zero-based and chromosome-map transforms are identical; only the
+        value coercion, the region clip/weight, and the binning are
+        vectorized.  The dispatch restricts this to float scores over
+        tabix/bigWig tables -- everything else keeps :meth:`_do_histogram`.
+        """
+        result: dict[str, Histogram] = {}
+        for score_id, hist_conf in all_hist_confs.items():
+            if isinstance(hist_conf, NullHistogramConfig):
+                continue
+            result[score_id] = build_empty_histogram(hist_conf)
+
+        impl = build_score_implementation_from_resource(resource)
+        with impl.score.open() as score:
+            defs = {
+                score_id: score.score_definitions[score_id]
+                for score_id in result
+            }
+            prev_right: int | None = None
+            records = score.table.get_records_in_region(chrom, start, end)
+            while True:
+                batch = list(
+                    itertools.islice(
+                        records,
+                        GenomicScoreImplementation._SCAN_BATCH_SIZE))
+                if not batch:
+                    break
+                prev_right = GenomicScoreImplementation._accumulate_batch(
+                    batch, result, defs, (chrom, start, end), prev_right)
+        del impl
+        return result
+
+    @staticmethod
+    def _accumulate_batch(
+        batch: list[Any],
+        result: dict[str, Histogram],
+        defs: dict[str, Any],
+        region: tuple[str | None, int | None, int | None],
+        prev_right: int | None,
+    ) -> int | None:
+        """Fold one batch of records into the per-score histograms.
+
+        Clips each record to ``[start, end]`` exactly as
+        ``_fetch_region_lines`` does (drop records ending before ``start``;
+        ``weight = min(end, pos_end) - max(start, pos_begin) + 1``), enforces
+        the same overlapping-position guard across the batch boundary, and
+        adds each float score's values vectorized.  Returns the last clipped
+        right edge so the next batch can continue the overlap check.
+        """
+        chrom, start, end = region
+        count = len(batch)
+        pos_begin = np.fromiter(
+            (rec[POS_BEGIN] for rec in batch), dtype=np.int64, count=count)
+        pos_end = np.fromiter(
+            (rec[POS_END] for rec in batch), dtype=np.int64, count=count)
+
+        left = pos_begin if start is None else np.maximum(pos_begin, start)
+        right = pos_end if end is None else np.minimum(pos_end, end)
+        # ``_fetch_region_lines`` skips a record that ends before the query.
+        keep = np.ones(count, dtype=bool) if start is None \
+            else (pos_end >= start)
+
+        kleft = left[keep]
+        kright = right[keep]
+        if kleft.size:
+            overlaps_within = kleft.size > 1 and bool(
+                np.any(kleft[1:] <= kright[:-1]))
+            overlaps_carry = prev_right is not None \
+                and int(kleft[0]) <= prev_right
+            if overlaps_within or overlaps_carry:
+                raise ValueError(
+                    f"multiple values for positions on {chrom}")
+            prev_right = int(kright[-1])
+        weights = (kright - kleft + 1).astype(np.int64)
+
+        for score_id, hist in result.items():
+            score_def = defs[score_id]
+            raw = pd.Series([rec[PAYLOAD][score_def.score_index]
+                             for rec in batch])
+            # NA is tested on the raw value BEFORE parse (matching
+            # ``_extract_value``); an unparseable value coerces to nan, which
+            # ``add_batch`` skips exactly as ``add_value`` skips a None.
+            values = pd.to_numeric(raw, errors="coerce").to_numpy(
+                dtype=np.float64, copy=True)
+            values[raw.isin(score_def.na_values).to_numpy()] = np.nan
+            assert isinstance(hist, NumberHistogram)
+            hist.add_batch(values[keep], weights)
+
+        return prev_right
+
+    @staticmethod
+    def _can_bulk_histogram(
+        resource: GenomicResource,
+        all_hist_confs: dict[str, HistogramConfig],
+    ) -> bool:
+        """Whether the vectorized scan may serve this histogram build.
+
+        Restricted to the common fast case whose bit-exactness the bulk path
+        guarantees: float scores with a number histogram, over a tabix or
+        bigWig table.  A ``cnv_collection`` (weight is 1, not the covered
+        span), a VCF-backed table (its record payload is not a raw row), an
+        int/str/bool score (``int()``/``str()`` parsing does not match
+        ``pd.to_numeric``), or a categorical/null histogram all keep the
+        per-record :meth:`_do_histogram`.
+        """
+        if resource.get_type() == "cnv_collection":
+            return False
+        impl = build_score_implementation_from_resource(resource)
+        with impl.score.open() as score:
+            table = score.table
+            if isinstance(table, VCFGenomicPositionTable):
+                return False
+            if not isinstance(
+                    table, (TabixGenomicPositionTable, BigWigTable)):
+                return False
+            for score_id, hist_conf in all_hist_confs.items():
+                if isinstance(hist_conf, NullHistogramConfig):
+                    continue
+                if not isinstance(hist_conf, NumberHistogramConfig):
+                    return False
+                score_def = score.score_definitions.get(score_id)
+                if score_def is None or score_def.value_type != "float":
+                    return False
+        return True
+
+    @staticmethod
+    def _do_histogram_task(
+        resource: GenomicResource,
+        all_hist_confs: dict[str, HistogramConfig],
+        chrom: str | None,
+        start: int | None,
+        end: int | None,
+    ) -> dict[str, Histogram]:
+        """Compute a region's histograms, bulk-vectorized where eligible.
+
+        The bulk path needs a concrete contig (its overlap guard runs along a
+        single chromosome's records); a ``chrom is None`` whole-table scan
+        keeps the per-record path.
+        """
+        if chrom is not None and \
+                GenomicScoreImplementation._can_bulk_histogram(
+                    resource, all_hist_confs):
+            return GenomicScoreImplementation._do_histogram_bulk(
+                resource, all_hist_confs, chrom, start, end)
+        return GenomicScoreImplementation._do_histogram(
+            resource, all_hist_confs, chrom, start, end)
 
     @staticmethod
     def _merge_histograms(

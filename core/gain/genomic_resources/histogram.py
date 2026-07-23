@@ -359,6 +359,57 @@ class NumberHistogram(Statistic):
 
         self.bars[index] += count
 
+    def add_batch(
+        self, values: np.ndarray, weights: np.ndarray,
+    ) -> None:
+        """Add a batch of ``(value, weight)`` pairs, vectorized.
+
+        Bit-for-bit equivalent to calling :meth:`add_value` over each pair in
+        order: same bin selection (``choose_bin_lin`` truncation and the
+        clamp to ``number_of_bins - 1``), the same below/above
+        ``out_of_range_bins`` split, the same ``min_value``/``max_value``
+        tracking, and the same nan-skip.  This is the hot path for the
+        statistics scan, where a per-value Python call dominates the cost.
+        """
+        values = np.asarray(values, dtype=np.float64)
+        weights = np.asarray(weights, dtype=np.int64)
+
+        # The log-scale binning is vectorized in a later step; until then the
+        # scalar path keeps the two modes exactly in agreement.
+        if self.config.x_log_scale:
+            for value, weight in zip(values, weights, strict=True):
+                self.add_value(float(value), int(weight))
+            return
+
+        finite = ~np.isnan(values)
+        if not finite.any():
+            return
+        values = values[finite]
+        weights = weights[finite]
+
+        # ``add_value`` seeds min/max at nan and folds each value in with
+        # ``min(value, self.min_value)``; over a set that is just the extremum.
+        batch_min = float(values.min())
+        batch_max = float(values.max())
+        self.min_value = batch_min if np.isnan(self.min_value) \
+            else min(self.min_value, batch_min)
+        self.max_value = batch_max if np.isnan(self.max_value) \
+            else max(self.max_value, batch_max)
+
+        below = values < self.view_min()
+        above = values > self.view_max()
+        self.out_of_range_bins[0] += int(weights[below].sum())
+        self.out_of_range_bins[1] += int(weights[above].sum())
+
+        in_range = ~(below | above)
+        # ``int((value - view_min) * _rstep)`` truncates toward zero; for the
+        # non-negative in-range offsets that is floor, which ``astype(int64)``
+        # reproduces.  Clamp to the last bin, exactly as ``choose_bin_lin``.
+        idx = ((values[in_range] - self.view_min())
+               * self._rstep).astype(np.int64)
+        np.minimum(idx, self.config.number_of_bins - 1, out=idx)
+        np.add.at(self.bars, idx, weights[in_range])
+
     def choose_bin_lin(self, value: float) -> int:
         """Compute bin index for a passed value for linear x-scale."""
         if value < self.view_min():
