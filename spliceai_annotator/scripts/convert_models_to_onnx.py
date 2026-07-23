@@ -71,7 +71,9 @@ def convert_one(index: int) -> pathlib.Path:
         raise FileNotFoundError(h5_path)
 
     print(f"Loading {h5_path.name} ...")
-    model = tf.keras.models.load_model(str(h5_path))
+    # compile=False: export/inference needs only the forward pass, and the
+    # 2017-era .h5 files carry no usable training-time compile objects.
+    model = tf.keras.models.load_model(str(h5_path), compile=False)
 
     print(f"Exporting {onnx_path.name} (dynamic length axis) ...")
     model.export(
