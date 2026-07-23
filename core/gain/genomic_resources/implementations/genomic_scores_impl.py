@@ -578,14 +578,20 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         """Whether the vectorized scan may serve this histogram build.
 
         Restricted to the common fast case whose bit-exactness the bulk path
-        guarantees: float scores with a number histogram, over a tabix or
-        bigWig table.  A ``cnv_collection`` (weight is 1, not the covered
-        span), a VCF-backed table (its record payload is not a raw row), an
-        int/str/bool score (``int()``/``str()`` parsing does not match
-        ``pd.to_numeric``), or a categorical/null histogram all keep the
-        per-record :meth:`_do_histogram`.
+        guarantees: a **position score** whose float columns feed a number
+        histogram, over a tabix or bigWig table.  The bulk path imposes
+        position-score semantics -- a span weight ``pos_end - pos_begin + 1``
+        and the one-value-per-position overlap guard -- so it must NOT serve
+        the score types that read differently: an ``allele_score`` or
+        ``np_score`` carries several weight-1 records (distinct ref/alt) at a
+        single position, which the overlap guard would reject; a
+        ``cnv_collection`` weights every record 1.  A VCF-backed table (its
+        record payload is not a raw row), an int/str/bool score
+        (``int()``/``str()`` parsing does not match ``pd.to_numeric``), or a
+        categorical/null histogram likewise keep the per-record
+        :meth:`_do_histogram`.
         """
-        if resource.get_type() == "cnv_collection":
+        if resource.get_type() != "position_score":
             return False
         impl = build_score_implementation_from_resource(resource)
         with impl.score.open() as score:

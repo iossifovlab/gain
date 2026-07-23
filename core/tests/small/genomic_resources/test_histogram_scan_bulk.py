@@ -13,6 +13,7 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
+    a_np_score,
     a_position_score,
 )
 
@@ -243,3 +244,23 @@ def test_int_score_is_not_bulk_eligible(tmp_path: pathlib.Path) -> None:
         "type": "number", "view_range": {"min": 0, "max": 10},
         "number_of_bins": 10, "x_log_scale": False, "y_log_scale": False})}
     assert not GenomicScoreImplementation._can_bulk_histogram(resource, confs)
+
+
+def test_np_score_is_not_bulk_eligible(tmp_path: pathlib.Path) -> None:
+    # An np_score/allele_score reads with per-allele (weight-1,
+    # multiple-alleles-per-position) semantics; the position-score bulk path
+    # would impose span weights and its overlap guard would raise on a
+    # multi-allele site.  The dispatch must keep such scores on the per-record
+    # path -- and never raise.
+    resource = (
+        a_np_score().with_score("score", "float").with_tabix()
+        .build_resource(tmp_path)
+    )
+    confs: dict = {"score": _hist_conf()}
+    assert not GenomicScoreImplementation._can_bulk_histogram(resource, confs)
+
+    via_task = GenomicScoreImplementation._do_histogram_task(
+        resource, confs, "1", 1, 20)
+    ref = GenomicScoreImplementation._do_histogram(
+        resource, confs, "1", 1, 20)
+    _assert_hists_equal(via_task, ref)
