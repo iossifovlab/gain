@@ -1,0 +1,12 @@
+- md5: c07545d85925164e84eb7fffc2a21c1c
+  name: gene_models.txt
+  size: 48760
+- md5: 18a3e2f5e967a8e058ee97337481cf32
+  name: genomic_resource.yaml
+  size: 60
+- md5: 6e01f10b0ae24a2d77faba3d5839125b
+  name: statistics/stats.yaml
+  size: 446
+- md5: 9bf68c86b0f7ee4c234ffc361c4d24c8
+  name: statistics/stats_hash
+  size: 125

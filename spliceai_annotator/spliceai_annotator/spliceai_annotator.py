@@ -357,6 +357,19 @@ models to predict splice site variant effects.
             )
             return False
 
+        # A deletion whose removed span exceeds the model half-window
+        # (ref_len - 1 > distance) cannot be padded faithfully: the sequential
+        # path reconstructs it as Illumina SpliceAI does, but the batch path
+        # silently produces different (wrong) positions/scores. Rather than
+        # emit values that depend on which code path ran, refuse the record.
+        if len(annotatable.ref) - 1 > self._distance:
+            logger.warning(
+                "Skipping record (deletion longer than distance=%s; "
+                "ref_len-1 > distance is not faithfully paddable): %s",
+                self._distance, annotatable,
+            )
+            return False
+
         if len(annotatable.alt) > self._max_insertion_length:
             logger.warning(
                 "Skipping record (alt too long): %s; alt longer than %s",

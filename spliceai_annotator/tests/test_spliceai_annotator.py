@@ -94,8 +94,9 @@ def test_spliceai_annotate_del_acceptor_long(
 
     result = spliceai_annotator.annotate(annotatable, {})
     assert result is not None
-    assert result["delta_score"] == \
-        "C|TUBB8|0.02|0.03|0.00|0.07|-22|1|-27|-21"
+    # ref_len-1 (66) > distance (50): refused as "deletion longer than
+    # distance" (batch/sequential padding diverges beyond this point).
+    assert result["delta_score"] is None
 
 
 def test_spliceai_annotate_del_acceptor_long_batch(
@@ -117,8 +118,8 @@ def test_spliceai_annotate_del_acceptor_long_batch(
 
     result = spliceai_annotator.batch_annotate([annotatable], [{}])
     assert result is not None
-    assert result[0]["delta_score"] == \
-        "C|TUBB8|0.02|0.03|0.00|0.07|-22|1|-27|-21"
+    # ref_len-1 (66) > distance (50): refused (see the sequential test above).
+    assert result[0]["delta_score"] is None
 
 
 def test_spliceai_annotate_ins_acceptor(

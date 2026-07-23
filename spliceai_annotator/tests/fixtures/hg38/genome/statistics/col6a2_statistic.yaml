@@ -1,0 +1,34 @@
+chrom: col6a2
+length: 56730
+nucleotide_counts:
+  A: 12735
+  C: 15779
+  G: 15423
+  N: 0
+  T: 12793
+nucleotide_pair_counts:
+  AA: 3158
+  AC: 2912
+  AG: 4225
+  AN: 0
+  AT: 2440
+  CA: 4520
+  CC: 5586
+  CG: 1500
+  CN: 0
+  CT: 4173
+  GA: 3266
+  GC: 3830
+  GG: 5327
+  GN: 0
+  GT: 3000
+  NA: 0
+  NC: 0
+  NG: 0
+  NN: 0
+  NT: 0
+  TA: 1790
+  TC: 3451
+  TG: 4371
+  TN: 0
+  TT: 3180

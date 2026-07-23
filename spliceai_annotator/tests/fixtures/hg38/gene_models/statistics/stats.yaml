@@ -1,0 +1,18 @@
+resource_id: hg38/gene_models
+chromosome_count: 2
+global:
+  transcript_number: 87
+  protein_coding_transcript_number: 67
+  gene_number: 5
+  protein_coding_gene_number: 3
+chromosomes:
+  sondonson:
+    transcript_number: 48
+    protein_coding_transcript_number: 34
+    gene_number: 2
+    protein_coding_gene_number: 2
+  col6a2:
+    transcript_number: 39
+    protein_coding_transcript_number: 33
+    gene_number: 3
+    protein_coding_gene_number: 1

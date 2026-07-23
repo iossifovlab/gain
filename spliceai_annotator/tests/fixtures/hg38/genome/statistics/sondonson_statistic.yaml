@@ -1,0 +1,34 @@
+chrom: sondonson
+length: 66578
+nucleotide_counts:
+  A: 19904
+  C: 12955
+  G: 13820
+  N: 0
+  T: 19899
+nucleotide_pair_counts:
+  AA: 6821
+  AC: 3309
+  AG: 4707
+  AN: 0
+  AT: 5066
+  CA: 4364
+  CC: 3171
+  CG: 1027
+  CN: 0
+  CT: 4393
+  GA: 3925
+  GC: 2976
+  GG: 3340
+  GN: 0
+  GT: 3579
+  NA: 0
+  NC: 0
+  NG: 0
+  NN: 0
+  NT: 0
+  TA: 4793
+  TC: 3499
+  TG: 4746
+  TN: 0
+  TT: 6861

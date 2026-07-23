@@ -352,11 +352,17 @@ pipeline {
                         stage('spliceai_annotator') {
                             steps {
                                 script {
+                                    // Fast tier only. The slow differential
+                                    // harness (~10 min under TensorFlow) is
+                                    // marked `integration` and runs in the
+                                    // downstream gain-spliceai-integration job
+                                    // (see 'Trigger spliceai integration'),
+                                    // keeping this per-PR step to a few minutes.
                                     runProject(
                                         name: 'spliceai_annotator',
                                         pkg: 'spliceai_annotator',
                                         tests: 'tests',
-                                        pytestArgs: '-n 5',
+                                        pytestArgs: '-n 5 -m "not integration"',
                                     )
                                 }
                             }
@@ -966,6 +972,47 @@ pipeline {
                             wait: false,
                             propagate: false,
                         )
+                    }
+                }
+
+                stage('Trigger spliceai integration') {
+                    when { not { environment name: 'DOCS_ONLY', value: 'true' } }
+                    // Downstream gate for the gain-spliceai-integration job
+                    // (DSL at spliceai_annotator/jenkins-jobs/
+                    // integration.groovy). Runs on every branch — the job
+                    // checks out the same branch / commit and runs the slow
+                    // `-m integration` differential harness (frozen hg38
+                    // corpus, ~10 min under TensorFlow) that the fast
+                    // spliceai_annotator step skips. `wait: false,
+                    // propagate: false` matches the web_e2e / core integration
+                    // shape: the parent moves on while it runs separately and a
+                    // regression doesn't FAILURE the parent.
+                    steps {
+                        // gain-seed creates this job from master, so it may not
+                        // exist yet on the branch that first introduces it (this
+                        // PR). Tolerate that until the DSL is seeded — the
+                        // downstream run is non-gating anyway.
+                        catchError(
+                            buildResult: 'SUCCESS',
+                            stageResult: 'SUCCESS',
+                            message: 'gain-spliceai-integration not seeded yet',
+                        ) {
+                            build(
+                                job: '/gain-spliceai-integration',
+                                parameters: [
+                                    string(
+                                        name: 'BRANCH_NAME',
+                                        value: env.BRANCH_NAME,
+                                    ),
+                                    string(
+                                        name: 'COMMIT_SHA',
+                                        value: env.GIT_COMMIT ?: '',
+                                    ),
+                                ],
+                                wait: false,
+                                propagate: false,
+                            )
+                        }
                     }
                 }
 
