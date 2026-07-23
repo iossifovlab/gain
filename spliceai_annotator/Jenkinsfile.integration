@@ -1,0 +1,146 @@
+// Dedicated Jenkins pipeline for the gain-spliceai-annotator integration
+// suite: the slow differential harness (`-m integration`) that the fast
+// per-PR spliceai_annotator step skips. It pins all 16 spliceai_annotator
+// attributes of today's TensorFlow output against a frozen hg38/GENCODE
+// fixture corpus (issue gain#320), so it needs no external GRR — the fixture
+// and baseline are committed and TensorFlow ships in the CI image.
+//
+// Expected Jenkins job setup:
+//   - Script path: spliceai_annotator/Jenkinsfile.integration
+//   - Job DSL: spliceai_annotator/jenkins-jobs/integration.groovy
+//     (pipelineJob 'gain-spliceai-integration'), seeded by gain-seed.
+//   - Triggered downstream from iossifovlab/gain/<branch> on every branch
+//     (see the 'Trigger spliceai integration' stage in the root Jenkinsfile),
+//     and safe to run manually.
+
+pipeline {
+    // Pinned to `pooh` to match the other integration jobs (docker daemon +
+    // enough cores for `pytest -n 5` on the TensorFlow corpus). No persistent
+    // cache is needed — the corpus + baseline are committed to the tree.
+    agent { label 'pooh' }
+
+    options {
+        timeout(time: 1, unit: 'HOURS')
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
+    parameters {
+        string(
+            name: 'BRANCH_NAME',
+            defaultValue: 'master',
+            description: 'Branch the upstream gain build was triggered from. ' +
+                'The pipeline checks out this branch unless COMMIT_SHA is set.',
+        )
+        string(
+            name: 'COMMIT_SHA',
+            defaultValue: '',
+            description: 'Specific commit SHA to test (takes precedence over ' +
+                'BRANCH_NAME). Empty = use BRANCH_NAME HEAD.',
+        )
+    }
+
+    environment {
+        IMAGE_TAG = "gain-spliceai-integration-ci:${env.BUILD_NUMBER}"
+    }
+
+    stages {
+        stage('Start') {
+            steps {
+                script {
+                    // Replace the default '#42' with '#42 <branch>' (plus
+                    // '@<short-sha>' on manual COMMIT_SHA pins) so the build
+                    // list makes it obvious which branch a build is for.
+                    String label = params.BRANCH_NAME
+                    if (params.COMMIT_SHA?.trim()) {
+                        label += " @ ${params.COMMIT_SHA.take(7)}"
+                    }
+                    currentBuild.displayName = "#${env.BUILD_NUMBER} ${label}"
+                    zulipSend(
+                        message: "Started build #${env.BUILD_NUMBER} [${label}] of project ${env.JOB_NAME} (${env.BUILD_URL})",
+                        topic: "${env.JOB_NAME}",
+                    )
+                }
+            }
+        }
+
+        stage('Checkout') {
+            // The job definition (this Jenkinsfile) is loaded from master by
+            // the Job DSL, but the source under test is the branch/commit the
+            // parent build triggered from.
+            steps {
+                script {
+                    String ref = params.COMMIT_SHA?.trim() ?: params.BRANCH_NAME
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: ref]],
+                        userRemoteConfigs: [[
+                            url: 'https://github.com/iossifovlab/gain.git',
+                        ]],
+                        extensions: [[$class: 'CloneOption',
+                                      shallow: true,
+                                      noTags: true,
+                                      depth: 1]],
+                    ])
+                }
+            }
+        }
+
+        stage('Prepare workspace') {
+            steps {
+                sh 'rm -rf reports && mkdir -p reports/integration'
+            }
+        }
+
+        stage('Build image') {
+            steps {
+                // Build from the repo root so the workspace manifests and
+                // uv.lock are in the build context (see spliceai_annotator/
+                // Dockerfile).
+                sh 'docker build -f spliceai_annotator/Dockerfile -t ${IMAGE_TAG} .'
+            }
+        }
+
+        stage('Integration tests') {
+            steps {
+                // The image WORKDIR is /workspace/spliceai_annotator, so the
+                // committed fixture + corpus under tests/ resolve directly.
+                sh '''
+                    docker run --rm \
+                        -v "$PWD/reports/integration:/reports" \
+                        ${IMAGE_TAG} \
+                        sh -c '
+                            set +e
+                            pytest -n 5 -m integration tests/ \
+                                --junitxml=/reports/pytest.xml
+                            pytest_exit=$?
+                            chmod -R a+rw /reports
+                            exit $pytest_exit
+                        '
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                try {
+                    junit(
+                        allowEmptyResults: true,
+                        testResults: 'reports/integration/*.xml',
+                    )
+                    archiveArtifacts(
+                        artifacts: 'reports/integration/*.xml',
+                        allowEmptyArchive: true,
+                        fingerprint: false,
+                    )
+                } finally {
+                    zulipNotification(topic: "${env.JOB_NAME}")
+                }
+            }
+        }
+        cleanup {
+            sh 'docker rmi ${IMAGE_TAG} 2>/dev/null || true'
+        }
+    }
+}

@@ -41,6 +41,11 @@ from tests.corpus.pipeline_config import (
     make_pipeline_yaml,
 )
 
+# Slow: ~9-10 min under TensorFlow. Runs in the gain-spliceai-integration job,
+# not the fast per-PR spliceai_annotator step (see spliceai_annotator/pytest.ini
+# and the "Trigger spliceai integration" stage in the root Jenkinsfile).
+pytestmark = pytest.mark.integration
+
 CORPUS_DIR = pathlib.Path(__file__).parent / "corpus"
 MANIFEST = json.loads((CORPUS_DIR / "corpus_manifest.json").read_text())
 with gzip.open(CORPUS_DIR / "baseline.json.gz", "rb") as _bf:

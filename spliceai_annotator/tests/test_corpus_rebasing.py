@@ -1,10 +1,15 @@
 # pylint: disable=C0114,C0116
+import pytest
 from gain.genomic_resources.gene_models.transcript_models import (
     Exon,
     TranscriptModel,
 )
 
 from tests.corpus.rebasing import rebase_pos, rebase_transcript
+
+# Grouped with the differential harness in the gain-spliceai-integration job
+# (it unit-tests the corpus rebasing helpers).
+pytestmark = pytest.mark.integration
 
 
 def test_rebase_pos_maps_window_start_to_one() -> None:

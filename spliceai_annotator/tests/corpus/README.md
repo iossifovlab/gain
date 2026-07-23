@@ -19,7 +19,12 @@ See iossifovlab/gain#320.
 | `rebasing.py`, `fixture_io.py` | Pure coordinate rebasing + fixture emission helpers (unit-tested in `../test_corpus_rebasing.py`). | — |
 
 The differential test that consumes all of this is
-`../test_spliceai_differential.py`.
+`../test_spliceai_differential.py`. It is marked `@pytest.mark.integration`
+(~10 min under TensorFlow), so it runs in the **gain-spliceai-integration**
+downstream job, not the fast per-PR `spliceai_annotator` step (which runs
+`-m "not integration"`). See `spliceai_annotator/pytest.ini`,
+`Jenkinsfile.integration`, and the `Trigger spliceai integration` stage in the
+root `Jenkinsfile`.
 
 ## Why the baseline is generated *only* from TensorFlow
 
