@@ -258,7 +258,49 @@ def test_get_chromosome_length_empty_mapped_contig_raises(
     tab = _empty_mapped_contig_table(tmp_path)
     # a known-but-empty contig has no max end position: clear ValueError,
     # not a bare KeyError or a max()-of-empty-sequence error.
-    with pytest.raises(ValueError, match="contig empty has no records"):
+    with pytest.raises(ValueError, match="contig empty has no records") as err:
         tab.get_chromosome_length("empty")
+    # ...and the diagnostic names the contigs the table does have, which is
+    # what tells a caller whether it asked about a contig this table has never
+    # heard of or about one it knows and has no rows for.  It is only buildable
+    # on an OPEN table -- get_chromosomes() refuses on a closed one -- which is
+    # why the closed case is guarded ahead of this branch (gain#358).
+    # Asserted by NAME against the list the message ends with, rather than
+    # against its exact repr: what the diagnostic owes the caller is the names,
+    # not a particular rendering or ordering of them.  Sliced at "contigs:"
+    # because "empty" is also the contig asked about, and so appears in the
+    # first half of the message either way.
+    contigs_listed = str(err.value).split("contigs:")[-1]
+    assert "kept" in contigs_listed
+    assert "empty" in contigs_listed
     # the populated contig still reports a length.
     assert tab.get_chromosome_length("kept") == 13
+
+
+def test_get_chromosome_length_on_a_closed_table_says_it_is_not_open(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A closed table reports why it actually failed, not a wrong diagnosis.
+
+    ``close()`` empties ``records_by_chr``, so on a closed table EVERY contig
+    -- including one the file is full of -- takes the no-records branch, and
+    the message that branch builds interpolates ``get_chromosomes()``, which a
+    closed table refuses.  So the intended diagnostic was never built: what
+    reached the caller came out of the middle of another message's
+    construction, and the "has no records" claim it was on its way to making
+    about a perfectly good contig was simply false.
+
+    A closed table refuses this read for the same reason it refuses its file
+    contigs, and says so in the same words its ``_load_file_chromosomes``
+    uses -- so the answer does not depend on which of the two file-derived
+    fields the call happened to reach first (gain#358).
+    """
+    tab = _empty_mapped_contig_table(tmp_path)
+    assert tab.get_chromosome_length("kept") == 13
+
+    tab.close()
+
+    with pytest.raises(ValueError, match="in-memory table not open") as err:
+        tab.get_chromosome_length("kept")
+    assert "no records" not in str(err.value), (
+        "a closed table reported a populated contig as having no records")

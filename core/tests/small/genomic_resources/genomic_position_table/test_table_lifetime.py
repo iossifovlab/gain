@@ -12,6 +12,19 @@ chromosome-MAPPED fixtures without which the base class's ``chrom_map`` and
 ``rev_chrom_map`` are ``None`` throughout and every question asked of them is
 answered vacuously).
 
+And a shell that **refuses to be read**: what a closed table answers is the
+other side of what it releases, so it is pinned here too --
+test_a_closed_table_refuses_its_file_chromosomes and
+test_a_closed_table_refuses_a_chromosome_length hold every backend to one
+``ValueError``, and the header-only fixture beside them holds the guard to
+being about the missing handle rather than about an empty contig list, which an
+open table may legitimately have (gain#358).  Both are asked over
+``_LIFETIME_BACKENDS`` rather than the four bare backends, so the mapped
+fixtures ask them through a populated ``chrom_map`` as well as a vacant one.
+The in-memory ``get_chromosome_length``'s OPEN-table diagnostic -- which
+contigs the message must name -- stays where its empty/unknown-contig policy
+already lives, in test_inmemory_genomic_position_table.py.
+
 The second half only matters because the first can be satisfied without it: a
 table can be perfectly collectable and still be several megabytes that nobody
 will ever read again, for as long as its holder lives.
@@ -568,8 +581,9 @@ def test_a_closed_vcf_table_does_not_answer_its_contigs_from_the_file(
     ``get_file_chromosomes`` memo and maps each contig into reference space --
     and ``close()`` now releases both the memo and the map, so a closed table
     has to reach for the file to answer at all.  Every other backend's
-    ``_load_file_chromosomes`` reads the open handle and so refuses (the tabix
-    one raises ``ValueError``, the bigWig one asserts); the VCF one opened the
+    ``_load_file_chromosomes`` reads the open handle and so refuses (with a
+    ``ValueError``, in all four since gain#358 -- the bigWig one asserted, and
+    the in-memory one did not refuse at all); the VCF one opened the
     resource's ``.vcf.gz`` *itself*, which is the one implementation that can
     still produce an answer after a close -- an answer with no chromosome map
     left to map it through, so ``map_chromosome`` passes the FILE's contigs
@@ -590,6 +604,141 @@ def test_a_closed_vcf_table_does_not_answer_its_contigs_from_the_file(
 
     with pytest.raises(ValueError, match="not open"):
         table.get_chromosomes()
+
+
+def test_a_never_opened_vcf_table_does_not_answer_its_contigs_either(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The other state that has no handle, and the same refusal.
+
+    ``VCFGenomicPositionTable._load_file_chromosomes`` guards
+    ``self.pysam_file``, which is ``None`` both AFTER a close and BEFORE the
+    first open -- so refusing covers the never-opened table too.  That is a
+    change from when this backend re-opened the resource itself and was the one
+    implementation able to answer its contigs with no open table at all, and
+    only the after-close half of it was pinned (gain#350, gain#358).
+
+    Worth a test of its own because the two states reach the guard by different
+    routes: a closed table has been through ``close()``, which released the
+    chromosome map the answer would have been mapped through, while a
+    never-opened one never built one -- and a guard written against the
+    released state alone (an emptied map, an emptied memo) would let this one
+    past and hand back the FILE's contigs where an open table hands back
+    reference-space names.
+    """
+    table = _a_mapped_vcf_table(tmp_path)
+
+    with pytest.raises(ValueError, match="vcf table not open"):
+        table.get_file_chromosomes()
+
+
+@pytest.mark.parametrize("build,_score_line", _LIFETIME_BACKENDS)
+def test_a_closed_table_refuses_its_file_chromosomes(
+    build: object,
+    _score_line: object,
+    tmp_path: pathlib.Path,
+) -> None:
+    """One answer to a closed ``get_file_chromosomes()``, from every backend.
+
+    What a closed table does when read is the contract gain#358 settles: it
+    **refuses** the reads that depend on what ``open()`` took out of the file,
+    and the file's own contigs are the first of them.  Three backends already
+    refused, each guarding the handle ``open()`` establishes and ``close()``
+    drops.  The in-memory one instead handed back the scanned-contigs list that
+    its ``close()`` empties -- ``[]``, which
+    :meth:`GenomicPositionTable.get_file_chromosomes` then memoised as the
+    answer for the rest of the table's life, and which a caller cannot tell
+    from an open table over a file with no records.
+
+    Asked of every backend at once so that a future one cannot quietly
+    diverge, and asked of the memoising **public** method rather than the
+    ``_load_file_chromosomes`` hook behind it, because that is the read a
+    caller performs -- and caching the wrong answer is half of what made the
+    in-memory divergence hard to see.
+    """
+    score, _region = build(tmp_path)  # type: ignore[operator]
+    table = score.table
+
+    table.open()
+    assert table.get_file_chromosomes(), (
+        f"the fixture yields no file contigs from a {type(table).__name__}: "
+        f"a closed table refusing them would prove nothing")
+    table.close()
+
+    with pytest.raises(ValueError, match="not open"):
+        table.get_file_chromosomes()
+
+
+def _a_header_only_inmemory_table(
+    tmp_path: pathlib.Path,
+) -> GenomicPositionTable:
+    """An in-memory table over a file with a header and no data rows."""
+    builder = (
+        a_position_score()
+        .with_score("s_float", "float")
+        .with_data("chrom  pos_begin  s_float\n")
+    )
+    repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
+    return PositionScore(repo.get_resource("pos")).table
+
+
+def test_an_open_inmemory_table_with_no_data_rows_answers_no_contigs(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An empty contig list is an ANSWER, and only a closed table refuses.
+
+    The trap in the test above's fix, stated as its own case.  The in-memory
+    backend's contigs are scanned off the data rows, so a file with a header
+    and nothing under it legitimately has none -- and a guard written as "the
+    scanned list is empty" would refuse this open table, which is a live read
+    path (a resource repaired before its data is written, a chrom_mapping that
+    covers no file contig).  Emptiness describes two states at once; the open
+    handle describes exactly one, which is why it is what
+    ``_load_file_chromosomes`` keys on (gain#358).
+    """
+    table = _a_header_only_inmemory_table(tmp_path)
+
+    with table:
+        assert table.get_file_chromosomes() == []
+        assert table.get_chromosomes() == []
+
+
+@pytest.mark.parametrize("build,_score_line", _LIFETIME_BACKENDS)
+def test_a_closed_table_refuses_a_chromosome_length(
+    build: object,
+    _score_line: object,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The same refusal, said the same way, for a contig's length.
+
+    ``get_chromosome_length`` is the other read every backend implements over
+    file-derived state, and the one whose diagnostics are built out of it: each
+    implementation answers an unknown contig by naming the contigs the table
+    does have, which is itself a read a closed table refuses.  So a closed
+    table must be turned away by the *first* guard, before any of that -- and
+    with a ``ValueError`` naming the resource, as
+    :meth:`GenomicPositionTable.close` states and the sibling
+    ``get_file_chromosomes`` test above pins for the other read.
+
+    bigWig is why this is parametrised rather than written once: it guarded
+    with a bare ``assert`` where its siblings raise, so a closed
+    ``get_chromosome_length`` gave a message-less ``AssertionError`` -- and,
+    under ``python -O`` which strips the assert, fell through into the
+    contig-naming branch and raised out of the middle of it (gain#358).
+    """
+    score, region = build(tmp_path)  # type: ignore[operator]
+    chrom = region[0]
+    table = score.table
+
+    table.open()
+    assert table.get_chromosome_length(chrom) > 0, (
+        f"the fixture yields no length for {chrom} from a "
+        f"{type(table).__name__}: a closed table refusing it would prove "
+        f"nothing")
+    table.close()
+
+    with pytest.raises(ValueError, match="not open"):
+        table.get_chromosome_length(chrom)
 
 
 def _an_inmemory_score(
