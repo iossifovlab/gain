@@ -3,7 +3,10 @@ import pathlib
 
 import numpy as np
 from gain.genomic_resources.genomic_scores import build_score_from_resource
-from gain.genomic_resources.testing.builders import a_position_score
+from gain.genomic_resources.testing.builders import (
+    a_bigwig_score,
+    a_position_score,
+)
 
 
 def _score(resource: object) -> object:
@@ -119,3 +122,31 @@ def test_region_value_arrays_batches(tmp_path: pathlib.Path) -> None:
     assert [len(b[0]) for b in batches] == [2, 2, 1]
     pos_begin = np.concatenate([b[0] for b in batches])
     assert list(pos_begin) == [1, 2, 3, 4, 5]
+
+
+def test_bigwig_region_value_arrays(tmp_path: pathlib.Path) -> None:
+    resource = (
+        a_bigwig_score()
+        .with_score("bw", "float")
+        .with_data(
+            """
+            chr1  0  2  0.0
+            chr1  2  4  2.0
+            chr1  4  6  4.0
+            """)
+        .with_chrom_lens({"chr1": 100})
+        .build_resource(tmp_path)
+    )
+    score = _score(resource)
+    with score.open() as opened:
+        sidx = opened.score_definitions["bw"].score_index
+        batches = list(opened.table.get_region_value_arrays(
+            "chr1", 1, 6, [sidx], 100))
+
+    pos_begin = np.concatenate([b[0] for b in batches])
+    pos_end = np.concatenate([b[1] for b in batches])
+    values = np.concatenate([b[2][sidx] for b in batches]).astype(float)
+    # bigWig 0-based half-open [0,2),[2,4),[4,6) -> closed one-based.
+    assert list(pos_begin) == [1, 3, 5]
+    assert list(pos_end) == [2, 4, 6]
+    assert list(values) == [0.0, 2.0, 4.0]

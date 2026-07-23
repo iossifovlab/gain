@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterable
 from typing import ClassVar
+
+import numpy as np
 
 from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_position_table.table import (
@@ -431,6 +433,65 @@ class BigWigTable(GenomicPositionTable):
 
         for interval in fetch_method(fchrom, pos_begin, pos_end):
             yield parser(chrom, interval)
+
+    def get_region_value_arrays(
+        self,
+        chrom: str,
+        start: int | None,
+        end: int | None,
+        value_columns: Iterable[int],
+        batch_size: int,  # noqa: ARG002
+    ) -> Generator[
+            tuple[np.ndarray, np.ndarray, dict[int, np.ndarray]], None, None]:
+        """Yield a region's intervals as column arrays, without records.
+
+        The bigWig counterpart of
+        :meth:`TabixGenomicPositionTable.get_region_value_arrays`: a fast path
+        for a full sequential scan (statistics).  It reuses the adaptive
+        :meth:`_fetch_chunk` windowing -- so memory stays bounded exactly as
+        the record path's -- but turns each chunk of raw intervals into arrays
+        in one shot rather than building a ``Record`` per interval.  The
+        coordinates match :meth:`_fetch_direct`: the raw zero-based half-open
+        ``[begin, end)`` becomes closed one-based (``begin + 1``, ``end``), and
+        the value lives at payload index 3.
+
+        ``batch_size`` is accepted for a uniform producer signature; the batch
+        size here is set by the adaptive fetch window, not this argument.
+        """
+        assert self._bw_file is not None
+        fchrom = self._map_file_chrom(chrom)
+        if fchrom not in self.chroms:
+            raise KeyError(fchrom)
+
+        chrom_len = self.chroms[fchrom]
+        pos = 0 if start is None else max(0, start - 1)
+        scan_stop = chrom_len if end is None else min(end, chrom_len)
+        columns = list(value_columns)
+        # Mirror the cursor update get_records_in_region makes, so a later read
+        # on the same open table observes the same state.
+        self._last_pos = pos
+
+        while pos < scan_stop:
+            intervals, pos = self._fetch_chunk(
+                self._direct_window, fchrom, pos, scan_stop, scan_stop)
+            if not intervals:
+                return
+            raw = np.array(intervals, dtype=np.float64)
+            pos_begin = raw[:, 0].astype(np.int64) + 1
+            pos_end = raw[:, 1].astype(np.int64)
+            value = raw[:, 2]
+            # payload == (chrom, pos_begin, pos_end, value); serve each
+            # requested column from it so any configured index (not just the
+            # value at 3) matches the per-record read exactly.
+            payload_columns: dict[int, np.ndarray] = {
+                1: pos_begin, 2: pos_end, 3: value,
+            }
+            cols = {
+                col: payload_columns[col] if col in payload_columns
+                else np.full(len(intervals), chrom, dtype=object)
+                for col in columns
+            }
+            yield pos_begin, pos_end, cols
 
     def get_all_records(self) -> Generator[Record, None, None]:
         assert self._bw_file is not None

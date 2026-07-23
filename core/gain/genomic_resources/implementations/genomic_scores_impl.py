@@ -522,16 +522,17 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             tuple[np.ndarray, np.ndarray, dict[int, np.ndarray]], None, None]:
         """Yield ``(pos_begin, pos_end, {col: raw_cells})`` batches.
 
-        Tabix takes the raw-row fast path
-        (:meth:`TabixGenomicPositionTable.get_region_value_arrays`), which
-        never builds a ``Record``; other backends (bigWig) go through
-        ``get_records_in_region`` and are unpacked into the same array shape
+        Tabix and bigWig each take their ``get_region_value_arrays`` fast path,
+        which never builds a ``Record``; any other backend goes through
+        ``get_records_in_region`` and is unpacked into the same array shape
         here, so the accumulator does not care which backend produced them.
         """
         batch_size = GenomicScoreImplementation._SCAN_BATCH_SIZE
         columns = list(value_columns)
-        if isinstance(table, TabixGenomicPositionTable) \
-                and not isinstance(table, VCFGenomicPositionTable) \
+        has_array_fastpath = isinstance(table, BigWigTable) or (
+            isinstance(table, TabixGenomicPositionTable)
+            and not isinstance(table, VCFGenomicPositionTable))
+        if has_array_fastpath \
                 and chrom is not None and start is not None and end is not None:
             yield from table.get_region_value_arrays(
                 chrom, start, end, columns, batch_size)
