@@ -52,6 +52,33 @@ pipeline {
 
     environment {
         IMAGE_TAG = "gain-spliceai-integration-ci:${env.BUILD_NUMBER}"
+
+        // GRR_ROOT is the node-local grr-sync root; the real tier
+        // bind-mounts ${GRR_ROOT}/grr:/grr:ro. It is provisioned per
+        // agent by seqpipe/infra#71 -- NOT as a uniform path: /tank/grr
+        // on some nodes, /data/grr on piglet + eyoree. The first #321
+        // real-tier build failed here because the job hard-required the
+        // agent's node environment to carry GRR_ROOT and the piglet agent
+        // had no such env var, so the `${GRR_ROOT:?...}` guard aborted
+        // before a single test ran. Resolve it the same way the sibling
+        // gpf-web-e2e job already does (web_e2e/Jenkinsfile.e2e): honour
+        // an explicit GRR_ROOT if set, else auto-detect the first
+        // candidate that exists, else emit a non-resolving sentinel so
+        // the pre-flight below fails with a clear "GRR not synced"
+        // message instead of an empty bind mount. No node-env
+        // provisioning required.
+        GRR_ROOT = sh(
+            script: '''
+                if [ -n "${GRR_ROOT:-}" ]; then
+                    printf '%s' "$GRR_ROOT"; exit 0
+                fi
+                for d in /tank/grr /data/grr; do
+                    [ -d "$d" ] && { printf '%s' "$d"; exit 0; }
+                done
+                printf '%s' "/grr-not-provisioned"
+            ''',
+            returnStdout: true,
+        ).trim()
     }
 
     stages {
@@ -113,20 +140,48 @@ pipeline {
 
         stage('Integration tests') {
             steps {
+                // Fail fast if grr-sync has not published the node-local
+                // GRR tree on this agent yet (seqpipe/infra#71). A dangling
+                // symlink, an absent tree, or the /grr-not-provisioned
+                // sentinel from the GRR_ROOT resolver would otherwise mount
+                // as an empty dir and fail deep in the run with a confusing
+                // error. Mirrors the pre-flight in web_e2e/Jenkinsfile.e2e.
+                sh '''
+                    set -eu
+                    tree="$GRR_ROOT/grr"
+                    resolved="$(readlink -e "$tree" || true)"
+                    if [ -z "$resolved" ]; then
+                        echo "GRR not synced on this node yet (GRR_ROOT=$GRR_ROOT):" >&2
+                        echo "  ($tree does not resolve -- grr-sync has not" >&2
+                        echo "   published the grr repo on this agent; see" >&2
+                        echo "   seqpipe/infra#71)" >&2
+                        exit 1
+                    fi
+                    # Accept EITHER manifest name: gain's directory GRR loader
+                    # tries .CONTENTS.json.gz first, then the uncompressed one.
+                    if [ ! -f "$tree/.CONTENTS.json.gz" ] \
+                       && [ ! -f "$tree/.CONTENTS.json" ]; then
+                        echo "GRR tree present but incomplete (GRR_ROOT=$GRR_ROOT):" >&2
+                        echo "  ($resolved has no .CONTENTS manifest)" >&2
+                        exit 1
+                    fi
+                    echo "OK: grr -> $resolved"
+                '''
+
                 // The image WORKDIR is /workspace/spliceai_annotator, so the
                 // committed fixture + corpus under tests/ resolve directly.
                 //
                 // The node-local real GRR is bind-mounted read-only at /grr
-                // (matching tests/integration_grr_definition.yaml). `:?` fails
-                // the build loudly if the agent has no GRR_ROOT provisioned
-                // instead of running a falsely-green fixture-only suite.
+                // (matching tests/integration_grr_definition.yaml); GRR_ROOT is
+                // resolved in the environment{} block and asserted non-empty by
+                // the pre-flight above.
                 // SPLICEAI_INTEGRATION_REQUIRE_GRR turns a missing /grr into a
                 // hard error inside the real tier too (it would pytest.skip on
                 // a dev box, but must never skip on the agent).
                 sh '''
                     docker run --rm \
                         -e SPLICEAI_INTEGRATION_REQUIRE_GRR=1 \
-                        -v "${GRR_ROOT:?GRR_ROOT must point at the grr-sync LVM root}/grr:/grr:ro" \
+                        -v "$GRR_ROOT/grr:/grr:ro" \
                         -v "$PWD/reports/integration:/reports" \
                         ${IMAGE_TAG} \
                         sh -c '
