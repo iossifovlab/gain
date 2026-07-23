@@ -471,6 +471,108 @@ def test_calc_histogram_categorical() -> None:
     assert histogram.raw_values[3] == 1
 
 
+def test_calc_histogram_categorical_string_values(
+    tmp_path: pathlib.Path,
+) -> None:
+    # #352: a string-valued gene score with a categorical histogram must
+    # build a real CategoricalHistogram. Previously the categorical branch
+    # coerced every value with int() (after math.isnan()), so a string
+    # category raised TypeError and the histogram was silently nullified.
+    repo = (
+        a_grr()
+        .with_resource(
+            "genes",
+            a_gene_score()
+            .with_score("gs_cat", "str")
+            .with_histogram(
+                {"type": "categorical", "value_order": ["LOW", "HIGH"]},
+            )
+            .with_data(textwrap.dedent("""
+                gene  gs_cat
+                g1    LOW
+                g2    HIGH
+                g3    LOW
+            """)),
+        )
+        .build_repo(tmp_path)
+    )
+    res = repo.get_resource("genes")
+
+    histogram = GeneScoreImplementation._build_histograms(res)["gs_cat"]
+
+    assert isinstance(histogram, CategoricalHistogram)
+    assert histogram.raw_values["LOW"] == 2
+    assert histogram.raw_values["HIGH"] == 1
+
+
+def test_calc_histogram_categorical_string_skips_missing_values() -> None:
+    # #352: a missing cell in a string categorical column is read by pandas
+    # as a NaN float. It must be skipped (math.isnan is unsafe on strings and
+    # a NaN float is rejected by CategoricalHistogram.add_value), leaving the
+    # real string categories correctly counted.
+    repo = build_inmemory_test_repository({
+        "genes": {
+            GR_CONF_FILE_NAME: textwrap.dedent("""
+                type: gene_score
+                filename: cat.csv
+                scores:
+                - id: gs_cat
+                  desc: categorical string
+                  histogram:
+                    type: categorical
+                    value_order: [LOW, HIGH]
+            """),
+            "cat.csv": "gene,gs_cat\ng1,LOW\ng2,\ng3,HIGH\ng4,LOW\n",
+        },
+    })
+    res = repo.get_resource("genes")
+
+    histogram = GeneScoreImplementation._build_histograms(res)["gs_cat"]
+
+    assert isinstance(histogram, CategoricalHistogram)
+    assert histogram.raw_values["LOW"] == 2
+    assert histogram.raw_values["HIGH"] == 1
+    assert len(histogram.raw_values) == 2  # the NaN row contributes no category
+
+
+def test_string_categorical_writes_json_and_png(
+    tmp_path: pathlib.Path,
+) -> None:
+    # #352 acceptance: the reproduction from the issue. A string-valued gene
+    # score with a categorical histogram must serialize a real categorical
+    # histogram_gs_cat.json AND render histogram_gs_cat.png -- previously the
+    # json held a serialized NullHistogram and no png was written.
+    repo = (
+        a_grr()
+        .with_resource(
+            "genes",
+            a_gene_score()
+            .with_score("gs_num", "float")
+            .with_score("gs_cat", "str")
+            .with_histogram(
+                {"type": "categorical", "value_order": ["LOW", "HIGH"]},
+                score_id="gs_cat",
+            )
+            .with_data(textwrap.dedent("""
+                gene  gs_num  gs_cat
+                g1    0.1     LOW
+                g2    0.2     HIGH
+                g3    0.3     LOW
+            """)),
+        )
+        .build_repo(tmp_path)
+    )
+    res = repo.get_resource("genes")
+
+    GeneScoreImplementation._build_histograms(res)
+
+    stats = tmp_path / "genes" / "statistics"
+    hist_json = json.loads((stats / "histogram_gs_cat.json").read_text())
+    assert hist_json["config"]["type"] == "categorical"
+    assert (stats / "histogram_gs_cat.png").exists()
+    assert (stats / "histogram_gs_cat.png").stat().st_size > 0
+
+
 # ---------------------------------------------------------------------------
 # _save_histogram (requires writable filesystem repo)
 # ---------------------------------------------------------------------------

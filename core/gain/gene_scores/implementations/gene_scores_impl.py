@@ -4,6 +4,8 @@ import json
 import math
 from typing import Any, ClassVar
 
+import numpy as np
+
 from gain import logging
 from gain.gene_scores.gene_scores import (
     GeneScore,
@@ -125,9 +127,21 @@ class GeneScoreImplementation(ScoreImplementationBase):
         elif isinstance(hist_conf, CategoricalHistogramConfig):
             histogram = CategoricalHistogram(hist_conf)
             for value in gene_score.get_values(score_id):
-                if math.isnan(value):
+                # Categorical values pass through untouched -- int()/isnan
+                # coercion is invalid for string categories (#352). Missing
+                # values are NaN floats (or None) regardless of the column's
+                # declared type, so filter them without assuming a number.
+                if value is None:
                     continue
-                histogram.add_value(int(value))
+                if isinstance(value, float) and math.isnan(value):
+                    continue
+                # get_values yields numpy scalars for numeric columns;
+                # CategoricalHistogram.add_value accepts only native str/int,
+                # so normalize numpy -> python (this is what int() used to do
+                # for the int-valued case).
+                if isinstance(value, np.generic):
+                    value = value.item()
+                histogram.add_value(value)
         else:
             raise TypeError(f"Unknown histogram config: {hist_conf}")
         return histogram

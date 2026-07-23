@@ -152,9 +152,13 @@ class GeneScore(ScoreResource[GeneScoreDef]):
         """Return maximal score value."""
         return float(self.df[score_id].max())
 
-    def get_values(self, score_id: str) -> list[float]:
-        """Return a list of score values."""
-        return cast(list[float], list(self.df[score_id].values))
+    def get_values(self, score_id: str) -> list[Any]:
+        """Return a list of score values.
+
+        A numeric score yields floats; a categorical string score yields the
+        raw string categories, so the element type is not narrowed to float.
+        """
+        return list(self.df[score_id].values)
 
     def _get_number_hist_conf(
             self, score_id: str) -> NumberHistogramConfig | None:
