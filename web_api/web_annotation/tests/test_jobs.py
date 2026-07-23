@@ -19,6 +19,7 @@ from pytest_mock import MockerFixture
 
 from web_annotation.consumers import AnnotationStateConsumer
 from web_annotation.executor import SequentialTaskExecutor
+from web_annotation.jobs import views as jobs_views
 from web_annotation.models import (
     AnonymousJob,
     Job,
@@ -272,6 +273,42 @@ def test_annotate_vcf(
         pathlib.Path(settings.JOB_RESULT_STORAGE_DIR) / user.email
     assert result_path.exists()
     assert job.result_path.endswith(".vcf") is True
+
+
+@pytest.mark.django_db
+def test_annotate_vcf_builds_pipeline_with_explicit_work_dir(
+    user_client: Client, test_grr: GenomicResourceRepo,
+    mocker: MockerFixture,
+) -> None:
+    """The VCF job path must pass an explicit writable work_dir.
+
+    Regression for gain#278: without it, the pipeline's annotators
+    inherit build_annotation_pipeline's cwd-relative default and EPERM
+    under any non-root runtime.
+    """
+    mocker.patch.object(jobs_views, "validate_vcf", return_value=True)
+    spy = mocker.spy(jobs_views, "build_annotation_pipeline")
+
+    user = User.objects.get(email="user@example.com")
+    vcf = textwrap.dedent("""
+        ##fileformat=VCFv4.1
+        ##contig=<ID=chr1>
+        #CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+        chr1	1	.	C	A	.	.	.
+    """).strip()
+
+    response = user_client.post(
+        "/api/jobs/annotate_vcf",
+        {
+            "pipeline_id": "pipeline/test_pipeline",
+            "data": ContentFile(vcf, "test_input.vcf"),
+        },
+    )
+    assert response.status_code == 200
+
+    spy.assert_called_once()
+    assert spy.call_args.kwargs["work_dir"] == \
+        pathlib.Path(settings.JOB_RESULT_STORAGE_DIR) / user.email
 
 
 @pytest.mark.django_db
@@ -772,6 +809,42 @@ def test_annotate_tabular(
     output = pathlib.Path(job.result_path).read_text(encoding="utf-8")
     lines = [line.split(separator) for line in output.strip().split("\n")]
     assert lines == expected_lines
+
+
+@pytest.mark.django_db
+def test_annotate_tabular_builds_pipeline_with_explicit_work_dir(
+    admin_client: Client, test_grr: GenomicResourceRepo,
+    mocker: MockerFixture,
+) -> None:
+    """The tabular job path must pass an explicit writable work_dir.
+
+    Regression for gain#278 — see the VCF counterpart above.
+    """
+    spy = mocker.spy(jobs_views, "build_annotation_pipeline")
+
+    user = User.objects.get(email="admin@example.com")
+    tabular = textwrap.dedent("""
+        chrom	pos	ref	alt
+        chr1	1	C	A
+    """).strip()
+
+    response = admin_client.post(
+        "/api/jobs/annotate_tabular",
+        {
+            "pipeline_id": "pipeline/test_pipeline",
+            "data": ContentFile(tabular, "test_input.tsv"),
+            "separator": "\t",
+            "col_chrom": "chrom",
+            "col_pos": "pos",
+            "col_ref": "ref",
+            "col_alt": "alt",
+        },
+    )
+    assert response.status_code == 200
+
+    spy.assert_called_once()
+    assert spy.call_args.kwargs["work_dir"] == \
+        pathlib.Path(settings.JOB_RESULT_STORAGE_DIR) / user.email
 
 
 @pytest.mark.django_db
