@@ -493,6 +493,25 @@ class BigWigTable(GenomicPositionTable):
             }
             yield pos_begin, pos_end, cols
 
+    def header_min_max(self) -> tuple[float, float] | None:
+        """The file-global ``(minVal, maxVal)`` from the bigWig header.
+
+        A bigWig header records the min and max value over every interval in
+        the file, computed at write time -- so it is the whole-file value
+        range without reading any data.  Returns ``None`` if the handle is
+        closed or the header carries no usable range (a missing or nan entry).
+        """
+        if self._bw_file is None:
+            return None
+        header = self._bw_file.header()
+        low, high = header.get("minVal"), header.get("maxVal")
+        if low is None or high is None:
+            return None
+        low, high = float(low), float(high)
+        if np.isnan(low) or np.isnan(high):
+            return None
+        return low, high
+
     def get_all_records(self) -> Generator[Record, None, None]:
         assert self._bw_file is not None
         for chrom in self.get_chromosomes():

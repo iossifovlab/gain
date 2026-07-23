@@ -150,22 +150,38 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             merge_min_max_task: Task | dict[str, Any] = all_hist_confs
             if all_min_max_scores:
                 min_max_tasks = []
-                for region in regions:
-                    chrom = region.chrom
-                    start = region.start
-                    end = region.stop
+                # A full-mapping bigWig carries its value range in its header,
+                # so one O(1) task replaces the whole per-region min/max scan.
+                header_min_max = \
+                    GenomicScoreImplementation._bigwig_header_min_max(
+                        self.score, all_min_max_scores)
+                if header_min_max is not None:
+                    low, high = header_min_max
                     task = TaskGraph.make_task(
-                        f"{self.resource.get_full_id()}_calculate_min_max"
-                        f"_{chrom}_{start}_{end}",
-                        GenomicScoreImplementation._do_min_max,
-                        args=[
-                            self.resource,
-                            all_min_max_scores,
-                            chrom, start, end],
+                        f"{self.resource.get_full_id()}_min_max_from_header",
+                        GenomicScoreImplementation._do_min_max_from_header,
+                        args=[all_min_max_scores, low, high],
                         deps=[],
                     )
                     min_max_tasks.append(task.task)
                     tasks.append(task)
+                else:
+                    for region in regions:
+                        chrom = region.chrom
+                        start = region.start
+                        end = region.stop
+                        task = TaskGraph.make_task(
+                            f"{self.resource.get_full_id()}_calculate_min_max"
+                            f"_{chrom}_{start}_{end}",
+                            GenomicScoreImplementation._do_min_max_task,
+                            args=[
+                                self.resource,
+                                all_min_max_scores,
+                                chrom, start, end],
+                            deps=[],
+                        )
+                        min_max_tasks.append(task.task)
+                        tasks.append(task)
                 merge_task = TaskGraph.make_task(
                     f"{self.resource.get_full_id()}_merge_min_max",
                     GenomicScoreImplementation._merge_min_max,
@@ -576,12 +592,40 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         right edge so the next batch can continue the overlap check.
         """
         pos_begin, pos_end, value_cells = arrays
+        keep, weights, prev_right = \
+            GenomicScoreImplementation._clip_keep_guard(
+                pos_begin, pos_end, region, prev_right)
+
+        for score_id, hist in result.items():
+            score_def = defs[score_id]
+            values = GenomicScoreImplementation._coerce_values(
+                value_cells[score_def.score_index], score_def)
+            assert isinstance(hist, NumberHistogram)
+            hist.add_batch(values[keep], weights)
+
+        return prev_right
+
+    @staticmethod
+    def _clip_keep_guard(
+        pos_begin: np.ndarray,
+        pos_end: np.ndarray,
+        region: tuple[str | None, int | None, int | None],
+        prev_right: int | None,
+    ) -> tuple[np.ndarray, np.ndarray, int | None]:
+        """Clip a batch to the region and enforce the overlap guard.
+
+        Returns ``(keep, weights, prev_right)``: the mask of records surviving
+        the ``pos_end >= start`` skip (as ``_fetch_region_lines`` drops records
+        ending before the query), their span weights
+        ``min(end, pos_end) - max(start, pos_begin) + 1``, and the carry for the
+        next batch's overlap check.  Raises ``ValueError`` on an overlapping
+        position exactly as ``fetch_region_values`` does, across the batch
+        boundary via ``prev_right``.
+        """
         chrom, start, end = region
         count = pos_begin.shape[0]
-
         left = pos_begin if start is None else np.maximum(pos_begin, start)
         right = pos_end if end is None else np.minimum(pos_end, end)
-        # ``_fetch_region_lines`` skips a record that ends before the query.
         keep = np.ones(count, dtype=bool) if start is None \
             else (pos_end >= start)
 
@@ -597,34 +641,36 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                     f"multiple values for positions on {chrom}")
             prev_right = int(kright[-1])
         weights = (kright - kleft + 1).astype(np.int64)
+        return keep, weights, prev_right
 
-        for score_id, hist in result.items():
-            score_def = defs[score_id]
-            raw = pd.Series(value_cells[score_def.score_index])
-            na_mask = raw.isin(score_def.na_values).to_numpy()
-            # NA is tested on the raw value BEFORE parse (matching
-            # ``_extract_value``); an unparseable value coerces to nan, which
-            # ``add_batch`` skips exactly as ``add_value`` skips a None.
-            values = pd.to_numeric(raw, errors="coerce").to_numpy(
-                dtype=np.float64, copy=True)
-            # ``pd.to_numeric`` is stricter than Python ``float()`` -- the
-            # per-record parser -- so it drops tokens ``float()`` accepts
-            # (PEP-515 underscores, Unicode digits).  Re-parse just the non-NA
-            # cells it turned to nan with ``float()`` so the two agree exactly;
-            # clean numeric data leaves this set empty and pays nothing.
-            retry = np.flatnonzero(np.isnan(values) & ~na_mask)
-            if retry.size:
-                raw_cells = raw.to_numpy()
-                for idx in retry:
-                    try:
-                        values[idx] = float(raw_cells[idx])
-                    except (TypeError, ValueError):
-                        values[idx] = np.nan
-            values[na_mask] = np.nan
-            assert isinstance(hist, NumberHistogram)
-            hist.add_batch(values[keep], weights)
+    @staticmethod
+    def _coerce_values(
+        cells: np.ndarray, score_def: Any,
+    ) -> np.ndarray:
+        """Parse a score column into floats, matching ``_extract_value``.
 
-        return prev_right
+        NA is tested on the raw value BEFORE parse; an unparseable value
+        becomes nan -- skipped by both ``add_batch`` and the min/max reduction,
+        exactly as ``add_value`` / ``MinMaxValue.add_value`` skip a ``None``.
+        ``pd.to_numeric`` is stricter than Python ``float()`` (the per-record
+        parser), so the few non-NA cells it drops (PEP-515 underscores, Unicode
+        digits) are re-parsed with ``float()``; clean numeric data leaves that
+        set empty and pays nothing.
+        """
+        raw = pd.Series(cells)
+        na_mask = raw.isin(score_def.na_values).to_numpy()
+        values = pd.to_numeric(raw, errors="coerce").to_numpy(
+            dtype=np.float64, copy=True)
+        retry = np.flatnonzero(np.isnan(values) & ~na_mask)
+        if retry.size:
+            raw_cells = raw.to_numpy()
+            for idx in retry:
+                try:
+                    values[idx] = float(raw_cells[idx])
+                except (TypeError, ValueError):
+                    values[idx] = np.nan
+        values[na_mask] = np.nan
+        return values
 
     @staticmethod
     def _can_bulk_histogram(
@@ -647,6 +693,31 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         categorical/null histogram likewise keep the per-record
         :meth:`_do_histogram`.
         """
+        number_score_ids = []
+        for score_id, hist_conf in all_hist_confs.items():
+            if isinstance(hist_conf, NullHistogramConfig):
+                continue
+            if not isinstance(hist_conf, NumberHistogramConfig):
+                return False
+            number_score_ids.append(score_id)
+        return GenomicScoreImplementation._bulk_scan_eligible(
+            resource, number_score_ids)
+
+    @staticmethod
+    def _bulk_scan_eligible(
+        resource: GenomicResource,
+        score_ids: list[str],
+    ) -> bool:
+        """Whether a vectorized region scan may serve these float scores.
+
+        The shared gate for the histogram and min/max bulk paths: a
+        **position_score** (its span-weight and one-value-per-position overlap
+        guard are what the bulk accumulators assume -- not the per-allele read
+        of ``allele_score``/``np_score`` nor the weight-1 of
+        ``cnv_collection``), over a tabix or bigWig table (a VCF table's record
+        payload is not a raw row), with every score a ``float`` (``int()`` /
+        ``str()`` parsing does not match ``pd.to_numeric`` + ``float()``).
+        """
         if resource.get_type() != "position_score":
             return False
         impl = build_score_implementation_from_resource(resource)
@@ -657,15 +728,33 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             if not isinstance(
                     table, (TabixGenomicPositionTable, BigWigTable)):
                 return False
-            for score_id, hist_conf in all_hist_confs.items():
-                if isinstance(hist_conf, NullHistogramConfig):
-                    continue
-                if not isinstance(hist_conf, NumberHistogramConfig):
-                    return False
+            for score_id in score_ids:
                 score_def = score.score_definitions.get(score_id)
                 if score_def is None or score_def.value_type != "float":
                     return False
         return True
+
+    @staticmethod
+    def _do_min_max_task(
+        resource: GenomicResource,
+        score_ids: list[str],
+        chrom: str | None,
+        start: int | None,
+        end: int | None,
+    ) -> dict[str, MinMaxValue]:
+        """Compute a region's min/max, bulk-vectorized where eligible.
+
+        Mirrors :meth:`_do_histogram_task`: the bulk path needs a concrete
+        contig for its overlap guard, so a ``chrom is None`` whole-table scan
+        keeps the per-record :meth:`_do_min_max`.
+        """
+        if chrom is not None and \
+                GenomicScoreImplementation._bulk_scan_eligible(
+                    resource, score_ids):
+            return GenomicScoreImplementation._do_min_max_bulk(
+                resource, score_ids, chrom, start, end)
+        return GenomicScoreImplementation._do_min_max(
+            resource, score_ids, chrom, start, end)
 
     @staticmethod
     def _do_histogram_task(
@@ -688,6 +777,124 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 resource, all_hist_confs, chrom, start, end)
         return GenomicScoreImplementation._do_histogram(
             resource, all_hist_confs, chrom, start, end)
+
+    @staticmethod
+    def _do_min_max_bulk(
+        resource: GenomicResource,
+        score_ids: list[str],
+        chrom: str | None,
+        start: int | None,
+        end: int | None,
+    ) -> dict[str, MinMaxValue]:
+        """Vectorized equivalent of :meth:`_do_min_max`.
+
+        Reads the region as column-array batches (the same producer the
+        histogram bulk path uses) and reduces each float score's values with
+        ``nanmin``/``nanmax`` rather than a per-record
+        ``MinMaxValue.add_value``.  Coercion, the region clip/skip and the
+        overlap guard are identical to the per-record path; ``count`` stays 0,
+        as for a position score.
+        """
+        result: dict[str, MinMaxValue] = {
+            score_id: MinMaxValue(score_id) for score_id in score_ids}
+
+        impl = build_score_implementation_from_resource(resource)
+        with impl.score.open() as score:
+            defs = {
+                score_id: score.score_definitions[score_id]
+                for score_id in score_ids}
+            value_columns = {
+                cast(int, defs[score_id].score_index)
+                for score_id in score_ids}
+            prev_right: int | None = None
+            for arrays in GenomicScoreImplementation._region_value_arrays(
+                    score.table, chrom, start, end, value_columns):
+                prev_right = GenomicScoreImplementation._accumulate_min_max(
+                    arrays, result, defs, (chrom, start, end), prev_right)
+        del impl
+        return result
+
+    @staticmethod
+    def _bigwig_header_min_max(
+        score: GenomicScore,
+        score_ids: list[str],
+    ) -> tuple[float, float] | None:
+        """The bigWig header ``(min, max)`` IFF it equals a full scan.
+
+        The header summarises EVERY interval in the file, so it matches what a
+        scan would compute only when the scan covers the same data: the
+        resource must map the full set of file contigs (a restrictive
+        ``chrom_mapping`` would leave some out, making the header range wider),
+        and no score may carry a NUMERIC ``na`` sentinel (which the scan drops
+        from a value the header still counts).  Returns ``None`` when any guard
+        fails -- the caller then scans, so correctness never depends on this.
+        """
+        table = score.table
+        if not isinstance(table, BigWigTable):
+            return None
+        file_contigs = set(table.get_file_chromosomes())
+        scored = {
+            table._map_file_chrom(chrom)  # noqa: SLF001
+            for chrom in score.get_all_chromosomes()
+        }
+        if scored != file_contigs:
+            return None
+        for score_id in score_ids:
+            na_values = score.score_definitions[score_id].na_values
+            if any(not isinstance(sentinel, str) for sentinel in na_values):
+                return None
+        return table.header_min_max()
+
+    @staticmethod
+    def _do_min_max_from_header(
+        score_ids: list[str],
+        low: float,
+        high: float,
+    ) -> dict[str, MinMaxValue]:
+        """Min/max "task" that returns the bigWig header range, no scan.
+
+        The header is the whole-file value range, so one O(1) task replaces the
+        per-region min/max scan entirely; the merge over this single task is
+        the identity.
+        """
+        return {
+            score_id: MinMaxValue(score_id, low, high)
+            for score_id in score_ids
+        }
+
+    @staticmethod
+    def _accumulate_min_max(
+        arrays: tuple[np.ndarray, np.ndarray, dict[int, np.ndarray]],
+        result: dict[str, MinMaxValue],
+        defs: dict[str, Any],
+        region: tuple[str | None, int | None, int | None],
+        prev_right: int | None,
+    ) -> int | None:
+        """Fold one batch of column arrays into the per-score min/max.
+
+        Shares the clip/skip and overlapping-position guard with the histogram
+        path; the reduction is ``nanmin``/``nanmax`` over the kept, non-nan
+        values, folded into the running ``MinMaxValue`` exactly as
+        ``add_value`` seeds and combines them.
+        """
+        pos_begin, pos_end, value_cells = arrays
+        keep, _weights, prev_right = \
+            GenomicScoreImplementation._clip_keep_guard(
+                pos_begin, pos_end, region, prev_right)
+
+        for score_id, min_max in result.items():
+            score_def = defs[score_id]
+            values = GenomicScoreImplementation._coerce_values(
+                value_cells[score_def.score_index], score_def)[keep]
+            finite = values[~np.isnan(values)]
+            if finite.size:
+                low = float(finite.min())
+                high = float(finite.max())
+                min_max.min = low if np.isnan(min_max.min) \
+                    else min(min_max.min, low)
+                min_max.max = high if np.isnan(min_max.max) \
+                    else max(min_max.max, high)
+        return prev_right
 
     @staticmethod
     def _merge_histograms(
