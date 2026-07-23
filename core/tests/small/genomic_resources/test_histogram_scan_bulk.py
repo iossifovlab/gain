@@ -246,6 +246,34 @@ def test_int_score_is_not_bulk_eligible(tmp_path: pathlib.Path) -> None:
     assert not GenomicScoreImplementation._can_bulk_histogram(resource, confs)
 
 
+def test_bulk_matches_per_record_float_underscore_token(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Python float() (the per-record parser) accepts PEP-515 underscores;
+    # the bulk coercion must agree, not silently drop "1_000" as NaN.
+    resource = (
+        a_position_score()
+        .with_score("s", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  s
+            chr1   1          2        0.5
+            chr1   3          4        1_000
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    confs: dict = {"s": NumberHistogramConfig.from_dict({
+        "type": "number", "view_range": {"min": 0, "max": 2000},
+        "number_of_bins": 10, "x_log_scale": False, "y_log_scale": False})}
+    ref = GenomicScoreImplementation._do_histogram(
+        resource, confs, "chr1", 1, 4)
+    bulk = GenomicScoreImplementation._do_histogram_bulk(
+        resource, confs, "chr1", 1, 4)
+    _assert_hists_equal(bulk, ref)
+    assert bulk["s"].max_value == 1000.0
+
+
 def test_np_score_is_not_bulk_eligible(tmp_path: pathlib.Path) -> None:
     # An np_score/allele_score reads with per-allele (weight-1,
     # multiple-alleles-per-position) semantics; the position-score bulk path

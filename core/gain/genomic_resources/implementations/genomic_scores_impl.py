@@ -601,12 +601,26 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         for score_id, hist in result.items():
             score_def = defs[score_id]
             raw = pd.Series(value_cells[score_def.score_index])
+            na_mask = raw.isin(score_def.na_values).to_numpy()
             # NA is tested on the raw value BEFORE parse (matching
             # ``_extract_value``); an unparseable value coerces to nan, which
             # ``add_batch`` skips exactly as ``add_value`` skips a None.
             values = pd.to_numeric(raw, errors="coerce").to_numpy(
                 dtype=np.float64, copy=True)
-            values[raw.isin(score_def.na_values).to_numpy()] = np.nan
+            # ``pd.to_numeric`` is stricter than Python ``float()`` -- the
+            # per-record parser -- so it drops tokens ``float()`` accepts
+            # (PEP-515 underscores, Unicode digits).  Re-parse just the non-NA
+            # cells it turned to nan with ``float()`` so the two agree exactly;
+            # clean numeric data leaves this set empty and pays nothing.
+            retry = np.flatnonzero(np.isnan(values) & ~na_mask)
+            if retry.size:
+                raw_cells = raw.to_numpy()
+                for idx in retry:
+                    try:
+                        values[idx] = float(raw_cells[idx])
+                    except (TypeError, ValueError):
+                        values[idx] = np.nan
+            values[na_mask] = np.nan
             assert isinstance(hist, NumberHistogram)
             hist.add_batch(values[keep], weights)
 
