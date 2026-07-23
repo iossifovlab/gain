@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import json
+from collections.abc import Generator, Iterable
 from typing import Any, ClassVar, cast
 
 import numpy as np
@@ -477,14 +478,14 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     ) -> dict[str, Histogram]:
         """Vectorized equivalent of :meth:`_do_histogram`.
 
-        Reads the region's records in batches and accumulates each score's
+        Reads a region as batches of column arrays -- the tabix fast path
+        pulls raw pysam rows directly (no ``Record`` built per row), bigWig
+        goes through ``get_records_in_region`` -- and accumulates each score's
         histogram with :meth:`NumberHistogram.add_batch` rather than a
-        per-record ``add_value``.  It draws records from the SAME
-        ``get_records_in_region`` the per-record path uses, so a record's
-        zero-based and chromosome-map transforms are identical; only the
-        value coercion, the region clip/weight, and the binning are
-        vectorized.  The dispatch restricts this to float scores over
-        tabix/bigWig tables -- everything else keeps :meth:`_do_histogram`.
+        per-record ``add_value``.  The clip/weight, overlap guard and value
+        coercion are identical to the per-record path (pinned by the
+        bulk-vs-per-record tests); the dispatch restricts this to float scores
+        over tabix/bigWig tables -- everything else keeps :meth:`_do_histogram`.
         """
         result: dict[str, Histogram] = {}
         for score_id, hist_conf in all_hist_confs.items():
@@ -498,43 +499,84 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 score_id: score.score_definitions[score_id]
                 for score_id in result
             }
+            # A bulk-eligible score addresses its column by integer index
+            # (str keys are VCF INFO names, which the dispatch excludes).
+            value_columns = {
+                cast(int, defs[score_id].score_index) for score_id in result}
             prev_right: int | None = None
-            records = score.table.get_records_in_region(chrom, start, end)
-            while True:
-                batch = list(
-                    itertools.islice(
-                        records,
-                        GenomicScoreImplementation._SCAN_BATCH_SIZE))
-                if not batch:
-                    break
-                prev_right = GenomicScoreImplementation._accumulate_batch(
-                    batch, result, defs, (chrom, start, end), prev_right)
+            for arrays in GenomicScoreImplementation._region_value_arrays(
+                    score.table, chrom, start, end, value_columns):
+                prev_right = GenomicScoreImplementation._accumulate_arrays(
+                    arrays, result, defs, (chrom, start, end), prev_right)
         del impl
         return result
 
     @staticmethod
-    def _accumulate_batch(
-        batch: list[Any],
+    def _region_value_arrays(
+        table: Any,
+        chrom: str | None,
+        start: int | None,
+        end: int | None,
+        value_columns: Iterable[int],
+    ) -> Generator[
+            tuple[np.ndarray, np.ndarray, dict[int, np.ndarray]], None, None]:
+        """Yield ``(pos_begin, pos_end, {col: raw_cells})`` batches.
+
+        Tabix takes the raw-row fast path
+        (:meth:`TabixGenomicPositionTable.get_region_value_arrays`), which
+        never builds a ``Record``; other backends (bigWig) go through
+        ``get_records_in_region`` and are unpacked into the same array shape
+        here, so the accumulator does not care which backend produced them.
+        """
+        batch_size = GenomicScoreImplementation._SCAN_BATCH_SIZE
+        columns = list(value_columns)
+        if isinstance(table, TabixGenomicPositionTable) \
+                and not isinstance(table, VCFGenomicPositionTable) \
+                and chrom is not None and start is not None and end is not None:
+            yield from table.get_region_value_arrays(
+                chrom, start, end, columns, batch_size)
+            return
+
+        records = table.get_records_in_region(chrom, start, end)
+        while True:
+            batch = list(itertools.islice(records, batch_size))
+            if not batch:
+                return
+            count = len(batch)
+            pos_begin = np.fromiter(
+                (rec[POS_BEGIN] for rec in batch),
+                dtype=np.int64, count=count)
+            pos_end = np.fromiter(
+                (rec[POS_END] for rec in batch), dtype=np.int64, count=count)
+            cols = {
+                col: np.array(
+                    [rec[PAYLOAD][col] for rec in batch], dtype=object)
+                for col in columns
+            }
+            yield pos_begin, pos_end, cols
+
+    @staticmethod
+    def _accumulate_arrays(
+        arrays: tuple[np.ndarray, np.ndarray, dict[int, np.ndarray]],
         result: dict[str, Histogram],
         defs: dict[str, Any],
         region: tuple[str | None, int | None, int | None],
         prev_right: int | None,
     ) -> int | None:
-        """Fold one batch of records into the per-score histograms.
+        """Fold one batch of column arrays into the per-score histograms.
 
-        Clips each record to ``[start, end]`` exactly as
-        ``_fetch_region_lines`` does (drop records ending before ``start``;
+        ``arrays`` is one ``(pos_begin, pos_end, {col: raw_cells})`` batch as
+        produced by :meth:`_region_value_arrays`.  Clips each record to
+        ``[start, end]`` exactly as ``_fetch_region_lines`` does (drop records
+        ending before ``start``;
         ``weight = min(end, pos_end) - max(start, pos_begin) + 1``), enforces
         the same overlapping-position guard across the batch boundary, and
         adds each float score's values vectorized.  Returns the last clipped
         right edge so the next batch can continue the overlap check.
         """
+        pos_begin, pos_end, value_cells = arrays
         chrom, start, end = region
-        count = len(batch)
-        pos_begin = np.fromiter(
-            (rec[POS_BEGIN] for rec in batch), dtype=np.int64, count=count)
-        pos_end = np.fromiter(
-            (rec[POS_END] for rec in batch), dtype=np.int64, count=count)
+        count = pos_begin.shape[0]
 
         left = pos_begin if start is None else np.maximum(pos_begin, start)
         right = pos_end if end is None else np.minimum(pos_end, end)
@@ -557,8 +599,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
         for score_id, hist in result.items():
             score_def = defs[score_id]
-            raw = pd.Series([rec[PAYLOAD][score_def.score_index]
-                             for rec in batch])
+            raw = pd.Series(value_cells[score_def.score_index])
             # NA is tested on the raw value BEFORE parse (matching
             # ``_extract_value``); an unparseable value coerces to nan, which
             # ``add_batch`` skips exactly as ``add_value`` skips a None.
