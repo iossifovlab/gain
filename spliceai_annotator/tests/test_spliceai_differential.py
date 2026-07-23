@@ -123,19 +123,6 @@ def test_matches_tensorflow_baseline(
     _assert_matches_baseline(variant, result)
 
 
-def _diverges_batch_vs_sequential(variant: dict[str, Any]) -> bool:
-    """Whether the two padding paths are known to structurally diverge.
-
-    ``_prediction_padding_sequential`` and ``_prediction_padding_batch`` trim a
-    deletion's alt window differently once the trimmed reference is longer than
-    the model half-window -- i.e. ``ref_len - 1 > distance`` (the case the issue
-    documents and the ``del_long`` corpus variants exercise).  In that regime
-    batch != sequential is expected behaviour, so equality is not asserted; the
-    sequential output is still pinned against the TensorFlow baseline.
-    """
-    return bool(len(variant["ref"]) - 1 > variant["distance"])
-
-
 def _assert_batch_equals_sequential(
     variant: dict[str, Any],
     seq_result: dict[str, Any],
@@ -145,14 +132,10 @@ def _assert_batch_equals_sequential(
         assert all(v is None for v in batch_result.values()), (
             f"{variant['id']}: batch not all-None for rejected")
         return
-    if _diverges_batch_vs_sequential(variant):
-        # documented ref_len-1 > distance padding divergence: the paths
-        # intentionally differ.  Exercise the batch path and only check it
-        # still yields a structurally valid (non-None) result.
-        assert not all(v is None for v in batch_result.values()), (
-            f"{variant['id']}: batch unexpectedly all-None "
-            "in the padding-divergence regime")
-        return
+    # Every annotated variant: batch must equal sequential.  Deletions with
+    # ref_len-1 > distance -- the only case where the two padding paths would
+    # diverge (batch mis-reconstructs vs Illumina SpliceAI) -- are refused by
+    # the annotator, so they never reach here as annotated results.
     # exact on the formatted attributes
     for source in (*DP_SOURCES, *PROB_SOURCES, "delta_score",
                    "gene", "transcript_ids"):

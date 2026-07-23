@@ -56,8 +56,23 @@ python -m tests.corpus.regenerate_baseline
 
 Both strands; multi-gene loci (`SON`+`DONSON` overlap) and multi-transcript
 genes (`SON`, `DONSON`, `COL6A2`); a crafted mixed-strand gene; `distance ∈
-{0, 50, 500, 5000}`; SNV + short/long deletion + short/long insertion; every
-`_is_valid_annotatable` rejection (complex, ref-too-long, alt-too-long, strange
-alt, wrong ref, near-chromosome-end); null variants **and** splice-site
-variants. At `distance=0` every variant is rejected (`ref` longer than
-`2*distance == 0`) — pinned as all-None.
+{0, 50, 500, 5000}`; SNV + short deletion + a boundary deletion
+(`del_len == distance`, the largest one still annotated) + short/long
+insertion; every `_is_valid_annotatable` rejection (complex, ref-too-long,
+alt-too-long, strange alt, wrong ref, near-chromosome-end, **and
+deletion-longer-than-distance**); null variants **and** splice-site variants.
+At `distance=0` every variant is rejected (`ref` longer than `2*distance == 0`)
+— pinned as all-None.
+
+## Why long deletions are refused (not annotated)
+
+A deletion whose removed span exceeds the model half-window
+(`ref_len - 1 > distance`) is **refused** by the annotator (all-None), by
+design. Beyond that point `_prediction_padding_batch` mis-reconstructs the alt
+window: the sequential path reproduces the original Illumina SpliceAI exactly,
+but the batch path does not (e.g. a 90 bp deletion at `distance=50` gave
+`DP_AG` batch `-17` vs sequential/Illumina `-43`). Rather than emit values that
+depend on which code path ran, `_is_valid_annotatable` rejects these records —
+so `batch_annotate == annotate` then holds **exactly** for every annotated
+variant, and the `reject_del_too_long` / `del_boundary` axes pin both sides of
+that threshold.

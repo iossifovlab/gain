@@ -827,59 +827,70 @@
       "reason": ""
     },
     {
-      "id": "sondonson_del_long_0",
+      "id": "sondonson_del_boundary_0",
       "contig": "sondonson",
       "pos": 34385,
-      "ref": "TAATTTGAGATAATTATCTCTGTTTTCTTTCTTAGCCTGTGGACATCTCTACAGCAATGAGTGAACGGGCACTTGCTCAGAAAAGACTCA",
+      "ref": "TAATTTGAGATAATTATCTCTGTTTTCTTTCTTAGCCTGTGGACATCTCTA",
       "alt": "T",
       "distance": 50,
-      "category": "del_long",
+      "category": "del_boundary",
       "expect": "annotated",
       "reason": ""
     },
     {
-      "id": "sondonson_del_long_1",
+      "id": "sondonson_del_boundary_1",
       "contig": "sondonson",
       "pos": 35382,
-      "ref": "ATCTAATTTGTGTGAATGACAGCTGATCTTTATCACAACAAATGTTGGTGACTGAAAAAAAGTATACAAGCTTCTTTAAAAAGTTGTTTT",
+      "ref": "ATCTAATTTGTGTGAATGACAGCTGATCTTTATCACAACAAATGTTGGTGA",
       "alt": "A",
       "distance": 50,
-      "category": "del_long",
+      "category": "del_boundary",
       "expect": "annotated",
       "reason": ""
     },
     {
-      "id": "sondonson_del_long_2",
+      "id": "sondonson_del_boundary_2",
       "contig": "sondonson",
       "pos": 38460,
-      "ref": "AGAATATTTGATGCTAGTATCAACTAAAAAAGAAACTTTTGAAAATTAAAAATGGGCCACAACATGTAGAAGTCATTAGGCAGCTGAAAA",
+      "ref": "AGAATATTTGATGCTAGTATCAACTAAAAAAGAAACTTTTGAAAATTAAAA",
       "alt": "A",
       "distance": 50,
-      "category": "del_long",
+      "category": "del_boundary",
       "expect": "annotated",
       "reason": ""
     },
     {
-      "id": "sondonson_del_long_3",
+      "id": "sondonson_del_long_0",
       "contig": "sondonson",
       "pos": 41788,
       "ref": "TACAGGATGAGCATCCCACATCTGGAAACCTGAAATGCTTTAAAACAGAAAACTTTTTGAATACTGATATGATGCTCAAAGGAAATACTC",
       "alt": "T",
       "distance": 50,
-      "category": "del_long",
-      "expect": "annotated",
-      "reason": ""
+      "category": "reject_del_too_long",
+      "expect": "rejected",
+      "reason": "deletion_longer_than_distance"
     },
     {
-      "id": "sondonson_del_long_4",
+      "id": "sondonson_del_long_1",
       "contig": "sondonson",
       "pos": 43098,
       "ref": "CTGAATTTCTATTGGTCCATGATAGTGGCCCTGATCATCGCAAACATTTTCTCTTTAGGGTAAATATGAATTTCTGCATTAATTATATAT",
       "alt": "C",
       "distance": 50,
-      "category": "del_long",
-      "expect": "annotated",
-      "reason": ""
+      "category": "reject_del_too_long",
+      "expect": "rejected",
+      "reason": "deletion_longer_than_distance"
+    },
+    {
+      "id": "sondonson_del_long_2",
+      "contig": "sondonson",
+      "pos": 43392,
+      "ref": "GAATGTGGGGAATTAATTTAATACTTTTGTCAGTCTTTTTCTCAATTTGGAGACCTGCTCTAATTTGCAGTCCCTTTCCCAAATGATTTG",
+      "alt": "G",
+      "distance": 50,
+      "category": "reject_del_too_long",
+      "expect": "rejected",
+      "reason": "deletion_longer_than_distance"
     },
     {
       "id": "sondonson_ins_short_0",
@@ -2006,8 +2017,8 @@
     {
       "id": "col6a2_del_short_2",
       "contig": "col6a2",
-      "pos": 28551,
-      "ref": "AGA",
+      "pos": 26995,
+      "ref": "ACC",
       "alt": "A",
       "distance": 50,
       "category": "del_short",
@@ -2016,6 +2027,17 @@
     },
     {
       "id": "col6a2_del_short_3",
+      "contig": "col6a2",
+      "pos": 29794,
+      "ref": "TCC",
+      "alt": "T",
+      "distance": 50,
+      "category": "del_short",
+      "expect": "annotated",
+      "reason": ""
+    },
+    {
+      "id": "col6a2_del_short_4",
       "contig": "col6a2",
       "pos": 30686,
       "ref": "ACA",
@@ -2026,7 +2048,7 @@
       "reason": ""
     },
     {
-      "id": "col6a2_del_short_4",
+      "id": "col6a2_del_short_5",
       "contig": "col6a2",
       "pos": 31242,
       "ref": "AGA",
@@ -2037,59 +2059,81 @@
       "reason": ""
     },
     {
-      "id": "col6a2_del_short_5",
+      "id": "col6a2_del_boundary_0",
       "contig": "col6a2",
       "pos": 32432,
-      "ref": "ACC",
+      "ref": "ACCTGTGCCCTCCTCACGAGGCTGAACAAGTTCCAGGGGACCCTGCAGGGC",
       "alt": "A",
       "distance": 50,
-      "category": "del_short",
+      "category": "del_boundary",
+      "expect": "annotated",
+      "reason": ""
+    },
+    {
+      "id": "col6a2_del_boundary_1",
+      "contig": "col6a2",
+      "pos": 33032,
+      "ref": "CCGCAGTGACTGGACAGCACCAGGTCCCCACCAGGCCCCAGCCCATCACCT",
+      "alt": "C",
+      "distance": 50,
+      "category": "del_boundary",
+      "expect": "annotated",
+      "reason": ""
+    },
+    {
+      "id": "col6a2_del_boundary_2",
+      "contig": "col6a2",
+      "pos": 33761,
+      "ref": "TCAGGGGTGATGCTGAAGGGCTGTGTGGTAAAACCCCGGCCACCAGCTCCC",
+      "alt": "T",
+      "distance": 50,
+      "category": "del_boundary",
       "expect": "annotated",
       "reason": ""
     },
     {
       "id": "col6a2_del_long_0",
       "contig": "col6a2",
-      "pos": 33761,
-      "ref": "TCAGGGGTGATGCTGAAGGGCTGTGTGGTAAAACCCCGGCCACCAGCTCCCCTTGACATCAGGTGAAGGGGCTTCCTCCCAGGAAGTGGA",
-      "alt": "T",
-      "distance": 50,
-      "category": "del_long",
-      "expect": "annotated",
-      "reason": ""
-    },
-    {
-      "id": "col6a2_del_long_1",
-      "contig": "col6a2",
       "pos": 34918,
       "ref": "GAGTCAGGGGCAAGGCAGTGGGCCTGAGGTCCTGGATGGGCCACAGGGAAAGGAGGAGCTGGGACCCTCAAGACAGAGGTCCACGGCCCC",
       "alt": "G",
       "distance": 50,
-      "category": "del_long",
-      "expect": "annotated",
-      "reason": ""
+      "category": "reject_del_too_long",
+      "expect": "rejected",
+      "reason": "deletion_longer_than_distance"
     },
     {
-      "id": "col6a2_del_long_2",
+      "id": "col6a2_del_long_1",
       "contig": "col6a2",
       "pos": 35442,
       "ref": "CAGCTACGTGGCCTGAGTAGGGTCCTCCCCGCGTGTGGGCAGGCTTCGGGTCTCTAGGCACGTCCAGCCCCCACTGGAGGTGGACAGGGC",
       "alt": "C",
       "distance": 50,
-      "category": "del_long",
-      "expect": "annotated",
-      "reason": ""
+      "category": "reject_del_too_long",
+      "expect": "rejected",
+      "reason": "deletion_longer_than_distance"
+    },
+    {
+      "id": "col6a2_del_long_2",
+      "contig": "col6a2",
+      "pos": 35906,
+      "ref": "GGTCCAGCCCAGCATCAGGAAAAGAGCACAGCTCAGAACGCAGCACAGTGGCCTCACCCAGAGTGTGAATGAGCGAGGGAGGGAAACGGG",
+      "alt": "G",
+      "distance": 50,
+      "category": "reject_del_too_long",
+      "expect": "rejected",
+      "reason": "deletion_longer_than_distance"
     },
     {
       "id": "col6a2_del_long_3",
       "contig": "col6a2",
-      "pos": 36282,
-      "ref": "CACTGGCTGGTCCCTTTTCAACCAAAGTTCAGGCTTTGCAAAAAAACCACATAGATGCTCCCGTTTAAAGGACCCCAAAATGCCAGATCG",
-      "alt": "C",
+      "pos": 37373,
+      "ref": "GGATGGGTTAGTGGGTGGGTGGATGAATGGATGGGTGCATAAAGGATGGATGGATGAATGAGTTAGTGGGTTGGCAGATGGATGGATGGG",
+      "alt": "G",
       "distance": 50,
-      "category": "del_long",
-      "expect": "annotated",
-      "reason": ""
+      "category": "reject_del_too_long",
+      "expect": "rejected",
+      "reason": "deletion_longer_than_distance"
     },
     {
       "id": "col6a2_del_long_4",
@@ -2098,9 +2142,9 @@
       "ref": "GGTGGGGGGAGGAGGGTGGCAGCGAGGTTGGTAGGGACAGGACCCGCCAGCCTCCCCGCATGGCTGCCTCCACACGTGGGCTGGAATGTC",
       "alt": "G",
       "distance": 50,
-      "category": "del_long",
-      "expect": "annotated",
-      "reason": ""
+      "category": "reject_del_too_long",
+      "expect": "rejected",
+      "reason": "deletion_longer_than_distance"
     },
     {
       "id": "col6a2_ins_short_0",

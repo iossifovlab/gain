@@ -206,6 +206,7 @@ N_NULL_D5000 = 6
 N_SPLICE_D50 = 30
 N_SPLICE_D500 = 8
 N_SHORT_DEL = 6
+N_BOUNDARY_DEL = 3
 N_LONG_DEL = 5
 N_SHORT_INS = 6
 N_LONG_INS = 5
@@ -253,20 +254,32 @@ def _build_variants(loci: dict[str, _Locus]) -> list[CorpusVariant]:
             add(f"{lname}_splice500_{i}", locus, pos, locus.base_at(pos),
                 locus.other_base(pos), 500, "snv_splice", "annotated")
 
-        # ---- deletions (short + long -> batch/seq divergence) -------------
-        del_anchor = _take(null_pos, N_SHORT_DEL + N_LONG_DEL)
+        # ---- deletions -----------------------------------------------------
+        # short:    del_len (2) <= distance -> annotated; batch == sequential.
+        # boundary: del_len (50) == distance -> the largest still-annotated
+        #           deletion; batch == sequential must still hold exactly.
+        # long:     del_len (89) > distance -> refused ("deletion longer than
+        #           distance"): the batch padding path mis-reconstructs it
+        #           (the sequential path matches Illumina SpliceAI, batch does
+        #           not), so the annotator rejects it outright.
+        del_anchor = _take(
+            null_pos, N_SHORT_DEL + N_BOUNDARY_DEL + N_LONG_DEL)
         short_anchor = del_anchor[:N_SHORT_DEL]
-        long_anchor = del_anchor[N_SHORT_DEL:]
+        bound_anchor = del_anchor[N_SHORT_DEL:N_SHORT_DEL + N_BOUNDARY_DEL]
+        long_anchor = del_anchor[N_SHORT_DEL + N_BOUNDARY_DEL:]
         for i, pos in enumerate(short_anchor):
             ref = locus.seq[pos - 1:pos - 1 + 3].upper()
             add(f"{lname}_del_short_{i}", locus, pos, ref, ref[0], 50,
                 "del_short", "annotated")
+        for i, pos in enumerate(bound_anchor):
+            ref = locus.seq[pos - 1:pos - 1 + 51].upper()
+            add(f"{lname}_del_boundary_{i}", locus, pos, ref, ref[0], 50,
+                "del_boundary", "annotated")
         for i, pos in enumerate(long_anchor):
-            # ref length 90 -> ref_len-1 (89) > distance (50): exercises the
-            # sequential/batch padding divergence.
             ref = locus.seq[pos - 1:pos - 1 + 90].upper()
             add(f"{lname}_del_long_{i}", locus, pos, ref, ref[0], 50,
-                "del_long", "annotated")
+                "reject_del_too_long", "rejected",
+                "deletion_longer_than_distance")
 
         # ---- insertions (short + long) ------------------------------------
         ins_anchor = _take(null_pos, N_SHORT_INS + N_LONG_INS)
