@@ -744,21 +744,20 @@ class FsspecReadWriteProtocol(
         if ancestor_specs is None:
             ancestor_specs = []
 
-        # Read .gitignore in the current directory and accumulate specs.
-        # Each spec is paired with the depth at which it was found so that
-        # patterns are matched against paths relative to their .gitignore root.
-        gitignore_url = os.path.join(url, ".gitignore")
+        # Path of the current directory from the GRR root. Each accumulated
+        # spec is anchored by the depth of the directory that holds its
+        # .gitignore, so _is_gitignored can match a file against a path
+        # relative to that .gitignore's own directory (git semantics).
+        full_parts = [
+            part for part in resource_path.split("/") if part
+        ] + path_array
+
+        # Read the .gitignore in the current directory and add its spec,
+        # anchored at this directory's depth.
         current_specs = ancestor_specs
-        if self.filesystem.exists(gitignore_url):
-            with self.filesystem.open(gitignore_url, "rt") as f:
-                raw = cast(str, f.read())
-            lines: list[str] = [
-                line for line in raw.splitlines()
-                if line and not line.startswith("#")
-            ]
-            if lines:
-                spec = pathspec.PathSpec.from_lines("gitignore", lines)
-                current_specs = [*ancestor_specs, (len(path_array), spec)]
+        spec = self._load_gitignore_spec(os.path.join(url, ".gitignore"))
+        if spec is not None:
+            current_specs = [*ancestor_specs, (len(full_parts), spec)]
 
         raw_names = []
         for direntry in self.filesystem.ls(url, detail=False):
@@ -781,7 +780,7 @@ class FsspecReadWriteProtocol(
         sibling_names = set(raw_names)
 
         for name in raw_names:
-            if self._is_gitignored(name, path_array, current_specs):
+            if self._is_gitignored(name, full_parts, current_specs):
                 # A gitignored leaf named by a genuine sibling `<name>.dvc`
                 # pointer is a `dvc add <file>` data file and must stay in
                 # the manifest -- regardless of WHICH gitignore rule ignored
@@ -855,16 +854,73 @@ class FsspecReadWriteProtocol(
 
         return parse_dvc_pointer_out(content, name) is not None
 
+    def _load_gitignore_spec(
+        self, gitignore_url: str,
+    ) -> pathspec.PathSpec | None:
+        """Return the PathSpec for a .gitignore, or None if absent/empty."""
+        if not self.filesystem.exists(gitignore_url):
+            return None
+        with self.filesystem.open(gitignore_url, "rt") as f:
+            raw = cast(str, f.read())
+        lines = [
+            line for line in raw.splitlines()
+            if line and not line.startswith("#")
+        ]
+        if not lines:
+            return None
+        return pathspec.PathSpec.from_lines("gitignore", lines)
+
+    def _collect_ancestor_specs(
+        self, resource_path: str,
+    ) -> list[tuple[int, pathspec.PathSpec]]:
+        """Seed gitignore specs from every directory above the resource.
+
+        Walk the directories between the GRR root (``self.url``, inclusive)
+        and the resource directory (exclusive), reading each ``.gitignore``.
+        The walk never climbs above ``self.url``, so a ``.gitignore`` outside
+        the GRR is never read. Each spec is anchored by the depth (from the
+        GRR root) of the directory that holds it, so it matches files under
+        the resource relative to its ``.gitignore`` root -- as git applies a
+        repository-root rule to a nested path. The resource's own
+        ``.gitignore`` is read by the descending scan, not here.
+
+        Ancestor and descendant specs are OR-combined by :meth:`_is_gitignored`
+        (any match ignores); cross-level ``!`` negation -- a deeper
+        ``.gitignore`` re-including a file an ancestor ignored -- is NOT
+        honored. See that method's docstring for the limitation.
+        """
+        parts = [part for part in resource_path.split("/") if part]
+        specs: list[tuple[int, pathspec.PathSpec]] = []
+        for depth in range(len(parts)):
+            spec = self._load_gitignore_spec(
+                os.path.join(self.url, *parts[:depth], ".gitignore"))
+            if spec is not None:
+                specs.append((depth, spec))
+        return specs
+
     @staticmethod
     def _is_gitignored(
         name: str,
-        path_array: list[str],
+        full_parts: list[str],
         specs: list[tuple[int, pathspec.PathSpec]],
     ) -> bool:
-        """Return True if name is excluded by any accumulated gitignore spec."""
-        for base_depth, spec in specs:
-            # Path relative to the directory that contains this .gitignore.
-            rel_parts = [*path_array[base_depth:], name]
+        """Return True if name is excluded by any accumulated gitignore spec.
+
+        Specs are combined by OR: ``name`` is dropped if *any* level's
+        ``.gitignore`` matches it. This matches git for the common case of
+        non-negated patterns, but it does NOT implement git's full
+        last-match-wins-across-levels semantics: a file ignored by an ancestor
+        ``.gitignore`` cannot be re-included by a ``!pattern`` in a deeper
+        ``.gitignore`` (cross-level negation). Negation within a single
+        ``.gitignore`` still works, since ``pathspec`` resolves last-match
+        inside one spec. This limitation is characterized by
+        ``test_gitignore_ancestor_negation_across_levels_is_not_honored``.
+        """
+        for anchor_depth, spec in specs:
+            # Path of `name` relative to the directory that holds this
+            # .gitignore: drop the leading `anchor_depth` components (GRR root
+            # -> that directory) from the current path, then add the file name.
+            rel_parts = [*full_parts[anchor_depth:], name]
             rel_path = "/".join(rel_parts)
             # Check as both a file and a directory path so that
             # trailing-/ patterns (e.g. logs/) prune whole directories.
@@ -911,7 +967,9 @@ class FsspecReadWriteProtocol(
         resource_path = resource.get_genomic_resource_id_version()
 
         result = Manifest()
-        for name, path in self._scan_resource_for_files(resource_path, []):
+        ancestor_specs = self._collect_ancestor_specs(resource_path)
+        for name, path in self._scan_resource_for_files(
+                resource_path, [], ancestor_specs):
             # The two pages `resource-info` writes are build artefacts, not
             # resource data, and stay out of the manifest -- whether or not
             # DVC manages them, since both are regenerated on every run.
