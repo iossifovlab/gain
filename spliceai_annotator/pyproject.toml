@@ -39,6 +39,16 @@ dev = [
     "pytest-mock",
     "pytest-xdist",
     "ruff==0.14.6",
+    # Build-time-only tooling for the offline .h5 -> .onnx conversion
+    # (scripts/convert_models_to_onnx.py) and the equivalence test
+    # (tests/test_onnx_equivalence.py). These are NOT runtime deps: the
+    # annotator runs the committed .onnx (once #297 swaps the backend) or the
+    # .h5 today. `onnx` provides onnx.checker; `onnxruntime` runs the .onnx in
+    # the equivalence test; `tf2onnx` is imported by Keras' model.export(
+    # format="onnx"). The equivalence test skips cleanly when they are absent.
+    "onnx",
+    "onnxruntime",
+    "tf2onnx",
 ]
 
 [tool.hatch.version]
