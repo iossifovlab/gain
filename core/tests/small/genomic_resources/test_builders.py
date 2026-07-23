@@ -1885,15 +1885,26 @@ def test_missing_zero_based_warns_inmemory(
     # An in-memory (tsv) table that omits zero_based no longer resolves
     # silently: it warns, naming the resource, that it is assuming 1-based.
     # gain#379 -- warn-only strategy, the default stays False.
-    res = (
-        a_position_score()
-        .with_score("v", "float")
-        .with_data("""
-            chrom  pos_begin  pos_end  v
-            1      10         12       0.5
-        """)
-        .build_resource(tmp_path)
+    #
+    # Built through a repo (not build_resource) so the resource has a real,
+    # non-empty id: the single-resource shorthand gives it id "" and
+    # get_full_id() == "", which would make the "names the resource" assertion
+    # vacuously true.
+    repo = (
+        a_grr()
+        .with_resource(
+            "scores/pos",
+            a_position_score()
+            .with_score("v", "float")
+            .with_data("""
+                chrom  pos_begin  pos_end  v
+                1      10         12       0.5
+            """),
+        )
+        .build_repo(tmp_path)
     )
+    res = repo.get_resource("scores/pos")
+    assert res.get_full_id() != ""
     with caplog.at_level("WARNING"):
         PositionScore(res)
     assert "zero_based" in caplog.text
@@ -1905,17 +1916,24 @@ def test_missing_zero_based_warns_tabix(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     # The tabix realize path warns identically -- the two honouring backends
-    # stay consistent (gain#379).
-    res = (
-        a_position_score()
-        .with_score("v", "float")
-        .with_tabix()
-        .with_data("""
-            chrom  pos_begin  pos_end  v
-            1      10         12       0.5
-        """)
-        .build_resource(tmp_path)
+    # stay consistent (gain#379).  Built through a repo so the resource id is
+    # non-empty (see test_missing_zero_based_warns_inmemory).
+    repo = (
+        a_grr()
+        .with_resource(
+            "scores/pos",
+            a_position_score()
+            .with_score("v", "float")
+            .with_tabix()
+            .with_data("""
+                chrom  pos_begin  pos_end  v
+                1      10         12       0.5
+            """),
+        )
+        .build_repo(tmp_path)
     )
+    res = repo.get_resource("scores/pos")
+    assert res.get_full_id() != ""
     with caplog.at_level("WARNING"):
         PositionScore(res)
     assert "zero_based" in caplog.text
