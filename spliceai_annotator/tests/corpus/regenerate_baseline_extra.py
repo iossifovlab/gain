@@ -32,7 +32,10 @@ from gain.genomic_resources.repository_factory import (
 
 from tests.corpus.pipeline_config import make_pipeline_yaml
 
-GRR_ROOT = os.environ.get("GRR_ROOT", "/data/cephfs/seqpipe/grr")
+# The grr-sync node-local tree on the integration agents (see
+# build_extra_corpus.py): grr_sync_target_root=/data/grr, `grr` repo at
+# /data/grr/grr.  Override with GRR_ROOT.
+GRR_ROOT = os.environ.get("GRR_ROOT", "/data/grr/grr")
 REAL_GENOME = "hg38/genomes/GRCh38.p14"
 REAL_GENE_MODELS = "hg38/gene_models/GENCODE/49/comprehensive/CHR"
 
