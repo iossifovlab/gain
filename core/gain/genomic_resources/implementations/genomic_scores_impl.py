@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import itertools
 import json
-from collections.abc import Generator, Iterable
-from typing import Any, ClassVar, cast
+from collections.abc import Callable, Generator, Iterable
+from typing import Any, ClassVar, TypeVar, cast
 
 import numpy as np
 import pandas as pd
@@ -63,6 +63,11 @@ from gain.utils.regions import (
 )
 
 logger = logging.getLogger(__name__)
+
+# The per-batch accumulator target of a bulk region scan -- a Histogram for the
+# histogram pass, a MinMaxValue for the min/max pass.  A TypeVar keeps
+# ``_bulk_region_scan`` generic without losing either caller's dict type.
+_AccT = TypeVar("_AccT")
 
 
 class GenomicScoreImplementation(ScoreImplementationBase):
@@ -508,21 +513,45 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             if isinstance(hist_conf, NullHistogramConfig):
                 continue
             result[score_id] = build_empty_histogram(hist_conf)
+        return GenomicScoreImplementation._bulk_region_scan(
+            resource, result, chrom, start, end,
+            GenomicScoreImplementation._accumulate_arrays)
 
+    @staticmethod
+    def _bulk_region_scan(
+        resource: GenomicResource,
+        result: dict[str, _AccT],
+        chrom: str | None,
+        start: int | None,
+        end: int | None,
+        accumulate: Callable[
+            [tuple[np.ndarray, np.ndarray, dict[int, np.ndarray]],
+             dict[str, _AccT], dict[str, Any],
+             tuple[str | None, int | None, int | None], int | None],
+            int | None],
+    ) -> dict[str, _AccT]:
+        """Drive a bulk region scan, folding each batch into ``result``.
+
+        The shared skeleton of :meth:`_do_histogram_bulk` and
+        :meth:`_do_min_max_bulk`: open the score, resolve each result score's
+        integer column index, and stream the region's column-array batches
+        through ``accumulate`` (which mutates ``result`` and carries the
+        overlap guard's ``prev_right``).  The caller supplies the pre-built
+        ``result`` -- empty histograms or seeded ``MinMaxValue`` -- and the
+        matching accumulator.  A bulk-eligible score addresses its column by
+        integer index; str keys are VCF INFO names, which the dispatch excludes.
+        """
         impl = build_score_implementation_from_resource(resource)
         with impl.score.open() as score:
             defs = {
                 score_id: score.score_definitions[score_id]
-                for score_id in result
-            }
-            # A bulk-eligible score addresses its column by integer index
-            # (str keys are VCF INFO names, which the dispatch excludes).
+                for score_id in result}
             value_columns = {
                 cast(int, defs[score_id].score_index) for score_id in result}
             prev_right: int | None = None
             for arrays in GenomicScoreImplementation._region_value_arrays(
                     score.table, chrom, start, end, value_columns):
-                prev_right = GenomicScoreImplementation._accumulate_arrays(
+                prev_right = accumulate(
                     arrays, result, defs, (chrom, start, end), prev_right)
         del impl
         return result
@@ -797,22 +826,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         """
         result: dict[str, MinMaxValue] = {
             score_id: MinMaxValue(score_id) for score_id in score_ids}
-
-        impl = build_score_implementation_from_resource(resource)
-        with impl.score.open() as score:
-            defs = {
-                score_id: score.score_definitions[score_id]
-                for score_id in score_ids}
-            value_columns = {
-                cast(int, defs[score_id].score_index)
-                for score_id in score_ids}
-            prev_right: int | None = None
-            for arrays in GenomicScoreImplementation._region_value_arrays(
-                    score.table, chrom, start, end, value_columns):
-                prev_right = GenomicScoreImplementation._accumulate_min_max(
-                    arrays, result, defs, (chrom, start, end), prev_right)
-        del impl
-        return result
+        return GenomicScoreImplementation._bulk_region_scan(
+            resource, result, chrom, start, end,
+            GenomicScoreImplementation._accumulate_min_max)
 
     @staticmethod
     def _bigwig_header_min_max(
