@@ -75,7 +75,8 @@ def h5_outputs(
     """``.h5`` predictions keyed by ``(model_index, width)``."""
     outputs: dict[tuple[int, int], np.ndarray] = {}
     for index in MODEL_INDICES:
-        keras_model = tf.keras.models.load_model(str(_h5_path(index)))
+        keras_model = tf.keras.models.load_model(
+            str(_h5_path(index)), compile=False)
         for width in WIDTHS:
             outputs[index, width] = np.asarray(
                 keras_model.predict(shared_inputs[width], verbose=0))
