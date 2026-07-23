@@ -2,33 +2,14 @@
 import pathlib
 
 import numpy as np
-from gain.genomic_resources.genomic_scores import build_score_from_resource
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation as G,
-)
-from gain.genomic_resources.implementations.genomic_scores_impl import (
-    build_score_implementation_from_resource,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
     a_position_score,
 )
-
-
-def _plain_bigwig(tmp_path: pathlib.Path) -> GenomicResource:
-    return (
-        a_bigwig_score()
-        .with_score("bw", "float")
-        .with_data(
-            """
-            chr1  0  2  0.0
-            chr1  2  4  2.5
-            chr1  4  6  4.0
-            """)
-        .with_chrom_lens({"chr1": 100})
-        .build_resource(tmp_path)
-    )
 
 
 def _assert_min_max_equal(bulk: dict, ref: dict) -> None:
@@ -169,66 +150,28 @@ def test_int_score_is_not_bulk_scan_eligible(
     assert not G._bulk_scan_eligible(resource, ["s"])
 
 
-# --- bigWig header() fast path ---
-
-
-def test_bigwig_header_min_max_equals_full_scan(
+def test_bulk_min_max_matches_per_record_literal_nan(
     tmp_path: pathlib.Path,
 ) -> None:
-    # The header value must equal a full scan of the mapped data, so using it
-    # for the view_range produces byte-identical histograms.
-    resource = _plain_bigwig(tmp_path)
-    score = build_score_from_resource(resource)
-    with score.open() as opened:
-        header = G._bigwig_header_min_max(opened, ["bw"])
-    scan = G._do_min_max(resource, ["bw"], "chr1", 1, 100)["bw"]
-    assert header is not None
-    assert header == (scan.min, scan.max)
-
-
-def test_bigwig_header_none_with_numeric_na(
-    tmp_path: pathlib.Path,
-) -> None:
-    # A numeric na sentinel could drop a stored value the header still counts,
-    # so the header is no longer exact -> fall back to the scan.
+    # A literal 'nan' token that is NOT a configured NA sentinel (na_values is
+    # "." here, so the default "nan" sentinel is dropped): both paths skip it
+    # for min/max -- MinMaxValue skips nan like NumberHistogram does, rather
+    # than letting min(nan, x) wipe the running extremum.
     resource = (
-        a_bigwig_score()
-        .with_score("bw", "float")
-        .with_na_values("-1")
+        a_position_score()
+        .with_score("s", "float")
+        .with_na_values(".")
         .with_data(
             """
-            chr1  0  2  0.0
-            chr1  2  4  2.5
+            chrom  pos_begin  pos_end  s
+            chr1   1          2        0.5
+            chr1   3          4        nan
+            chr1   5          6        0.9
             """)
-        .with_chrom_lens({"chr1": 100})
+        .with_tabix()
         .build_resource(tmp_path)
     )
-    score = build_score_from_resource(resource)
-    with score.open() as opened:
-        assert G._bigwig_header_min_max(opened, ["bw"]) is None
-
-
-def test_tabix_has_no_header_min_max(tmp_path: pathlib.Path) -> None:
-    resource = _multiscore_tabix(tmp_path)
-    score = build_score_from_resource(resource)
-    with score.open() as opened:
-        assert G._bigwig_header_min_max(opened, ["s1"]) is None
-
-
-def test_do_min_max_from_header_wraps_values() -> None:
-    result = G._do_min_max_from_header(["a", "b"], 0.0, 4.0)
-    assert (result["a"].min, result["a"].max) == (0.0, 4.0)
-    assert (result["b"].min, result["b"].max) == (0.0, 4.0)
-    assert result["a"].count == 0
-
-
-def test_bigwig_min_max_wired_as_single_header_task(
-    tmp_path: pathlib.Path,
-) -> None:
-    resource = _plain_bigwig(tmp_path)  # no view_range -> min/max pass runs
-    impl = build_score_implementation_from_resource(resource)
-    tasks = impl.create_statistics_build_tasks(
-        region_size=3_000_000_000, grr=None)
-    names = [task.task.task_id for task in tasks]
-    assert any("min_max_from_header" in n for n in names), names
-    assert not any("calculate_min_max" in n for n in names), names
+    ref = G._do_min_max(resource, ["s"], "chr1", 1, 6)
+    bulk = G._do_min_max_bulk(resource, ["s"], "chr1", 1, 6)
+    _assert_min_max_equal(bulk, ref)
+    assert (bulk["s"].min, bulk["s"].max) == (0.5, 0.9)

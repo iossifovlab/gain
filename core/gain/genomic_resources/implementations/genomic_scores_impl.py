@@ -155,38 +155,22 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             merge_min_max_task: Task | dict[str, Any] = all_hist_confs
             if all_min_max_scores:
                 min_max_tasks = []
-                # A full-mapping bigWig carries its value range in its header,
-                # so one O(1) task replaces the whole per-region min/max scan.
-                header_min_max = \
-                    GenomicScoreImplementation._bigwig_header_min_max(
-                        self.score, all_min_max_scores)
-                if header_min_max is not None:
-                    low, high = header_min_max
+                for region in regions:
+                    chrom = region.chrom
+                    start = region.start
+                    end = region.stop
                     task = TaskGraph.make_task(
-                        f"{self.resource.get_full_id()}_min_max_from_header",
-                        GenomicScoreImplementation._do_min_max_from_header,
-                        args=[all_min_max_scores, low, high],
+                        f"{self.resource.get_full_id()}_calculate_min_max"
+                        f"_{chrom}_{start}_{end}",
+                        GenomicScoreImplementation._do_min_max_task,
+                        args=[
+                            self.resource,
+                            all_min_max_scores,
+                            chrom, start, end],
                         deps=[],
                     )
                     min_max_tasks.append(task.task)
                     tasks.append(task)
-                else:
-                    for region in regions:
-                        chrom = region.chrom
-                        start = region.start
-                        end = region.stop
-                        task = TaskGraph.make_task(
-                            f"{self.resource.get_full_id()}_calculate_min_max"
-                            f"_{chrom}_{start}_{end}",
-                            GenomicScoreImplementation._do_min_max_task,
-                            args=[
-                                self.resource,
-                                all_min_max_scores,
-                                chrom, start, end],
-                            deps=[],
-                        )
-                        min_max_tasks.append(task.task)
-                        tasks.append(task)
                 merge_task = TaskGraph.make_task(
                     f"{self.resource.get_full_id()}_merge_min_max",
                     GenomicScoreImplementation._merge_min_max,
@@ -829,54 +813,6 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         return GenomicScoreImplementation._bulk_region_scan(
             resource, result, chrom, start, end,
             GenomicScoreImplementation._accumulate_min_max)
-
-    @staticmethod
-    def _bigwig_header_min_max(
-        score: GenomicScore,
-        score_ids: list[str],
-    ) -> tuple[float, float] | None:
-        """The bigWig header ``(min, max)`` IFF it equals a full scan.
-
-        The header summarises EVERY interval in the file, so it matches what a
-        scan would compute only when the scan covers the same data: the
-        resource must map the full set of file contigs (a restrictive
-        ``chrom_mapping`` would leave some out, making the header range wider),
-        and no score may carry a NUMERIC ``na`` sentinel (which the scan drops
-        from a value the header still counts).  Returns ``None`` when any guard
-        fails -- the caller then scans, so correctness never depends on this.
-        """
-        table = score.table
-        if not isinstance(table, BigWigTable):
-            return None
-        file_contigs = set(table.get_file_chromosomes())
-        scored = {
-            table._map_file_chrom(chrom)  # noqa: SLF001
-            for chrom in score.get_all_chromosomes()
-        }
-        if scored != file_contigs:
-            return None
-        for score_id in score_ids:
-            na_values = score.score_definitions[score_id].na_values
-            if any(not isinstance(sentinel, str) for sentinel in na_values):
-                return None
-        return table.header_min_max()
-
-    @staticmethod
-    def _do_min_max_from_header(
-        score_ids: list[str],
-        low: float,
-        high: float,
-    ) -> dict[str, MinMaxValue]:
-        """Min/max "task" that returns the bigWig header range, no scan.
-
-        The header is the whole-file value range, so one O(1) task replaces the
-        per-region min/max scan entirely; the merge over this single task is
-        the identity.
-        """
-        return {
-            score_id: MinMaxValue(score_id, low, high)
-            for score_id in score_ids
-        }
 
     @staticmethod
     def _accumulate_min_max(
