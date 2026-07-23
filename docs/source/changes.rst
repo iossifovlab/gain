@@ -126,6 +126,99 @@ Release Notes
       the loop spun at its wait timeout with nothing logged. Both worker
       bodies now catch ``BaseException`` and deliver it as the per-task
       result, so the run terminates with an error the caller sees.
+    * **Behavior change:** the SpliceAI annotator now refuses a deletion
+      whose removed span exceeds the model half-window
+      (``ref_len - 1 > distance``) with a "deletion longer than
+      distance" warning, instead of emitting values that differed
+      between batch and sequential annotation. Batch mode
+      mis-reconstructed the alt window for such deletions while the
+      sequential path matched Illumina SpliceAI exactly; refusing them
+      makes ``batch_annotate`` and ``annotate`` agree for every variant
+      (#320).
+    * **Behavior change:** ``build_annotation_pipeline`` no longer
+      defaults ``work_dir`` to the cwd-relative ``./work`` (which
+      ``EPERM``'d under a non-root runtime in a root-owned cwd) — the
+      default is now an absolute, uid-safe, per-process temp dir, with a
+      one-time warning naming the fix. Passing an explicit ``work_dir``
+      is unchanged (#331).
+    * **Fixed:** a tabix table with overlapping intervals silently
+      returned wrong ``get_records_in_region`` results whenever its
+      ``LineBuffer`` was warm — the ordinary sorted-scan case — dropping
+      records that overlap the region and yielding records that do not,
+      with no error. Four places assumed ``pos_end`` is non-decreasing,
+      which fails the moment two intervals overlap; ordering is now
+      judged by ``pos_begin`` throughout. Point tables and
+      disjoint-interval tables were always immune and are unchanged
+      (#250).
+    * **Fixed:** an HTTP GRR download could silently truncate — a short
+      read in fsspec's range layer ended the copy loop early, writing a
+      file that looked complete and failed only at the md5 check (with a
+      different md5 each retry). ``_download_resource_file`` now checks
+      the bytes written against the manifest's recorded size before the
+      md5 check and raises a distinct, retryable
+      ``TruncatedDownloadError`` naming both counts; a full-length
+      corrupt transfer still raises ``ChecksumMismatchError``, now also
+      carrying the byte count (#292).
+    * **Fixed:** a scalar ``na_values`` sentinel (``na_values: "-1"``)
+      was matched by substring rather than equality, so it silently
+      turned a real score of ``1`` into ``None`` (and ``-999`` NA'd
+      ``9``, ``99``, ``999``, …); on a bigWig table it raised
+      ``TypeError``, so ``na_values`` had never worked there. Scalars are
+      now normalised to a type-aware sentinel set matched against the raw
+      value's own type. The default (absent) case is unchanged (#268).
+    * **Fixed:** a VCF ``Number=A`` INFO field on a record with no ALT
+      allele (``ALT=.``) now yields a null score, uniformly for single-
+      and multi-value rows, instead of leaking the raw pysam ``tuple`` as
+      a score value. Records with an ALT allele, and the ``Number=R``
+      branch, are unaffected (#256).
+    * **Fixed:** a ``gene_score`` resource declaring
+      ``histogram: {type: "null", …}`` passed schema validation but
+      crashed in ``GeneScore.__init__``; that config is now accepted, as
+      on the genomic side. A gene-score histogram that fails to build at
+      runtime is now recorded as a ``NullHistogram`` carrying the reason
+      instead of being silently dropped or failing the task (#305).
+    * **Fixed:** the ``genes`` and ``worst_effect_genes`` annotation
+      columns were order-dependent on ``PYTHONHASHSEED`` —
+      ``AnnotationEffect.genes``, ``.filter_genes`` and
+      ``unique_regions`` deduped via ``list(set(...))``. They now dedupe
+      order-preservingly, keeping the worst-effect-first ordering, so the
+      columns are byte-reproducible across processes (#327).
+    * **Fixed:** a tabix table reopened over changed data without an
+      intervening ``close()`` could answer queries from the previous
+      file's buffered lines; ``open()`` now discards the buffer. A
+      ``close()`` that failed partway left a live handle with its
+      chromosome map already released (returning file-space contig
+      names); the handle is now closed first (#362).
+    * **Fixed:** the GRR manifest scanner read ``.gitignore`` only from
+      the resource directory downward, so a rule in a ``.gitignore``
+      between the GRR root and the resource never excluded files — a root
+      ``*.log`` rule failed to keep ``grr_manage.log`` out of a
+      resource's ``.MANIFEST``, churning it every run. Ancestor
+      ``.gitignore`` specs up to the GRR root are now applied with git's
+      per-directory matching (#369).
+    * **Fixed:** a bigWig query landing in an unscored gap between two
+      buffered intervals could return a real score value for a position
+      the track does not cover; the buffer search now returns the
+      insertion point rather than the last probed index (#259).
+    * bigWig region fetch is now sized by record count, not base pairs:
+      an adaptive window replaces the fixed 50 bp / 500 bp chunks, making
+      a 1 Mb region fetch substantially faster and collapsing the
+      empty-gap walk on sparse tracks. ``direct_fetch_size`` /
+      ``buffer_fetch_size`` keep their names but now mean records per
+      call (default 5,000), and they — with ``use_buffered_threshold`` —
+      are now accepted by the table schema (they were read but rejected
+      as unknown fields) (#259).
+    * On a dense tabix table with overlapping intervals, ``LineBuffer``
+      no longer grows with the widest interval: ``prune`` now evicts
+      every dead record (amortized) instead of stopping at the first
+      survivor, so buffer memory and ``fetch``'s rescan stay bounded to a
+      multiple of the live set. Records returned are identical (#287).
+    * ``build_genomic_position_table`` now warns when a tabix or
+      in-memory table omits ``zero_based`` (silently defaulting to
+      1-based, so a 0-based/BED-derived table is read one base over),
+      naming the resource; stating the flag either way silences it and no
+      default is changed (#379). Setting ``zero_based`` on a VCF or
+      bigWig table, which ignore it, is now also warned (#378).
 
 * 2026.7.1
     * **Behavior change:** a completed anonymous annotation job and its
