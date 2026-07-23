@@ -1,4 +1,5 @@
 """Provides GRR protocols based on fsspec library."""
+# pylint: disable=too-many-lines
 from __future__ import annotations
 
 import asyncio
@@ -97,6 +98,20 @@ class ChecksumMismatchError(OSError):
     """
 
 
+class TruncatedDownloadError(OSError):
+    """A download that ended short of the manifest's recorded byte size.
+
+    A silent short read in the fsspec range-reassembly layer (gain#292, H1)
+    makes ``infile.read()`` return EOF before the whole file has been
+    streamed; the copy loop stops on that empty read and writes a truncated
+    file. Caught explicitly by byte count -- before the md5 check -- so the
+    failure is reported as the truncation it is, with both the received and
+    the expected size, rather than as an opaque checksum mismatch. Treated as
+    retryable, like ChecksumMismatchError, so a transient short read is
+    retried from scratch rather than aborting the file.
+    """
+
+
 # aiohttp.ClientError is folded into the retryable set when aiohttp is
 # importable (it always is when an HTTP GRR is used).
 try:
@@ -107,12 +122,14 @@ except ImportError:
 
 # Transient errors that warrant retrying a file download from scratch. A
 # stalled aiohttp read surfaces as fsspec's FSTimeoutError; ConnectionError
-# covers resets/refused connects; ChecksumMismatchError covers truncated
-# transfers.
+# covers resets/refused connects; TruncatedDownloadError covers a silent short
+# read that ends the stream early (gain#292); ChecksumMismatchError covers a
+# full-length transfer whose bytes are corrupt.
 _RETRYABLE_COPY_ERRORS: tuple[type[BaseException], ...] = (
     fsspec.exceptions.FSTimeoutError,
     asyncio.TimeoutError,
     ConnectionError,
+    TruncatedDownloadError,
     ChecksumMismatchError,
     *_aiohttp_errors,
 )
@@ -1124,6 +1141,7 @@ class FsspecReadWriteProtocol(
                 return self._download_resource_file(
                     remote_resource, dest_resource, filename,
                     dest_filepath, manifest_entry.md5,
+                    expected_size=manifest_entry.size,
                     on_bytes=wrapped_on_bytes)
             except _RETRYABLE_COPY_ERRORS as error:
                 last_error = error
@@ -1151,17 +1169,28 @@ class FsspecReadWriteProtocol(
             dest_filepath: str,
             expected_md5: str | None,
             *,
+            expected_size: int,
             on_bytes: Callable[[int], None] | None = None,
     ) -> ResourceFileState:
-        """Download a single resource file once and verify its checksum.
+        """Download a single resource file once and verify it.
 
         Opens a fresh remote handle and truncates the destination, so a
         retried call recovers cleanly from a partially-written file.
+
+        The download is verified twice: the number of bytes written must
+        equal the manifest's recorded size (a silent short read in the
+        fsspec range-reassembly layer ends the stream early and would
+        otherwise produce a truncated file that only fails at the md5 check
+        -- gain#292), and the md5 of the written bytes must match the
+        manifest. The size check runs first so a truncation is reported as
+        such, with both byte counts, rather than as an opaque checksum
+        mismatch.
 
         ``on_bytes``, when given, is called with the length of each chunk
         right after it is written, to drive a byte-level progress bar
         (see gain#77).
         """
+        bytes_written = 0
         with remote_resource.open_raw_file(
                 filename, "rb",
                 uncompress=False) as infile, \
@@ -1173,6 +1202,7 @@ class FsspecReadWriteProtocol(
             md5_hash = hashlib.md5()  # noqa
             while chunk := infile.read(self.CHUNK_SIZE):
                 outfile.write(chunk)
+                bytes_written += len(chunk)
                 if on_bytes is not None:
                     on_bytes(len(chunk))
                 md5_hash.update(chunk)
@@ -1182,10 +1212,18 @@ class FsspecReadWriteProtocol(
         if not self.filesystem.exists(dest_filepath):
             raise OSError(f"destination file not created {dest_filepath}")
 
+        if bytes_written != expected_size:
+            raise TruncatedDownloadError(
+                f"file copy is truncated "
+                f"{dest_resource.resource_id} ({filename}); "
+                f"received {bytes_written} bytes, "
+                f"expected {expected_size}")
+
         if md5 != expected_md5:
             raise ChecksumMismatchError(
                 f"file copy is broken "
                 f"{dest_resource.resource_id} ({filename}); "
+                f"received {bytes_written} bytes (size ok); "
                 f"md5sum are different: "
                 f"{md5}!={expected_md5}")
 

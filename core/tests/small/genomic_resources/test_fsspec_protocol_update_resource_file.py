@@ -4,7 +4,11 @@ from typing import Any
 
 import pytest
 from fsspec.exceptions import FSTimeoutError
-from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
+from gain.genomic_resources.fsspec_protocol import (
+    ChecksumMismatchError,
+    FsspecReadWriteProtocol,
+    TruncatedDownloadError,
+)
 from gain.genomic_resources.testing import build_inmemory_test_protocol
 from pytest_mock import MockerFixture
 
@@ -157,6 +161,192 @@ def test_copy_resource_file_retries_transient_read_failure(
     assert state is not None
     assert state.md5 == "d9636a8dca9e5626851471d1c0ea92b1"
     assert proto.file_exists(dst_res, "genes.gtf")
+
+
+class _ShortReadFile:
+    """A remote handle that serves a truncated prefix, then a clean EOF.
+
+    Simulates the fsspec silent short read of gain#292 (H1): the
+    range-reassembly layer hands back fewer bytes than the file holds and
+    then signals end-of-stream with an empty ``read``, so the copy loop's
+    ``while chunk := infile.read(...)`` stops early and writes a truncated
+    file that looks like a complete download and fails only at the md5 check.
+
+    ``keep`` is the total number of leading bytes served before EOF.
+    """
+
+    def __init__(self, real_handle: Any, keep: int) -> None:
+        self._real = real_handle
+        self._keep = keep
+
+    def __enter__(self) -> "_ShortReadFile":
+        self._real.__enter__()
+        return self
+
+    def __exit__(self, *args: object) -> bool:
+        self._real.__exit__(*args)
+        return False
+
+    def read(self, *args: object) -> bytes:
+        if self._keep <= 0:
+            return b""
+        chunk = self._real.read(*args)
+        if not chunk:
+            return chunk
+        if len(chunk) > self._keep:
+            chunk = chunk[:self._keep]
+        self._keep -= len(chunk)
+        return chunk
+
+
+@pytest.mark.grr_rw
+def test_copy_resource_file_raises_truncated_download_on_short_read(
+        content_fixture: dict[str, Any],
+        fsspec_proto: FsspecReadWriteProtocol,
+        mocker: MockerFixture) -> None:
+    # A silent short read (fewer bytes than the manifest size, then EOF) must
+    # be caught as a truncation -- not misreported as a checksum mismatch --
+    # and the error must record both the expected and the received byte count
+    # (the size measurement gain#292 says was never captured). A source that
+    # is short on every attempt exhausts the retry budget and raises. See
+    # gain#292 (H1).
+
+    # Given
+    src_proto = build_inmemory_test_protocol(content_fixture)
+    proto = fsspec_proto
+
+    src_res = src_proto.get_resource("sub/two")
+    dst_res = proto.get_resource("sub/two")
+
+    expected_size = src_res.get_manifest()["genes.gtf"].size
+    short_size = expected_size - 5
+    assert short_size > 0
+
+    real_open = src_res.open_raw_file
+    attempts = {"n": 0}
+
+    def short_open(filename: str, mode: str = "rt", **kwargs: Any) -> Any:
+        attempts["n"] += 1
+        return _ShortReadFile(real_open(filename, mode, **kwargs), short_size)
+
+    mocker.patch.object(src_res, "open_raw_file", side_effect=short_open)
+    sleep = mocker.patch(
+        "gain.genomic_resources.fsspec_protocol.time.sleep")
+
+    # When / Then
+    with pytest.raises(TruncatedDownloadError) as exc_info:
+        proto.copy_resource_file(src_res, dst_res, "genes.gtf")
+
+    # retried the whole file budget, then gave up
+    assert attempts["n"] == 4
+    assert sleep.call_count == 3
+    # the error names the received and the expected size
+    message = str(exc_info.value)
+    assert str(short_size) in message
+    assert str(expected_size) in message
+
+
+@pytest.mark.grr_rw
+def test_copy_resource_file_recovers_from_transient_short_read(
+        content_fixture: dict[str, Any],
+        fsspec_proto: FsspecReadWriteProtocol,
+        mocker: MockerFixture) -> None:
+    # A short read on the first attempt, then a full stream on retry, must be
+    # retried from scratch and complete cleanly -- a truncated download is a
+    # retryable error, not a hard failure. See gain#292.
+
+    # Given
+    src_proto = build_inmemory_test_protocol(content_fixture)
+    proto = fsspec_proto
+
+    src_res = src_proto.get_resource("sub/two")
+    dst_res = proto.get_resource("sub/two")
+
+    expected_size = src_res.get_manifest()["genes.gtf"].size
+
+    real_open = src_res.open_raw_file
+    attempts = {"n": 0}
+
+    def flaky_open(filename: str, mode: str = "rt", **kwargs: Any) -> Any:
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            return _ShortReadFile(
+                real_open(filename, mode, **kwargs), expected_size - 5)
+        return real_open(filename, mode, **kwargs)
+
+    mocker.patch.object(src_res, "open_raw_file", side_effect=flaky_open)
+    mocker.patch("gain.genomic_resources.fsspec_protocol.time.sleep")
+
+    # When
+    state = proto.copy_resource_file(src_res, dst_res, "genes.gtf")
+
+    # Then: it retried once, then completed correctly
+    assert attempts["n"] == 2
+    assert state is not None
+    assert state.md5 == "d9636a8dca9e5626851471d1c0ea92b1"
+    assert proto.file_exists(dst_res, "genes.gtf")
+
+
+class _CorruptingFile:
+    """Serves the file at full length, but with every byte altered.
+
+    Simulates a full-length transfer with wrong content (gain#292, H2/H3): the
+    byte count matches the manifest so the truncation guard passes, and only
+    the md5 check catches the corruption.
+    """
+
+    def __init__(self, real_handle: Any) -> None:
+        self._real = real_handle
+
+    def __enter__(self) -> "_CorruptingFile":
+        self._real.__enter__()
+        return self
+
+    def __exit__(self, *args: object) -> bool:
+        self._real.__exit__(*args)
+        return False
+
+    def read(self, *args: object) -> bytes:
+        chunk = self._real.read(*args)
+        if not chunk:
+            return chunk
+        return bytes(b ^ 0xFF for b in chunk)
+
+
+@pytest.mark.grr_rw
+def test_copy_resource_file_checksum_mismatch_records_size(
+        content_fixture: dict[str, Any],
+        fsspec_proto: FsspecReadWriteProtocol,
+        mocker: MockerFixture) -> None:
+    # A full-length transfer with corrupt content (size matches, md5 does not)
+    # must still raise ChecksumMismatchError -- and the error must now record
+    # the byte count, the measurement gain#292 says was never captured, which
+    # is what distinguishes a truncation from a full-length corruption.
+
+    # Given
+    src_proto = build_inmemory_test_protocol(content_fixture)
+    proto = fsspec_proto
+
+    src_res = src_proto.get_resource("sub/two")
+    dst_res = proto.get_resource("sub/two")
+
+    expected_size = src_res.get_manifest()["genes.gtf"].size
+
+    real_open = src_res.open_raw_file
+
+    def corrupt_open(filename: str, mode: str = "rt", **kwargs: Any) -> Any:
+        return _CorruptingFile(real_open(filename, mode, **kwargs))
+
+    mocker.patch.object(src_res, "open_raw_file", side_effect=corrupt_open)
+    mocker.patch("gain.genomic_resources.fsspec_protocol.time.sleep")
+
+    # When / Then
+    with pytest.raises(ChecksumMismatchError) as exc_info:
+        proto.copy_resource_file(src_res, dst_res, "genes.gtf")
+
+    # the error records the received byte count (full length, so it is the
+    # manifest size) -- proving the transfer was NOT truncated
+    assert str(expected_size) in str(exc_info.value)
 
 
 @pytest.mark.grr_rw
