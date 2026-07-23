@@ -204,7 +204,8 @@ class AnnotateVCF(AnnotationBaseView):
 
         job.save()
         work_dir = self.result_storage_dir / work_folder_name
-        pipeline = build_annotation_pipeline(pipeline.raw, pipeline.repository)
+        pipeline = build_annotation_pipeline(
+            pipeline.raw, pipeline.repository, work_dir=work_dir)
         args = get_args_vcf(
             job, pipeline, str(work_dir))
         start_time = time.time()
@@ -337,7 +338,8 @@ class AnnotateTabular(AnnotationBaseView):
             job.delete()
             return Response(status=views.status.HTTP_404_NOT_FOUND)
 
-        pipeline = build_annotation_pipeline(pipeline.raw, pipeline.repository)
+        pipeline = build_annotation_pipeline(
+            pipeline.raw, pipeline.repository, work_dir=work_dir)
         args = get_args_tabular(
             job, details, pipeline, str(work_dir))
         start_time = time.time()
