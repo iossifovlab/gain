@@ -70,5 +70,83 @@
       }
     ],
     "version": "0"
+  },
+  {
+    "config": {
+      "filename": "gene_models.txt",
+      "format": "default",
+      "type": "gene_models"
+    },
+    "full_id": "hg38/gene_models",
+    "id": "hg38/gene_models",
+    "manifest": [
+      {
+        "md5": "c07545d85925164e84eb7fffc2a21c1c",
+        "name": "gene_models.txt",
+        "size": 48760
+      },
+      {
+        "md5": "18a3e2f5e967a8e058ee97337481cf32",
+        "name": "genomic_resource.yaml",
+        "size": 60
+      },
+      {
+        "md5": "6e01f10b0ae24a2d77faba3d5839125b",
+        "name": "statistics/stats.yaml",
+        "size": 446
+      },
+      {
+        "md5": "9bf68c86b0f7ee4c234ffc361c4d24c8",
+        "name": "statistics/stats_hash",
+        "size": 125
+      }
+    ],
+    "version": "0"
+  },
+  {
+    "config": {
+      "filename": "corpus.fa",
+      "type": "genome"
+    },
+    "full_id": "hg38/genome",
+    "id": "hg38/genome",
+    "manifest": [
+      {
+        "md5": "f62098039b94f32f58a495ea8b9cb07d",
+        "name": "corpus.fa",
+        "size": 123329
+      },
+      {
+        "md5": "a972678c4ae48207e706b54f92cbb8b1",
+        "name": "corpus.fa.fai",
+        "size": 62
+      },
+      {
+        "md5": "39089f648a05b4fef74dee6a0ce9e33e",
+        "name": "genomic_resource.yaml",
+        "size": 33
+      },
+      {
+        "md5": "353e27c96b9a408418b444fbbcf12a6e",
+        "name": "statistics/col6a2_statistic.yaml",
+        "size": 370
+      },
+      {
+        "md5": "ee8728be91fc95e80f8bd0682e85ba2c",
+        "name": "statistics/reference_genome_statistic.yaml",
+        "size": 683
+      },
+      {
+        "md5": "af9c7ab3f2c03169fe83181a19ebbf18",
+        "name": "statistics/sondonson_statistic.yaml",
+        "size": 373
+      },
+      {
+        "md5": "652ce2832c327494e13993c559788b96",
+        "name": "statistics/stats_hash",
+        "size": 54
+      }
+    ],
+    "version": "0"
   }
 ]
