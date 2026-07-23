@@ -976,17 +976,26 @@ pipeline {
                 }
 
                 stage('Trigger spliceai integration') {
-                    when { not { environment name: 'DOCS_ONLY', value: 'true' } }
                     // Downstream gate for the gain-spliceai-integration job
                     // (DSL at spliceai_annotator/jenkins-jobs/
-                    // integration.groovy). Runs on every branch — the job
-                    // checks out the same branch / commit and runs the slow
-                    // `-m integration` differential harness (frozen hg38
-                    // corpus, ~10 min under TensorFlow) that the fast
-                    // spliceai_annotator step skips. `wait: false,
-                    // propagate: false` matches the web_e2e / core integration
-                    // shape: the parent moves on while it runs separately and a
-                    // regression doesn't FAILURE the parent.
+                    // integration.groovy). Runs only on master and only when
+                    // spliceai_annotator/** changed — the #321 real tier runs
+                    // real SpliceAI TensorFlow inference over the corpus against
+                    // the node-local GRR on a single pinned agent, so (like VEP)
+                    // we don't fire it on every push to unrelated code. The job
+                    // checks out the passed commit and runs the slow
+                    // `-m integration` harness that the fast spliceai_annotator
+                    // step skips. `wait: false, propagate: false` matches the
+                    // web_e2e / core / VEP integration shape: the parent moves
+                    // on while it runs separately and a regression doesn't
+                    // FAILURE the parent.
+                    when {
+                        allOf {
+                            branch 'master'
+                            changeset 'spliceai_annotator/**'
+                            not { environment name: 'DOCS_ONLY', value: 'true' }
+                        }
+                    }
                     steps {
                         // gain-seed creates this job from master, so it may not
                         // exist yet on the branch that first introduces it (this

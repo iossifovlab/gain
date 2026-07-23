@@ -1,0 +1,23 @@
+# Node-local real GRR for the SpliceAI integration tier (issue #321).
+#
+# Points at the grr-sync materialized tree that the gain-spliceai-integration
+# Jenkins job binds read-only at /grr (`${GRR_ROOT}/grr:/grr:ro`). Byte-range
+# local reads (fasta), zero per-build network, no cache.
+#
+# Resolved from tests/conftest.py's `real_grr` fixture -- no GRR_DEFINITION_FILE
+# export needed (the self-contained pattern from
+# core/tests/integration/effect_annotation/conftest.py). For a local run on a
+# dev box, point the fixture at the tree's real path with
+# SPLICEAI_INTEGRATION_GRR_DIR (e.g. /data/cephfs/seqpipe/grr); the conftest
+# overrides the `directory` below.
+#
+# read_only: true guarantees builds never write into the shared hardlinked
+# grr-sync tree.
+id: "local"
+type: group
+children:
+- id: "grr.sync"
+  type: "directory"
+  directory: /grr
+  public_url: "https://grr.iossifovlab.com"
+  read_only: true

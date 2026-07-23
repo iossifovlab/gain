@@ -4,15 +4,19 @@
 // repo's `spliceai_annotator/Jenkinsfile.integration` and runs it against the
 // branch / commit passed as build parameters.
 //
-// The job is kicked off downstream from `iossifovlab/gain/<branch>`'s
-// `Trigger spliceai integration` stage on every branch, and runs the slow
-// `-m integration` differential harness (the frozen hg38 corpus, gain#320)
-// that the fast per-PR spliceai_annotator step skips. Safe to trigger
-// manually from the Jenkins UI too (defaults: master HEAD).
+// The job is kicked off downstream from `iossifovlab/gain/master`'s
+// `Trigger spliceai integration` stage when spliceai_annotator/** changes,
+// and runs the slow `-m integration` harness that the fast per-PR
+// spliceai_annotator step skips: the #320 frozen-fixture differential tier
+// plus the #321 real tier against the node-local GRR mounted at /grr. Safe to
+// trigger manually from the Jenkins UI on any branch too (defaults: master
+// HEAD).
 //
-// No cron: the harness is deterministic (a committed fixture + baseline, no
-// live GRR), so a nightly run against unchanged master would only re-assert
-// the same result -- the per-branch trigger already covers every code change.
+// No cron here: the nightly re-run -- which is what surfaces drift in the real
+// hg38/GENCODE resources (the whole point of the #321 tier) -- is the
+// `Run gain-spliceai-integration` stage in Jenkinsfile.nightly (wait/propagate
+// true). Keeping it there rather than a second DSL cron avoids double-running
+// this expensive TensorFlow + real-GRR job on the single pinned agent.
 
 // Declared at the Jenkins root (not under `iossifovlab/`): that path is a
 // GitHub Organization Folder and rejects Job-DSL-managed children. Sibling of

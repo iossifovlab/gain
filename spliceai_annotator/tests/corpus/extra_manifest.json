@@ -1,0 +1,105 @@
+{
+  "genome_resource": "hg38/genomes/GRCh38.p14",
+  "gene_models_resource": "hg38/gene_models/GENCODE/49/comprehensive/CHR",
+  "variants": [
+    {
+      "id": "brca2_donor_d50",
+      "contig": "chr13",
+      "pos": 32316527,
+      "ref": "G",
+      "alt": "C",
+      "distance": 50,
+      "category": "real_splice_site",
+      "expect": "annotated",
+      "reason": ""
+    },
+    {
+      "id": "brca2_donor_d500",
+      "contig": "chr13",
+      "pos": 32316527,
+      "ref": "G",
+      "alt": "C",
+      "distance": 500,
+      "category": "real_splice_site",
+      "expect": "annotated",
+      "reason": ""
+    },
+    {
+      "id": "brca2_acceptor_d50",
+      "contig": "chr13",
+      "pos": 32319077,
+      "ref": "A",
+      "alt": "C",
+      "distance": 50,
+      "category": "real_splice_site",
+      "expect": "annotated",
+      "reason": ""
+    },
+    {
+      "id": "brca2_acceptor_d500",
+      "contig": "chr13",
+      "pos": 32319077,
+      "ref": "A",
+      "alt": "C",
+      "distance": 500,
+      "category": "real_splice_site",
+      "expect": "annotated",
+      "reason": ""
+    },
+    {
+      "id": "brca1_donor_d50",
+      "contig": "chr17",
+      "pos": 43047703,
+      "ref": "C",
+      "alt": "G",
+      "distance": 50,
+      "category": "real_splice_site",
+      "expect": "annotated",
+      "reason": ""
+    },
+    {
+      "id": "brca1_donor_d500",
+      "contig": "chr17",
+      "pos": 43047703,
+      "ref": "C",
+      "alt": "G",
+      "distance": 500,
+      "category": "real_splice_site",
+      "expect": "annotated",
+      "reason": ""
+    },
+    {
+      "id": "brca1_acceptor_d50",
+      "contig": "chr17",
+      "pos": 43049121,
+      "ref": "T",
+      "alt": "A",
+      "distance": 50,
+      "category": "real_splice_site",
+      "expect": "annotated",
+      "reason": ""
+    },
+    {
+      "id": "brca1_acceptor_d500",
+      "contig": "chr17",
+      "pos": 43049121,
+      "ref": "T",
+      "alt": "A",
+      "distance": 500,
+      "category": "real_splice_site",
+      "expect": "annotated",
+      "reason": ""
+    },
+    {
+      "id": "mt_reject_near_end",
+      "contig": "chrM",
+      "pos": 16000,
+      "ref": "G",
+      "alt": "C",
+      "distance": 50,
+      "category": "reject",
+      "expect": "rejected",
+      "reason": "near_chromosome_end"
+    }
+  ]
+}
