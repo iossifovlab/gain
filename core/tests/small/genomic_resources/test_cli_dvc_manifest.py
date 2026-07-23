@@ -703,6 +703,45 @@ def test_gitignored_dvc_leaf_is_not_rehashed_on_a_repeat_run(
     assert resource_states(path) == states_before
 
 
+def test_ancestor_gitignored_dvc_leaf_takes_its_md5_from_its_sidecar(
+    tmp_path_factory: pytest.TempPathFactory,
+    md5_spy: list[str],
+) -> None:
+    """#369 x #373: a `dvc add`-ed file matched by an *ancestor* `.gitignore`.
+
+    The data file is gitignored only by a rule sitting ABOVE the resource
+    directory (at the GRR root), never by the resource's own `.gitignore`.
+    It must still reach the manifest through the `_is_dvc_managed_leaf`
+    exemption -- the same as a resource-level `dvc add` layout -- so the
+    default repair trusts its sidecar md5 and never hashes it (#373), while a
+    plain sibling matched by the same ancestor rule is dropped.
+    """
+    # Given a GRR whose ROOT .gitignore ignores every `*.txt`, and a resource
+    # holding a `dvc add`-ed `data.txt` plus a plain `notes.txt`.
+    path = tmp_path_factory.mktemp("cli_dvc_ancestor_gitignore")
+    setup_directories(path, {
+        ".gitignore": "*.txt\n",
+        "one": {
+            "genomic_resource.yaml": "",
+            "data.txt": ORIGINAL_DATA,
+            "data.txt.dvc": dvc_sidecar("data.txt", ORIGINAL_DATA),
+            "notes.txt": "just a note\n",
+        },
+    })
+    proto = build_filesystem_test_protocol(path, repair=False)
+
+    # When its manifest is built
+    cli_manage(["repo-repair", "-R", str(path)])
+
+    # Then the DVC-managed data file is kept, from its sidecar, never hashed,
+    assert "data.txt" not in md5_spy
+    manifest = proto.load_manifest(proto.get_resource("one"))
+    assert manifest["data.txt"].md5 == md5_of(ORIGINAL_DATA)
+    assert manifest["data.txt"].size == size_of(ORIGINAL_DATA)
+    # while the plain sibling matched by the same ancestor rule is dropped.
+    assert "notes.txt" not in manifest
+
+
 def test_gitignored_dvc_leaf_tampered_before_any_state_keeps_the_sidecar(
     gitignored_stale_dvc_proto_fixture: tuple[
         pathlib.Path, FsspecReadWriteProtocol],

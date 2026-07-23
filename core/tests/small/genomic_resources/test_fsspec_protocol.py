@@ -3,6 +3,7 @@
 import gzip
 import inspect
 import io
+import pathlib
 from typing import Any, cast
 
 import pysam
@@ -16,7 +17,11 @@ from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     ReadWriteRepositoryProtocol,
 )
-from gain.genomic_resources.testing import build_inmemory_test_protocol
+from gain.genomic_resources.testing import (
+    build_filesystem_test_protocol,
+    build_inmemory_test_protocol,
+    setup_directories,
+)
 from pytest_mock import MockerFixture
 
 
@@ -587,6 +592,207 @@ def test_gitignore_subdirectory_pattern_does_not_affect_sibling() -> None:
     assert "a/data.txt" in entries
     assert "a/drop.log" not in entries
     assert "b/also.log" in entries
+
+
+def test_gitignore_at_grr_root_excludes_files_from_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    # AC1: a `.gitignore` at the GRR root (above the resource directory)
+    # excludes matching files from the resource manifest beneath it - as it
+    # does in git. This is the reported #369 symptom: a `grr_manage.log` that
+    # a root `*.log` rule ignores was hashed into `.MANIFEST` anyway.
+    setup_directories(tmp_path, {
+        ".gitignore": "*.log\n",
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            "grr_manage.log": "log",
+        },
+    })
+    proto = build_filesystem_test_protocol(tmp_path, repair=False)
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "data.txt" in entries
+    assert "grr_manage.log" not in entries
+
+
+def test_gitignore_at_intermediate_directory_is_honored(
+    tmp_path: pathlib.Path,
+) -> None:
+    # AC2: a `.gitignore` at an intermediate directory (GRR root < dir <
+    # resource) is honored for resources beneath it.
+    setup_directories(tmp_path, {
+        "sub": {
+            ".gitignore": "*.log\n",
+            "res": {
+                GR_CONF_FILE_NAME: "",
+                "data.txt": "data",
+                "debug.log": "log",
+            },
+        },
+    })
+    proto = build_filesystem_test_protocol(tmp_path, repair=False)
+    res = proto.get_resource("sub/res")
+    entries = proto.collect_resource_entries(res)
+    assert "data.txt" in entries
+    assert "debug.log" not in entries
+
+
+def test_gitignore_ancestor_pattern_matched_relative_to_its_dir(
+    tmp_path: pathlib.Path,
+) -> None:
+    # AC2: an ancestor pattern is matched relative to the directory that holds
+    # the `.gitignore`, not relative to the resource. A root `/res/x.log`
+    # names the resource-root file by its GRR-root-relative path and excludes
+    # it; a sibling `data.txt` at the same level is untouched.
+    setup_directories(tmp_path, {
+        ".gitignore": "/res/x.log\n",
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            "x.log": "log",
+        },
+    })
+    proto = build_filesystem_test_protocol(tmp_path, repair=False)
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "data.txt" in entries
+    assert "x.log" not in entries
+
+
+def test_gitignore_anchored_ancestor_pattern_keeps_git_semantics(
+    tmp_path: pathlib.Path,
+) -> None:
+    # AC5: ancestor patterns are re-anchored to their own `.gitignore`'s
+    # directory, as git anchors a `/`-rooted pattern. The assertion is
+    # discriminating only because the fix actually LOADS the ancestor
+    # `.gitignore`: an anchored root `/x.log` names the ROOT's own file and
+    # must NOT drop the resource's `res/x.log`, whereas a NON-anchored root
+    # `*.log` DOES drop `res/x.log`. Pre-fix (ancestor `.gitignore` never
+    # read) the `*.log` file survives too, so the non-anchored half fails
+    # without the fix -- that is what distinguishes real ancestor loading
+    # from a no-op.
+    anchored = tmp_path / "anchored"
+    setup_directories(anchored, {
+        ".gitignore": "/x.log\n",   # anchored to GRR root -> only root's x.log
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            "x.log": "log",
+        },
+    })
+    proto = build_filesystem_test_protocol(anchored, repair=False)
+    entries = proto.collect_resource_entries(proto.get_resource("res"))
+    assert "data.txt" in entries
+    assert "x.log" in entries        # anchored root pattern does not reach it
+
+    non_anchored = tmp_path / "non_anchored"
+    setup_directories(non_anchored, {
+        ".gitignore": "*.log\n",    # non-anchored -> matches at any depth
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            "x.log": "log",
+        },
+    })
+    proto = build_filesystem_test_protocol(non_anchored, repair=False)
+    entries = proto.collect_resource_entries(proto.get_resource("res"))
+    assert "data.txt" in entries
+    assert "x.log" not in entries    # non-anchored ancestor rule DOES reach it
+
+
+def test_gitignore_ancestor_dvc_managed_leaf_is_kept(
+    tmp_path: pathlib.Path,
+) -> None:
+    # AC4: a `dvc add`-ed data file that happens to match an *ancestor*
+    # pattern stays in the manifest via the `_is_dvc_managed_leaf` exemption,
+    # while a plain sibling matched by the same ancestor pattern is dropped.
+    setup_directories(tmp_path, {
+        ".gitignore": "*.bw\n",
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            "scores.bw": "binary",
+            "scores.bw.dvc": SCORES_DVC_CONTENT,
+            "extra.bw": "junk",
+        },
+    })
+    proto = build_filesystem_test_protocol(tmp_path, repair=False)
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "data.txt" in entries
+    assert "scores.bw" in entries       # DVC-managed: exempted
+    assert "extra.bw" not in entries    # ancestor pattern is active
+
+
+def test_gitignore_above_grr_root_is_not_honored(
+    tmp_path: pathlib.Path,
+) -> None:
+    # AC6: the upward walk stops at the protocol root (`self.url`); a
+    # `.gitignore` in the PARENT of the GRR root is never read. Paired with a
+    # positive control -- the SAME rule placed AT the GRR root IS honored --
+    # so the test also fails if ancestor loading regresses, not only if the
+    # boundary logic breaks. The positive control fails against pre-fix code,
+    # which never read the root `.gitignore` at all.
+    outside = tmp_path / "outside"
+    setup_directories(outside, {
+        ".gitignore": "*.log\n",  # OUTSIDE the GRR (parent of its root)
+        "grr": {
+            "res": {
+                GR_CONF_FILE_NAME: "",
+                "data.txt": "data",
+                "keep.log": "log",
+            },
+        },
+    })
+    proto = build_filesystem_test_protocol(outside / "grr", repair=False)
+    entries = proto.collect_resource_entries(proto.get_resource("res"))
+    assert "data.txt" in entries
+    assert "keep.log" in entries     # above-root rule is never read
+
+    # Positive control: the SAME `*.log` rule AT the GRR root IS honored.
+    # This regresses to a failure if ancestor loading breaks.
+    inside = tmp_path / "inside"
+    setup_directories(inside, {
+        ".gitignore": "*.log\n",  # AT the GRR root -> honored
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            "keep.log": "log",
+        },
+    })
+    proto = build_filesystem_test_protocol(inside, repair=False)
+    entries = proto.collect_resource_entries(proto.get_resource("res"))
+    assert "data.txt" in entries
+    assert "keep.log" not in entries  # root rule honored (fails w/o the fix)
+
+
+def test_gitignore_ancestor_negation_across_levels_is_not_honored(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Characterizes a KNOWN LIMITATION -- this is NOT a git-fidelity assertion.
+    # Git resolves .gitignore rules shallow->deep with last-match-wins, so a
+    # deeper `!important.log` would RE-INCLUDE a file that an ancestor `*.log`
+    # ignored. This scanner instead OR-combines the accumulated specs
+    # (`_is_gitignored`: any level's match ignores), so cross-level negation
+    # is NOT honored and `important.log` is dropped. The test pins the current
+    # behavior so a future move toward full git fidelity is a deliberate,
+    # visible change; it does not assert the divergence is desirable.
+    setup_directories(tmp_path, {
+        ".gitignore": "*.log\n",          # ancestor: ignore every *.log
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            ".gitignore": "!important.log\n",  # deeper: git would re-include
+            "data.txt": "data",
+            "important.log": "log",
+        },
+    })
+    proto = build_filesystem_test_protocol(tmp_path, repair=False)
+    entries = proto.collect_resource_entries(proto.get_resource("res"))
+    assert "data.txt" in entries
+    # KNOWN LIMITATION: git would KEEP this file (deeper `!` wins); the
+    # OR-combine across levels drops it instead.
+    assert "important.log" not in entries
 
 
 # `dvc add scores.bw` writes `/scores.bw` into .gitignore and creates a
