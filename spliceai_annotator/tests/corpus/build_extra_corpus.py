@@ -36,7 +36,11 @@ from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
 
-GRR_ROOT = os.environ.get("GRR_ROOT", "/data/cephfs/seqpipe/grr")
+# The grr-sync node-local tree on the integration agents: gain-infra publishes
+# it with grr_sync_target_root=/data/grr and the `grr` repo at the stable
+# per-repo symlink /data/grr/grr (group_vars/grr_sync_agents).  Override with
+# GRR_ROOT for a different checkout.
+GRR_ROOT = os.environ.get("GRR_ROOT", "/data/grr/grr")
 GENE_MODELS_ID = "hg38/gene_models/GENCODE/49/comprehensive/CHR"
 GENOME_ID = "hg38/genomes/GRCh38.p14"
 

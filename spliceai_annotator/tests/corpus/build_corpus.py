@@ -12,9 +12,9 @@ produce chromosome-sized FASTA), and emits:
 * ``tests/corpus/corpus_manifest.json`` -- every corpus variant with its
   intended ``distance`` and expected disposition.
 
-Requires the real GRR at ``/data/cephfs/seqpipe/grr`` (``GRR_ROOT`` env var to
-override).  It does **not** run TensorFlow -- the baseline is pinned separately
-by ``regenerate_baseline.py``.
+Requires the real GRR: the grr-sync node-local tree at ``/data/grr/grr`` on the
+integration agents (``GRR_ROOT`` env var to override).  It does **not** run
+TensorFlow -- the baseline is pinned separately by ``regenerate_baseline.py``.
 
 Run:  ``python -m tests.corpus.build_corpus``  (from the spliceai_annotator dir,
 inside the worktree venv).
@@ -53,7 +53,7 @@ from tests.corpus.fixture_io import (
 )
 from tests.corpus.rebasing import rebase_transcript
 
-GRR_ROOT = os.environ.get("GRR_ROOT", "/data/cephfs/seqpipe/grr")
+GRR_ROOT = os.environ.get("GRR_ROOT", "/data/grr/grr")
 GENE_MODELS_ID = "hg38/gene_models/GENCODE/49/comprehensive/CHR"
 GENOME_ID = "hg38/genomes/GRCh38.p14"
 
