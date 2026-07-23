@@ -1,15 +1,16 @@
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from copy import copy
 from typing import Any
 
-from dask.distributed import Client, Future
+from dask.distributed import Client
 
 from gain import logging
 from gain.task_graph.base_executor import TaskGraphExecutorBase
 from gain.task_graph.cache import NoTaskCache, TaskCache
-from gain.task_graph.graph import Task, TaskDesc, TaskGraph
+from gain.task_graph.dask_run_state import RunState
+from gain.task_graph.graph import Task, TaskGraph
 from gain.task_graph.logging import (
     ensure_log_dir,
     safe_task_id,
@@ -17,6 +18,11 @@ from gain.task_graph.logging import (
 
 NO_TASK_CACHE = NoTaskCache()
 logger = logging.getLogger(__name__)
+
+# Named so a leaked run is identifiable in a thread dump -- and so a test
+# can assert that a run really did tear its workers down.
+SUBMIT_WORKER_THREAD_NAME = "gain-dask-submit-worker"
+RESULTS_WORKER_THREAD_NAME = "gain-dask-results-worker"
 
 
 class DaskExecutor(TaskGraphExecutorBase):
@@ -39,136 +45,94 @@ class DaskExecutor(TaskGraphExecutorBase):
         self._params = copy(kwargs)
         self._params["task_log_dir"] = log_dir
 
-    def _submit_worker_func(
-        self,
-        submit_queue: list[TaskDesc | None],
-        submit_condition: threading.Condition,
-        running: dict[Future, Task],
-        running_lock: threading.Lock,
-        on_done: Callable[[Future], None],
-    ) -> None:
+    def _submit_worker_func(self, state: RunState) -> None:
+        """Hand queued tasks to the cluster until the run shuts down."""
         start = time.time()
         submit_count = 0
 
         while True:
-            tasks: list[TaskDesc | None] = []
-
-            # Read without removing. A task stays on `submit_queue` until
-            # `running` knows its future, so that it is never absent from
-            # BOTH -- which is what termination reads (gain#365). The main
-            # loop only ever appends, so the batch taken here stays at the
-            # front of the queue and can be dropped by length afterwards.
-            with submit_condition:
-                if not submit_queue:
-                    submit_condition.wait()
-                tasks = copy(submit_queue)
-
-            if any(t is None for t in tasks):
-                logger.warning(
-                    "submit worker received shutdown signal; "
-                    "skipping %s tasks...",
-                    len(tasks) - 1)
+            batch = state.claim_for_submit()
+            if batch is None:
+                logger.debug("submit worker stopping")
                 return
 
-            assert all(isinstance(t, TaskDesc) for t in tasks)
-            task_ids = [
-                safe_task_id(task.task.task_id)
-                for task in tasks
-                if task is not None
-            ]
+            tasks = list(batch.tasks)
+            task_ids = [safe_task_id(task.task.task_id) for task in tasks]
 
+            # No lock is held across map(). The batch does not need one: it
+            # sits in the in-flight submit state for the whole width of the
+            # call, so termination counts it the entire time (gain#365).
             futures = self._dask_client.map(
-                            self._exec, tasks,
-                            key=task_ids,
-                            pure=False,
-                            params=self._params,
-                        )
+                self._exec, tasks,
+                key=task_ids,
+                pure=False,
+                params=self._params,
+            )
 
-            with running_lock:
-                for future, task in zip(futures, tasks, strict=True):
-                    assert task is not None
-                    submit_count += 1
-                    running[future] = task.task
-                    total_running = len(running)
+            state.submitted(batch, futures)
 
             # Registered only once `running` already knows every future, so
             # a callback firing immediately (a future that is already done)
-            # can never reach the main loop before its task mapping exists.
+            # can never reach the run loop before its task mapping exists
+            # (gain#355).
             for future in futures:
-                future.add_done_callback(on_done)
+                future.add_done_callback(state.task_finished)
 
-            # Only now is the batch accounted for in `running`, so only now
-            # may it leave the queue. A shutdown sentinel appended while
-            # `map()` was in flight sits behind the batch and survives this.
-            with submit_condition:
-                del submit_queue[:len(tasks)]
-
+            submit_count += len(tasks)
             elapsed = time.time() - start
             logger.debug(
                 "submitted %s tasks in %.2f seconds; %.2f tasks/s",
                 submit_count, elapsed, submit_count / elapsed)
             logger.debug(
-                "total running tasks: %s", total_running)
+                "total unfinished tasks: %s", state.unfinished_count())
 
-    def _results_worker_func(
-            self,
-            completed_queue: list[tuple[Future, Task] | None],
-            completed_condition: threading.Condition,
-            results_queue: list[tuple[Task, Any]],
-            results_lock: threading.Lock,
-    ) -> None:
-        shutdown_signal = False
+    def _results_worker_func(self, state: RunState) -> None:
+        """Gather finished futures until the run shuts down."""
         processed_results = 0
 
-        with completed_condition:
-            while True:
-                if shutdown_signal and len(completed_queue) == 0:
-                    break
+        while True:
+            batch = state.claim_for_gather()
+            if batch is None:
+                break
 
-                if completed_queue:
-                    logger.debug(
-                        "results worker processing %s completed tasks",
-                        len(completed_queue))
+            logger.debug(
+                "results worker processing %s completed tasks",
+                len(batch.entries))
 
-                    if any(i is None for i in completed_queue):
-                        logger.warning(
-                            "results worker received shutdown signal; ")
-                        shutdown_signal = True
-                        completed_queue = [
-                            i for i in completed_queue if i is not None]
-                    if not completed_queue:
-                        continue
+            # No lock is held across gather() either -- the mirror image of
+            # the submit worker. The batch is in the in-flight gather state
+            # for the whole round trip, so a run whose gather outlasts the
+            # loop's wait cannot be called finished under it (gain#367).
+            # A *list*, deliberately: ``errors="skip"`` only drops failed
+            # futures when the container it is handed is a list. Given a
+            # tuple, ``distributed`` packs the failures back in as ``None``
+            # and returns the same length -- the check below would always
+            # match and a crashed task would be delivered as a successful
+            # ``None`` result, with nothing raised anywhere.
+            results = self._dask_client.gather(
+                list(batch.futures), errors="skip")
 
-                    futures, tasks = zip(*completed_queue, strict=True)
-                    completed_queue.clear()
+            if len(results) == len(batch.tasks):
+                gathered = list(zip(batch.tasks, results, strict=True))
+            else:
+                logger.error(
+                    "failed to gather results for all %s tasks; "
+                    "looking for exceptions in futures...",
+                    len(batch.tasks))
+                gathered = []
+                for future, task in zip(
+                        batch.futures, batch.tasks, strict=True):
+                    try:
+                        result = future.result()
+                    except Exception as ex:  # noqa: BLE001
+                        # pylint: disable=broad-except
+                        result = ex
+                    gathered.append((task, result))
 
-                    results = self._dask_client.gather(futures, errors="skip")
-
-                    if len(results) == len(tasks):
-                        with results_lock:
-                            results_queue.extend(
-                                zip(tasks, results, strict=True))
-                        processed_results += len(results)
-                        for future in futures:
-                            future.release()
-
-                    else:
-                        logger.error(
-                            "failed to gather results for all %s tasks; "
-                            "looking for exceptions in futures...",
-                            len(tasks))
-                        for future, task in zip(futures, tasks, strict=True):
-                            try:
-                                result = future.result()
-                            except Exception as ex:  # noqa: BLE001
-                                # pylint: disable=broad-except
-                                result = ex
-                            with results_lock:
-                                results_queue.append((task, result))
-                            future.release()
-                            processed_results += 1
-
-                completed_condition.wait(timeout=0.05)
+            state.gathered(batch, gathered)
+            for future in batch.futures:
+                future.release()
+            processed_results += len(gathered)
 
         logger.info("results worker processed %s results", processed_results)
 
@@ -179,132 +143,68 @@ class DaskExecutor(TaskGraphExecutorBase):
     ) -> Iterator[tuple[Task, Any]]:
         self._executing = True
 
-        submit_queue: list[TaskDesc | None] = []
-        submit_condition: threading.Condition = threading.Condition()
-
-        running_lock: threading.Lock = threading.Lock()
-        running: dict[Future, Task] = {}
-
-        done_queue: list[Future] = []
-        done_condition: threading.Condition = threading.Condition()
-
-        completed_queue: list[tuple[Future, Task] | None] = []
-        completed_condition: threading.Condition = threading.Condition()
-
-        results_queue: list[tuple[Task, Any]] = []
-        results_lock: threading.Lock = threading.Lock()
-
-        def on_done(future: Future) -> None:
-            """Hand a finished future to the run loop.
-
-            Runs on a dask callback thread. Registered ONCE per future, at
-            submit time -- which is the whole point. The poll this replaced,
-            ``wait(running, return_when="FIRST_COMPLETED", timeout=0.05)``,
-            rebuilt a waiter for EVERY still-pending future about twenty
-            times a second, and ``distributed.utils.Any`` never cancels the
-            waiters it loses the race to. Each abandoned waiter pins an
-            asyncio Task, a coroutine, a Timeout and a weakref until its
-            future resolves -- ~220MB/min of driver RSS on a long repair
-            (gain#355).
-            """
-            with done_condition:
-                done_queue.append(future)
-                done_condition.notify_all()
+        state = RunState()
 
         submit_worker = threading.Thread(
-            target=self._submit_worker_func,
-            args=(
-                submit_queue, submit_condition,
-                running, running_lock, on_done),
-            daemon=True)
+            target=self._submit_worker_func, args=(state,),
+            name=SUBMIT_WORKER_THREAD_NAME, daemon=True)
         submit_worker.start()
 
         results_worker = threading.Thread(
-            target=self._results_worker_func,
-            args=(
-                completed_queue, completed_condition,
-                results_queue, results_lock),
-            daemon=True)
+            target=self._results_worker_func, args=(state,),
+            name=RESULTS_WORKER_THREAD_NAME, daemon=True)
         results_worker.start()
-
-        is_done: bool = graph.empty()
 
         finished_tasks = 0
         initial_task_count = len(graph)
 
-        while not is_done:
-            with running_lock:
-                total_running = len(running)
-            if total_running < self.MAX_RUNNING_TASKS:
-                limit = max(self.MAX_RUNNING_TASKS - total_running, 1)
-                ready_tasks = graph.extract_tasks(
-                    graph.ready_tasks(limit=limit))
-                with submit_condition:
-                    if ready_tasks:
-                        submit_queue.extend(ready_tasks)
-                        submit_condition.notify_all()
+        # The teardown belongs in a finally: this is a generator, and a
+        # consumer that stops early -- `task_graph_run_with_results` raises
+        # out of its `for` loop on the first error unless --keep-going --
+        # throws GeneratorExit in at the yield below. Without the finally
+        # that skips the shutdown, both joins and the flag, leaking two
+        # threads and leaving the executor permanently "executing".
+        try:
+            # The run is over when the graph has nothing left to hand out
+            # and the state has nothing outstanding. One query, one lock,
+            # one owner: a task is outstanding from the moment it leaves
+            # the graph until the moment its result is taken below, with no
+            # gap for it to be invisible in -- so there is nothing for a
+            # re-read to catch up with. Only this thread takes tasks out of
+            # the graph or puts results back, so the two reads cannot race
+            # each other.
+            while not graph.empty() or state.has_outstanding():
+                unfinished = state.unfinished_count()
+                if unfinished < self.MAX_RUNNING_TASKS:
+                    limit = max(self.MAX_RUNNING_TASKS - unfinished, 1)
+                    # Two steps, and the tasks are in neither the graph nor
+                    # the state in between. Safe only because this thread
+                    # is the sole evaluator of the loop condition above:
+                    # nothing can observe the gap. Top the queue up from a
+                    # second thread, or evaluate termination anywhere else,
+                    # and this reopens gain#365 right here -- enqueue and
+                    # extract would then have to happen under one lock.
+                    state.enqueue(
+                        graph.extract_tasks(graph.ready_tasks(limit=limit)))
 
-            # Block until a future actually finishes.  The timeout only
-            # bounds how long we go without re-checking the graph for newly
-            # ready tasks; unlike the wait() poll it replaced, waking up
-            # costs nothing per pending future.
-            completed: list[Future] = []
-            with done_condition:
-                if not done_queue:
-                    done_condition.wait(timeout=0.05)
-                if done_queue:
-                    completed = copy(done_queue)
-                    done_queue.clear()
+                # Block until a result is ready. The timeout only bounds
+                # how long we go without re-checking the graph for newly
+                # ready tasks; unlike the wait() poll it replaced, waking
+                # up costs nothing per pending future (gain#355).
+                state.wait_for_results()
 
-            if completed:
-                logger.debug(
-                    "collected %s completed futures", len(completed))
-
-            with running_lock, completed_condition:
-                for future in completed:
-                    task = running.pop(future, None)
-                    if task is None:
-                        # Already accounted for; a future is only ever
-                        # handed over once, but never trust a callback
-                        # thread to guarantee that.
-                        continue
-                    completed_queue.append((future, task))
-                completed_condition.notify_all()
-
-            with results_lock:
-                while results_queue:
-                    item = results_queue.pop(0)
-                    task, result = item
+                for task, result in state.take_results():
                     graph.process_completed_tasks([(task, result)])
                     finished_tasks += 1
                     logger.info(
-                        "finished %s/%s", finished_tasks,
-                        initial_task_count)
+                        "finished %s/%s", finished_tasks, initial_task_count)
                     yield task, result
+        finally:
+            state.shutdown()
 
-            is_done = graph.empty()
-            if is_done:
-                for _ in range(3):
-                    with submit_condition:
-                        is_done = is_done and not submit_queue
-                    with running_lock:
-                        is_done = is_done and not running
-                    with results_lock:
-                        is_done = is_done and not results_queue
-                    with completed_condition:
-                        is_done = is_done and not completed_queue
-
-        with submit_condition:
-            submit_queue.append(None)
-            submit_condition.notify_all()
-
-        with completed_condition:
-            completed_queue.append(None)
-            completed_condition.notify_all()
-
-        results_worker.join()
-        submit_worker.join()
-        self._executing = False
+            results_worker.join()
+            submit_worker.join()
+            self._executing = False
 
     def close(self) -> None:
         """Close the Dask executor."""

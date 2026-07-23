@@ -9,7 +9,12 @@ from unittest.mock import MagicMock
 
 import pytest
 from dask.distributed import Client
-from gain.task_graph.dask_executor import DaskExecutor
+from gain.task_graph.cache import CacheRecordType, FileTaskCache
+from gain.task_graph.dask_executor import (
+    RESULTS_WORKER_THREAD_NAME,
+    SUBMIT_WORKER_THREAD_NAME,
+    DaskExecutor,
+)
 from gain.task_graph.executor import (
     TaskGraphExecutor,
 )
@@ -204,23 +209,46 @@ def double(x: int) -> int:
     return x * 2
 
 
-class _SlowSubmitClient:
-    """A client whose ``map()`` takes longer than the run loop's wait.
+class _WrappedClient:
+    """A real client with one of its calls overridden by a subclass.
 
-    Stands in for a loaded machine, where handing a batch of tasks to the
-    scheduler is not instant. Everything else is the real client.
+    Everything not overridden is the real client, so the run still goes
+    through a real scheduler and real workers.
     """
 
-    def __init__(self, client: Client, delay: float) -> None:
+    def __init__(self, client: Client) -> None:
         self._client = client
-        self._delay = delay
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
 
+
+class _SlowClient(_WrappedClient):
+    """A real client with one of its calls artificially slowed down.
+
+    Stands in for a loaded machine, where talking to the scheduler is not
+    instant.
+    """
+
+    def __init__(self, client: Client, delay: float) -> None:
+        super().__init__(client)
+        self._delay = delay
+
+
+class _SlowSubmitClient(_SlowClient):
+    """A client whose ``map()`` takes longer than the run loop's wait."""
+
     def map(self, *args: Any, **kwargs: Any) -> Any:
         time.sleep(self._delay)
         return self._client.map(*args, **kwargs)
+
+
+class _SlowGatherClient(_SlowClient):
+    """A client whose ``gather()`` takes longer than the run loop's wait."""
+
+    def gather(self, *args: Any, **kwargs: Any) -> Any:
+        time.sleep(self._delay)
+        return self._client.gather(*args, **kwargs)
 
 
 def test_slow_submission_does_not_end_the_run_early(
@@ -261,3 +289,163 @@ def test_slow_submission_does_not_end_the_run_early(
     )
     for i in range(num_tasks):
         assert results[f"WideTask{i}"] == i * 2
+
+
+def test_slow_gather_does_not_end_the_run_early(
+    dask_client: Client,
+) -> None:
+    """A gather slower than the run loop's wait must not end the run.
+
+    Regression for iossifovlab/gain#367, and the mirror image of
+    ``test_slow_submission_does_not_end_the_run_early``. A finished task
+    stops being *running* the moment its callback fires and only becomes a
+    *result* once ``Client.gather()`` has returned; for the whole width of
+    that call it is in neither. Termination must still see it -- the
+    results worker holds it in an explicit in-flight gather state, so the
+    run loop counts it as outstanding the entire time.
+
+    The window is as wide as ``gather()`` and the run loop reaches its
+    termination check every 0.05s, so this only bites when gathering
+    outlasts that wait; delaying ``gather()`` past it makes it certain.
+    The test is only meaningful because no lock is held across the gather:
+    an implementation that pulls the batch out of the completed collection
+    and then releases its lock for the round trip yields 1 of 50 here.
+    """
+    graph = TaskGraph()
+    num_tasks = 50
+    for i in range(num_tasks):
+        graph.create_task(f"WideTask{i}", double, args=[i], deps=[])
+
+    executor = DaskExecutor(_SlowGatherClient(dask_client, delay=0.2))
+
+    results = {
+        task.task_id: result for task, result in executor.execute(graph)
+    }
+
+    assert len(results) == num_tasks, (
+        f"executor yielded {len(results)} of {num_tasks} results; a run "
+        f"whose gather outlasts the loop's wait ended early (gain#367)"
+    )
+    for i in range(num_tasks):
+        assert results[f"WideTask{i}"] == i * 2
+
+
+def die_on_the_worker(*args: Any, **kwargs: Any) -> Any:
+    """Fail where nothing in the executor can catch it."""
+    raise RuntimeError("the worker died")
+
+
+class _DyingWorkerClient(_WrappedClient):
+    """A client whose submitted work dies on the worker.
+
+    ``_exec`` catches every ``Exception`` the task function raises and
+    returns it as the task's *result*, so a task that merely raises never
+    leaves a future in the ``error`` state. The failures that do -- an
+    OOM-killed worker, a lost worker, a cancelled key -- cannot be
+    provoked from inside the task function, so what dask is asked to run
+    is replaced instead.
+    """
+
+    def map(self, _func: Any, tasks: Any, **kwargs: Any) -> Any:
+        return self._client.map(die_on_the_worker, tasks, **kwargs)
+
+
+def test_a_task_that_dies_on_the_worker_is_delivered_as_an_error(
+    dask_client: Client,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A future that ends in ``error`` must be yielded as an exception.
+
+    Regression for the silent-wrong-result mode this whole line of work
+    exists to prevent. The results worker passed a *tuple* of futures to
+    ``Client.gather(..., errors="skip")``; ``skip`` only drops bad futures
+    when the container is a ``list`` -- for a tuple ``distributed`` packs
+    them back as ``None`` and returns the same length. The length check
+    therefore always matched, the "look for exceptions in the futures"
+    fallback was unreachable, and an OOM-killed task was delivered with
+    the value ``None``.
+
+    Nothing raised, so ``is_error`` downstream was ``False`` and the task
+    was written to the cache as a COMPUTED result of ``None`` -- a later
+    cached run then skips it entirely. Hence the assertion on the cache
+    record: the delivered value and what it makes the run believe are the
+    same bug.
+    """
+    def a_graph() -> TaskGraph:
+        graph = TaskGraph()
+        graph.create_task("DoomedTask", double, args=[1], deps=[])
+        return graph
+
+    task_cache = FileTaskCache(cache_dir=str(tmp_path))
+    executor = DaskExecutor(
+        _DyingWorkerClient(dask_client),
+        task_cache=task_cache,
+        task_log_dir=str(tmp_path / "logs"),
+    )
+
+    results = dict(executor.execute(a_graph()))
+
+    assert len(results) == 1, "the failed task was not delivered at all"
+    result = results[Task("DoomedTask")]
+    assert isinstance(result, BaseException), (
+        f"a task whose future ended in error was delivered as {result!r}; "
+        f"it must be delivered as an exception"
+    )
+
+    record = task_cache.get_record(
+        a_graph().get_task_desc(Task("DoomedTask")))
+    assert record.type == CacheRecordType.ERROR, (
+        f"the failed task was cached as {record.type}; a crashed task "
+        f"cached as COMPUTED is skipped by every later cached run"
+    )
+
+
+def _live_run_worker_threads() -> list[threading.Thread]:
+    return [
+        thread for thread in threading.enumerate()
+        if thread.name in (
+            SUBMIT_WORKER_THREAD_NAME, RESULTS_WORKER_THREAD_NAME)
+    ]
+
+
+def test_abandoning_the_result_iterator_shuts_the_run_down(
+    dask_client: Client,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Closing the iterator early must tear the run down, not leak it.
+
+    ``task_graph_run_with_results(..., keep_going=False)`` does
+    ``raise result_or_error`` from inside its ``for ... in tasks_iter``
+    loop, so the first failing task of any run without ``--keep-going``
+    abandons this generator part way. The teardown -- shutdown, both
+    joins, clearing ``_executing`` -- used to sit after the ``while`` loop
+    unprotected, and ``GeneratorExit`` skipped all of it: both worker
+    threads survived for the life of the process and the executor stayed
+    permanently "executing", so the long-lived module-level executors in
+    ``web_api`` could never run another graph.
+    """
+    def a_graph(prefix: str, count: int) -> TaskGraph:
+        graph = TaskGraph()
+        for i in range(count):
+            graph.create_task(f"{prefix}{i}", double, args=[i], deps=[])
+        return graph
+
+    executor = DaskExecutor(
+        dask_client, task_log_dir=str(tmp_path / "logs"))
+
+    assert not _live_run_worker_threads(), "leaked from an earlier test"
+
+    tasks_iter = executor.execute(a_graph("Abandoned", 50))
+    next(tasks_iter)
+    tasks_iter.close()
+
+    assert not _live_run_worker_threads(), (
+        "abandoning the result iterator left the run's worker threads "
+        "alive; every non-keep-going run that hits a failing task leaks "
+        "two threads"
+    )
+
+    results = dict(executor.execute(a_graph("Reused", 20)))
+    assert len(results) == 20, (
+        "the executor could not run a second graph after an abandoned run"
+    )
