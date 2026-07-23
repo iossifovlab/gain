@@ -24,6 +24,16 @@ def a_claimed_submit_batch(state: RunState, task_id: str) -> SubmitBatch:
     return batch
 
 
+def a_claimed_submit_batch_of(
+    state: RunState, task_ids: list[str],
+) -> SubmitBatch:
+    """Enqueue several tasks and take them into the in-flight submit state."""
+    state.enqueue([a_task_desc(task_id) for task_id in task_ids])
+    batch = state.claim_for_submit()
+    assert batch is not None
+    return batch
+
+
 def test_a_task_is_outstanding_at_every_step_from_queued_to_yielded() -> None:
     """The whole contract in one walk (gain#367).
 
@@ -146,3 +156,158 @@ def test_shutdown_discards_tasks_that_never_reached_the_cluster() -> None:
     assert not state.has_outstanding(), (
         "tasks discarded at shutdown are still counted as outstanding"
     )
+
+
+def test_a_batch_that_fails_to_submit_is_delivered_as_error_results() -> None:
+    """A batch the submit worker could not hand to the cluster (gain#372).
+
+    ``Client.map()`` can raise -- a dead scheduler connection, a
+    serialization error. The batch is in the in-flight submit state at that
+    instant, so without a terminal transition out of it the batch would be
+    counted as outstanding forever and the run loop would spin without end.
+    ``submit_failed`` delivers the failure as the result of every task in
+    the batch, exactly as a task that dies on the worker is delivered, so
+    the run yields it as an error and then terminates.
+    """
+    state = RunState()
+    batch = a_claimed_submit_batch(state, "A")
+    error = RuntimeError("map failed: the scheduler is gone")
+
+    state.submit_failed(batch, error)
+
+    assert state.has_outstanding(), "delivered as a result, still to be yielded"
+    assert state.take_results() == [(Task("A"), error)]
+    assert not state.has_outstanding(), "the failed batch is no longer counted"
+
+
+def test_a_batch_that_fails_to_gather_is_delivered_as_error_results() -> None:
+    """A batch the results worker could not collect (gain#372).
+
+    ``Client.gather()`` can raise -- a lost comm, a dead worker -- and
+    ``errors="skip"`` suppresses task errors, not transport ones. The batch
+    is in the in-flight gather state at that instant; ``gather_failed``
+    delivers the failure as the result of every task and drops the batch
+    from the gather state, so the run terminates instead of spinning. The
+    caller releases the batch's futures, as it does after a normal gather.
+    """
+    state = RunState()
+    future = MagicMock()
+
+    batch = a_claimed_submit_batch(state, "A")
+    state.submitted(batch, [future])
+    state.task_finished(future)
+    gather_batch = state.claim_for_gather()
+    assert gather_batch is not None
+    error = RuntimeError("gather failed: the connection is gone")
+
+    state.gather_failed(gather_batch, error)
+
+    assert state.has_outstanding(), "delivered as a result, still to be yielded"
+    assert state.take_results() == [(Task("A"), error)]
+    assert not state.has_outstanding(), "the failed batch is no longer counted"
+
+
+def test_a_batch_that_fails_after_being_submitted_is_delivered_as_errors(
+) -> None:
+    """A batch map() returned but wiring-up could not finish (gain#372).
+
+    ``Client.map()`` hands the futures back and the submit worker then moves
+    them into ``running`` and attaches their completion callbacks. That can
+    raise part way -- a client tearing down under ``add_done_callback``,
+    which (unlike ``release()``) does not swallow it -- with the whole batch
+    already in ``running``. ``submit_aborted`` delivers the failure as the
+    result of every task and clears every one of its futures from
+    ``running``, so none lingers counted as outstanding forever and the run
+    terminates with exactly one result per task.
+    """
+    state = RunState()
+    batch = a_claimed_submit_batch_of(state, ["A", "B", "C"])
+    futures = [MagicMock(), MagicMock(), MagicMock()]
+    state.submitted(batch, futures)
+    assert state.unfinished_count() == 3, "all three running on the cluster"
+    error = TypeError("add_done_callback failed: the client loop is gone")
+
+    state.submit_aborted(batch, futures, error)
+
+    assert state.unfinished_count() == 0, "no future left stranded in running"
+    assert state.take_results() == [
+        (Task("A"), error), (Task("B"), error), (Task("C"), error)]
+    assert not state.has_outstanding(), "the failed batch is no longer counted"
+
+
+def test_submit_aborted_tolerates_a_future_a_callback_already_took() -> None:
+    """A callback can fire between ``submitted`` and the raise (gain#372).
+
+    ``add_done_callback`` registers before it raises, so a future whose
+    callback wins the race has already left ``running`` for ``completed``.
+    ``submit_aborted`` must not trip over its absence, and still delivers
+    every task in the batch as the failure.
+    """
+    state = RunState()
+    batch = a_claimed_submit_batch_of(state, ["A", "B"])
+    futures = [MagicMock(), MagicMock()]
+    state.submitted(batch, futures)
+    state.task_finished(futures[0])  # its callback fired first
+    error = RuntimeError("add_done_callback failed: the client loop is gone")
+
+    state.submit_aborted(batch, futures, error)
+
+    assert futures[0] not in state._running
+    assert futures[1] not in state._running
+    assert futures[0] not in [f for f, _ in state._completed], (
+        "a future its callback already moved to completed was left there; "
+        "the results worker will gather and deliver its task a second time"
+    )
+    assert (Task("A"), error) in state._gathered
+    assert (Task("B"), error) in state._gathered
+
+
+def test_submit_aborted_does_not_deliver_a_completed_future_twice() -> None:
+    """The batch error must not be duplicated by a future already completed.
+
+    An already-finished future's ``task_finished`` callback can fire --
+    moving it from ``running`` to ``completed`` -- before
+    ``add_done_callback`` raises on a later future in the same batch.
+    ``submit_aborted`` delivers that task as the batch error; if it also
+    left the future in ``completed`` the results worker would gather it and
+    deliver the SAME task a second time. So the batch is counted and
+    delivered exactly once per task, and the stray completed future is
+    evicted (gain#372).
+    """
+    state = RunState()
+    batch = a_claimed_submit_batch_of(state, ["A", "B"])
+    futures = [MagicMock(), MagicMock()]
+    state.submitted(batch, futures)
+    state.task_finished(futures[0])  # its callback won the race to completed
+    error = RuntimeError("add_done_callback failed: the client loop is gone")
+
+    state.submit_aborted(batch, futures, error)
+
+    assert futures[0] not in [f for f, _ in state._completed], (
+        "a completed future was left behind and will be gathered and "
+        "delivered a second time (gain#372)"
+    )
+    assert state._outstanding_count() == 2, (
+        f"a 2-task batch is outstanding as {state._outstanding_count()}; the "
+        f"stray completed future is counted on top of the batch error"
+    )
+
+    # Drain the way the run loop would, gathering anything left in completed;
+    # each task must come out exactly once, never twice.
+    state.shutdown()
+    while (gather_batch := state.claim_for_gather()) is not None:
+        state.gathered(
+            gather_batch,
+            [(task, "SUCCESS") for task in gather_batch.tasks])
+    delivered = [task for task, _ in state.take_results()]
+    assert delivered.count(Task("A")) == 1, (
+        f"Task A was delivered {delivered.count(Task('A'))} times; a completed "
+        f"future left by submit_aborted is gathered and re-delivers it "
+        f"(gain#372)"
+    )
+    assert delivered.count(Task("B")) == 1
+    assert len(delivered) == 2, (
+        f"the 2-task batch delivered {len(delivered)} results; a completed "
+        f"future left behind delivers a task twice (gain#372)"
+    )
+    assert not state.has_outstanding()

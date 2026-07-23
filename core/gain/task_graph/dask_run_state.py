@@ -274,3 +274,78 @@ class RunState:
             self._gathered.extend(results)
             del self._gathering[batch.batch_id]
             self._condition.notify_all()
+
+    def submit_failed(
+        self, batch: SubmitBatch, error: BaseException,
+    ) -> None:
+        """Move a batch that could not be submitted out of in-flight submit.
+
+        The mirror of :meth:`submitted` for the failure path: ``Client.map()``
+        can raise (a dead scheduler connection, a serialization error) while
+        the batch sits in the in-flight submit state, where it would be
+        counted as outstanding forever and spin the run loop without end
+        (gain#372). The failure is delivered as the result of every task in
+        the batch -- exactly as a task that dies on the worker is delivered
+        -- so the run loop yields it as an error and then terminates, and
+        the batch leaves the submit state in the same lock hold.
+        """
+        with self._condition:
+            self._gathered.extend(
+                (task.task, error) for task in batch.tasks)
+            del self._submitting[batch.batch_id]
+            self._condition.notify_all()
+
+    def submit_aborted(
+        self, batch: SubmitBatch, futures: Sequence[Future],
+        error: BaseException,
+    ) -> None:
+        """Recover a batch whose wiring-up failed after ``map()`` returned.
+
+        ``Client.map()`` handed the futures back, but moving them into
+        ``running`` and attaching their completion callbacks raised part way
+        -- a client tearing down under ``Future.add_done_callback``, which
+        (unlike ``release()``) does not swallow it (gain#372). Some of the
+        batch's futures may already sit in ``running`` with a callback
+        attached, one of which may even have fired and moved to
+        ``completed``; others never got one. Deliver the whole batch as a
+        per-task error and drop every one of its futures from ``running``
+        (and the batch from ``submitting``, in case ``submitted`` raised
+        before it left it), so none lingers there counted as outstanding
+        forever and the run terminates with one result per task. A future a
+        callback already took out of ``running`` is simply absent there -- the
+        pop shrugs -- but it now sits in ``completed``, so it is evicted from
+        there too; otherwise the results worker would gather it and deliver
+        its task a second time, on top of the batch error.
+        """
+        with self._condition:
+            self._submitting.pop(batch.batch_id, None)
+            future_set = set(futures)
+            for future in futures:
+                self._running.pop(future, None)
+            self._completed = [
+                (f, t) for f, t in self._completed if f not in future_set
+            ]
+            self._gathered.extend(
+                (task.task, error) for task in batch.tasks)
+            self._condition.notify_all()
+
+    def gather_failed(
+        self, batch: GatherBatch, error: BaseException,
+    ) -> None:
+        """Move a batch that could not be gathered out of in-flight gather.
+
+        The mirror of :meth:`gathered` for the failure path: ``Client.gather()``
+        can raise (a lost comm, a dead worker), and ``errors="skip"``
+        suppresses task errors, not transport ones (gain#372). While the
+        batch sits in the in-flight gather state such a failure would be
+        counted as outstanding forever; the failure is delivered as the
+        result of every task in the batch, so the run loop yields it as an
+        error and then terminates, and the batch leaves the gather state in
+        the same lock hold. The caller releases the batch's futures, as it
+        does after a normal gather -- ``future.release()`` is a dask call and
+        must not run under this lock.
+        """
+        with self._condition:
+            self._gathered.extend((task, error) for task in batch.tasks)
+            del self._gathering[batch.batch_id]
+            self._condition.notify_all()

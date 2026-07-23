@@ -5,10 +5,11 @@ import pathlib
 import threading
 import time
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from dask.distributed import Client
+from gain.task_graph import dask_executor
 from gain.task_graph.cache import CacheRecordType, FileTaskCache
 from gain.task_graph.dask_executor import (
     RESULTS_WORKER_THREAD_NAME,
@@ -449,3 +450,298 @@ def test_abandoning_the_result_iterator_shuts_the_run_down(
     assert len(results) == 20, (
         "the executor could not run a second graph after an abandoned run"
     )
+
+
+def _force_stop_run(state: Any) -> None:
+    """Best-effort: empty a hung run's state so its loop can terminate.
+
+    Test-only. ``shutdown()`` alone will not do it -- it deliberately leaves
+    running/completed batches in place -- so a run stranded by gain#372 stays
+    outstanding after it. Emptying every collection under the state's lock
+    drops ``has_outstanding()`` to false, the one thing the spinning run loop
+    is waiting to see.
+    """
+    with state._condition:
+        state._shutdown = True
+        state._queued.clear()
+        state._submitting.clear()
+        state._running.clear()
+        state._completed.clear()
+        state._gathering.clear()
+        state._gathered.clear()
+        state._condition.notify_all()
+
+
+def _run_in_thread_with_timeout(
+    executor: DaskExecutor, graph: TaskGraph, timeout: float,
+) -> list[tuple[Task, Any]]:
+    """Drain ``execute`` to completion in a thread, bounded by ``timeout``.
+
+    Without a fix for gain#372 a worker whose dask call raises dies with its
+    batch still in the in-flight state, so ``has_outstanding()`` answers
+    "yes" forever and the run loop never terminates. Draining the generator
+    in a daemon thread and joining it with a timeout turns that permanent
+    hang into an assertion failure here instead of a hung test process: the
+    test fails by timing out without the fix, and returns in well under a
+    second with it.
+
+    Results are collected as a LIST of ``(task, result)`` pairs, not a dict:
+    a dict silently dedupes, so a task delivered twice -- over-delivery, the
+    opposite failure -- would be invisible. The list length is exactly one
+    per task or the assertion the caller makes on it catches the discrepancy.
+
+    On timeout the run is stopped best-effort. A hung run loop is parked
+    inside the generator with no further yields coming, so it cannot be
+    closed cooperatively from here; instead the run's ``RunState`` -- caught
+    as it is constructed, via the executor module's namespace -- is emptied
+    under its own lock, which drops ``has_outstanding()`` to false so the
+    loop terminates and its daemon workers stop. Otherwise a timed-out red
+    run leaves a daemon spinning the run loop against the shared session
+    cluster, cascading into later tests.
+    """
+    results: list[tuple[Task, Any]] = []
+    errors: list[BaseException] = []
+    done = threading.Event()
+    captured: list[Any] = []
+
+    real_run_state = dask_executor.RunState
+
+    def capturing_run_state() -> Any:
+        state = real_run_state()
+        captured.append(state)
+        return state
+
+    def drain() -> None:
+        try:
+            for task, result in executor.execute(graph):
+                results.append((task, result))
+        except BaseException as ex:  # noqa: BLE001
+            errors.append(ex)
+        finally:
+            done.set()
+
+    timed_out = False
+    with patch.object(dask_executor, "RunState", capturing_run_state):
+        thread = threading.Thread(target=drain, daemon=True)
+        thread.start()
+        thread.join(timeout)
+
+        if not done.is_set():
+            # A genuine hang: force the run's state empty so the spinning loop
+            # terminates and its daemon workers stop, instead of being left to
+            # hammer the shared session cluster (best-effort, test-only).
+            timed_out = True
+            for state in captured:
+                _force_stop_run(state)
+            thread.join(timeout)
+
+    assert done.is_set(), "the run did not stop even after force-stop"
+    assert not timed_out, (
+        f"the run did not terminate within {timeout}s; a worker whose dask "
+        f"call raised left its batch counted as outstanding forever and the "
+        f"run loop spun without end (gain#372)"
+    )
+    if errors:
+        raise errors[0]
+    return results
+
+
+class _FailingSubmitClient(_WrappedClient):
+    """A client whose ``map()`` raises, as a dead scheduler connection would.
+
+    The submit worker calls ``map()`` with the batch held in the in-flight
+    submit state; the raise stands in for a transport error there, which
+    nothing in the worker used to catch.
+    """
+
+    def map(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("map failed: the scheduler connection is gone")
+
+
+class _FailingGatherClient(_WrappedClient):
+    """A client whose ``gather()`` raises, with a real ``map()`` underneath.
+
+    The tasks are really submitted and really finish on the workers, so the
+    results worker reaches ``gather()`` with the batch in the in-flight
+    gather state; the raise stands in for a lost comm there, which
+    ``errors="skip"`` does not suppress.
+    """
+
+    def gather(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("gather failed: the worker comm is gone")
+
+
+def _assert_failing_client_delivers_every_task_as_error(
+    client: Any, tmp_path: pathlib.Path, what: str, num_tasks: int = 5,
+) -> None:
+    """Run a graph on a client that fails mid-run; assert one error per task.
+
+    Shared by the submit / gather / callback-registration regression tests:
+    each wraps ``dask_client`` in a client that raises at one point, and the
+    fix must turn every such failure into the run terminating with exactly
+    one delivered per-task error -- never hanging, never silently fewer, and
+    (since results is a list) never silently more (gain#372).
+    """
+    graph = TaskGraph()
+    for i in range(num_tasks):
+        graph.create_task(f"Task{i}", double, args=[i], deps=[])
+
+    executor = DaskExecutor(client, task_log_dir=str(tmp_path / "logs"))
+
+    results = _run_in_thread_with_timeout(executor, graph, timeout=20.0)
+
+    assert len(results) == num_tasks, (
+        f"the run delivered {len(results)} of {num_tasks} results; a failed "
+        f"{what} must deliver every task exactly once, never silently "
+        f"fewer -- nor, since results is a list, silently more (gain#372)"
+    )
+    by_task = dict(results)
+    assert len(by_task) == num_tasks, "a task was delivered more than once"
+    for i in range(num_tasks):
+        result = by_task[Task(f"Task{i}")]
+        assert isinstance(result, BaseException), (
+            f"Task{i} was delivered as {result!r}; a task in a batch whose "
+            f"{what} failed must be delivered as an error"
+        )
+
+
+def test_a_submission_that_fails_ends_the_run_instead_of_hanging(
+    dask_client: Client,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A ``map()`` that raises must end the run, not hang it (gain#372).
+
+    The submit worker holds the batch in the in-flight submit state for the
+    whole width of ``map()``. If ``map()`` raises and nothing catches it the
+    daemon thread dies with the batch still in that state, so
+    ``has_outstanding()`` answers "yes" forever and the run loop spins at
+    its wait timeout without end -- no exception surfaces and the loop logs
+    nothing. The fix delivers the failure as the result of every task in the
+    batch, so the run terminates and the caller learns every task failed.
+    """
+    _assert_failing_client_delivers_every_task_as_error(
+        _FailingSubmitClient(dask_client), tmp_path, "submission")
+
+
+def test_a_gather_that_fails_ends_the_run_instead_of_hanging(
+    dask_client: Client,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A ``gather()`` that raises must end the run, not hang it (gain#372).
+
+    Mirror of the submit case. A finished task is held in the in-flight
+    gather state for the whole width of ``gather()``. If ``gather()`` raises
+    and nothing catches it the results worker dies with the batch still in
+    that state -- and its futures never released -- so the run loop spins
+    without end. ``errors="skip"`` suppresses task errors, not the transport
+    error modelled here. The fix delivers the failure as the result of every
+    task in the batch and releases its futures, so the run terminates.
+    """
+    _assert_failing_client_delivers_every_task_as_error(
+        _FailingGatherClient(dask_client), tmp_path, "gather")
+
+
+class _CallbackRaisingFuture:
+    """A future proxy whose ``add_done_callback`` raises on the Nth call.
+
+    Everything else delegates to the real future. The callback is forwarded
+    to the real future unchanged, so it fires with the *real* future -- which
+    the run state, keyed by this proxy, does not recognise. The proxy is what
+    stays in ``running``, exactly the future the recovery must clear; the
+    forwarded callback finding nothing to pop is what keeps this batch's
+    delivery a clean one-error-per-task rather than a race with the callback.
+
+    (A variant that lands a completed future in ``completed`` before the raise
+    -- to exercise ``submit_aborted``'s eviction of it end-to-end -- was tried
+    and reverted: with a live results worker it races ``gather()`` against the
+    abort, a broader over-delivery window than the ``_completed`` eviction
+    closes and one the scoped gain#372 fix deliberately leaves to the gather
+    path. That eviction is covered deterministically by
+    ``test_submit_aborted_does_not_deliver_a_completed_future_twice`` in
+    ``test_dask_run_state.py`` instead.)
+    """
+
+    def __init__(
+        self, future: Any, counter: list[int], fail_at: int,
+    ) -> None:
+        self._future = future
+        self._counter = counter
+        self._fail_at = fail_at
+
+    def add_done_callback(self, fn: Any) -> None:
+        self._counter[0] += 1
+        if self._counter[0] >= self._fail_at:
+            raise TypeError(
+                "add_done_callback failed: the client IOLoop is gone")
+        self._future.add_done_callback(fn)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._future, name)
+
+
+class _CallbackRaisingClient(_WrappedClient):
+    """A real client whose futures raise from ``add_done_callback`` partway.
+
+    ``map()`` and the workers are real; only registering completion callbacks
+    fails, as it would under a client IOLoop torn down mid-run. By then the
+    batch is already in ``running``, so -- unlike the ``map()``/``gather()``
+    failures -- its futures exist and must be cleared from there.
+    """
+
+    def __init__(self, client: Client, fail_at: int) -> None:
+        super().__init__(client)
+        self._fail_at = fail_at
+
+    def map(self, *args: Any, **kwargs: Any) -> Any:
+        futures = self._client.map(*args, **kwargs)
+        counter = [0]
+        return [
+            _CallbackRaisingFuture(future, counter, self._fail_at)
+            for future in futures
+        ]
+
+
+def test_a_callback_registration_that_fails_ends_the_run_instead_of_hanging(
+    dask_client: Client,
+    tmp_path: pathlib.Path,
+) -> None:
+    """``add_done_callback`` raising mid-batch must end the run (gain#372).
+
+    ``map()`` succeeds and ``submitted()`` moves the whole batch into
+    ``running``; then registering completion callbacks raises part way --
+    ``Future.add_done_callback`` does not swallow it. The futures past the
+    raise got no callback and, before this fix, stranded in ``running``
+    forever: ``has_outstanding()`` answered "yes" without end and the run
+    loop spun, delivering fewer results than tasks and never terminating.
+    The guard now covers ``submitted()`` and the callback loop, so on the
+    raise the whole batch is delivered as per-task errors and cleared from
+    ``running`` -- the run terminates with exactly one result per task.
+    """
+    _assert_failing_client_delivers_every_task_as_error(
+        _CallbackRaisingClient(dask_client, fail_at=3),
+        tmp_path, "callback registration")
+
+
+def test_releasing_futures_after_a_gather_failure_survives_a_raising_release(
+) -> None:
+    """A ``future.release()`` that raises must not kill the results worker.
+
+    On the gather-failure path the release loop runs on the very dead-client
+    condition that caused the failure. ``distributed``'s ``release()`` is
+    effectively non-throwing, so this is robustness, not a live bug -- but a
+    raising ``release()`` there would kill the results worker and re-strand
+    any batch that completes after this one, the hang this whole line of work
+    exists to prevent (an integration reproduction needs a second batch to
+    finish after the worker dies, which is inherently racy -- hence this
+    targeted unit check). Each release stands alone: one raising must neither
+    propagate nor skip the rest.
+    """
+    good = MagicMock()
+    bad = MagicMock()
+    bad.release.side_effect = RuntimeError(
+        "release failed: the client is gone")
+
+    DaskExecutor._release_futures([bad, good])
+
+    bad.release.assert_called_once()
+    good.release.assert_called_once()
