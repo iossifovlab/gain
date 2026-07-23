@@ -29,10 +29,22 @@ DS_SOURCES = ("DS_AG", "DS_AL", "DS_DG", "DS_DL", "DS_MAX")
 PROB_SOURCES = ("ref_A_p", "ref_D_p", "alt_A_p", "alt_D_p")
 DP_SOURCES = ("DP_AG", "DP_AL", "DP_DG", "DP_DL")
 
-# Tolerance for the raw floats (DS_* and the parsed probability vectors):
-# ~40x above the observed TF->ONNX perturbation, 1000x below the 2dp step.
+# Tolerance for the raw DS_* floats: ~40x above the observed TF->ONNX
+# perturbation (2.4e-7), far below the 2dp delta_score step.  These are
+# compared at full precision, so they stay portable across fp environments.
 FLOAT_TOL = 1e-5
-# Gate DP_*/delta_score assertions: below this DS_MAX the argmax position sits
+# Tolerance for the probability vectors.  They are emitted as 4-decimal strings
+# (``f"{p:.4f}"``), so their resolution is 1e-4: a raw value near a rounding
+# boundary rounds to *adjacent* 4dp values across fp environments (the baseline
+# host vs CI, or batch fp non-associativity vs sequential) -- a 1e-4 jump.  The
+# tolerance must absorb a one-unit 4dp flip; comparing 4dp values any tighter
+# than their own grid is not portable.
+PROB_TOL = 2e-4
+# Tolerance for the 2dp ``DS`` fields embedded in ``delta_score`` -- one 2dp
+# unit, for the same rounding-boundary reason (the raw DS_* are pinned
+# separately at FLOAT_TOL, so this only prevents spurious 2dp flips).
+DELTA_DS_TOL = 2e-2
+# Gate DP_*/delta_score position assertions: below this DS_MAX the argmax sits
 # inside the noise floor and can flip.
 DS_MAX_GATE = 0.01
 
