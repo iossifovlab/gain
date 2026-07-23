@@ -1,5 +1,6 @@
 """Factory for creation of annotation pipeline."""
 
+import tempfile
 from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
@@ -30,6 +31,22 @@ logger = logging.getLogger(__name__)
 _ANNOTATOR_FACTORY_REGISTRY: dict[
     str, Callable[[AnnotationPipeline, AnnotatorInfo], Annotator]] = {}
 _EXTENTIONS_LOADED = False
+
+# Memoized per-process fallback work dir for `build_annotation_pipeline`.
+# Minted lazily via `tempfile.mkdtemp` (0700, owned by the current uid) so it
+# is absolute and CWD-independent, and cannot reintroduce the cross-uid EPERM
+# a fixed shared path would. Reset to None in tests to isolate the memo.
+_DEFAULT_WORK_DIR: Path | None = None
+
+
+def _get_default_work_dir() -> Path:
+    """Return the memoized per-process fallback work dir, minting it once."""
+    # pylint: disable=global-statement
+    global _DEFAULT_WORK_DIR
+    if _DEFAULT_WORK_DIR is None:
+        _DEFAULT_WORK_DIR = Path(
+            tempfile.mkdtemp(prefix="gain-annotation-work-"))
+    return _DEFAULT_WORK_DIR
 
 
 def _load_annotator_factory_plugins() -> None:
@@ -215,11 +232,16 @@ def build_annotation_pipeline(
     pipeline = AnnotationPipeline(grr)
     pipeline.preamble = preamble
     pipeline.raw = config
+    if work_dir is None:
+        work_dir = _get_default_work_dir()
+        logger.warning(
+            "no `work_dir` passed to `build_annotation_pipeline`; "
+            "defaulting to a temporary directory %s. Pass an explicit "
+            "`work_dir` — this default is deprecated and will become "
+            "required.", work_dir)
     annotator_config = None
     try:
         for idx, annotator_config in enumerate(pipeline_config):
-            if work_dir is None:
-                work_dir = Path("./work")
             annotator = build_pipeline_annotator(
                 pipeline, annotator_config,
                 work_dir / f"A{idx}_{annotator_config.type}",
