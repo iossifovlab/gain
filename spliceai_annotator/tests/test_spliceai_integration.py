@@ -103,6 +103,11 @@ for _v in EXTRA_VARIANTS:
     _EXTRA_BY_DISTANCE[_v["distance"]].append(_v)
 EXTRA_DISTANCES = sorted(_EXTRA_BY_DISTANCE)
 
+# The real pipelines cover every distance either tier uses, so neither corpus's
+# distances are coupled to the other's (an extra-corpus distance absent from the
+# de-rebased corpus must not KeyError).
+ALL_DISTANCES = sorted(set(DISTANCES) | set(EXTRA_DISTANCES))
+
 
 @pytest.fixture(scope="session")
 def real_pipelines(
@@ -110,7 +115,7 @@ def real_pipelines(
 ) -> Iterator[dict[int, AnnotationPipeline]]:
     """One opened all-16-attribute pipeline per distance, on the real GRR."""
     pipelines = {}
-    for distance in DISTANCES:
+    for distance in ALL_DISTANCES:
         pipeline = load_pipeline_from_yaml(
             make_pipeline_yaml(distance, REAL_GENOME, REAL_GENE_MODELS),
             real_grr)
