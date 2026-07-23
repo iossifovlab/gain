@@ -27,9 +27,16 @@ from gain.genomic_resources.genomic_position_table.record import (
 from gain.genomic_resources.genomic_position_table.table import (
     GenomicPositionTable,
 )
+from gain.genomic_resources.genomic_position_table.table_bigwig import (
+    BigWigTable,
+)
 from gain.genomic_resources.genomic_position_table.table_vcf import (
     ALLELE_INDEX,
     VARIANT,
+)
+from gain.genomic_resources.genomic_scores import (
+    AlleleScore,
+    PositionScore,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing import (
@@ -41,8 +48,10 @@ from gain.genomic_resources.testing import (
     setup_vcf,
 )
 from gain.genomic_resources.testing.builders import (
+    a_bigwig_score,
     a_grr,
     a_position_score,
+    a_vcf_info_score,
 )
 
 
@@ -2702,3 +2711,219 @@ def test_headerless_tabix_on_the_default_header_mode_names_the_remedy(
     assert "scores/headerless" in message
     assert "data.txt.gz" in message
     assert "header_mode: none" in message
+
+
+def test_zero_based_on_a_vcf_table_warns_and_stays_one_based(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # zero_based is honored only by the tabix/in-memory backends; a VCF is
+    # always 1-based.  Setting the key on a VCF table must warn (naming the
+    # resource) but leave the table opening and reading exactly as before.
+    res = (
+        a_grr()
+        .with_resource("my_vcf", a_vcf_info_score())
+        .build_repo(tmp_path)
+        .get_resource("my_vcf")
+    )
+    assert res.config is not None
+    table_def = {**res.config["table"], "zero_based": True}
+
+    with (
+        caplog.at_level("WARNING"),
+        build_genomic_position_table(res, table_def) as tab,
+    ):
+        assert isinstance(tab, VCFGenomicPositionTable)
+        record = next(iter(tab.get_all_records()))
+        # 1-based: the VCF row at POS 10 stays at position 10.
+        assert record[POS_BEGIN] == 10
+        assert record[POS_END] == 10
+
+    warnings = [
+        r.message for r in caplog.records if r.levelname == "WARNING"
+    ]
+    assert any("zero_based" in m and "my_vcf" in m for m in warnings), warnings
+
+
+def test_zero_based_false_on_a_vcf_table_still_warns(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Either value of the key triggers the warning: a config that redundantly
+    # sets zero_based: False on a VCF is still surfaced, and still works.
+    res = (
+        a_grr()
+        .with_resource("redundant_vcf", a_vcf_info_score())
+        .build_repo(tmp_path)
+        .get_resource("redundant_vcf")
+    )
+    assert res.config is not None
+    table_def = {**res.config["table"], "zero_based": False}
+
+    with (
+        caplog.at_level("WARNING"),
+        build_genomic_position_table(res, table_def) as tab,
+    ):
+        assert isinstance(tab, VCFGenomicPositionTable)
+        record = next(iter(tab.get_all_records()))
+        assert record[POS_BEGIN] == 10
+
+    warnings = [
+        r.message for r in caplog.records if r.levelname == "WARNING"
+    ]
+    assert any(
+        "zero_based" in m and "redundant_vcf" in m for m in warnings), warnings
+
+
+def test_zero_based_on_a_bigwig_table_warns_and_conversion_unchanged(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # bigWig hard-codes its 0-based-half-open -> closed-1-based conversion and
+    # never consults zero_based.  Setting the key must warn (naming the
+    # resource) but leave the coordinate conversion exactly as before.
+    res = (
+        a_grr()
+        .with_resource("my_bw", a_bigwig_score().with_data("""
+            chr1   0    10    0.11
+        """).with_chrom_lens({"chr1": 100}))
+        .build_repo(tmp_path)
+        .get_resource("my_bw")
+    )
+    assert res.config is not None
+    table_def = {**res.config["table"], "zero_based": True}
+
+    with (
+        caplog.at_level("WARNING"),
+        build_genomic_position_table(res, table_def) as tab,
+    ):
+        assert isinstance(tab, BigWigTable)
+        record = next(iter(tab.get_all_records()))
+        # Unchanged conversion: file interval [0, 10) -> closed 1-based
+        # (1, 10), regardless of the ignored zero_based key.
+        assert record[POS_BEGIN] == 1
+        assert record[POS_END] == 10
+
+    warnings = [
+        r.message for r in caplog.records if r.levelname == "WARNING"
+    ]
+    assert any("zero_based" in m and "my_bw" in m for m in warnings), warnings
+
+
+@pytest.mark.parametrize("with_tabix", [False, True])
+def test_zero_based_on_a_tabular_table_emits_no_warning(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    with_tabix: bool,
+) -> None:
+    # The tabix and in-memory backends HONOR zero_based, so setting it there
+    # must not warn -- only the formats that ignore the flag (VCF, bigWig) do.
+    builder = (
+        a_position_score()
+        .with_score("c1", "float")
+        .with_data("""
+            chrom  pos_begin  c1
+            1      3          3.14
+        """)
+        .with_zero_based()
+    )
+    if with_tabix:
+        builder = builder.with_tabix()
+    res = (
+        a_grr()
+        .with_resource("honored", builder)
+        .build_repo(tmp_path)
+        .get_resource("honored")
+    )
+    assert res.config is not None
+    assert "zero_based" in res.config["table"]
+
+    with (
+        caplog.at_level("WARNING"),
+        build_genomic_position_table(res, res.config["table"]) as tab,
+    ):
+        # zero_based is honored: the row authored at 3 is read at 4.
+        record = next(iter(tab.get_all_records()))
+        assert record[POS_BEGIN] == 4
+
+    assert not any(
+        "zero_based" in r.message
+        for r in caplog.records if r.levelname == "WARNING"
+    ), [r.message for r in caplog.records]
+
+
+def test_zero_based_authored_in_vcf_config_warns_through_schema(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # End-to-end guard for the schema link.  The unit tests above splice
+    # zero_based into a copied table dict and call build_genomic_position_table
+    # directly, so they never prove that a resource whose CONFIG authors the
+    # key carries it through GenomicScore.validate_and_normalize_schema into
+    # the warning.  Here the key is authored in genomic_resource.yaml and the
+    # score is opened through the normal AlleleScore path (its __init__ runs
+    # validate_and_normalize_schema, then build_genomic_position_table); if the
+    # table schema ever dropped zero_based, the dict-injection tests would keep
+    # passing while this one caught the regression.
+    res = (
+        a_grr()
+        .with_resource("scores/vcf_zb", a_vcf_info_score().with_zero_based())
+        .build_repo(tmp_path)
+        .get_resource("scores/vcf_zb")
+    )
+    assert res.config is not None
+    # The authored key survives schema validation into the normalized config.
+    assert res.config["table"]["zero_based"] is True
+
+    with caplog.at_level("WARNING"):
+        score = AlleleScore(res).open()
+        with score:
+            # Coordinate/read behavior unchanged: the VCF row authored at POS
+            # 10 still reads 1-based at 10, the ignored zero_based key aside.
+            assert score.fetch_scores("chr1", 10, "A", "T") == {
+                "score": pytest.approx(0.1),
+            }
+
+    warnings = [
+        r.message for r in caplog.records if r.levelname == "WARNING"
+    ]
+    assert any(
+        "zero_based" in m and "scores/vcf_zb" in m for m in warnings), warnings
+
+
+def test_zero_based_authored_in_bigwig_config_warns_through_schema(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The bigWig counterpart of the VCF end-to-end guard above: the key is
+    # authored in genomic_resource.yaml and the score is opened through the
+    # normal PositionScore path (validate_and_normalize_schema ->
+    # build_genomic_position_table), proving the schema carries zero_based to
+    # the warning for the bigWig backend too.
+    res = (
+        a_grr()
+        .with_resource(
+            "scores/bw_zb",
+            a_bigwig_score()
+            .with_data("chr1  0  10  0.11")
+            .with_chrom_lens({"chr1": 100})
+            .with_zero_based(),
+        )
+        .build_repo(tmp_path)
+        .get_resource("scores/bw_zb")
+    )
+    assert res.config is not None
+    assert res.config["table"]["zero_based"] is True
+
+    with caplog.at_level("WARNING"):
+        score = PositionScore(res).open()
+        with score:
+            # Unchanged conversion: file interval [0, 10) reads 1-based at 5,
+            # regardless of the ignored zero_based key.
+            assert score.fetch_scores("chr1", 5) == [pytest.approx(0.11)]
+
+    warnings = [
+        r.message for r in caplog.records if r.levelname == "WARNING"
+    ]
+    assert any(
+        "zero_based" in m and "scores/bw_zb" in m for m in warnings), warnings

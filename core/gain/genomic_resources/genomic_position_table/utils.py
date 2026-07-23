@@ -37,12 +37,25 @@ def build_genomic_position_table(
     if table_fmt == "tabix":
         return TabixGenomicPositionTable(resource, table_definition)
     if table_fmt == "vcf_info":
+        if "zero_based" in table_definition:
+            logger.warning(
+                "zero_based is not supported for VCF tables (a VCF is "
+                "always 1-based), ignoring it in %s",
+                resource.get_full_id(),
+            )
         return VCFGenomicPositionTable(resource, table_definition)
     if table_fmt.lower() in ("bw", "bigwig"):
         if table_definition.get("header_mode") is not None:
             logger.warning(
                 "header_mode is not supported for bigwig tables, "
                 "ignoring it in %s",
+                resource.get_full_id(),
+            )
+        if "zero_based" in table_definition:
+            logger.warning(
+                "zero_based is not supported for bigWig tables (the "
+                "0-based-half-open to closed-1-based conversion is "
+                "intrinsic), ignoring it in %s",
                 resource.get_full_id(),
             )
         return BigWigTable(resource, table_definition)
