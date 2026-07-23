@@ -167,6 +167,10 @@ def test_bulk_unparseable_value_logs_and_yields_none(
         assert isinstance(line, line_cls)
         defs = _defs(score)
 
+        # Clear first: opening the score above may log unrelated records (e.g.
+        # the gain#379 missing-zero_based warning on this fixture), and this
+        # test compares the per-score vs bulk parse-error counts only.
+        caplog.clear()
         with caplog.at_level(logging.ERROR):
             per_score = [line.get_score(s) for s in score.get_all_scores()]
         per_score_records = len(caplog.records)
