@@ -1,5 +1,11 @@
 SpliceAI models are provided under CC BY NC 4.0 license for academic and non-commercial use.
 
+This license covers the SpliceAI models in every committed serialization
+alongside it in this directory: the original Keras HDF5 weights
+(spliceai1..5.h5, the source of truth) and the ONNX artifacts derived from them
+by a format conversion (spliceai1..5.onnx). Section 2(a)(4) authorises such
+format conversion; the ONNX artifacts remain NonCommercial with attribution.
+
 *************************************************************************************
 
 Creative Commons Attribution-NonCommercial 4.0 International Public License
