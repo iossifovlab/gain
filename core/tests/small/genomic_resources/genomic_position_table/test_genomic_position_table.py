@@ -34,6 +34,10 @@ from gain.genomic_resources.genomic_position_table.table_vcf import (
     ALLELE_INDEX,
     VARIANT,
 )
+from gain.genomic_resources.genomic_scores import (
+    AlleleScore,
+    PositionScore,
+)
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing import (
     build_filesystem_test_resource,
@@ -2846,3 +2850,80 @@ def test_zero_based_on_a_tabular_table_emits_no_warning(
         "zero_based" in r.message
         for r in caplog.records if r.levelname == "WARNING"
     ), [r.message for r in caplog.records]
+
+
+def test_zero_based_authored_in_vcf_config_warns_through_schema(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # End-to-end guard for the schema link.  The unit tests above splice
+    # zero_based into a copied table dict and call build_genomic_position_table
+    # directly, so they never prove that a resource whose CONFIG authors the
+    # key carries it through GenomicScore.validate_and_normalize_schema into
+    # the warning.  Here the key is authored in genomic_resource.yaml and the
+    # score is opened through the normal AlleleScore path (its __init__ runs
+    # validate_and_normalize_schema, then build_genomic_position_table); if the
+    # table schema ever dropped zero_based, the dict-injection tests would keep
+    # passing while this one caught the regression.
+    res = (
+        a_grr()
+        .with_resource("scores/vcf_zb", a_vcf_info_score().with_zero_based())
+        .build_repo(tmp_path)
+        .get_resource("scores/vcf_zb")
+    )
+    assert res.config is not None
+    # The authored key survives schema validation into the normalized config.
+    assert res.config["table"]["zero_based"] is True
+
+    with caplog.at_level("WARNING"):
+        score = AlleleScore(res).open()
+        with score:
+            # Coordinate/read behavior unchanged: the VCF row authored at POS
+            # 10 still reads 1-based at 10, the ignored zero_based key aside.
+            assert score.fetch_scores("chr1", 10, "A", "T") == {
+                "score": pytest.approx(0.1),
+            }
+
+    warnings = [
+        r.message for r in caplog.records if r.levelname == "WARNING"
+    ]
+    assert any(
+        "zero_based" in m and "scores/vcf_zb" in m for m in warnings), warnings
+
+
+def test_zero_based_authored_in_bigwig_config_warns_through_schema(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The bigWig counterpart of the VCF end-to-end guard above: the key is
+    # authored in genomic_resource.yaml and the score is opened through the
+    # normal PositionScore path (validate_and_normalize_schema ->
+    # build_genomic_position_table), proving the schema carries zero_based to
+    # the warning for the bigWig backend too.
+    res = (
+        a_grr()
+        .with_resource(
+            "scores/bw_zb",
+            a_bigwig_score()
+            .with_data("chr1  0  10  0.11")
+            .with_chrom_lens({"chr1": 100})
+            .with_zero_based(),
+        )
+        .build_repo(tmp_path)
+        .get_resource("scores/bw_zb")
+    )
+    assert res.config is not None
+    assert res.config["table"]["zero_based"] is True
+
+    with caplog.at_level("WARNING"):
+        score = PositionScore(res).open()
+        with score:
+            # Unchanged conversion: file interval [0, 10) reads 1-based at 5,
+            # regardless of the ignored zero_based key.
+            assert score.fetch_scores("chr1", 5) == [pytest.approx(0.11)]
+
+    warnings = [
+        r.message for r in caplog.records if r.levelname == "WARNING"
+    ]
+    assert any(
+        "zero_based" in m and "scores/bw_zb" in m for m in warnings), warnings

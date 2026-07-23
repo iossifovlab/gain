@@ -662,6 +662,7 @@ class BigWigScoreBuilder:
     histogram: dict[str, Any] | None = None
     na_values: str | list[str] | None = None
     fetch_budgets: dict[str, int] | None = None
+    zero_based: bool = False
 
     def with_fetch_budgets(
         self, *,
@@ -722,6 +723,18 @@ class BigWigScoreBuilder:
         """Declare the chromosome lengths written into the bigWig header."""
         return dataclasses.replace(self, chrom_lens=dict(chrom_lens))
 
+    def with_zero_based(self) -> Self:
+        """Emit ``zero_based: true`` in the ``table:`` config.
+
+        A bigWig hard-codes its 0-based-half-open to closed-1-based
+        conversion and never consults the key -- authoring it here
+        realizes, config-first, the misconfiguration the table-build
+        warning is meant to surface, and lets a test carry the key
+        through schema validation instead of injecting it into a table
+        dict by hand.
+        """
+        return dataclasses.replace(self, zero_based=True)
+
     def realize_into(self, resource_dir: pathlib.Path) -> None:
         """Write the resource config and the bigWig into ``resource_dir``."""
         data = self.data if self.data is not None else _BIGWIG_DEFAULT_DATA
@@ -767,10 +780,13 @@ class BigWigScoreBuilder:
             f"    {key}: {value}\n"
             for key, value in (self.fetch_budgets or {}).items()
         )
+        zero_based_line = (
+            "    zero_based: true\n" if self.zero_based else "")
         config = (
             "type: position_score\n"
             "table:\n"
             f"    filename: {_BIGWIG_FILENAME}\n"
+            f"{zero_based_line}"
             f"{budget_lines}"
             "scores:\n"
             f"- id: {self.score_id}\n"
@@ -819,10 +835,22 @@ class VcfInfoScoreBuilder:
     """
 
     data: str | None = None
+    zero_based: bool = False
 
     def with_data(self, data: str) -> Self:
         """Author the whole VCF, ``##`` header lines included."""
         return dataclasses.replace(self, data=data)
+
+    def with_zero_based(self) -> Self:
+        """Emit ``zero_based: true`` in the ``table:`` config.
+
+        A VCF is always 1-based, so the ``vcf_info`` backend ignores the
+        key -- authoring it here realizes, config-first, the
+        misconfiguration the table-build warning is meant to surface, and
+        lets a test carry the key through schema validation instead of
+        injecting it into a table dict by hand.
+        """
+        return dataclasses.replace(self, zero_based=True)
 
     def realize_into(self, resource_dir: pathlib.Path) -> None:
         """Write the resource config and the bgzipped VCF + index."""
@@ -856,10 +884,13 @@ class VcfInfoScoreBuilder:
                 "VCF data must carry a '#CHROM' column header line")
 
     def _render_config(self) -> str:
+        zero_based_line = (
+            "    zero_based: true\n" if self.zero_based else "")
         return (
             "type: allele_score\n"
             "table:\n"
             f"    filename: {_VCF_FILENAME}\n"
+            f"{zero_based_line}"
         )
 
 

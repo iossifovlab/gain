@@ -39,7 +39,7 @@ def build_genomic_position_table(
     if table_fmt == "vcf_info":
         if "zero_based" in table_definition:
             logger.warning(
-                "zero_based is not honored for vcf_info tables (a VCF is "
+                "zero_based is not supported for VCF tables (a VCF is "
                 "always 1-based), ignoring it in %s",
                 resource.get_full_id(),
             )
@@ -53,7 +53,7 @@ def build_genomic_position_table(
             )
         if "zero_based" in table_definition:
             logger.warning(
-                "zero_based is not honored for bigwig tables (the "
+                "zero_based is not supported for bigWig tables (the "
                 "0-based-half-open to closed-1-based conversion is "
                 "intrinsic), ignoring it in %s",
                 resource.get_full_id(),
