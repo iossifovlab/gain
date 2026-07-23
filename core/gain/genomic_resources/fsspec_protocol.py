@@ -37,6 +37,7 @@ from filelock import FileLock
 from markdown2 import markdown
 
 from gain import logging
+from gain.genomic_resources.dvc import parse_dvc_pointer_out
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
@@ -50,8 +51,8 @@ from gain.genomic_resources.repository import (
     ReadOnlyRepositoryProtocol,
     ReadWriteRepositoryProtocol,
     ResourceFileState,
+    is_generated_info_page,
     is_gr_id_token,
-    parse_dvc_pointer_out,
     parse_gr_id_version_token,
 )
 from gain.templates import get_template
@@ -724,22 +725,18 @@ class FsspecReadWriteProtocol(
     def _scan_resource_for_files(
         self, resource_path: str, path_array: list[str],
         ancestor_specs: list[tuple[int, pathspec.PathSpec]] | None = None,
-        *,
-        dvc_managed: bool = False,
-    ) -> Generator[tuple[str, str, bool], None, None]:
-        """Yield ``(name, url, dvc_managed)`` for every file of a resource.
+    ) -> Generator[tuple[str, str], None, None]:
+        """Yield ``(name, url)`` for every file of a resource.
 
-        ``dvc_managed`` marks a file that DVC tracks: a per-file ``dvc add
-        <file>`` output. It never grants the file's ``.dvc`` sidecar any
-        authority over its md5 sum -- the bytes are on disk, so the md5 comes
-        from them. It only says "this is resource data, not a page GAIn
-        generated" (see :meth:`collect_resource_entries`). It is meaningful
-        only for a file; a directory's children each get their own.
+        Whether DVC manages a file is no part of the scan's answer. What a
+        file IS -- resource data, or a page GAIn generated -- is read off its
+        path by :meth:`collect_resource_entries`, never off the presence of a
+        sidecar (#373).
         """
         url = os.path.join(self.url, resource_path, *path_array)
         if not self.filesystem.isdir(url):
             if path_array:
-                yield os.path.join(*path_array), url, dvc_managed
+                yield os.path.join(*path_array), url
             return
 
         path = os.path.join(self.root_path, resource_path, *path_array)
@@ -796,18 +793,15 @@ class FsspecReadWriteProtocol(
                 if not self._is_dvc_managed_leaf(url, name, sibling_names):
                     continue
                 yield from self._scan_resource_for_files(
-                    resource_path, [*path_array, name], current_specs,
-                    dvc_managed=True)
+                    resource_path, [*path_array, name], current_specs)
                 continue
 
-            # A file that is not gitignored is already in the scan; the cheap
-            # sibling-name test is only used to tell resource data apart from
-            # a generated info page, never to trust a sidecar. Deliberately
-            # NOT `_is_dvc_managed_leaf`: that opens the `.dvc`, and a
-            # directory with nothing gitignored must open none (gain#209).
+            # A file that is not gitignored is already in the scan, and no
+            # `.dvc` sibling is consulted for it -- `_is_dvc_managed_leaf`
+            # opens the sidecar, and a directory with nothing gitignored must
+            # open none (gain#209).
             yield from self._scan_resource_for_files(
-                resource_path, [*path_array, name], current_specs,
-                dvc_managed=f"{name}.dvc" in sibling_names)
+                resource_path, [*path_array, name], current_specs)
 
     def _is_dvc_managed_leaf(
         self, url: str, name: str, sibling_names: set[str],
@@ -830,7 +824,7 @@ class FsspecReadWriteProtocol(
            with an ``outs`` list of dicts -- that declares ``name`` as one of
            its outputs (``out["path"] == name``). Both this test and
            ``cli.collect_dvc_entries`` delegate to
-           :func:`repository.parse_dvc_pointer_out`, so the scanner and the
+           :func:`dvc.parse_dvc_pointer_out`, so the scanner and the
            cli cannot classify the same sidecar differently.
 
         Parsing NEVER raises: a binary/non-UTF-8 ``.dvc`` (read in binary and
@@ -917,14 +911,15 @@ class FsspecReadWriteProtocol(
         resource_path = resource.get_genomic_resource_id_version()
 
         result = Manifest()
-        for name, path, dvc_managed in self._scan_resource_for_files(
-                resource_path, []):
-            # The info pages GAIn generates for a resource are not resource
-            # data and stay out of the manifest. A DVC-managed `*html` file is
-            # not generated - it is data, `dvc add`ed like any other file - so
-            # the exclusion does not apply to it: it is scanned, and its md5
-            # sum comes from its bytes rather than from its sidecar (gain#255).
-            if name.endswith("html") and not dvc_managed:
+        for name, path in self._scan_resource_for_files(resource_path, []):
+            # The two pages `resource-info` writes are build artefacts, not
+            # resource data, and stay out of the manifest -- whether or not
+            # DVC manages them, since both are regenerated on every run.
+            # Every OTHER file is manifested, whatever its extension: the
+            # old "drop every name ending in html" rule was a proxy for "this
+            # is a page GAIn generated" and silently dropped any html file a
+            # resource legitimately carries as data (#373).
+            if is_generated_info_page(name):
                 continue
 
             size = self._get_filepath_size(path)
@@ -1208,17 +1203,48 @@ class FsspecReadWriteProtocol(
         # file returns its current persisted state.
         return self.load_resource_file_state(dest_resource, filename)
 
-    def build_content_file(self) -> list[dict[str, Any]]:
-        """Build the content of the repository (i.e '.CONTENTS.json' file)."""
-        content = [
-            {
+    def _manifest_for_repository_index(
+            self, res: GenomicResource,
+            failed: frozenset[str]) -> Manifest | None:
+        """The manifest to publish for ``res`` in repository-wide files.
+
+        A resource this run FAILED to verify must not have its manifest
+        rebuilt from scratch here: that fallback hashes the drifted
+        bytes, writes a state and publishes an md5 the run had just
+        refused to record, dropping any pointer-only entry on the way.
+        Publish the manifest it already had committed, or -- if it
+        never had one -- leave it out of the repository index entirely
+        (#373).
+        """
+        if res.resource_id in failed:
+            try:
+                return self.load_manifest(res)
+            except FileNotFoundError:
+                return None
+        return res.get_manifest()
+
+    def build_content_file(
+        self, failed: frozenset[str] = frozenset(),
+    ) -> list[dict[str, Any]]:
+        """Build the content of the repository (i.e '.CONTENTS.json' file).
+
+        ``failed`` names resources this run could not verify; each is
+        published from the manifest it already had, or left out if it
+        never had one, so a failed run never rebuilds a manifest from
+        scratch and poisons the contents with it (#373).
+        """
+        content = []
+        for res in self.get_all_resources():
+            manifest = self._manifest_for_repository_index(res, failed)
+            if manifest is None:
+                continue
+            content.append({
                 "full_id": res.get_full_id(),
                 "id": res.resource_id,
                 "version": res.get_version_str(),
                 "config": res.get_config(),
-                "manifest": res.get_manifest().to_manifest_entries(),
-            }
-            for res in self.get_all_resources()]
+                "manifest": manifest.to_manifest_entries(),
+            })
         content = sorted(content, key=operator.itemgetter("id"))
 
         content_filepath = os.path.join(
@@ -1256,12 +1282,22 @@ class FsspecReadWriteProtocol(
         self,
         repository_template: str = "grr_index.jinja",
         about_template: str | None = "grr_about.jinja",
+        failed: frozenset[str] = frozenset(),
     ) -> dict:
-        """Build info dict for the repository."""
+        """Build info dict for the repository.
+
+        ``failed`` names resources this run could not verify; each is
+        described from the manifest it already had, or left off the
+        index page if it never had one, so the page never triggers a
+        build-from-scratch of a failed resource's manifest (#373).
+        """
         result = {}
         for res in self.get_all_resources():
+            manifest = self._manifest_for_repository_index(res, failed)
+            if manifest is None:
+                continue
             res_size = convert_size(
-                sum(f for _, f in res.get_manifest().get_files()),
+                sum(f for _, f in manifest.get_files()),
             )
             assert res.config is not None
             result[res.get_full_id()] = {
@@ -1269,7 +1305,7 @@ class FsspecReadWriteProtocol(
                 "res_id": res.resource_id,
                 **res.config,
                 "res_version": res.get_version_str(),
-                "res_files": len(list(res.get_manifest().get_files())),
+                "res_files": len(list(manifest.get_files())),
                 "res_size": res_size,
                 "res_summary": res.get_summary(),
             }

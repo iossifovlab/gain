@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 
 import gzip
+import inspect
 import io
 from typing import Any, cast
 
@@ -771,11 +772,10 @@ def test_build_manifest_keeps_dvc_managed_file_present_on_disk() -> None:
     # are deliberately wrong. Two things are asserted:
     #   1. The pure scan (`collect_resource_entries`) sees the real on-disk
     #      file (size 11) — proving the gitignore exemption keeps it.
-    #   2. The manifest describes the bytes actually served: for a file that is
-    #      materialised on disk, its resource file state (built from content)
-    #      wins over the `.dvc` pointer, so a stale pointer cannot produce a
-    #      manifest that mismatches the real file. The pointer remains the sole
-    #      source of md5/size only for pointer-only (not materialised) files.
+    #   2. A recorded resource file state — which this protocol writes for
+    #      every file it sets up — says "GAIn hashed these bytes", and
+    #      outranks a `.dvc` pointer that contradicts it (#373). The sidecar
+    #      answers only for a file no state describes as it is now.
     proto = build_inmemory_test_protocol({
         "res": {
             GR_CONF_FILE_NAME: "",
@@ -1057,3 +1057,97 @@ def test_scan_does_not_open_dvc_when_nothing_gitignored(
     assert "data.txt.dvc" in entries
     opened = [call.args[0] for call in spy.call_args_list if call.args]
     assert not any(str(p).endswith(".dvc") for p in opened), opened
+
+
+# ---------------------------------------------------------------------------
+# Membership in the manifest is decided by PATH, not by file extension (#373)
+# ---------------------------------------------------------------------------
+# `resource-info` writes exactly two pages into a resource: `index.html` and
+# `statistics/index.html`. Those two are build artefacts and stay out of the
+# manifest; every other file is resource data and is manifested, whatever its
+# extension and whether or not DVC manages it.
+
+
+def test_scan_yields_a_name_and_a_url_only() -> None:
+    # The `dvc_managed` third element is gone: nothing consumes it now that
+    # the exclusion is by generated path rather than by extension (#373).
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            "data.txt.dvc": SCORES_DVC_CONTENT,
+        },
+    })
+    scanned = list(proto._scan_resource_for_files("res", []))
+    assert scanned
+    assert all(len(item) == 2 for item in scanned), scanned
+    assert "dvc_managed" not in inspect.signature(
+        proto._scan_resource_for_files).parameters
+
+
+@pytest.mark.parametrize("page", ["index.html", "statistics/index.html"])
+def test_generated_info_page_is_excluded_from_the_entries(page: str) -> None:
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            "index.html": "<html>generated</html>",
+            "statistics": {
+                "index.html": "<html>generated</html>",
+                "stats_hash": "hash",
+            },
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert page not in entries
+    assert "data.txt" in entries
+    assert "statistics/stats_hash" in entries
+
+
+@pytest.mark.parametrize("page", ["index.html", "statistics/index.html"])
+def test_a_dvc_managed_generated_info_page_is_excluded_too(page: str) -> None:
+    # A generated page is a build artefact whether or not somebody
+    # `dvc add`ed it; manifesting it would put a regenerated page under
+    # checksum control (#373).
+    index_dvc = (
+        "outs:\n"
+        "- md5: 0123456789abcdef0123456789abcdef\n"
+        "  size: 22\n"
+        "  path: index.html\n"
+    )
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "data.txt": "data",
+            ".gitignore": "/index.html\nstatistics/index.html\n",
+            "index.html": "<html>generated</html>",
+            "index.html.dvc": index_dvc,
+            "statistics": {
+                "index.html": "<html>generated</html>",
+                "index.html.dvc": index_dvc,
+            },
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert page not in entries
+
+
+def test_an_html_data_file_at_another_path_is_manifested() -> None:
+    # The old rule dropped every name ending in `html`, silently losing an
+    # html file a resource carries as DATA (#373). No sidecar here: the file
+    # is a plain, non-DVC resource file.
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "report.html": "<html>report</html>",
+            "docs": {
+                "index.html": "<html>docs</html>",
+            },
+        },
+    })
+    res = proto.get_resource("res")
+    entries = proto.collect_resource_entries(res)
+    assert "report.html" in entries
+    assert "docs/index.html" in entries

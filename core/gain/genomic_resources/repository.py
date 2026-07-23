@@ -60,6 +60,7 @@ import pysam
 import yaml
 
 from gain import logging
+from gain.genomic_resources.dvc import DvcContentDrift, DvcContentDriftError
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +70,36 @@ GR_MANIFEST_FILE_NAME = ".MANIFEST"
 GR_CONTENTS_FILE_NAME = ".CONTENTS.json.gz"
 GR_SQLITE_META_FILE_NAME = ".CONTENTS.sqlite3.gz"
 GR_INDEX_FILE_NAME = "index.html"
+GR_STATISTICS_FOLDER_NAME = "statistics"
+
+#: The path `grr_manage resource-info` writes the statistics page to;
+#: named here so the writer and the exclusion below cannot drift (#373).
+GR_STATISTICS_INDEX_FILE_NAME = \
+    f"{GR_STATISTICS_FOLDER_NAME}/{GR_INDEX_FILE_NAME}"
+
+#: The pages `grr_manage resource-info` writes into a resource. They are
+#: regenerated on every run, so they are build artefacts rather than resource
+#: data and are never manifested -- whether or not DVC manages them (#373).
+GR_GENERATED_INFO_PAGES = frozenset({
+    GR_INDEX_FILE_NAME,
+    GR_STATISTICS_INDEX_FILE_NAME,
+})
 
 GR_ENCODING = "utf-8"
 
 _GR_ID_TOKEN_RE = re.compile(r"[a-zA-Z0-9._-]+")
+
+
+def is_generated_info_page(name: str) -> bool:
+    """Return True if ``name`` is a page ``resource-info`` generates.
+
+    Membership in a resource's manifest is decided by the file's PATH: the
+    two pages GAIn writes itself are excluded, everything else is resource
+    data. The rule it replaced -- "drop every name ending in ``html``" -- was
+    a proxy for the same question and a bad one, since it silently dropped
+    any html file a resource legitimately carries as data (#373).
+    """
+    return name in GR_GENERATED_INFO_PAGES
 
 
 def is_gr_id_token(token: str) -> bool:
@@ -395,69 +422,6 @@ class ManifestUpdate:
             True if there are files to delete or update
         """
         return bool(self.entries_to_delete or self.entries_to_update)
-
-
-def parse_dvc_pointer_out(
-    content: str | bytes, basename: str,
-) -> dict[str, Any] | None:
-    """Parse a ``.dvc`` sidecar; return the output entry describing basename.
-
-    A well-formed ``.dvc`` pointer is a mapping with an ``outs`` list of
-    mappings; the output that describes ``basename`` is the one whose
-    ``path`` equals it exactly. Anything else - a mapping without ``outs``,
-    an ``outs`` that is not a list of mappings, an output for some other
-    path, YAML that does not parse, non-UTF-8 bytes - is not a pointer for
-    ``basename`` and yields ``None``.
-
-    Parsing NEVER raises. This is the single place a ``.dvc`` file is
-    interpreted, so that the repository scan
-    (``_is_dvc_managed_leaf``, which must never abort on stray content) and
-    ``grr_manage``'s ``collect_dvc_entries`` cannot classify the same sidecar
-    differently (#251).
-
-    Args:
-        content: raw content of the ``.dvc`` file; bytes are safe to pass -
-            ``yaml`` decodes them itself, so a binary file cannot raise a
-            ``UnicodeDecodeError`` past this function.
-        basename: the base name of the data file the pointer must describe.
-
-    Returns:
-        The matching ``outs`` entry, or None if the content is not a pointer
-        for ``basename``. The entry is NOT validated beyond its ``path``:
-        callers that need an md5 sum and a size must check for them.
-    """
-    try:
-        dvc = yaml.safe_load(content)
-        for out in dvc["outs"]:
-            if out["path"] == basename:
-                return cast(dict[str, Any], out)
-    except (yaml.YAMLError, TypeError, KeyError, OSError, ValueError) as error:
-        logger.debug(
-            "ignoring malformed '.dvc' pointer for <%s>: %s", basename, error)
-        return None
-    return None
-
-
-def is_dvc_directory_out(out: dict[str, Any]) -> bool:
-    """Return True if a ``.dvc`` output describes a ``dvc add <dir>`` output.
-
-    DVC writes two signals for a directory output, and either one on its own
-    is enough to recognise it:
-
-    * its ``md5`` is the hash of a DVC *cache object* - a listing of the
-      directory's files - and carries a ``.dir`` suffix to say so;
-    * it declares ``nfiles``, the number of files in the directory.
-
-    Neither is checked in isolation: an out that lost its ``nfiles`` is still
-    a directory, and so is one whose md5 sum lost its suffix. GAIn does not
-    support directory outputs - it cannot verify a ``.dir`` md5 sum against
-    anything it can read - so ``grr_manage`` refuses a resource that has one
-    (#255).
-    """
-    md5 = out.get("md5")
-    if isinstance(md5, str) and md5.endswith(".dir"):
-        return True
-    return "nfiles" in out
 
 
 class GenomicResource:
@@ -986,96 +950,138 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
             Manifest containing entries for all files in the resource
         """
 
+    def _warn_dvc_size_mismatch(
+            self, resource: GenomicResource, name: str,
+            dvc_size: int | None, disk_size: int) -> None:
+        """Warn (both modes) that a sidecar's declared size is wrong (#373)."""
+        logger.warning(
+            "the '.dvc' sidecar of <%s> in <%s> declares a size of "
+            "%s, but the file on disk is %s bytes; taking the md5 "
+            "sum and the size from the sidecar. Run 'dvc add %s' "
+            "(or 'dvc commit') to make DVC describe the bytes that "
+            "are there, then repair the resource again",
+            name, resource.resource_id, dvc_size, disk_size, name)
+
     def _update_manifest_entry_and_state(
-            self, resource: GenomicResource, entry: ManifestEntry, *,
-            verify_content: bool = False) -> None:
+            self, resource: GenomicResource, entry: ManifestEntry,
+            prebuild_entries: dict[str, ManifestEntry], *,
+            verify_content: bool = False) -> DvcContentDrift | None:
         """Fill in md5 and size of a *materialised* file's manifest entry.
 
-        Whenever an md5 has to be *derived* for a file whose bytes are on
-        disk, it is computed from those bytes. A prebuild (``.dvc``) entry is
-        never a source of md5 here: a sidecar cannot be confirmed without
-        reading the bytes it claims to describe. See
-        :meth:`_merge_pointer_only_entries` for the case where the bytes are
-        absent and the sidecar is the only source there is.
+        In the DEFAULT mode a DVC-managed file is never hashed. Three
+        sources answer for a file, in this order:
 
-        An already-recorded resource file state, however, is authoritative
-        whenever its size and timestamp still match the file - whatever wrote
-        it. A ``ResourceFileState`` does not record how its md5 was derived,
-        and GAIn deliberately does not distinguish: a DVC-declared md5 and a
-        content-derived one are treated as equivalent, because ``dvc add``
-        computes the md5 from the very bytes it stores. A state written by an
-        older GAIn therefore keeps its md5, and such a file is not rehashed.
+        1. a recorded ``ResourceFileState`` whose size and timestamp still
+           match the file. It says "GAIn hashed these bytes", and it
+           outranks a sidecar that contradicts it;
+        2. otherwise, the file's ``.dvc`` sidecar (its ``prebuild_entries``
+           entry): it supplies BOTH the md5 sum and the size, and NO state
+           is written for it. ``dvc add`` computed that md5 sum from the
+           very bytes it stored, and what a client downloads is that cache
+           object, so the sidecar describes the file GAIn serves. Keeping
+           state to mean "GAIn hashed these bytes" is what makes rule 1
+           meaningful; and re-reading the sidecar costs nothing, since
+           ``cli.collect_dvc_entries`` parses every sidecar of the resource
+           on every manifest command anyway;
+        3. otherwise, the file's content, and the resulting state is saved.
 
-        The accepted consequence: on a GRR an older GAIn already managed, an
-        in-place edit made *before* the upgrade may already be baked into a
-        state, and re-running ``repo-repair`` will not re-detect it. Force
-        content verification with ``verify_content`` (``grr_manage
-        --without-dvc``), which ignores recorded state entirely.
+        If the sidecar's declared size differs from the size on disk, rule 2
+        logs a WARNING naming the file - the scan already stat'ed it, so the
+        comparison is free - and the sidecar still wins both fields. The
+        default mode reports the drift it notices for free; ``-D`` hunts for
+        it.
 
-        With ``verify_content`` the recorded state is not consulted at all and
-        the file's content is hashed - the explicit "verify these bytes"
-        audit mode behind ``grr_manage --without-dvc``.
+        With ``verify_content`` (``grr_manage --without-dvc``) this is the
+        VERIFIER instead: the recorded state is not consulted at all, every
+        materialised file is hashed, and a file whose content disagrees with
+        its sidecar is returned as a :class:`DvcContentDrift` rather than
+        recorded. The caller collects those and fails the resource (#373); a
+        wrong sidecar-declared size still lets the sidecar win both fields.
+        Verification never writes an md5 sum that contradicts a sidecar:
+        ``.MANIFEST`` is a committed artefact, and the remedy for drift is
+        ``dvc add`` / ``dvc commit``, after which every machine - pointer
+        only or fully materialised - produces the identical manifest.
         """
-        if not verify_content:
-            pre_state = self.load_resource_file_state(resource, entry.name)
-            if pre_state is not None:
-                timestamp = self.get_resource_file_timestamp(
-                    resource, entry.name)
-                size = self.get_resource_file_size(resource, entry.name)
-                if abs(timestamp - pre_state.timestamp) <= 1e-2 \
-                        and size == pre_state.size:
-                    entry.md5 = pre_state.md5
-                    entry.size = pre_state.size
-                    return
-                logger.debug(
-                    "timestamp (%s) or size (%s) mismatch for %s in %s; "
-                    "recomputing md5...",
-                    pre_state.timestamp - timestamp, pre_state.size - size,
-                    entry.name, resource.resource_id)
+        dvc_entry = prebuild_entries.get(entry.name)
+        if dvc_entry is not None and dvc_entry.md5 is None:
+            dvc_entry = None
+
+        if verify_content:
+            state = self.build_resource_file_state(resource, entry.name)
+            if dvc_entry is not None:
+                if dvc_entry.md5 != state.md5:
+                    return DvcContentDrift(
+                        entry.name, state.md5, cast(str, dvc_entry.md5))
+                if state.size != dvc_entry.size:
+                    # Sidecar wins both fields; no state (#373).
+                    self._warn_dvc_size_mismatch(
+                        resource, entry.name, dvc_entry.size, state.size)
+                    entry.md5 = dvc_entry.md5
+                    entry.size = dvc_entry.size
+                    return None
+            self.save_resource_file_state(resource, state)
+            entry.md5 = state.md5
+            entry.size = state.size
+            return None
+
+        pre_state = self.load_resource_file_state(resource, entry.name)
+        if pre_state is not None:
+            timestamp = self.get_resource_file_timestamp(
+                resource, entry.name)
+            size = self.get_resource_file_size(resource, entry.name)
+            if abs(timestamp - pre_state.timestamp) <= 1e-2 \
+                    and size == pre_state.size:
+                entry.md5 = pre_state.md5
+                entry.size = pre_state.size
+                return None
+            logger.debug(
+                "timestamp (%s) or size (%s) mismatch for %s in %s; "
+                "recomputing md5...",
+                pre_state.timestamp - timestamp, pre_state.size - size,
+                entry.name, resource.resource_id)
+
+        if dvc_entry is not None:
+            if entry.size != dvc_entry.size:
+                self._warn_dvc_size_mismatch(
+                    resource, entry.name, dvc_entry.size, entry.size)
+            entry.md5 = dvc_entry.md5
+            entry.size = dvc_entry.size
+            return None
 
         state = self.build_resource_file_state(resource, entry.name)
         self.save_resource_file_state(resource, state)
 
         entry.md5 = state.md5
         entry.size = state.size
+        return None
 
-    def _merge_pointer_only_entries(
+    def _merge_unscanned_dvc_entries(
         self,
         resource: GenomicResource,
         manifest: Manifest,
         prebuild_entries: dict[str, ManifestEntry],
     ) -> None:
-        """Merge prebuild entries for the files that are NOT materialised.
+        """Merge the ``.dvc`` entries the scan did not produce itself.
 
-        A prebuild (``.dvc``) entry is merged in iff the data it describes is
-        absent from the repository - the pointer-only clone the ``grr``
-        pipeline builds from. There are no bytes to hash, so the sidecar is
-        the sole possible source of md5 and size, whatever the caller asked
-        for, and the entry is never dropped.
+        A file the scan did not yield has no scanned entry to fill in, so its
+        sidecar is the only source of md5 and size there is - and it is a
+        good one, whether or not the bytes happen to be on disk. The typical
+        case is the pointer-only clone the ``grr`` pipeline builds from,
+        where nothing has been ``dvc pull``ed; the guarantee is more general
+        than that, and deliberately so: a file the scan stops yielding must
+        fall back to DVC rather than silently vanish from the manifest.
 
-        The predicate is "the file is NOT materialised" (``file_exists``), NOT
-        "the scan did not yield it" (gain#255). The two are not the same: the
-        scan skips things that ARE on disk, and every one of them used to be
-        classified pointer-only and handed its sidecar's md5 sum unverified -
-        in every mode, ``--without-dvc`` included. Anything the scan does not
-        yield but that exists on disk is deliberately left out of the manifest
-        rather than certified from a sidecar nobody read the bytes for.
-
-        Entries for materialised files are left as the scan built them; their
-        md5 is derived from the file's content.
+        The one exception is a page ``resource-info`` generates: it is a
+        build artefact regardless of who ``dvc add``ed it, and manifesting it
+        would put a regenerated page under checksum control (#373).
         """
         for name, entry in prebuild_entries.items():
             if name in manifest:
                 continue
-            if self.file_exists(resource, name):
-                # On disk, yet not in the scanned manifest. Whatever kept it
-                # out of the scan, its bytes are right there and its sidecar
-                # is not evidence about them: it is left out of the manifest
-                # rather than certified from a claim nobody checked.
+            if is_generated_info_page(name):
                 logger.debug(
-                    "not taking the md5 sum of <%s> in <%s> from its '.dvc' "
-                    "sidecar: it is materialised, and a sidecar is never the "
-                    "md5 sum of bytes that are on disk",
+                    "not manifesting <%s> of <%s> from its '.dvc' sidecar: "
+                    "it is a page GAIn generates",
                     name, resource.resource_id)
                 continue
             manifest.add(entry)
@@ -1090,11 +1096,18 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         if prebuild_entries is None:
             prebuild_entries = {}
         manifest = Manifest()
+        drifts: list[DvcContentDrift] = []
         for entry in self.collect_resource_entries(resource):
-            self._update_manifest_entry_and_state(
-                resource, entry, verify_content=verify_content)
+            drift = self._update_manifest_entry_and_state(
+                resource, entry, prebuild_entries,
+                verify_content=verify_content)
+            if drift is not None:
+                drifts.append(drift)
+                continue
             manifest.add(entry)
-        self._merge_pointer_only_entries(
+        if drifts:
+            raise DvcContentDriftError(resource.resource_id, drifts)
+        self._merge_unscanned_dvc_entries(
             resource, manifest, prebuild_entries)
         return manifest
 
@@ -1114,16 +1127,26 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
 
         manifest = Manifest()
         entries_to_update = set()
+        drifts: list[DvcContentDrift] = []
         for entry in self.collect_resource_entries(resource):
-            self._update_manifest_entry_and_state(
-                resource, entry, verify_content=verify_content)
+            drift = self._update_manifest_entry_and_state(
+                resource, entry, prebuild_entries,
+                verify_content=verify_content)
+            if drift is not None:
+                # Collected, not raised: one command reports every drifted
+                # file of the resource, not just the first (#373).
+                drifts.append(drift)
+                continue
             manifest.add(entry)
 
             if entry.name not in current_manifest \
                     or entry.md5 != current_manifest[entry.name].md5:
                 entries_to_update.add(entry.name)
 
-        self._merge_pointer_only_entries(
+        if drifts:
+            raise DvcContentDriftError(resource.resource_id, drifts)
+
+        self._merge_unscanned_dvc_entries(
             resource, manifest, prebuild_entries)
 
         entries_to_delete = current_manifest.names() - manifest.names()
@@ -1137,8 +1160,8 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
     ) -> Manifest:
         """Update or create full manifest for the resource."""
         # `check_update_manifest` already fills in md5 and size of every
-        # materialised entry of the manifest it returns, and merges the
-        # pointer-only entries; the manifest it hands back is the updated one.
+        # scanned entry of the manifest it returns, and merges the entries
+        # the scan did not yield; what it hands back IS the updated manifest.
         manifest_update = self.check_update_manifest(
             resource, prebuild_entries, verify_content=verify_content)
 

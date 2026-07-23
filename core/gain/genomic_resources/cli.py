@@ -8,7 +8,7 @@ import os
 import pathlib
 import sys
 from collections.abc import Sequence
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 from urllib.parse import urlparse
 
 import apsw
@@ -17,6 +17,11 @@ from cerberus.schema import SchemaError
 
 from gain import __version__, logging
 from gain.genomic_resources.cached_repository import GenomicResourceCachedRepo
+from gain.genomic_resources.dvc import (
+    DvcContentDriftError,
+    is_dvc_directory_out,
+    parse_dvc_pointer_out,
+)
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
     build_fsspec_protocol,
@@ -25,14 +30,14 @@ from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
+    GR_INDEX_FILE_NAME,
     GR_SQLITE_META_FILE_NAME,
+    GR_STATISTICS_INDEX_FILE_NAME,
     GenomicResource,
     GenomicResourceRepo,
     ManifestEntry,
     ReadOnlyRepositoryProtocol,
     ReadWriteRepositoryProtocol,
-    is_dvc_directory_out,
-    parse_dvc_pointer_out,
     parse_gr_id_version_token,
     version_tuple_to_string,
 )
@@ -189,17 +194,22 @@ def _add_dvc_parameters_group(parser: argparse.ArgumentParser) -> None:
     group.add_argument(
         "--with-dvc", default=True,
         action="store_true", dest="use_dvc",
-        help="reuse the recorded md5 sum of a resource file whose size and "
-        "timestamp are unchanged, instead of hashing it again (default)")
+        help="trust a '.dvc' sidecar as the md5 sum and size of the file it "
+        "describes, and never hash a DVC-managed file (default). A file GAIn "
+        "has already hashed keeps its recorded md5 sum while its size and "
+        "timestamp are unchanged; a file with no sidecar and no usable state "
+        "is hashed")
     group.add_argument(
         "-D", "--without-dvc",
         action="store_false", dest="use_dvc",
-        help="verify mode: compute from its content the md5 sum of every "
-        "resource file that is present on disk, ignoring its recorded state. "
-        "Only a file that is NOT present on disk (a '.dvc' pointer only) "
-        "keeps taking its md5 sum and size from its '.dvc' sidecar - there "
-        "is no content of its own to hash, and its manifest entry is never "
-        "dropped")
+        help="verify mode: ignore every recorded state, compute from its "
+        "content the md5 sum of every resource file that is on disk, and "
+        "check it against the file's '.dvc' sidecar. The run reports every "
+        "file that disagrees and exits non-zero, writing no manifest for the "
+        "resources they belong to; fix the drift with 'dvc add' / "
+        "'dvc commit'. A file that is NOT on disk still takes its md5 sum "
+        "and size from its sidecar - there is no content to hash, and its "
+        "manifest entry is never dropped")
 
 
 def _add_hist_parameters_group(parser: argparse.ArgumentParser) -> None:
@@ -431,7 +441,7 @@ def collect_dvc_entries(
     already tolerated the very same content (see
     :meth:`FsspecReadWriteProtocol._is_dvc_managed_leaf`); the two classify
     identically because both delegate to
-    :func:`repository.parse_dvc_pointer_out`.
+    :func:`dvc.parse_dvc_pointer_out`.
 
     A *well-formed* sidecar for a ``dvc add <dir>`` output is a different
     matter: it is not ignored, it is REFUSED. GAIn cannot verify a ``.dir``
@@ -444,10 +454,12 @@ def collect_dvc_entries(
     passes through, and it applies whether or not the directory is
     materialised.
 
-    An entry is produced for every readable sidecar. Which of them actually
-    reach the manifest is decided by
-    :meth:`ReadWriteRepositoryProtocol._merge_pointer_only_entries`: only
-    those whose data file is not materialised (gain#255).
+    An entry is produced for every readable sidecar. Every materialised
+    file's entry is consulted by
+    :meth:`ReadWriteRepositoryProtocol._update_manifest_entry_and_state` -
+    the sidecar IS the md5 sum of the file it describes - and the entries
+    for files the scan did not yield are merged by
+    :meth:`ReadWriteRepositoryProtocol._merge_unscanned_dvc_entries` (#373).
 
     Raises:
         UnsupportedDvcDirectoryOutputError: the resource has a ``dvc add
@@ -519,11 +531,11 @@ def _do_resource_manifest_command(
     force: bool,  # noqa: FBT001
     use_dvc: bool,  # noqa: FBT001
 ) -> bool:
-    # '.dvc' entries are always collected: a resource file that is not
-    # materialised has no content to hash, so its '.dvc' file is the only
-    # possible source of its manifest entry - dropping it here would delete
-    # the entry from the manifest. `use_dvc` decides only whether a file that
-    # IS on disk may skip hashing and reuse its recorded md5 sum.
+    # '.dvc' entries are always collected, in EVERY mode: they are the md5
+    # sum of the file they describe by default, and the thing `--without-dvc`
+    # verifies the bytes against. Gating this on `use_dvc` also deleted every
+    # entry a sidecar is the only possible source for - a file that is not
+    # materialised - from every manifest under `-D` (#251).
     prebuild_entries = collect_dvc_entries(proto, res)
     verify_content = not use_dvc
 
@@ -554,14 +566,11 @@ def _do_resource_manifest_command(
 
     if force or bool(manifest_update):
         # The manifest `check_update_manifest` returned IS the updated one:
-        # every materialised entry already carries an md5 sum derived from
-        # the file's bytes, and the pointer-only entries are already merged
-        # in. Deriving it again through `build_manifest`/`update_manifest`
-        # would hash every materialised file a SECOND time - free in the
-        # default mode, where the states just persisted make the size and
-        # timestamp fast path hit, but a full second read of the repository
-        # under `--without-dvc`, which deliberately bypasses that fast
-        # path (#251).
+        # every entry already carries its md5 sum, and the entries the scan
+        # did not yield are already merged in. Deriving it again through
+        # `build_manifest`/`update_manifest` would read every materialised
+        # file a SECOND time under `--without-dvc`, which deliberately
+        # bypasses the size and timestamp fast path (#251).
         logger.info(
             "updating manifest for resource <%s>...", res.resource_id)
         proto.save_manifest(res, manifest_update.manifest)
@@ -569,33 +578,66 @@ def _do_resource_manifest_command(
     return False
 
 
+class ManifestOutcome(NamedTuple):
+    """What a manifest pass over a set of resources found.
+
+    ``updates_needed`` is keyed by the resources the pass got through, and
+    valued by whether that resource's manifest is stale. ``failed`` names
+    the resources whose manifest could not be built at all - today, only a
+    resource whose content drifted from its ``.dvc`` sidecars under
+    ``--without-dvc``; it has NO entry in ``updates_needed`` (#373).
+    """
+
+    updates_needed: dict[str, bool]
+    failed: frozenset[str]
+
+
 def _run_repo_manifest_command_internal(
         proto: ReadWriteRepositoryProtocol,
         resources: Sequence[GenomicResource],
-        **kwargs: bool | int | str) -> dict[str, Any]:
+        **kwargs: bool | int | str) -> ManifestOutcome:
     dry_run = cast(bool, kwargs.get("dry_run", False))
     force = cast(bool, kwargs.get("force", False))
     use_dvc = cast(bool, kwargs.get("use_dvc", True))
 
     updates_needed = {}
+    failed: set[str] = set()
     for res in resources:
-        updates_needed[res.resource_id] = _do_resource_manifest_command(
-            proto, res,
-            dry_run=dry_run,
-            force=force,
-            use_dvc=use_dvc,
-        )
+        try:
+            updates_needed[res.resource_id] = _do_resource_manifest_command(
+                proto, res,
+                dry_run=dry_run,
+                force=force,
+                use_dvc=use_dvc,
+            )
+        except DvcContentDriftError as err:
+            # Collected, not raised: every drifted resource of the
+            # repository is reported by one run, and the resources that
+            # agree with their sidecars are still repaired (#373).
+            _report_resource_failure(
+                err, "could not verify", res.resource_id)
+            failed.add(res.resource_id)
 
-    return updates_needed
+    return ManifestOutcome(updates_needed, frozenset(failed))
 
 
-def _build_content_file(proto: FsspecReadWriteProtocol) -> None:
-    """Build CONTENTS.json."""
-    proto.build_content_file()
+def _build_content_file(
+    proto: FsspecReadWriteProtocol,
+    failed: frozenset[str] = frozenset(),
+) -> None:
+    """Build CONTENTS.json.
+
+    ``failed`` names resources this run could not verify; they are
+    published from the manifest they already had, or left out if they
+    never had one, so a failed run never rebuilds -- and poisons the
+    contents with -- a manifest it just refused to write (#373).
+    """
+    proto.build_content_file(failed)
 
 
 def _create_contents_db(
     proto: FsspecReadWriteProtocol,
+    already_failed: frozenset[str] = frozenset(),
 ) -> frozenset[str]:
     """Build the FTS SQLite index for the repository.
 
@@ -636,6 +678,10 @@ def _create_contents_db(
     index_infos: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
     failed: set[str] = set()
     for res in proto.get_all_resources():
+        if res.resource_id in already_failed:
+            # Its manifest could not be verified this run; indexing it
+            # would read a resource the run is already failing on (#373).
+            continue
         try:
             impl = build_resource_implementation(res)
             index_infos.append(impl.collect_index_info())
@@ -701,20 +747,23 @@ def _run_repo_manifest_command(
         # A usage error, not a count of anything.
         logger.warning("please choose one of 'dry_run' and 'force' options")
         return CommandResult(repo_failed=True)
-    updates_needed = _run_repo_manifest_command_internal(
+    outcome = _run_repo_manifest_command_internal(
         proto, resources, **kwargs)
     if dry_run:
         # `updates_needed` is keyed by EVERY resource and valued by whether
         # that resource's manifest is stale, so its LENGTH is the size of
         # the repository -- which made `--dry-run` report a fully settled
         # repository as inconsistent, with a status equal to its resource
-        # count.  Count the stale ones (gain#364).
+        # count.  Count the stale ones (gain#364).  A resource that could
+        # not even be checked is certainly not up to date, so it counts too.
         return CommandResult(
             needs_update=sum(
-                1 for stale in updates_needed.values() if stale))
+                1 for stale in outcome.updates_needed.values() if stale
+            ) + len(outcome.failed),
+            failed=outcome.failed)
     assert isinstance(proto, FsspecReadWriteProtocol)
-    _build_content_file(proto)
-    return CommandResult()
+    _build_content_file(proto, outcome.failed)
+    return CommandResult(failed=outcome.failed)
 
 
 def _find_resources(
@@ -902,15 +951,24 @@ def _run_repo_stats_command(
         logger.warning("please choose one of 'dry_run' and 'force' options")
         return CommandResult(repo_failed=True)
 
-    updates_needed = _run_repo_manifest_command_internal(
+    outcome = _run_repo_manifest_command_internal(
         proto, resources, **kwargs)
+    updates_needed = outcome.updates_needed
 
     graph = TaskGraph()
 
     needs_update = 0
-    failed: set[str] = set()
+    failed: set[str] = set(outcome.failed)
     stats_resources: list[GenomicResource] = []
     for res in resources:
+        if res.resource_id in failed:
+            # Its manifest could not be built, so there is nothing to
+            # certify the statistics against -- and rebuilding them would
+            # write new files into a resource the run is already failing on.
+            logger.warning(
+                "not building the statistics of <%s>: "
+                "it already failed in this run", res.resource_id)
+            continue
         # Four operations under one `try` -- building the implementation,
         # looking up the manifest update, comparing the statistics hash and
         # collecting the statistics tasks -- so the message names none of
@@ -983,18 +1041,21 @@ def _run_repo_stats_command(
         # and persisted the resulting states - so re-verifying them here
         # would be a second full read of the repository, not a second
         # opinion (#251). The freshly written statistics files have no state
-        # and are hashed here.
+        # and are hashed here. It cannot fail: the default mode never
+        # verifies a sidecar, so it has no drift to report.
         _run_repo_manifest_command_internal(
             proto, stats_resources,
             dry_run=False, force=True, use_dvc=True)
 
     assert isinstance(proto, FsspecReadWriteProtocol)
-    _build_content_file(proto)
+    _build_content_file(proto, frozenset(failed))
     # The FTS index walks the whole repository, so the ids it returns may
     # name resources this command did not select -- they are reported
     # under their own ids, and the run fails, but the selected resource is
-    # not blamed for them.
-    failed |= _create_contents_db(proto)
+    # not blamed for them. A resource that already failed this run is
+    # left out of it: rebuilding an index for a resource the run is
+    # failing on is exactly the poison #373 removes.
+    failed |= _create_contents_db(proto, frozenset(failed))
     return CommandResult(
         failed=frozenset(failed), repo_failed=repo_failed)
 
@@ -1019,8 +1080,8 @@ def _run_repo_info_command(
         return result
 
     assert isinstance(proto, FsspecReadWriteProtocol)
-    proto.build_index_info()
     failed = set(result.failed)
+    proto.build_index_info(failed=frozenset(failed))
     for res in resources:
         if res.resource_id in failed:
             # Something GAIn was asked to do to it already failed -- most
@@ -1073,9 +1134,10 @@ def _do_resource_info_command(
     info = implementation.get_info(repo=repo)
     statistics_info = implementation.get_statistics_info(repo=repo)
 
-    _write_resource_file_if_changed(proto, res, "index.html", info)
     _write_resource_file_if_changed(
-        proto, res, "statistics/index.html", statistics_info)
+        proto, res, GR_INDEX_FILE_NAME, info)
+    _write_resource_file_if_changed(
+        proto, res, GR_STATISTICS_INDEX_FILE_NAME, statistics_info)
 
 
 # The repository-scoped and resource-scoped commands differ only in how they
