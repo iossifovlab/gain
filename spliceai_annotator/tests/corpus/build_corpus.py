@@ -66,9 +66,12 @@ MANIFEST_PATH = HERE / "corpus_manifest.json"
 FASTA_FILENAME = "corpus.fa"
 GENE_MODELS_FILENAME = "gene_models.txt"
 
-# The maximum half-window the annotator ever fetches is width//2 at
-# distance=5000 (= 10100); flank every locus a little beyond that so any
-# in-gene position is a valid, full-window annotatable at every distance.
+# The widest window the annotator fetches is width = 10000 + 2*distance + 1
+# (20001 at distance=5000), i.e. width//2 = 10000 real bases each side of a
+# variant. Flank every locus a little beyond that half-window so any in-gene
+# position is a valid, full-window annotatable at every distance. (The batch
+# tensor is wider -- width + max_insertion_length -- but that extra width is
+# N-padding added in memory, not sequence fetched from the genome.)
 FLANK = 10300
 
 DISTANCES = [0, 50, 500, 5000]
