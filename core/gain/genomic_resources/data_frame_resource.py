@@ -38,7 +38,11 @@ def load_data_frame_from_resource(
     file_format = config.get("format", "csv")
     params = config.get("parameters", {})
 
-    if file_format not in {"csv", "tsv"}:
+    if file_format in {"csv", "tsv"}:
+        result: pd.DataFrame = pd.read_csv(file_name, **params)
+    elif file_format == "excel":
+        result: pd.DataFrame = pd.read_excel(file_name, **params)
+    else:
         logger.error(
             "unknown format %s for the data_frame %s",
             file_format, resource.resource_id)
@@ -46,7 +50,6 @@ def load_data_frame_from_resource(
             f"Unknown format {file_format} "
             f"for the dataframe {resource.resource_id}")
 
-    result: pd.DataFrame = pd.read_csv(file_name, **params)
     return result
 
 

@@ -50,8 +50,9 @@ class DataFrameResourceImplementation(
         with self.resource.proto.open_raw_file(
             self.resource, "statistics/describe.csv", mode="rt",
         ) as stats_file:
-            df_description = pd.read_csv(stats_file)
-        info["df_description"] = df_description.to_html(index=False)
+            df_description = pd.read_csv(stats_file, index_col=0).T
+            df_description.columns.name = "Columns"
+        info["df_description"] = df_description.to_html(index=True)
         return info
 
     def get_info(self, **kwargs: Any) -> str:  # noqa: ARG002
