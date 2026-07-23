@@ -7,9 +7,13 @@ import textwrap
 from collections import Counter
 
 import pytest
+from gain.genomic_resources import cli as cli_module
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.repository import (
+    GR_GENERATED_INFO_PAGES,
+    GR_INDEX_FILE_NAME,
+    GR_STATISTICS_INDEX_FILE_NAME,
     GenomicResource,
     ReadWriteRepositoryProtocol,
     ResourceFileState,
@@ -1461,3 +1465,225 @@ def test_without_dvc_re_verifies_a_state_written_by_an_earlier_gain(
     assert md5_of(TAMPERED_DATA) in caplog.text
     manifest = proto.load_manifest(proto.get_resource("one"))
     assert manifest["data.txt"].md5 == md5_of(ORIGINAL_DATA)
+
+# ---------------------------------------------------------------------------
+# What a FAILED verification is allowed to leave behind (#373)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def unmanifested_drifted_repo_fixture(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[pathlib.Path, FsspecReadWriteProtocol]:
+    """Build a GRR whose resource has NO `.MANIFEST` and a drifted file.
+
+    Every newly added resource has this shape, so it is the common case
+    rather than an exotic one. It also carries a pointer-only entry, whose
+    sidecar is the only possible source of its manifest entry.
+    """
+    path = tmp_path_factory.mktemp("cli_dvc_unmanifested_drift")
+    setup_directories(path, {
+        "one": {
+            "genomic_resource.yaml": "",
+            "data.txt": SAME_SIZE_TAMPERED_DATA,
+            "data.txt.dvc": dvc_sidecar("data.txt", ORIGINAL_DATA),
+            "big.bw.dvc": dvc_sidecar("big.bw", ORIGINAL_DATA),
+        },
+    })
+    proto = build_filesystem_test_protocol(path, repair=False)
+    return path, proto
+
+
+@pytest.mark.parametrize("command", ["repo-manifest", "repo-repair"])
+def test_a_failed_verification_publishes_no_content_derived_md5(
+    unmanifested_drifted_repo_fixture: tuple[
+        pathlib.Path, FsspecReadWriteProtocol],
+    command: str,
+) -> None:
+    """A `-D` run that failed must leave NOTHING derived from the bytes.
+
+    Refusing to write the `.MANIFEST` is only half the promise. The run goes
+    on to rebuild `.CONTENTS.json.gz` (and the repository index page) from
+    every resource's manifest, and a resource that has no `.MANIFEST` yet
+    falls through to the build-from-scratch fallback -- which hashes, writes
+    a `ResourceFileState` and knows nothing of the `.dvc` sidecars. That
+    published the very md5 sum the run had just refused to record, poisoned
+    the next DEFAULT run through the state it left, and dropped the
+    pointer-only entry on the way (#373).
+    """
+    # Given a resource with no manifest, a drifted file and a pointer-only one
+    path, proto = unmanifested_drifted_repo_fixture
+
+    # When the repository is verified
+    with pytest.raises(SystemExit) as excinfo:
+        cli_manage([command, "-R", str(path), "-D"])
+
+    # Then the run fails and writes no manifest
+    assert excinfo.value.code == 1
+    assert not (path / "one" / ".MANIFEST").exists()
+
+    # ... no content-derived state is left behind for the drifted file
+    assert proto.load_resource_file_state(
+        proto.get_resource("one"), "data.txt") is None
+    assert not (path / "one" / ".grr" / "data.txt.state").exists()
+
+    # ... and nothing the run refused to record is published either
+    contents = (path / ".CONTENTS.json").read_text(encoding="utf8")
+    assert md5_of(SAME_SIZE_TAMPERED_DATA) not in contents
+
+    # ... so a later DEFAULT run still reads its md5 sums off the sidecars,
+    # and still merges the pointer-only entry
+    cli_manage([command, "-R", str(path)])
+    manifest = proto.load_manifest(proto.get_resource("one"))
+    assert manifest["data.txt"].md5 == md5_of(ORIGINAL_DATA)
+    assert manifest["big.bw"].md5 == md5_of(ORIGINAL_DATA)
+
+
+def test_a_failed_verification_leaves_the_published_manifest_alone(
+    stale_same_size_dvc_proto_fixture: tuple[
+        pathlib.Path, FsspecReadWriteProtocol],
+) -> None:
+    """A resource the run failed on keeps the manifest it already had.
+
+    Nothing about the resource changed on disk, so the manifest a previous
+    run committed is still the honest description of what DVC published: it
+    is republished unchanged rather than replaced by a rebuilt-from-scratch
+    one, and no content-derived state is left behind.
+    """
+    # Given a repaired GRR whose file then turns out to have drifted
+    path, proto = stale_same_size_dvc_proto_fixture
+    cli_manage(["repo-repair", "-R", str(path)])
+    manifest_before = (path / "one" / ".MANIFEST").read_bytes()
+
+    # When it is verified
+    with pytest.raises(SystemExit) as excinfo:
+        cli_manage(["repo-repair", "-R", str(path), "-D"])
+
+    # Then the run fails, and neither the manifest nor the contents lose it
+    assert excinfo.value.code == 1
+    assert (path / "one" / ".MANIFEST").read_bytes() == manifest_before
+    contents = (path / ".CONTENTS.json").read_text(encoding="utf8")
+    assert md5_of(ORIGINAL_DATA) in contents
+    assert md5_of(SAME_SIZE_TAMPERED_DATA) not in contents
+    assert proto.load_resource_file_state(
+        proto.get_resource("one"), "data.txt") is None
+
+
+# ---------------------------------------------------------------------------
+# A sidecar that lies about the SIZE: both modes must still agree (#373)
+# ---------------------------------------------------------------------------
+
+WRONG_DECLARED_SIZE = 999
+
+
+@pytest.fixture
+def wrong_size_dvc_proto_fixture(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[pathlib.Path, FsspecReadWriteProtocol]:
+    """Build a GRR whose sidecar has the right md5 but the wrong size."""
+    path = tmp_path_factory.mktemp("cli_dvc_wrong_size")
+    assert size_of(ORIGINAL_DATA) != WRONG_DECLARED_SIZE
+    setup_directories(path, {
+        "one": {
+            "genomic_resource.yaml": "",
+            "data.txt": ORIGINAL_DATA,
+            "data.txt.dvc": textwrap.dedent(f"""
+                outs:
+                - md5: {md5_of(ORIGINAL_DATA)}
+                  size: {WRONG_DECLARED_SIZE}
+                  path: data.txt
+            """),
+        },
+    })
+    proto = build_filesystem_test_protocol(path, repair=False)
+    return path, proto
+
+
+def test_both_modes_agree_when_the_sidecar_lies_about_the_size(
+    wrong_size_dvc_proto_fixture: tuple[
+        pathlib.Path, FsspecReadWriteProtocol],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A `.MANIFEST` must be a function of the bytes, not of the mode.
+
+    A sidecar whose md5 sum is right and whose declared size is not is drift
+    the verifier can see for free, exactly like the default mode can. Both
+    warn about it and both let the sidecar win -- otherwise the same bytes
+    would produce two different committed manifests depending on which flag
+    the last run used (#373).
+    """
+    # Given a resource whose sidecar declares a size the file does not have
+    path, proto = wrong_size_dvc_proto_fixture
+
+    # When it is verified with `-D`
+    with caplog.at_level(logging.WARNING):
+        cli_manage(["resource-manifest", "-R", str(path), "-r", "one", "-D"])
+
+    # Then the size mismatch is warned about, naming the file and the remedy
+    warnings = [
+        record.getMessage() for record in caplog.records
+        if record.levelno == logging.WARNING
+    ]
+    message = next(
+        (msg for msg in warnings if "data.txt" in msg and "dvc add" in msg),
+        None)
+    assert message is not None, warnings
+    assert "dvc commit" in message
+
+    # ... the sidecar still wins both fields
+    manifest = proto.load_manifest(proto.get_resource("one"))
+    assert manifest["data.txt"].md5 == md5_of(ORIGINAL_DATA)
+    assert manifest["data.txt"].size == WRONG_DECLARED_SIZE
+    verified = (path / "one" / ".MANIFEST").read_bytes()
+
+    # ... and no content-derived state disagreeing with the sidecar is left
+    assert proto.load_resource_file_state(
+        proto.get_resource("one"), "data.txt") is None
+
+    # ... and the default mode writes the identical manifest for the
+    # identical bytes, this run and every run after it
+    cli_manage(
+        ["resource-manifest", "-R", str(path), "-r", "one", "--force"])
+    assert (path / "one" / ".MANIFEST").read_bytes() == verified
+
+
+# ---------------------------------------------------------------------------
+# The generated pages: one source for the writer and for the excluder
+# ---------------------------------------------------------------------------
+
+
+def test_the_generated_pages_are_written_where_the_exclusion_looks(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The writer and the excluder must not be able to drift apart.
+
+    Which paths `resource-info` writes and which paths the manifest excludes
+    are the same question, so they are answered by the same constants (#373).
+    """
+    # Given the two pages the exclusion knows about, from one source
+    assert set(GR_GENERATED_INFO_PAGES) == {
+        GR_INDEX_FILE_NAME, GR_STATISTICS_INDEX_FILE_NAME,
+    }
+
+    # ... and a resource to render them for
+    path = tmp_path_factory.mktemp("cli_generated_pages")
+    setup_directories(path, {
+        "one": {
+            "genomic_resource.yaml": "",
+            "data.txt": ORIGINAL_DATA,
+        },
+    })
+    build_filesystem_test_protocol(path, repair=False)
+
+    # When the generated-page paths are named something else
+    monkeypatch.setattr(cli_module, "GR_INDEX_FILE_NAME", "generated.html")
+    monkeypatch.setattr(
+        cli_module, "GR_STATISTICS_INDEX_FILE_NAME",
+        "generated-stats/index.html")
+    cli_manage(["resource-info", "-R", str(path), "-r", "one"])
+
+    # Then that is where `resource-info` writes them: the writer reads the
+    # very constants the exclusion is built from
+    assert (path / "one" / "generated.html").exists()
+    assert (path / "one" / "generated-stats" / "index.html").exists()

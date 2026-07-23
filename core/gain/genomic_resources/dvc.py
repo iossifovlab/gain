@@ -6,12 +6,13 @@ places -- the repository scan, ``grr_manage``'s entry collection and the
 manifest builder -- and this module is the only place that interprets one,
 so the three can never classify the same sidecar differently.
 """
-import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
 import yaml
+
+from gain import logging
 
 logger = logging.getLogger(__name__)
 

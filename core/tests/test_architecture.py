@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 """Architecture tests for gain package using pytestarch."""
 import os
+import pathlib
 
 import pytest
 from pytestarch import EvaluableArchitecture, get_evaluable_architecture
@@ -54,4 +55,32 @@ def test_gain_core_tests_do_not_import_from_gpf_core(
     assert gpf_imports == [], (
         f"gain_core tests must not import from gpf_core, "
         f"but found: {gpf_imports}"
+    )
+
+
+def test_no_gain_module_uses_stdlib_logging_directly() -> None:
+    """Every gain module logs through `from gain import logging`.
+
+    stdlib `import logging` skips the TRACE / USER_INFO level bootstrap that
+    `gain.logging` performs on import. Only that bootstrap module and the
+    `logging` shim itself may reach for the stdlib module by name (#373).
+    """
+    allowed = {
+        os.path.join(GAIN_SRC, "logging.py"),
+        os.path.join(GAIN_SRC, "utils", "log_levels.py"),
+    }
+    offenders = []
+    for py in pathlib.Path(GAIN_SRC).rglob("*.py"):
+        if str(py) in allowed:
+            continue
+        for line in py.read_text(encoding="utf8").splitlines():
+            stripped = line.strip()
+            if stripped == "import logging" \
+                    or stripped.startswith(
+                        ("import logging as", "import logging.")):
+                offenders.append(str(py))
+                break
+    assert offenders == [], (
+        "these gain modules use stdlib logging instead of "
+        f"`from gain import logging`: {offenders}"
     )

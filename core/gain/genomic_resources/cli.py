@@ -30,7 +30,9 @@ from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
+    GR_INDEX_FILE_NAME,
     GR_SQLITE_META_FILE_NAME,
+    GR_STATISTICS_INDEX_FILE_NAME,
     GenomicResource,
     GenomicResourceRepo,
     ManifestEntry,
@@ -619,13 +621,23 @@ def _run_repo_manifest_command_internal(
     return ManifestOutcome(updates_needed, frozenset(failed))
 
 
-def _build_content_file(proto: FsspecReadWriteProtocol) -> None:
-    """Build CONTENTS.json."""
-    proto.build_content_file()
+def _build_content_file(
+    proto: FsspecReadWriteProtocol,
+    failed: frozenset[str] = frozenset(),
+) -> None:
+    """Build CONTENTS.json.
+
+    ``failed`` names resources this run could not verify; they are
+    published from the manifest they already had, or left out if they
+    never had one, so a failed run never rebuilds -- and poisons the
+    contents with -- a manifest it just refused to write (#373).
+    """
+    proto.build_content_file(failed)
 
 
 def _create_contents_db(
     proto: FsspecReadWriteProtocol,
+    already_failed: frozenset[str] = frozenset(),
 ) -> frozenset[str]:
     """Build the FTS SQLite index for the repository.
 
@@ -666,6 +678,10 @@ def _create_contents_db(
     index_infos: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
     failed: set[str] = set()
     for res in proto.get_all_resources():
+        if res.resource_id in already_failed:
+            # Its manifest could not be verified this run; indexing it
+            # would read a resource the run is already failing on (#373).
+            continue
         try:
             impl = build_resource_implementation(res)
             index_infos.append(impl.collect_index_info())
@@ -746,7 +762,7 @@ def _run_repo_manifest_command(
             ) + len(outcome.failed),
             failed=outcome.failed)
     assert isinstance(proto, FsspecReadWriteProtocol)
-    _build_content_file(proto)
+    _build_content_file(proto, outcome.failed)
     return CommandResult(failed=outcome.failed)
 
 
@@ -1032,12 +1048,14 @@ def _run_repo_stats_command(
             dry_run=False, force=True, use_dvc=True)
 
     assert isinstance(proto, FsspecReadWriteProtocol)
-    _build_content_file(proto)
+    _build_content_file(proto, frozenset(failed))
     # The FTS index walks the whole repository, so the ids it returns may
     # name resources this command did not select -- they are reported
     # under their own ids, and the run fails, but the selected resource is
-    # not blamed for them.
-    failed |= _create_contents_db(proto)
+    # not blamed for them. A resource that already failed this run is
+    # left out of it: rebuilding an index for a resource the run is
+    # failing on is exactly the poison #373 removes.
+    failed |= _create_contents_db(proto, frozenset(failed))
     return CommandResult(
         failed=frozenset(failed), repo_failed=repo_failed)
 
@@ -1062,8 +1080,8 @@ def _run_repo_info_command(
         return result
 
     assert isinstance(proto, FsspecReadWriteProtocol)
-    proto.build_index_info()
     failed = set(result.failed)
+    proto.build_index_info(failed=frozenset(failed))
     for res in resources:
         if res.resource_id in failed:
             # Something GAIn was asked to do to it already failed -- most
@@ -1116,9 +1134,10 @@ def _do_resource_info_command(
     info = implementation.get_info(repo=repo)
     statistics_info = implementation.get_statistics_info(repo=repo)
 
-    _write_resource_file_if_changed(proto, res, "index.html", info)
     _write_resource_file_if_changed(
-        proto, res, "statistics/index.html", statistics_info)
+        proto, res, GR_INDEX_FILE_NAME, info)
+    _write_resource_file_if_changed(
+        proto, res, GR_STATISTICS_INDEX_FILE_NAME, statistics_info)
 
 
 # The repository-scoped and resource-scoped commands differ only in how they

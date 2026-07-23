@@ -72,12 +72,17 @@ GR_SQLITE_META_FILE_NAME = ".CONTENTS.sqlite3.gz"
 GR_INDEX_FILE_NAME = "index.html"
 GR_STATISTICS_FOLDER_NAME = "statistics"
 
+#: The path `grr_manage resource-info` writes the statistics page to;
+#: named here so the writer and the exclusion below cannot drift (#373).
+GR_STATISTICS_INDEX_FILE_NAME = \
+    f"{GR_STATISTICS_FOLDER_NAME}/{GR_INDEX_FILE_NAME}"
+
 #: The pages `grr_manage resource-info` writes into a resource. They are
 #: regenerated on every run, so they are build artefacts rather than resource
 #: data and are never manifested -- whether or not DVC manages them (#373).
 GR_GENERATED_INFO_PAGES = frozenset({
     GR_INDEX_FILE_NAME,
-    f"{GR_STATISTICS_FOLDER_NAME}/{GR_INDEX_FILE_NAME}",
+    GR_STATISTICS_INDEX_FILE_NAME,
 })
 
 GR_ENCODING = "utf-8"
@@ -945,6 +950,18 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
             Manifest containing entries for all files in the resource
         """
 
+    def _warn_dvc_size_mismatch(
+            self, resource: GenomicResource, name: str,
+            dvc_size: int | None, disk_size: int) -> None:
+        """Warn (both modes) that a sidecar's declared size is wrong (#373)."""
+        logger.warning(
+            "the '.dvc' sidecar of <%s> in <%s> declares a size of "
+            "%s, but the file on disk is %s bytes; taking the md5 "
+            "sum and the size from the sidecar. Run 'dvc add %s' "
+            "(or 'dvc commit') to make DVC describe the bytes that "
+            "are there, then repair the resource again",
+            name, resource.resource_id, dvc_size, disk_size, name)
+
     def _update_manifest_entry_and_state(
             self, resource: GenomicResource, entry: ManifestEntry,
             prebuild_entries: dict[str, ManifestEntry], *,
@@ -978,7 +995,8 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         VERIFIER instead: the recorded state is not consulted at all, every
         materialised file is hashed, and a file whose content disagrees with
         its sidecar is returned as a :class:`DvcContentDrift` rather than
-        recorded. The caller collects those and fails the resource (#373).
+        recorded. The caller collects those and fails the resource (#373); a
+        wrong sidecar-declared size still lets the sidecar win both fields.
         Verification never writes an md5 sum that contradicts a sidecar:
         ``.MANIFEST`` is a committed artefact, and the remedy for drift is
         ``dvc add`` / ``dvc commit``, after which every machine - pointer
@@ -990,9 +1008,17 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
 
         if verify_content:
             state = self.build_resource_file_state(resource, entry.name)
-            if dvc_entry is not None and dvc_entry.md5 != state.md5:
-                return DvcContentDrift(
-                    entry.name, state.md5, cast(str, dvc_entry.md5))
+            if dvc_entry is not None:
+                if dvc_entry.md5 != state.md5:
+                    return DvcContentDrift(
+                        entry.name, state.md5, cast(str, dvc_entry.md5))
+                if state.size != dvc_entry.size:
+                    # Sidecar wins both fields; no state (#373).
+                    self._warn_dvc_size_mismatch(
+                        resource, entry.name, dvc_entry.size, state.size)
+                    entry.md5 = dvc_entry.md5
+                    entry.size = dvc_entry.size
+                    return None
             self.save_resource_file_state(resource, state)
             entry.md5 = state.md5
             entry.size = state.size
@@ -1016,14 +1042,8 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
 
         if dvc_entry is not None:
             if entry.size != dvc_entry.size:
-                logger.warning(
-                    "the '.dvc' sidecar of <%s> in <%s> declares a size of "
-                    "%s, but the file on disk is %s bytes; taking the md5 "
-                    "sum and the size from the sidecar. Run 'dvc add %s' "
-                    "(or 'dvc commit') to make DVC describe the bytes that "
-                    "are there, then repair the resource again",
-                    entry.name, resource.resource_id,
-                    dvc_entry.size, entry.size, entry.name)
+                self._warn_dvc_size_mismatch(
+                    resource, entry.name, dvc_entry.size, entry.size)
             entry.md5 = dvc_entry.md5
             entry.size = dvc_entry.size
             return None

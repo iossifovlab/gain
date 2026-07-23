@@ -1203,17 +1203,48 @@ class FsspecReadWriteProtocol(
         # file returns its current persisted state.
         return self.load_resource_file_state(dest_resource, filename)
 
-    def build_content_file(self) -> list[dict[str, Any]]:
-        """Build the content of the repository (i.e '.CONTENTS.json' file)."""
-        content = [
-            {
+    def _manifest_for_repository_index(
+            self, res: GenomicResource,
+            failed: frozenset[str]) -> Manifest | None:
+        """The manifest to publish for ``res`` in repository-wide files.
+
+        A resource this run FAILED to verify must not have its manifest
+        rebuilt from scratch here: that fallback hashes the drifted
+        bytes, writes a state and publishes an md5 the run had just
+        refused to record, dropping any pointer-only entry on the way.
+        Publish the manifest it already had committed, or -- if it
+        never had one -- leave it out of the repository index entirely
+        (#373).
+        """
+        if res.resource_id in failed:
+            try:
+                return self.load_manifest(res)
+            except FileNotFoundError:
+                return None
+        return res.get_manifest()
+
+    def build_content_file(
+        self, failed: frozenset[str] = frozenset(),
+    ) -> list[dict[str, Any]]:
+        """Build the content of the repository (i.e '.CONTENTS.json' file).
+
+        ``failed`` names resources this run could not verify; each is
+        published from the manifest it already had, or left out if it
+        never had one, so a failed run never rebuilds a manifest from
+        scratch and poisons the contents with it (#373).
+        """
+        content = []
+        for res in self.get_all_resources():
+            manifest = self._manifest_for_repository_index(res, failed)
+            if manifest is None:
+                continue
+            content.append({
                 "full_id": res.get_full_id(),
                 "id": res.resource_id,
                 "version": res.get_version_str(),
                 "config": res.get_config(),
-                "manifest": res.get_manifest().to_manifest_entries(),
-            }
-            for res in self.get_all_resources()]
+                "manifest": manifest.to_manifest_entries(),
+            })
         content = sorted(content, key=operator.itemgetter("id"))
 
         content_filepath = os.path.join(
@@ -1251,12 +1282,22 @@ class FsspecReadWriteProtocol(
         self,
         repository_template: str = "grr_index.jinja",
         about_template: str | None = "grr_about.jinja",
+        failed: frozenset[str] = frozenset(),
     ) -> dict:
-        """Build info dict for the repository."""
+        """Build info dict for the repository.
+
+        ``failed`` names resources this run could not verify; each is
+        described from the manifest it already had, or left off the
+        index page if it never had one, so the page never triggers a
+        build-from-scratch of a failed resource's manifest (#373).
+        """
         result = {}
         for res in self.get_all_resources():
+            manifest = self._manifest_for_repository_index(res, failed)
+            if manifest is None:
+                continue
             res_size = convert_size(
-                sum(f for _, f in res.get_manifest().get_files()),
+                sum(f for _, f in manifest.get_files()),
             )
             assert res.config is not None
             result[res.get_full_id()] = {
@@ -1264,7 +1305,7 @@ class FsspecReadWriteProtocol(
                 "res_id": res.resource_id,
                 **res.config,
                 "res_version": res.get_version_str(),
-                "res_files": len(list(res.get_manifest().get_files())),
+                "res_files": len(list(manifest.get_files())),
                 "res_size": res_size,
                 "res_summary": res.get_summary(),
             }
