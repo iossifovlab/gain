@@ -91,6 +91,41 @@ Release Notes
       aborts ``grr_manage`` with a traceback (#251): it is reported as a
       warning and ignored, and is no longer written into the
       ``.MANIFEST`` as ``md5: null``.
+    * **Fixed:** the ``DaskExecutor`` run loop leaked driver memory
+      (#355): it polled the whole pending-future set every 50 ms with
+      ``wait(FIRST_COMPLETED)``, which minted an uncancelled asyncio
+      Task per pending future per poll (~220 MB/min, to 3.3 GB on a
+      ``grr_manage resource-repair`` over a 5.5 GB bigWig). It now
+      registers one ``add_done_callback`` per future at submit time and
+      drains a queue, so waking up costs nothing per pending future.
+    * **Fixed:** the ``DaskExecutor`` run loop could return zero results
+      for a non-empty graph (#365): the submit worker removed a batch
+      from the queue before ``Client.map()`` and recorded its futures
+      only after it returned, so for the width of that call the task was
+      in none of the tracked collections and the loop could declare
+      itself finished and return empty. A batch now stays on the submit
+      queue until ``running`` holds every future.
+    * **Fixed:** rewrote the Dask run loop's termination logic around a
+      single ``RunState`` six-state machine behind one lock (#367),
+      replacing four separately-locked collections and a triple
+      re-read; a task now occupies exactly one state from the moment it
+      leaves the graph until its result is taken, closing a symmetric
+      gather-side window that could silently under-deliver results.
+    * **Fixed:** a crashed or OOM-killed Dask worker's task was yielded
+      as ``None`` and cached as a COMPUTED ``None``, so a run of nothing
+      but dead tasks reported success (#367): ``gather(errors="skip")``
+      was handed a tuple, which ``distributed`` does not drop failed
+      futures from, and now gathers a list. Generator teardown also
+      moved into a ``finally`` so a ``keep_going=False`` failure no
+      longer leaks both worker threads and leaves a long-lived
+      ``web_api`` executor permanently "executing".
+    * **Fixed:** an unguarded exception in either ``DaskExecutor``
+      worker thread hung the run indefinitely (#372): a raise between
+      claiming a batch and transitioning it out left the batch stranded
+      in-flight, so ``has_outstanding()`` answered "yes" forever while
+      the loop spun at its wait timeout with nothing logged. Both worker
+      bodies now catch ``BaseException`` and deliver it as the per-task
+      result, so the run terminates with an error the caller sees.
 
 * 2026.7.1
     * **Behavior change:** a completed anonymous annotation job and its
