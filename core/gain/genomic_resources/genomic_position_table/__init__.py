@@ -190,20 +190,21 @@ back unparsed and rows are not clipped to the region; both stay with the caller,
 as on the record path.  ``batch_size`` is a hint -- ``BigWigTable`` ignores it,
 its batches being sized by its own adaptive fetch window.
 
-**Ask the flag; do not test the class.**  The capability is not derivable from
-the class hierarchy: ``VCFGenomicPositionTable`` subclasses
-``TabixGenomicPositionTable`` and so *inherits* a working implementation it
-cannot honour -- its PAYLOAD is ``(variant, allele index)`` rather than a raw
-row, and a VCF score is an INFO field addressed by name, not by the integer
-column index this contract passes -- so it sets ``supports_value_arrays`` back
-to ``False``.  An out-of-tree caller that reaches for the method must consult
-the flag (or ``GenomicScore.supports_region_value_arrays(scores)``, which folds
-this flag together with the value types its own parse requires, and is
-answerable on an unopened score).  Probing by calling and catching
-does NOT work: an unguarded call on a VCF table reaches the inherited tabix
-implementation and trips its ``assert isinstance(self.pysam_file,
-pysam.TabixFile)``, yielding a message-less ``AssertionError`` -- and nothing at
-all under ``python -O``.
+**Ask the flag; do not test the class.**  The capability is NOT derivable from
+the class hierarchy -- ``VCFGenomicPositionTable`` subclasses
+``TabixGenomicPositionTable``, inherits its implementation, and sets
+``supports_value_arrays`` back to ``False``.  An out-of-tree caller reaching for
+the method must consult the flag (or
+``GenomicScore.supports_region_value_arrays(scores)``, which folds this flag
+together with the value types its own parse requires, and is answerable on an
+unopened score).  Probing by calling and catching does NOT work: an unguarded
+call on a VCF table reaches the inherited tabix implementation and trips its
+``assert isinstance(self.pysam_file, pysam.TabixFile)``, yielding a
+message-less ``AssertionError`` -- and nothing at all under ``python -O``.
+
+Why the capability is declared rather than inferred, why VCF cannot honour the
+contract it inherits, and why this read path exists at all: see
+``docs/adr/0001-bulk-read-path-for-statistics.md``.
 
 """
 from .line import LineBuffer
