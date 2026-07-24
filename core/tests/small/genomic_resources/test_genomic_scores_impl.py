@@ -7,11 +7,17 @@ from typing import cast
 
 import pytest
 import pytest_mock
+from gain.genomic_resources.genomic_scores import (
+    build_score_from_resource,
+)
 from gain.genomic_resources.histogram import (
     CategoricalHistogramConfig,
+    Histogram,
     HistogramConfig,
     NullHistogramConfig,
+    NumberHistogram,
     NumberHistogramConfig,
+    load_histogram,
 )
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
@@ -29,6 +35,10 @@ from gain.genomic_resources.testing import (
     setup_directories,
     setup_genome,
     setup_vcf,
+)
+from gain.genomic_resources.testing.builders import (
+    PositionScoreBuilder,
+    a_position_score,
 )
 from gain.task_graph.cli_tools import task_graph_run
 from gain.task_graph.executor import (
@@ -668,6 +678,80 @@ def test_statistics_with_vcf_allele_score_30_000_000(
 
     graph.add_tasks(tasks)
     task_graph_run(graph, executor)
+
+
+def _build_statistics(
+    res: GenomicResource, region_size: int,
+) -> None:
+    """Run the resource's statistics build tasks to completion."""
+    impl = build_score_implementation_from_resource(res)
+    graph = TaskGraph()
+    graph.add_tasks(
+        impl.create_statistics_build_tasks(region_size=region_size),
+    )
+    task_graph_run(graph, SequentialExecutor())
+
+
+def _built_histogram(res: GenomicResource, score_id: str) -> Histogram:
+    """Read back the histogram a statistics build wrote into ``res``."""
+    score = build_score_from_resource(res)
+    return load_histogram(res, score.get_histogram_filename(score_id))
+
+
+def _a_two_chrom_score() -> PositionScoreBuilder:
+    return (
+        a_position_score()
+        .with_score("value", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  value
+            chr1   1          10       0.1
+            chr1   11         20       0.4
+            chr1   21         30       0.9
+            chr2   1          10       0.6
+            """,
+        )
+    )
+
+
+def test_noregion_statistics_build_writes_the_score_histogram(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A ``region_size <= 0`` build computes histograms in a single task.
+
+    ``_do_noregion_histograms`` runs min/max, histogram and save together
+    instead of fanning out over regions.  It must still write a histogram
+    that spans the whole score.
+    """
+    res = _a_two_chrom_score().build_resource(tmp_path)
+
+    _build_statistics(res, region_size=0)
+
+    histogram = _built_histogram(res, "value")
+    assert isinstance(histogram, NumberHistogram)
+    assert (histogram.min_value, histogram.max_value) == (0.1, 0.9)
+    # every authored position is counted, across both chromosomes
+    assert histogram.bars.sum() == 40
+
+
+def test_noregion_statistics_build_matches_the_regioned_build(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Splitting the work into regions does not change the result.
+
+    The region fan-out merges per-region min/max and per-region histograms;
+    the no-region path computes both in one pass.  Both must arrive at the
+    same histogram for the same score.
+    """
+    builder = _a_two_chrom_score()
+    regioned = builder.build_resource(tmp_path / "regioned")
+    noregion = builder.build_resource(tmp_path / "noregion")
+
+    _build_statistics(regioned, region_size=10)
+    _build_statistics(noregion, region_size=0)
+
+    assert _built_histogram(noregion, "value").serialize() == \
+        _built_histogram(regioned, "value").serialize()
 
 
 def test_collect_index_info_header_includes_score_fields() -> None:
