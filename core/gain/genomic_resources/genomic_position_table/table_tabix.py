@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import itertools
 from collections import Counter
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
 from typing import Any, ClassVar
 
+import numpy as np
 import pysam
 
 from gain import logging
@@ -59,6 +61,10 @@ class TabixGenomicPositionTable(GenomicPositionTable):
     # subclasses this one and yields records too (with a payload of its own),
     # so it inherits the claim as-is -- see VCFGenomicPositionTable.
     yields_records: ClassVar[bool] = True
+
+    # Serves the bulk column-array read; see get_region_value_arrays below.
+    # NOT inherited in spirit by the VCF backend, which sets it back to False.
+    supports_value_arrays: ClassVar[bool] = True
 
     BUFFER_MAXSIZE: int = 20_000
 
@@ -475,3 +481,78 @@ class TabixGenomicPositionTable(GenomicPositionTable):
             reference=fchrom, start=pos_begin, parser=pysam.asTuple(),
         ):
             yield parser(raw)
+
+    def get_region_value_arrays(
+        self,
+        chrom: str,
+        start: int | None,
+        end: int | None,
+        value_columns: Iterable[int],
+        batch_size: int,
+    ) -> Generator[
+            tuple[np.ndarray, np.ndarray, dict[int, np.ndarray]], None, None]:
+        """Yield a region's rows as column arrays, without building records.
+
+        A fast path for a full sequential scan (statistics): the rows are read
+        straight from ``pysam`` and returned per batch as the parsed one-based
+        ``pos_begin``/``pos_end`` int arrays plus the raw string cells of each
+        requested column index -- paying neither the per-row ``Record`` tuple
+        nor the parser call.  The one-based / zero-based transform matches
+        :func:`build_tabular_parser` exactly (``pos_begin += 1``, and a
+        single-base zero-based interval bumps ``pos_end`` too); the contig is
+        fixed by the fetch, so no per-row chromosome map is needed.
+
+        The read starts and stops where :meth:`get_records_in_region` would:
+        ``fetch`` begins at ``start - 1`` and a row whose parsed ``pos_begin``
+        runs past ``end`` terminates the scan (that row and everything after
+        it are not yielded), mirroring ``_gen_from_tabix``.  Records ending
+        before ``start`` are still yielded here and dropped by the caller's
+        clip, exactly as the per-record path drops them.
+        """
+        assert isinstance(self.pysam_file, pysam.TabixFile)
+        fchrom = self.unmap_chromosome(chrom)
+        if fchrom is None:
+            raise ValueError(
+                f"error in mapping chromosome {chrom} to file contigs: "
+                f"{self.get_file_chromosomes()}")
+
+        columns = list(value_columns)
+        pos_begin_key = self.pos_begin_key
+        pos_end_key = self.pos_end_key
+        fetch_start = None if start is None else start - 1
+        raw_iter = self.pysam_file.fetch(
+            reference=fchrom, start=fetch_start, parser=pysam.asTuple())
+
+        while True:
+            rows = list(itertools.islice(raw_iter, batch_size))
+            if not rows:
+                return
+            exhausted = len(rows) < batch_size
+
+            pos_begin = np.array(
+                [row[pos_begin_key] for row in rows]).astype(np.int64)
+            pos_end = np.array(
+                [row[pos_end_key] for row in rows]).astype(np.int64)
+            if self.zero_based:
+                single_base = pos_begin == pos_end
+                pos_end = pos_end + single_base
+                pos_begin = pos_begin + 1
+
+            truncated = False
+            if end is not None:
+                past_end = pos_begin > end
+                if bool(past_end.any()):
+                    cut = int(np.argmax(past_end))
+                    rows = rows[:cut]
+                    pos_begin = pos_begin[:cut]
+                    pos_end = pos_end[:cut]
+                    truncated = True
+
+            cols = {
+                col: np.array([row[col] for row in rows], dtype=object)
+                for col in columns
+            }
+            yield pos_begin, pos_end, cols
+
+            if truncated or exhausted:
+                return

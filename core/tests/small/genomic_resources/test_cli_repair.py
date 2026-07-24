@@ -394,8 +394,11 @@ def test_repo_repair_reports_a_statistics_task_that_fails_while_running(
     # bar the one the task explodes on, so nothing else can carry the
     # non-zero status.
     path, _proto = proto_fixture
+    # The histogram task enters through ``_do_histogram_task`` (which routes
+    # eligible resources to the bulk scan); that is the seam a failing task
+    # must be injected at.
     monkeypatch.setattr(
-        GenomicScoreImplementation, "_do_histogram",
+        GenomicScoreImplementation, "_do_histogram_task",
         _histogram_that_raises("one"))
 
     with caplog.at_level(logging.INFO, logger="grr_manage"), \
@@ -428,7 +431,7 @@ def test_a_failing_statistics_task_leaves_the_info_page_alone(
     good_page = "<html>the good page</html>"
     (path / "one" / "index.html").write_text(good_page)
     monkeypatch.setattr(
-        GenomicScoreImplementation, "_do_histogram",
+        GenomicScoreImplementation, "_do_histogram_task",
         _histogram_that_raises("one"))
 
     with pytest.raises(SystemExit):

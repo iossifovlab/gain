@@ -23,7 +23,12 @@ class MinMaxValue(Statistic):
         self.count = count
 
     def add_value(self, value: float | None) -> None:
-        if value is None:
+        # Skip nan as ``NumberHistogram.add_value`` does: a ``min(nan, x)`` /
+        # ``max(nan, x)`` returns nan and would wipe the running extremum (and
+        # a trailing nan would nullify the histogram via the view_range check).
+        # A nan reaches here only as a literal value token that parsed to nan
+        # but is not a configured NA sentinel; both are non-values for min/max.
+        if value is None or np.isnan(value):
             return
         self.min = min(value, self.min)
         self.max = max(value, self.max)

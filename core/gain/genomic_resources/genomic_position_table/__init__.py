@@ -174,6 +174,37 @@ is exactly what #350 avoided.  Named here so the ambiguity is a decision on
 record rather than something a caller has to rediscover; the same note is on
 ``GenomicPositionTable.close``.
 
+**New optional capability: ``get_region_value_arrays`` and the
+``supports_value_arrays`` flag that declares it** (gain#398).  ``BigWigTable``,
+``TabixGenomicPositionTable`` and ``VCFGenomicPositionTable`` are in ``__all__``
+below, so this adds public surface to ``gain`` and is recorded for the same
+reason as everything above.
+
+``get_region_value_arrays(chrom, pos_begin, pos_end, value_columns,
+batch_size)`` reads a region as batches of column arrays --
+``(pos_begin, pos_end, {column index: raw cells})`` -- without building a
+``Record`` per row.  It is a fast path for a full sequential scan, and it is
+OPTIONAL: the base class refuses with ``TypeError``, and a backend that serves
+it overrides the method *and* sets ``supports_value_arrays = True``.  Cells come
+back unparsed and rows are not clipped to the region; both stay with the caller,
+as on the record path.  ``batch_size`` is a hint -- ``BigWigTable`` ignores it,
+its batches being sized by its own adaptive fetch window.
+
+**Ask the flag; do not test the class.**  The capability is not derivable from
+the class hierarchy: ``VCFGenomicPositionTable`` subclasses
+``TabixGenomicPositionTable`` and so *inherits* a working implementation it
+cannot honour -- its PAYLOAD is ``(variant, allele index)`` rather than a raw
+row, and a VCF score is an INFO field addressed by name, not by the integer
+column index this contract passes -- so it sets ``supports_value_arrays`` back
+to ``False``.  An out-of-tree caller that reaches for the method must consult
+the flag (or ``GenomicScore.supports_region_value_arrays(scores)``, which folds
+this flag together with the value types its own parse requires, and is
+answerable on an unopened score).  Probing by calling and catching
+does NOT work: an unguarded call on a VCF table reaches the inherited tabix
+implementation and trips its ``assert isinstance(self.pysam_file,
+pysam.TabixFile)``, yielding a message-less ``AssertionError`` -- and nothing at
+all under ``python -O``.
+
 """
 from .line import LineBuffer
 from .table_bigwig import BigWigTable

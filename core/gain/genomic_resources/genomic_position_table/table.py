@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import abc
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
 from types import TracebackType
 from typing import ClassVar, cast
 
+import numpy as np
 from box import Box
 
 from gain import logging
@@ -37,6 +38,26 @@ class GenomicPositionTable(abc.ABC):
     # test_backend_record_contract.py, which fails a backend that leaves it
     # False as much as one whose records do not match its claim.
     yields_records: ClassVar[bool] = False
+
+    # Whether this backend serves :meth:`get_region_value_arrays` -- the bulk
+    # column-array region read that never builds a record.  Unlike
+    # ``yields_records`` this one has a real False state: it is an optional
+    # fast path, and a backend that does not implement it is in no way broken.
+    #
+    # It exists because the capability is NOT answerable from the class alone.
+    # ``VCFGenomicPositionTable`` subclasses ``TabixGenomicPositionTable`` and
+    # so *inherits* its implementation, but cannot honour the contract: a VCF
+    # record's PAYLOAD is ``(variant, allele index)`` rather than a raw row,
+    # and a VCF score addresses its column by INFO *name*, not by the integer
+    # payload index the arrays contract passes.  So the VCF backend sets this
+    # back to False explicitly -- the one declaration that replaces the
+    # ``isinstance(Tabix) and not isinstance(VCF)`` every caller used to have
+    # to know to write.
+    #
+    # A backend sets this True *and* implements the method; the two are held
+    # together by test_backend_record_contract.py, which fails a backend whose
+    # claim and behaviour disagree in either direction.
+    supports_value_arrays: ClassVar[bool] = False
 
     CHROM = "chrom"
     POS_BEGIN = "pos_begin"
@@ -299,6 +320,38 @@ class GenomicPositionTable(abc.ABC):
 
         The interval is closed on both sides and 1-based.
         """
+
+    def get_region_value_arrays(
+        self,
+        chrom: str,  # noqa: ARG002
+        start: int | None,  # noqa: ARG002
+        end: int | None,  # noqa: ARG002
+        value_columns: Iterable[int],  # noqa: ARG002
+        batch_size: int,  # noqa: ARG002
+    ) -> Generator[
+            tuple[np.ndarray, np.ndarray, dict[int, np.ndarray]], None, None]:
+        """Yield a region's rows as column arrays, without building records.
+
+        The region bounds are named ``start``/``end`` rather than the
+        ``pos_begin``/``pos_end`` of :meth:`get_records_in_region`, because an
+        implementation of this method builds ``pos_begin``/``pos_end`` *arrays*
+        in its body -- the scalar bounds need names that do not shadow them.
+
+        An OPTIONAL fast path: a backend that serves it sets
+        :attr:`supports_value_arrays` and overrides this; the base refuses.
+        Ask before calling -- do not probe by catching the exception.
+
+        Each batch is ``(pos_begin, pos_end, {column index: raw cells})``: the
+        parsed one-based position arrays, plus the raw cells of each requested
+        payload column.  Cells are NOT parsed and rows are NOT clipped to the
+        region -- both stay with the caller, exactly as on the record path.
+        ``batch_size`` is a hint a backend may ignore when its read granularity
+        is fixed by its own windowing.
+        """
+        raise TypeError(
+            f"{type(self).__name__} does not serve get_region_value_arrays "
+            f"(resource {self.genomic_resource.resource_id}); it leaves "
+            f"supports_value_arrays False -- check that before calling.")
 
     def get_chromosomes(self) -> list[str]:
         """Return list of contigs in the genomic position table."""

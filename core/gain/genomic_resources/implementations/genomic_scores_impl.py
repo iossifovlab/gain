@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, ClassVar, cast
+from collections.abc import Callable
+from typing import Any, ClassVar, TypeVar, cast
 
 import numpy as np
 
@@ -29,6 +30,7 @@ from gain.genomic_resources.histogram import (
     HistogramError,
     NullHistogram,
     NullHistogramConfig,
+    NumberHistogram,
     NumberHistogramConfig,
     build_default_histogram_conf,
     build_empty_histogram,
@@ -56,6 +58,11 @@ from gain.utils.regions import (
 )
 
 logger = logging.getLogger(__name__)
+
+# The per-batch accumulator target of a bulk region scan -- a Histogram for the
+# histogram pass, a MinMaxValue for the min/max pass.  A TypeVar keeps
+# ``_bulk_region_scan`` generic without losing either caller's dict type.
+_AccT = TypeVar("_AccT")
 
 
 class GenomicScoreImplementation(ScoreImplementationBase):
@@ -150,7 +157,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                     task = TaskGraph.make_task(
                         f"{self.resource.get_full_id()}_calculate_min_max"
                         f"_{chrom}_{start}_{end}",
-                        GenomicScoreImplementation._do_min_max,
+                        GenomicScoreImplementation._do_min_max_task,
                         args=[
                             self.resource,
                             all_min_max_scores,
@@ -180,7 +187,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 task = TaskGraph.make_task(
                     f"{self.resource.get_full_id()}_calculate_histogram_"
                     f"{chrom}_{start}_{end}",
-                    GenomicScoreImplementation._do_histogram,
+                    GenomicScoreImplementation._do_histogram_task,
                     args=[
                         self.resource,
                         merge_min_max_task,
@@ -458,6 +465,301 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                             NullHistogramConfig(str(err)),
                         )
         return result
+
+    _SCAN_BATCH_SIZE: ClassVar[int] = 100_000
+
+    @staticmethod
+    def _do_histogram_bulk(
+        resource: GenomicResource,
+        all_hist_confs: dict[str, HistogramConfig],
+        chrom: str,
+        start: int,
+        end: int,
+    ) -> dict[str, Histogram]:
+        """Vectorized equivalent of :meth:`_do_histogram`.
+
+        Reads a region as batches of column arrays -- tabix pulls raw pysam
+        rows directly and bigWig converts each fetched interval chunk in one
+        shot, neither building a ``Record`` per row -- and accumulates each
+        score's histogram with :meth:`NumberHistogram.add_batch` rather than a
+        per-record ``add_value``.  The clip/weight, overlap guard and value
+        coercion are identical to the per-record path (pinned by the
+        bulk-vs-per-record tests); the dispatch restricts this to float scores
+        over tabix/bigWig tables -- everything else keeps :meth:`_do_histogram`.
+        """
+        result: dict[str, Histogram] = {}
+        for score_id, hist_conf in all_hist_confs.items():
+            if isinstance(hist_conf, NullHistogramConfig):
+                continue
+            result[score_id] = build_empty_histogram(hist_conf)
+        return GenomicScoreImplementation._bulk_region_scan(
+            resource, result, chrom, start, end,
+            GenomicScoreImplementation._accumulate_arrays)
+
+    @staticmethod
+    def _bulk_region_scan(
+        resource: GenomicResource,
+        result: dict[str, _AccT],
+        chrom: str,
+        start: int,
+        end: int,
+        accumulate: Callable[
+            [tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]],
+             dict[str, _AccT],
+             tuple[str | None, int | None, int | None], int | None],
+            int | None],
+    ) -> dict[str, _AccT]:
+        """Drive a bulk region scan, folding each batch into ``result``.
+
+        The shared skeleton of :meth:`_do_histogram_bulk` and
+        :meth:`_do_min_max_bulk`: open the score and stream the region's
+        column-array batches through ``accumulate`` (which mutates ``result``
+        and carries the overlap guard's ``prev_right``).  The caller supplies
+        the pre-built ``result`` -- empty histograms or seeded ``MinMaxValue``
+        -- and the matching accumulator.  Batches are keyed by SCORE ID: the
+        score resolves each id to its payload column itself (gain#398), so
+        nothing here handles column indices.
+        """
+        impl = build_score_implementation_from_resource(resource)
+        with impl.score.open() as score:
+            prev_right: int | None = None
+            batches = score.fetch_region_value_arrays(
+                chrom, start, end, list(result),
+                batch_size=GenomicScoreImplementation._SCAN_BATCH_SIZE)
+            for arrays in batches:
+                prev_right = accumulate(
+                    arrays, result, (chrom, start, end), prev_right)
+        return result
+
+    @staticmethod
+    def _accumulate_arrays(
+        arrays: tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]],
+        result: dict[str, Histogram],
+        region: tuple[str | None, int | None, int | None],
+        prev_right: int | None,
+    ) -> int | None:
+        """Fold one batch of column arrays into the per-score histograms.
+
+        ``arrays`` is one ``(pos_begin, pos_end, {score_id: cells})`` batch as
+        produced by :meth:`_region_value_arrays`.  Clips each record to
+        ``[start, end]`` exactly as ``_fetch_region_lines`` does (drop records
+        ending before ``start``;
+        ``weight = min(end, pos_end) - max(start, pos_begin) + 1``), enforces
+        the same overlapping-position guard across the batch boundary, and
+        adds each float score's values vectorized.  Returns the last clipped
+        right edge so the next batch can continue the overlap check.
+        """
+        pos_begin, pos_end, value_cells = arrays
+        keep, weights, prev_right = \
+            GenomicScoreImplementation._clip_keep_guard(
+                pos_begin, pos_end, region, prev_right)
+
+        for score_id, hist in result.items():
+            values = value_cells[score_id]
+            assert isinstance(hist, NumberHistogram)
+            hist.add_batch(values[keep], weights)
+
+        return prev_right
+
+    @staticmethod
+    def _clip_keep_guard(
+        pos_begin: np.ndarray,
+        pos_end: np.ndarray,
+        region: tuple[str | None, int | None, int | None],
+        prev_right: int | None,
+    ) -> tuple[np.ndarray, np.ndarray, int | None]:
+        """Clip a batch to the region and enforce the overlap guard.
+
+        Returns ``(keep, weights, prev_right)``: the mask of records surviving
+        the ``pos_end >= start`` skip (as ``_fetch_region_lines`` drops records
+        ending before the query), their span weights
+        ``min(end, pos_end) - max(start, pos_begin) + 1``, and the carry for the
+        next batch's overlap check.  Raises ``ValueError`` on an overlapping
+        position exactly as ``fetch_region_values`` does, across the batch
+        boundary via ``prev_right``.
+        """
+        chrom, start, end = region
+        count = pos_begin.shape[0]
+        left = pos_begin if start is None else np.maximum(pos_begin, start)
+        right = pos_end if end is None else np.minimum(pos_end, end)
+        keep = np.ones(count, dtype=bool) if start is None \
+            else (pos_end >= start)
+
+        kleft = left[keep]
+        kright = right[keep]
+        if kleft.size:
+            overlaps_within = kleft.size > 1 and bool(
+                np.any(kleft[1:] <= kright[:-1]))
+            overlaps_carry = prev_right is not None \
+                and int(kleft[0]) <= prev_right
+            if overlaps_within or overlaps_carry:
+                raise ValueError(
+                    f"multiple values for positions on {chrom}")
+            prev_right = int(kright[-1])
+        weights = (kright - kleft + 1).astype(np.int64)
+        return keep, weights, prev_right
+
+    @staticmethod
+    def _can_bulk_histogram(
+        resource: GenomicResource,
+        all_hist_confs: dict[str, HistogramConfig],
+    ) -> bool:
+        """Whether the vectorized scan may serve this histogram build.
+
+        Restricted to the common fast case whose bit-exactness the bulk path
+        guarantees: a **position score** whose float columns feed a number
+        histogram, over a tabix or bigWig table.  The bulk path imposes
+        position-score semantics -- a span weight ``pos_end - pos_begin + 1``
+        and the one-value-per-position overlap guard -- so it must NOT serve
+        the score types that read differently: an ``allele_score`` or
+        ``np_score`` carries several weight-1 records (distinct ref/alt) at a
+        single position, which the overlap guard would reject; a
+        ``cnv_collection`` weights every record 1.  A VCF-backed table (its
+        record payload is not a raw row), an int/str/bool score
+        (``int()``/``str()`` parsing is not the float parse the bulk path
+        does), or a
+        categorical/null histogram likewise keep the per-record
+        :meth:`_do_histogram`.
+        """
+        number_score_ids = []
+        for score_id, hist_conf in all_hist_confs.items():
+            if isinstance(hist_conf, NullHistogramConfig):
+                continue
+            if not isinstance(hist_conf, NumberHistogramConfig):
+                return False
+            number_score_ids.append(score_id)
+        return GenomicScoreImplementation._bulk_scan_eligible(
+            resource, number_score_ids)
+
+    @staticmethod
+    def _bulk_scan_eligible(
+        resource: GenomicResource,
+        score_ids: list[str],
+    ) -> bool:
+        """Whether a vectorized region scan may serve these float scores.
+
+        The shared gate for the histogram and min/max bulk paths, and the place
+        the conditions that are THIS caller's live -- as opposed to the one
+        condition that is the backend's, which the score now answers itself:
+
+        * a **position_score**: its span-weight and one-value-per-position
+          overlap guard are what the bulk accumulators assume -- not the
+          per-allele read of ``allele_score``/``np_score`` nor the weight-1 of
+          ``cnv_collection``;
+        * every score a ``float``: ``int()`` / ``str()`` parsing is not the
+          float parse the bulk path does;
+        * and the backend serves the bulk read at all -- asked of the score,
+          not tested on the table's class.
+
+        Answered WITHOUT opening the score: the table and the score definitions
+        are both built in ``GenomicScore.__init__``, so nothing here needs a
+        file handle.
+        """
+        if resource.get_type() != "position_score":
+            return False
+        score = build_score_implementation_from_resource(resource).score
+        return score.supports_region_value_arrays(score_ids)
+
+    @staticmethod
+    def _do_min_max_task(
+        resource: GenomicResource,
+        score_ids: list[str],
+        chrom: str | None,
+        start: int | None,
+        end: int | None,
+    ) -> dict[str, MinMaxValue]:
+        """Compute a region's min/max, bulk-vectorized where eligible.
+
+        Mirrors :meth:`_do_histogram_task`: the bulk path needs a bounded
+        region -- a concrete contig for its overlap guard, and concrete bounds
+        because that is what the score's bulk read takes -- so any unbounded
+        scan keeps the per-record :meth:`_do_min_max`.
+        """
+        if chrom is not None and start is not None and end is not None \
+                and GenomicScoreImplementation._bulk_scan_eligible(
+                    resource, score_ids):
+            return GenomicScoreImplementation._do_min_max_bulk(
+                resource, score_ids, chrom, start, end)
+        return GenomicScoreImplementation._do_min_max(
+            resource, score_ids, chrom, start, end)
+
+    @staticmethod
+    def _do_histogram_task(
+        resource: GenomicResource,
+        all_hist_confs: dict[str, HistogramConfig],
+        chrom: str | None,
+        start: int | None,
+        end: int | None,
+    ) -> dict[str, Histogram]:
+        """Compute a region's histograms, bulk-vectorized where eligible.
+
+        The bulk path needs a bounded region: a concrete contig, because its
+        overlap guard runs along a single chromosome's records, and concrete
+        bounds, because that is what the score's bulk read takes.  Any
+        unbounded scan keeps the per-record path.
+        """
+        if chrom is not None and start is not None and end is not None \
+                and GenomicScoreImplementation._can_bulk_histogram(
+                    resource, all_hist_confs):
+            return GenomicScoreImplementation._do_histogram_bulk(
+                resource, all_hist_confs, chrom, start, end)
+        return GenomicScoreImplementation._do_histogram(
+            resource, all_hist_confs, chrom, start, end)
+
+    @staticmethod
+    def _do_min_max_bulk(
+        resource: GenomicResource,
+        score_ids: list[str],
+        chrom: str,
+        start: int,
+        end: int,
+    ) -> dict[str, MinMaxValue]:
+        """Vectorized equivalent of :meth:`_do_min_max`.
+
+        Reads the region as column-array batches of already-parsed values
+        (the same producer the histogram bulk path uses) and reduces each score
+        with ``min()``/``max()`` over the batch's non-nan subset, rather than a
+        per-record ``MinMaxValue.add_value``.  The parse, the region clip/skip
+        and the overlap guard are identical to the per-record path; ``count``
+        stays 0, as for a position score.
+        """
+        result: dict[str, MinMaxValue] = {
+            score_id: MinMaxValue(score_id) for score_id in score_ids}
+        return GenomicScoreImplementation._bulk_region_scan(
+            resource, result, chrom, start, end,
+            GenomicScoreImplementation._accumulate_min_max)
+
+    @staticmethod
+    def _accumulate_min_max(
+        arrays: tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]],
+        result: dict[str, MinMaxValue],
+        region: tuple[str | None, int | None, int | None],
+        prev_right: int | None,
+    ) -> int | None:
+        """Fold one batch of column arrays into the per-score min/max.
+
+        Shares the clip/skip and overlapping-position guard with the histogram
+        path; the reduction takes ``min()``/``max()`` over the kept values
+        with the nans dropped first -- an empty remainder contributes nothing --
+        folded into the running ``MinMaxValue`` exactly as ``add_value`` seeds
+        and combines them.
+        """
+        pos_begin, pos_end, value_cells = arrays
+        keep, _weights, prev_right = \
+            GenomicScoreImplementation._clip_keep_guard(
+                pos_begin, pos_end, region, prev_right)
+
+        for score_id, min_max in result.items():
+            values = value_cells[score_id][keep]
+            finite = values[~np.isnan(values)]
+            if finite.size:
+                low = float(finite.min())
+                high = float(finite.max())
+                min_max.min = low if np.isnan(min_max.min) \
+                    else min(min_max.min, low)
+                min_max.max = high if np.isnan(min_max.max) \
+                    else max(min_max.max, high)
+        return prev_right
 
     @staticmethod
     def _merge_histograms(

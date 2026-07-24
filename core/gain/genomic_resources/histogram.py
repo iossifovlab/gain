@@ -359,6 +359,82 @@ class NumberHistogram(Statistic):
 
         self.bars[index] += count
 
+    def add_batch(
+        self, values: np.ndarray, weights: np.ndarray,
+    ) -> None:
+        """Add a batch of ``(value, weight)`` pairs, vectorized.
+
+        Bit-for-bit equivalent to calling :meth:`add_value` over each pair in
+        order: the same bin selection for both x-scales (the truncation of
+        ``choose_bin_lin`` / ``choose_bin_log`` and the clamp to
+        ``number_of_bins - 1``), the same below/above ``out_of_range_bins``
+        split, the same ``min_value``/``max_value`` tracking, and the same
+        nan-skip.  This is the hot path for the statistics scan, where a
+        per-value Python call dominates the cost.
+
+        Both x-scales are vectorized.  The log one is bit-exact for the same
+        reason the linear one is and one more: ``np.log10`` returns the same
+        float for a scalar as for that scalar inside an array, at every array
+        width numpy dispatches differently on -- checked over many decades by
+        test_add_batch_matches_add_value_loop_log_fuzz, which varies batch size
+        precisely to cover numpy's scalar-loop and SIMD kernels.
+        """
+        values = np.asarray(values, dtype=np.float64)
+        weights = np.asarray(weights, dtype=np.int64)
+
+        finite = ~np.isnan(values)
+        if not finite.any():
+            return
+        values = values[finite]
+        weights = weights[finite]
+
+        # ``add_value`` seeds min/max at nan and folds each value in with
+        # ``min(value, self.min_value)``; over a set that is just the extremum.
+        batch_min = float(values.min())
+        batch_max = float(values.max())
+        self.min_value = batch_min if np.isnan(self.min_value) \
+            else min(self.min_value, batch_min)
+        self.max_value = batch_max if np.isnan(self.max_value) \
+            else max(self.max_value, batch_max)
+
+        below = values < self.view_min()
+        above = values > self.view_max()
+        self.out_of_range_bins[0] += int(weights[below].sum())
+        self.out_of_range_bins[1] += int(weights[above].sum())
+
+        in_range = ~(below | above)
+        idx = self._bin_indices(values[in_range])
+        # Clamp to the last bin, exactly as choose_bin_lin/choose_bin_log do.
+        np.minimum(idx, self.config.number_of_bins - 1, out=idx)
+        np.add.at(self.bars, idx, weights[in_range])
+
+    def _bin_indices(self, values: np.ndarray) -> np.ndarray:
+        """Vectorized, unclamped bin index for values already known in range.
+
+        The array counterpart of :meth:`choose_bin_lin` /
+        :meth:`choose_bin_log`, minus the below/above tests its caller has
+        already applied.  Both scalar forms truncate with ``int(...)``, which
+        rounds toward zero; the offsets here are non-negative, so that is
+        floor, which ``astype(np.int64)`` reproduces.
+        """
+        if not self.config.x_log_scale:
+            linear: np.ndarray = (
+                (values - self.view_min()) * self._rstep).astype(np.int64)
+            return linear
+
+        assert self.config.x_min_log is not None
+        x_min_log = self.config.x_min_log
+        # choose_bin_log puts everything under x_min_log in bin 0 -- the bin
+        # spanning view_min..x_min_log, which is why the log formula's index
+        # starts at 1 -- and log-bins the rest.  Zeros give the first case for
+        # free, so only the second is computed.
+        indices = np.zeros(values.shape, dtype=np.int64)
+        logged = values >= x_min_log
+        indices[logged] = ((
+            np.log10(values[logged]) - np.log10(x_min_log))
+            * self._rstep).astype(np.int64) + 1
+        return indices
+
     def choose_bin_lin(self, value: float) -> int:
         """Compute bin index for a passed value for linear x-scale."""
         if value < self.view_min():

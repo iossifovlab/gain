@@ -15,6 +15,8 @@ from typing import (
     cast,
 )
 
+import numpy as np
+
 from gain import logging
 from gain.genomic_resources.genomic_position_table import (
     VCFGenomicPositionTable,
@@ -60,6 +62,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 ScoreValue = str | int | float | bool | None
+
+# Default rows-per-batch hint for GenomicScore.fetch_region_value_arrays.  Big
+# enough that the per-batch numpy overhead disappears against the per-row work
+# it replaces, small enough that one batch's arrays stay comfortably in cache.
+DEFAULT_VALUE_ARRAYS_BATCH_SIZE = 100_000
 
 VCF_TYPE_CONVERSION_MAP = {
     "Integer": "int",
@@ -185,6 +192,134 @@ class GenomicScoreDef(ScoreDef):
                 default_allele_aggregators[self.value_type]
         self.na_values = _normalize_na_values(
             self.na_values, self.value_type)
+
+    def parse_value(self, value: str | int | float | None) -> ScoreValue:
+        """Turn one raw cell into this score's value.
+
+        ``None`` for a null raw value (an absent VCF INFO key), for a
+        configured NA sentinel, and for a cell that fails to parse -- a bad
+        cell is logged and skipped rather than aborting a whole scan.
+
+        The scalar half of this definition's parsing contract; the column half
+        is :meth:`parse_array`.  Both live here, on the object that owns the
+        two inputs they need (``value_parser`` and ``na_values``), so neither
+        can be changed against a config the other did not see.
+        """
+        if value is None or value in self.na_values:
+            return None
+        if self.value_parser is None:
+            return value
+        # pylint: disable=broad-except
+        try:  # Temporary workaround for GRR generation
+            parsed: ScoreValue = self.value_parser(value)
+        except Exception:
+            logger.exception(
+                "unable to parse value %s for score %s",
+                value, self.score_id)
+            return None
+        return parsed
+
+    def _na_mask(self, cells: np.ndarray) -> np.ndarray:
+        """Which cells are configured NA sentinels, vectorized.
+
+        The array form of ``value in self.na_values``, and it has to be built
+        by hand because ``np.isin(cells, list(self.na_values))`` is NOT that
+        test.  ``na_values`` deliberately holds BOTH representations of each
+        sentinel (``na_values: "-1"`` normalizes to ``{"-1", -1.0}``, so that a
+        sentinel matches whichever form the backend presents), and handing that
+        mixed list to numpy makes it coerce the lot to one dtype -- which broke
+        both branches in opposite directions:
+
+        * text cells: the float ``-1.0`` was stringified to ``"-1.0"``, so that
+          spelling became an NA token the scalar test never treats as one, and
+          real values were dropped;
+        * float cells: every sentinel became a string, so ``isin`` compared
+          float64 against ``<U32`` and was ALWAYS False -- the NA config simply
+          did not apply, and a declared non-value was binned as real data.
+
+        So each sentinel is matched against the representation the cells
+        actually carry, which is what ``_normalize_na_values`` stores both
+        forms for in the first place.  (``pd.Series.isin``, which this replaced
+        in gain#385, is hash-based and had neither problem; the coercion came
+        in with the switch to numpy.)
+        """
+        if cells.dtype.kind == "f":
+            numeric = np.array(
+                [value for value in self.na_values
+                 if not isinstance(value, str)],
+                dtype=np.float64)
+            return np.isin(cells, numeric)
+        text = np.array(
+            [value for value in self.na_values if isinstance(value, str)],
+            dtype=object)
+        return np.isin(cells, text)
+
+    def parse_array(self, cells: np.ndarray) -> np.ndarray:
+        """Turn a whole column of raw cells into values, vectorized.
+
+        The column half of this definition's parsing contract, and the reason
+        the bulk statistics scan is worth having.  Equivalent to
+        ``[parse_value(c) for c in cells]`` with ``None`` rendered as ``nan``
+        -- a float64 array has no ``None``, and for every consumer a non-value
+        and a nan are the same skip.  That equivalence is not an aspiration:
+        test_parse_array_agrees_with_parse_value_fuzz asserts it token by
+        token, over several ``na_values`` configs and several array widths.
+
+        **Parsed with numpy, deliberately NOT with ``pd.to_numeric``**, which
+        is not correctly rounded -- it returns 9.999999999999999e-26 for
+        ``1e-25`` and truncates ``0.00000071009127180852`` to ten significant
+        digits.  ``ndarray.astype`` agrees with ``float()`` on every token
+        tested, including the PEP-515 underscores and Unicode digits pandas
+        rejects outright.
+
+        Float scores only, which is what ``_bulk_scan_eligible`` gates on: an
+        ``int`` score would need ``int()`` semantics (``int("3.5")`` raises
+        where ``float("3.5")`` does not).  Opening that gate is gain#405's
+        follow-up, and this assert is what makes the limit visible until then.
+        """
+        assert self.value_type == "float", (
+            f"parse_array is float-only; score {self.score_id} is "
+            f"{self.value_type}")
+
+        if cells.dtype.kind == "f":
+            # Already numeric (a bigWig payload): nothing to parse, and the
+            # per-record path does not parse it either.
+            values = cells.astype(np.float64, copy=True)
+            values[self._na_mask(cells)] = np.nan
+            return values
+
+        raw = np.asarray(cells, dtype=object)
+        na_mask = self._na_mask(raw)
+        work = raw.copy()
+        # Substitute a parseable stand-in for each NA cell.  This one line
+        # does both jobs: it is what makes an NA cell come out as nan, AND it
+        # keeps a single "." sentinel from making the bulk astype raise and
+        # sending the whole batch down the per-cell path below.  There used to
+        # be a second ``values[na_mask] = np.nan`` after the parse as well; it
+        # could never change an outcome, and two rounds of mutation testing
+        # caught the comment here describing the pair's division of labour
+        # wrongly, so it is gone rather than explained a third time.
+        work[na_mask] = "nan"
+        try:
+            values = work.astype(np.float64)
+        except (TypeError, ValueError):
+            values = np.empty(work.shape, dtype=np.float64)
+            failed = 0
+            for idx, cell in enumerate(work):
+                try:
+                    values[idx] = float(cell)
+                except (TypeError, ValueError):
+                    values[idx] = np.nan
+                    failed += 1
+            if failed:
+                # Once per batch, with a count.  The per-record path logs a
+                # traceback per bad cell, which on a corrupt column means one
+                # per row; saying it once keeps the signal that the bulk path
+                # used to drop entirely without reproducing that flood.
+                logger.warning(
+                    "unable to parse %s of %s values for score %s",
+                    failed, values.size, self.score_id)
+        return values
 
 
 class ScoreLineBase(abc.ABC):
@@ -343,27 +478,15 @@ class ScoreLineBase(abc.ABC):
     def _extract_value(self, score_def: GenomicScoreDef) -> ScoreValue:
         """Get and parse one score from the line using a resolved def.
 
-        A null raw value (e.g. an absent VCF INFO key) or a configured NA
-        value yields ``None``; a value that fails to parse is logged and
-        yields ``None`` rather than aborting the scan.
+        The line's job is the RAW GET -- which slot of which payload holds this
+        score, the one thing that differs per backend.  Turning that cell into
+        a value is the definition's (:meth:`GenomicScoreDef.parse_value`), so
+        that the per-record read and the bulk column read cannot drift apart.
         """
         key = score_def.score_index
         assert key is not None
 
-        value: str | int | float | None = self._get_raw(key)
-        if value is None or value in score_def.na_values:
-            return None
-        if score_def.value_parser is None:
-            return value
-        # pylint: disable=broad-except
-        try:  # Temporary workaround for GRR generation
-            parsed: ScoreValue = score_def.value_parser(value)
-        except Exception:
-            logger.exception(
-                "unable to parse value %s for score %s",
-                value, score_def.score_id)
-            return None
-        return parsed
+        return score_def.parse_value(self._get_raw(key))
 
     def get_values(
         self, score_defs: list[GenomicScoreDef],
@@ -1379,6 +1502,147 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 "Error fetching lines for region %s:%s-%s in resource %s",
                 chrom, pos_begin, pos_end, self.resource_id)
             raise
+
+    def supports_region_value_arrays(self, scores: list[str]) -> bool:
+        """Whether :meth:`fetch_region_value_arrays` will serve these scores.
+
+        Answers the two things a caller can be wrong about: the backend
+        serves the bulk column-array read, AND every named score is one this
+        facade can parse.  A predicate that answered only the first would say
+        True for a call that then refuses -- not a capability query but a trap.
+
+        It is not a promise the call cannot fail for some OTHER reason.  A
+        score whose configured column index does not exist in its backend's
+        payload still raises (deliberately -- see ``BigWigTable``), and so
+        does a closed score or an unknown contig.  This answers "is this score
+        the kind this method serves", not "is every argument valid".
+
+        The value-type half is not a consumer's condition leaking in: the
+        facade parses, so it is float-only (an ``int`` score needs ``int()``
+        semantics -- ``int("3.5")`` raises where ``float("3.5")`` does not).
+        What a *consumer* additionally needs stays with the consumer: the
+        statistics scan also requires a position score, because its
+        accumulators assume a span weight and one value per position, and it
+        keeps asking that itself.
+
+        Answerable on an UNOPENED score: the table and the score definitions
+        are both built in ``__init__``, so nothing here touches the file.
+        """
+        if not self.table.supports_value_arrays:
+            return False
+        for score_id in scores:
+            score_def = self.score_definitions.get(score_id)
+            if score_def is None or score_def.value_type != "float":
+                return False
+        return True
+
+    def fetch_region_value_arrays(
+        self,
+        chrom: str,
+        pos_begin: int | None,
+        pos_end: int | None,
+        scores: list[str],
+        *,
+        batch_size: int = DEFAULT_VALUE_ARRAYS_BATCH_SIZE,
+    ) -> Generator[
+            tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]], None, None]:
+        """Fetch a region as column arrays, without building a record per row.
+
+        The bulk counterpart of :meth:`fetch_lines`, for a caller that scans a
+        whole region and wants columns rather than rows -- statistics, above
+        all.  Each batch is ``(pos_begin, pos_end, {score_id: values})``: the
+        one-based position arrays, plus one ``float64`` array of **parsed**
+        values per requested score.
+
+        **Values are parsed, by the same contract the per-record read uses.**
+        Each column goes through :meth:`GenomicScoreDef.parse_array`, whose
+        agreement with the per-value :meth:`GenomicScoreDef.parse_value` is
+        pinned by test_parse_array_agrees_with_parse_value_fuzz.  So NA
+        sentinels and unparseable cells arrive as ``nan`` -- the array
+        contract's "no value", the per-record contract's ``None`` -- and every
+        backend yields ``float64``, whatever it stores underneath.
+
+        That parse is why this is float-only, and why
+        :meth:`supports_region_value_arrays` asks about the scores and not
+        only about the backend.
+
+        **It does NOT clip.**  A record overlapping the region's start is
+        yielded whole, exactly as :meth:`fetch_lines` yields it; trimming to
+        ``[pos_begin, pos_end]`` is the caller's, because what a partial
+        overlap means depends on what the caller is computing.
+
+        ``batch_size`` is a HINT.  A backend whose read granularity is fixed by
+        its own windowing -- ``BigWigTable``, whose batches are sized by its
+        adaptive fetch window -- ignores it.
+
+        Each score id gets an array of its own -- the parse builds one per
+        id, so two ids sharing a payload column no longer alias, as they did
+        while this method returned the backend's raw cells.
+
+        The guards below run when this method is CALLED, not on the first
+        ``next()`` -- which is why the streaming half lives in
+        :meth:`_value_array_batches` rather than a ``yield`` here.
+        """
+        if not self.supports_region_value_arrays(scores):
+            # Refuse here rather than let the call reach the table.  A VCF
+            # table INHERITS the tabix implementation, so an unguarded call
+            # does not fail cleanly -- it trips that method's
+            # ``assert isinstance(self.pysam_file, pysam.TabixFile)`` and
+            # yields a message-less AssertionError (nothing at all under
+            # ``python -O``).  Probing this capability by catching is therefore
+            # not viable; ask supports_region_value_arrays() first.
+            reason = (
+                f"its {type(self.table).__name__} backend leaves "
+                f"supports_value_arrays False"
+                if not self.table.supports_value_arrays
+                else "not every requested score is a float score")
+            raise TypeError(
+                f"genomic score <{self.resource_id}> does not serve "
+                f"fetch_region_value_arrays for {sorted(scores)}: {reason}. "
+                f"Ask supports_region_value_arrays(scores) before calling.")
+        if not self.is_open():
+            raise ValueError(f"genomic score <{self.resource_id}> is not open")
+        if chrom not in self.get_all_chromosomes():
+            raise ValueError(
+                f"{chrom} is not among the available chromosomes.")
+
+        # score id -> payload column index, resolved once for the whole scan.
+        # The cast is sound because the backends that serve this call address
+        # their columns by integer index; a str key is a VCF INFO name, and the
+        # VCF backend does not serve it (see supports_region_value_arrays).
+        columns = {
+            score_id: cast(int, self.score_definitions[score_id].score_index)
+            for score_id in scores
+        }
+        return self._value_array_batches(
+            columns, (chrom, pos_begin, pos_end), batch_size)
+
+    def _value_array_batches(
+        self,
+        columns: dict[str, int],
+        region: tuple[str, int | None, int | None],
+        batch_size: int,
+    ) -> Generator[
+            tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]], None, None]:
+        """Stream the batches for an already-validated request.
+
+        Split out so :meth:`fetch_region_value_arrays` is a plain function and
+        its guards fire when it is CALLED.  Were it a generator itself, every
+        one of those checks would be deferred to the first ``next()``, so a
+        caller that built the generator and passed it elsewhere would be handed
+        the refusal at some arbitrary later point, far from the mistake.
+        """
+        chrom, pos_begin, pos_end = region
+        defs = {
+            score_id: self.score_definitions[score_id]
+            for score_id in columns
+        }
+        for begin, end, cells in self.table.get_region_value_arrays(
+                chrom, pos_begin, pos_end, set(columns.values()), batch_size):
+            yield begin, end, {
+                score_id: defs[score_id].parse_array(cells[column])
+                for score_id, column in columns.items()
+            }
 
     def get_all_chromosomes(self) -> list[str]:
         if not self.is_open():
