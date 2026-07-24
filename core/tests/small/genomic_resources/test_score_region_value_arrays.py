@@ -63,9 +63,12 @@ def test_tabix_score_fetches_value_arrays_keyed_by_score_id(
     assert np.array_equal(pos_end, [3, 4, 10, 11, 20])
     # Keyed by score id -- the caller never sees the payload column index.
     assert set(cols) == {"s1"}
-    # Cells are handed back RAW: no na_values handling, no coercion.  The
-    # configured NA sentinel "." arrives as the string it is in the file.
-    assert list(cols["s1"]) == ["0.1", "0.5", "0.95", ".", "1.0"]
+    # PARSED, not raw: the facade applies the score's own parse, so every
+    # backend yields float64 and the configured NA sentinel "." arrives as
+    # nan rather than as the string it is in the file.
+    assert cols["s1"].dtype == np.float64
+    assert np.array_equal(
+        cols["s1"], np.array([0.1, 0.5, 0.95, np.nan, 1.0]), equal_nan=True)
 
 
 def test_capability_is_answerable_without_opening_the_score(
@@ -77,11 +80,11 @@ def test_capability_is_answerable_without_opening_the_score(
     tabix = PositionScore(_multiscore_tabix(tmp_path / "tabix"))
     vcf = AlleleScore(_vcf_score(tmp_path / "vcf"))
 
-    assert tabix.supports_region_value_arrays() is True
+    assert tabix.supports_region_value_arrays(["s1"]) is True
     # A VCF table subclasses the tabix one and so INHERITS the method, but its
     # payload is (variant, allele_index) and its columns are INFO names, not
     # the integer payload indices the arrays contract uses.
-    assert vcf.supports_region_value_arrays() is False
+    assert vcf.supports_region_value_arrays(["scoreA"]) is False
 
 
 def test_vcf_score_refuses_to_fetch_value_arrays(
@@ -176,3 +179,31 @@ def test_eligible_scan_uses_the_array_producer_not_the_record_path(
     assert calls == 1, (
         f"bulk scan used the array producer {calls} times; expected 1 "
         f"(0 means it silently fell back to the per-record path)")
+
+
+def test_capability_query_accounts_for_the_scores_value_type(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The query answers "will this call succeed", not just "which backend".
+
+    Since the facade parses, it is float-only -- an int score would need
+    ``int()`` semantics.  A predicate that answered about the backend alone
+    would say True for a call that then refuses, which is not a capability
+    query, it is a trap.
+    """
+    int_score = PositionScore(
+        a_position_score()
+        .with_score("s", "int")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  s
+            chr1   1          2        3
+            """)
+        .with_tabix()
+        .build_resource(tmp_path / "int"))
+    float_score = PositionScore(_multiscore_tabix(tmp_path / "float"))
+
+    # Same backend -- tabix, which does serve the bulk read -- so the value
+    # type is the only thing separating these two answers.
+    assert int_score.supports_region_value_arrays(["s"]) is False
+    assert float_score.supports_region_value_arrays(["s1", "s2"]) is True

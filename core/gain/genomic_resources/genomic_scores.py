@@ -1469,20 +1469,32 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 chrom, pos_begin, pos_end, self.resource_id)
             raise
 
-    def supports_region_value_arrays(self) -> bool:
-        """Whether this score's backend serves the bulk column-array read.
+    def supports_region_value_arrays(self, scores: list[str]) -> bool:
+        """Whether :meth:`fetch_region_value_arrays` will serve these scores.
 
-        Answers about the BACKEND and nothing else.  It deliberately does not
-        fold in what any particular consumer additionally needs -- the
-        statistics scan, for instance, also requires a position score and float
-        value types, because its accumulators assume a span weight and one
-        value per position.  Those are conditions of that consumer, not of this
-        method, and a caller that has its own must keep asking them itself.
+        Answers exactly "will that call succeed": the backend serves the bulk
+        column-array read, AND every named score is one this facade can parse.
+        A predicate that answered only the first would say True for a call that
+        then refuses -- not a capability query but a trap.
 
-        Answerable on an UNOPENED score: ``self.table`` is built in
-        ``__init__``, so nothing here touches the file.
+        The value-type half is not a consumer's condition leaking in: the
+        facade parses, so it is float-only (an ``int`` score needs ``int()``
+        semantics -- ``int("3.5")`` raises where ``float("3.5")`` does not).
+        What a *consumer* additionally needs stays with the consumer: the
+        statistics scan also requires a position score, because its
+        accumulators assume a span weight and one value per position, and it
+        keeps asking that itself.
+
+        Answerable on an UNOPENED score: the table and the score definitions
+        are both built in ``__init__``, so nothing here touches the file.
         """
-        return self.table.supports_value_arrays
+        if not self.table.supports_value_arrays:
+            return False
+        for score_id in scores:
+            score_def = self.score_definitions.get(score_id)
+            if score_def is None or score_def.value_type != "float":
+                return False
+        return True
 
     def fetch_region_value_arrays(
         self,
@@ -1498,35 +1510,40 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         The bulk counterpart of :meth:`fetch_lines`, for a caller that scans a
         whole region and wants columns rather than rows -- statistics, above
-        all.  Each batch is ``(pos_begin, pos_end, {score_id: raw_cells})``:
-        the parsed one-based position arrays, plus one array of **raw,
-        unparsed** cells per requested score.
+        all.  Each batch is ``(pos_begin, pos_end, {score_id: values})``: the
+        one-based position arrays, plus one ``float64`` array of **parsed**
+        values per requested score.
 
-        Two things it deliberately does not do, both of which stay with the
-        caller:
+        **Values are parsed, by the same contract the per-record read uses.**
+        Each column goes through :meth:`GenomicScoreDef.parse_array`, whose
+        agreement with the per-value :meth:`GenomicScoreDef.parse_value` is
+        pinned by test_parse_array_agrees_with_parse_value_fuzz.  So NA
+        sentinels and unparseable cells arrive as ``nan`` -- the array
+        contract's "no value", the per-record contract's ``None`` -- and every
+        backend yields ``float64``, whatever it stores underneath.
 
-        * **No parsing.**  ``na_values`` are not applied and nothing is coerced
-          to float, so this method makes no claim about a score's value type.
-          Note the raw cells are not dtype-uniform across backends -- a tabix
-          table yields ``dtype=object`` strings, a bigWig table ``float64``.
-        * **No clipping.**  A record overlapping the region's start is yielded
-          whole, exactly as :meth:`fetch_lines` yields it.
+        That parse is why this is float-only, and why
+        :meth:`supports_region_value_arrays` asks about the scores and not
+        only about the backend.
+
+        **It does NOT clip.**  A record overlapping the region's start is
+        yielded whole, exactly as :meth:`fetch_lines` yields it; trimming to
+        ``[pos_begin, pos_end]`` is the caller's, because what a partial
+        overlap means depends on what the caller is computing.
 
         ``batch_size`` is a HINT.  A backend whose read granularity is fixed by
         its own windowing -- ``BigWigTable``, whose batches are sized by its
         adaptive fetch window -- ignores it.
 
-        **Do not mutate the yielded arrays.**  They are views on what the
-        backend produced, and two score ids configured to the same column are
-        served the identical array object (as are ``pos_begin`` and a bigWig
-        score reading payload column 1), so an in-place edit would be seen by
-        the other.  Copy first if you need to modify.
+        **Do not mutate the yielded arrays.**  Two score ids configured to the
+        same column are served the identical array object, so an in-place edit
+        would be seen by the other.  Copy first if you need to modify.
 
         The guards below run when this method is CALLED, not on the first
         ``next()`` -- which is why the streaming half lives in
         :meth:`_value_array_batches` rather than a ``yield`` here.
         """
-        if not self.supports_region_value_arrays():
+        if not self.supports_region_value_arrays(scores):
             # Refuse here rather than let the call reach the table.  A VCF
             # table INHERITS the tabix implementation, so an unguarded call
             # does not fail cleanly -- it trips that method's
@@ -1534,12 +1551,15 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             # yields a message-less AssertionError (nothing at all under
             # ``python -O``).  Probing this capability by catching is therefore
             # not viable; ask supports_region_value_arrays() first.
+            reason = (
+                f"its {type(self.table).__name__} backend leaves "
+                f"supports_value_arrays False"
+                if not self.table.supports_value_arrays
+                else "not every requested score is a float score")
             raise TypeError(
                 f"genomic score <{self.resource_id}> does not serve "
-                f"fetch_region_value_arrays: its "
-                f"{type(self.table).__name__} backend leaves "
-                f"supports_value_arrays False. Ask "
-                f"supports_region_value_arrays() before calling.")
+                f"fetch_region_value_arrays for {sorted(scores)}: {reason}. "
+                f"Ask supports_region_value_arrays(scores) before calling.")
         if not self.is_open():
             raise ValueError(f"genomic score <{self.resource_id}> is not open")
         if chrom not in self.get_all_chromosomes():
@@ -1573,10 +1593,14 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         the refusal at some arbitrary later point, far from the mistake.
         """
         chrom, pos_begin, pos_end = region
+        defs = {
+            score_id: self.score_definitions[score_id]
+            for score_id in columns
+        }
         for begin, end, cells in self.table.get_region_value_arrays(
                 chrom, pos_begin, pos_end, set(columns.values()), batch_size):
             yield begin, end, {
-                score_id: cells[column]
+                score_id: defs[score_id].parse_array(cells[column])
                 for score_id, column in columns.items()
             }
 

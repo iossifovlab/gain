@@ -398,7 +398,10 @@ def test_a_backend_serves_value_arrays_exactly_when_it_claims_to(
     # The claim is read off the UNOPENED table: it is a ClassVar, and the
     # score-level query is answerable without opening the file.
     assert score.table.supports_value_arrays is serves_arrays
-    assert score.supports_region_value_arrays() is serves_arrays
+    # Every fixture score here is float, so the query's value-type half
+    # is satisfied and the backend is what decides.
+    assert score.supports_region_value_arrays(
+        list(score.score_definitions)) is serves_arrays
 
     with score.open() as opened:
         score_id = opened.get_all_scores()[0]
