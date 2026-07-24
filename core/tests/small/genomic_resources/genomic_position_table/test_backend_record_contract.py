@@ -45,6 +45,7 @@ from __future__ import annotations
 import pathlib
 from collections.abc import Callable
 
+import numpy as np
 import pytest
 from gain.genomic_resources.genomic_position_table.record import (
     PAYLOAD,
@@ -421,3 +422,16 @@ def test_a_backend_serves_value_arrays_exactly_when_it_claims_to(
         for begin, stop in zip(pos_begin, pos_end, strict=True)
     ]
     assert spans == [(line.pos_begin, line.pos_end) for line in lines]
+
+    # The VALUES too, not just the spans -- this test used to promise
+    # agreement with the record read and check only the coordinates, so a
+    # backend returning the right rows with the wrong numbers passed it.
+    values = [
+        value for _, _, cols in batches for value in cols[score_id]
+    ]
+    expected = [line.get_score(score_id) for line in lines]
+    assert np.array_equal(
+        np.array(values, dtype=np.float64),
+        np.array([np.nan if v is None else v for v in expected],
+                 dtype=np.float64),
+        equal_nan=True), (values, expected)

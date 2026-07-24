@@ -61,6 +61,11 @@ _TOKENS = [
     # na_values="-1" config below exercises nothing at all, since no
     # other token matches it (found by mutation testing).
     "-1",
+    # ...and its OTHER spelling. _normalize_na_values stores both forms
+    # of a sentinel ("-1" and -1.0), so a vectorized NA test that lets
+    # numpy coerce that mixed set to one dtype stringifies the float and
+    # starts matching "-1.0" too -- which parse_value never does.
+    "-1.0",
 ]
 
 
@@ -124,3 +129,24 @@ def test_parse_array_logs_one_summary_per_batch(
     assert "unable to parse 2 of 5 values" in caplog.records[0].getMessage()
     assert np.array_equal(
         values, np.array([0.5, np.nan, np.nan, np.nan, 0.7]), equal_nan=True)
+
+
+def test_parse_array_agrees_with_parse_value_on_float_cells(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The float-dtype branch honours na_values too.
+
+    A bigWig payload arrives as float64, not as text, so parse_array takes a
+    different branch -- one the object-dtype fuzz above cannot reach.  A
+    sentinel must still be a non-value there: matching it against the text
+    form of na_values only would make the branch a permanent no-op, and the
+    value the config declares "absent" would be binned as real data.
+    """
+    score_def = _float_def(tmp_path, na_values="-1")
+    cells = np.array([-1.0, 0.5, 2.0, np.nan])
+
+    got = score_def.parse_array(cells)
+    want = _as_floats([score_def.parse_value(float(c)) for c in cells])
+
+    assert np.array_equal(got, np.array(want), equal_nan=True), (got, want)
+    assert np.isnan(got[0]), "the configured NA sentinel must not survive"

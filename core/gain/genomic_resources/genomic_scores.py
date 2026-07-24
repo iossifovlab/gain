@@ -219,6 +219,41 @@ class GenomicScoreDef(ScoreDef):
             return None
         return parsed
 
+    def _na_mask(self, cells: np.ndarray) -> np.ndarray:
+        """Which cells are configured NA sentinels, vectorized.
+
+        The array form of ``value in self.na_values``, and it has to be built
+        by hand because ``np.isin(cells, list(self.na_values))`` is NOT that
+        test.  ``na_values`` deliberately holds BOTH representations of each
+        sentinel (``na_values: "-1"`` normalizes to ``{"-1", -1.0}``, so that a
+        sentinel matches whichever form the backend presents), and handing that
+        mixed list to numpy makes it coerce the lot to one dtype -- which broke
+        both branches in opposite directions:
+
+        * text cells: the float ``-1.0`` was stringified to ``"-1.0"``, so that
+          spelling became an NA token the scalar test never treats as one, and
+          real values were dropped;
+        * float cells: every sentinel became a string, so ``isin`` compared
+          float64 against ``<U32`` and was ALWAYS False -- the NA config simply
+          did not apply, and a declared non-value was binned as real data.
+
+        So each sentinel is matched against the representation the cells
+        actually carry, which is what ``_normalize_na_values`` stores both
+        forms for in the first place.  (``pd.Series.isin``, which this replaced
+        in gain#385, is hash-based and had neither problem; the coercion came
+        in with the switch to numpy.)
+        """
+        if cells.dtype.kind == "f":
+            numeric = np.array(
+                [value for value in self.na_values
+                 if not isinstance(value, str)],
+                dtype=np.float64)
+            return np.isin(cells, numeric)
+        text = np.array(
+            [value for value in self.na_values if isinstance(value, str)],
+            dtype=object)
+        return np.isin(cells, text)
+
     def parse_array(self, cells: np.ndarray) -> np.ndarray:
         """Turn a whole column of raw cells into values, vectorized.
 
@@ -250,20 +285,20 @@ class GenomicScoreDef(ScoreDef):
             # Already numeric (a bigWig payload): nothing to parse, and the
             # per-record path does not parse it either.
             values = cells.astype(np.float64, copy=True)
-            values[np.isin(cells, list(self.na_values))] = np.nan
+            values[self._na_mask(cells)] = np.nan
             return values
 
         raw = np.asarray(cells, dtype=object)
-        na_mask = np.isin(raw, list(self.na_values))
+        na_mask = self._na_mask(raw)
         work = raw.copy()
-        # A parseable stand-in for each NA cell.  This line is a PERFORMANCE
-        # measure -- without it a single "." sentinel makes the bulk astype
-        # raise and sends the whole batch down the per-cell path -- while the
-        # ``values[na_mask] = np.nan`` below is the CORRECTNESS one, and it is
-        # what stops a numeric sentinel (na_values: "-1") from being read as
-        # the number it looks like.  Each also happens to cover for the other,
-        # so removing either alone leaves the tests green; removing both does
-        # not.  Keep both, and know which is doing which job.
+        # Substitute a parseable stand-in for each NA cell.  This one line
+        # does both jobs: it is what makes an NA cell come out as nan, AND it
+        # keeps a single "." sentinel from making the bulk astype raise and
+        # sending the whole batch down the per-cell path below.  There used to
+        # be a second ``values[na_mask] = np.nan`` after the parse as well; it
+        # could never change an outcome, and two rounds of mutation testing
+        # caught the comment here describing the pair's division of labour
+        # wrongly, so it is gone rather than explained a third time.
         work[na_mask] = "nan"
         try:
             values = work.astype(np.float64)
@@ -284,7 +319,6 @@ class GenomicScoreDef(ScoreDef):
                 logger.warning(
                     "unable to parse %s of %s values for score %s",
                     failed, values.size, self.score_id)
-        values[na_mask] = np.nan
         return values
 
 
@@ -1472,10 +1506,16 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     def supports_region_value_arrays(self, scores: list[str]) -> bool:
         """Whether :meth:`fetch_region_value_arrays` will serve these scores.
 
-        Answers exactly "will that call succeed": the backend serves the bulk
-        column-array read, AND every named score is one this facade can parse.
-        A predicate that answered only the first would say True for a call that
-        then refuses -- not a capability query but a trap.
+        Answers the two things a caller can be wrong about: the backend
+        serves the bulk column-array read, AND every named score is one this
+        facade can parse.  A predicate that answered only the first would say
+        True for a call that then refuses -- not a capability query but a trap.
+
+        It is not a promise the call cannot fail for some OTHER reason.  A
+        score whose configured column index does not exist in its backend's
+        payload still raises (deliberately -- see ``BigWigTable``), and so
+        does a closed score or an unknown contig.  This answers "is this score
+        the kind this method serves", not "is every argument valid".
 
         The value-type half is not a consumer's condition leaking in: the
         facade parses, so it is float-only (an ``int`` score needs ``int()``
@@ -1535,9 +1575,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         its own windowing -- ``BigWigTable``, whose batches are sized by its
         adaptive fetch window -- ignores it.
 
-        **Do not mutate the yielded arrays.**  Two score ids configured to the
-        same column are served the identical array object, so an in-place edit
-        would be seen by the other.  Copy first if you need to modify.
+        Each score id gets an array of its own -- the parse builds one per
+        id, so two ids sharing a payload column no longer alias, as they did
+        while this method returned the backend's raw cells.
 
         The guards below run when this method is CALLED, not on the first
         ``next()`` -- which is why the streaming half lives in

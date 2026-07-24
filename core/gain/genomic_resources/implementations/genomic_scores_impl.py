@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import itertools
 import json
-from collections.abc import Callable, Generator
+from collections.abc import Callable
 from typing import Any, ClassVar, TypeVar, cast
 
 import numpy as np
@@ -473,9 +472,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def _do_histogram_bulk(
         resource: GenomicResource,
         all_hist_confs: dict[str, HistogramConfig],
-        chrom: str | None,
-        start: int | None,
-        end: int | None,
+        chrom: str,
+        start: int,
+        end: int,
     ) -> dict[str, Histogram]:
         """Vectorized equivalent of :meth:`_do_histogram`.
 
@@ -501,9 +500,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def _bulk_region_scan(
         resource: GenomicResource,
         result: dict[str, _AccT],
-        chrom: str | None,
-        start: int | None,
-        end: int | None,
+        chrom: str,
+        start: int,
+        end: int,
         accumulate: Callable[
             [tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]],
              dict[str, _AccT],
@@ -524,72 +523,14 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         impl = build_score_implementation_from_resource(resource)
         with impl.score.open() as score:
             prev_right: int | None = None
-            for arrays in GenomicScoreImplementation._region_value_arrays(
-                    score, chrom, start, end, list(result)):
+            batches = score.fetch_region_value_arrays(
+                chrom, start, end, list(result),
+                batch_size=GenomicScoreImplementation._SCAN_BATCH_SIZE)
+            for arrays in batches:
                 prev_right = accumulate(
                     arrays, result, (chrom, start, end), prev_right)
         del impl
         return result
-
-    @staticmethod
-    def _region_value_arrays(
-        score: GenomicScore,
-        chrom: str | None,
-        start: int | None,
-        end: int | None,
-        score_ids: list[str],
-    ) -> Generator[
-            tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]], None, None]:
-        """Yield ``(pos_begin, pos_end, {score_id: values})`` batches.
-
-        Values arrive PARSED from both branches, so the accumulators reduce
-        floats and never parse anything themselves.
-
-        A score whose backend serves the bulk read answers it directly, never
-        building a ``Record``; any other is read line by line and batched into
-        the same array shape here.  Which is which is the score's to say --
-        ask, do not test its backend's class.  Everything below goes through
-        the genomic score interface: this module does not reach into the table.
-
-        The two branches parse by different halves of the same contract --
-        ``parse_array`` on the fast path, ``parse_value`` (via
-        ``ScoreLineBase.get_values``) on the slow one -- which is exactly what
-        test_parse_array_agrees_with_parse_value_fuzz holds to each other, so
-        the seam between them is covered rather than assumed.
-
-        The fast path also needs a bounded region: the overlap guard runs along
-        one contig, and an unbounded scan keeps the line read.
-        """
-        batch_size = GenomicScoreImplementation._SCAN_BATCH_SIZE
-        if score.supports_region_value_arrays(score_ids) \
-                and chrom is not None and start is not None and end is not None:
-            yield from score.fetch_region_value_arrays(
-                chrom, start, end, score_ids, batch_size=batch_size)
-            return
-
-        defs = [score.score_definitions[score_id] for score_id in score_ids]
-        lines = score.fetch_lines(chrom, start, end)
-        while True:
-            batch = list(itertools.islice(lines, batch_size))
-            if not batch:
-                return
-            count = len(batch)
-            pos_begin = np.fromiter(
-                (line.pos_begin for line in batch),
-                dtype=np.int64, count=count)
-            pos_end = np.fromiter(
-                (line.pos_end for line in batch), dtype=np.int64, count=count)
-            # get_values applies the same NA handling and parse the fast path
-            # does; None is its "no value", nan is the array contract's.
-            parsed = [line.get_values(defs) for line in batch]
-            cols = {
-                score_id: np.array(
-                    [np.nan if row[index] is None else row[index]
-                     for row in parsed],
-                    dtype=np.float64)
-                for index, score_id in enumerate(score_ids)
-            }
-            yield pos_begin, pos_end, cols
 
     @staticmethod
     def _accumulate_arrays(
@@ -730,12 +671,13 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     ) -> dict[str, MinMaxValue]:
         """Compute a region's min/max, bulk-vectorized where eligible.
 
-        Mirrors :meth:`_do_histogram_task`: the bulk path needs a concrete
-        contig for its overlap guard, so a ``chrom is None`` whole-table scan
-        keeps the per-record :meth:`_do_min_max`.
+        Mirrors :meth:`_do_histogram_task`: the bulk path needs a bounded
+        region -- a concrete contig for its overlap guard, and concrete bounds
+        because that is what the score's bulk read takes -- so any unbounded
+        scan keeps the per-record :meth:`_do_min_max`.
         """
-        if chrom is not None and \
-                GenomicScoreImplementation._bulk_scan_eligible(
+        if chrom is not None and start is not None and end is not None \
+                and GenomicScoreImplementation._bulk_scan_eligible(
                     resource, score_ids):
             return GenomicScoreImplementation._do_min_max_bulk(
                 resource, score_ids, chrom, start, end)
@@ -752,12 +694,13 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     ) -> dict[str, Histogram]:
         """Compute a region's histograms, bulk-vectorized where eligible.
 
-        The bulk path needs a concrete contig (its overlap guard runs along a
-        single chromosome's records); a ``chrom is None`` whole-table scan
-        keeps the per-record path.
+        The bulk path needs a bounded region: a concrete contig, because its
+        overlap guard runs along a single chromosome's records, and concrete
+        bounds, because that is what the score's bulk read takes.  Any
+        unbounded scan keeps the per-record path.
         """
-        if chrom is not None and \
-                GenomicScoreImplementation._can_bulk_histogram(
+        if chrom is not None and start is not None and end is not None \
+                and GenomicScoreImplementation._can_bulk_histogram(
                     resource, all_hist_confs):
             return GenomicScoreImplementation._do_histogram_bulk(
                 resource, all_hist_confs, chrom, start, end)
@@ -768,9 +711,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def _do_min_max_bulk(
         resource: GenomicResource,
         score_ids: list[str],
-        chrom: str | None,
-        start: int | None,
-        end: int | None,
+        chrom: str,
+        start: int,
+        end: int,
     ) -> dict[str, MinMaxValue]:
         """Vectorized equivalent of :meth:`_do_min_max`.
 
