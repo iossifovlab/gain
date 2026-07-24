@@ -12,8 +12,10 @@ from spliceai_annotator import spliceai_annotator_impl as impl
 # The narrowest window the CNN accepts: it crops 10000 positions, so
 # `distance=0` gives 10000 + 2*0 + 1 in and a single position out.
 MIN_WIDTH = 10001
-# The widest window the annotator ever builds: `_batch_width` at the maximum
-# distance -- 10000 + 2*5000 + 1 + DEFAULT_MAX_INSERTION_LENGTH.
+# `_batch_width` at the maximum distance with the *default* insertion
+# length: 10000 + 2*5000 + 1 + DEFAULT_MAX_INSERTION_LENGTH. Not an absolute
+# ceiling -- `max_insertion_length` is configurable up to 2000, which would
+# make it 22001 -- but it is the widest window a default deployment builds.
 MAX_WIDTH = 20201
 
 
@@ -34,7 +36,11 @@ def tensorflow_backend() -> ModuleType:
     # Loaded explicitly rather than through `impl.SPLICEAI_MODELS`, which
     # holds whichever backend the *process* selected -- these tests compare
     # the two and must not collapse to one when SPLICEAI_BACKEND=onnx.
-    pytest.importorskip("tensorflow")
+    #
+    # Deliberately not `importorskip`: the cross-backend assertions in this
+    # file are the guard on the ONNX migration, and the run in which
+    # TensorFlow disappears (#298) is exactly the run in which they must
+    # fail loudly rather than turn into silent skips.
     return impl.load_spliceai_backend("tensorflow")
 
 
@@ -100,8 +106,13 @@ def test_onnx_predicts_from_the_annotators_int8_one_hot(
     y = onnx_backend.spliceai_predict(onnx_models, x)
 
     # (batch, width - 10000, 3): P(neither) / P(acceptor) / P(donor).
+    # Deliberately no "probabilities sum to 1" assertion: the graph ends in a
+    # softmax and a mean of softmax outputs is still a simplex point, so it
+    # holds for any correctly-shaped output -- including a broken ensemble.
+    # What this test pins is that int8 in does not raise, at the right shape
+    # and dtype; equivalence is pinned below.
     assert y.shape == (1, MIN_WIDTH - 10000, 3)
-    np.testing.assert_allclose(y.sum(axis=-1), 1.0, atol=1e-5)
+    assert y.dtype == np.float32
 
 
 def test_onnx_sessions_carry_the_measured_performance_settings(
@@ -150,17 +161,18 @@ def test_onnx_matches_tensorflow_on_the_annotators_windows(
 ) -> None:
     """The two backends must agree far tighter than the output's resolution.
 
-    Measured max-abs disagreement: 3.4e-13 at width 10001, 2.4e-7 at 20201,
-    3.3e-7 batched -- against a `delta_score` reported at two decimals. 1e-5
-    keeps a real bound (it is the differential harness's own DS_* tier)
-    without pinning float noise.
+    Measured max-abs disagreement is ~2.4e-7 at every window the annotator
+    actually builds (1.2e-7 at 10101, 2.4e-7 at 10301 -- the default
+    distance=50 -- and at 20201), against a `delta_score` reported at two
+    decimals. 1e-5 keeps a real bound (it is the differential harness's own
+    DS_* tier) without pinning float noise.
 
-    How much this bound proves depends on the window. At 20201 the ensemble
-    is not saturated and 1e-5 is a sharp test: dropping one of the five
-    models moves the output by ~2e-2, three orders above the tolerance. At
-    10001 a *random* window saturates to P(neither) ~ 1 and the whole signal
-    is below 1e-5, so this assertion is weak there -- that gap is covered by
-    `test_onnx_ensemble_is_the_full_five_models` below, not by this bound.
+    MIN_WIDTH is the exception in both directions, and not because it is
+    narrow: `distance=0` yields a *single* output position, which on a random
+    sequence saturates to P(neither) ~ 1. Agreement there reads 3.4e-13, but
+    so does the entire signal -- the whole 4-of-5 ensemble difference is
+    below this tolerance, so at that width this assertion proves little.
+    `test_onnx_ensemble_is_the_full_five_models` covers that gap.
     """
     x = a_one_hot_window(width, batch=batch)
 
@@ -255,22 +267,29 @@ def test_onnx_ensemble_is_the_full_five_models(
 ) -> None:
     """Pin that the ONNX backend averages all five models, not a subset.
 
-    On a random narrow window every ensemble member saturates to
-    ~P(neither)=1 and the members agree with each other to well within the
-    equivalence bound above -- so that bound alone stays green for a backend
-    that silently ran four models, or one. (The sibling
-    `test_onnx_equivalence.py` documents the same trap for the .h5 -> .onnx
-    conversion and defends against it the same way.)
+    The equivalence bound above is not enough on its own: at a *narrow*
+    window a random one-hot sequence saturates every ensemble member to
+    ~P(neither)=1, the members then agree with each other well inside 1e-5,
+    and a backend that silently ran four models -- or one -- stays green.
+    (The sibling `test_onnx_equivalence.py` documents the same trap for the
+    .h5 -> .onnx conversion and defends against it the same way.)
 
-    What separates them is precision: the full ONNX ensemble reproduces the
-    full TensorFlow ensemble to float-roundtrip accuracy, orders of magnitude
-    tighter than the residual left by dropping any one member. Measured
-    margin here is ~1.7e5x; 100x is asserted.
+    Run at MAX_WIDTH deliberately. At MIN_WIDTH the whole 4-of-5 signal is
+    5.96e-08 -- exactly half a float32 ulp at 1.0, one representable step --
+    so asserting a margin over it would demand the two backends agree to
+    *zero* ulps and would fail on a correct ensemble the first time a
+    different CPU or ORT build moved the last bit. Here the ensemble is not
+    saturated: dropping a member moves the output by ~2.2e-02 against a
+    backend disagreement of ~2.4e-07, a margin of ~9e4x. 100x is asserted,
+    floored at 2 ulp so the check cannot degenerate into bit-exactness.
     """
-    x = a_one_hot_window(MIN_WIDTH)
+    x = a_one_hot_window(MAX_WIDTH)
     reference = tensorflow_backend.spliceai_predict(tensorflow_models, x)
-    own = np.max(np.abs(
-        onnx_backend.spliceai_predict(onnx_models, x) - reference))
+    own = max(
+        float(np.max(np.abs(
+            onnx_backend.spliceai_predict(onnx_models, x) - reference))),
+        2 * float(np.spacing(np.float32(1.0))),
+    )
 
     for dropped in range(len(onnx_models)):
         subset = [m for i, m in enumerate(onnx_models) if i != dropped]
@@ -280,3 +299,41 @@ def test_onnx_ensemble_is_the_full_five_models(
             f"dropping model {dropped} moves the output by only {degraded:.2e} "
             f"against the full ensemble's {own:.2e} -- the equivalence check "
             f"cannot tell a degraded ensemble from the real one")
+
+
+# A single ORT invocation costs a steady ~5.4 KB per sequence position, so
+# this ceiling is what "the shipped budget bounds memory" means in practice:
+# ~0.6 GB, the plateau the TensorFlow backend reaches at any batch size.
+MAX_POSITIONS_PER_RUN = 100_000
+
+
+@pytest.mark.parametrize("width", [MIN_WIDTH, MAX_WIDTH])
+def test_shipped_budget_bounds_what_ort_is_asked_to_do(
+    onnx_backend: ModuleType, width: int,
+) -> None:
+    """Exercise `ONNX_POSITION_BUDGET` itself, not a patched stand-in.
+
+    The tests around this one patch the budget to drive the chunking
+    mechanism. That leaves the shipped *value* -- the entire substance of the
+    memory fix -- unasserted: raising it back to something unbounded restores
+    the original defect with the whole suite still green. This test reads the
+    module constant.
+    """
+    assert onnx_backend.ONNX_POSITION_BUDGET // width >= 1, (
+        f"budget {onnx_backend.ONNX_POSITION_BUDGET} cannot fit even one "
+        f"window of width {width}")
+    batch_sizes: list[int] = []
+    models = [_RecordingSession(batch_sizes, scale) for scale in range(1, 6)]
+    # Sized off the ceiling, not off the budget: a batch that would breach
+    # MAX_POSITIONS_PER_RUN in one run if the backend did not chunk -- while
+    # staying small enough that an unbounded budget fails the assertion
+    # rather than exhausting the machine.
+    rows = MAX_POSITIONS_PER_RUN // width + 2
+    x = np.zeros((rows, width, 4), np.int8)
+
+    onnx_backend.spliceai_predict(models, x)
+
+    assert max(batch_sizes) * width <= MAX_POSITIONS_PER_RUN, (
+        f"one ORT run covered {max(batch_sizes) * width} positions at width "
+        f"{width}; the shipped budget must keep it under "
+        f"{MAX_POSITIONS_PER_RUN}")

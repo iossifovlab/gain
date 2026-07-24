@@ -35,9 +35,17 @@ import onnxruntime as ort
 #:
 #: 65536 is chosen to land on the ~0.6 GB plateau TensorFlow reaches at any
 #: batch size, i.e. to preserve the memory contract callers already rely on.
-#: Throughput is unaffected: repeated runs at 131072 vs 65536 straddle each
-#: other (1452/2174 ms vs 1756/1454 ms per window), so the tighter budget
-#: costs nothing measurable.
+#: Throughput is unaffected: with the budgets interleaved within each
+#: repetition (so drift hits all of them equally), run-to-run spread is
+#: +-25%, larger than any budget effect, and smaller chunks trend *faster*
+#: at the narrow width.
+#:
+#: "Bounded", not literally flat: a residual ~0.17 MB/row at width 10101 and
+#: ~0.56 MB/row at 20201 remains, from the retained per-chunk outputs and
+#: the final concatenate. It is well under the TensorFlow backend's own
+#: slope (~0.49 MB/row at 10101), and at width 20201 / batch 64 chunked ONNX
+#: peaks at 702 MB against TensorFlow's 1215 MB -- so this is a bound in the
+#: sense that matters, not an asymptote.
 ONNX_POSITION_BUDGET = 65536
 
 
@@ -120,16 +128,22 @@ def spliceai_predict(
     returns int8 deliberately -- the memory-cheap choice for a 20,201 x 4
     array.
 
-    The batch axis is split into `ONNX_POSITION_BUDGET`-sized runs, which is
-    what keeps peak memory flat in the caller's batch size -- see that
-    constant. Rows are independent, so chunking changes no result.
+    The batch axis is split into `ONNX_POSITION_BUDGET`-sized runs -- see
+    that constant for why and for the measurements. Rows are independent, so
+    chunking changes no result: a chunked pass is bitwise identical to an
+    unchunked one.
+
+    The float32 cast happens per chunk rather than once over the whole batch
+    so that the widened copy is bounded too; casting up front would hold a
+    4x-larger array (int8 -> float32) for the whole call, which is the
+    largest remaining term in the residual per-row cost.
     """
-    x = x.astype(np.float32, copy=False)
     rows_per_run = max(1, ONNX_POSITION_BUDGET // x.shape[1])
-    return cast(np.ndarray, np.concatenate([
-        np.mean([
+    predictions = []
+    for chunk in _chunks(x, rows_per_run):
+        chunk = chunk.astype(np.float32, copy=False)
+        predictions.append(np.mean([
             model.run(None, {model.get_inputs()[0].name: chunk})[0]
             for model in models
-        ], axis=0)
-        for chunk in _chunks(x, rows_per_run)
-    ], axis=0))
+        ], axis=0))
+    return cast(np.ndarray, np.concatenate(predictions, axis=0))

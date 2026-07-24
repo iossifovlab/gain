@@ -701,10 +701,9 @@ rather than in the pipeline configuration:
        Which of the two runtimes is faster is hardware-dependent — measure on
        your own hardware rather than assuming.
 
-Both runtimes produce the same annotations: they agree to ``2.4e-7`` or better
-at the widest window and to ``3.4e-13`` at the narrowest, against delta scores
-reported at two decimal places. An unrecognized value is an error rather than a
-silent fallback.
+Both runtimes produce the same annotations: they agree to about ``2.4e-7`` at
+every window the annotator builds, against delta scores reported at two decimal
+places. An unrecognized value is an error rather than a silent fallback.
 
 
 The annotator produces the following attributes, along with their default aggregators for

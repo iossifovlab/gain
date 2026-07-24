@@ -202,6 +202,7 @@ pipeline {
                         sh -c '
                             set +e
                             pytest -n 5 -m integration tests/ \
+                                --junitprefix=tensorflow \
                                 --junitxml=/reports/pytest.xml
                             pytest_exit=$?
                             chmod -R a+rw /reports
@@ -218,6 +219,7 @@ pipeline {
                         sh -c '
                             set +e
                             pytest -n 5 -m integration tests/ \
+                                --junitprefix=onnx \
                                 --junitxml=/reports/pytest-onnx.xml
                             pytest_exit=$?
                             chmod -R a+rw /reports
