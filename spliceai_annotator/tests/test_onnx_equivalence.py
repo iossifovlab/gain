@@ -23,9 +23,10 @@ network. On random one-hot DNA every ensemble member saturates to
 The suite therefore feeds a real splice-site window as well --
 ``test_suite_feeds_a_non_saturated_window`` guards that premise.
 
-Build-time-only tooling (``onnx``, ``onnxruntime``) lives in the ``dev``
-dependency group, not the annotator's runtime deps, so these tests skip cleanly
-wherever that tooling is absent (e.g. the runtime-only CI image). Only
+``onnx`` (the checker) is build-time-only tooling and lives in the ``dev``
+dependency group, so these tests skip cleanly wherever it is absent (e.g. the
+runtime-only CI image). ``onnxruntime`` is no longer dev-only -- issue #297
+promoted it to a runtime dependency when the ONNX backend shipped. Only
 ``onnx`` is imported at module scope: ``tensorflow`` and ``onnxruntime`` are
 imported by the fixtures that need them, so
 ``test_onnx_passes_checker_with_dynamic_length_axis`` still validates the

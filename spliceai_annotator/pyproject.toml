@@ -23,9 +23,13 @@ dependencies = [
     # with SPLICEAI_BACKEND (see spliceai_annotator_impl), TensorFlow by
     # default, so an installed annotator must be able to run either. Which of
     # the two survives is issue #298.
-    # (The conda recipe asks for >=1.26 instead -- deliberately, not by
-    # drift: conda-forge's newest onnxruntime is 1.26.0 while PyPI has 1.27.)
-    "onnxruntime>=1.27",
+    # >=1.26, matching the conda recipe: conda-forge's newest onnxruntime is
+    # 1.26.0, and the recipe installs this wheel with `pip install --no-deps`,
+    # so a >=1.27 bound here would bake an unsatisfiable Requires-Dist into a
+    # conda env that resolves 1.26 (`pip check` fails, and anything reading
+    # importlib.metadata raises). Nothing in this backend needs 1.27; the
+    # committed uv.lock still pins the exact version CI resolves.
+    "onnxruntime>=1.26",
     "tensorflow>=2.18",
 ]
 dynamic = ["version"]

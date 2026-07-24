@@ -19,6 +19,28 @@ from spliceai_annotator.spliceai_annotator import (
     SpliceAIAnnotator,
 )
 
+
+@pytest.fixture(scope="session", autouse=True)
+def assert_requested_backend_is_the_one_running() -> None:
+    """Fail loudly if SPLICEAI_BACKEND was asked for but did not take effect.
+
+    The ONNX CI tier differs from the TensorFlow one by a single `docker run`
+    flag, and nothing else in the suite would notice its absence: the
+    backend-selection tests set the variable themselves, and the ONNX tests
+    load their backend by name. Drop the flag and you get a fully green "ONNX
+    tier" that ran TensorFlow twice -- and #297's "passes on both backends"
+    would be asserted by nothing.
+    """
+    requested = os.environ.get("SPLICEAI_BACKEND")
+    if requested is None:
+        return
+    # pylint: disable=import-outside-toplevel
+    from spliceai_annotator import spliceai_annotator_impl as impl
+    assert requested.strip().lower() == impl.SPLICEAI_BACKEND_NAME, (
+        f"SPLICEAI_BACKEND={requested!r} was requested but the loaded "
+        f"runtime is {impl.SPLICEAI_BACKEND_NAME!r}")
+
+
 INTEGRATION_GRR_DEFINITION = (
     pathlib.Path(__file__).parent / "integration_grr_definition.yaml"
 )

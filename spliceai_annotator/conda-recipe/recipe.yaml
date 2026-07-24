@@ -37,11 +37,12 @@ requirements:
     # SPLICEAI_BACKEND (TensorFlow by default), so an installed package must
     # be able to run either. See spliceai_annotator_impl.
     #
-    # >=1.26, not the >=1.27 the wheel asks for: conda-forge's newest
-    # onnxruntime is 1.26.0 and neither bioconda nor iossifovlab carries it
-    # at all, so >=1.27 is unsatisfiable on the channels above. rattler-build
-    # does not solve run deps for a noarch recipe, so that would have built
-    # and published green and only failed for whoever installed it.
+    # >=1.26: conda-forge's newest onnxruntime is 1.26.0 and neither bioconda
+    # nor iossifovlab carries it at all, so a >=1.27 bound is unsatisfiable
+    # on the channels above -- and rattler-build does not solve run deps for
+    # a noarch recipe, so it would have built and published green and failed
+    # only for whoever installed it. Kept in step with the wheel's own bound
+    # in pyproject.toml, which this recipe installs with --no-deps.
     - onnxruntime >=1.26
     - tensorflow >=2.18
 

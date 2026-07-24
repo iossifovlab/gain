@@ -67,23 +67,34 @@ def load_spliceai_backend(name: str | None = None) -> ModuleType:
     return importlib.import_module(SPLICEAI_BACKENDS[name], __package__)
 
 
-SPLICEAI_BACKEND = load_spliceai_backend()
+#: The backend name that actually won at import time. `spliceai_backend_name`
+#: re-reads the environment on every call, so it answers "what does the
+#: environment say now", which after import is a different question -- anything
+#: setting SPLICEAI_BACKEND late is silently ignored. Ask this instead when you
+#: need to know which runtime is loaded (a CI tier asserting it really ran
+#: ONNX, a log line, a bug report).
+SPLICEAI_BACKEND_NAME = spliceai_backend_name()
+
+#: The module implementing the runtime -- named `_MODULE` so it cannot be
+#: confused with SPLICEAI_BACKEND_ENV, the environment variable's *name*.
+SPLICEAI_BACKEND_MODULE = load_spliceai_backend(SPLICEAI_BACKEND_NAME)
 
 
 def spliceai_load_models() -> list:
     """Open SpliceAI annotator implementation."""
-    return cast(list, SPLICEAI_BACKEND.spliceai_load_models())
+    return cast(list, SPLICEAI_BACKEND_MODULE.spliceai_load_models())
 
 
 def spliceai_close() -> None:
-    SPLICEAI_BACKEND.spliceai_close()
+    SPLICEAI_BACKEND_MODULE.spliceai_close()
 
 
 def spliceai_predict(
     models: list,
     x: np.ndarray,
 ) -> np.ndarray:
-    return cast(np.ndarray, SPLICEAI_BACKEND.spliceai_predict(models, x))
+    return cast(
+        np.ndarray, SPLICEAI_BACKEND_MODULE.spliceai_predict(models, x))
 
 
 SPLICEAI_MODELS = spliceai_load_models()
