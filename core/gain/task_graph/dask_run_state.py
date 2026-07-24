@@ -97,7 +97,7 @@ class RunState:
         self._completed: list[tuple[Future, Task]] = []
         self._gathering: dict[int, GatherBatch] = {}
         self._gathered: list[tuple[Task, Any]] = []
-        self._delivered: set[str] = set()
+        self._delivered: set[Task] = set()
         self._shutdown = False
 
     def _deliver(self, results: Iterable[tuple[Task, Any]]) -> None:
@@ -107,22 +107,20 @@ class RunState:
         "exactly one result per task, never more" is enforced. Every other
         guard in this class keeps a task from being *lost*; this one keeps it
         from being delivered *twice*, which the recovery transitions can
-        otherwise do: the run's six states are not all reachable from every
-        transition, so a batch aborted mid-wiring cannot evict a future the
-        results worker has already claimed for gather, gathered, or handed to
-        the run loop (gain#381). Rather than have each transition try to
+        otherwise do -- see :meth:`submit_aborted` for the windows one of
+        them cannot reach (gain#381). Rather than have each transition try to
         reach the others' states, whichever path delivers a task first wins
         and every later one drops its duplicate here.
 
         Caller holds the lock.
         """
         for task, result in results:
-            if task.task_id in self._delivered:
+            if task in self._delivered:
                 logger.debug(
                     "task %s was already delivered; dropping the duplicate "
                     "result", task.task_id)
                 continue
-            self._delivered.add(task.task_id)
+            self._delivered.add(task)
             self._gathered.append((task, result))
 
     def _outstanding_count(self) -> int:
@@ -188,6 +186,9 @@ class RunState:
         The results stop being outstanding here, so the caller must feed
         them back to the graph and yield them before it asks
         :meth:`has_outstanding` again.
+
+        A task comes out of here at most once for the life of the run, no
+        matter which path delivered it -- see :meth:`_deliver` (gain#381).
         """
         with self._condition:
             gathered = self._gathered
