@@ -21,6 +21,7 @@ dependencies:
   - filelock=3.19
   - networkx=3.6
   - numpy=2.2.6
+  - openpyxl=3.1
   - pandas=2.2.3
   - matplotlib-base=3.8
   - fsspec=2026.2
