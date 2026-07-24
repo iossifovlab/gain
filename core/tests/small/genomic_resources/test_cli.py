@@ -260,3 +260,32 @@ def test_grr_manage_version_report(
 
     out, _err = capsys.readouterr()
     assert out.startswith("GAIn version: ")
+
+
+@pytest.mark.parametrize("flag", ["-n", "--dry-run", "-f", "--force"])
+def test_repo_init_refuses_dry_run_and_force(
+    repo_fixture: tuple[pathlib.Path, GenomicResourceProtocolRepo],
+    flag: str,
+) -> None:
+    """`repo-init` must not offer flags it has never honoured (#415).
+
+    It mounted the Force/Dry run group but read neither value, so
+    `repo-init -n` initialised the repository for real - writing the
+    content file and a state for every file it hashed, which is exactly
+    what `--dry-run` promises not to do (#257).
+    """
+    # Given a directory that is not yet a GRR
+    path, _repo = repo_fixture
+    (path / GR_CONTENTS_FILE_NAME).unlink(missing_ok=True)
+    (path / GR_CONTENTS_FILE_NAME[:-3]).unlink(missing_ok=True)
+
+    # When 'repo-init' is asked for a dry run, or forced
+    with pytest.raises(SystemExit) as excinfo:
+        cli_manage(["repo-init", flag, "-R", str(path)])
+
+    # Then argparse rejects the flag outright
+    assert excinfo.value.code == 2
+
+    # ... and the repository was left uninitialised
+    assert not (path / GR_CONTENTS_FILE_NAME).exists()
+    assert not (path / GR_CONTENTS_FILE_NAME[:-3]).exists()
