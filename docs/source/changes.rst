@@ -1,6 +1,17 @@
 Release Notes
 =============
 
+* 2026.7.4
+    * **Fixed:** a ``data_frame`` resource with ``format: excel`` — the
+      format announced in 2026.7.3 — could not be read by a stock
+      install. pandas opens a workbook through ``openpyxl``, which was
+      not a dependency of ``gain-core``, so the read raised an
+      ``ImportError`` asking for the missing package.
+      ``openpyxl >=3.1`` is now declared everywhere ``gain-core``
+      declares its runtime dependencies — the Python distribution, the
+      conda environment and the conda package recipe — so an Excel
+      ``data_frame`` opens out of the box (#423).
+
 * 2026.7.3
     * **Behavior change:** ``grr_manage --dry-run`` now writes nothing at
       all — it no longer records a ``.grr/<file>.state`` for each file it
