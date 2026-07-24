@@ -381,9 +381,12 @@ pipeline {
                                     // inside the suite. Tests are unchanged;
                                     // only the env var differs.
                                     //
-                                    // Reuses the image the stage above builds
-                                    // (same tag, same context -- a cache hit)
-                                    // and runs pytest only: ruff/mypy/pylint
+                                    // This stage is a *sibling* of the one
+                                    // above inside `parallel`, so the two run
+                                    // at the same time and this build is not
+                                    // a cache hit off it -- docker dedupes
+                                    // the layers, not the concurrent work.
+                                    // It runs pytest only: ruff/mypy/pylint
                                     // and `uv build` are backend-independent
                                     // and would just duplicate that stage's
                                     // reports.

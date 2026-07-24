@@ -36,7 +36,13 @@ requirements:
     # Both model runtimes: the backend is selected per process with
     # SPLICEAI_BACKEND (TensorFlow by default), so an installed package must
     # be able to run either. See spliceai_annotator_impl.
-    - onnxruntime >=1.27
+    #
+    # >=1.26, not the >=1.27 the wheel asks for: conda-forge's newest
+    # onnxruntime is 1.26.0 and neither bioconda nor iossifovlab carries it
+    # at all, so >=1.27 is unsatisfiable on the channels above. rattler-build
+    # does not solve run deps for a noarch recipe, so that would have built
+    # and published green and only failed for whoever installed it.
+    - onnxruntime >=1.26
     - tensorflow >=2.18
 
 about:

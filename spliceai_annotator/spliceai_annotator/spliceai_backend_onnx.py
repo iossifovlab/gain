@@ -6,11 +6,39 @@ and pinned to it by ``tests/test_onnx_equivalence.py``. Selected with
 ``SPLICEAI_BACKEND=onnx`` -- see ``spliceai_annotator_impl``.
 """
 import gc
+from collections.abc import Iterator
 from importlib.resources import as_file, files
 from typing import cast
 
 import numpy as np
 import onnxruntime as ort
+
+#: Maximum number of sequence positions (rows x window width) handed to ONNX
+#: Runtime in a single `run`.
+#:
+#: `session.run` evaluates the whole batch axis in one graph invocation, so
+#: its peak memory is *linear* in the batch -- a steady ~5.4 KB per position.
+#: Keras hides this by chunking `predict` at 32 internally; ONNX Runtime does
+#: not. That difference is not academic: `annotate_vcf` defaults to
+#: `batch_size=500` and `_do_batch_annotate` concatenates a whole width
+#: bucket into one call, so an unchunked ONNX pass would ask for ~27 GB at
+#: the default `distance=50` and ~55 GB at the widest window, where the
+#: TensorFlow backend it replaces stays flat at ~0.6 GB.
+#:
+#: Measured peak RSS per pass (32 windows at width 10101 / 16 at 20201):
+#:
+#:      budget      rows/run   peak @10101   peak @20201
+#:      unchunked   all        1755 MB       (linear)
+#:      262144      25         1531 MB       --
+#:      131072      12         1288 MB       1272 MB
+#:      65536        6          647 MB        643 MB
+#:
+#: 65536 is chosen to land on the ~0.6 GB plateau TensorFlow reaches at any
+#: batch size, i.e. to preserve the memory contract callers already rely on.
+#: Throughput is unaffected: repeated runs at 131072 vs 65536 straddle each
+#: other (1452/2174 ms vs 1756/1454 ms per window), so the tighter budget
+#: costs nothing measurable.
+ONNX_POSITION_BUDGET = 65536
 
 
 def spliceai_session_options() -> ort.SessionOptions:
@@ -74,6 +102,11 @@ def spliceai_close() -> None:
     gc.collect()
 
 
+def _chunks(x: np.ndarray, rows: int) -> Iterator[np.ndarray]:
+    for start in range(0, len(x), rows):
+        yield x[start:start + rows]
+
+
 def spliceai_predict(
     models: list,
     x: np.ndarray,
@@ -86,9 +119,17 @@ def spliceai_predict(
     it silently. It belongs here rather than in `one_hot_encode`, which
     returns int8 deliberately -- the memory-cheap choice for a 20,201 x 4
     array.
+
+    The batch axis is split into `ONNX_POSITION_BUDGET`-sized runs, which is
+    what keeps peak memory flat in the caller's batch size -- see that
+    constant. Rows are independent, so chunking changes no result.
     """
     x = x.astype(np.float32, copy=False)
-    return cast(np.ndarray, np.mean([
-        model.run(None, {model.get_inputs()[0].name: x})[0]
-        for model in models
+    rows_per_run = max(1, ONNX_POSITION_BUDGET // x.shape[1])
+    return cast(np.ndarray, np.concatenate([
+        np.mean([
+            model.run(None, {model.get_inputs()[0].name: chunk})[0]
+            for model in models
+        ], axis=0)
+        for chunk in _chunks(x, rows_per_run)
     ], axis=0))

@@ -12,7 +12,8 @@ channels:
 dependencies:
   - tensorflow=2.18
   # The alternative model runtime, selected with SPLICEAI_BACKEND=onnx.
-  - onnxruntime>=1.27
+  # >=1.26 is what conda-forge actually ships (see conda-recipe/recipe.yaml).
+  - onnxruntime>=1.26
   # - pip:
   #   - types-tensorflow
   

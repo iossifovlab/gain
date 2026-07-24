@@ -23,6 +23,8 @@ dependencies = [
     # with SPLICEAI_BACKEND (see spliceai_annotator_impl), TensorFlow by
     # default, so an installed annotator must be able to run either. Which of
     # the two survives is issue #298.
+    # (The conda recipe asks for >=1.26 instead -- deliberately, not by
+    # drift: conda-forge's newest onnxruntime is 1.26.0 while PyPI has 1.27.)
     "onnxruntime>=1.27",
     "tensorflow>=2.18",
 ]
