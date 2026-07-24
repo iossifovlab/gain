@@ -1,6 +1,66 @@
 Release Notes
 =============
 
+* 2026.7.3
+    * **Behavior change:** ``grr_manage --dry-run`` now writes nothing at
+      all — it no longer records a ``.grr/<file>.state`` for each file it
+      hashes, so it leaves the repository byte-identical; repeated dry
+      runs re-hash instead of seeding the state cache (#257).
+    * **Behavior change:** ``grr_manage repo-init`` no longer offers
+      ``--dry-run`` / ``--force``; both were accepted and ignored, so
+      ``repo-init -n`` initialised the repository for real (#415).
+    * The statistics scan is now bulk-vectorized for float
+      ``position_score`` resources over tabix and bigWig — column arrays
+      instead of a ``Record`` per row, and numpy accumulation instead of
+      a call per value — making the histogram and min/max passes ~3–4x
+      faster on tabix and ~9x on bigWig, bit-identical to the per-record
+      path (#385).
+    * Every other resource keeps the per-record scan: allele and NP
+      scores, VCF-backed tables, non-float or categorical scores, CNV
+      collections and whole-table (``--region-size 0``) runs (#385).
+    * ``GenomicScore`` exposes the bulk column-array region read
+      (``supports_region_value_arrays`` /
+      ``fetch_region_value_arrays``, yielding parsed ``float64`` arrays
+      per score); a backend declares it through
+      ``GenomicPositionTable.supports_value_arrays`` (#398, #409).
+    * Turning a raw cell into a score value now lives on
+      ``GenomicScoreDef.parse_value`` / ``parse_array``, instead of
+      being implemented once per record and once per column (#405).
+    * **Fixed:** a literal ``nan`` value token — reachable when
+      ``na_values`` is configured without the default ``nan`` sentinel —
+      poisoned a score's recorded min/max and nullified its histogram
+      (#385).
+    * The SpliceAI annotator can run under ONNX Runtime:
+      ``SPLICEAI_BACKEND=onnx`` selects it per process, TensorFlow stays
+      the default, and an unrecognised value raises (#297).
+    * The five SpliceAI ensemble models now ship as ``.onnx`` artifacts
+      derived from the committed ``.h5`` weights and pinned to them by
+      an equivalence test; ``onnxruntime`` became a runtime dependency
+      of ``gain-spliceai-annotator`` (#296).
+    * ONNX is not currently the faster backend: measured ~1.08x slower
+      than TensorFlow at the default window and ~1.26x at the widest
+      (#400).
+    * **Fixed:** a Dask batch aborted mid-wiring could deliver its error
+      on top of a task's real result, so a run yielded more results than
+      the graph had tasks; delivery is now exactly-once per task (#381).
+    * **Fixed:** a string-valued gene score with a ``categorical``
+      histogram was silently recorded as a ``NullHistogram``, because
+      the values were coerced with ``int()`` (#352).
+    * **Fixed:** a ``data_frame`` resource read its file relative to the
+      process's working directory rather than through the resource, so
+      it loaded only by accident; it also now accepts ``format: excel``
+      alongside ``csv``/``tsv``, and its info page lists the column
+      description one row per column.
+    * ``draw_score_histograms`` pointed at a non-score resource now
+      fails with a ``TypeError`` naming the resource and its type,
+      instead of an empty ``AssertionError`` (#337).
+    * CI: the gain-web e2e job reports ``NOT_BUILT`` rather than failing
+      when its branch moves past the commit it was handed (#414), and
+      its per-agent lock is no longer collapsed onto one global resource
+      (#291).
+    * CI: the SpliceAI integration tier resolves ``GRR_ROOT`` itself and
+      runs against the node-local real GRR (#321).
+
 * 2026.7.2
     * **Behavior change:** ``grr_manage`` now reports every resource it
       cannot process and exits non-zero, instead of skipping it with a
