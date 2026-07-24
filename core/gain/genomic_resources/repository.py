@@ -43,6 +43,7 @@ Configuration Files:
     metadata including type, description, and resource-specific settings.
 
 """
+# pylint: disable=too-many-lines
 from __future__ import annotations
 
 import abc
@@ -984,7 +985,8 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
            meaningful; and re-reading the sidecar costs nothing, since
            ``cli.collect_dvc_entries`` parses every sidecar of the resource
            on every manifest command anyway;
-        3. otherwise, the file's content, and the resulting state is saved.
+        3. otherwise, the file's content, and the resulting state is saved
+           -- unless ``save_state`` is off (see below).
 
         If the sidecar's declared size differs from the size on disk, rule 2
         logs a WARNING naming the file - the scan already stat'ed it, so the
@@ -1002,6 +1004,12 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         ``.MANIFEST`` is a committed artefact, and the remedy for drift is
         ``dvc add`` / ``dvc commit``, after which every machine - pointer
         only or fully materialised - produces the identical manifest.
+
+        ``save_state=False`` (``grr_manage --dry-run``) suppresses every
+        write this method would make, in BOTH modes: the md5 sums it
+        derives still fill in the entry and are still compared against the
+        sidecars, they are just not recorded. What the run reports is
+        unchanged; what it leaves behind is nothing (#257).
         """
         dvc_entry = prebuild_entries.get(entry.name)
         if dvc_entry is not None and dvc_entry.md5 is None:
