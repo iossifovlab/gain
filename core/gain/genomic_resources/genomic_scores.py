@@ -1576,9 +1576,12 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         facade parses, so it is float-only (an ``int`` score needs ``int()``
         semantics -- ``int("3.5")`` raises where ``float("3.5")`` does not).
         What a *consumer* additionally needs stays with the consumer: the
-        statistics scan also requires a position score, because its
-        accumulators assume a span weight and one value per position, and it
-        keeps asking that itself.
+        statistics scan also restricts which resource kinds it will read in
+        bulk, and it keeps asking that itself.  (No longer because its
+        accumulators assume position-score semantics -- how records weigh and
+        whether they may share a position is declared per score class and the
+        accumulators follow it -- but because a kind has to be tested against
+        both paths before it is let through.)
 
         Answerable on an UNOPENED score: the table and the score definitions
         are both built in ``__init__``, so nothing here touches the file.
@@ -2006,6 +2009,15 @@ class AlleleScore(GenomicScore):
     # a backwards position).  Stated once, so the bulk scan cannot read these
     # records under the position score's one-value-per-position rule.
     RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.SHARED
+
+    # An allele record stands for one ref/alt pair, NOT for each base it
+    # covers -- and the table permits a multi-base record via an optional
+    # ``pos_end`` column (a deletion, say).  :meth:`fetch_region_values` makes
+    # this structural by yielding ``(pos, pos, values)``: whatever ``pos_end``
+    # says, the per-record weight is 1.  A bulk read deriving the weight from
+    # the position arrays would multiply such a record by its span instead,
+    # which is why this has to be said here rather than left to the default.
+    RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
 
     class Mode(enum.Enum):
         """Allele score mode."""

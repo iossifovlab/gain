@@ -160,6 +160,72 @@ def test_bulk_histogram_matches_per_record_cnv_collection(
     assert ref["s"].bars.sum() == 3
 
 
+def test_bulk_histogram_matches_per_record_allele_spanning_record(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An allele record may span several bases -- and still counts ONCE.
+
+    ``AlleleScore.fetch_region_values`` yields ``(pos, pos, values)``, so the
+    per-record weight is structurally 1 no matter how wide the record's
+    ``pos_end`` reaches.  A bulk read that derived the weight from the
+    position arrays instead would silently multiply such a record by its
+    span, which single-base fixtures can never reveal.
+    """
+    resource = (
+        an_allele_score()
+        .with_score("s", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  reference   alternative  s
+            chr1   10         19       AAAAAAAAAA  G            0.1
+            chr1   30         30       C           T            0.5
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    confs: dict = {"s": _hist_conf()}
+
+    ref = GenomicScoreImplementation._do_histogram(
+        resource, confs, "chr1", 1, 100)
+    bulk = GenomicScoreImplementation._do_histogram_bulk(
+        resource, confs, "chr1", 1, 100)
+
+    _assert_hists_equal(bulk, ref)
+    # Two records, two counts -- not 10 + 1.
+    assert ref["s"].bars.sum() == 2
+
+
+def test_bulk_histogram_matches_per_record_allele_span_clipped_by_region(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The same, where the spanning record hangs off the region start.
+
+    Here the clipped span (5) differs from both the full span (10) and the
+    correct weight (1), so a weight taken from the clipped positions is wrong
+    in a different way again.
+    """
+    resource = (
+        an_allele_score()
+        .with_score("s", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  reference   alternative  s
+            chr1   10         19       AAAAAAAAAA  G            0.1
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    confs: dict = {"s": _hist_conf()}
+
+    ref = GenomicScoreImplementation._do_histogram(
+        resource, confs, "chr1", 15, 25)
+    bulk = GenomicScoreImplementation._do_histogram_bulk(
+        resource, confs, "chr1", 15, 25)
+
+    _assert_hists_equal(bulk, ref)
+    assert ref["s"].bars.sum() == 1
+
+
 def test_bulk_histogram_matches_per_record_cnv_subregion_clip(
     tmp_path: pathlib.Path,
 ) -> None:

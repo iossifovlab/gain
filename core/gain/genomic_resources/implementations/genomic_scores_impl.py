@@ -506,10 +506,14 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         rows directly and bigWig converts each fetched interval chunk in one
         shot, neither building a ``Record`` per row -- and accumulates each
         score's histogram with :meth:`NumberHistogram.add_batch` rather than a
-        per-record ``add_value``.  The clip/weight, overlap guard and value
-        coercion are identical to the per-record path (pinned by the
-        bulk-vs-per-record tests); the dispatch restricts this to float scores
-        over tabix/bigWig tables -- everything else keeps :meth:`_do_histogram`.
+        per-record ``add_value``.  The clip, the weight, the record-ordering
+        rule and the value coercion are identical to the per-record path
+        (pinned by the bulk-vs-per-record tests) -- the weight and the
+        ordering because both paths read them off the same per-score-class
+        declarations rather than assuming one kind's semantics.  The dispatch
+        restricts this to float scores over tabix/bigWig tables on a kind in
+        ``_BULK_SCAN_RESOURCE_TYPES``; everything else keeps
+        :meth:`_do_histogram`.
         """
         result: dict[str, Histogram] = {}
         for score_id, hist_conf in all_hist_confs.items():
@@ -776,8 +780,10 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         (the same producer the histogram bulk path uses) and reduces each score
         with ``min()``/``max()`` over the batch's non-nan subset, rather than a
         per-record ``MinMaxValue.add_value``.  The parse, the region clip/skip
-        and the overlap guard are identical to the per-record path; ``count``
-        stays 0, as for a position score.
+        and the record-ordering rule are identical to the per-record path, and
+        so is ``count``: it stays 0 for a position or allele score and tracks
+        the records seen for a ``cnv_collection``, whose
+        ``RECORDS_ARE_COUNTED`` says the count is part of this statistic.
         """
         result: dict[str, MinMaxValue] = {
             score_id: MinMaxValue(score_id) for score_id in score_ids}
@@ -795,11 +801,15 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     ) -> int | None:
         """Fold one batch of column arrays into the per-score min/max.
 
-        Shares the clip/skip and overlapping-position guard with the histogram
+        Shares the clip/skip and record-ordering guard with the histogram
         path; the reduction takes ``min()``/``max()`` over the kept values
         with the nans dropped first -- an empty remainder contributes nothing --
         folded into the running ``MinMaxValue`` exactly as ``add_value`` seeds
         and combines them.
+
+        Where the score kind says so (``RECORDS_ARE_COUNTED``) it also tracks
+        how many records were seen, which is a count of RECORDS and not of
+        values: an NA-valued record counts, exactly as it does per record.
         """
         pos_begin, pos_end, value_cells = arrays
         keep, _weights, prev_right = \
