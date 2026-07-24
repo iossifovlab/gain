@@ -1,7 +1,7 @@
 # pylint: disable=W0621,C0114,C0115,C0116,W0212,W0613
 from unittest.mock import MagicMock
 
-from gain.task_graph.dask_run_state import RunState, SubmitBatch
+from gain.task_graph.dask_run_state import GatherBatch, RunState, SubmitBatch
 from gain.task_graph.graph import Task, TaskDesc
 
 
@@ -30,6 +30,13 @@ def a_claimed_submit_batch_of(
     """Enqueue several tasks and take them into the in-flight submit state."""
     state.enqueue([a_task_desc(task_id) for task_id in task_ids])
     batch = state.claim_for_submit()
+    assert batch is not None
+    return batch
+
+
+def a_claimed_gather_batch(state: RunState) -> GatherBatch:
+    """Take everything completed into the in-flight gather state."""
+    batch = state.claim_for_gather()
     assert batch is not None
     return batch
 
@@ -330,8 +337,8 @@ def test_submit_aborted_does_not_duplicate_a_task_claimed_for_gather() -> None:
     futures = [MagicMock(), MagicMock()]
     state.submitted(batch, futures)
     state.task_finished(futures[0])  # its callback fired first
-    gather_batch = state.claim_for_gather()  # ...and the results worker has it
-    assert gather_batch is not None
+    # ...and the results worker has it, where no eviction can reach it
+    gather_batch = a_claimed_gather_batch(state)
     error = RuntimeError("add_done_callback failed: the client loop is gone")
 
     state.submit_aborted(batch, futures, error)
@@ -367,8 +374,7 @@ def test_submit_aborted_does_not_duplicate_an_already_gathered_task() -> None:
     futures = [MagicMock(), MagicMock()]
     state.submitted(batch, futures)
     state.task_finished(futures[0])
-    gather_batch = state.claim_for_gather()
-    assert gather_batch is not None
+    gather_batch = a_claimed_gather_batch(state)
     state.gathered(
         gather_batch, [(task, "SUCCESS") for task in gather_batch.tasks])
     error = RuntimeError("add_done_callback failed: the client loop is gone")
@@ -393,8 +399,7 @@ def test_submit_aborted_does_not_redeliver_a_task_the_run_loop_took() -> None:
     futures = [MagicMock(), MagicMock()]
     state.submitted(batch, futures)
     state.task_finished(futures[0])
-    gather_batch = state.claim_for_gather()
-    assert gather_batch is not None
+    gather_batch = a_claimed_gather_batch(state)
     state.gathered(
         gather_batch, [(task, "SUCCESS") for task in gather_batch.tasks])
     assert state.take_results() == [(Task("A"), "SUCCESS")], "yielded already"
@@ -423,8 +428,7 @@ def test_gather_failed_does_not_duplicate_a_task_the_abort_delivered() -> None:
     futures = [MagicMock(), MagicMock()]
     state.submitted(batch, futures)
     state.task_finished(futures[0])
-    gather_batch = state.claim_for_gather()
-    assert gather_batch is not None
+    gather_batch = a_claimed_gather_batch(state)
     abort_error = RuntimeError("add_done_callback failed: the loop is gone")
     state.submit_aborted(batch, futures, abort_error)
     gather_error = OSError("gather failed: the connection is gone")
