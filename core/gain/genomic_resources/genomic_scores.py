@@ -1433,6 +1433,16 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         ``batch_size`` is a HINT.  A backend whose read granularity is fixed by
         its own windowing -- ``BigWigTable``, whose batches are sized by its
         adaptive fetch window -- ignores it.
+
+        **Do not mutate the yielded arrays.**  They are views on what the
+        backend produced, and two score ids configured to the same column are
+        served the identical array object (as are ``pos_begin`` and a bigWig
+        score reading payload column 1), so an in-place edit would be seen by
+        the other.  Copy first if you need to modify.
+
+        The guards below run when this method is CALLED, not on the first
+        ``next()`` -- which is why the streaming half lives in
+        :meth:`_value_array_batches` rather than a ``yield`` here.
         """
         if not self.supports_region_value_arrays():
             # Refuse here rather than let the call reach the table.  A VCF
@@ -1462,6 +1472,25 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             score_id: cast(int, self.score_definitions[score_id].score_index)
             for score_id in scores
         }
+        return self._value_array_batches(
+            columns, (chrom, pos_begin, pos_end), batch_size)
+
+    def _value_array_batches(
+        self,
+        columns: dict[str, int],
+        region: tuple[str, int | None, int | None],
+        batch_size: int,
+    ) -> Generator[
+            tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]], None, None]:
+        """Stream the batches for an already-validated request.
+
+        Split out so :meth:`fetch_region_value_arrays` is a plain function and
+        its guards fire when it is CALLED.  Were it a generator itself, every
+        one of those checks would be deferred to the first ``next()``, so a
+        caller that built the generator and passed it elsewhere would be handed
+        the refusal at some arbitrary later point, far from the mistake.
+        """
+        chrom, pos_begin, pos_end = region
         for begin, end, cells in self.table.get_region_value_arrays(
                 chrom, pos_begin, pos_end, set(columns.values()), batch_size):
             yield begin, end, {

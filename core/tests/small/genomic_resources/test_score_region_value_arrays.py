@@ -92,7 +92,7 @@ def test_vcf_score_refuses_to_fetch_value_arrays(
     # the honest answer, and it points at the query to ask instead.
     with AlleleScore(_vcf_score(tmp_path)).open() as score, \
             pytest.raises(TypeError, match="supports_region_value_arrays"):
-        list(score.fetch_region_value_arrays("chr1", 1, 100, ["scoreA"]))
+        score.fetch_region_value_arrays("chr1", 1, 100, ["scoreA"])
 
 
 def test_bigwig_score_value_arrays_match_the_record_read(
@@ -130,7 +130,7 @@ def test_fetching_value_arrays_from_an_unopened_score_is_refused(
 ) -> None:
     score = PositionScore(_multiscore_tabix(tmp_path))
     with pytest.raises(ValueError, match="is not open"):
-        list(score.fetch_region_value_arrays("chr1", 1, 20, ["s1"]))
+        score.fetch_region_value_arrays("chr1", 1, 20, ["s1"])
 
 
 def test_fetching_value_arrays_for_an_unknown_chromosome_is_refused(
@@ -138,4 +138,41 @@ def test_fetching_value_arrays_for_an_unknown_chromosome_is_refused(
 ) -> None:
     with PositionScore(_multiscore_tabix(tmp_path)).open() as score, \
             pytest.raises(ValueError, match="not among the available"):
-        list(score.fetch_region_value_arrays("chrZZ", 1, 20, ["s1"]))
+        # No list(): the guard fires on the CALL, not on first next().
+        score.fetch_region_value_arrays("chrZZ", 1, 20, ["s1"])
+
+
+def test_eligible_scan_uses_the_array_producer_not_the_record_path(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An eligible bulk scan must actually take the array fast path.
+
+    Equivalence tests structurally cannot catch this: the record-unpacking
+    fallback in ``_region_value_arrays`` produces the same arrays, so disabling
+    the fast path entirely leaves every result bit-identical and the whole
+    suite green (verified by mutation) while giving back the ~3x (tabix) and
+    ~8x (bigWig) this PR exists for.  This test is the only thing that notices.
+    """
+    from gain.genomic_resources.implementations.genomic_scores_impl import (
+        GenomicScoreImplementation,
+    )
+
+    resource = _multiscore_tabix(tmp_path)
+    calls = 0
+    original = PositionScore.fetch_region_value_arrays
+
+    def counting_fetch(self: PositionScore, *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        return original(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    PositionScore.fetch_region_value_arrays = counting_fetch  # type: ignore[method-assign,assignment]
+    try:
+        GenomicScoreImplementation._do_min_max_bulk(
+            resource, ["s1"], "chr1", 1, 20)
+    finally:
+        PositionScore.fetch_region_value_arrays = original  # type: ignore[method-assign]
+
+    assert calls == 1, (
+        f"bulk scan used the array producer {calls} times; expected 1 "
+        f"(0 means it silently fell back to the per-record path)")

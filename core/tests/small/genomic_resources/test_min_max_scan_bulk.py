@@ -175,3 +175,33 @@ def test_bulk_min_max_matches_per_record_literal_nan(
     bulk = G._do_min_max_bulk(resource, ["s"], "chr1", 1, 6)
     _assert_min_max_equal(bulk, ref)
     assert (bulk["s"].min, bulk["s"].max) == (0.5, 0.9)
+
+
+def test_bulk_min_max_matches_per_record_high_precision_tokens(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Scientific notation and >=16 significant digits -- the shape a p-value or
+    # allele-frequency column has.  ``pd.to_numeric`` is NOT correctly rounded
+    # here (it also truncates long decimals to ~10 significant digits), so a
+    # parser built on it diverges from the per-record ``float()`` by ULPs or
+    # much more, silently, on exactly the resources that need precision most.
+    resource = (
+        a_position_score()
+        .with_score("s", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  s
+            chr1   1          1        1e-25
+            chr1   2          2        0.00000071009127180852
+            chr1   3          3        96.43868415975565
+            chr1   4          4        6.754841e-20
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    ref = G._do_min_max(resource, ["s"], "chr1", 1, 4)
+    bulk = G._do_min_max_bulk(resource, ["s"], "chr1", 1, 4)
+    _assert_min_max_equal(bulk, ref)
+    # Pinned exactly: these are the values Python's float() produces.
+    assert bulk["s"].min == 1e-25
+    assert bulk["s"].max == 96.43868415975565

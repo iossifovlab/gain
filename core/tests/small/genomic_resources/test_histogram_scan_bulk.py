@@ -292,3 +292,64 @@ def test_np_score_is_not_bulk_eligible(tmp_path: pathlib.Path) -> None:
     ref = GenomicScoreImplementation._do_histogram(
         resource, confs, "1", 1, 20)
     _assert_hists_equal(via_task, ref)
+
+
+def test_bulk_histogram_overlap_guard_within_one_batch(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Overlapping positions are rejected when both rows are in ONE batch.
+
+    The sibling boundary test drives _SCAN_BATCH_SIZE down to 1, so it only
+    ever exercises the carry between batches.  The within-batch comparison --
+    ``kleft[1:] <= kright[:-1]`` -- had no test at all: deleting it, or
+    weakening it to ``<`` so that mere adjacency slips through, left the whole
+    suite green (verified by mutation).
+    """
+    resource = (
+        a_position_score()
+        .with_score("s", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  s
+            chr1   1          5        0.1
+            chr1   3          8        0.2
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    confs: dict = {"s": _hist_conf()}
+    # Default batch size: both rows land in the same batch.
+    with pytest.raises(ValueError, match="multiple values for positions"):
+        GenomicScoreImplementation._do_histogram_bulk(
+            resource, confs, "chr1", 1, 10)
+    # ...and the per-record path rejects it the same way.
+    with pytest.raises(ValueError, match="multiple values for positions"):
+        GenomicScoreImplementation._do_histogram(
+            resource, confs, "chr1", 1, 10)
+
+
+def test_bulk_histogram_overlap_guard_rejects_adjacency_within_one_batch(
+    tmp_path: pathlib.Path,
+) -> None:
+    # left == previous right is an overlap too (both rows claim that position),
+    # which is why the guard uses ``<=``.  Its own test, because the ``<``
+    # mutation is invisible to the case above.
+    resource = (
+        a_position_score()
+        .with_score("s", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  s
+            chr1   1          5        0.1
+            chr1   5          9        0.2
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    confs: dict = {"s": _hist_conf()}
+    with pytest.raises(ValueError, match="multiple values for positions"):
+        GenomicScoreImplementation._do_histogram_bulk(
+            resource, confs, "chr1", 1, 10)
+    with pytest.raises(ValueError, match="multiple values for positions"):
+        GenomicScoreImplementation._do_histogram(
+            resource, confs, "chr1", 1, 10)

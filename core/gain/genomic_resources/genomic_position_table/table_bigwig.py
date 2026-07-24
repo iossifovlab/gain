@@ -485,15 +485,16 @@ class BigWigTable(GenomicPositionTable):
             value = raw[:, 2]
             # payload == (chrom, pos_begin, pos_end, value); serve each
             # requested column from it so any configured index (not just the
-            # value at 3) matches the per-record read exactly.
-            payload_columns: dict[int, np.ndarray] = {
-                1: pos_begin, 2: pos_end, 3: value,
-            }
-            cols = {
-                col: payload_columns[col] if col in payload_columns
-                else np.full(len(intervals), chrom, dtype=object)
-                for col in columns
-            }
+            # value at 3) matches the per-record read exactly.  Indexed as the
+            # 4-tuple it stands for, so an out-of-range column raises the same
+            # IndexError the record path raises rather than being quietly
+            # served something -- a misconfigured index used to come back as
+            # the chromosome string here, turning an aborted repair into a
+            # silently all-zero histogram.
+            chrom_col = np.full(len(intervals), chrom, dtype=object) \
+                if any(col in {0, -4} for col in columns) else None
+            payload_columns = (chrom_col, pos_begin, pos_end, value)
+            cols = {col: payload_columns[col] for col in columns}
             yield pos_begin, pos_end, cols
 
     def get_all_records(self) -> Generator[Record, None, None]:

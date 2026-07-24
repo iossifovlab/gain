@@ -6,7 +6,6 @@ from collections.abc import Callable, Generator
 from typing import Any, ClassVar, TypeVar, cast
 
 import numpy as np
-import pandas as pd
 
 from gain import logging
 from gain.genomic_resources.genomic_position_table import (
@@ -665,21 +664,50 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         NA is tested on the raw value BEFORE parse; an unparseable value
         becomes nan -- skipped by both ``add_batch`` and the min/max reduction,
         exactly as ``add_value`` / ``MinMaxValue.add_value`` skip a ``None``.
-        ``pd.to_numeric`` is stricter than Python ``float()`` (the per-record
-        parser), so the few non-NA cells it drops (PEP-515 underscores, Unicode
-        digits) are re-parsed with ``float()``; clean numeric data leaves that
-        set empty and pays nothing.
+
+        **Parsed with numpy, deliberately NOT with ``pd.to_numeric``.**  The
+        per-record path parses with Python ``float()``, which is correctly
+        rounded; ``pd.to_numeric`` is not, and the difference is not a
+        rounding curiosity -- it silently mis-parses exactly the columns that
+        need precision most:
+
+            pd.to_numeric  float()
+            1e-25                   9.999999999999999e-26   1e-25
+            96.43868415975565       96.43868415975564       96.43868415975565
+            0.00000071009127180852  7.100912718e-07         7.1009127180852e-07
+
+        The last one is not an ULP: pandas truncates to ~10 significant digits.
+        Scientific notation misparses ~8-10% of the time at any precision, so a
+        p-value or allele-frequency column would diverge from the per-record
+        path on nearly a tenth of its rows.  ``ndarray.astype(np.float64)``
+        agrees with ``float()`` on every token tested, including the PEP-515
+        underscores and Unicode digits that ``pd.to_numeric`` rejects outright
+        (which is why this used to need a re-parse loop -- it no longer does).
+
+        numpy raises rather than coercing, so NA sentinels are substituted
+        before the bulk parse and a batch containing a genuinely unparseable
+        cell falls back to per-cell parsing.  Real score columns take neither
+        path; both are there so a dirty one still agrees with per-record.
         """
-        raw = pd.Series(cells)
-        na_mask = raw.isin(score_def.na_values).to_numpy()
-        values = pd.to_numeric(raw, errors="coerce").to_numpy(
-            dtype=np.float64, copy=True)
-        retry = np.flatnonzero(np.isnan(values) & ~na_mask)
-        if retry.size:
-            raw_cells = raw.to_numpy()
-            for idx in retry:
+        if cells.dtype.kind == "f":
+            # Already numeric (bigWig serves float payloads): nothing to parse,
+            # and the per-record path does not parse it either.
+            values = cells.astype(np.float64, copy=True)
+            na_mask = np.isin(cells, list(score_def.na_values))
+            values[na_mask] = np.nan
+            return values
+
+        raw = np.asarray(cells, dtype=object)
+        na_mask = np.isin(raw, list(score_def.na_values))
+        work = raw.copy()
+        work[na_mask] = "nan"
+        try:
+            values = work.astype(np.float64)
+        except (TypeError, ValueError):
+            values = np.empty(work.shape, dtype=np.float64)
+            for idx, cell in enumerate(work):
                 try:
-                    values[idx] = float(raw_cells[idx])
+                    values[idx] = float(cell)
                 except (TypeError, ValueError):
                     values[idx] = np.nan
         values[na_mask] = np.nan
@@ -702,7 +730,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         single position, which the overlap guard would reject; a
         ``cnv_collection`` weights every record 1.  A VCF-backed table (its
         record payload is not a raw row), an int/str/bool score
-        (``int()``/``str()`` parsing does not match ``pd.to_numeric``), or a
+        (``int()``/``str()`` parsing is not the float parse the bulk path
+        does), or a
         categorical/null histogram likewise keep the per-record
         :meth:`_do_histogram`.
         """
@@ -731,8 +760,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
           overlap guard are what the bulk accumulators assume -- not the
           per-allele read of ``allele_score``/``np_score`` nor the weight-1 of
           ``cnv_collection``;
-        * every score a ``float``: ``int()`` / ``str()`` parsing does not match
-          ``pd.to_numeric`` + ``float()``;
+        * every score a ``float``: ``int()`` / ``str()`` parsing is not the
+          float parse the bulk path does;
         * and the backend serves the bulk read at all -- asked of the score,
           not tested on the table's class.
 
