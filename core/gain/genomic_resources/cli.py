@@ -181,8 +181,11 @@ def _add_dry_run_and_force_parameters_group(
     group = parser.add_argument_group(title="Force/Dry run")
     group.add_argument(
         "-n", "--dry-run", default=False, action="store_true",
-        help="only checks if the manifest update is needed whithout "
-        "actually updating it")
+        help="report whether the manifest needs updating and write nothing: "
+        "no manifest, and no recorded file state either. The run still reads "
+        "and hashes whatever answering the question takes, it just keeps no "
+        "receipt - so it leaves the repository byte-identical, and seeds "
+        "nothing for the next run to reuse")
     group.add_argument(
         "-f", "--force", default=False,
         action="store_true",
@@ -539,8 +542,12 @@ def _do_resource_manifest_command(
     prebuild_entries = collect_dvc_entries(proto, res)
     verify_content = not use_dvc
 
+    # A dry run reports; it does not record. Recording the states it derived
+    # on the way would leave `.grr/<file>.state` files behind in a tree the
+    # caller asked us only to inspect (#257).
     manifest_update = proto.check_update_manifest(
-        res, prebuild_entries, verify_content=verify_content)
+        res, prebuild_entries, verify_content=verify_content,
+        save_state=not dry_run)
     if not bool(manifest_update):
         logger.debug(
             "manifest of <%s> is up to date",

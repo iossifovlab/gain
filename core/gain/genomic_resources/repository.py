@@ -965,7 +965,8 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
     def _update_manifest_entry_and_state(
             self, resource: GenomicResource, entry: ManifestEntry,
             prebuild_entries: dict[str, ManifestEntry], *,
-            verify_content: bool = False) -> DvcContentDrift | None:
+            verify_content: bool = False,
+            save_state: bool = True) -> DvcContentDrift | None:
         """Fill in md5 and size of a *materialised* file's manifest entry.
 
         In the DEFAULT mode a DVC-managed file is never hashed. Three
@@ -1019,7 +1020,8 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
                     entry.md5 = dvc_entry.md5
                     entry.size = dvc_entry.size
                     return None
-            self.save_resource_file_state(resource, state)
+            if save_state:
+                self.save_resource_file_state(resource, state)
             entry.md5 = state.md5
             entry.size = state.size
             return None
@@ -1049,7 +1051,8 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
             return None
 
         state = self.build_resource_file_state(resource, entry.name)
-        self.save_resource_file_state(resource, state)
+        if save_state:
+            self.save_resource_file_state(resource, state)
 
         entry.md5 = state.md5
         entry.size = state.size
@@ -1116,8 +1119,12 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         prebuild_entries: dict[str, ManifestEntry] | None = None,
         *,
         verify_content: bool = False,
+        save_state: bool = True,
     ) -> ManifestUpdate:
-        """Check if the resource manifest needs update."""
+        """Check if the resource manifest needs update.
+
+        With ``save_state=False`` nothing it derives is recorded (#257).
+        """
         if prebuild_entries is None:
             prebuild_entries = {}
         try:
@@ -1131,7 +1138,7 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         for entry in self.collect_resource_entries(resource):
             drift = self._update_manifest_entry_and_state(
                 resource, entry, prebuild_entries,
-                verify_content=verify_content)
+                verify_content=verify_content, save_state=save_state)
             if drift is not None:
                 # Collected, not raised: one command reports every drifted
                 # file of the resource, not just the first (#373).
