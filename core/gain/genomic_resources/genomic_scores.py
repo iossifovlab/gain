@@ -193,6 +193,100 @@ class GenomicScoreDef(ScoreDef):
         self.na_values = _normalize_na_values(
             self.na_values, self.value_type)
 
+    def parse_value(self, value: str | int | float | None) -> ScoreValue:
+        """Turn one raw cell into this score's value.
+
+        ``None`` for a null raw value (an absent VCF INFO key), for a
+        configured NA sentinel, and for a cell that fails to parse -- a bad
+        cell is logged and skipped rather than aborting a whole scan.
+
+        The scalar half of this definition's parsing contract; the column half
+        is :meth:`parse_array`.  Both live here, on the object that owns the
+        two inputs they need (``value_parser`` and ``na_values``), so neither
+        can be changed against a config the other did not see.
+        """
+        if value is None or value in self.na_values:
+            return None
+        if self.value_parser is None:
+            return value
+        # pylint: disable=broad-except
+        try:  # Temporary workaround for GRR generation
+            parsed: ScoreValue = self.value_parser(value)
+        except Exception:
+            logger.exception(
+                "unable to parse value %s for score %s",
+                value, self.score_id)
+            return None
+        return parsed
+
+    def parse_array(self, cells: np.ndarray) -> np.ndarray:
+        """Turn a whole column of raw cells into values, vectorized.
+
+        The column half of this definition's parsing contract, and the reason
+        the bulk statistics scan is worth having.  Equivalent to
+        ``[parse_value(c) for c in cells]`` with ``None`` rendered as ``nan``
+        -- a float64 array has no ``None``, and for every consumer a non-value
+        and a nan are the same skip.  That equivalence is not an aspiration:
+        test_parse_array_agrees_with_parse_value_fuzz asserts it token by
+        token, over several ``na_values`` configs and several array widths.
+
+        **Parsed with numpy, deliberately NOT with ``pd.to_numeric``**, which
+        is not correctly rounded -- it returns 9.999999999999999e-26 for
+        ``1e-25`` and truncates ``0.00000071009127180852`` to ten significant
+        digits.  ``ndarray.astype`` agrees with ``float()`` on every token
+        tested, including the PEP-515 underscores and Unicode digits pandas
+        rejects outright.
+
+        Float scores only, which is what ``_bulk_scan_eligible`` gates on: an
+        ``int`` score would need ``int()`` semantics (``int("3.5")`` raises
+        where ``float("3.5")`` does not).  Opening that gate is gain#405's
+        follow-up, and this assert is what makes the limit visible until then.
+        """
+        assert self.value_type == "float", (
+            f"parse_array is float-only; score {self.score_id} is "
+            f"{self.value_type}")
+
+        if cells.dtype.kind == "f":
+            # Already numeric (a bigWig payload): nothing to parse, and the
+            # per-record path does not parse it either.
+            values = cells.astype(np.float64, copy=True)
+            values[np.isin(cells, list(self.na_values))] = np.nan
+            return values
+
+        raw = np.asarray(cells, dtype=object)
+        na_mask = np.isin(raw, list(self.na_values))
+        work = raw.copy()
+        # A parseable stand-in for each NA cell.  This line is a PERFORMANCE
+        # measure -- without it a single "." sentinel makes the bulk astype
+        # raise and sends the whole batch down the per-cell path -- while the
+        # ``values[na_mask] = np.nan`` below is the CORRECTNESS one, and it is
+        # what stops a numeric sentinel (na_values: "-1") from being read as
+        # the number it looks like.  Each also happens to cover for the other,
+        # so removing either alone leaves the tests green; removing both does
+        # not.  Keep both, and know which is doing which job.
+        work[na_mask] = "nan"
+        try:
+            values = work.astype(np.float64)
+        except (TypeError, ValueError):
+            values = np.empty(work.shape, dtype=np.float64)
+            failed = 0
+            for idx, cell in enumerate(work):
+                try:
+                    values[idx] = float(cell)
+                except (TypeError, ValueError):
+                    values[idx] = np.nan
+                    failed += 1
+            if failed:
+                # Once per batch, with a count.  The per-record path logs a
+                # traceback per bad cell, which on a corrupt column means one
+                # per row; saying it once keeps the signal that the bulk path
+                # used to drop entirely without reproducing that flood.
+                logger.warning(
+                    "unable to parse %s of %s values for score %s",
+                    failed, values.size, self.score_id)
+        values[na_mask] = np.nan
+        return values
+
 
 class ScoreLineBase(abc.ABC):
     """Shared value extraction for the per-backend score lines.
@@ -350,27 +444,15 @@ class ScoreLineBase(abc.ABC):
     def _extract_value(self, score_def: GenomicScoreDef) -> ScoreValue:
         """Get and parse one score from the line using a resolved def.
 
-        A null raw value (e.g. an absent VCF INFO key) or a configured NA
-        value yields ``None``; a value that fails to parse is logged and
-        yields ``None`` rather than aborting the scan.
+        The line's job is the RAW GET -- which slot of which payload holds this
+        score, the one thing that differs per backend.  Turning that cell into
+        a value is the definition's (:meth:`GenomicScoreDef.parse_value`), so
+        that the per-record read and the bulk column read cannot drift apart.
         """
         key = score_def.score_index
         assert key is not None
 
-        value: str | int | float | None = self._get_raw(key)
-        if value is None or value in score_def.na_values:
-            return None
-        if score_def.value_parser is None:
-            return value
-        # pylint: disable=broad-except
-        try:  # Temporary workaround for GRR generation
-            parsed: ScoreValue = score_def.value_parser(value)
-        except Exception:
-            logger.exception(
-                "unable to parse value %s for score %s",
-                value, score_def.score_id)
-            return None
-        return parsed
+        return score_def.parse_value(self._get_raw(key))
 
     def get_values(
         self, score_defs: list[GenomicScoreDef],

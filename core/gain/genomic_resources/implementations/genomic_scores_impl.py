@@ -610,8 +610,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
         for score_id, hist in result.items():
             score_def = defs[score_id]
-            values = GenomicScoreImplementation._coerce_values(
-                value_cells[score_id], score_def)
+            values = score_def.parse_array(value_cells[score_id])
             assert isinstance(hist, NumberHistogram)
             hist.add_batch(values[keep], weights)
 
@@ -654,64 +653,6 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             prev_right = int(kright[-1])
         weights = (kright - kleft + 1).astype(np.int64)
         return keep, weights, prev_right
-
-    @staticmethod
-    def _coerce_values(
-        cells: np.ndarray, score_def: Any,
-    ) -> np.ndarray:
-        """Parse a score column into floats, matching ``_extract_value``.
-
-        NA is tested on the raw value BEFORE parse; an unparseable value
-        becomes nan -- skipped by both ``add_batch`` and the min/max reduction,
-        exactly as ``add_value`` / ``MinMaxValue.add_value`` skip a ``None``.
-
-        **Parsed with numpy, deliberately NOT with ``pd.to_numeric``.**  The
-        per-record path parses with Python ``float()``, which is correctly
-        rounded; ``pd.to_numeric`` is not, and the difference is not a
-        rounding curiosity -- it silently mis-parses exactly the columns that
-        need precision most:
-
-            pd.to_numeric  float()
-            1e-25                   9.999999999999999e-26   1e-25
-            96.43868415975565       96.43868415975564       96.43868415975565
-            0.00000071009127180852  7.100912718e-07         7.1009127180852e-07
-
-        The last one is not an ULP: pandas truncates to ~10 significant digits.
-        Scientific notation misparses ~8-10% of the time at any precision, so a
-        p-value or allele-frequency column would diverge from the per-record
-        path on nearly a tenth of its rows.  ``ndarray.astype(np.float64)``
-        agrees with ``float()`` on every token tested, including the PEP-515
-        underscores and Unicode digits that ``pd.to_numeric`` rejects outright
-        (which is why this used to need a re-parse loop -- it no longer does).
-
-        numpy raises rather than coercing, so NA sentinels are substituted
-        before the bulk parse and a batch containing a genuinely unparseable
-        cell falls back to per-cell parsing.  Real score columns take neither
-        path; both are there so a dirty one still agrees with per-record.
-        """
-        if cells.dtype.kind == "f":
-            # Already numeric (bigWig serves float payloads): nothing to parse,
-            # and the per-record path does not parse it either.
-            values = cells.astype(np.float64, copy=True)
-            na_mask = np.isin(cells, list(score_def.na_values))
-            values[na_mask] = np.nan
-            return values
-
-        raw = np.asarray(cells, dtype=object)
-        na_mask = np.isin(raw, list(score_def.na_values))
-        work = raw.copy()
-        work[na_mask] = "nan"
-        try:
-            values = work.astype(np.float64)
-        except (TypeError, ValueError):
-            values = np.empty(work.shape, dtype=np.float64)
-            for idx, cell in enumerate(work):
-                try:
-                    values[idx] = float(cell)
-                except (TypeError, ValueError):
-                    values[idx] = np.nan
-        values[na_mask] = np.nan
-        return values
 
     @staticmethod
     def _can_bulk_histogram(
@@ -871,8 +812,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
         for score_id, min_max in result.items():
             score_def = defs[score_id]
-            values = GenomicScoreImplementation._coerce_values(
-                value_cells[score_id], score_def)[keep]
+            values = score_def.parse_array(value_cells[score_id])[keep]
             finite = values[~np.isnan(values)]
             if finite.size:
                 low = float(finite.min())
