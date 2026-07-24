@@ -49,7 +49,6 @@ def main(
         argv: list[str] | None = None,
 ) -> None:
     """Liftover dae variants tool main function."""
-    # pylint: disable=too-many-locals,too-many-statements
     if argv is None:
         argv = sys.argv[1:]
 
@@ -87,7 +86,10 @@ def main(
     for res in resourses:
         assert res.config is not None
         impl = build_resource_implementation(res)
-        assert isinstance(impl, ScoreImplementationBase)
+        if not isinstance(impl, ScoreImplementationBase):
+            raise TypeError(
+                f"can't draw histograms for resource <{res.resource_id}>: "
+                f"a {res.get_type()} resource carries no scores")
         score = impl.score
 
         for score_id in score.get_all_scores():
