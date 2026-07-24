@@ -19,6 +19,11 @@ classifiers = [
 dependencies = [
     "gain-core",
     "numpy>=2.2",
+    # Both model runtimes are runtime deps: the backend is chosen per process
+    # with SPLICEAI_BACKEND (see spliceai_annotator_impl), TensorFlow by
+    # default, so an installed annotator must be able to run either. Which of
+    # the two survives is issue #298.
+    "onnxruntime>=1.27",
     "tensorflow>=2.18",
 ]
 dynamic = ["version"]
@@ -41,16 +46,18 @@ dev = [
     "ruff==0.14.6",
     # Build-time-only tooling for the offline .h5 -> .onnx conversion
     # (scripts/convert_models_to_onnx.py) and the equivalence test
-    # (tests/test_onnx_equivalence.py). These are NOT runtime deps: the
-    # annotator runs the committed .onnx (once #297 swaps the backend) or the
-    # .h5 today. `onnx` provides onnx.checker; `onnxruntime` runs the .onnx in
-    # the equivalence test; `tf2onnx` is imported by Keras' model.export(
-    # format="onnx"). The equivalence test skips cleanly when they are absent.
-    # Pinned: the committed .onnx artifacts were validated against these exact
-    # versions, so a floated onnxruntime/onnx must not silently redefine what
-    # "reproduces the .h5" means without an intentional bump here.
+    # (tests/test_onnx_equivalence.py). `onnx` provides onnx.checker;
+    # `tf2onnx` is imported by Keras' model.export(format="onnx"). Neither is
+    # needed to *run* the committed .onnx -- that is onnxruntime, which #297
+    # promoted to a runtime dep above. The equivalence test skips cleanly when
+    # these are absent.
+    # Pinned: the committed .onnx artifacts were produced by these exact
+    # versions, so a float must not silently redefine what "reproduces the
+    # .h5" means without an intentional bump here. (onnxruntime carries a
+    # lower bound instead, as an installed-at-runtime dep; the committed
+    # uv.lock still pins the exact version CI resolves, and
+    # tests/test_onnx_equivalence.py re-checks reproduction on every run.)
     "onnx==1.22.0",
-    "onnxruntime==1.27.0",
     "tf2onnx==1.17.0",
 ]
 

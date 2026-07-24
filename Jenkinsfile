@@ -368,7 +368,50 @@ pipeline {
                             }
                             post { always { script { publishReports('spliceai_annotator') } } }
                         }
-        
+
+                        stage('spliceai_annotator (onnx)') {
+                            steps {
+                                script {
+                                    // Second pass of the same fast tier with
+                                    // the ONNX Runtime backend selected (#297).
+                                    // The backend is a process-wide choice read
+                                    // from SPLICEAI_BACKEND at import time, so
+                                    // "green on both backends" can only be a
+                                    // second *run* -- not a parametrization
+                                    // inside the suite. Tests are unchanged;
+                                    // only the env var differs.
+                                    //
+                                    // Reuses the image the stage above builds
+                                    // (same tag, same context -- a cache hit)
+                                    // and runs pytest only: ruff/mypy/pylint
+                                    // and `uv build` are backend-independent
+                                    // and would just duplicate that stage's
+                                    // reports.
+                                    sh label: 'Build spliceai_annotator image', script: """
+                                        docker build -f spliceai_annotator/Dockerfile \\
+                                            -t gain-spliceai-annotator-ci:${env.BUILD_NUMBER} .
+                                    """
+                                    sh label: 'Run spliceai_annotator CI (onnx backend)', script: """
+                                        mkdir -p reports/spliceai_annotator_onnx
+                                        docker run --rm \\
+                                            -v \$PWD/reports/spliceai_annotator_onnx:/reports \\
+                                            -e SPLICEAI_BACKEND=onnx \\
+                                            gain-spliceai-annotator-ci:${env.BUILD_NUMBER} \\
+                                            sh -c '
+                                                set +e
+                                                pytest -n 5 -m "not integration" \\
+                                                    --junitxml=/reports/pytest.xml \\
+                                                    tests
+                                                pytest_exit=\$?
+                                                chmod -R a+rw /reports
+                                                exit \$pytest_exit
+                                            '
+                                    """
+                                }
+                            }
+                            post { always { script { publishReports('spliceai_annotator_onnx') } } }
+                        }
+
                         stage('web_api') {
                             environment {
                                 COMPOSE_PROJECT = "gain-ci-web-api-${env.BUILD_NUMBER}"

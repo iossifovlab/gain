@@ -12,9 +12,14 @@ archived). Two committed serializations of the **same** models live here:
 
 The `.h5` files are authoritative. The `.onnx` files are **derived** from them
 and are committed alongside — exactly as the `.h5` files are committed — so the
-runtime never needs TensorFlow to load the ensemble (see issue #296; the
-runtime backend swap itself is #297/#299). If the two ever disagree, the `.h5`
-files win: regenerate the `.onnx` from them, never the reverse.
+runtime never needs TensorFlow to load the ensemble (see issue #296). If the
+two ever disagree, the `.h5` files win: regenerate the `.onnx` from them, never
+the reverse.
+
+Which serialization actually runs is a per-process choice: `SPLICEAI_BACKEND`
+selects `tensorflow` (the `.h5` files — the default) or `onnx` (these `.onnx`
+files, under ONNX Runtime; issue #297). Whether TensorFlow stays installed at
+all is #298.
 
 ## Regenerating the `.onnx` files
 

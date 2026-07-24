@@ -1,7 +1,6 @@
 // Dedicated Jenkins pipeline for the gain-spliceai-annotator integration
 // suite: the slow differential harness (`-m integration`) that the fast
-// per-PR spliceai_annotator step skips. Two tiers run here, both under
-// TensorFlow (shipped in the CI image):
+// per-PR spliceai_annotator step skips. Two tiers run here:
 //
 //   - #320 fixture tier: pins all 16 attributes against a frozen hg38/GENCODE
 //     fixture corpus committed to the tree (needs no external GRR).
@@ -9,6 +8,11 @@
 //     extra loci against the node-local *real* GRR (real hg38 + GENCODE),
 //     catching drift the frozen fixture cannot see. It reads the grr-sync
 //     materialized tree mounted read-only at /grr.
+//
+// Both tiers run twice -- once per model runtime backend (#297): the default
+// TensorFlow one and, with SPLICEAI_BACKEND=onnx, ONNX Runtime. Both runtimes
+// ship in the CI image. This is where the ONNX migration is actually held to
+// the corpus, so the job's wall clock is roughly doubled by design.
 //
 // Expected Jenkins job setup:
 //   - Script path: spliceai_annotator/Jenkinsfile.integration
@@ -178,7 +182,18 @@ pipeline {
                 // SPLICEAI_INTEGRATION_REQUIRE_GRR turns a missing /grr into a
                 // hard error inside the real tier too (it would pytest.skip on
                 // a dev box, but must never skip on the agent).
+                //
+                // Run the whole harness once per model runtime backend
+                // (#297). SPLICEAI_BACKEND is read at import time, so the two
+                // backends are two *processes*, not a parametrization; this
+                // is where "the corpus reproduces under ONNX too" is actually
+                // proven, since the fast tier's golden assertions are far
+                // coarser than the 16 tiered attributes pinned here. Both
+                // tiers run even if the first fails -- a one-sided failure is
+                // the diagnostic.
                 sh '''
+                    set +e
+
                     docker run --rm \
                         -e SPLICEAI_INTEGRATION_REQUIRE_GRR=1 \
                         -v "$GRR_ROOT/grr:/grr:ro" \
@@ -192,6 +207,26 @@ pipeline {
                             chmod -R a+rw /reports
                             exit $pytest_exit
                         '
+                    tensorflow_exit=$?
+
+                    docker run --rm \
+                        -e SPLICEAI_INTEGRATION_REQUIRE_GRR=1 \
+                        -e SPLICEAI_BACKEND=onnx \
+                        -v "$GRR_ROOT/grr:/grr:ro" \
+                        -v "$PWD/reports/integration:/reports" \
+                        ${IMAGE_TAG} \
+                        sh -c '
+                            set +e
+                            pytest -n 5 -m integration tests/ \
+                                --junitxml=/reports/pytest-onnx.xml
+                            pytest_exit=$?
+                            chmod -R a+rw /reports
+                            exit $pytest_exit
+                        '
+                    onnx_exit=$?
+
+                    echo "integration tiers: tensorflow=$tensorflow_exit onnx=$onnx_exit"
+                    [ "$tensorflow_exit" -eq 0 ] && [ "$onnx_exit" -eq 0 ]
                 '''
             }
         }
