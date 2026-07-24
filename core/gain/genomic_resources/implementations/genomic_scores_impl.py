@@ -482,10 +482,10 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     ) -> dict[str, Histogram]:
         """Vectorized equivalent of :meth:`_do_histogram`.
 
-        Reads a region as batches of column arrays -- the tabix fast path
-        pulls raw pysam rows directly (no ``Record`` built per row), bigWig
-        goes through ``get_records_in_region`` -- and accumulates each score's
-        histogram with :meth:`NumberHistogram.add_batch` rather than a
+        Reads a region as batches of column arrays -- tabix pulls raw pysam
+        rows directly and bigWig converts each fetched interval chunk in one
+        shot, neither building a ``Record`` per row -- and accumulates each
+        score's histogram with :meth:`NumberHistogram.add_batch` rather than a
         per-record ``add_value``.  The clip/weight, overlap guard and value
         coercion are identical to the per-record path (pinned by the
         bulk-vs-per-record tests); the dispatch restricts this to float scores
@@ -516,13 +516,13 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         """Drive a bulk region scan, folding each batch into ``result``.
 
         The shared skeleton of :meth:`_do_histogram_bulk` and
-        :meth:`_do_min_max_bulk`: open the score, resolve each result score's
-        integer column index, and stream the region's column-array batches
-        through ``accumulate`` (which mutates ``result`` and carries the
-        overlap guard's ``prev_right``).  The caller supplies the pre-built
-        ``result`` -- empty histograms or seeded ``MinMaxValue`` -- and the
-        matching accumulator.  A bulk-eligible score addresses its column by
-        integer index; str keys are VCF INFO names, which the dispatch excludes.
+        :meth:`_do_min_max_bulk`: open the score and stream the region's
+        column-array batches through ``accumulate`` (which mutates ``result``
+        and carries the overlap guard's ``prev_right``).  The caller supplies
+        the pre-built ``result`` -- empty histograms or seeded ``MinMaxValue``
+        -- and the matching accumulator.  Batches are keyed by SCORE ID: the
+        score resolves each id to its payload column itself (gain#398), so
+        nothing here handles column indices.
         """
         impl = build_score_implementation_from_resource(resource)
         with impl.score.open() as score:
@@ -807,8 +807,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
         Reads the region as column-array batches (the same producer the
         histogram bulk path uses) and reduces each float score's values with
-        ``nanmin``/``nanmax`` rather than a per-record
-        ``MinMaxValue.add_value``.  Coercion, the region clip/skip and the
+        ``min()``/``max()`` over the batch's non-nan subset, rather than a
+        per-record ``MinMaxValue.add_value``.  Coercion, the region clip/skip
+        and the
         overlap guard are identical to the per-record path; ``count`` stays 0,
         as for a position score.
         """
@@ -829,9 +830,10 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         """Fold one batch of column arrays into the per-score min/max.
 
         Shares the clip/skip and overlapping-position guard with the histogram
-        path; the reduction is ``nanmin``/``nanmax`` over the kept, non-nan
-        values, folded into the running ``MinMaxValue`` exactly as
-        ``add_value`` seeds and combines them.
+        path; the reduction takes ``min()``/``max()`` over the kept values
+        with the nans dropped first -- an empty remainder contributes nothing --
+        folded into the running ``MinMaxValue`` exactly as ``add_value`` seeds
+        and combines them.
         """
         pos_begin, pos_end, value_cells = arrays
         keep, _weights, prev_right = \
