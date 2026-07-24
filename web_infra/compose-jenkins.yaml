@@ -7,7 +7,18 @@ services:
 
   db:
     image: postgres
-    restart: always
+    # Ephemeral, per-build stack: never ask the daemon to keep this
+    # alive (gain#323). `always` also means "start on daemon start",
+    # so a container leaked by an aborted build (Jenkins never reaches
+    # post{}, so the `down -v` backstop never runs) is resurrected on
+    # every dockerd start, forever -- it is never idle-reaped and never
+    # ages out. Seven such db containers, the oldest from 2026-05-13,
+    # came back from the dead on piglet's 2026-07-15 reimage.
+    # Nothing here depends on the policy: dependents gate on
+    # `depends_on: service_healthy`, and postgres' first-boot init runs
+    # inside the same container process, so a cold start is not an
+    # exit-and-retry. Matches every sibling service in this file.
+    restart: "no"
     # set shared memory limit when using docker compose
     shm_size: 128mb
     volumes_from:
