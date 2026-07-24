@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import itertools
 import threading
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -75,6 +75,13 @@ class RunState:
 
     :meth:`has_outstanding` is the single query all of this exists to
     answer, and the run loop's termination decision is that one call.
+
+    The states are not all reachable from every transition, though, and the
+    recovery paths are where that bites: a batch aborted mid-wiring can
+    evict its futures from the collections it holds, but not from the
+    results worker's hands. So "exactly one result per task" is not left to
+    the collections to imply -- :meth:`_deliver` is the only way into
+    ``gathered`` and it enforces the invariant outright (gain#381).
     """
 
     def __init__(self) -> None:
@@ -90,7 +97,33 @@ class RunState:
         self._completed: list[tuple[Future, Task]] = []
         self._gathering: dict[int, GatherBatch] = {}
         self._gathered: list[tuple[Task, Any]] = []
+        self._delivered: set[str] = set()
         self._shutdown = False
+
+    def _deliver(self, results: Iterable[tuple[Task, Any]]) -> None:
+        """Deliver results for tasks not delivered already.
+
+        The one way a result reaches :attr:`_gathered`, and so the one place
+        "exactly one result per task, never more" is enforced. Every other
+        guard in this class keeps a task from being *lost*; this one keeps it
+        from being delivered *twice*, which the recovery transitions can
+        otherwise do: the run's six states are not all reachable from every
+        transition, so a batch aborted mid-wiring cannot evict a future the
+        results worker has already claimed for gather, gathered, or handed to
+        the run loop (gain#381). Rather than have each transition try to
+        reach the others' states, whichever path delivers a task first wins
+        and every later one drops its duplicate here.
+
+        Caller holds the lock.
+        """
+        for task, result in results:
+            if task.task_id in self._delivered:
+                logger.debug(
+                    "task %s was already delivered; dropping the duplicate "
+                    "result", task.task_id)
+                continue
+            self._delivered.add(task.task_id)
+            self._gathered.append((task, result))
 
     def _outstanding_count(self) -> int:
         """Count everything not yet yielded. Caller holds the lock."""
@@ -269,9 +302,14 @@ class RunState:
     def gathered(
         self, batch: GatherBatch, results: Sequence[tuple[Task, Any]],
     ) -> None:
-        """Move a gathered batch from in-flight gather to results."""
+        """Move a gathered batch from in-flight gather to results.
+
+        A task an aborted submit batch already delivered as an error is not
+        delivered again here -- see :meth:`_deliver` -- but the batch leaves
+        the in-flight gather state either way.
+        """
         with self._condition:
-            self._gathered.extend(results)
+            self._deliver(results)
             del self._gathering[batch.batch_id]
             self._condition.notify_all()
 
@@ -288,10 +326,15 @@ class RunState:
         the batch -- exactly as a task that dies on the worker is delivered
         -- so the run loop yields it as an error and then terminates, and
         the batch leaves the submit state in the same lock hold.
+
+        Delivers through :meth:`_deliver` like every other path. Nothing can
+        have delivered these tasks already -- ``map()`` raised, so no future
+        of theirs ever existed to complete -- but "every result goes through
+        the ledger" is a rule worth having no exception to: an exception is
+        the kind of thing a later change quietly grows a duplicate behind.
         """
         with self._condition:
-            self._gathered.extend(
-                (task.task, error) for task in batch.tasks)
+            self._deliver((task.task, error) for task in batch.tasks)
             del self._submitting[batch.batch_id]
             self._condition.notify_all()
 
@@ -316,6 +359,16 @@ class RunState:
         pop shrugs -- but it now sits in ``completed``, so it is evicted from
         there too; otherwise the results worker would gather it and deliver
         its task a second time, on top of the batch error.
+
+        Eviction reaches only as far as the collections this transition can
+        see. The results worker runs in parallel and may have carried a
+        callback-completed future beyond all of them -- into the in-flight
+        gather state, into ``gathered``, or out to the run loop, which cannot
+        be taken back at all. Those are :meth:`_deliver`'s to handle: the
+        error is delivered only for the tasks nothing has delivered yet, so
+        whichever of the two paths arrives first is the one result the task
+        gets (gain#381). If every task in the batch already has a result, the
+        wiring failure cost the run nothing and surfaces only in the log.
         """
         with self._condition:
             self._submitting.pop(batch.batch_id, None)
@@ -325,8 +378,7 @@ class RunState:
             self._completed = [
                 (f, t) for f, t in self._completed if f not in future_set
             ]
-            self._gathered.extend(
-                (task.task, error) for task in batch.tasks)
+            self._deliver((task.task, error) for task in batch.tasks)
             self._condition.notify_all()
 
     def gather_failed(
@@ -346,6 +398,6 @@ class RunState:
         must not run under this lock.
         """
         with self._condition:
-            self._gathered.extend((task, error) for task in batch.tasks)
+            self._deliver((task, error) for task in batch.tasks)
             del self._gathering[batch.batch_id]
             self._condition.notify_all()

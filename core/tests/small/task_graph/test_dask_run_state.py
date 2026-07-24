@@ -311,3 +311,129 @@ def test_submit_aborted_does_not_deliver_a_completed_future_twice() -> None:
         f"future left behind delivers a task twice (gain#372)"
     )
     assert not state.has_outstanding()
+
+
+def test_submit_aborted_does_not_duplicate_a_task_claimed_for_gather() -> None:
+    """The results worker can hold the future the abort wants to evict.
+
+    ``submit_aborted`` evicts the batch's futures from ``running`` and
+    ``completed``, but the results worker runs in parallel and can have
+    claimed a callback-completed future for gather already -- putting it in
+    the in-flight gather state, which no eviction reaches. The batch error
+    and the real result would then both be delivered for that one task
+    (gain#381). Exactly one result per task holds across that window: the
+    abort gets there first, so its error is the one delivered and the later
+    gather drops its duplicate.
+    """
+    state = RunState()
+    batch = a_claimed_submit_batch_of(state, ["A", "B"])
+    futures = [MagicMock(), MagicMock()]
+    state.submitted(batch, futures)
+    state.task_finished(futures[0])  # its callback fired first
+    gather_batch = state.claim_for_gather()  # ...and the results worker has it
+    assert gather_batch is not None
+    error = RuntimeError("add_done_callback failed: the client loop is gone")
+
+    state.submit_aborted(batch, futures, error)
+    state.gathered(
+        gather_batch, [(task, "SUCCESS") for task in gather_batch.tasks])
+
+    delivered = state.take_results()
+    delivered_tasks = [task for task, _ in delivered]
+    assert delivered_tasks.count(Task("A")) == 1, (
+        f"Task A was delivered {delivered_tasks.count(Task('A'))} times; the "
+        f"abort cannot reach a future the results worker claimed for gather, "
+        f"so it delivers the batch error on top of the real result (gain#381)"
+    )
+    assert delivered_tasks.count(Task("B")) == 1
+    assert delivered == [(Task("A"), error), (Task("B"), error)], (
+        "the abort delivered first, so its error is the result of record"
+    )
+    assert not state.has_outstanding()
+
+
+def test_submit_aborted_does_not_duplicate_an_already_gathered_task() -> None:
+    """The results worker can have finished before the abort even runs.
+
+    One step further on than the in-flight gather window: the real result is
+    in ``gathered`` already, waiting for the run loop to take it, and no
+    eviction reaches there either (gain#381). The gather got there first, so
+    its real result is the one that stands and the abort's error is dropped
+    for that task -- while the task that never completed still gets the
+    error, so the failure is not silently swallowed.
+    """
+    state = RunState()
+    batch = a_claimed_submit_batch_of(state, ["A", "B"])
+    futures = [MagicMock(), MagicMock()]
+    state.submitted(batch, futures)
+    state.task_finished(futures[0])
+    gather_batch = state.claim_for_gather()
+    assert gather_batch is not None
+    state.gathered(
+        gather_batch, [(task, "SUCCESS") for task in gather_batch.tasks])
+    error = RuntimeError("add_done_callback failed: the client loop is gone")
+
+    state.submit_aborted(batch, futures, error)
+
+    assert state.take_results() == [(Task("A"), "SUCCESS"), (Task("B"), error)]
+    assert not state.has_outstanding()
+
+
+def test_submit_aborted_does_not_redeliver_a_task_the_run_loop_took() -> None:
+    """A result the run loop already yielded cannot be taken back.
+
+    The last and widest of the three windows no eviction reaches: the run
+    loop has taken the real result and yielded it to the caller, so the only
+    way not to deliver that task twice is to remember that it was delivered
+    at all (gain#381). The abort still delivers the task that never
+    completed, so the run still learns of the failure.
+    """
+    state = RunState()
+    batch = a_claimed_submit_batch_of(state, ["A", "B"])
+    futures = [MagicMock(), MagicMock()]
+    state.submitted(batch, futures)
+    state.task_finished(futures[0])
+    gather_batch = state.claim_for_gather()
+    assert gather_batch is not None
+    state.gathered(
+        gather_batch, [(task, "SUCCESS") for task in gather_batch.tasks])
+    assert state.take_results() == [(Task("A"), "SUCCESS")], "yielded already"
+    error = RuntimeError("add_done_callback failed: the client loop is gone")
+
+    state.submit_aborted(batch, futures, error)
+
+    assert state.take_results() == [(Task("B"), error)], (
+        "Task A was delivered a second time, after the run loop had already "
+        "yielded its real result (gain#381)"
+    )
+    assert not state.has_outstanding()
+
+
+def test_gather_failed_does_not_duplicate_a_task_the_abort_delivered() -> None:
+    """Two recovery transitions can reach for the same task.
+
+    The abort delivers the batch error for a task whose future the results
+    worker is already gathering; that gather then fails and delivers its own
+    error for the very same task. Both are recovery paths, and neither can
+    see the other's state -- so the ledger, not the collections, is what
+    keeps this to one result per task (gain#381).
+    """
+    state = RunState()
+    batch = a_claimed_submit_batch_of(state, ["A", "B"])
+    futures = [MagicMock(), MagicMock()]
+    state.submitted(batch, futures)
+    state.task_finished(futures[0])
+    gather_batch = state.claim_for_gather()
+    assert gather_batch is not None
+    abort_error = RuntimeError("add_done_callback failed: the loop is gone")
+    state.submit_aborted(batch, futures, abort_error)
+    gather_error = OSError("gather failed: the connection is gone")
+
+    state.gather_failed(gather_batch, gather_error)
+
+    assert state.take_results() == [
+        (Task("A"), abort_error), (Task("B"), abort_error)], (
+        "the gather failure re-delivered a task the abort had already "
+        "delivered (gain#381)"
+    )
+    assert not state.has_outstanding()

@@ -651,14 +651,14 @@ class _CallbackRaisingFuture:
     forwarded callback finding nothing to pop is what keeps this batch's
     delivery a clean one-error-per-task rather than a race with the callback.
 
-    (A variant that lands a completed future in ``completed`` before the raise
-    -- to exercise ``submit_aborted``'s eviction of it end-to-end -- was tried
-    and reverted: with a live results worker it races ``gather()`` against the
-    abort, a broader over-delivery window than the ``_completed`` eviction
-    closes and one the scoped gain#372 fix deliberately leaves to the gather
-    path. That eviction is covered deterministically by
-    ``test_submit_aborted_does_not_deliver_a_completed_future_twice`` in
-    ``test_dask_run_state.py`` instead.)
+    (Landing a completed future in ``completed`` before the raise needs a
+    proxy the run state and dask agree on, which this one is not -- see
+    ``_RaisingAfterCompletionFuture`` below, which wraps only the raising
+    future for exactly that reason. That broader over-delivery window, which
+    the scoped gain#372 fix left to the gather path, is closed by gain#381
+    and covered by
+    ``test_an_abort_does_not_redeliver_a_task_the_results_worker_took`` here
+    and window by window in ``test_dask_run_state.py``.)
     """
 
     def __init__(
@@ -720,6 +720,95 @@ def test_a_callback_registration_that_fails_ends_the_run_instead_of_hanging(
     _assert_failing_client_delivers_every_task_as_error(
         _CallbackRaisingClient(dask_client, fail_at=3),
         tmp_path, "callback registration")
+
+
+class _RaisingAfterCompletionFuture:
+    """A future proxy that raises from ``add_done_callback`` -- but not yet.
+
+    It first waits for an earlier future of the same batch to really finish,
+    so that by the time the abort runs, that future's callback has fired and
+    the results worker has its task in hand. Unlike
+    :class:`_CallbackRaisingFuture`, only the raising future is wrapped: the
+    earlier ones are handed back exactly as ``map()`` returned them, so the
+    run state keys them by the same object dask reports completion for and
+    the completion really does travel down the results path (gain#381).
+    """
+
+    def __init__(self, future: Any, wait_for: Any) -> None:
+        self._future = future
+        self._wait_for = wait_for
+
+    def add_done_callback(self, fn: Any) -> None:
+        deadline = time.time() + 10.0
+        while not self._wait_for.done() and time.time() < deadline:
+            time.sleep(0.01)
+        # Finished is not the same as delivered: give the callback thread and
+        # the results worker their turn, so the completed task is somewhere
+        # the abort cannot reach it -- being gathered, gathered, or already
+        # yielded -- rather than still sitting in ``completed``, which it can.
+        time.sleep(0.3)
+        raise TypeError("add_done_callback failed: the client IOLoop is gone")
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._future, name)
+
+
+class _CompletionRacingCallbackClient(_WrappedClient):
+    """A real client whose callback registration raises after a real finish.
+
+    The whole batch is really submitted and really runs; registering the
+    completion callbacks raises only once an earlier task of the batch has
+    completed and been taken up by the results worker.
+    """
+
+    def __init__(self, client: Client, fail_at: int) -> None:
+        super().__init__(client)
+        self._fail_at = fail_at
+
+    def map(self, *args: Any, **kwargs: Any) -> Any:
+        futures = list(self._client.map(*args, **kwargs))
+        futures[self._fail_at] = _RaisingAfterCompletionFuture(
+            futures[self._fail_at], futures[0])
+        return futures
+
+
+def test_an_abort_does_not_redeliver_a_task_the_results_worker_took(
+    dask_client: Client,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The abort races a real gather, end to end, and still delivers once.
+
+    The run-state tests pin each window of this race down deterministically;
+    this one runs it for real -- real scheduler, real workers, a task that
+    genuinely completes and is genuinely collected while the same batch is
+    being aborted mid-wiring. Whichever of the two paths wins the race, the
+    run must yield exactly one result per task (gain#381). Before the fix the
+    abort delivered its error on top of the collected result and the run
+    yielded more results than the graph had tasks.
+    """
+    num_tasks = 5
+    graph = TaskGraph()
+    for i in range(num_tasks):
+        graph.create_task(f"Task{i}", double, args=[i], deps=[])
+
+    executor = DaskExecutor(
+        _CompletionRacingCallbackClient(dask_client, fail_at=3),
+        task_log_dir=str(tmp_path / "logs"))
+
+    results = _run_in_thread_with_timeout(executor, graph, timeout=30.0)
+
+    assert len(results) == num_tasks, (
+        f"the run yielded {len(results)} results for {num_tasks} tasks; a "
+        f"task the results worker had already taken was delivered again by "
+        f"the abort (gain#381)"
+    )
+    assert len(dict(results)) == num_tasks, (
+        "a task was delivered more than once"
+    )
+    assert any(isinstance(result, BaseException) for _, result in results), (
+        "the wiring failure never surfaced; the caller must still learn the "
+        "run failed (gain#372)"
+    )
 
 
 def test_releasing_futures_after_a_gather_failure_survives_a_raising_release(
