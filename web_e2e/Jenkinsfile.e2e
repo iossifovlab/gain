@@ -69,6 +69,11 @@ pipeline {
     }
 
     environment {
+        // Named once because the `Checkout` stage both clones from it
+        // and `git ls-remote`s it to tell a superseded commit from a
+        // genuine checkout failure.
+        GAIN_REPO_URL = 'https://github.com/iossifovlab/gain.git'
+
         BACKEND_IMAGE  = "gain-web-api-prod:${env.BUILD_NUMBER}"
         FRONTEND_IMAGE = "gain-web-ui-prod:${env.BUILD_NUMBER}"
         COMPOSE_PROJECT =
@@ -178,22 +183,86 @@ pipeline {
             }
         }
 
+        // The upstream gain build hands us the exact SHA it built the
+        // wheels from, and that SHA is what has to be tested: `Prepare
+        // backend/frontend images` copies those wheels, so quietly
+        // testing a newer tip would pair new sources with old wheels
+        // and report a result about a combination nobody has.
+        //
+        // Two separate things used to make this stage fail red
+        // (gain#414):
+        //
+        //   1. `depth: 1`. A shallow fetch of `+refs/heads/*` lands
+        //      only branch TIPS, so an explicit COMMIT_SHA resolved
+        //      only for as long as it still WAS some branch's tip —
+        //      an ordinary fast-forward push between the upstream
+        //      trigger and this stage was enough to break a build
+        //      whose SHA was still perfectly reachable. It also
+        //      degraded the shared workspace repo (cloned with full
+        //      history by the declarative `Checkout SCM` above) to a
+        //      shallow one. Hence: no shallow clone here.
+        //
+        //   2. A force-push past COMMIT_SHA orphans it — unreachable
+        //      from every ref, therefore unfetchable at ANY depth.
+        //      That is routine on a branch being rebased through
+        //      review, and this job starts minutes after the commit
+        //      (it waits on the parent's `Conda packages` stage), so
+        //      it is the normal case rather than a tight race.
+        //
+        // A build whose commit no longer exists has not failed, it has
+        // been SUPERSEDED: report NOT_BUILT and skip the suite instead
+        // of raising a red Zulip alert for a run that never had a
+        // chance. The build triggered by the new tip is the one that
+        // carries the verdict.
+        //
+        // Only a MOVED BRANCH justifies that. If the tip is still our
+        // SHA then the checkout failed for some other reason (network,
+        // disk, credentials) and the build must stay red — so rethrow.
+        // A `milestone()` would be the tidier way to drop superseded
+        // runs, but it aborts older builds of the whole JOB, and this
+        // one job serves every branch — it would cancel unrelated
+        // branches' builds.
         stage('Checkout') {
             steps {
                 script {
-                    String ref = params.COMMIT_SHA?.trim() ?: \
-                                 params.BRANCH_NAME
-                    checkout([
-                        $class: 'GitSCM',
-                        branches: [[name: ref]],
-                        userRemoteConfigs: [[
-                            url: 'https://github.com/iossifovlab/gain.git',
-                        ]],
-                        extensions: [[$class: 'CloneOption',
-                                      shallow: true,
-                                      noTags: true,
-                                      depth: 1]],
-                    ])
+                    String sha = params.COMMIT_SHA?.trim()
+                    String ref = sha ?: params.BRANCH_NAME
+                    try {
+                        checkout([
+                            $class: 'GitSCM',
+                            branches: [[name: ref]],
+                            userRemoteConfigs: [[
+                                url: env.GAIN_REPO_URL,
+                            ]],
+                            extensions: [[$class: 'CloneOption',
+                                          shallow: false,
+                                          noTags: true]],
+                        ])
+                    } catch (Exception err) {
+                        // Read the tip through the shell env rather
+                        // than Groovy interpolation, so a branch name
+                        // never lands inside the command string.
+                        String tip = sh(
+                            script: 'git ls-remote "$GAIN_REPO_URL" ' +
+                                    '"refs/heads/$BRANCH_NAME" ' +
+                                    '| cut -f1',
+                            returnStdout: true,
+                        ).trim()
+                        if (!sha || tip == sha) {
+                            throw err
+                        }
+                        env.SUPERSEDED = 'true'
+                        currentBuild.result = 'NOT_BUILT'
+                        currentBuild.displayName += ' (superseded)'
+                        echo(
+                            "COMMIT_SHA ${sha} is no longer on " +
+                            "${params.BRANCH_NAME} (tip is now " +
+                            "${tip ?: 'nothing — branch is gone'}). " +
+                            'This build was superseded by a newer ' +
+                            'push before it could start; marking it ' +
+                            'NOT_BUILT and skipping the suite.'
+                        )
+                    }
                 }
             }
         }
@@ -228,6 +297,10 @@ pipeline {
         // guard hard-fails on an empty root; the pre-flight below is the
         // positive check that the trees are actually synced on this node.
         stage('Compose env') {
+            // Every stage from here on is guarded the same way: on a
+            // superseded COMMIT_SHA (see `Checkout`) there are no
+            // sources to test, and the build is already NOT_BUILT.
+            when { expression { env.SUPERSEDED != 'true' } }
             steps {
                 sh '''
                     set -eu
@@ -313,6 +386,7 @@ EOF
             // while #19 succeeded on a still-authenticated one
             // (piglet). Logging in here makes the pull
             // agent-independent.
+            when { expression { env.SUPERSEDED != 'true' } }
             environment {
                 REGISTRY_USER = credentials('user.registry.seqpipe.org')
                 REGISTRY_PASS = credentials('passwd.registry.seqpipe.org')
@@ -411,6 +485,7 @@ EOF
             // Playwright runner image — always built locally; not
             // pushed to the registry (only its inputs are: the
             // committed package-lock.json and the test sources).
+            when { expression { env.SUPERSEDED != 'true' } }
             steps {
                 sh '''
                     set -a; . ./web_infra/.env; set +a
@@ -424,6 +499,7 @@ EOF
         }
 
         stage('Instance import') {
+            when { expression { env.SUPERSEDED != 'true' } }
             steps {
                 sh '''
                     set -a; . ./web_infra/.env; set +a
@@ -437,6 +513,7 @@ EOF
         }
 
         stage('Run e2e') {
+            when { expression { env.SUPERSEDED != 'true' } }
             steps {
                 script {
                     // tb-cj9: per-agent lock for the heaviest stage.
