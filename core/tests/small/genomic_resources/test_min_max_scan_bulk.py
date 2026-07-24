@@ -8,7 +8,9 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
+    a_cnv_collection,
     a_position_score,
+    an_allele_score,
 )
 
 
@@ -40,6 +42,90 @@ def _multiscore_tabix(tmp_path: pathlib.Path) -> GenomicResource:
         .with_tabix()
         .build_resource(tmp_path)
     )
+
+
+def test_bulk_min_max_matches_per_record_allele_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Several records at one position must not abort the min/max scan."""
+    resource = (
+        an_allele_score()
+        .with_score("s", "float")
+        .with_data(
+            """
+            chrom  pos_begin  reference  alternative  s
+            chr1   10         A          G            0.1
+            chr1   10         A          C            0.7
+            chr1   10         A          T            0.3
+            chr1   16         C          T            0.5
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+    ref = G._do_min_max(resource, ["s"], "chr1", 1, 20)
+    bulk = G._do_min_max_bulk(resource, ["s"], "chr1", 1, 20)
+
+    _assert_min_max_equal(bulk, ref)
+    # The extremes both sit on records that share position 10 with others,
+    # so a scan that dropped or deduplicated them would not find these.
+    assert (bulk["s"].min, bulk["s"].max) == (0.1, 0.7)
+
+
+def test_bulk_min_max_matches_per_record_cnv_collection(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A CNV collection's min/max also carries a record COUNT.
+
+    Unlike a position score -- whose count stays 0 -- the per-record path
+    counts every CNV, so the bulk path has to as well or the two disagree on
+    a field that reaches the serialized statistic.
+    """
+    resource = (
+        a_cnv_collection()
+        .with_score("s", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  s
+            chr1   10         100      0.1
+            chr1   20         200      0.7
+            chr1   30         40       0.3
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+    ref = G._do_min_max(resource, ["s"], "chr1", 1, 300)
+    bulk = G._do_min_max_bulk(resource, ["s"], "chr1", 1, 300)
+
+    _assert_min_max_equal(bulk, ref)
+    assert (bulk["s"].min, bulk["s"].max) == (0.1, 0.7)
+    assert bulk["s"].count == 3
+
+
+def test_dispatch_min_max_uses_bulk_for_allele_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The min/max dispatch must let allele scores through too."""
+    resource = (
+        an_allele_score()
+        .with_score("s", "float")
+        .with_data(
+            """
+            chrom  pos_begin  reference  alternative  s
+            chr1   10         A          G            0.1
+            chr1   10         A          C            0.7
+            chr1   16         C          T            0.5
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+    assert G._bulk_scan_eligible(resource, ["s"])
+    via_task = G._do_min_max_task(resource, ["s"], "chr1", 1, 20)
+    ref = G._do_min_max(resource, ["s"], "chr1", 1, 20)
+
+    _assert_min_max_equal(via_task, ref)
 
 
 def test_bulk_min_max_matches_per_record_tabix(

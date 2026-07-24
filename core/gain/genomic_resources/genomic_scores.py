@@ -12,6 +12,7 @@ from types import TracebackType
 from typing import (
     TYPE_CHECKING,
     Any,
+    ClassVar,
     cast,
 )
 
@@ -922,6 +923,39 @@ _ScoreLineFactory = Callable[
 ]
 
 
+class RecordOrdering(enum.Enum):
+    """Whether one kind of score may cover a position more than once.
+
+    The per-record read decides this inside each score's own
+    ``fetch_region_values``.  The bulk statistics scan never builds those
+    records, so it has to decide the same thing from position arrays alone --
+    and the answer is NOT the same for every kind, which is why it is declared
+    per score class rather than assumed.  Reading an allele score under the
+    position score's rule is precisely the mistake this prevents: it rejects
+    the several-records-at-one-position shape that IS an allele score.
+
+    Only *this* rule is enforced here, not sortedness: the bulk scan is served
+    exclusively by tabix and bigWig tables, and tabix refuses to index a file
+    whose positions move backwards ("Unsorted positions on sequence"), so an
+    out-of-order resource cannot reach this code to be checked.
+    """
+
+    DISJOINT = "disjoint"
+    """No two records may share or even touch a position.
+
+    A position score's rule: one value per position, so a second record
+    reaching a position already covered is a corrupt resource.
+    """
+
+    SHARED = "shared"
+    """Several records may cover the same position.
+
+    An allele score carries one record per ref/alt pair at a position; a CNV
+    collection carries overlapping regions.  For both, what the position score
+    calls corruption is the ordinary shape of the data.
+    """
+
+
 class GenomicScore(ScoreResource[GenomicScoreDef]):
     """Base class for genomic score resources.
 
@@ -1026,6 +1060,27 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         - GenomicResource: Base resource abstraction
         - GenomicPositionTable: Table format abstraction
     """
+
+    # How this kind of score's records may be laid out along a chromosome --
+    # the rule the bulk statistics scan must enforce for itself, since it
+    # never builds the records whose fetch would enforce it.  Defaults to the
+    # strictest reading, so a score kind that has not thought about this is
+    # held to one-value-per-position rather than silently let through.
+    RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.DISJOINT
+
+    # What one record contributes to a statistic: the number of bases it
+    # covers, or just itself.  A position score's value stands for every base
+    # in its span, so the span IS the weight; a record that stands only for
+    # itself (one CNV, one allele) counts 1 however long it is.  BOTH the
+    # per-record and the bulk scan read this, so the two cannot drift apart.
+    RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = True
+
+    # Whether the min/max statistic also reports HOW MANY records were seen.
+    # A position or allele score's min/max carries no count (it stays 0 and is
+    # left out of the serialized form); a CNV collection reports the number of
+    # CNVs alongside their range.  Read by both scan paths, like the two rules
+    # above, so neither can start counting without the other.
+    RECORDS_ARE_COUNTED: ClassVar[bool] = False
 
     # What each fetched line is wrapped in.  Installed by :meth:`open`, from
     # the table's ``yields_records`` claim, and declared here with NO default
@@ -1945,6 +2000,13 @@ class AlleleScore(GenomicScore):
                  and allele_aggregator specifications
     """
 
+    # Several records at one position, one per ref/alt pair, is what an allele
+    # score IS -- so a shared position is ordinary here, exactly as
+    # :meth:`fetch_region` treats it (it yields the repeats and raises only on
+    # a backwards position).  Stated once, so the bulk scan cannot read these
+    # records under the position score's one-value-per-position rule.
+    RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.SHARED
+
     class Mode(enum.Enum):
         """Allele score mode."""
 
@@ -2200,6 +2262,18 @@ class _CNVScoreDef(GenomicScoreDef):
 
 class CnvCollection(GenomicScore):
     """A collection of CNVs."""
+
+    # CNVs are regions, and they overlap each other freely -- so a position
+    # covered by several of them is ordinary, not corrupt.
+    RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.SHARED
+
+    # A CNV counts once however many bases it spans: the record stands for one
+    # event, not for each of its bases.  This is the single statement of that
+    # rule -- both the per-record and the bulk statistics scan read it here.
+    RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
+
+    # How many CNVs a region holds is itself part of the statistic here.
+    RECORDS_ARE_COUNTED: ClassVar[bool] = True
 
     def __init__(self, resource: GenomicResource):
         if resource.get_type() != "cnv_collection":

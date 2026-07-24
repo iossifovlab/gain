@@ -21,6 +21,7 @@ from gain.genomic_resources.genomic_position_table.table_inmemory import (
 )
 from gain.genomic_resources.genomic_scores import (
     GenomicScore,
+    RecordOrdering,
     build_score_from_resource,
 )
 from gain.genomic_resources.histogram import (
@@ -63,6 +64,21 @@ logger = logging.getLogger(__name__)
 # histogram pass, a MinMaxValue for the min/max pass.  A TypeVar keeps
 # ``_bulk_region_scan`` generic without losing either caller's dict type.
 _AccT = TypeVar("_AccT")
+
+# The resource kinds the bulk accumulators can serve.  Each declares how its
+# records weigh and whether they may share a position (see
+# ``GenomicScore.RECORD_WEIGHT_IS_SPAN`` / ``RECORD_ORDERING``), which is what
+# lets one set of accumulators read all three.
+#
+# ``np_score`` is absent deliberately: it is a deprecated alias that
+# ``AlleleScore`` already serves, so it would read correctly -- but no
+# ``np_score`` resource exists in any production GRR, so it is left on the
+# per-record path rather than enabled untested (gain#421).
+_BULK_SCAN_RESOURCE_TYPES = frozenset({
+    "position_score",
+    "allele_score",
+    "cnv_collection",
+})
 
 
 class GenomicScoreImplementation(ScoreImplementationBase):
@@ -341,6 +357,10 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         value: float,
     ) -> None:
         statistic.add_value(value)
+        # Whether the record count is part of this statistic is the score
+        # kind's to say, in the one place the bulk scan reads it from too.
+        if self.score.RECORDS_ARE_COUNTED:
+            statistic.add_count()
 
     @staticmethod
     def _do_min_max(
@@ -412,9 +432,13 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         value: Any,
         count: int,
     ) -> None:
+        # ``count`` is the record's span; whether that is its weight is the
+        # score kind's to say, and it says it in ONE place that the bulk scan
+        # reads too (see ``GenomicScore.RECORD_WEIGHT_IS_SPAN``).  A CNV
+        # counts once however long it is.
         histogram.add_value(
             value,
-            count,
+            count if self.score.RECORD_WEIGHT_IS_SPAN else 1,
         )
 
     @staticmethod
@@ -506,7 +530,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         accumulate: Callable[
             [tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]],
              dict[str, _AccT],
-             tuple[str | None, int | None, int | None], int | None],
+             tuple[str | None, int | None, int | None], int | None,
+             GenomicScore],
             int | None],
     ) -> dict[str, _AccT]:
         """Drive a bulk region scan, folding each batch into ``result``.
@@ -528,7 +553,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 batch_size=GenomicScoreImplementation._SCAN_BATCH_SIZE)
             for arrays in batches:
                 prev_right = accumulate(
-                    arrays, result, (chrom, start, end), prev_right)
+                    arrays, result, (chrom, start, end), prev_right,
+                    score)
         return result
 
     @staticmethod
@@ -537,22 +563,25 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         result: dict[str, Histogram],
         region: tuple[str | None, int | None, int | None],
         prev_right: int | None,
+        score: GenomicScore,
     ) -> int | None:
         """Fold one batch of column arrays into the per-score histograms.
 
         ``arrays`` is one ``(pos_begin, pos_end, {score_id: cells})`` batch as
         produced by :meth:`_region_value_arrays`.  Clips each record to
-        ``[start, end]`` exactly as ``_fetch_region_lines`` does (drop records
-        ending before ``start``;
-        ``weight = min(end, pos_end) - max(start, pos_begin) + 1``), enforces
-        the same overlapping-position guard across the batch boundary, and
-        adds each float score's values vectorized.  Returns the last clipped
-        right edge so the next batch can continue the overlap check.
+        ``[start, end]`` exactly as ``_fetch_region_lines`` does (dropping
+        records ending before ``start``), weights it as its score kind says to
+        and enforces that kind's record-ordering rule across the batch
+        boundary -- both via :meth:`_clip_keep_guard` -- then adds each float
+        score's values vectorized.  Returns the last clipped right edge so the
+        next batch can continue the check.
         """
         pos_begin, pos_end, value_cells = arrays
         keep, weights, prev_right = \
             GenomicScoreImplementation._clip_keep_guard(
-                pos_begin, pos_end, region, prev_right)
+                pos_begin, pos_end, region, prev_right,
+                score.RECORD_ORDERING,
+                weight_is_span=score.RECORD_WEIGHT_IS_SPAN)
 
         for score_id, hist in result.items():
             values = value_cells[score_id]
@@ -567,16 +596,34 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         pos_end: np.ndarray,
         region: tuple[str | None, int | None, int | None],
         prev_right: int | None,
+        ordering: RecordOrdering,
+        *,
+        weight_is_span: bool,
     ) -> tuple[np.ndarray, np.ndarray, int | None]:
-        """Clip a batch to the region and enforce the overlap guard.
+        """Clip a batch to the region and enforce the record-ordering rule.
 
         Returns ``(keep, weights, prev_right)``: the mask of records surviving
         the ``pos_end >= start`` skip (as ``_fetch_region_lines`` drops records
-        ending before the query), their span weights
-        ``min(end, pos_end) - max(start, pos_begin) + 1``, and the carry for the
-        next batch's overlap check.  Raises ``ValueError`` on an overlapping
-        position exactly as ``fetch_region_values`` does, across the batch
-        boundary via ``prev_right``.
+        ending before the query), their weights, and the carry for the next
+        batch's check.  Raises ``ValueError`` on a layout the score's own
+        ``fetch_region_values`` would reject, across the batch boundary via
+        ``prev_right``.
+
+        Neither the weight nor the rejected layout is this function's to
+        decide; both come from the score kind (``RECORD_WEIGHT_IS_SPAN`` and
+        :class:`RecordOrdering`), so that one scan reads all of them:
+
+        * ``weight_is_span``: a position score's value stands for every base
+          it covers, so its weight is the clipped span
+          ``min(end, pos_end) - max(start, pos_begin) + 1``.  A record that
+          stands only for itself -- one CNV, one allele -- weighs 1 however
+          many bases it spans.
+        * ``ordering``: a position score forbids two records touching at all,
+          while an allele score's several records at one position and a CNV
+          collection's overlapping regions are the ordinary shape of the data.
+          Sortedness is NOT checked here: only tabix and bigWig tables reach
+          this code, and tabix refuses to index a file whose positions move
+          backwards.
         """
         chrom, start, end = region
         count = pos_begin.shape[0]
@@ -588,15 +635,20 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         kleft = left[keep]
         kright = right[keep]
         if kleft.size:
-            overlaps_within = kleft.size > 1 and bool(
-                np.any(kleft[1:] <= kright[:-1]))
-            overlaps_carry = prev_right is not None \
-                and int(kleft[0]) <= prev_right
-            if overlaps_within or overlaps_carry:
+            if ordering is RecordOrdering.DISJOINT:
+                violation_within = kleft.size > 1 and bool(
+                    np.any(kleft[1:] <= kright[:-1]))
+                violation_carry = prev_right is not None \
+                    and int(kleft[0]) <= prev_right
+            else:
+                violation_within = False
+                violation_carry = False
+            if violation_within or violation_carry:
                 raise ValueError(
                     f"multiple values for positions on {chrom}")
             prev_right = int(kright[-1])
-        weights = (kright - kleft + 1).astype(np.int64)
+        weights = (kright - kleft + 1).astype(np.int64) if weight_is_span \
+            else np.ones(kleft.shape[0], dtype=np.int64)
         return keep, weights, prev_right
 
     @staticmethod
@@ -606,20 +658,21 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     ) -> bool:
         """Whether the vectorized scan may serve this histogram build.
 
-        Restricted to the common fast case whose bit-exactness the bulk path
-        guarantees: a **position score** whose float columns feed a number
-        histogram, over a tabix or bigWig table.  The bulk path imposes
-        position-score semantics -- a span weight ``pos_end - pos_begin + 1``
-        and the one-value-per-position overlap guard -- so it must NOT serve
-        the score types that read differently: an ``allele_score`` or
-        ``np_score`` carries several weight-1 records (distinct ref/alt) at a
-        single position, which the overlap guard would reject; a
-        ``cnv_collection`` weights every record 1.  A VCF-backed table (its
+        Restricted to the cases whose bit-exactness the bulk path guarantees:
+        float columns feeding a **number** histogram, over a tabix or bigWig
+        table, on a resource kind the accumulators can read.
+
+        The reading rules are no longer the position score's alone.  How a
+        record weighs and whether records may share a position are declared by
+        each score class (``RECORD_WEIGHT_IS_SPAN``, ``RECORD_ORDERING``) and
+        the accumulators follow them, so an ``allele_score``'s several records
+        per position and a ``cnv_collection``'s overlapping weight-1 regions
+        are read correctly rather than rejected (gain#421).
+
+        Still on the per-record :meth:`_do_histogram`: a VCF-backed table (its
         record payload is not a raw row), an int/str/bool score
         (``int()``/``str()`` parsing is not the float parse the bulk path
-        does), or a
-        categorical/null histogram likewise keep the per-record
-        :meth:`_do_histogram`.
+        does -- gain#406), a categorical or null histogram, and ``np_score``.
         """
         number_score_ids = []
         for score_id, hist_conf in all_hist_confs.items():
@@ -642,10 +695,13 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         the conditions that are THIS caller's live -- as opposed to the one
         condition that is the backend's, which the score now answers itself:
 
-        * a **position_score**: its span-weight and one-value-per-position
-          overlap guard are what the bulk accumulators assume -- not the
-          per-allele read of ``allele_score``/``np_score`` nor the weight-1 of
-          ``cnv_collection``;
+        * a resource kind the bulk accumulators can read.  It is no longer only
+          the position score: how records are weighted and whether they may
+          share a position are declared per score class
+          (``RECORD_WEIGHT_IS_SPAN``, ``RECORD_ORDERING``) and the accumulators
+          follow those, so an ``allele_score``'s several records per position
+          and a ``cnv_collection``'s overlapping weight-1 regions read
+          correctly (gain#421);
         * every score a ``float``: ``int()`` / ``str()`` parsing is not the
           float parse the bulk path does;
         * and the backend serves the bulk read at all -- asked of the score,
@@ -655,7 +711,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         are both built in ``GenomicScore.__init__``, so nothing here needs a
         file handle.
         """
-        if resource.get_type() != "position_score":
+        if resource.get_type() not in _BULK_SCAN_RESOURCE_TYPES:
             return False
         score = build_score_implementation_from_resource(resource).score
         return score.supports_region_value_arrays(score_ids)
@@ -735,6 +791,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         result: dict[str, MinMaxValue],
         region: tuple[str | None, int | None, int | None],
         prev_right: int | None,
+        score: GenomicScore,
     ) -> int | None:
         """Fold one batch of column arrays into the per-score min/max.
 
@@ -747,10 +804,17 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         pos_begin, pos_end, value_cells = arrays
         keep, _weights, prev_right = \
             GenomicScoreImplementation._clip_keep_guard(
-                pos_begin, pos_end, region, prev_right)
+                pos_begin, pos_end, region, prev_right,
+                score.RECORD_ORDERING,
+                weight_is_span=score.RECORD_WEIGHT_IS_SPAN)
 
         for score_id, min_max in result.items():
             values = value_cells[score_id][keep]
+            if score.RECORDS_ARE_COUNTED:
+                # Every KEPT record, not every value: the per-record path
+                # counts a record whose value is NA too, since it counts
+                # records rather than values.
+                min_max.add_count(int(values.size))
             finite = values[~np.isnan(values)]
             if finite.size:
                 low = float(finite.min())
@@ -862,23 +926,6 @@ class CnvCollectionImplementation(GenomicScoreImplementation):
 
     def get_statistics_info(self, **kwargs: Any) -> str:
         return super().get_statistics_info(**kwargs)
-
-    def _histogram_add_value(
-        self, histogram: Histogram,
-        value: Any,
-        count: int,  # noqa: ARG002
-    ) -> None:
-        histogram.add_value(
-            value,
-            1,
-        )
-
-    def _min_max_add_value(
-        self, statistic: MinMaxValue,
-        value: Any,
-    ) -> None:
-        statistic.add_value(value)
-        statistic.add_count()
 
 
 def build_score_implementation_from_resource(
