@@ -156,6 +156,22 @@ Services defined in `docker-compose.yaml`:
 
 ## Architecture
 
+### Architecture Decision Records
+
+`docs/adr/` records decisions that shaped this
+codebase — what was chosen, why it was scoped that
+way, and what it cost. **Read the relevant ADR before
+changing or extending the area it covers**; it is
+where the reasoning lives that is otherwise spread
+across issue threads and commit messages. See
+`docs/adr/README.md` for the convention, including how
+ADRs divide labour with the module-header "ledger"
+docstrings that some `__init__.py` files carry.
+
+These are internal records and sit deliberately
+outside `docs/source/`, which is the published GAIn
+documentation site.
+
 ### Package Structure
 
 - **`core/`** — GAIn (Genomic Annotation
