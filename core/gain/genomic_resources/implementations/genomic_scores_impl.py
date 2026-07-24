@@ -529,7 +529,6 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             for arrays in batches:
                 prev_right = accumulate(
                     arrays, result, (chrom, start, end), prev_right)
-        del impl
         return result
 
     @staticmethod
