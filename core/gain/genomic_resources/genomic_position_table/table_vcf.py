@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Generator
+from typing import ClassVar
 
 import pysam
 
@@ -106,6 +107,17 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
     score is opened.  Only the five decoded slots (``CHROM`` ... ``ALT``) mean
     the same thing across every backend.
     """
+
+    # **Set back to False on purpose.**  This backend inherits its tabix
+    # parent's ``get_region_value_arrays`` implementation, but cannot honour
+    # its contract: that method reads a raw tabular row and serves columns by
+    # integer payload index, and neither holds here -- the PAYLOAD is
+    # ``(variant record, allele index)`` and a VCF score is an INFO field
+    # addressed by *name*.  Inheriting True would hand a caller rows that are
+    # not rows.  This one line is what the callers' old
+    # ``isinstance(Tabix) and not isinstance(VCF)`` said, said once and in the
+    # place that knows why.
+    supports_value_arrays: ClassVar[bool] = False
 
     CHROM = "CHROM"
     POS_BEGIN = "POS"

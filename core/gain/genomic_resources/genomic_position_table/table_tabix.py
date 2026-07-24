@@ -62,6 +62,10 @@ class TabixGenomicPositionTable(GenomicPositionTable):
     # so it inherits the claim as-is -- see VCFGenomicPositionTable.
     yields_records: ClassVar[bool] = True
 
+    # Serves the bulk column-array read; see get_region_value_arrays below.
+    # NOT inherited in spirit by the VCF backend, which sets it back to False.
+    supports_value_arrays: ClassVar[bool] = True
+
     BUFFER_MAXSIZE: int = 20_000
 
     def __init__(

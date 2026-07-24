@@ -15,6 +15,8 @@ from typing import (
     cast,
 )
 
+import numpy as np
+
 from gain import logging
 from gain.genomic_resources.genomic_position_table import (
     VCFGenomicPositionTable,
@@ -60,6 +62,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 ScoreValue = str | int | float | bool | None
+
+# Default rows-per-batch hint for GenomicScore.fetch_region_value_arrays.  Big
+# enough that the per-batch numpy overhead disappears against the per-row work
+# it replaces, small enough that one batch's arrays stay comfortably in cache.
+DEFAULT_VALUE_ARRAYS_BATCH_SIZE = 100_000
 
 VCF_TYPE_CONVERSION_MAP = {
     "Integer": "int",
@@ -1379,6 +1386,88 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 "Error fetching lines for region %s:%s-%s in resource %s",
                 chrom, pos_begin, pos_end, self.resource_id)
             raise
+
+    def supports_region_value_arrays(self) -> bool:
+        """Whether this score's backend serves the bulk column-array read.
+
+        Answers about the BACKEND and nothing else.  It deliberately does not
+        fold in what any particular consumer additionally needs -- the
+        statistics scan, for instance, also requires a position score and float
+        value types, because its accumulators assume a span weight and one
+        value per position.  Those are conditions of that consumer, not of this
+        method, and a caller that has its own must keep asking them itself.
+
+        Answerable on an UNOPENED score: ``self.table`` is built in
+        ``__init__``, so nothing here touches the file.
+        """
+        return self.table.supports_value_arrays
+
+    def fetch_region_value_arrays(
+        self,
+        chrom: str,
+        pos_begin: int | None,
+        pos_end: int | None,
+        scores: list[str],
+        *,
+        batch_size: int = DEFAULT_VALUE_ARRAYS_BATCH_SIZE,
+    ) -> Generator[
+            tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]], None, None]:
+        """Fetch a region as column arrays, without building a record per row.
+
+        The bulk counterpart of :meth:`fetch_lines`, for a caller that scans a
+        whole region and wants columns rather than rows -- statistics, above
+        all.  Each batch is ``(pos_begin, pos_end, {score_id: raw_cells})``:
+        the parsed one-based position arrays, plus one array of **raw,
+        unparsed** cells per requested score.
+
+        Two things it deliberately does not do, both of which stay with the
+        caller:
+
+        * **No parsing.**  ``na_values`` are not applied and nothing is coerced
+          to float, so this method makes no claim about a score's value type.
+          Note the raw cells are not dtype-uniform across backends -- a tabix
+          table yields ``dtype=object`` strings, a bigWig table ``float64``.
+        * **No clipping.**  A record overlapping the region's start is yielded
+          whole, exactly as :meth:`fetch_lines` yields it.
+
+        ``batch_size`` is a HINT.  A backend whose read granularity is fixed by
+        its own windowing -- ``BigWigTable``, whose batches are sized by its
+        adaptive fetch window -- ignores it.
+        """
+        if not self.supports_region_value_arrays():
+            # Refuse here rather than let the call reach the table.  A VCF
+            # table INHERITS the tabix implementation, so an unguarded call
+            # does not fail cleanly -- it trips that method's
+            # ``assert isinstance(self.pysam_file, pysam.TabixFile)`` and
+            # yields a message-less AssertionError (nothing at all under
+            # ``python -O``).  Probing this capability by catching is therefore
+            # not viable; ask supports_region_value_arrays() first.
+            raise TypeError(
+                f"genomic score <{self.resource_id}> does not serve "
+                f"fetch_region_value_arrays: its "
+                f"{type(self.table).__name__} backend leaves "
+                f"supports_value_arrays False. Ask "
+                f"supports_region_value_arrays() before calling.")
+        if not self.is_open():
+            raise ValueError(f"genomic score <{self.resource_id}> is not open")
+        if chrom not in self.get_all_chromosomes():
+            raise ValueError(
+                f"{chrom} is not among the available chromosomes.")
+
+        # score id -> payload column index, resolved once for the whole scan.
+        # The cast is sound because the backends that serve this call address
+        # their columns by integer index; a str key is a VCF INFO name, and the
+        # VCF backend does not serve it (see supports_region_value_arrays).
+        columns = {
+            score_id: cast(int, self.score_definitions[score_id].score_index)
+            for score_id in scores
+        }
+        for begin, end, cells in self.table.get_region_value_arrays(
+                chrom, pos_begin, pos_end, set(columns.values()), batch_size):
+            yield begin, end, {
+                score_id: cells[column]
+                for score_id, column in columns.items()
+            }
 
     def get_all_chromosomes(self) -> list[str]:
         if not self.is_open():

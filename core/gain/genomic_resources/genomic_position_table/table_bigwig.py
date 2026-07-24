@@ -142,6 +142,9 @@ class BigWigTable(GenomicPositionTable):
     # This backend yields records rather than line adapters (#238).
     yields_records: ClassVar[bool] = True
 
+    # Serves the bulk column-array read; see get_region_value_arrays below.
+    supports_value_arrays: ClassVar[bool] = True
+
     def __init__(
         self,
         genomic_resource: GenomicResource,

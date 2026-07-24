@@ -343,3 +343,78 @@ def test_open_routes_a_backend_to_the_score_line_its_payload_needs(
         # lookup does not fit its payload.
         score_id = next(iter(score.get_all_scores()))
         assert line.get_score(score_id) is not None
+
+
+# Whether this backend serves ``get_region_value_arrays`` -- the OPTIONAL bulk
+# column-array read (gain#398).  Unlike ``yields_records`` this has a genuine
+# False state: a backend that does not implement the fast path is in no way
+# broken, it simply keeps the record read.
+#
+#   * tabix -- reads raw rows straight from pysam and serves columns by
+#     integer payload index: True;
+#   * bigWig -- turns each adaptive-window interval chunk into arrays: True;
+#   * in-memory -- no implementation of its own: False;
+#   * VCF -- INHERITS tabix's implementation but sets the flag back to False,
+#     because its PAYLOAD is (variant, allele index) rather than a raw row and
+#     its scores are INFO fields addressed by name, not by column index. This
+#     is the case the flag exists for: the capability is NOT derivable from the
+#     class hierarchy, so it has to be declared.
+#
+# test_a_backend_serves_value_arrays_exactly_when_it_claims_to holds every
+# backend to its entry in BOTH directions.
+_VALUE_ARRAYS: list[pytest.param] = [  # type: ignore[valid-type]
+    pytest.param(_build_inmemory, False, id="inmemory"),
+    pytest.param(_build_tabix, True, id="tabix"),
+    pytest.param(_build_vcf, False, id="vcf"),
+    pytest.param(_build_bigwig, True, id="bigwig"),
+]
+
+
+def test_every_backend_declares_whether_it_serves_value_arrays() -> None:
+    """_VALUE_ARRAYS must cover every backend, so a fifth cannot slip in.
+
+    Same guard as the hashability list above: a new backend that is added to
+    _BACKENDS but not here would never have its claim checked against its
+    behaviour, and the flag's whole job is to be checkable.
+    """
+    assert {str(param.id) for param in _VALUE_ARRAYS} == \
+        {str(param.id) for param in _BACKENDS}
+
+
+@pytest.mark.parametrize(("build_backend", "serves_arrays"), _VALUE_ARRAYS)
+def test_a_backend_serves_value_arrays_exactly_when_it_claims_to(
+    build_backend: Callable[[pathlib.Path], Backend],
+    serves_arrays: bool,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The claim and the behaviour, held together in both directions.
+
+    A backend that claims support must produce arrays that agree with its own
+    record read; one that does not claim it must refuse cleanly, with a
+    ``TypeError`` -- and not, say, trip an assert deep in an inherited fetch.
+    """
+    score, (chrom, beg, end) = build_backend(tmp_path)
+
+    # The claim is read off the UNOPENED table: it is a ClassVar, and the
+    # score-level query is answerable without opening the file.
+    assert score.table.supports_value_arrays is serves_arrays
+    assert score.supports_region_value_arrays() is serves_arrays
+
+    with score.open() as opened:
+        score_id = opened.get_all_scores()[0]
+        if not serves_arrays:
+            with pytest.raises(TypeError, match="supports_region_value_arrays"):
+                list(opened.fetch_region_value_arrays(
+                    chrom, beg, end, [score_id]))
+            return
+
+        batches = list(
+            opened.fetch_region_value_arrays(chrom, beg, end, [score_id]))
+        lines = list(opened.fetch_lines(chrom, beg, end))
+
+    spans = [
+        (int(begin), int(stop))
+        for pos_begin, pos_end, _ in batches
+        for begin, stop in zip(pos_begin, pos_end, strict=True)
+    ]
+    assert spans == [(line.pos_begin, line.pos_end) for line in lines]

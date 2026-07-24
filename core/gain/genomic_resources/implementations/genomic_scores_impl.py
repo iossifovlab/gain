@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import itertools
 import json
-from collections.abc import Callable, Generator, Iterable
+from collections.abc import Callable, Generator
 from typing import Any, ClassVar, TypeVar, cast
 
 import numpy as np
@@ -11,7 +11,6 @@ import pandas as pd
 from gain import logging
 from gain.genomic_resources.genomic_position_table import (
     TabixGenomicPositionTable,
-    VCFGenomicPositionTable,
 )
 from gain.genomic_resources.genomic_position_table.record import (
     PAYLOAD,
@@ -509,7 +508,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         start: int | None,
         end: int | None,
         accumulate: Callable[
-            [tuple[np.ndarray, np.ndarray, dict[int, np.ndarray]],
+            [tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]],
              dict[str, _AccT], dict[str, Any],
              tuple[str | None, int | None, int | None], int | None],
             int | None],
@@ -530,11 +529,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             defs = {
                 score_id: score.score_definitions[score_id]
                 for score_id in result}
-            value_columns = {
-                cast(int, defs[score_id].score_index) for score_id in result}
             prev_right: int | None = None
             for arrays in GenomicScoreImplementation._region_value_arrays(
-                    score.table, chrom, start, end, value_columns):
+                    score, chrom, start, end, list(result)):
                 prev_right = accumulate(
                     arrays, result, defs, (chrom, start, end), prev_right)
         del impl
@@ -542,32 +539,35 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
     @staticmethod
     def _region_value_arrays(
-        table: Any,
+        score: GenomicScore,
         chrom: str | None,
         start: int | None,
         end: int | None,
-        value_columns: Iterable[int],
+        score_ids: list[str],
     ) -> Generator[
-            tuple[np.ndarray, np.ndarray, dict[int, np.ndarray]], None, None]:
-        """Yield ``(pos_begin, pos_end, {col: raw_cells})`` batches.
+            tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]], None, None]:
+        """Yield ``(pos_begin, pos_end, {score_id: raw_cells})`` batches.
 
-        Tabix and bigWig each take their ``get_region_value_arrays`` fast path,
-        which never builds a ``Record``; any other backend goes through
-        ``get_records_in_region`` and is unpacked into the same array shape
-        here, so the accumulator does not care which backend produced them.
+        A backend that serves the bulk read answers it directly, never building
+        a ``Record``; any other is read record-wise and unpacked into the same
+        array shape here, so the accumulator does not care which produced them.
+        Which is which is the score's to say -- ask, do not test its class.
+
+        The fast path also needs a bounded region: the overlap guard runs along
+        one contig, and an unbounded scan keeps the record read.
         """
         batch_size = GenomicScoreImplementation._SCAN_BATCH_SIZE
-        columns = list(value_columns)
-        has_array_fastpath = isinstance(table, BigWigTable) or (
-            isinstance(table, TabixGenomicPositionTable)
-            and not isinstance(table, VCFGenomicPositionTable))
-        if has_array_fastpath \
+        if score.supports_region_value_arrays() \
                 and chrom is not None and start is not None and end is not None:
-            yield from table.get_region_value_arrays(
-                chrom, start, end, columns, batch_size)
+            yield from score.fetch_region_value_arrays(
+                chrom, start, end, score_ids, batch_size=batch_size)
             return
 
-        records = table.get_records_in_region(chrom, start, end)
+        columns = {
+            score_id: cast(int, score.score_definitions[score_id].score_index)
+            for score_id in score_ids
+        }
+        records = score.table.get_records_in_region(chrom, start, end)
         while True:
             batch = list(itertools.islice(records, batch_size))
             if not batch:
@@ -579,15 +579,15 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             pos_end = np.fromiter(
                 (rec[POS_END] for rec in batch), dtype=np.int64, count=count)
             cols = {
-                col: np.array(
-                    [rec[PAYLOAD][col] for rec in batch], dtype=object)
-                for col in columns
+                score_id: np.array(
+                    [rec[PAYLOAD][column] for rec in batch], dtype=object)
+                for score_id, column in columns.items()
             }
             yield pos_begin, pos_end, cols
 
     @staticmethod
     def _accumulate_arrays(
-        arrays: tuple[np.ndarray, np.ndarray, dict[int, np.ndarray]],
+        arrays: tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]],
         result: dict[str, Histogram],
         defs: dict[str, Any],
         region: tuple[str | None, int | None, int | None],
@@ -595,7 +595,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     ) -> int | None:
         """Fold one batch of column arrays into the per-score histograms.
 
-        ``arrays`` is one ``(pos_begin, pos_end, {col: raw_cells})`` batch as
+        ``arrays`` is one ``(pos_begin, pos_end, {score_id: cells})`` batch as
         produced by :meth:`_region_value_arrays`.  Clips each record to
         ``[start, end]`` exactly as ``_fetch_region_lines`` does (drop records
         ending before ``start``;
@@ -612,7 +612,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         for score_id, hist in result.items():
             score_def = defs[score_id]
             values = GenomicScoreImplementation._coerce_values(
-                value_cells[score_def.score_index], score_def)
+                value_cells[score_id], score_def)
             assert isinstance(hist, NumberHistogram)
             hist.add_batch(values[keep], weights)
 
@@ -723,28 +723,32 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     ) -> bool:
         """Whether a vectorized region scan may serve these float scores.
 
-        The shared gate for the histogram and min/max bulk paths: a
-        **position_score** (its span-weight and one-value-per-position overlap
-        guard are what the bulk accumulators assume -- not the per-allele read
-        of ``allele_score``/``np_score`` nor the weight-1 of
-        ``cnv_collection``), over a tabix or bigWig table (a VCF table's record
-        payload is not a raw row), with every score a ``float`` (``int()`` /
-        ``str()`` parsing does not match ``pd.to_numeric`` + ``float()``).
+        The shared gate for the histogram and min/max bulk paths, and the place
+        the conditions that are THIS caller's live -- as opposed to the one
+        condition that is the backend's, which the score now answers itself:
+
+        * a **position_score**: its span-weight and one-value-per-position
+          overlap guard are what the bulk accumulators assume -- not the
+          per-allele read of ``allele_score``/``np_score`` nor the weight-1 of
+          ``cnv_collection``;
+        * every score a ``float``: ``int()`` / ``str()`` parsing does not match
+          ``pd.to_numeric`` + ``float()``;
+        * and the backend serves the bulk read at all -- asked of the score,
+          not tested on the table's class.
+
+        Answered WITHOUT opening the score: the table and the score definitions
+        are both built in ``GenomicScore.__init__``, so nothing here needs a
+        file handle.
         """
         if resource.get_type() != "position_score":
             return False
-        impl = build_score_implementation_from_resource(resource)
-        with impl.score.open() as score:
-            table = score.table
-            if isinstance(table, VCFGenomicPositionTable):
+        score = build_score_implementation_from_resource(resource).score
+        if not score.supports_region_value_arrays():
+            return False
+        for score_id in score_ids:
+            score_def = score.score_definitions.get(score_id)
+            if score_def is None or score_def.value_type != "float":
                 return False
-            if not isinstance(
-                    table, (TabixGenomicPositionTable, BigWigTable)):
-                return False
-            for score_id in score_ids:
-                score_def = score.score_definitions.get(score_id)
-                if score_def is None or score_def.value_type != "float":
-                    return False
         return True
 
     @staticmethod
@@ -816,7 +820,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
     @staticmethod
     def _accumulate_min_max(
-        arrays: tuple[np.ndarray, np.ndarray, dict[int, np.ndarray]],
+        arrays: tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]],
         result: dict[str, MinMaxValue],
         defs: dict[str, Any],
         region: tuple[str | None, int | None, int | None],
@@ -837,7 +841,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         for score_id, min_max in result.items():
             score_def = defs[score_id]
             values = GenomicScoreImplementation._coerce_values(
-                value_cells[score_def.score_index], score_def)[keep]
+                value_cells[score_id], score_def)[keep]
             finite = values[~np.isnan(values)]
             if finite.size:
                 low = float(finite.min())
