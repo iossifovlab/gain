@@ -683,6 +683,29 @@ The configuration fields are:
        Default: ``false``.
 
 
+The SpliceAI models can be executed by either of two runtimes. The runtime is a
+process-wide choice, made with the ``SPLICEAI_BACKEND`` environment variable
+rather than in the pipeline configuration:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - ``SPLICEAI_BACKEND``
+     - Description
+   * - ``tensorflow``
+     - TensorFlow/Keras, running the ``spliceai{1..5}.h5`` models. The default.
+   * - ``onnx``
+     - ONNX Runtime, running the ``spliceai{1..5}.onnx`` models converted from
+       those same ``.h5`` files. Does not need TensorFlow at inference time.
+       Which of the two runtimes is faster is hardware-dependent — measure on
+       your own hardware rather than assuming.
+
+Both runtimes produce the same annotations: they agree to roughly ``2e-7``,
+against delta scores reported at two decimal places. An unrecognized value is
+an error rather than a silent fallback.
+
+
 The annotator produces the following attributes, along with their default aggregators for
 batch annotations that span multiple predictions:
 

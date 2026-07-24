@@ -33,6 +33,10 @@ requirements:
     - python >=3.12
     - gain-core
     - numpy >=2.2
+    # Both model runtimes: the backend is selected per process with
+    # SPLICEAI_BACKEND (TensorFlow by default), so an installed package must
+    # be able to run either. See spliceai_annotator_impl.
+    - onnxruntime >=1.27
     - tensorflow >=2.18
 
 about:

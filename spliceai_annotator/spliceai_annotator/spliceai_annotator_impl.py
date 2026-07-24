@@ -1,33 +1,89 @@
-import gc
-from importlib.resources import as_file, files
+"""Model runtime seam for the SpliceAI annotator (issue #297).
+
+``spliceai_annotator.py`` holds all the domain logic and talks to the model
+runtime only through the three functions re-exported here
+(``spliceai_load_models`` / ``spliceai_predict`` / ``spliceai_close``) plus the
+process-wide ``SPLICEAI_MODELS``. This module is the only place that knows
+*which* runtime executes the ensemble.
+
+Two backends ship:
+
+* ``tensorflow`` (default) -- the five ``.h5`` files, unchanged; and
+* ``onnx`` -- the five converted ``.onnx`` artifacts under ONNX Runtime.
+
+Select with the ``SPLICEAI_BACKEND`` environment variable
+(``SPLICEAI_BACKEND=onnx``). It is read once, at import time: the backend is a
+process-wide choice, like the models it loads, and switching it mid-process
+would leave already-opened annotators holding models from the other runtime.
+"""
+import importlib
+import logging
+import os
+from types import ModuleType
 from typing import cast
 
 import numpy as np
-import tensorflow as tf
+
+logger = logging.getLogger(__name__)
+
+SPLICEAI_BACKEND_ENV = "SPLICEAI_BACKEND"
+DEFAULT_SPLICEAI_BACKEND = "tensorflow"
+
+#: Backend name -> module implementing the model runtime interface.
+SPLICEAI_BACKENDS = {
+    "tensorflow": ".spliceai_backend_tensorflow",
+    "onnx": ".spliceai_backend_onnx",
+}
+
+
+def spliceai_backend_name() -> str:
+    """Return the backend selected by ``SPLICEAI_BACKEND``.
+
+    Unknown values raise instead of silently falling back: a typo'd backend
+    that quietly ran TensorFlow would make an ONNX CI tier pass without ever
+    exercising ONNX.
+    """
+    name = os.environ.get(
+        SPLICEAI_BACKEND_ENV, DEFAULT_SPLICEAI_BACKEND).strip().lower()
+    if name not in SPLICEAI_BACKENDS:
+        raise ValueError(
+            f"unknown SpliceAI backend {name!r} in "
+            f"{SPLICEAI_BACKEND_ENV}; expected one of "
+            f"{sorted(SPLICEAI_BACKENDS)}")
+    return name
+
+
+def load_spliceai_backend(name: str | None = None) -> ModuleType:
+    """Import the backend module, defaulting to the selected one."""
+    if name is None:
+        name = spliceai_backend_name()
+    elif name not in SPLICEAI_BACKENDS:
+        raise ValueError(
+            f"unknown SpliceAI backend {name!r}; expected one of "
+            f"{sorted(SPLICEAI_BACKENDS)}")
+    # Logged because it is otherwise invisible which runtime produced a set of
+    # annotations -- the two agree numerically, so the output cannot tell you.
+    logger.info("using the %s SpliceAI model runtime backend", name)
+    return importlib.import_module(SPLICEAI_BACKENDS[name], __package__)
+
+
+SPLICEAI_BACKEND = load_spliceai_backend()
 
 
 def spliceai_load_models() -> list:
     """Open SpliceAI annotator implementation."""
-    package = files(__package__)
-    models = []
-    for i in range(1, 6):
-        with as_file(package / "models" / f"spliceai{i}.h5") as model_path:
-            models.append(tf.keras.models.load_model(str(model_path)))
-    return models
+    return cast(list, SPLICEAI_BACKEND.spliceai_load_models())
 
 
 def spliceai_close() -> None:
-    gc.collect()
+    SPLICEAI_BACKEND.spliceai_close()
 
 
 def spliceai_predict(
     models: list,
     x: np.ndarray,
 ) -> np.ndarray:
-    return cast(np.ndarray, np.mean([
-        models[m].predict(x, verbose=0)
-        for m in range(5)
-    ], axis=0))
+    return cast(np.ndarray, SPLICEAI_BACKEND.spliceai_predict(models, x))
 
 
 SPLICEAI_MODELS = spliceai_load_models()

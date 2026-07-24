@@ -11,6 +11,8 @@ channels:
   - iossifovlab
 dependencies:
   - tensorflow=2.18
+  # The alternative model runtime, selected with SPLICEAI_BACKEND=onnx.
+  - onnxruntime>=1.27
   # - pip:
   #   - types-tensorflow
   
