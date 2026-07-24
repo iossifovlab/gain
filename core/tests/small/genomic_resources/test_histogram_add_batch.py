@@ -124,3 +124,76 @@ def test_add_batch_weighted_counts_use_int64() -> None:
 
     _assert_same(batched, ref)
     assert batched.bars[5] == 5_000_000_000
+
+
+def test_add_batch_log_scale_is_vectorized_not_a_per_value_loop() -> None:
+    """The log path must not fall back to looping ``add_value``.
+
+    Equivalence alone cannot catch a regression here: a fallback that calls
+    ``add_value`` per element is by construction bit-identical to the scalar
+    path, so it would pass every other test in this file while quietly costing
+    the statistics scan the ~32% that vectorizing the accumulation buys.  This
+    is the only test that would notice.
+    """
+    config = _log_config()
+    hist = NumberHistogram(config)
+    calls = 0
+    original = NumberHistogram.add_value
+
+    def counting_add_value(
+        self: NumberHistogram, value: float | None, count: int = 1,
+    ) -> None:
+        nonlocal calls
+        calls += 1
+        original(self, value, count)
+
+    NumberHistogram.add_value = counting_add_value  # type: ignore[method-assign]
+    try:
+        hist.add_batch(
+            np.array([0.05, 0.5, 10.0, 1000.0]), np.array([1, 2, 3, 4]))
+    finally:
+        NumberHistogram.add_value = original  # type: ignore[method-assign]
+
+    assert calls == 0, f"add_batch fell back to {calls} add_value calls"
+
+
+def test_add_batch_matches_add_value_loop_log_fuzz() -> None:
+    """Randomised log-scale equivalence, over many decades and batch sizes.
+
+    Batch size is varied deliberately: numpy dispatches short arrays to a
+    scalar loop and longer ones to a SIMD kernel, and a log histogram bins on
+    ``np.log10`` -- so a vectorized implementation that agreed with the scalar
+    path only for one of those widths would be a real, silent divergence.
+    """
+    rng = np.random.default_rng(20260724)
+    for _ in range(300):
+        x_min_log = float(10.0 ** rng.integers(-4, 0))
+        view_max = float(10.0 ** rng.integers(1, 5))
+        config = NumberHistogramConfig.from_dict({
+            "type": "number",
+            "view_range": {"min": 0, "max": view_max},
+            "number_of_bins": int(rng.integers(2, 40)),
+            "x_log_scale": True,
+            "y_log_scale": False,
+            "x_min_log": x_min_log,
+        })
+        n_bins = config.number_of_bins
+        size = int(rng.integers(1, 60))
+        # Spans below view_min, below x_min_log, the bulk of the decades, and
+        # past view_max -- so every branch of choose_bin_log is exercised.
+        random_values = 10.0 ** rng.uniform(-6, 6, size=size)
+        random_values[rng.random(size) < 0.1] *= -1.0
+        # Plus the exact bin boundaries.  Random draws essentially never land
+        # on one, and an edge is where a log index is most fragile: it is the
+        # only place a last-ulp difference in ``log10`` changes which bin a
+        # value truncates into.  Without these the fuzz is insensitive to a
+        # perturbation of ``log10(x_min_log)`` (verified by mutation).
+        edges = np.logspace(np.log10(x_min_log), np.log10(view_max), n_bins)
+        values = np.concatenate([random_values, edges])
+        weights = rng.integers(1, 5, size=values.size)
+
+        ref = _reference(config, values, weights)
+        batched = NumberHistogram(config)
+        batched.add_batch(values, weights)
+
+        _assert_same(batched, ref)
