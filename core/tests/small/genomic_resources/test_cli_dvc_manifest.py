@@ -1726,3 +1726,165 @@ def test_the_generated_pages_are_written_where_the_exclusion_looks(
     # very constants the exclusion is built from
     assert (path / "one" / "generated.html").exists()
     assert (path / "one" / "generated-stats" / "index.html").exists()
+
+
+def test_dry_run_writes_no_state(
+    dvc_proto_fixture: tuple[pathlib.Path, FsspecReadWriteProtocol],
+) -> None:
+    """`--dry-run` reports what would change; it changes nothing (#257).
+
+    The recorded state is a derived artefact, but it is still a write into
+    the resource directory - and a flag that only reports must leave the
+    tree it inspects byte-identical.
+    """
+    # Given a stateless resource with no recorded state at all
+    path, _proto = dvc_proto_fixture
+    assert not (path / "one" / ".grr").exists()
+
+    # When its manifest is checked with '--dry-run'
+    with pytest.raises(SystemExit):
+        cli_manage([
+            "resource-manifest", "--dry-run", "-R", str(path), "-r", "one"])
+
+    # Then nothing was recorded
+    assert not (path / "one" / ".grr").exists()
+
+
+def test_without_dvc_dry_run_verifies_but_records_nothing(
+    dvc_proto_fixture: tuple[pathlib.Path, FsspecReadWriteProtocol],
+    md5_spy: list[str],
+) -> None:
+    """`-D --dry-run` still audits every file; it just keeps no receipt.
+
+    `-D` bypasses the fast path, so it hashes every materialised file - the
+    one mode where a dry run would otherwise record a state for the whole
+    resource (#257).
+    """
+    # Given a stateless resource whose sidecar tells the truth
+    path, proto = dvc_proto_fixture
+
+    # When its manifest is checked with '-D --dry-run'
+    with pytest.raises(SystemExit):
+        cli_manage([
+            "resource-manifest", "--dry-run", "-D",
+            "-R", str(path), "-r", "one"])
+
+    # Then the verification still happened
+    assert "data.txt" in md5_spy
+
+    # ... and still nothing was recorded
+    res = proto.get_resource("one")
+    assert proto.load_resource_file_state(res, "data.txt") is None
+    assert not (path / "one" / ".grr").exists()
+
+
+def test_dry_run_leaves_a_stale_state_alone(
+    tmp_path_factory: pytest.TempPathFactory,
+    md5_spy: list[str],
+) -> None:
+    """A dry run does not repair the state it finds out of date (#257).
+
+    Rewriting it would be the most surprising kind of side effect: the run
+    that promised to change nothing is the one that quietly re-certifies a
+    file whose bytes have moved on.
+    """
+    # Given a resource whose recorded state no longer describes its file
+    path = tmp_path_factory.mktemp("cli_dvc_dry_run_stale_state")
+    setup_directories(path, {
+        "one": {
+            "genomic_resource.yaml": "",
+            "data.txt": ORIGINAL_DATA,
+        },
+    })
+    proto = build_filesystem_test_protocol(path, repair=False)
+    cli_manage(["resource-manifest", "-R", str(path), "-r", "one"])
+    res = proto.get_resource("one")
+    assert proto.load_resource_file_state(res, "data.txt") is not None
+
+    (path / "one" / "data.txt").write_text(TAMPERED_DATA, encoding="utf8")
+    md5_spy.clear()
+
+    # When the manifest is checked with '--dry-run'
+    with pytest.raises(SystemExit):
+        cli_manage([
+            "resource-manifest", "--dry-run", "-R", str(path), "-r", "one"])
+
+    # Then the new bytes were hashed to answer the question
+    assert "data.txt" in md5_spy
+
+    # ... and the state on disk still describes the bytes GAIn actually
+    # hashed, rather than being quietly advanced to the new ones
+    state = proto.load_resource_file_state(res, "data.txt")
+    assert state is not None
+    assert state.md5 == md5_of(ORIGINAL_DATA)
+    assert state.size == size_of(ORIGINAL_DATA)
+
+
+def test_without_dvc_dry_run_still_reports_drift_and_fails(
+    stale_dvc_proto_fixture: tuple[pathlib.Path, FsspecReadWriteProtocol],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Recording nothing must not soften the verdict a dry run reaches.
+
+    `-D --dry-run` is how a pipeline asks "would this GRR pass?" - it has to
+    answer, and answer non-zero, without touching the tree (#257).
+    """
+    # Given a resource whose .dvc sidecar disagrees with the file on disk
+    path, _proto = stale_dvc_proto_fixture
+
+    # When it is verified with '-D --dry-run'
+    with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as excinfo:
+        cli_manage([
+            "resource-manifest", "--dry-run", "-D",
+            "-R", str(path), "-r", "one"])
+
+    # Then the run still fails and still names the drifted file
+    assert excinfo.value.code != 0
+    assert "data.txt" in caplog.text
+    assert md5_of(TAMPERED_DATA) in caplog.text
+
+    # ... and it wrote neither a manifest nor a state
+    assert not (path / "one" / ".MANIFEST").exists()
+    assert not (path / "one" / ".grr").exists()
+
+
+def _snapshot_tree(path: pathlib.Path) -> dict[str, tuple[bytes, int]]:
+    """Capture every file under ``path`` with its bytes and mtime."""
+    return {
+        str(entry.relative_to(path)): (
+            entry.read_bytes(), entry.stat().st_mtime_ns,
+        )
+        for entry in sorted(path.rglob("*")) if entry.is_file()
+    }
+
+
+def test_repo_repair_dry_run_leaves_the_repository_byte_identical(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """The whole point of `-n`, stated as a property (#257).
+
+    This is the shape `iossifovlab/grr`'s pipeline runs over a materialised
+    clone: a check that must be able to run on a tree it does not own.
+    """
+    # Given a repository that has never been manifested
+    path = tmp_path_factory.mktemp("cli_dvc_dry_run_byte_identical")
+    setup_directories(path, {
+        "one": {
+            "genomic_resource.yaml": "",
+            "data.txt": ORIGINAL_DATA,
+            "data.txt.dvc": dvc_sidecar("data.txt", ORIGINAL_DATA),
+        },
+        "two": {
+            "genomic_resource.yaml": "",
+            "plain.txt": ORIGINAL_DATA,
+        },
+    })
+    build_filesystem_test_protocol(path, repair=False)
+    before = _snapshot_tree(path)
+
+    # When the whole repository is checked with '--dry-run'
+    with pytest.raises(SystemExit):
+        cli_manage(["repo-repair", "--dry-run", "-R", str(path), "-j", "1"])
+
+    # Then not one byte of it moved
+    assert _snapshot_tree(path) == before
