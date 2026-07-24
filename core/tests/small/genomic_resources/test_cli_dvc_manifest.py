@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import contextlib
 import hashlib
 import logging
 import os
@@ -21,6 +22,10 @@ from gain.genomic_resources.repository import (
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
     setup_directories,
+)
+from gain.genomic_resources.testing.builders import (
+    a_grr,
+    a_position_score,
 )
 
 ORIGINAL_DATA = "ORIGINAL DATA - trust me\n"
@@ -1858,33 +1863,91 @@ def _snapshot_tree(path: pathlib.Path) -> dict[str, tuple[bytes, int]]:
     }
 
 
+@pytest.mark.parametrize("repaired", [False, True])
 def test_repo_repair_dry_run_leaves_the_repository_byte_identical(
     tmp_path_factory: pytest.TempPathFactory,
+    repaired: bool,
 ) -> None:
     """The whole point of `-n`, stated as a property (#257).
 
     This is the shape `iossifovlab/grr`'s pipeline runs over a materialised
     clone: a check that must be able to run on a tree it does not own.
+
+    A real ``position_score`` rather than a bare config, so the statistics
+    path - ``_stats_need_rebuild`` and ``calc_statistics_hash``, which
+    reaches ``get_manifest()`` and can build a manifest of its own - is
+    actually exercised; and run against a settled repository as well as a
+    cold one, since the two take different branches (#416).
     """
-    # Given a repository that has never been manifested
+    # Given a repository holding a real score resource, and a file whose
+    # md5 sum only its '.dvc' sidecar can answer for
     path = tmp_path_factory.mktemp("cli_dvc_dry_run_byte_identical")
+    (
+        a_grr()
+        .with_resource(
+            "scores",
+            a_position_score()
+            .with_score("phastCons", "float")
+            .with_histogram({"type": "number", "number_of_bins": 10})
+            .with_tabix()
+            .with_data("""
+                chrom  pos_begin  pos_end  phastCons
+                1      10         15       0.02
+                1      17         19       0.03
+            """))
+        .build_repo(path)
+    )
     setup_directories(path, {
-        "one": {
+        "dvc_managed": {
             "genomic_resource.yaml": "",
             "data.txt": ORIGINAL_DATA,
             "data.txt.dvc": dvc_sidecar("data.txt", ORIGINAL_DATA),
         },
-        "two": {
-            "genomic_resource.yaml": "",
-            "plain.txt": ORIGINAL_DATA,
-        },
     })
-    build_filesystem_test_protocol(path, repair=False)
+
+    if repaired:
+        with contextlib.suppress(SystemExit):
+            cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
+        # ... which really did compute the statistics, so the dry run
+        # below is answering the harder question
+        assert (path / "scores" / "statistics").exists()
+
     before = _snapshot_tree(path)
+    assert before
 
     # When the whole repository is checked with '--dry-run'
-    with pytest.raises(SystemExit):
+    with contextlib.suppress(SystemExit):
         cli_manage(["repo-repair", "--dry-run", "-R", str(path), "-j", "1"])
 
     # Then not one byte of it moved
     assert _snapshot_tree(path) == before
+
+
+def test_check_update_manifest_records_state_by_default(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """Recording is what a caller gets unless it asks otherwise (#416).
+
+    Only the CLI passes ``save_state`` explicitly, so the default is the
+    whole contract for every out-of-tree caller. Nothing else pins it: the
+    suite passes with the default flipped.
+    """
+    # Given a stateless resource whose file nothing has hashed yet
+    path = tmp_path_factory.mktemp("cli_dvc_default_save_state")
+    setup_directories(path, {
+        "one": {
+            "genomic_resource.yaml": "",
+            "data.txt": ORIGINAL_DATA,
+        },
+    })
+    proto = build_filesystem_test_protocol(path, repair=False)
+    res = proto.get_resource("one")
+    assert proto.load_resource_file_state(res, "data.txt") is None
+
+    # When the manifest is checked without saying anything about state
+    proto.check_update_manifest(res)
+
+    # Then the state it derived was recorded
+    state = proto.load_resource_file_state(res, "data.txt")
+    assert state is not None
+    assert state.md5 == md5_of(ORIGINAL_DATA)
