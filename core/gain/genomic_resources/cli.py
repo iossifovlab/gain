@@ -271,8 +271,11 @@ def _configure_repo_init_subparser(
     parser = subparsers.add_parser(
         "repo-init", help="Initialize a directory to turn it into a GRR")
 
+    # No Force/Dry run group here: `repo-init` has no manifest-staleness
+    # question to answer, and it never read either value -- so `repo-init
+    # -n` initialised the repository for real, writing the content file
+    # and a state for every file it hashed (#415).
     _add_repository_resource_parameters_group(parser, use_resource=False)
-    _add_dry_run_and_force_parameters_group(parser)
     VerbosityConfiguration.set_arguments(parser)
 
 
