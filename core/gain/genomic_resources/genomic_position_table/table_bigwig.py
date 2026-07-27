@@ -111,6 +111,14 @@ def build_bigwig_parser() -> BigWigParser:
     resolves through :class:`RecordScoreLine`'s by-index payload read.  REF and
     ALT are always ``None``: a bigWig carries neither.
 
+    **Before narrowing this payload to just the value** -- which is the
+    obvious cleanup, since the four-tuple repeats three fields the record
+    already decodes -- read the "Deliberately NOT changed" entry in this
+    package's ``__init__``.  The ``index: 3`` in every deployed bigWig
+    resource's config, and the out-of-range ``IndexError`` that
+    :meth:`BigWigTable.get_region_value_arrays` reproduces on purpose, both
+    depend on this shape, and the change was measured to buy no speed.
+
     The parser closes over nothing.  A bigWig has no configurable transform for
     it to specialise on -- it is a binary format with a fixed layout, its
     coordinates are converted upstream in the fetch methods, and its result

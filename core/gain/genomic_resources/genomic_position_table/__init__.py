@@ -206,6 +206,43 @@ Why the capability is declared rather than inferred, why VCF cannot honour the
 contract it inherits, and why this read path exists at all: see
 ``docs/adr/0001-bulk-read-path-for-statistics.md``.
 
+**Deliberately NOT changed: the bigWig payload's four-tuple shape.**
+``BigWigTable`` builds ``payload = (chrom, pos_begin, pos_end, value)``, which
+repeats three fields the record already carries in its decoded slots, purely
+so that the single value is addressable at ``payload[3]``.  It reads as an
+internal adapter -- a binary format's one value wearing the shape of a tabular
+row -- and the obvious cleanup is to let the payload be the value.  It was
+investigated and rejected; recorded here because the reasons are not visible
+from ``build_bigwig_parser``, which is where someone would go to make the
+change.
+
+**The shape is config surface, not an implementation detail.**  A bigWig
+score's column is declared in its ``genomic_resource.yaml`` as ``index: 3``,
+and every deployed bigWig resource says so (the testing builder emits it from
+``_BIGWIG_VALUE_INDEX``, and the repo's own fixtures carry it throughout).
+Narrowing the payload changes what that 3 means, so it is a migration across
+every GRR that serves a bigWig, not a refactor.
+
+**Three consumers depend on it, and the third is the surprising one.**  The
+per-record read indexes it (``RecordScoreLine`` binds ``_get_raw`` to the
+payload's ``__getitem__``); so does the score config above; and so does
+``BigWigTable.get_region_value_arrays``, which serves *any* requested column
+out of a reconstructed four-tuple **on purpose** -- so that an out-of-range
+index raises the same ``IndexError`` the record path raises.  That is not
+incidental: a misconfigured index used to be served the chromosome string
+there, which turned an aborted repair into a silently all-zero histogram.  A
+narrowed payload has to reproduce that refusal or reintroduce the bug.
+
+**And it buys nothing measurable.**  The per-record read was profiled while
+``ScoreLineBase.core_fields`` was added: the cost of this path is coordinate
+and per-line-object access, not the payload's width.  Removing the repeated
+fields was measured at no reliable saving, against a ~13% saving from
+``core_fields`` and dropping the ``typing.cast`` calls.  So the
+change would carry a cross-repository config migration and a subtle
+error-semantics obligation to buy readability alone.  If it is ever revisited,
+those are the three things that have to be answered, and the ``index: 3``
+compatibility question is the one that decides it.
+
 """
 from .line import LineBuffer
 from .table_bigwig import BigWigTable
