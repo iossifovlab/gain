@@ -1294,9 +1294,9 @@ def colliding_proto_id_repository(
 
     Not contrived: ``repository_factory._build_group_repository`` defaults a
     child's id to ``""``, so any group definition whose children omit ``id``
-    lands here. Cache protocols are keyed by ``proto_id``, so both children
-    resolve to a single caching protocol whose resource dict holds only the
-    first child's resources.
+    lands here. Caching protocols are keyed by ``proto_id`` and their cache
+    directory is derived from it, so both children would share one caching
+    protocol and one cache directory.
     """
     children: list[Any] = [
         _proto_repo(tmp_path / "a", "", {
@@ -1311,43 +1311,94 @@ def colliding_proto_id_repository(
         f"file://{tmp_path}/cache")
 
 
-def test_search_resources_survives_colliding_proto_ids(
+@pytest.fixture
+def same_id_colliding_repository(
+    tmp_path: pathlib.Path,
+) -> GenomicResourceCachedRepo:
+    """Colliding proto ids where both children hold the *same* resource id.
+
+    The corrupting shape: the two resources also collide inside the shared
+    cache directory, so reads of one can return the other's bytes.
+    """
+    children: list[Any] = [
+        _proto_repo(tmp_path / "a", "", {
+            "one(1.0)": {GR_CONF_FILE_NAME: "", "data.txt": "AAAA-from-a"},
+        }),
+        _proto_repo(tmp_path / "b", "", {
+            "one(1.0)": {GR_CONF_FILE_NAME: "", "data.txt": "BBBB-from-b"},
+        }),
+    ]
+    return GenomicResourceCachedRepo(
+        GenomicResourceGroupRepo(children, "top"),
+        f"file://{tmp_path}/cache")
+
+
+@pytest.mark.parametrize("produce", [
+    lambda repo: list(repo.get_all_resources()),
+    lambda repo: list(repo.search_resources()),
+], ids=["get_all_resources", "search_resources"])
+def test_colliding_repository_ids_are_refused(
+    same_id_colliding_repository: GenomicResourceCachedRepo,
+    produce: Callable[[GenomicResourceCachedRepo], Any],
+) -> None:
+    """Two remotes sharing a proto id must fail loudly, not silently alias.
+
+    They would otherwise share a caching protocol *and* a cache directory:
+    the second child's resources get bound to the first child's remote, so
+    a resource id present in both reads the wrong file's bytes. Before this
+    was refused, ``search_resources`` on this repository returned two hits
+    that were the same object and both read ``AAAA-from-a``.
+    """
+    with pytest.raises(ValueError, match="used by more than one repository"):
+        produce(same_id_colliding_repository)
+
+
+def test_single_lookup_under_colliding_ids_is_not_aliased(
+    same_id_colliding_repository: GenomicResourceCachedRepo,
+) -> None:
+    """A lone lookup sees one protocol, so there is nothing to alias.
+
+    It resolves to the first child by group precedence and is bound to that
+    child's remote -- correct, not corrupt. The collision is only detectable
+    once a second protocol shows up, which is why the refusal lives in
+    _get_or_create_cache_proto rather than at every entry point.
+    """
+    resource = same_id_colliding_repository.get_resource("one")
+
+    assert isinstance(resource.proto, CachingProtocol)
+    with resource.open_raw_file("data.txt") as infile:
+        assert infile.read() == "AAAA-from-a"
+
+    # ...and the moment the second protocol is reached, it is refused.
+    with pytest.raises(ValueError, match="used by more than one repository"):
+        list(same_id_colliding_repository.get_all_resources())
+
+
+def test_colliding_repository_ids_name_both_urls(
     colliding_proto_id_repository: GenomicResourceCachedRepo,
 ) -> None:
-    """A resource missing from the cache proto's dict must not raise.
+    """The error must be actionable: which id, and which two repositories."""
+    with pytest.raises(ValueError) as excinfo:
+        list(colliding_proto_id_repository.get_all_resources())
 
-    Resolving hits through that dict is an optimisation, not a guarantee.
-    Searching this repository worked before #428 and must keep working -- a
-    bare KeyError escaping the generator would surface as a 500 from the web
-    API search endpoint.
-    """
-    resources = list(colliding_proto_id_repository.search_resources())
-
-    assert {res.resource_id for res in resources} == {"one", "two"}
-    for res in resources:
-        assert isinstance(res.proto, CachingProtocol)
+    message = str(excinfo.value)
+    assert "/a" in message
+    assert "/b" in message
+    assert "'id'" in message
 
 
-def test_find_resource_returns_none_rather_than_raising(
-    colliding_proto_id_repository: GenomicResourceCachedRepo,
+def test_find_and_get_resource_agree_on_a_missing_resource(
+    cached_group_repository: GenomicResourceCachedRepo,
 ) -> None:
-    """find_resource's contract is to return None, never to raise.
+    """find_resource returns None where get_resource raises -- same input.
 
-    Resolving the wrapped resource via the cache protocol's *get_resource*
-    would raise FileNotFoundError here; annotation_factory branches on
-    ``resource is None`` and would surface that instead of its own message.
-
-    Enumerate first: that binds the shared (empty) proto id to the *first*
-    child's caching protocol. Without it a lone find_resource creates the
-    caching protocol from its own child and the ids never collide.
+    find_resource's contract is to return None, never to raise;
+    annotation_factory branches on ``resource is None``.
     """
-    assert len(list(colliding_proto_id_repository.get_all_resources())) == 2
+    assert cached_group_repository.find_resource("no_such_res") is None
 
-    found = colliding_proto_id_repository.find_resource("two")
-    assert found is not None
-    assert isinstance(found.proto, CachingProtocol)
-
-    assert colliding_proto_id_repository.find_resource("no_such_res") is None
+    with pytest.raises((ValueError, FileNotFoundError)):
+        cached_group_repository.get_resource("no_such_res")
 
 
 def test_repository_id_reaches_a_repo_nested_in_a_subgroup(
@@ -1375,3 +1426,57 @@ def test_repository_id_reaches_a_repo_nested_in_a_subgroup(
     assert outer.find_resource(
         "one", repository_id="other_repo") is not None
     assert outer.find_resource("one", repository_id="nope") is None
+
+    # Naming the sub-group itself: the group must NOT re-apply the filter
+    # inside a child it has already matched by id, or the child compares
+    # "inner_group" against its own children's ids and finds nothing.
+    found = outer.find_resource("one", repository_id="inner_group")
+    assert found is not None
+    assert found.version == (1, 0)
+
+
+def test_repository_id_names_a_cached_child_of_a_group(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A cached child answers to its own id, filter not re-applied inside.
+
+    Same branch as naming a sub-group: GenomicResourceCachedRepo.repo_id is
+    "<child>.caching_repo", and forwarding that id into it would compare it
+    against the wrapped child's id and find nothing.
+    """
+    leaf = _proto_repo(tmp_path / "leaf", "leaf_repo", {
+        "one(1.0)": {GR_CONF_FILE_NAME: "", "data.txt": "leaf"},
+    })
+    other = _proto_repo(tmp_path / "other", "other_repo", {
+        "one(2.0)": {GR_CONF_FILE_NAME: "", "data.txt": "other"},
+    })
+    cached_leaf = GenomicResourceCachedRepo(
+        leaf, f"file://{tmp_path}/cache")
+    outer = GenomicResourceGroupRepo([other, cached_leaf], "outer_group")
+
+    found = outer.find_resource(
+        "one", repository_id="leaf_repo.caching_repo")
+    assert found is not None
+    assert found.version == (1, 0)
+    assert isinstance(found.proto, CachingProtocol)
+
+
+def test_empty_repository_id_is_not_a_filter(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A falsy repository_id must mean "no filter" at every layer.
+
+    GenomicResourceProtocolRepo ignores a falsy repository_id, so a group
+    treating "" as a real id would disagree with its own children -- and ""
+    is exactly what repository_factory hands an unnamed child.
+    """
+    first = _proto_repo(tmp_path / "first", "first_repo", {
+        "one(1.0)": {GR_CONF_FILE_NAME: "", "data.txt": "first"},
+    })
+    unnamed = _proto_repo(tmp_path / "unnamed", "", {
+        "one(2.0)": {GR_CONF_FILE_NAME: "", "data.txt": "unnamed"},
+    })
+    group = GenomicResourceGroupRepo([first, unnamed], "group")
+
+    assert group.find_resource("one", repository_id="") == \
+        group.find_resource("one")

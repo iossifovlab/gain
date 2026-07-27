@@ -30,8 +30,10 @@ class GenomicResourceGroupRepo(GenomicResourceRepo):
             repository_id: str | None = None) -> GenomicResource | None:
 
         for child_repo in self.children:
-            if repository_id is not None \
-                    and child_repo.repo_id == repository_id:
+            # Truthiness, not `is not None`: GenomicResourceProtocolRepo
+            # ignores a falsy repository_id, so treating "" as a real filter
+            # here would make the two layers disagree.
+            if repository_id and child_repo.repo_id == repository_id:
                 # This child *is* the requested repository. Re-applying the
                 # filter inside it would compare repository_id against its
                 # own children's ids and find nothing.
