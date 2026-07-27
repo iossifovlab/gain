@@ -279,8 +279,9 @@ lives in a sibling module that imports the shared
 single-realize seam one way; `builders` does not import
 back, and there is no re-export. It composes into
 `a_grr().with_resource(...)` like any other builder. Its
-knobs are `with_data` / `with_raw_content` (verbatim,
-for `parameters:` shapes a whitespace block cannot
+knobs are `with_data` / `with_raw_content` (verbatim
+text or bytes, for `parameters:` shapes and compressed
+tables a whitespace block cannot
 express), `with_format` (`csv`/`tsv`/`excel`, filename
 follows), `with_file`, `with_parameters`,
 `with_declared_format` (config only — how you build an

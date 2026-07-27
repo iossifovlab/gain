@@ -2368,7 +2368,7 @@ def test_data_frame_rejects_raw_content_for_excel(
         a_data_frame().with_format("excel").with_raw_content("a,b\n1,2\n")
     )
 
-    with pytest.raises(ResourceValidationError, match="binary"):
+    with pytest.raises(ResourceValidationError, match="rendered workbook"):
         builder.build_resource(tmp_path)
 
 

@@ -3,6 +3,7 @@
 from typing import Any
 
 import pandas as pd
+from pandas.io.common import infer_compression
 
 from gain import logging
 from gain.genomic_resources.repository import (
@@ -38,24 +39,37 @@ def load_data_frame_from_resource(
             f"missing file parameter for: {resource.resource_id}") from exc
 
     file_format = config.get("format", "csv")
-    # ``config.get`` hands back the resource's own cached config dict --
-    # applying the tsv separator default in place would mutate the config
-    # for every later load in the process.  Copy first.
+    # ``config.get`` hands back the resource's own cached config dict, and
+    # the defaults below are applied IN PLACE -- without this copy the tsv
+    # separator and the inferred compression would be written into the
+    # config itself and seen by every later load through this resource.
     params = dict(config.get("parameters", {}))
 
     result: Any
     if file_format in {"csv", "tsv"}:
-        if file_format == "tsv":
+        if file_format == "tsv" and not params.keys() & {"sep", "delimiter"}:
             # Without this, ``format: tsv`` was a synonym for csv and a
             # tab-separated file loaded as a single column whose name was
-            # the whole header line.  An explicit ``parameters.sep`` still
-            # wins, so configs that already work around it are unaffected.
-            params = {"sep": "\t", **params}
-        result = pd.read_csv(
-            resource.get_file_url(file_name), **params)
+            # the whole header line.  A config that states its own
+            # separator keeps winning -- and it has to be checked under
+            # both spellings, because ``delimiter`` is pandas' alias for
+            # ``sep`` and read_csv rejects a call carrying both.
+            params["sep"] = "\t"
+        # A bare url would make pandas build its OWN fsspec filesystem with
+        # no storage_options, so an s3 GRR against a non-AWS endpoint
+        # (MinIO, Ceph) would be unreachable -- the protocol is the only
+        # thing that knows the endpoint.  Reading the raw stream costs the
+        # ``.gz`` detection pandas does for a url, so hand pandas the same
+        # answer it would have inferred from the name.
+        params.setdefault(
+            "compression", infer_compression(file_name, "infer"))
+        with resource.proto.open_raw_file(
+                resource, file_name, mode="rb") as infile:
+            result = pd.read_csv(infile, **params)
     elif file_format == "excel":
-        result = pd.read_excel(
-            resource.get_file_url(file_name), **params)
+        with resource.proto.open_raw_file(
+                resource, file_name, mode="rb") as infile:
+            result = pd.read_excel(infile, **params)
     else:
         logger.error(
             "unknown format %s for the data_frame %s",

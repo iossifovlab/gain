@@ -10,6 +10,7 @@ other factories.
 """
 from __future__ import annotations
 
+import csv
 import dataclasses
 import io
 import pathlib
@@ -65,10 +66,11 @@ class DataFrameBuilder:
 
     * :meth:`with_data` -- a whitespace-separated block, normalized by
       ``convert_to_tab_separated`` and rendered into the target format.
-    * :meth:`with_raw_content` -- verbatim file text.  Not a luxury: the
-      ``parameters:`` passthrough (``skiprows``, ``comment``,
-      ``na_values``, quoted separators) describes file shapes a
-      whitespace block cannot express.
+    * :meth:`with_raw_content` -- verbatim file content, text or bytes.
+      Not a luxury: the ``parameters:`` passthrough (``skiprows``,
+      ``comment``, ``na_values``, quoted separators) describes file
+      shapes a whitespace block cannot express, and a compressed table
+      has no whitespace-block spelling at all.
 
     A bare builder realizes a valid minimal readable csv resource.
 
@@ -82,7 +84,7 @@ class DataFrameBuilder:
     """
 
     data: str | None = None
-    raw_content: str | None = None
+    raw_content: str | bytes | None = None
     file_format: str = "csv"
     declared_format: str | None = None
     omit_format_key: bool = False
@@ -99,15 +101,17 @@ class DataFrameBuilder:
         """
         return dataclasses.replace(self, data=data)
 
-    def with_raw_content(self, content: str) -> DataFrameBuilder:
+    def with_raw_content(self, content: str | bytes) -> DataFrameBuilder:
         """Write ``content`` to the data file verbatim.
 
         The escape hatch for file shapes a whitespace block cannot
         express -- comment lines, leading junk rows, quoted separators,
         explicit NA markers -- i.e. everything the ``parameters:``
-        passthrough exists to handle.  Mutually exclusive with
-        :meth:`with_data`, and unavailable for ``excel`` (an xlsx is
-        binary, so there is no text to write verbatim).
+        passthrough exists to handle.  ``bytes`` for a table the loader
+        is meant to decompress, paired with :meth:`with_file` to give it
+        a name pandas can infer the compression from.  Mutually
+        exclusive with :meth:`with_data`, and unavailable for ``excel``
+        (:meth:`with_data` renders the workbook).
         """
         return dataclasses.replace(self, raw_content=content)
 
@@ -197,8 +201,14 @@ def _render_data_frame_table(builder: DataFrameBuilder) -> str | bytes:
     if builder.file_format == "tsv":
         return tsv
     if builder.file_format == "csv":
-        return "".join(
-            f"{','.join(line.split('\t'))}\n" for line in lines)
+        # Through ``csv.writer`` rather than a join, so that a value
+        # carrying the separator or a quote character is quoted rather
+        # than silently shifting the columns -- "the same table by
+        # construction" has to hold for those values too.
+        text_buffer = io.StringIO(newline="")
+        writer = csv.writer(text_buffer, lineterminator="\n")
+        writer.writerows(line.split("\t") for line in lines)
+        return text_buffer.getvalue()
 
     frame = pd.read_csv(io.StringIO(tsv), sep="\t")
     buffer = io.BytesIO()
@@ -221,8 +231,8 @@ def _build_data_frame_content(
             "authored as a whitespace block or written verbatim, not both")
     if builder.raw_content is not None and builder.file_format == "excel":
         raise ResourceValidationError(
-            "with_raw_content is text, but an xlsx is binary; author an "
-            "excel table with with_data")
+            "with_raw_content writes bytes through untouched, but an xlsx "
+            "is a rendered workbook; author an excel table with with_data")
 
     filename = builder.filename or _DATA_FRAME_FILENAMES[builder.file_format]
 

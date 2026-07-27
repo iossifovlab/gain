@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import gzip
 import pathlib
 import textwrap
 
@@ -96,6 +97,31 @@ def test_all_three_formats_carry_the_same_table(
     assert_frame_equal(frames["csv"], frames["excel"])
 
 
+def test_the_formats_agree_on_values_needing_quoting(
+    tmp_path: pathlib.Path,
+) -> None:
+    # "The same table by construction" has to hold for values that carry
+    # the csv separator or a quote character too -- otherwise the csv arm
+    # of the equivalence above is only testing values that happen to need
+    # no quoting, and a comma silently shifts the columns.
+    quoted = """
+        gene  label
+        G1    alpha,beta
+        G2    say||"hi"
+    """
+    base = a_data_frame().with_data(quoted)
+    frames = {
+        file_format: load_data_frame_from_resource(
+            base.with_format(file_format).build_resource(
+                tmp_path / file_format))
+        for file_format in ("csv", "tsv", "excel")
+    }
+
+    assert frames["tsv"]["label"].tolist() == ["alpha,beta", 'say "hi"']
+    assert_frame_equal(frames["csv"], frames["tsv"])
+    assert_frame_equal(frames["csv"], frames["excel"])
+
+
 def test_a_missing_format_key_defaults_to_csv(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -110,16 +136,19 @@ def test_a_missing_format_key_defaults_to_csv(
         load_data_frame_from_resource(resource), expected_frame())
 
 
-def test_an_explicit_sep_parameter_overrides_the_tsv_default(
-    tmp_path: pathlib.Path,
+@pytest.mark.parametrize("spelling", ["sep", "delimiter"])
+def test_an_explicit_separator_overrides_the_tsv_default(
+    tmp_path: pathlib.Path, spelling: str,
 ) -> None:
     # The tsv separator is a DEFAULT, not a hard-coding: a config that
-    # already spells out its own ``sep`` keeps winning.
+    # already spells out its own separator keeps winning.  Both spellings:
+    # ``delimiter`` is pandas' alias for ``sep`` and read_csv rejects a
+    # call carrying both, so the default has to stand down for either.
     resource = (
         a_data_frame()
         .with_declared_format("tsv")
         .with_raw_content("gene;score\nG1;0.25\nG2;0.50\n")
-        .with_parameters({"sep": ";"})
+        .with_parameters({spelling: ";"})
         .build_resource(tmp_path)
     )
 
@@ -148,22 +177,25 @@ def test_the_parameters_block_reaches_the_reader(
     assert frame["score"].isna().tolist() == [False, True]
 
 
-def test_loading_a_parameterless_resource_does_not_mutate_its_config(
+def test_loading_a_resource_does_not_mutate_its_parameters_block(
     tmp_path: pathlib.Path,
 ) -> None:
-    # ``config.get("parameters", {})`` hands back the resource's own cached
-    # dict; applying the tsv separator default in place would leak into
-    # every later load through the same resource object.
+    # ``config.get("parameters")`` hands back the resource's own cached
+    # dict, and the loader applies its defaults IN PLACE.  Without the copy
+    # the tsv separator lands in the config, where ``calc_statistics_hash``
+    # reads it -- so merely loading a resource would change its statistics
+    # hash and make grr_manage rebuild statistics that are up to date.
     resource = (
         a_data_frame()
         .with_format("tsv")
         .with_data(DATA)
+        .with_parameters({"skip_blank_lines": True})
         .build_resource(tmp_path)
     )
 
     load_data_frame_from_resource(resource)
 
-    assert resource.get_config().get("parameters", {}) == {}
+    assert resource.get_config()["parameters"] == {"skip_blank_lines": True}
     assert_frame_equal(
         load_data_frame_from_resource(resource), expected_frame())
 
@@ -240,6 +272,23 @@ def test_load_from_resource_id_uses_the_passed_repository(
         expected_frame())
 
 
+def republish(
+    root: pathlib.Path, grr_scheme: str, monkeypatch: pytest.MonkeyPatch,
+) -> GenomicResourceProtocolRepo:
+    """Serve the GRR laid out under ``root`` over ``grr_scheme``."""
+    source = build_filesystem_test_protocol(root)
+    if grr_scheme == "file":
+        return GenomicResourceProtocolRepo(source)
+    if grr_scheme == "s3":
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "minioadmin")
+        proto = s3_test_protocol()
+    else:
+        proto = build_inmemory_test_protocol(content={})
+    copy_proto_genomic_resources(proto, source)
+    return GenomicResourceProtocolRepo(proto)
+
+
 @pytest.mark.grr_rw
 def test_the_data_file_resolves_through_the_resource_not_the_cwd(
     tmp_path: pathlib.Path,
@@ -261,18 +310,7 @@ def test_the_data_file_resolves_through_the_resource_not_the_cwd(
 
     root = tmp_path / "grr"
     setup_directories(root, content)
-
-    if grr_scheme == "inmemory":
-        proto = build_inmemory_test_protocol(content=content)
-    elif grr_scheme == "s3":
-        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
-        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "minioadmin")
-        proto = s3_test_protocol()
-        copy_proto_genomic_resources(
-            proto, build_filesystem_test_protocol(root))
-    else:
-        proto = build_filesystem_test_protocol(root)
-    repo = GenomicResourceProtocolRepo(proto)
+    repo = republish(root, grr_scheme, monkeypatch)
 
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir(parents=True, exist_ok=True)
@@ -282,3 +320,68 @@ def test_the_data_file_resolves_through_the_resource_not_the_cwd(
 
     assert list(frame.columns) == ["gene", "score"]
     assert frame["score"].tolist() == [0.25, 0.50]
+
+
+@pytest.mark.grr_rw
+@pytest.mark.parametrize("file_format", ["csv", "tsv", "excel"])
+def test_every_format_reads_through_the_resource_protocol(
+    tmp_path: pathlib.Path,
+    grr_scheme: str,
+    monkeypatch: pytest.MonkeyPatch,
+    file_format: str,
+) -> None:
+    # Handing pandas a url makes it build its OWN fsspec filesystem with no
+    # storage_options, so it never learns the protocol's ``endpoint_url``
+    # and reaches for real AWS: a data_frame on any non-AWS s3 endpoint was
+    # unreadable.  Every format goes through the protocol's raw stream now,
+    # including excel -- openpyxl needs a seekable one.
+    root = tmp_path / "grr"
+    (
+        a_grr()
+        .with_resource(
+            "tables/genes",
+            a_data_frame().with_format(file_format).with_data(DATA))
+        .build_repo(root)
+    )
+    repo = republish(root, grr_scheme, monkeypatch)
+
+    assert_frame_equal(
+        load_data_frame_from_resource(repo.get_resource("tables/genes")),
+        expected_frame())
+
+
+def test_a_gzipped_table_is_still_decompressed(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Reading the raw stream loses the ``.gz`` detection pandas performs on
+    # a url, so the loader now infers it from the file name instead.  A
+    # config naming a compressed table must keep working.
+    resource = (
+        a_data_frame()
+        .with_file("data.csv.gz")
+        .with_raw_content(gzip.compress(b"gene,score\nG1,0.25\nG2,0.50\n"))
+        .build_resource(tmp_path)
+    )
+
+    frame = load_data_frame_from_resource(resource)
+
+    assert list(frame.columns) == ["gene", "score"]
+    assert frame["score"].tolist() == [0.25, 0.50]
+
+
+def test_an_explicit_compression_parameter_wins(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The inferred compression is a default like the tsv separator is: a
+    # config that spells its own out -- because the name does not advertise
+    # it -- keeps winning.
+    resource = (
+        a_data_frame()
+        .with_file("data.csv.bin")
+        .with_raw_content(gzip.compress(b"gene,score\nG1,0.25\nG2,0.50\n"))
+        .with_parameters({"compression": "gzip"})
+        .build_resource(tmp_path)
+    )
+
+    assert list(load_data_frame_from_resource(resource).columns) == [
+        "gene", "score"]
