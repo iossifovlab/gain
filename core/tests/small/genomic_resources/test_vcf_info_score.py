@@ -67,7 +67,10 @@ def test_clinvar_vcf_resource(vcf_info_clinvar: AlleleScore) -> None:
     vcf_info_clinvar.open()
     scores = vcf_info_clinvar.score_definitions
     assert "CLNDN" in scores
-    assert scores["CLNDN"].score_index == "CLNDN"
+    # A VCF score is addressed by INFO key, which is col_name; score_index
+    # is the resolved payload COLUMN of a tabular backend and a VCF score
+    # def has none.
+    assert scores["CLNDN"].col_name == "CLNDN"
     assert scores["CLNDN"].desc == ("ClinVar's preferred disease name for the"
                                     " concept specified by disease identifiers"
                                     " in CLNDISDB")
@@ -349,11 +352,11 @@ def test_gnomad_vcf_resource(
     assert "AF" in scores
     info = scores["AF"]
 
-    assert info.score_index == "AF"
+    assert info.col_name == "AF"
     assert info.desc is not None
 
     info = scores["AN"]
-    assert info.score_index == "AN"
+    assert info.col_name == "AN"
 
 
 @pytest.mark.parametrize("chrom,start,end,scores,expected", [

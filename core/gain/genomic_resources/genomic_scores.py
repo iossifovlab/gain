@@ -6,7 +6,7 @@ import contextlib
 import copy
 import enum
 from collections.abc import Callable, Generator, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import Lock
 from types import TracebackType
 from typing import (
@@ -218,7 +218,23 @@ class GenomicScoreDef(ScoreDef):
 
     value_parser: Any                             # internal
     na_values: Any                                # internal
-    score_index: int | str | None = None       # internal
+    # The resolved payload column this score is read from, filled in by
+    # ``GenomicScore.open`` -- the single form the read path uses, as against
+    # ``col_name``/``col_index``, which are the two forms a config may state.
+    #
+    # ``init=False`` with no default, so the attribute does not EXIST until
+    # open() resolves it.  That is the honest encoding of "not resolved yet":
+    # reading it early raises ``AttributeError`` naming the attribute, where a
+    # sentinel would have to be a real int -- and every candidate is a valid
+    # index into a payload (``-1`` most treacherously, since it would quietly
+    # read the last column instead of failing).
+    #
+    # Only column-addressed backends set it.  A VCF score is addressed by INFO
+    # *name*, which is ``col_name``, and ``VCFScoreLine`` reads that directly;
+    # a VCF score def therefore never has this attribute at all.  Nothing else
+    # reads it: ``fetch_region_value_arrays`` does, but the VCF backend does
+    # not serve that call (``supports_region_value_arrays``).
+    score_index: int = field(init=False)        # internal
 
     def __post_init__(self) -> None:
         if self.value_type is None:
@@ -546,18 +562,28 @@ class ScoreLineBase(abc.ABC):
         """
         return self.chrom, self.pos_begin, self.pos_end
 
+    @abc.abstractmethod
     def _extract_value(self, score_def: GenomicScoreDef) -> ScoreValue:
         """Get and parse one score from the line using a resolved def.
 
-        The line's job is the RAW GET -- which slot of which payload holds this
-        score, the one thing that differs per backend.  Turning that cell into
-        a value is the definition's (:meth:`GenomicScoreDef.parse_value`), so
-        that the per-record read and the bulk column read cannot drift apart.
-        """
-        key = score_def.score_index
-        assert key is not None
+        Abstract because the two siblings address a score differently, and the
+        difference is not one this class can express: a record line reads a
+        payload COLUMN (``score_def.score_index``, an int), a VCF line reads an
+        INFO KEY (``score_def.col_name``, a str).  Stating one of those here
+        and letting the other override it would put an addressing scheme that
+        only some backends use into the class that is meant to be neutral about
+        backends -- the same reason ``_get_raw`` is answered per sibling rather
+        than defaulted here.
 
-        return score_def.parse_value(self._get_raw(key))
+        What each implementation must NOT vary is the second half: turning the
+        raw cell into a value is :meth:`GenomicScoreDef.parse_value`'s job, so
+        that the per-record read and the bulk column read cannot drift apart.
+        Every implementation is a raw get through ``self._get_raw`` followed by
+        exactly that call.
+
+        The methods that walk scores -- :meth:`get_score` and
+        :meth:`get_values` -- stay here, over this hook.
+        """
 
     def get_values(
         self, score_defs: list[GenomicScoreDef],
@@ -724,6 +750,16 @@ class RecordScoreLine(RecordScoreLineBase):
         self.score_defs = score_defs
         self._get_raw = self._record[PAYLOAD].__getitem__
 
+    def _extract_value(self, score_def: GenomicScoreDef) -> ScoreValue:
+        """Read the score's payload column and parse it.
+
+        ``score_index`` is the column resolved once by ``GenomicScore.open``.
+        There is no "not resolved yet" check: the attribute does not exist
+        until open() sets it, so an unopened def raises ``AttributeError``
+        naming it, which is what the old ``assert key is not None`` was for.
+        """
+        return score_def.parse_value(self._get_raw(score_def.score_index))
+
 
 class VCFScoreLine(RecordScoreLineBase):
     """Score line over a VCF record: a score is an INFO field, not a column.
@@ -887,6 +923,25 @@ class VCFScoreLine(RecordScoreLineBase):
         self._info: pysam.VariantRecordInfo | None = None
         self._info_meta = None  # type: ignore[assignment]
         self._allele_index: int | None = None
+
+    def _extract_value(self, score_def: GenomicScoreDef) -> ScoreValue:
+        """Read the score's INFO field and parse it.
+
+        A VCF score's address is its INFO key, which is ``col_name`` -- the
+        very string the config named.  ``score_index`` is not consulted: it is
+        the resolved payload COLUMN of a tabular backend, and a VCF score def
+        does not have one (see :class:`GenomicScoreDef`).
+
+        The narrowing assert is real work, not ceremony: ``col_name`` is
+        declared ``str | None`` because a column-addressed score leaves it
+        ``None``, and only ``GenomicScore.open`` -- which refuses to open a VCF
+        score without one -- makes it a string here.  It sits on the VCF path
+        alone; the record path, which is the hot one, no longer carries a
+        check of its own.
+        """
+        key = score_def.col_name
+        assert key is not None
+        return score_def.parse_value(self._get_raw(key))
 
     def _get_raw(self, key: str | int) -> Any:
         """Look one INFO field up on this record's allele.
@@ -1535,10 +1590,19 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             self._validate_scoredefs()
 
         if is_vcf:
-            # A VCF score is addressed by INFO key, not by column index.
+            # A VCF score has no column to resolve: it is addressed by INFO
+            # KEY, which is ``col_name``, and :class:`VCFScoreLine` reads that
+            # attribute directly.  This branch used to copy the same string
+            # into ``score_index`` as well, which is what made that field
+            # ``int | str`` and forced an ``isinstance`` assert at the other
+            # end; the copy said nothing the original did not.  So all that is
+            # left here is the invariant the copy used to assert.
             for score_def in self.score_definitions.values():
-                assert score_def.col_name is not None
-                score_def.score_index = score_def.col_name
+                if score_def.col_name is None:
+                    raise ValueError(
+                        f"score {score_def.score_id!r} of VCF resource "
+                        f"{self.resource_id!r} has no INFO key; a VCF score "
+                        f"is addressed by name")
         else:
             # Resolve each score's configured address to a payload column.
             #
@@ -1575,6 +1639,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                         f"score {score_def.score_id!r} of resource "
                         f"{self.resource_id!r} configures neither "
                         f"column_name nor column_index; one is required")
+
         return self
 
     def __enter__(self) -> Self:
@@ -1732,11 +1797,13 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 f"{chrom} is not among the available chromosomes.")
 
         # score id -> payload column index, resolved once for the whole scan.
-        # The cast is sound because the backends that serve this call address
-        # their columns by integer index; a str key is a VCF INFO name, and the
-        # VCF backend does not serve it (see supports_region_value_arrays).
+        # No cast: ``score_index`` IS an int.  It used to be ``int | str``,
+        # the str being a VCF INFO name, and this had to assert -- by cast --
+        # that the VCF backend never reaches here.  A VCF score is now
+        # addressed by ``col_name`` and has no ``score_index`` at all, so the
+        # claim is carried by the type instead of by a comment.
         columns = {
-            score_id: cast(int, self.score_definitions[score_id].score_index)
+            score_id: self.score_definitions[score_id].score_index
             for score_id in scores
         }
         return self._value_array_batches(

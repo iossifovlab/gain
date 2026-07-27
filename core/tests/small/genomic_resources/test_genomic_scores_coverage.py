@@ -47,9 +47,11 @@ def test_score_line_get_score_value_parser_exception(
             hist_conf=None,
             value_parser=bad_parser,
             na_values=None,
-            score_index=3,
         ),
     }
+    # score_index is init=False -- GenomicScore.open resolves it from
+    # col_name/col_index, and this def is built by hand without one.
+    score_defs["test_score"].score_index = 3
     line = RecordScoreLine(("chr1", 1, 10, None, None, raw_row), score_defs)
 
     result = line.get_score("test_score")

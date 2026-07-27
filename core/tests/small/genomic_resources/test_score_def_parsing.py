@@ -317,3 +317,45 @@ def test_the_resolution_guard_refuses_a_doubly_addressed_score_def() -> None:
 
     with pytest.raises(ValueError, match="configures both a column name"):
         score.open()
+
+
+def test_score_index_does_not_exist_until_the_score_is_opened() -> None:
+    """"Unresolved" is the attribute's absence, not a sentinel value.
+
+    ``score_index`` is ``field(init=False)`` with no default, so a def that
+    has not been through ``GenomicScore.open`` has no such attribute and
+    reading it says so.  A sentinel would have to be a real int, and every
+    candidate is a valid payload index -- ``-1`` most treacherously, since it
+    would read the last column instead of failing.
+    """
+    res = build_inmemory_test_resource({
+        "genomic_resource.yaml": """
+            type: position_score
+            table:
+                header_mode: none
+                filename: data.mem
+                chrom:
+                    index: 0
+                pos_begin:
+                    index: 1
+                pos_end:
+                    index: 2
+            scores:
+            - id: s
+              column_index: 3
+              type: float""",
+        "data.mem": convert_to_tab_separated("""
+            chr1  10  12  0.5
+        """),
+    })
+    score = build_score_from_resource(res)
+    score_def = score.score_definitions["s"]
+
+    # Built in __init__, so the configured address is already known...
+    assert score_def.col_index == 3
+    # ...but nothing has resolved it to a payload column yet.
+    with pytest.raises(AttributeError, match="score_index"):
+        _ = score_def.score_index
+
+    with score.open():
+        assert score_def.score_index == 3
