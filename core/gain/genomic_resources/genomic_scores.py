@@ -150,6 +150,55 @@ def _normalize_na_values(na_values: Any, value_type: str) -> set[Any]:
     return sentinels
 
 
+def _parse_column_address(
+    score_conf: dict[str, Any],
+) -> tuple[str | None, int | None]:
+    """Read a score's configured column address as ``(name, index)``.
+
+    A score is addressed either by column NAME or by column INDEX, never both
+    -- the resource schema declares the two mutually exclusive, and each has a
+    modern spelling (``column_name`` / ``column_index``) plus a legacy alias
+    (``name`` / ``index``) that is still accepted.  Exactly one of the returned
+    pair is non-``None`` for a well-formed config.
+
+    **Index 0 is why this is a function.**  The obvious spelling of "modern key
+    or legacy alias, converted" is
+
+    .. code-block:: python
+
+        col_index_str = conf.get("column_index") or conf.get("index")
+        col_index = int(col_index_str) if col_index_str else None
+
+    and it silently discards a legitimate ``column_index: 0``, twice over:
+    ``0`` is falsy, so the ``or`` falls through to the legacy key (usually
+    absent, giving ``None``), and the ternary would drop it even when reached
+    directly.  Both tests have to be ``is None`` / ``is not None``, because the
+    value being looked for is itself falsy.
+
+    That was a real defect, not a hypothetical: with both keys discarded the
+    score def carried ``col_index=None`` AND ``col_name=None``, so ``open()``
+    took its by-name branch and died on a message-less assertion naming
+    neither the resource nor the score.  Column 0 is a legal address -- the
+    validator explicitly permits ``0 <= column_index`` -- so any resource
+    whose score sits in the first column could not be opened at all.
+
+    This lives at module level, not on a class, because ``CnvCollection``
+    overrides ``_parse_scoredef_config`` with its own near-copy; parsed in one
+    place, the two cannot drift, and the bug above cannot be fixed in one of
+    them only.  (Pinned by test_column_index_zero_is_a_real_address.)
+    """
+    col_name = score_conf.get("column_name")
+    if col_name is None:
+        col_name = score_conf.get("name")
+
+    col_index_raw = score_conf.get("column_index")
+    if col_index_raw is None:
+        col_index_raw = score_conf.get("index")
+    col_index = int(col_index_raw) if col_index_raw is not None else None
+
+    return col_name, col_index
+
+
 @dataclass
 class GenomicScoreDef(ScoreDef):
     """A genomic score definition. Includes backend loading internals.
@@ -1209,11 +1258,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         for score_conf in config["scores"]:
             value_parser = SCORE_TYPE_PARSERS[score_conf.get("type", "float")]
 
-            col_name = score_conf.get("column_name") \
-                or score_conf.get("name")
-            col_index_str = score_conf.get("column_index") \
-                or score_conf.get("index")
-            col_index = int(col_index_str) if col_index_str else None
+            col_name, col_index = _parse_column_address(score_conf)
 
             hist_conf = build_histogram_config(score_conf)
             nuc_aggregator = score_conf.get("nucleotide_aggregator")
@@ -1495,15 +1540,41 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 assert score_def.col_name is not None
                 score_def.score_index = score_def.col_name
         else:
+            # Resolve each score's configured address to a payload column.
+            #
+            # Index first, because it needs nothing from the table -- only the
+            # by-NAME case has to consult the header.  These raise rather than
+            # assert: an assert here reported a misconfigured resource with a
+            # message-less AssertionError naming neither the resource nor the
+            # score, and ``python -O`` strips it altogether, leaving the by-name
+            # branch to call ``header.index(None)`` on a table whose header may
+            # itself be ``None``.  A resource config is data, and bad data is
+            # reported, not asserted away.
             for score_def in self.score_definitions.values():
-                if score_def.col_index is None:
-                    assert self.table.header is not None
-                    assert score_def.col_name is not None
+                if score_def.col_index is not None:
+                    if score_def.col_name is not None:
+                        raise ValueError(
+                            f"score {score_def.score_id!r} of resource "
+                            f"{self.resource_id!r} configures both a column "
+                            f"name ({score_def.col_name!r}) and a column "
+                            f"index ({score_def.col_index}); they are "
+                            f"mutually exclusive")
+                    score_def.score_index = score_def.col_index
+                elif score_def.col_name is not None:
+                    if self.table.header is None:
+                        raise ValueError(
+                            f"score {score_def.score_id!r} of resource "
+                            f"{self.resource_id!r} is addressed by column "
+                            f"name ({score_def.col_name!r}), but its table "
+                            f"has no header to resolve that name against; "
+                            f"address it by column_index instead")
                     score_def.score_index = self.table.header.index(
                         score_def.col_name)
                 else:
-                    assert score_def.col_name is None
-                    score_def.score_index = score_def.col_index
+                    raise ValueError(
+                        f"score {score_def.score_id!r} of resource "
+                        f"{self.resource_id!r} configures neither "
+                        f"column_name nor column_index; one is required")
         return self
 
     def __enter__(self) -> Self:
@@ -2322,11 +2393,7 @@ class CnvCollection(GenomicScore):
         for score_conf in config["scores"]:
             value_parser = SCORE_TYPE_PARSERS[score_conf.get("type", "float")]
 
-            col_name = score_conf.get("column_name") \
-                or score_conf.get("name")
-            col_index_str = score_conf.get("column_index") \
-                or score_conf.get("index")
-            col_index = int(col_index_str) if col_index_str else None
+            col_name, col_index = _parse_column_address(score_conf)
 
             hist_conf = build_histogram_config(score_conf)
             nuc_aggregator = score_conf.get("nucleotide_aggregator")
