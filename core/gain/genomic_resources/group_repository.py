@@ -32,10 +32,10 @@ class GenomicResourceGroupRepo(GenomicResourceRepo):
         for child_repo in self.children:
             if repository_id is not None and \
                     child_repo.repo_id is not None and \
-                    child_repo.repo_id != resource_id:
+                    child_repo.repo_id != repository_id:
                 continue
             res = child_repo.find_resource(
-                resource_id, version_constraint)
+                resource_id, version_constraint, repository_id)
             if res:
                 return res
 
@@ -53,15 +53,13 @@ class GenomicResourceGroupRepo(GenomicResourceRepo):
             self, resource_id: str, version_constraint: str | None = None,
             repository_id: str | None = None) -> GenomicResource:
 
-        for child_repo in self.children:
-            if repository_id is not None and \
-                    child_repo.repo_id is not None and \
-                    child_repo.repo_id != resource_id:
-                continue
-            res = child_repo.find_resource(
-                resource_id, version_constraint, repository_id)
-            if res:
-                return res
-        raise ValueError(
-            f"resource {resource_id} {version_constraint} "
-            f"({repository_id}) not found")
+        # Delegates to find_resource so the two cannot drift apart: they
+        # previously carried duplicate copies of the child filter, and only
+        # one of them forwarded repository_id to the child. See #429.
+        res = self.find_resource(
+            resource_id, version_constraint, repository_id)
+        if res is None:
+            raise ValueError(
+                f"resource {resource_id} {version_constraint} "
+                f"({repository_id}) not found")
+        return res

@@ -24,7 +24,6 @@ from gain.genomic_resources.repository import (
     GenomicResourceRepo,
     Manifest,
     ReadOnlyRepositoryProtocol,
-    is_version_constraint_satisfied,
     parse_resource_id_version,
     version_tuple_to_string,
 )
@@ -294,7 +293,23 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
         search_term: str | None = None,
         resource_type: str | None = None,
     ) -> Generator[GenomicResource, None, None]:
-        yield from self.child.search_resources(search_term, resource_type)
+        # The child yields resources bound to the *remote* protocol; handing
+        # those out would let callers read files straight from the remote,
+        # neither consulting nor populating the cache. Every resource this
+        # repository produces must be cache-backed, exactly as in
+        # get_all_resources/get_resource. See #428.
+        #
+        # The lookup cannot KeyError: the cache protocol's dict is keyed off
+        # the same remote_protocol.get_all_resources() that the child's FTS
+        # resolution indexes with an equally unguarded lookup. Nor does it
+        # cost an extra enumeration -- the FTS search already builds the
+        # remote's dict to resolve its own hits.
+        for remote_resource in self.child.search_resources(
+                search_term, resource_type):
+            cache_proto = self._get_or_create_cache_proto(
+                remote_resource.proto)
+            yield cache_proto.get_all_resources_dict()[
+                remote_resource.get_full_id()]
 
     def _get_or_create_cache_proto(
             self, proto: ReadOnlyRepositoryProtocol) -> CachingProtocol:
@@ -325,30 +340,30 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
         version_constraint: str | None = None,
         repository_id: str | None = None,
     ) -> GenomicResource | None:
-        """Return requested resource or None if not found."""
-        if version_constraint is None:
-            resource_id, version = parse_resource_id_version(resource_id)
-            if version is not None:
-                version_constraint = f"={version_tuple_to_string(version)}"
-        matching_resources: list[GenomicResource] = []
-        for res in self.get_all_resources():
-            if res.resource_id != resource_id:
-                continue
-            if repository_id is not None and \
-                    res.proto.proto_id != repository_id:
-                continue
-            if is_version_constraint_satisfied(
-                    version_constraint, res.version):
-                matching_resources.append(res)
-        if not matching_resources:
+        """Return requested resource or None if not found.
+
+        Mirrors get_resource: the child resolves the resource (and owns
+        repository_id semantics), then the hit is wrapped so the returned
+        resource is cache-backed.
+
+        This used to enumerate every resource and pick the highest version
+        across protocols, which had two defects. It filtered repository_id
+        against the *cache* protocol's id -- registered as
+        ``f"{proto_id}.cached"`` -- so the filter never matched anything. And
+        because get_resource already delegated, the two methods could return
+        different versions of the same id when a group repository's children
+        overlapped. Group child order is a priority list; first child wins.
+        See #429.
+        """
+        remote_resource = self.child.find_resource(
+            resource_id, version_constraint, repository_id)
+        if remote_resource is None:
             return None
 
-        def get_resource_version(res: GenomicResource) -> tuple[int, ...]:
-            return res.version
-
-        return max(
-            matching_resources,
-            key=get_resource_version)
+        cache_proto = self._get_or_create_cache_proto(remote_resource.proto)
+        return cache_proto.get_resource(
+            remote_resource.resource_id,
+            f"={remote_resource.get_version_str()}")
 
     def get_resource(
             self, resource_id: str,

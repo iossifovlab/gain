@@ -3,6 +3,7 @@ import contextlib
 import logging
 import os
 import pathlib
+import textwrap
 import threading
 from collections.abc import Callable, Generator
 from contextlib import AbstractContextManager
@@ -14,10 +15,19 @@ from gain.genomic_resources.cached_repository import (
     GenomicResourceCachedRepo,
     cache_resources,
 )
-from gain.genomic_resources.cli import _run_list_command
-from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
+from gain.genomic_resources.cli import (
+    _create_contents_db,
+    _run_list_command,
+    cli_manage,
+)
+from gain.genomic_resources.fsspec_protocol import (
+    FsspecReadWriteProtocol,
+    build_fsspec_protocol,
+)
+from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
+    GenomicResource,
     GenomicResourceProtocolRepo,
 )
 from gain.genomic_resources.repository_factory import (
@@ -26,7 +36,9 @@ from gain.genomic_resources.repository_factory import (
 from gain.genomic_resources.testing import (
     build_inmemory_test_repository,
     build_s3_test_bucket,
+    convert_to_tab_separated,
     s3_test_server_endpoint,
+    setup_directories,
 )
 from pytest_mock import MockerFixture
 
@@ -989,3 +1001,276 @@ def test_cache_find_resource_with_version(
 
         assert filesystem.exists(
             os.path.join(base_url, resource_path, "genes.gtf"))
+
+
+# ---------------------------------------------------------------------------
+# Every resource a cached repository produces must be cache-backed (#428),
+# and repository_id must actually narrow the search (#429).
+# ---------------------------------------------------------------------------
+
+
+def _setup_search_remote(root_path: pathlib.Path) -> None:
+    """Lay out two searchable position scores under ``root_path``."""
+    setup_directories(
+        root_path,
+        {
+            "scores/res_a": {
+                "genomic_resource.yaml": textwrap.dedent("""
+                    type: position_score
+                    meta:
+                        description: Example position score A
+                        labels:
+                            domain: domain_a
+                    table:
+                        filename: data.txt
+                    scores:
+                        - id: score
+                          type: float
+                          name: score
+                """),
+                "data.txt": convert_to_tab_separated("""
+                    chrom  pos_begin  score
+                    chr1   100        1.5
+                """),
+            },
+            "scores/res_b": {
+                "genomic_resource.yaml": textwrap.dedent("""
+                    type: position_score
+                    meta:
+                        description: Example position score B
+                        labels:
+                            domain: domain_b
+                    table:
+                        filename: data.txt
+                    scores:
+                        - id: score
+                          type: float
+                          name: score
+                """),
+                "data.txt": convert_to_tab_separated("""
+                    chrom  pos_begin  score
+                    chr1   200        0.7
+                """),
+            },
+        },
+    )
+
+
+@pytest.fixture
+def indexed_cache_repository(
+    tmp_path: pathlib.Path,
+) -> GenomicResourceCachedRepo:
+    """Cached repo over a filesystem remote that carries an FTS index.
+
+    Deliberately separate from ``cache_repository``: that fixture builds an
+    in-memory remote with no ``.CONTENTS.sqlite3``, so a *filtered*
+    search_resources() raises ValueError in the protocol
+    (`fsspec_protocol.open_repository_sqlite3_metadata_db`) long before it
+    reaches the code under test. ``_create_contents_db`` also works against
+    real filesystem paths (``proto.root_path``), hence a filesystem remote
+    rather than the in-memory one. Building the index into ``cache_repository``
+    itself would tax the ~25 tests that consume it for a capability only these
+    tests need.
+    """
+    remote_path = tmp_path / "remote"
+    _setup_search_remote(remote_path)
+    cli_manage(["repo-manifest", "-R", str(remote_path)])
+    # A short proto id, not build_filesystem_test_protocol's absolute path:
+    # the cache url is built with os.path.join(cache_url, proto_id), which
+    # discards the cache prefix when proto_id is absolute -- the cache would
+    # land on top of the remote and nothing would be observable.
+    proto = cast(
+        FsspecReadWriteProtocol,
+        build_fsspec_protocol("remote_repo", str(remote_path)))
+    _create_contents_db(proto)
+    return GenomicResourceCachedRepo(
+        GenomicResourceProtocolRepo(proto),
+        f"file://{tmp_path}/cache")
+
+
+#: Every ``GenomicResourceCachedRepo`` method that hands out resources. The
+#: table is the point: ``search_resources`` was the one member that forgot to
+#: wrap (#428), and a new resource-producing method should be added here so
+#: the invariant is enforced class-wide rather than per-method.
+RESOURCE_PRODUCERS: list[
+    tuple[str, Callable[[GenomicResourceCachedRepo], list[GenomicResource]]]
+] = [
+    (
+        "get_all_resources",
+        lambda repo: list(repo.get_all_resources()),
+    ),
+    (
+        "get_resource",
+        lambda repo: [repo.get_resource("scores/res_a")],
+    ),
+    (
+        "find_resource",
+        lambda repo: [
+            cast(GenomicResource, repo.find_resource("scores/res_a")),
+        ],
+    ),
+    (
+        "search_resources_unfiltered",
+        lambda repo: list(repo.search_resources()),
+    ),
+    (
+        "search_resources_by_type",
+        lambda repo: list(repo.search_resources(
+            resource_type="position_score")),
+    ),
+    (
+        "search_resources_by_term",
+        lambda repo: list(repo.search_resources(search_term="domain_a")),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "label,produce", RESOURCE_PRODUCERS,
+    ids=[label for label, _ in RESOURCE_PRODUCERS],
+)
+def test_produced_resources_are_cache_backed(
+    indexed_cache_repository: GenomicResourceCachedRepo,
+    label: str,
+    produce: Callable[[GenomicResourceCachedRepo], list[GenomicResource]],
+) -> None:
+    resources = produce(indexed_cache_repository)
+
+    assert resources, label
+    for res in resources:
+        assert isinstance(res.proto, CachingProtocol), \
+            f"{label} yielded a non-cache-backed {res.resource_id}"
+
+
+def test_search_resources_yields_the_memoized_resource(
+    indexed_cache_repository: GenomicResourceCachedRepo,
+) -> None:
+    """A search hit is the same object get_all_resources() hands out.
+
+    ``GenomicResource.__eq__`` ignores ``proto`` and ``__hash__`` uses
+    ``proto.get_url()``, which the caching protocol forwards to the remote --
+    so a cache-backed resource and its remote twin compare equal. Identity is
+    what actually distinguishes them.
+    """
+    by_id = {
+        res.resource_id: res
+        for res in indexed_cache_repository.get_all_resources()
+    }
+
+    searched = list(
+        indexed_cache_repository.search_resources(search_term="domain_a"))
+
+    assert len(searched) == 1
+    assert searched[0] is by_id["scores/res_a"]
+
+
+def test_reading_a_search_hit_populates_the_cache(
+    indexed_cache_repository: GenomicResourceCachedRepo,
+) -> None:
+    """The behaviour #428 is actually about: search hits go through the cache.
+
+    Before the fix the hit carried the remote protocol, so this read went
+    straight to the remote and the cache directory stayed empty.
+    """
+    searched = list(
+        indexed_cache_repository.search_resources(search_term="domain_a"))
+    assert len(searched) == 1
+    resource = searched[0]
+
+    proto = cast(CachingProtocol, resource.proto)
+    filesystem = proto.local_protocol.filesystem
+    base_url = proto.local_protocol.url
+    cached_file = os.path.join(base_url, "scores/res_a", "data.txt")
+
+    assert not filesystem.exists(cached_file)
+
+    with resource.open_raw_file("data.txt") as infile:
+        assert "chr1" in infile.read()
+
+    assert filesystem.exists(cached_file)
+
+
+@pytest.fixture
+def cached_group_repository(
+    tmp_path: pathlib.Path,
+) -> GenomicResourceCachedRepo:
+    """Cached repo over a group of two named filesystem repos.
+
+    ``repo_a`` and ``repo_b`` both hold ``one``, at different versions, with
+    ``repo_a`` first in the group. This is the topology
+    ``repository_factory`` builds whenever a group definition carries a
+    ``cache_dir``.
+    """
+    children: list[Any] = []
+    for repo_id, version, content in (
+        ("repo_a", "1.0", "from repo_a"),
+        ("repo_b", "2.0", "from repo_b"),
+    ):
+        root = tmp_path / repo_id
+        setup_directories(root, {
+            f"one({version})": {
+                GR_CONF_FILE_NAME: "",
+                "data.txt": content,
+            },
+        })
+        proto = cast(
+            FsspecReadWriteProtocol,
+            build_fsspec_protocol(repo_id, str(root)))
+        proto.build_content_file()
+        children.append(GenomicResourceProtocolRepo(proto))
+
+    return GenomicResourceCachedRepo(
+        GenomicResourceGroupRepo(children, "group_repo"),
+        f"file://{tmp_path}/cache")
+
+
+@pytest.mark.parametrize("repository_id,expected", [
+    ("repo_a", (1, 0)),
+    ("repo_b", (2, 0)),
+])
+def test_repository_id_narrows_to_the_named_child(
+    cached_group_repository: GenomicResourceCachedRepo,
+    repository_id: str,
+    expected: tuple[int, ...],
+) -> None:
+    """repository_id selects a specific child through the cached+group stack.
+
+    Before #429 this matched nothing: the group compared its child ids
+    against the *resource* id, and the cached repo compared the caching
+    protocol's ``<id>.cached`` proto id.
+    """
+    found = cached_group_repository.find_resource(
+        "one", repository_id=repository_id)
+    assert found is not None
+    assert found.version == expected
+    assert isinstance(found.proto, CachingProtocol)
+
+    got = cached_group_repository.get_resource(
+        "one", repository_id=repository_id)
+    assert got.version == expected
+
+
+def test_repository_id_of_unknown_child_finds_nothing(
+    cached_group_repository: GenomicResourceCachedRepo,
+) -> None:
+    assert cached_group_repository.find_resource(
+        "one", repository_id="no_such_repo") is None
+
+
+def test_find_and_get_resource_agree_on_group_precedence(
+    cached_group_repository: GenomicResourceCachedRepo,
+) -> None:
+    """First child wins, and both accessors say so.
+
+    Group child order is a priority list. ``get_resource`` already delegated
+    to the child (so it honoured that order), while ``find_resource``
+    enumerated everything and returned the highest version -- so the two could
+    return different versions of the same id. See #429.
+    """
+    found = cached_group_repository.find_resource("one")
+    got = cached_group_repository.get_resource("one")
+
+    assert found is not None
+    assert found.version == (1, 0)
+    assert got.version == (1, 0)
+    assert found.version == got.version
