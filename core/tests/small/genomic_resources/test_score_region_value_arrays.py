@@ -15,7 +15,10 @@ from gain.genomic_resources.genomic_position_table.record import (
     POS_BEGIN,
     POS_END,
 )
-from gain.genomic_resources.genomic_scores import AlleleScore, PositionScore
+from gain.genomic_resources.genomic_scores import (
+    AlleleScore,
+    PositionScore,
+)
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,

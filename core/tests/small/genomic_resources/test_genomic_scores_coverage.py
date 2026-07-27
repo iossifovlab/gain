@@ -7,13 +7,15 @@ from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     CnvCollection,
-    GenomicScoreDef,
     PositionScore,
-    _extract_column_value,
     build_position_score_from_resource,
     build_score_from_resource,
 )
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME
+from gain.genomic_resources.score_def import (
+    GenomicScoreDef,
+    extract_column_value,
+)
 from gain.genomic_resources.testing import build_inmemory_test_resource
 
 
@@ -22,7 +24,7 @@ def test_score_line_get_score_value_parser_exception(
 ) -> None:
     """Test the value read when the configured value parser raises.
 
-    The behaviour under test is ``_extract_column_value``'s: a value parser
+    The behaviour under test is ``extract_column_value``'s: a value parser
     that raises is logged and yields ``None`` rather than propagating.  Read
     straight off a record -- the score lines that used to wrap one are gone,
     and a score is a cell of the record's payload.
@@ -53,7 +55,7 @@ def test_score_line_get_score_value_parser_exception(
     score_defs["test_score"].score_index = 3
     record = ("chr1", 1, 10, None, None, raw_row)
 
-    result = _extract_column_value(record, score_defs["test_score"])
+    result = extract_column_value(record, score_defs["test_score"])
     assert result is None
     assert any(
         "unable to parse value" in rec.message

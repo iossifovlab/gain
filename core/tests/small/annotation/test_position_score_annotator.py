@@ -6,7 +6,9 @@ import pytest
 from gain.annotation.annotatable import Position, VCFAllele
 from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
-from gain.genomic_resources.genomic_scores import PositionScore
+from gain.genomic_resources.genomic_scores import (
+    PositionScore,
+)
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,

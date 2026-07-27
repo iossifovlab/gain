@@ -4,7 +4,9 @@
 import pathlib
 
 import pytest
-from gain.genomic_resources.genomic_scores import PositionScore
+from gain.genomic_resources.genomic_scores import (
+    PositionScore,
+)
 from gain.genomic_resources.testing.builders import a_position_score
 
 

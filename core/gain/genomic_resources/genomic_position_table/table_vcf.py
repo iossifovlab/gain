@@ -29,7 +29,7 @@ from .table_tabix import TabixGenomicPositionTable
 #
 # They used to be memoised on the score line, resolved on its first score read.
 # With the score lines gone the value read is a pure function of the record
-# (``_extract_vcf_value`` in ``genomic_scores.py``), so the memo has to live in
+# (``vcf_scores.extract_vcf_value``), so the memo has to live in
 # the record itself -- which is what a backend-defined payload is for.  The
 # trade is that resolution is now EAGER: a record whose scores are never read
 # pays the ~170ns anyway.  That case is real but narrow -- ``AlleleScore``
@@ -39,7 +39,7 @@ from .table_tabix import TabixGenomicPositionTable
 #
 # Resolving them here does NOT make the per-key metadata lookup eager: the
 # ``INFO_META.get(key)`` that types a field is still made only in the branch
-# that needs it (see ``_extract_vcf_value``), because that call builds a fresh
+# that needs it (see ``extract_vcf_value``), because that call builds a fresh
 # ``VariantMetadata`` per key and a Number=1 field must not pay for one.
 VARIANT = 0
 ALLELE_INDEX = 1
@@ -121,20 +121,22 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
     is holding.
 
     **Its PAYLOAD is not a raw row.**  A VCF record carries ``(variant record,
-    allele index)`` in the slot where a tabix record carries the raw tabular
-    row (see ``VARIANT``/``ALLELE_INDEX`` above), because a VCF score is not a
-    column: it is an INFO field, looked up by name against the variant's header
-    metadata and selected by allele.  That lookup lives in one place --
-    ``VCFScoreLine`` in ``genomic_scores.py``, chosen once per table when the
-    score is opened.  Only the five decoded slots (``CHROM`` ... ``ALT``) mean
-    the same thing across every backend.
+    allele index, info, info_meta)`` in the slot where a tabix record carries
+    the raw tabular row (see ``VARIANT``/``ALLELE_INDEX``/``INFO``/
+    ``INFO_META`` above), because a VCF score is not a column: it is an INFO
+    field, looked up by name against the variant's header metadata and
+    selected by allele.  That lookup lives in one place --
+    ``vcf_scores.extract_vcf_value``, bound once per score when it is opened.
+    Only the five decoded slots (``CHROM`` ... ``ALT``) mean the same thing
+    across every backend.
     """
 
     # **Set back to False on purpose.**  This backend inherits its tabix
     # parent's ``get_region_value_arrays`` implementation, but cannot honour
     # its contract: that method reads a raw tabular row and serves columns by
     # integer payload index, and neither holds here -- the PAYLOAD is
-    # ``(variant record, allele index)`` and a VCF score is an INFO field
+    # ``(variant, allele index, info, info_meta)`` and a VCF score is an INFO
+    # field
     # addressed by *name*.  Inheriting True would hand a caller rows that are
     # not rows.  This one line is what the callers' old
     # ``isinstance(Tabix) and not isinstance(VCF)`` said, said once and in the

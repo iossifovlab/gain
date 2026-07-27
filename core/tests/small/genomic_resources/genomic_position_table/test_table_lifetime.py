@@ -86,7 +86,9 @@ from gain.genomic_resources.genomic_position_table.table import (
 from gain.genomic_resources.genomic_scores import (
     GenomicScore,
     PositionScore,
-    _extract_column_value,
+)
+from gain.genomic_resources.score_def import (
+    extract_column_value,
 )
 from gain.genomic_resources.testing import (
     build_filesystem_test_resource,
@@ -155,9 +157,9 @@ def _build_mapped_tabix(tmp_path: pathlib.Path) -> Backend:
 # mapped in-memory table is not a sixth backend.
 _MAPPED_BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
     pytest.param(
-        _build_mapped_inmemory, _extract_column_value,
+        _build_mapped_inmemory, extract_column_value,
         id="inmemory-mapped"),
-    pytest.param(_build_mapped_tabix, _extract_column_value, id="tabix-mapped"),
+    pytest.param(_build_mapped_tabix, extract_column_value, id="tabix-mapped"),
 ]
 _LIFETIME_BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
     *_BACKENDS, *_MAPPED_BACKENDS,

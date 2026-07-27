@@ -18,7 +18,10 @@ from gain.genomic_resources.aggregators import (
     AGGREGATOR_SCHEMA,
     Aggregator,
 )
-from gain.genomic_resources.genomic_scores import AlleleScore, PositionScore
+from gain.genomic_resources.genomic_scores import (
+    AlleleScore,
+    PositionScore,
+)
 from gain.genomic_resources.testing.builders import (
     a_grr,
     a_position_score,

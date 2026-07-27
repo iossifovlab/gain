@@ -19,7 +19,9 @@ This is deliberately NOT a ``pytestarch`` rule: pytestarch reasons about module
 *imports* and cannot express "this class must not grow this method".
 """
 from gain.gene_scores.gene_scores import GeneScore
-from gain.genomic_resources.genomic_scores import GenomicScore
+from gain.genomic_resources.genomic_scores import (
+    GenomicScore,
+)
 from gain.genomic_resources.score_resource import ScoreResource
 
 # The complete, intended public surface of ScoreResource.  Grow this ONLY when

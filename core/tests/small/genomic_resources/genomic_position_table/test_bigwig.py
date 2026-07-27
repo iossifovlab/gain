@@ -26,9 +26,11 @@ from gain.genomic_resources.genomic_position_table.utils import (
 )
 from gain.genomic_resources.genomic_scores import (
     PositionScore,
-    _extract_column_value,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.score_def import (
+    extract_column_value,
+)
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     setup_bigwig,
@@ -182,7 +184,7 @@ def test_bigwig_score_reads_value_at_index_3(
     repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
     score = PositionScore(repo.get_resource("bw")).open()
     with score:
-        assert score._extract_value is _extract_column_value
+        assert score._extract_value is extract_column_value
         record = next(iter(score.fetch_records("chr1", 5, 5)))
         assert type(record) is tuple
         assert score.get_score_from_record(record, "bw") == \

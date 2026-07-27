@@ -17,9 +17,9 @@ built it says it means:
 
 * a record whose payload is a raw tabular row (in-memory, tabix) or the
   four-element interval of a bigWig line is read by
-  :func:`_extract_column_value`, which takes score columns out of it by index;
+  :func:`extract_column_value`, which takes score columns out of it by index;
 * a **VCF** record, whose payload carries the variant, its allele index and
-  the two pysam INFO proxies, is read by :func:`_extract_vcf_value`, which
+  the two pysam INFO proxies, is read by :func:`extract_vcf_value`, which
   looks INFO fields up by name and selects them by allele.
 
 #238 migrated bigWig -- the last adapter backend -- and #239 then deleted the
@@ -58,14 +58,18 @@ from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     GenomicScore,
     PositionScore,
-    _extract_column_value,
-    _extract_vcf_value,
+)
+from gain.genomic_resources.score_def import (
+    extract_column_value,
 )
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
     a_grr,
     a_position_score,
     a_vcf_info_score,
+)
+from gain.genomic_resources.vcf_scores import (
+    extract_vcf_value,
 )
 
 # A region each backend's fixture data answers with at least one line.
@@ -132,10 +136,10 @@ def _build_bigwig(tmp_path: pathlib.Path) -> Backend:
 # to.  Every backend in the tree is here: a fifth one must be added, or nothing
 # checks that its claim is true.
 _BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
-    pytest.param(_build_inmemory, _extract_column_value, id="inmemory"),
-    pytest.param(_build_tabix, _extract_column_value, id="tabix"),
-    pytest.param(_build_vcf, _extract_vcf_value, id="vcf"),
-    pytest.param(_build_bigwig, _extract_column_value, id="bigwig"),
+    pytest.param(_build_inmemory, extract_column_value, id="inmemory"),
+    pytest.param(_build_tabix, extract_column_value, id="tabix"),
+    pytest.param(_build_vcf, extract_vcf_value, id="vcf"),
+    pytest.param(_build_bigwig, extract_column_value, id="bigwig"),
 ]
 
 
@@ -183,9 +187,9 @@ def test_every_record_backend_declares_whether_its_records_hash(
     could only ever see backends that already passed that gate.  It is
     deliberately NOT read off the score line class each backend is paired with
     below: a migrating backend can arrive with a score line class of its own
-    (VCF did, at :class:`_extract_vcf_value`) or reuse an existing one whose
+    (VCF did, at :class:`extract_vcf_value`) or reuse an existing one whose
     hashability differs from every backend already routed there (bigWig, #238,
-    reuses :class:`_extract_column_value` but -- unlike tabix, the other backend
+    reuses :class:`extract_column_value` but -- unlike tabix, the other backend
     routed there -- yields hashable records), and a check written against the
     score line classes rather than the tables would miss both.  Ask the table,
     and there is nothing to add to but _HASHABILITY.
@@ -300,7 +304,7 @@ def test_a_backend_yields_what_its_yields_records_claim_says(
             f"{len(first)}-slot tuple; a record has {RECORD_SLOTS} slots")
         payload = first[PAYLOAD]
         # Both extractors index the payload -- the column one binds
-        # _get_raw to payload.__getitem__ for a score column, _extract_vcf_value
+        # _get_raw to payload.__getitem__ for a score column, extract_vcf_value
         # reads the (variant, allele index) pair out of it -- so a payload
         # must be indexable...
         assert hasattr(payload, "__getitem__"), (

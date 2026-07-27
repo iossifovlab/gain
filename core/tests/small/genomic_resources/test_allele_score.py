@@ -3,7 +3,9 @@
 import textwrap
 
 import pytest
-from gain.genomic_resources.genomic_scores import AlleleScore
+from gain.genomic_resources.genomic_scores import (
+    AlleleScore,
+)
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME, GenomicResource
 from gain.genomic_resources.testing import build_inmemory_test_resource
 

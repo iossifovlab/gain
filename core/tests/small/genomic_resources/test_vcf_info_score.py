@@ -2,7 +2,12 @@
 import textwrap
 
 import pytest
-from gain.genomic_resources.genomic_scores import AlleleScore, ScoreValue
+from gain.genomic_resources.genomic_scores import (
+    AlleleScore,
+)
+from gain.genomic_resources.score_def import (
+    ScoreValue,
+)
 from gain.genomic_resources.testing import (
     build_filesystem_test_resource,
     setup_directories,

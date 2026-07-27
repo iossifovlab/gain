@@ -16,9 +16,11 @@ import pathlib
 
 import pytest
 from gain.genomic_resources.genomic_scores import (
-    GenomicScoreDef,
     PositionScore,
-    _normalize_na_values,
+)
+from gain.genomic_resources.score_def import (
+    GenomicScoreDef,
+    normalize_na_values,
 )
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
@@ -68,7 +70,7 @@ def test_bare_non_string_scalar_sentinel_is_wrapped() -> None:
     # into ``tuple(na_values)`` and raised ``TypeError: 'int' object is not
     # iterable``.  A bare numeric scalar must normalize like the "-1" string:
     # to a type-aware set that matches by value and never substring-matches.
-    na_values = _normalize_na_values(-1, "int")
+    na_values = normalize_na_values(-1, "int")
     # (b) matches the sentinel by value (int raw payload and its text form)...
     assert -1 in na_values
     assert "-1" in na_values
@@ -76,7 +78,7 @@ def test_bare_non_string_scalar_sentinel_is_wrapped() -> None:
     assert 1 not in na_values
     assert "1" not in na_values
     # A bare int scalar and the equivalent "-1" string normalize identically.
-    assert na_values == _normalize_na_values("-1", "int")
+    assert na_values == normalize_na_values("-1", "int")
 
 
 @pytest.mark.parametrize("tabix", [False, True])
@@ -239,13 +241,13 @@ def _serialized(na_values: object) -> str:
 def test_default_na_values_is_a_fixed_point(value_type: str) -> None:
     # gain #268 (idempotency): the VCF scores-block merge re-normalizes an
     # already-normalized set (``GenomicScoreDef.__post_init__`` runs
-    # ``_normalize_na_values`` on ``config_scoredef.na_values``, which is
+    # ``normalize_na_values`` on ``config_scoredef.na_values``, which is
     # itself an already-normalized set).  Re-normalizing the default float/int
     # set must be a FIXED POINT -- pre-fix the second pass parsed the "nan"
     # text token and grew the set with a stray ``float('nan')``, changing the
     # statistics hash of VCF scores that configure no na_values.
-    once = _normalize_na_values(None, value_type)
-    twice = _normalize_na_values(once, value_type)
+    once = normalize_na_values(None, value_type)
+    twice = normalize_na_values(once, value_type)
     assert twice == once
     # And the exact serialized form the statistics hash consumes is unchanged.
     assert _serialized(twice) == _serialized(once)
@@ -255,8 +257,8 @@ def test_scalar_na_value_is_a_fixed_point() -> None:
     # gain #268 (idempotency): a configured scalar normalizes to
     # ``{'-1', -1.0}``; re-normalizing that set must not grow it (pre-fix it
     # added the ``str(-1.0)`` == '-1.0' text form).
-    once = _normalize_na_values("-1", "float")
-    twice = _normalize_na_values(once, "float")
+    once = normalize_na_values("-1", "float")
+    twice = normalize_na_values(once, "float")
     assert twice == once
     assert _serialized(twice) == _serialized(once)
 

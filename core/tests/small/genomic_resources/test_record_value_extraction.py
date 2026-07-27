@@ -12,10 +12,10 @@ There are two extractors, chosen once per opened score by
 ``GenomicScore.open`` from the table's type, and they differ only in where a
 raw value comes from:
 
-``_extract_column_value`` (the in-memory, tabix and bigWig record backends)
+``extract_column_value`` (the in-memory, tabix and bigWig record backends)
 indexes the record's payload by the resolved integer column.
 
-``_extract_vcf_value`` (the VCF backend) looks an INFO field up by name on the
+``extract_vcf_value`` (the VCF backend) looks an INFO field up by name on the
 proxies the payload carries, and selects it by allele.
 
 The NA and parse tests run against **both** column-payload record backends,
@@ -43,10 +43,11 @@ from gain.genomic_resources.genomic_position_table.record import (
 )
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
-    GenomicScoreDef,
     PositionScore,
-    _extract_column_value,
-    _extract_vcf_value,
+)
+from gain.genomic_resources.score_def import (
+    GenomicScoreDef,
+    extract_column_value,
 )
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
@@ -54,16 +55,19 @@ from gain.genomic_resources.testing.builders import (
     a_position_score,
     a_vcf_info_score,
 )
+from gain.genomic_resources.vcf_scores import (
+    extract_vcf_value,
+)
 
 # The two tabular backends the shared _extract_value runs on, and the
 # concrete score line class each one yields.  A tabular ``.txt`` resource is
 # read by the in-memory backend; ``with_tabix`` realizes the same data as a
 # tabix table.  Both are on the record contract, so both yield a
-# _extract_column_value -- but over different payloads (a plain tuple of cells
+# extract_column_value -- but over different payloads (a plain tuple of cells
 # vs. a lazily-decoding pysam row), which is what makes running both worth it.
 _TABULAR_BACKENDS = [
-    pytest.param(False, _extract_column_value, id="inmemory"),
-    pytest.param(True, _extract_column_value, id="tabix"),
+    pytest.param(False, extract_column_value, id="inmemory"),
+    pytest.param(True, extract_column_value, id="tabix"),
 ]
 
 
@@ -209,7 +213,7 @@ chr1   11  .  A   T   .    .      scoreA=0.2;scoreB=0.5
 def test_vcf_backend_is_routed_to_the_info_extractor(tmp_path) -> None:
     # The VCF backend yields records, but its scores are INFO fields rather than
     # columns, so a record payload's __getitem__ is not the lookup it needs: it
-    # is routed to _extract_vcf_value, which performs the INFO lookup.
+    # is routed to extract_vcf_value, which performs the INFO lookup.
     # _TABULAR_BACKENDS pins the two column-payload record backends; this pins
     # the INFO-payload one.
     builder = a_vcf_info_score().with_data("""
@@ -223,7 +227,7 @@ chr1   10  .  A   T   .    .      scoreA=0.1
     with score:
         assert score.table.yields_records is True
         # The class is chosen ONCE, at open -- before a single line is fetched.
-        assert score._extract_value is _extract_vcf_value
+        assert score._extract_value is extract_vcf_value
 
         record = next(iter(score.fetch_records("chr1", 10, 10)))
         assert type(record) is tuple
@@ -239,7 +243,7 @@ def test_record_backend_reads_a_record_through_the_column_extractor(
     tmp_path,
 ) -> None:
     # The record path, end to end: the in-memory backend yields records, so the
-    # score reads them with _extract_column_value; the core fields come off the
+    # score reads them with extract_column_value; the core fields come off the
     # record's named slots and whose scores come out of the payload.
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
@@ -294,13 +298,13 @@ def test_the_score_is_routed_before_it_reports_itself_open(tmp_path) -> None:
         # The score never published itself as open while still routed to the
         # adapter score line: a concurrent reader can only ever see the record
         # routing this table actually needs.
-        assert seen_at_publication == [_extract_column_value]
+        assert seen_at_publication == [extract_column_value]
 
 
 def test_bigwig_backend_is_routed_to_the_column_extractor(tmp_path) -> None:
     # Since #238 the bigWig backend is on the record contract too: it yields
     # records whose payload is the four-element interval, so the score is routed
-    # to _extract_column_value and read by index (``index: 3`` is the value
+    # to extract_column_value and read by index (``index: 3`` is the value
     # cell), not
     # to the retired adapter ScoreLine (deleted in #239).  It is the third
     # backend on that leg, alongside in-memory and tabix.
@@ -319,14 +323,14 @@ def test_bigwig_backend_is_routed_to_the_column_extractor(tmp_path) -> None:
         assert score.table.yields_records is True
         record = next(iter(score.fetch_records("chr1", 5, 5)))
         assert type(record) is tuple
-        assert score._extract_value is _extract_column_value
+        assert score._extract_value is extract_column_value
         assert score.get_score_from_record(record, "bw") == pytest.approx(0.11)
 
 
 def test_get_score_from_record_singular(tmp_path) -> None:
-    # _extract_column_value.get_score (the singular path) is exercised directly:
+    # extract_column_value.get_score (the singular path) is exercised directly:
     # the other tests here go through the bulk get_values.  The in-memory
-    # backend is routed to _extract_column_value, so this pins the read
+    # backend is routed to extract_column_value, so this pins the read
     # the record payload's __getitem__ binding, one score id at a time.
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
@@ -347,7 +351,7 @@ def test_get_values_returns_new_ordered_list(tmp_path) -> None:
     with score:
         record = next(iter(score.fetch_records("1", 10, 10)))
         reversed_defs = list(reversed(_defs(score)))
-        # tabular .txt -> in-memory backend -> _extract_column_value
+        # tabular .txt -> in-memory backend -> extract_column_value
         assert type(record) is tuple
         assert score.get_values_from_record(
             record, reversed_defs) == ["hello", 0.5]

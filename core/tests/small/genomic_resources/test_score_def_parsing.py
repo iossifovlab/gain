@@ -14,10 +14,12 @@ import pathlib
 import numpy as np
 import pytest
 from gain.genomic_resources.genomic_scores import (
-    GenomicScoreDef,
     PositionScore,
-    _parse_column_address,
     build_score_from_resource,
+)
+from gain.genomic_resources.score_def import (
+    GenomicScoreDef,
+    _parse_column_address,
 )
 from gain.genomic_resources.testing import (
     build_inmemory_test_resource,
@@ -67,7 +69,7 @@ _TOKENS = [
     # na_values="-1" config below exercises nothing at all, since no
     # other token matches it (found by mutation testing).
     "-1",
-    # ...and its OTHER spelling. _normalize_na_values stores both forms
+    # ...and its OTHER spelling. normalize_na_values stores both forms
     # of a sentinel ("-1" and -1.0), so a vectorized NA test that lets
     # numpy coerce that mixed set to one dtype stringifies the float and
     # starts matching "-1.0" too -- which parse_value never does.
