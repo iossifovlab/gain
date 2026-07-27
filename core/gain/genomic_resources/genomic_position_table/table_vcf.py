@@ -10,19 +10,41 @@ from gain.genomic_resources.repository import GenomicResource
 from .record import Record
 from .table_tabix import TabixGenomicPositionTable
 
-# Slot positions inside a VCF record's PAYLOAD.  The payload of a VCF record is
-# the variant record **paired with an allele index** -- and it has to be a pair,
-# because a VCF record is not a row: one ``pysam.VariantRecord`` explodes into
-# one record per ALT allele, and the variant record alone cannot say which of
-# its alleles a given record stands for.  Everything else the INFO lookup needs
-# is reachable from the variant record: the header metadata that types an INFO
-# field is ``variant.header.info``, so the payload carries no third element.
+# Slot positions inside a VCF record's PAYLOAD.  The payload of a VCF record
+# carries the variant record, an allele index, and the two pysam proxies an
+# INFO lookup needs.
 #
-# ``None`` in the ALLELE_INDEX position means the record's ALT is absent ('.'):
-# the record stands for the *reference* allele, and a Number=R INFO field is
-# read at its reference offset.  (Pinned in test_genomic_position_table.py.)
+# The allele index has to be there because a VCF record is not a row: one
+# ``pysam.VariantRecord`` explodes into one record per ALT allele, and the
+# variant record alone cannot say which of its alleles a given record stands
+# for.  ``None`` in that position means the record's ALT is absent ('.'): the
+# record stands for the *reference* allele, and a Number=R INFO field is read
+# at its reference offset.  (Pinned in test_genomic_position_table.py.)
+#
+# **INFO and INFO_META are here because pysam allocates a fresh proxy on every
+# access.**  ``variant.info`` is not a cached attribute -- ``v.info is v.info``
+# is False, and each access costs ~85ns -- so a reader that re-derived them per
+# score would pay ~170ns per score per record.  Measured, before they lived
+# here: a 20-score read of a 3000-row VCF went from 8.50 to 10.76us/line.
+#
+# They used to be memoised on the score line, resolved on its first score read.
+# With the score lines gone the value read is a pure function of the record
+# (``_extract_vcf_value`` in ``genomic_scores.py``), so the memo has to live in
+# the record itself -- which is what a backend-defined payload is for.  The
+# trade is that resolution is now EAGER: a record whose scores are never read
+# pays the ~170ns anyway.  That case is real but narrow -- ``AlleleScore``
+# fetches every record at a position and reads only the ref/alt match, so a
+# 4-allele position wastes ~0.5us -- and it buys a value read that needs no
+# state of its own, and so no per-line object to hold it.
+#
+# Resolving them here does NOT make the per-key metadata lookup eager: the
+# ``INFO_META.get(key)`` that types a field is still made only in the branch
+# that needs it (see ``_extract_vcf_value``), because that call builds a fresh
+# ``VariantMetadata`` per key and a Number=1 field must not pay for one.
 VARIANT = 0
 ALLELE_INDEX = 1
+INFO = 2
+INFO_META = 3
 
 # A VCF parser maps a raw variant record **and one allele index** to a record,
 # or to ``None`` when the variant's contig is absent from a configured
@@ -72,7 +94,7 @@ def build_vcf_parser(rev_chrom_map: dict[str, str] | None) -> VCFParser:
                 alt = raw.alts[allele_index]
             return (
                 rchrom, raw.pos, raw.stop, raw.ref, alt,
-                (raw, allele_index))
+                (raw, allele_index, raw.info, raw.header.info))
         return parse_mapped
 
     def parse_identity(
@@ -84,7 +106,7 @@ def build_vcf_parser(rev_chrom_map: dict[str, str] | None) -> VCFParser:
             alt = raw.alts[allele_index]
         return (
             raw.contig, raw.pos, raw.stop, raw.ref, alt,
-            (raw, allele_index))
+            (raw, allele_index, raw.info, raw.header.info))
     return parse_identity
 
 

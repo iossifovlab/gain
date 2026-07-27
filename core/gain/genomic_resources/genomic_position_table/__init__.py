@@ -7,8 +7,8 @@ other record backend.  This is a breaking export change, recorded here because
 nothing else records it: an importer of ``VCFLine`` now gets an ImportError.
 There is no drop-in replacement object, and none is wanted -- a VCF line is a
 record tuple, and what used to be read off a ``VCFLine`` is read from the
-record's slots (``CHROM`` ... ``ALT``) or, for scores, through the score layer's
-``VCFScoreLine``.
+record's slots (``CHROM`` ... ``ALT``) or, for scores, through the score
+layer's ``GenomicScore.get_score_from_record``.
 
 **Removed exports: ``Line`` and ``BigWigLine``** (and, with them, the
 ``LineBase`` protocol they satisfied and the ``row()`` method all three
@@ -27,7 +27,7 @@ The score layer's adapter-era ``ScoreLine`` was deleted by #239 too, but it was
 never exported from this package and was never an adapter itself -- it *wrapped*
 one, asserting its line was a ``Line`` or a ``BigWigLine``.  That assert is why
 it could not outlive them.  It has no bearing on this package's exports; a score
-caller goes through ``RecordScoreLine``/``VCFScoreLine`` (see below).
+caller goes through ``GenomicScore.get_score_from_record`` (see below).
 
 There is no replacement and no deprecation shim.  A shim was considered and
 rejected: it costs nothing to anyone who does not call it, but hands anyone who
@@ -38,18 +38,26 @@ record's slots instead (``record[CHROM]``, ``record[POS_BEGIN]``,
 ``line.get(key)`` for a column indexes the record's payload
 (``record[PAYLOAD][key]``); a caller wanting the whole raw row back takes
 ``tuple(record[PAYLOAD])``.  For scores, none of this is the intended route at
-all -- go through the score layer's ``RecordScoreLine``/``VCFScoreLine``, which
-read the same slots and additionally handle NA values, parsing and aggregation.
+all -- go through the score layer's ``GenomicScore.get_score_from_record``
+or ``get_values_from_record``, which read the same slots and additionally
+handle NA values, parsing and aggregation.
 
 **The ``tuple()`` around that last one is the migration, not noise.**
 ``row()`` returned ``tuple(self._data)`` in both adapters -- an immutable
 snapshot of the row, taken there and then.  ``record[PAYLOAD]`` is not that:
 the payload is the backend's row held **by reference**, deliberately neither
 copied nor frozen (``record.py``), and for the tabix backend it is a
-``pysam.TupleProxy`` that pysam reuses as the fetch advances and that
-``LineBuffer`` may still be holding.  Retain it past the iteration and its
-cells are whatever pysam has since put there; write to it and you mutate a
-buffered row (see ``line.py``).  ``tuple(record[PAYLOAD])`` reproduces what
+``pysam.TupleProxy`` that ``LineBuffer`` may still be holding: write to it and
+you mutate a buffered row (see ``line.py``).
+
+**It does NOT get reused as the fetch advances**, which an earlier version of
+this note claimed.  ``pysam.asTuple()`` hands up one proxy object PER LINE (as
+``TabixGenomicPositionTable.get_line_iterator`` says), so retaining a record
+past its iteration keeps its own cells: materialising a region with ``list()``
+and reading the payloads afterwards gives each row's real values, measured.
+The mutation hazard above is real; the aliasing one was not.
+
+``tuple(record[PAYLOAD])`` reproduces what
 ``row()`` handed back, and is what a ``row()`` caller migrates to.
 
 **``fchrom`` has no record equivalent, and is the one ``LineBase`` attribute
@@ -206,6 +214,30 @@ Why the capability is declared rather than inferred, why VCF cannot honour the
 contract it inherits, and why this read path exists at all: see
 ``docs/adr/0001-bulk-read-path-for-statistics.md``.
 
+**Changed payload: a VCF record's PAYLOAD is now a FOUR-element tuple.**
+``VCFGenomicPositionTable`` is in ``__all__`` below, so this changes public
+surface of ``gain`` and is recorded for the same reason as everything above.
+It was ``(variant, allele index)``; it is now
+``(variant, allele index, info, info_meta)``, the last two being the pysam
+proxies an INFO lookup needs -- ``variant.info`` and ``variant.header.info``.
+
+They are there because pysam allocates a FRESH proxy on every access
+(``v.info is v.info`` is False, ~85ns each), so a reader that re-derived them
+per score paid ~170ns per score per record: measured, a 20-score read of a
+3000-row VCF went from 8.50 to 10.76us/line.  They used to be memoised on the
+per-line ``VCFScoreLine``, resolved on its first score read.  With the score
+lines removed, reading a value is a pure function of the record
+(``_extract_vcf_value``), so the memo had to move into the record -- which is
+what a backend-defined payload is for.
+
+The trade is that resolution is EAGER: a record whose scores are never read
+pays the ~170ns anyway.  That case is narrow (``AlleleScore`` fetches every
+record at a position and reads only the ref/alt match, so a 4-allele position
+wastes ~0.5us) and it buys a value read that needs no state, and so no
+per-line object to hold it.  An out-of-tree reader that unpacked the payload
+as a pair now gets a ``ValueError``; unpack four, or index by the ``VARIANT``
+/ ``ALLELE_INDEX`` / ``INFO`` / ``INFO_META`` constants in ``table_vcf``.
+
 **Deliberately NOT changed: the bigWig payload's four-tuple shape.**
 ``BigWigTable`` builds ``payload = (chrom, pos_begin, pos_end, value)``, which
 repeats three fields the record already carries in its decoded slots, purely
@@ -224,8 +256,8 @@ Narrowing the payload changes what that 3 means, so it is a migration across
 every GRR that serves a bigWig, not a refactor.
 
 **Three consumers depend on it, and the third is the surprising one.**  The
-per-record read indexes it (``RecordScoreLine`` binds ``_get_raw`` to the
-payload's ``__getitem__``); so does the score config above; and so does
+per-record read indexes it (``_extract_column_value`` reads the payload by
+the resolved column); so does the score config above; and so does
 ``BigWigTable.get_region_value_arrays``, which serves *any* requested column
 out of a reconstructed four-tuple **on purpose** -- so that an out-of-range
 index raises the same ``IndexError`` the record path raises.  That is not
@@ -234,10 +266,10 @@ there, which turned an aborted repair into a silently all-zero histogram.  A
 narrowed payload has to reproduce that refusal or reintroduce the bug.
 
 **And it buys nothing measurable.**  The per-record read was profiled while
-``ScoreLineBase.core_fields`` was added: the cost of this path is coordinate
-and per-line-object access, not the payload's width.  Removing the repeated
-fields was measured at no reliable saving, against a ~13% saving from
-``core_fields`` and dropping the ``typing.cast`` calls.  So the
+the per-line score-line objects were removed: the cost of this path is
+coordinate and per-line-object access, not the payload's width.  Removing the
+repeated fields was measured at no reliable saving, against a ~13% saving from
+reading coordinates straight off the record's slots.  So the
 change would carry a cross-repository config migration and a subtle
 error-semantics obligation to buy readability alone.  If it is ever revisited,
 those are the three things that have to be answered, and the ``index: 3``

@@ -9,7 +9,7 @@ from gain.genomic_resources.genomic_scores import (
     CnvCollection,
     GenomicScoreDef,
     PositionScore,
-    RecordScoreLine,
+    _extract_column_value,
     build_position_score_from_resource,
     build_score_from_resource,
 )
@@ -20,13 +20,12 @@ from gain.genomic_resources.testing import build_inmemory_test_resource
 def test_score_line_get_score_value_parser_exception(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Test get_score() when the configured value parser raises.
+    """Test the value read when the configured value parser raises.
 
-    The behaviour under test is ``ScoreLineBase._extract_value``'s: a value
-    parser that raises is logged and yields ``None`` rather than propagating.
-    Read here through ``RecordScoreLine`` -- since #239 deleted the ``Line``
-    adapter and ``ScoreLine``, a record is the only shape a score line wraps,
-    and the score column is a cell of the record's payload.
+    The behaviour under test is ``_extract_column_value``'s: a value parser
+    that raises is logged and yields ``None`` rather than propagating.  Read
+    straight off a record -- the score lines that used to wrap one are gone,
+    and a score is a cell of the record's payload.
     """
 
     def bad_parser(value: str) -> float:
@@ -52,9 +51,9 @@ def test_score_line_get_score_value_parser_exception(
     # score_index is init=False -- GenomicScore.open resolves it from
     # col_name/col_index, and this def is built by hand without one.
     score_defs["test_score"].score_index = 3
-    line = RecordScoreLine(("chr1", 1, 10, None, None, raw_row), score_defs)
+    record = ("chr1", 1, 10, None, None, raw_row)
 
-    result = line.get_score("test_score")
+    result = _extract_column_value(record, score_defs["test_score"])
     assert result is None
     assert any(
         "unable to parse value" in rec.message

@@ -1,47 +1,32 @@
-"""Equivalence tests for the bulk value-extraction path on the score lines.
+"""Equivalence tests for reading score values off a record.
 
-``ScoreLineBase.get_values`` extracts the values for a whole line given a list
-of already-resolved score definitions, hoisting the name->definition lookup
-out of the per-line loop.  These tests pin it to the single-score
-``get_score`` path: for every input the bulk method must return
-*exactly* what looping ``get_score`` returns -- including ``None`` for an
-absent key, ``None`` for a configured NA value, and ``None`` (plus a logged
-parse failure) for an unparseable value.
+``GenomicScore.get_values_from_record`` reads several scores from one record
+given a list of already-resolved score definitions, hoisting the
+name->definition lookup out of the per-record loop.  These tests pin it to the
+single-score ``get_score_from_record`` path: for every input the bulk method
+must return *exactly* what looping the single one returns -- including
+``None`` for an absent key, ``None`` for a configured NA value, and ``None``
+(plus a logged parse failure) for an unparseable value.
 
-The value-extraction logic (``_extract_value``) is shared by both score
-line classes, but each reaches its raw value through a ``_get_raw`` of its own,
-and they do not get there the same way.
+There are two extractors, chosen once per opened score by
+``GenomicScore.open`` from the table's type, and they differ only in where a
+raw value comes from:
 
-``RecordScoreLine`` (the in-memory, tabix and -- since #238 -- bigWig record
-backends) **binds** it, in its constructor, to a callable that is reachable
-*from* the line but is not the line: the record payload's ``__getitem__``.
-(#239 deleted the third class, the adapter-era ``ScoreLine``, which bound
-``_get_raw`` to an adapter's ``line.get``; no backend had been routed to it
-since bigWig migrated.)
+``_extract_column_value`` (the in-memory, tabix and bigWig record backends)
+indexes the record's payload by the resolved integer column.
 
-``VCFScoreLine`` (the VCF record backend, whose payload is a ``(variant, allele
-index)`` pair rather than a row) instead declares ``_get_raw`` as a plain
-**method**, and must: its INFO lookup needs the line *itself*, and binding a
-method of self onto self (``self._get_raw = self._something``) is a reference
-cycle -- one per line, on the hot path, where one score line is built per line
-of a fetch.  A method allocates nothing per line and refers to nothing, so the
-line dies by refcount when the fetch loop drops it.  That rule -- a subclass
-whose lookup needs ``self`` uses a method and does not bind -- is pinned in
-test_genomic_scores.py, by
-test_score_lines_are_freed_without_the_cycle_collector.
+``_extract_vcf_value`` (the VCF backend) looks an INFO field up by name on the
+proxies the payload carries, and selects it by allele.
 
 The NA and parse tests run against **both** column-payload record backends,
-because their payloads are different objects: the in-memory backend's payload is
-a plain ``tuple`` of cells, the tabix backend's is a lazily-decoding ``pysam``
-row.  ``RecordScoreLine`` binds ``_get_raw`` to whichever one it is handed, so a
-binding that works on one and not the other fails here.  Each class is exercised
-over its own backend by the backend tests at the bottom of this file.
+because their payloads are different objects: the in-memory backend's payload
+is a plain ``tuple`` of cells, the tabix backend's is a lazily-decoding
+``pysam`` row.  A read that works on one and not the other fails here.
 
-Which class a backend is routed to is therefore load-bearing, so the routing is
-pinned here too, from the score's side.  That every backend's ``yields_records``
-claim is *true* -- the question a runtime check used to ask, per table -- is not
-a property of a line at all, and is pinned statically over all four backends by
-test_backend_record_contract.py.
+Which extractor a backend is routed to is load-bearing, so the routing is
+pinned here too, from the score's side.  That every backend's
+``yields_records`` claim is *true* is pinned statically over all four backends
+by test_backend_record_contract.py.
 """
 from __future__ import annotations
 
@@ -49,12 +34,19 @@ import logging
 from typing import Any
 
 import pytest
+from gain.genomic_resources.genomic_position_table.record import (
+    ALT,
+    CHROM,
+    POS_BEGIN,
+    POS_END,
+    REF,
+)
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     GenomicScoreDef,
     PositionScore,
-    RecordScoreLine,
-    VCFScoreLine,
+    _extract_column_value,
+    _extract_vcf_value,
 )
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
@@ -67,11 +59,11 @@ from gain.genomic_resources.testing.builders import (
 # concrete score line class each one yields.  A tabular ``.txt`` resource is
 # read by the in-memory backend; ``with_tabix`` realizes the same data as a
 # tabix table.  Both are on the record contract, so both yield a
-# RecordScoreLine -- but over different payloads (a plain tuple of cells
+# _extract_column_value -- but over different payloads (a plain tuple of cells
 # vs. a lazily-decoding pysam row), which is what makes running both worth it.
 _TABULAR_BACKENDS = [
-    pytest.param(False, RecordScoreLine, id="inmemory"),
-    pytest.param(True, RecordScoreLine, id="tabix"),
+    pytest.param(False, _extract_column_value, id="inmemory"),
+    pytest.param(True, _extract_column_value, id="tabix"),
 ]
 
 
@@ -106,16 +98,19 @@ def test_bulk_matches_per_score_on_tabular(tmp_path) -> None:
         1      11         0.25     world
     """)
     with score:
-        for line in score.fetch_lines("1", 10, 11):
-            per_score = [line.get_score(s) for s in score.get_all_scores()]
-            bulk = line.get_values(_defs(score))
+        for record in score.fetch_records("1", 10, 11):
+            per_score = [
+                score.get_score_from_record(record, s)
+                for s in score.get_all_scores()]
+            bulk = score.get_values_from_record(record, _defs(score))
             assert bulk == per_score
-        line = next(iter(score.fetch_lines("1", 10, 10)))
-        assert line.get_values(_defs(score)) == [0.5, "hello"]
+        record = next(iter(score.fetch_records("1", 10, 10)))
+        assert score.get_values_from_record(
+            record, _defs(score)) == [0.5, "hello"]
 
 
-@pytest.mark.parametrize(("tabix", "line_cls"), _TABULAR_BACKENDS)
-def test_bulk_na_value_yields_none(tmp_path, tabix, line_cls) -> None:
+@pytest.mark.parametrize(("tabix", "extractor"), _TABULAR_BACKENDS)
+def test_bulk_na_value_yields_none(tmp_path, tabix, extractor) -> None:
     # The NA token must *parse successfully* so this test actually exercises
     # the na_values branch: ``"nan"`` is a configured NA value for a float
     # score AND ``float("nan")`` returns ``nan`` (it does not raise).  A
@@ -132,13 +127,15 @@ def test_bulk_na_value_yields_none(tmp_path, tabix, line_cls) -> None:
         1      10         nan      hello
     """, tabix=tabix)
     with score:
-        line = next(iter(score.fetch_lines("1", 10, 10)))
-        assert isinstance(line, line_cls)
+        record = next(iter(score.fetch_records("1", 10, 10)))
+        assert score._extract_value is extractor
         # "nan" is a configured NA value for a float score, and float("nan")
         # does not raise -- so only the na_values check makes this None.
         assert "nan" in score.score_definitions["s_float"].na_values
-        per_score = [line.get_score(s) for s in score.get_all_scores()]
-        bulk = line.get_values(_defs(score))
+        per_score = [
+                score.get_score_from_record(record, s)
+                for s in score.get_all_scores()]
+        bulk = score.get_values_from_record(record, _defs(score))
         # The absolute assertions are the real guard here.  While both paths
         # share ``_extract_value``, ``bulk == per_score`` is tautological --
         # dropping the na_values check makes BOTH return ``nan``, and the
@@ -152,9 +149,9 @@ def test_bulk_na_value_yields_none(tmp_path, tabix, line_cls) -> None:
         assert bulk == per_score
 
 
-@pytest.mark.parametrize(("tabix", "line_cls"), _TABULAR_BACKENDS)
+@pytest.mark.parametrize(("tabix", "extractor"), _TABULAR_BACKENDS)
 def test_bulk_unparseable_value_logs_and_yields_none(
-    tmp_path, tabix, line_cls, caplog: pytest.LogCaptureFixture,
+    tmp_path, tabix, extractor, caplog: pytest.LogCaptureFixture,
 ) -> None:
     # Runs on both record backends so the parse-failure branch (with its
     # logger.exception) is proven over both record payloads.
@@ -163,8 +160,8 @@ def test_bulk_unparseable_value_logs_and_yields_none(
         1      10         not_a_number  hello
     """, tabix=tabix)
     with score:
-        line = next(iter(score.fetch_lines("1", 10, 10)))
-        assert isinstance(line, line_cls)
+        record = next(iter(score.fetch_records("1", 10, 10)))
+        assert score._extract_value is extractor
         defs = _defs(score)
 
         # Clear first: opening the score above may log unrelated records (e.g.
@@ -172,14 +169,16 @@ def test_bulk_unparseable_value_logs_and_yields_none(
         # test compares the per-score vs bulk parse-error counts only.
         caplog.clear()
         with caplog.at_level(logging.ERROR):
-            per_score = [line.get_score(s) for s in score.get_all_scores()]
+            per_score = [
+                score.get_score_from_record(record, s)
+                for s in score.get_all_scores()]
         per_score_records = len(caplog.records)
         assert per_score_records >= 1
         assert per_score[0] is None
 
         caplog.clear()
         with caplog.at_level(logging.ERROR):
-            bulk = line.get_values(defs)
+            bulk = score.get_values_from_record(record, defs)
         assert bulk == per_score
         assert bulk[0] is None
         assert len(caplog.records) == per_score_records
@@ -197,18 +196,20 @@ chr1   11  .  A   T   .    .      scoreA=0.2;scoreB=0.5
     repo = a_grr().with_resource("vcf", builder).build_repo(tmp_path)
     score = AlleleScore(repo.get_resource("vcf")).open()
     with score:
-        line = next(iter(score.fetch_lines("chr1", 10, 10)))
-        per_score = [line.get_score(s) for s in score.get_all_scores()]
-        bulk = line.get_values(_defs(score))
+        record = next(iter(score.fetch_records("chr1", 10, 10)))
+        per_score = [
+                score.get_score_from_record(record, s)
+                for s in score.get_all_scores()]
+        bulk = score.get_values_from_record(record, _defs(score))
         assert bulk == per_score
         # scoreB is absent from this record's INFO -> null raw value -> None
         assert None in bulk
 
 
-def test_vcf_backend_yields_the_vcf_score_line(tmp_path) -> None:
+def test_vcf_backend_is_routed_to_the_info_extractor(tmp_path) -> None:
     # The VCF backend yields records, but its scores are INFO fields rather than
     # columns, so a record payload's __getitem__ is not the lookup it needs: it
-    # is routed to VCFScoreLine, the one class that performs the INFO lookup.
+    # is routed to _extract_vcf_value, which performs the INFO lookup.
     # _TABULAR_BACKENDS pins the two column-payload record backends; this pins
     # the INFO-payload one.
     builder = a_vcf_info_score().with_data("""
@@ -222,45 +223,46 @@ chr1   10  .  A   T   .    .      scoreA=0.1
     with score:
         assert score.table.yields_records is True
         # The class is chosen ONCE, at open -- before a single line is fetched.
-        assert score._score_line_class is VCFScoreLine
+        assert score._extract_value is _extract_vcf_value
 
-        line = next(iter(score.fetch_lines("chr1", 10, 10)))
-        assert type(line) is VCFScoreLine
+        record = next(iter(score.fetch_records("chr1", 10, 10)))
+        assert type(record) is tuple
         # ...and it is not the column-payload record score line: reading scoreA
         # through the record payload's __getitem__ would index the
         # (variant, allele index) pair, not the INFO field.
-        assert not isinstance(line, RecordScoreLine)
-        assert line.get_score("scoreA") == pytest.approx(0.1)
+
+        assert score.get_score_from_record(record, "scoreA") == \
+            pytest.approx(0.1)
 
 
-def test_record_backend_reads_a_record_through_the_record_score_line(
+def test_record_backend_reads_a_record_through_the_column_extractor(
     tmp_path,
 ) -> None:
     # The record path, end to end: the in-memory backend yields records, so the
-    # score wraps them in a RecordScoreLine, whose core fields come off the
+    # score reads them with _extract_column_value; the core fields come off the
     # record's named slots and whose scores come out of the payload.
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
         1      10         0.5      hello
     """)
     with score:
-        line = next(iter(score.fetch_lines("1", 10, 10)))
-        assert isinstance(line, RecordScoreLine)
-        assert line.chrom == "1"
-        assert line.pos_begin == 10
-        assert line.pos_end == 10
-        assert line.ref is None
-        assert line.alt is None
-        assert line.get_score("s_float") == 0.5
+        record = next(iter(score.fetch_records("1", 10, 10)))
+        assert type(record) is tuple
+        assert record[CHROM] == "1"
+        assert record[POS_BEGIN] == 10
+        assert record[POS_END] == 10
+        assert record[REF] is None
+        assert record[ALT] is None
+        assert score.get_score_from_record(record, "s_float") == 0.5
 
 
 def test_the_score_is_routed_before_it_reports_itself_open(tmp_path) -> None:
     # ``table_loaded = True`` is the score PUBLISHING itself: from that write
     # on, a second caller's ``open()`` takes the ``is_open()`` early return and
-    # goes straight to reading ``_score_line_class``.  So the routing must
+    # goes straight to reading ``_extract_value``.  So the routing must
     # already be installed at that instant, or the second caller reads the
     # unrouted score.  Since #239 deleted the adapter ``ScoreLine`` that used
-    # to be the ``__init__`` default, ``_score_line_class`` has no default at
+    # to be the ``__init__`` default, ``_extract_value`` has no default at
     # all, so that reader gets an AttributeError.
     #
     # Scores are shared (the in-memory CNV cache hands the same instance to
@@ -274,7 +276,7 @@ def test_the_score_is_routed_before_it_reports_itself_open(tmp_path) -> None:
         def __setattr__(self, name: str, value: Any) -> None:
             if name == "table_loaded" and value is True:
                 # what a thread taking the is_open() early return would use
-                seen_at_publication.append(self._score_line_class)
+                seen_at_publication.append(self._extract_value)
             super().__setattr__(name, value)
 
     builder = (
@@ -292,13 +294,14 @@ def test_the_score_is_routed_before_it_reports_itself_open(tmp_path) -> None:
         # The score never published itself as open while still routed to the
         # adapter score line: a concurrent reader can only ever see the record
         # routing this table actually needs.
-        assert seen_at_publication == [RecordScoreLine]
+        assert seen_at_publication == [_extract_column_value]
 
 
-def test_bigwig_backend_yields_the_record_score_line(tmp_path) -> None:
+def test_bigwig_backend_is_routed_to_the_column_extractor(tmp_path) -> None:
     # Since #238 the bigWig backend is on the record contract too: it yields
     # records whose payload is the four-element interval, so the score is routed
-    # to RecordScoreLine and read by index (``index: 3`` -> the value cell), not
+    # to _extract_column_value and read by index (``index: 3`` is the value
+    # cell), not
     # to the retired adapter ScoreLine (deleted in #239).  It is the third
     # backend on that leg, alongside in-memory and tabix.
     builder = (
@@ -314,26 +317,26 @@ def test_bigwig_backend_yields_the_record_score_line(tmp_path) -> None:
     score = PositionScore(repo.get_resource("bw")).open()
     with score:
         assert score.table.yields_records is True
-        line = next(iter(score.fetch_lines("chr1", 5, 5)))
-        assert isinstance(line, RecordScoreLine)
-        assert not isinstance(line, VCFScoreLine)
-        assert line.get_score("bw") == pytest.approx(0.11)
+        record = next(iter(score.fetch_records("chr1", 5, 5)))
+        assert type(record) is tuple
+        assert score._extract_value is _extract_column_value
+        assert score.get_score_from_record(record, "bw") == pytest.approx(0.11)
 
 
-def test_record_score_line_get_score_singular(tmp_path) -> None:
-    # RecordScoreLine.get_score (the singular path) is exercised directly:
+def test_get_score_from_record_singular(tmp_path) -> None:
+    # _extract_column_value.get_score (the singular path) is exercised directly:
     # the other tests here go through the bulk get_values.  The in-memory
-    # backend yields RecordScoreLine, so this pins get_score reading through
+    # backend is routed to _extract_column_value, so this pins the read
     # the record payload's __getitem__ binding, one score id at a time.
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
         1      10         0.5      hello
     """)
     with score:
-        line = next(iter(score.fetch_lines("1", 10, 10)))
-        assert isinstance(line, RecordScoreLine)
-        assert line.get_score("s_float") == 0.5
-        assert line.get_score("s_str") == "hello"
+        record = next(iter(score.fetch_records("1", 10, 10)))
+        assert type(record) is tuple
+        assert score.get_score_from_record(record, "s_float") == 0.5
+        assert score.get_score_from_record(record, "s_str") == "hello"
 
 
 def test_get_values_returns_new_ordered_list(tmp_path) -> None:
@@ -342,11 +345,12 @@ def test_get_values_returns_new_ordered_list(tmp_path) -> None:
         1      10         0.5      hello
     """)
     with score:
-        line = next(iter(score.fetch_lines("1", 10, 10)))
+        record = next(iter(score.fetch_records("1", 10, 10)))
         reversed_defs = list(reversed(_defs(score)))
-        # tabular .txt -> in-memory backend -> RecordScoreLine
-        assert isinstance(line, RecordScoreLine)
-        assert line.get_values(reversed_defs) == ["hello", 0.5]
+        # tabular .txt -> in-memory backend -> _extract_column_value
+        assert type(record) is tuple
+        assert score.get_values_from_record(
+            record, reversed_defs) == ["hello", 0.5]
 
 
 # --- empty-region + unknown-score-id: the score-name resolution must not

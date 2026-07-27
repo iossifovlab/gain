@@ -86,7 +86,7 @@ from gain.genomic_resources.genomic_position_table.table import (
 from gain.genomic_resources.genomic_scores import (
     GenomicScore,
     PositionScore,
-    RecordScoreLine,
+    _extract_column_value,
 )
 from gain.genomic_resources.testing import (
     build_filesystem_test_resource,
@@ -154,8 +154,10 @@ def _build_mapped_tabix(tmp_path: pathlib.Path) -> Backend:
 # record-contract file it lives in reads as an exhaustiveness claim, and a
 # mapped in-memory table is not a sixth backend.
 _MAPPED_BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
-    pytest.param(_build_mapped_inmemory, RecordScoreLine, id="inmemory-mapped"),
-    pytest.param(_build_mapped_tabix, RecordScoreLine, id="tabix-mapped"),
+    pytest.param(
+        _build_mapped_inmemory, _extract_column_value,
+        id="inmemory-mapped"),
+    pytest.param(_build_mapped_tabix, _extract_column_value, id="tabix-mapped"),
 ]
 _LIFETIME_BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
     *_BACKENDS, *_MAPPED_BACKENDS,

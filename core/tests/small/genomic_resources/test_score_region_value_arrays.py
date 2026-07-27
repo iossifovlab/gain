@@ -11,6 +11,10 @@ import pathlib
 
 import numpy as np
 import pytest
+from gain.genomic_resources.genomic_position_table.record import (
+    POS_BEGIN,
+    POS_END,
+)
 from gain.genomic_resources.genomic_scores import AlleleScore, PositionScore
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing.builders import (
@@ -115,7 +119,10 @@ def test_bigwig_score_value_arrays_match_the_record_read(
 
     with PositionScore(resource).open() as score:
         batches = list(score.fetch_region_value_arrays("chr1", 1, 6, ["bw"]))
-        lines = list(score.fetch_lines("chr1", 1, 6))
+        records = list(score.fetch_records("chr1", 1, 6))
+        record_values = [
+            score.get_score_from_record(rec, "bw")
+            for rec in records]
 
     spans = [
         (int(begin), int(end))
@@ -124,8 +131,9 @@ def test_bigwig_score_value_arrays_match_the_record_read(
     ]
     values = [float(v) for _, _, cols in batches for v in cols["bw"]]
 
-    assert spans == [(line.pos_begin, line.pos_end) for line in lines]
-    assert values == [line.get_score("bw") for line in lines]
+    assert spans == [
+        (rec[POS_BEGIN], rec[POS_END]) for rec in records]
+    assert values == record_values
 
 
 def test_fetching_value_arrays_from_an_unopened_score_is_refused(

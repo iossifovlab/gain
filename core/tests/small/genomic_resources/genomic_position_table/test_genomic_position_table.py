@@ -1777,10 +1777,11 @@ def test_vcf_yields_records_paired_with_an_allele_index(
     # The VCF backend is on the record contract: it yields the same six-slot
     # plain tuple every other record backend does.  What is VCF-specific is the
     # PAYLOAD: a VCF record explodes one variant record into one record per ALT
-    # allele, so the payload is the variant record **paired with the allele
-    # index** that says which of its alleles this record stands for.  The header
-    # metadata the INFO lookup needs is reachable from the variant record
-    # itself (``variant.header.info``), so the payload carries nothing else.
+    # allele, so the payload carries the variant record **paired with the
+    # allele index** that says which of its alleles this record stands for --
+    # and, since the score lines were removed, the two pysam proxies an INFO
+    # lookup needs.  They are resolved once here rather than per score because
+    # pysam allocates a fresh proxy on every access; see ``table_vcf``.
     assert vcf_res.config is not None
 
     with build_genomic_position_table(
@@ -1801,12 +1802,14 @@ def test_vcf_yields_records_paired_with_an_allele_index(
         assert record[REF] == "A"
         assert record[ALT] == "T"
 
-        variant, allele_index = record[PAYLOAD]
+        variant, allele_index, info, info_meta = record[PAYLOAD]
         assert isinstance(variant, pysam.VariantRecord)
         assert allele_index == 0
-        # header metadata: derived from the record, not carried beside it
-        assert isinstance(variant.header.info, pysam.VariantHeaderMetadata)
-        assert isinstance(variant.info, pysam.VariantRecordInfo)
+        # The proxies are carried, not re-derived: pysam hands back a fresh
+        # object on every ``variant.info`` access, so a reader that went to
+        # the variant per score would pay for one each time.
+        assert isinstance(info, pysam.VariantRecordInfo)
+        assert isinstance(info_meta, pysam.VariantHeaderMetadata)
 
 
 def test_vcf_get_all_records(vcf_res: GenomicResource) -> None:

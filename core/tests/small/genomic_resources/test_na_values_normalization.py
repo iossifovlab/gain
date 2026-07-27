@@ -54,8 +54,8 @@ def test_scalar_na_value_marks_only_the_sentinel(
     score = _open_position(tmp_path, builder)
     with score:
         values = [
-            line.get_score("s")
-            for line in score.fetch_lines("1", 10, 11)
+            score.get_score_from_record(record, "s")
+            for record in score.fetch_records("1", 10, 11)
         ]
     assert values == [None, 1]
 
@@ -106,8 +106,8 @@ def test_scalar_na_value_never_substring_matches(
     score = _open_position(tmp_path, builder)
     with score:
         values = [
-            line.get_score("s")
-            for line in score.fetch_lines("1", 10, 15)
+            score.get_score_from_record(record, "s")
+            for record in score.fetch_records("1", 10, 15)
         ]
     assert values == [None, 9, 99, 999, -9, -99]
 
@@ -134,12 +134,12 @@ def test_scalar_and_one_element_list_behave_identically(
     list_score = _open_position(tmp_path / "b", listed)
     with scalar_score, list_score:
         scalar_values = [
-            line.get_score("s")
-            for line in scalar_score.fetch_lines("1", 10, 11)
+            scalar_score.get_score_from_record(record, "s")
+            for record in scalar_score.fetch_records("1", 10, 11)
         ]
         list_values = [
-            line.get_score("s")
-            for line in list_score.fetch_lines("1", 10, 11)
+            list_score.get_score_from_record(record, "s")
+            for record in list_score.fetch_records("1", 10, 11)
         ]
     assert scalar_values == list_values == [None, 1]
 
@@ -167,8 +167,8 @@ def test_non_numeric_sentinel_is_na_tested_before_parsing(
     score = _open_position(tmp_path, builder)
     with caplog.at_level("ERROR"), score:
         values = [
-            line.get_score("s")
-            for line in score.fetch_lines("1", 10, 12)
+            score.get_score_from_record(record, "s")
+            for record in score.fetch_records("1", 10, 12)
         ]
     assert values == [None, None, 1.5]
     assert "unable to parse" not in caplog.text
@@ -193,8 +193,8 @@ def test_default_na_values_unchanged_when_absent(
     with score:
         na_values = score.score_definitions["s"].na_values
         values = [
-            line.get_score("s")
-            for line in score.fetch_lines("1", 10, 11)
+            score.get_score_from_record(record, "s")
+            for record in score.fetch_records("1", 10, 11)
         ]
     assert values == [None, 0.5]
     # The default float NA set is preserved verbatim.
@@ -222,10 +222,11 @@ def test_bigwig_scalar_na_value_matches_float_payload(
     )
     score = _open_position(tmp_path, builder, resource_id="bw")
     with score:
-        na_line = next(iter(score.fetch_lines("chr1", 1, 1)))
-        real_line = next(iter(score.fetch_lines("chr1", 11, 11)))
-        assert na_line.get_score("bw") is None
-        assert real_line.get_score("bw") == pytest.approx(1.0)
+        na_record = next(iter(score.fetch_records("chr1", 1, 1)))
+        real_record = next(iter(score.fetch_records("chr1", 11, 11)))
+        assert score.get_score_from_record(na_record, "bw") is None
+        assert score.get_score_from_record(real_record, "bw") == \
+            pytest.approx(1.0)
 
 
 def _serialized(na_values: object) -> str:
@@ -303,7 +304,8 @@ def test_bigwig_scalar_na_value_never_substring_matches(
     )
     score = _open_position(tmp_path, builder, resource_id="bw")
     with score:
-        na_line = next(iter(score.fetch_lines("chr1", 1, 1)))
-        real_line = next(iter(score.fetch_lines("chr1", 11, 11)))
-        assert na_line.get_score("bw") is None
-        assert real_line.get_score("bw") == pytest.approx(99.0)
+        na_record = next(iter(score.fetch_records("chr1", 1, 1)))
+        real_record = next(iter(score.fetch_records("chr1", 11, 11)))
+        assert score.get_score_from_record(na_record, "bw") is None
+        assert score.get_score_from_record(real_record, "bw") == \
+            pytest.approx(99.0)

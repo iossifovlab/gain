@@ -26,7 +26,7 @@ from gain.genomic_resources.genomic_position_table.utils import (
 )
 from gain.genomic_resources.genomic_scores import (
     PositionScore,
-    RecordScoreLine,
+    _extract_column_value,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing import (
@@ -166,14 +166,13 @@ def test_bigwig_parser_converts_zero_based_half_open_to_closed_one_based(
         "2", 6, 10, None, None, ("2", 6, 10, 0.4))
 
 
-def test_bigwig_score_reads_value_at_index_3_through_record_score_line(
+def test_bigwig_score_reads_value_at_index_3(
     tmp_path: pathlib.Path,
 ) -> None:
     # A bigWig score is configured at column ``index: 3`` (the value column of
-    # the four-element interval payload).  Now that the backend yields records,
-    # GenomicScore.open must route it to RecordScoreLine, whose by-index read
-    # of the payload resolves that score -- the record-path equivalent of the
-    # retired ``BigWigLine.get(3)``.
+    # the four-element interval payload).  GenomicScore.open must route it to
+    # the by-index column extractor, whose read of the payload resolves that
+    # score -- the record-path equivalent of the retired ``BigWigLine.get(3)``.
     builder = (
         a_bigwig_score()
         .with_score("bw", "float")
@@ -183,10 +182,11 @@ def test_bigwig_score_reads_value_at_index_3_through_record_score_line(
     repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
     score = PositionScore(repo.get_resource("bw")).open()
     with score:
-        assert score._score_line_class is RecordScoreLine
-        line = next(iter(score.fetch_lines("chr1", 5, 5)))
-        assert type(line) is RecordScoreLine
-        assert line.get_score("bw") == pytest.approx(0.11)
+        assert score._extract_value is _extract_column_value
+        record = next(iter(score.fetch_records("chr1", 5, 5)))
+        assert type(record) is tuple
+        assert score.get_score_from_record(record, "bw") == \
+            pytest.approx(0.11)
 
 
 def test_get_records_in_region(bigwig_table: BigWigTable) -> None:

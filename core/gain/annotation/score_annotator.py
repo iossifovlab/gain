@@ -30,10 +30,17 @@ from gain.genomic_resources.aggregators import (
     AggregatorSource,
     WeightedValues,
 )
+from gain.genomic_resources.genomic_position_table.record import (
+    ALT,
+    CHROM,
+    POS_BEGIN,
+    REF,
+    Record,
+)
 from gain.genomic_resources.genomic_scores import (
+    AlleleScore,
     GenomicScore,
     GenomicScoreDef,
-    ScoreLineBase,
     build_allele_score_from_resource,
     build_position_score_from_resource,
 )
@@ -391,9 +398,9 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
     ``allele_filter``
     -----------------
     An optional annotator-level boolean expression evaluated against each
-    ``ScoreLineBase`` before it is included in the result.  Supported
+    the record predicate before it is included in the result.  Supported
     operators: ``>``, ``<``, ``==``, ``in``, ``and``, ``or``.  Variables
-    resolve via ``ScoreLineBase.get_score``.
+    resolve via ``GenomicScore.get_score_from_record``.
     """
 
     ALLELE_FILTER_GRAMMAR = textwrap.dedent("""
@@ -442,7 +449,8 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
                 "\n", " ").replace("\t", " ").strip()
             try:
                 self.allele_filter = self._build_allele_filter_func(
-                    self.filter_parser.parse(cnv_filter_str))
+                    self.filter_parser.parse(cnv_filter_str),
+                    self.allele_score)
             except Exception as e:
                 raise AnnotationConfigurationError(
                     f"Error parsing cnv_filter: {e}") from e
@@ -490,18 +498,25 @@ Non-``VCFAllele`` annotatables always use region aggregation.
 
     @classmethod
     def _build_allele_filter_func(
-        cls, tree: Tree,
-    ) -> Callable[[ScoreLineBase], bool]:
-        """Compile a Lark parse tree into a ScoreLineBase predicate."""
+        cls, tree: Tree, score: AlleleScore,
+    ) -> Callable[[Record], bool]:
+        """Compile a Lark parse tree into a record predicate.
+
+        The predicate used to take a score line and call ``get_score`` on it.
+        With the score lines gone a value is read off a RECORD, through the
+        score that owns the definitions -- so the score is threaded in here
+        and closed over by each variable accessor, and the predicate itself
+        stays a one-argument callable the fetch loop can apply per record.
+        """
         if tree.data == "and_":
             assert isinstance(tree.children[0], Tree)
             assert isinstance(tree.children[1], Tree)
-            left_func = cls._build_allele_filter_func(tree.children[0])
-            right_func = cls._build_allele_filter_func(tree.children[1])
+            left_func = cls._build_allele_filter_func(tree.children[0], score)
+            right_func = cls._build_allele_filter_func(tree.children[1], score)
             return lambda cnv: left_func(cnv) and right_func(cnv)
         if tree.data == "or":
-            left_func = cls._build_allele_filter_func(tree.children[0])
-            right_func = cls._build_allele_filter_func(tree.children[1])
+            left_func = cls._build_allele_filter_func(tree.children[0], score)
+            right_func = cls._build_allele_filter_func(tree.children[1], score)
             return lambda cnv: left_func(cnv) or right_func(cnv)
 
         left = tree.children[0]
@@ -515,8 +530,8 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             assert isinstance(left.children[0].children[0], Token)
             left_value = left.children[0].children[0].value
 
-            def left_accessor(_score: ScoreLineBase) -> Any:
-                return _score.get_score(left_value)
+            def left_accessor(_record: Record) -> Any:
+                return score.get_score_from_record(_record, left_value)
         else:
             assert isinstance(left.children[0], Tree)
             assert isinstance(left.children[0].data, Token)
@@ -527,7 +542,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
                 left_value = float(left_value)
 
             def left_accessor(
-                _score: ScoreLineBase,
+                _record: Record,
             ) -> Any:  # pylint: disable=unused-argument
                 return left_value
         assert isinstance(tree.children[1], Tree)
@@ -545,8 +560,8 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             assert isinstance(right.children[0].children[0], Token)
             right_value = right.children[0].children[0].value
 
-            def right_accessor(_score: ScoreLineBase) -> Any:
-                return _score.get_score(right_value)
+            def right_accessor(_record: Record) -> Any:
+                return score.get_score_from_record(_record, right_value)
         else:
             assert isinstance(right.children[0], Tree)
             assert isinstance(right.children[0].data, Token)
@@ -557,7 +572,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
                 right_value = float(right_value)
 
             def right_accessor(
-                _score: ScoreLineBase,
+                _record: Record,
             ) -> Any:  # pylint: disable=unused-argument
                 return right_value
 
@@ -608,20 +623,20 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         self, annotatable: VCFAllele,
     ) -> dict[str, Any]:
         """Return scores for an exact chrom/pos/ref/alt match."""
-        line = self.allele_score.fetch_allele_line(
+        record = self.allele_score.fetch_allele_record(
             annotatable.chrom,
             annotatable.position,
             annotatable.reference,
             annotatable.alternative,
         )
-        if line is None:
+        if record is None:
             return self._empty_result()
 
-        if self.allele_filter is not None and not self.allele_filter(line):
+        if self.allele_filter is not None and not self.allele_filter(record):
             return self._empty_result()
 
         scores: dict[str, Any] = {
-            sc: line.get_score(sc)
+            sc: self.allele_score.get_score_from_record(record, sc)
             for sc in (
                 self.simple_score_queries or self.allele_score.get_all_scores()
             )
@@ -654,23 +669,26 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         alleles: set[str] = set()
         has_lines = False
 
-        for line in self.allele_score.fetch_lines(
+        for record in self.allele_score.fetch_records(
             annotatable.chrom, annotatable.position, annotatable.pos_end,
         ):
             has_lines = True
-            if self.allele_filter is not None and not self.allele_filter(line):
+            if self.allele_filter is not None \
+                    and not self.allele_filter(record):
                 continue
 
             for source in self.allele_score_sources:
-                raw[source].append(line.get_score(source))
+                raw[source].append(
+                    self.allele_score.get_score_from_record(record, source))
 
             if self.allele_attribute is not None:
-                allele_str = f"{line.chrom}:{line.pos_begin}"
-                if line.ref is not None and line.alt is not None:
-                    allele_str += f":{line.ref}:{line.alt}"
+                allele_str = f"{record[CHROM]}:{record[POS_BEGIN]}"
+                if record[REF] is not None and record[ALT] is not None:
+                    allele_str += f":{record[REF]}:{record[ALT]}"
                 if self.attrs_to_include:
                     attrs_str = ",".join(
-                        stringify(line.get_score(a))
+                        stringify(
+                            self.allele_score.get_score_from_record(record, a))
                         for a in self.attrs_to_include)
                     allele_str += f":{attrs_str}"
                 alleles.add(allele_str)

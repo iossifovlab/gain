@@ -1836,10 +1836,11 @@ def test_zero_based_invalid_row_rejected_by_score_layer(
 def test_invalid_region_error_names_the_offending_line(
     tmp_path: pathlib.Path,
 ) -> None:
-    # The OSError raised for an end < begin row interpolates the score line
-    # itself.  Without a __repr__ that reads
-    # "<gain...RecordScoreLine object at 0x7f...>" -- an address, useless for
-    # diagnosis.  The message must name the contig and the two positions.
+    # The OSError raised for an end < begin row must name the offending row.
+    # It is built from the record's DECODED slots rather than interpolating
+    # the record: a record's last slot is the backend's payload, so
+    # f"{record}" would print a whole pysam.VariantRecord or a TupleProxy.
+    # (The retired score line had a __repr__ written for the same reason.)
     score = PositionScore(
         a_position_score()
         .with_score("v", "float")
@@ -1850,7 +1851,7 @@ def test_invalid_region_error_names_the_offending_line(
         """)
         .build_resource(tmp_path),
     ).open()
-    with pytest.raises(OSError, match=re.escape("RecordScoreLine(1:6-3")):
+    with pytest.raises(OSError, match=re.escape("record 1:6-3")):
         list(score.fetch_region_values("1", 1, 100))
 
 
