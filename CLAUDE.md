@@ -270,6 +270,29 @@ multi-resource repo with
 `build_resource(tmp_path)` is the single-resource
 shorthand.
 
+**`a_data_frame` is the one factory NOT in
+`builders.py`** — import it from
+`gain.genomic_resources.testing.data_frame_builder`.
+`builders.py` was within nine lines of pylint's
+1500-line module ceiling before it was written, so it
+lives in a sibling module that imports the shared
+single-realize seam one way; `builders` does not import
+back, and there is no re-export. It composes into
+`a_grr().with_resource(...)` like any other builder. Its
+knobs are `with_data` / `with_raw_content` (verbatim,
+for `parameters:` shapes a whitespace block cannot
+express), `with_format` (`csv`/`tsv`/`excel`, filename
+follows), `with_file`, `with_parameters`,
+`with_declared_format` (config only — how you build an
+unknown or mismatched format) and
+`without_file_key` / `without_format_key`. It
+deliberately exposes no expected DataFrame: it parses the
+authored block with pandas to realize xlsx, so handing
+that frame back as an oracle would be circular on the
+separator and dtype axes a `data_frame` test varies.
+The next builder added should follow the same sibling-
+module pattern rather than grow `builders.py`.
+
 **That list is the whole of the coverage — the gaps are
 large and structural, not an oversight to work around.**
 There is no builder for `gene_models`, `liftover_chain`,

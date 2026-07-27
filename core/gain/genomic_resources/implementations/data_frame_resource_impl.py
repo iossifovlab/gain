@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from typing import Any, ClassVar
 
 import pandas as pd
@@ -21,6 +22,9 @@ from gain.task_graph.graph import TaskDesc, TaskGraph
 
 logger = logging.getLogger(__name__)
 
+# The describe statistics table backing the info page.
+_DESCRIBE_STATISTIC = "statistics/describe.csv"
+
 
 class DataFrameResourceImplementation(
     GenomicResourceImplementation,
@@ -32,14 +36,20 @@ class DataFrameResourceImplementation(
 
     @property
     def files(self) -> set[str]:
-        # No type-specific file list: a basic resource ships arbitrary files,
-        # so every manifest entry (other than the config that
-        # _enumerate_resource_files adds itself, and lockfiles) is part of it.
+        # The two files this implementation actually reads: the declared
+        # table and the describe statistics behind the info page.  This set
+        # drives the cache prefetch worklist (see cached_repository), so it
+        # is intersected with the manifest rather than stated flat: naming a
+        # file the resource does not have produces a classify failure line
+        # in the end-of-run cache summary (gain#43), and describe.csv is
+        # absent until statistics are built.  ``.get`` because a config
+        # missing ``file:`` must still yield a set here -- the loader is
+        # where that misconfiguration gets reported.
+        wanted = {self.config.get("file"), _DESCRIBE_STATISTIC}
         return {
             entry.name
             for entry in self.resource.get_manifest()
-            if entry.name != "genomic_resource.yaml"
-            and not entry.name.endswith(".lockfile")
+            if entry.name in wanted
         }
 
     def _get_template_data(self) -> dict[str, Any]:
@@ -47,12 +57,16 @@ class DataFrameResourceImplementation(
 
         if "meta" in info:
             info["meta"] = markdown(str(info["meta"]))
-        with self.resource.proto.open_raw_file(
-            self.resource, "statistics/describe.csv", mode="rt",
-        ) as stats_file:
-            df_description = pd.read_csv(stats_file, index_col=0).T
-            df_description.columns.name = "Columns"
-        info["df_description"] = df_description.to_html(index=True)
+        # Statistics may legitimately be absent: a read-only remote GRR
+        # cannot build them, and grr_browse must still render the resource
+        # rather than 500 on it.  The template guards on the key.
+        if self.resource.file_exists(_DESCRIBE_STATISTIC):
+            with self.resource.proto.open_raw_file(
+                self.resource, _DESCRIBE_STATISTIC, mode="rt",
+            ) as stats_file:
+                df_description = pd.read_csv(stats_file, index_col=0).T
+                df_description.columns.name = "Columns"
+            info["df_description"] = df_description.to_html(index=True)
         return info
 
     def get_info(self, **kwargs: Any) -> str:  # noqa: ARG002
@@ -65,12 +79,22 @@ class DataFrameResourceImplementation(
         return b"placeholder"
 
     def calc_statistics_hash(self) -> bytes:
-        payload = (
-            str(self.config["file"])
-            + str(self.config.get("format", "csv"))
-            + str(self.config.get("parameters", {}))
-        )
-        return payload.encode("utf-8")
+        # Hashing the config alone left the data file invisible: editing the
+        # table did not change the hash, so grr_manage never rebuilt
+        # describe.csv -- the one thing this hash exists to trigger.  Shaped
+        # like gene_models_impl / reference_genome_impl so a package-wide
+        # change to statistics hashing sweeps this up too.
+        manifest = self.resource.get_manifest()
+        file_name = str(self.config["file"])
+        return json.dumps({
+            "config": {
+                "format": self.config.get("format", "csv"),
+                "parameters": self.config.get("parameters", {}),
+            },
+            "files_md5": {
+                file_name: manifest[file_name].md5,
+            },
+        }, sort_keys=True, indent=2).encode()
 
     @staticmethod
     def _stats_for_data_frame(resource: GenomicResource) -> None:
@@ -78,7 +102,7 @@ class DataFrameResourceImplementation(
         dsk = df.describe(include="all")
 
         with resource.proto.open_raw_file(
-            resource, "statistics/describe.csv", mode="wt",
+            resource, _DESCRIBE_STATISTIC, mode="wt",
         ) as outfile:
             dsk.to_csv(outfile)
 

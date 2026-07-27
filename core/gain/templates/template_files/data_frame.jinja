@@ -3,6 +3,10 @@
 
 {% set description = data.df_description %}
 
+{% if description %}
 {{ description }}
+{% else %}
+<p>Statistics have not been built for this resource.</p>
+{% endif %}
 
 {% endblock %}
