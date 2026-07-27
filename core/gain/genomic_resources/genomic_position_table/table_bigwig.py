@@ -21,6 +21,14 @@ from gain.utils.regions import Region
 # coordinate transform of its own to fold in.
 BigWigInterval = tuple[int, int, float]
 
+# The one column a bigWig has, for the bulk column-array read.  A record's
+# PAYLOAD is the interval's value itself, so "column 0 of the payload" and "the
+# value" name the same thing and there is no second column to address.  Stated
+# once, here, because this module owns the payload's shape; the score layer
+# re-exports it (``bigwig_scores.BIGWIG_VALUE_COLUMN``) rather than repeating
+# the literal.
+VALUE_COLUMN = 0
+
 # A bigWig parser maps a (mapped/reference chrom, fetched interval) pair to a
 # record.  It is not a ``TabularParser``: a bigWig line is not a row of string
 # cells parsed by column key, it is a numeric interval whose contig is threaded
@@ -104,20 +112,22 @@ def build_bigwig_parser() -> BigWigParser:
     of the record migration is that a fetched line no longer constructs a
     per-line ``BigWigLine`` adapter object, only a plain record tuple.
 
-    A bigWig record's PAYLOAD is the **four-element interval**
-    ``(chrom, pos_begin, pos_end, value)`` -- the very tuple the retired
-    ``BigWigLine`` carried as its raw row -- so the single value column stays
-    addressable at index 3, which is where every bigWig score's ``index: 3``
-    resolves through :class:`RecordScoreLine`'s by-index payload read.  REF and
-    ALT are always ``None``: a bigWig carries neither.
+    A bigWig record's PAYLOAD is the **value itself** -- a bare ``float``, not
+    a tuple.  A bigWig carries one number per interval; everything else the
+    payload used to repeat (``(chrom, pos_begin, pos_end, value)``, inherited
+    from the retired ``BigWigLine``'s raw row) is already decoded into the
+    record's own slots, and the repetition existed only so the value was
+    addressable at ``payload[3]``.  With the narrowing, reading a bigWig score
+    is ``record[PAYLOAD]`` -- an identity, with no index and no parse (see
+    ``bigwig_scores.extract_bigwig_value``).  REF and ALT are always ``None``:
+    a bigWig carries neither.
 
-    **Before narrowing this payload to just the value** -- which is the
-    obvious cleanup, since the four-tuple repeats three fields the record
-    already decodes -- read the "Deliberately NOT changed" entry in this
-    package's ``__init__``.  The ``index: 3`` in every deployed bigWig
-    resource's config, and the out-of-range ``IndexError`` that
-    :meth:`BigWigTable.get_region_value_arrays` reproduces on purpose, both
-    depend on this shape, and the change was measured to buy no speed.
+    The three reasons the earlier, wider shape was kept are recorded -- and
+    answered -- in the ledger entry in this package's ``__init__``.  The short
+    of it: ``index: 3`` survives as an accepted deprecated no-op rather than as
+    a payload shape, the out-of-range ``IndexError`` is superseded by an
+    open-time refusal that names the resource and the score, and the
+    "no speed to be had" measurement predated the removal of the parse.
 
     The parser closes over nothing.  A bigWig has no configurable transform for
     it to specialise on -- it is a binary format with a fixed layout, its
@@ -128,11 +138,7 @@ def build_bigwig_parser() -> BigWigParser:
     the records the fetch path yields.
     """
     def parse(chrom: str, interval: BigWigInterval) -> Record:
-        # PAYLOAD repeats chrom/begin/end so that ``payload[3]`` is the value:
-        # this is byte-for-byte the tuple ``BigWigLine((chrom, *interval))``
-        # wrapped, kept identical so the score read is unchanged.
-        payload = (chrom, *interval)
-        return (chrom, interval[0], interval[1], None, None, payload)
+        return (chrom, interval[0], interval[1], None, None, interval[2])
     return parse
 
 
@@ -140,11 +146,10 @@ class BigWigTable(GenomicPositionTable):
     """bigWig format implementation of the genomic position table.
 
     Yields **records** -- the six-slot plain tuples of the record contract --
-    so the score layer wraps its lines in a :class:`RecordScoreLine`, exactly
-    like the tabix and in-memory backends.  A bigWig record's PAYLOAD is the
-    four-element interval ``(chrom, pos_begin, pos_end, value)`` (see
-    :func:`build_bigwig_parser`); the value column is read from it by index,
-    the same read the retired ``BigWigLine`` adapter served through ``get``.
+    exactly like the tabix and in-memory backends.  A bigWig record's PAYLOAD
+    is the interval's value, a bare ``float`` (see
+    :func:`build_bigwig_parser`); the score layer reads it straight out of the
+    slot, with no index and no parse.
     """
 
     # This backend yields records rather than line adapters (#238).
@@ -463,8 +468,19 @@ class BigWigTable(GenomicPositionTable):
         the record path's -- but turns each chunk of raw intervals into arrays
         in one shot rather than building a ``Record`` per interval.  The
         coordinates match :meth:`_fetch_direct`: the raw zero-based half-open
-        ``[begin, end)`` becomes closed one-based (``begin + 1``, ``end``), and
-        the value lives at payload index 3.
+        ``[begin, end)`` becomes closed one-based (``begin + 1``, ``end``).
+
+        **A bigWig has exactly one column, and its index is 0.**  A record's
+        PAYLOAD is the interval's value (see :func:`build_bigwig_parser`), so
+        "the payload's column 0" and "the value" are the same thing, and any
+        other index names a column this backend does not have -- refused with
+        a ``KeyError`` naming the resource rather than served whatever the old
+        four-tuple reconstruction happened to hold at that offset.  That
+        reconstruction existed to make a bad index raise the ``IndexError``
+        the record path raised; the record path no longer indexes anything, and
+        a misconfigured index is now refused when the *score* is opened, by
+        name, which is a better diagnostic than either.  This check is the
+        backstop for a caller that reaches the table directly.
 
         ``batch_size`` is accepted for a uniform producer signature; the batch
         size here is set by the adaptive fetch window, not this argument.
@@ -477,7 +493,14 @@ class BigWigTable(GenomicPositionTable):
         chrom_len = self.chroms[fchrom]
         pos = 0 if start is None else max(0, start - 1)
         scan_stop = chrom_len if end is None else min(end, chrom_len)
-        columns = list(value_columns)
+        bad_columns = sorted(
+            col for col in value_columns if col != VALUE_COLUMN)
+        if bad_columns:
+            raise KeyError(
+                f"bigwig table of resource "
+                f"{self.genomic_resource.resource_id}: a bigWig record's "
+                f"payload is its value, so column {VALUE_COLUMN} is the only "
+                f"one there is; asked for {bad_columns}")
         # Mirror the cursor update get_records_in_region makes, so a later read
         # on the same open table observes the same state.
         self._last_pos = pos
@@ -490,20 +513,7 @@ class BigWigTable(GenomicPositionTable):
             raw = np.array(intervals, dtype=np.float64)
             pos_begin = raw[:, 0].astype(np.int64) + 1
             pos_end = raw[:, 1].astype(np.int64)
-            value = raw[:, 2]
-            # payload == (chrom, pos_begin, pos_end, value); serve each
-            # requested column from it so any configured index (not just the
-            # value at 3) matches the per-record read exactly.  Indexed as the
-            # 4-tuple it stands for, so an out-of-range column raises the same
-            # IndexError the record path raises rather than being quietly
-            # served something -- a misconfigured index used to come back as
-            # the chromosome string here, turning an aborted repair into a
-            # silently all-zero histogram.
-            chrom_col = np.full(len(intervals), chrom, dtype=object) \
-                if any(col in {0, -4} for col in columns) else None
-            payload_columns = (chrom_col, pos_begin, pos_end, value)
-            cols = {col: payload_columns[col] for col in columns}
-            yield pos_begin, pos_end, cols
+            yield pos_begin, pos_end, {VALUE_COLUMN: raw[:, 2]}
 
     def get_all_records(self) -> Generator[Record, None, None]:
         assert self._bw_file is not None

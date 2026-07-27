@@ -63,19 +63,47 @@ def build_genomic_position_table(
             )
         return VCFGenomicPositionTable(resource, table_definition)
     if table_fmt.lower() in ("bw", "bigwig"):
-        if table_definition.get("header_mode") is not None:
-            logger.warning(
-                "header_mode is not supported for bigwig tables, "
-                "ignoring it in %s",
-                resource.get_full_id(),
-            )
-        if "zero_based" in table_definition:
-            logger.warning(
-                "zero_based is not supported for bigWig tables (the "
-                "0-based-half-open to closed-1-based conversion is "
-                "intrinsic), ignoring it in %s",
-                resource.get_full_id(),
-            )
+        _warn_inert_bigwig_keys(resource, table_definition)
         return BigWigTable(resource, table_definition)
 
     raise ValueError(f"unknown table format {table_fmt}")
+
+
+def _warn_inert_bigwig_keys(
+    resource: GenomicResource, table_definition: dict,
+) -> None:
+    """Warn about table keys a bigWig reads nothing from, and ignore them."""
+    if table_definition.get("header_mode") is not None:
+        logger.warning(
+            "header_mode is not supported for bigwig tables, "
+            "ignoring it in %s",
+            resource.get_full_id(),
+        )
+    # The tabular table keys a bigWig has no use for.  A bigWig is a
+    # binary format with a fixed layout: it has no header to name columns
+    # in and no columns to address, and a record's positional fields are
+    # decoded by the backend itself.  ``BigWigTable.open`` does call
+    # ``_set_core_column_keys()``, so these keys DO set
+    # ``chrom_key``/``pos_begin_key``/``pos_end_key`` -- and nothing in
+    # ``table_bigwig`` reads any of the three.  So they are inert, not
+    # wrong: they corrupt no value, and a deployed resource carrying them
+    # (``hg19/scores/Linsight`` configures all three) must keep opening
+    # and annotating exactly as before.  Warn so they can be cleaned out
+    # of the GRRs; do not refuse.  Contrast the SCORE config, where a
+    # column address really would name a column that is not the value --
+    # ``bigwig_scores.validate_bigwig_scoredefs`` refuses that one.
+    for inert_key in ("chrom", "pos_begin", "pos_end", "header"):
+        if inert_key in table_definition:
+            logger.warning(
+                "'%s' is not supported for bigWig tables (a bigWig has "
+                "no columns and no header; its positions are decoded by "
+                "the backend), ignoring it in %s",
+                inert_key, resource.get_full_id(),
+            )
+    if "zero_based" in table_definition:
+        logger.warning(
+            "zero_based is not supported for bigWig tables (the "
+            "0-based-half-open to closed-1-based conversion is "
+            "intrinsic), ignoring it in %s",
+            resource.get_full_id(),
+        )

@@ -15,12 +15,13 @@ it.
 turns on what a record's PAYLOAD means -- which is whatever the backend that
 built it says it means:
 
-* a record whose payload is a raw tabular row (in-memory, tabix) or the
-  four-element interval of a bigWig line is read by
+* a record whose payload is a raw tabular row (in-memory, tabix) is read by
   :func:`extract_column_value`, which takes score columns out of it by index;
 * a **VCF** record, whose payload carries the variant, its allele index and
   the two pysam INFO proxies, is read by :func:`extract_vcf_value`, which
-  looks INFO fields up by name and selects them by allele.
+  looks INFO fields up by name and selects them by allele;
+* a **bigWig** record, whose payload IS the interval's value, is read by
+  :func:`extract_bigwig_value` -- an identity, with no index and no parse.
 
 #238 migrated bigWig -- the last adapter backend -- and #239 then deleted the
 line adapters, the ``LineBase`` protocol and the adapter-era ``ScoreLine``
@@ -47,6 +48,9 @@ from collections.abc import Callable
 
 import numpy as np
 import pytest
+from gain.genomic_resources.bigwig_scores import (
+    extract_bigwig_value,
+)
 from gain.genomic_resources.genomic_position_table.record import (
     PAYLOAD,
     POS_BEGIN,
@@ -139,7 +143,7 @@ _BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
     pytest.param(_build_inmemory, extract_column_value, id="inmemory"),
     pytest.param(_build_tabix, extract_column_value, id="tabix"),
     pytest.param(_build_vcf, extract_vcf_value, id="vcf"),
-    pytest.param(_build_bigwig, extract_column_value, id="bigwig"),
+    pytest.param(_build_bigwig, extract_bigwig_value, id="bigwig"),
 ]
 
 
@@ -156,8 +160,7 @@ _BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
 #   * VCF -- payload is a ``(pysam.VariantRecord, allele index)`` pair, and a
 #     ``pysam.VariantRecord`` is unhashable for the same reason, so hashing the
 #     pair -- and so the record -- raises ``TypeError``;
-#   * bigWig -- payload is a plain ``(chrom, pos_begin, pos_end, value)`` tuple
-#     of a str, two ints and a float, all hashable: hashes.
+#   * bigWig -- payload is the interval's value, a bare ``float``: hashes.
 #
 # test_every_record_backend_declares_whether_its_records_hash keeps this list
 # in step with what the backends in _BACKENDS actually claim.
@@ -186,13 +189,12 @@ def test_every_record_backend_declares_whether_its_records_hash(
     ``GenomicScore.open`` refuses outright.  Opening first would mean this loop
     could only ever see backends that already passed that gate.  It is
     deliberately NOT read off the score line class each backend is paired with
-    below: a migrating backend can arrive with a score line class of its own
-    (VCF did, at :class:`extract_vcf_value`) or reuse an existing one whose
-    hashability differs from every backend already routed there (bigWig, #238,
-    reuses :class:`extract_column_value` but -- unlike tabix, the other backend
-    routed there -- yields hashable records), and a check written against the
-    score line classes rather than the tables would miss both.  Ask the table,
-    and there is nothing to add to but _HASHABILITY.
+    below: a migrating backend can arrive with an extractor of its own (VCF
+    did, at :func:`extract_vcf_value`; bigWig has since acquired
+    :func:`extract_bigwig_value`) or reuse an existing one whose hashability
+    differs from every backend already routed there, and a check written
+    against the extractors rather than the tables would miss both.  Ask the
+    table, and there is nothing to add to but _HASHABILITY.
     """
     record_backends = set()
     for param in _BACKENDS:
@@ -303,20 +305,27 @@ def test_a_backend_yields_what_its_yields_records_claim_says(
             f"{backend} sets yields_records but yields a "
             f"{len(first)}-slot tuple; a record has {RECORD_SLOTS} slots")
         payload = first[PAYLOAD]
-        # Both extractors index the payload -- the column one binds
-        # _get_raw to payload.__getitem__ for a score column, extract_vcf_value
-        # reads the (variant, allele index) pair out of it -- so a payload
-        # must be indexable...
-        assert hasattr(payload, "__getitem__"), (
-            f"{backend} sets yields_records but its record's PAYLOAD is a "
-            f"{type(payload).__name__}, which is not indexable")
-        # ...and must not be a str/bytes: those are indexable, but index
-        # to *characters*, so every score would silently parse to None
-        # rather than raise.
-        assert not isinstance(payload, (str, bytes)), (
-            f"{backend} sets yields_records but its record's PAYLOAD is a "
-            f"{type(payload).__name__} -- indexing it yields characters, "
-            f"not cells")
+        # A payload must be readable by the extractor this backend is routed
+        # to, and there are two shapes of that.  An INDEXED payload -- a raw
+        # tabular row, or the VCF (variant, allele index, info, info_meta)
+        # tuple -- must be indexable, and must not be a str/bytes: those are
+        # indexable but index to *characters*, so every score would silently
+        # parse to None rather than raise.  A WHOLE-payload extractor
+        # (bigWig's identity) needs neither, and asking for indexability there
+        # would be asking for the repetition the narrowing removed.
+        if extractor is extract_bigwig_value:
+            assert isinstance(payload, float), (
+                f"{backend} is routed to the identity extractor, so its "
+                f"record's PAYLOAD must be the value itself; it is a "
+                f"{type(payload).__name__}")
+        else:
+            assert hasattr(payload, "__getitem__"), (
+                f"{backend} sets yields_records but its record's PAYLOAD is a "
+                f"{type(payload).__name__}, which is not indexable")
+            assert not isinstance(payload, (str, bytes)), (
+                f"{backend} sets yields_records but its record's PAYLOAD is a "
+                f"{type(payload).__name__} -- indexing it yields characters, "
+                f"not cells")
 
 
 @pytest.mark.parametrize(("build_backend", "extractor"), _BACKENDS)

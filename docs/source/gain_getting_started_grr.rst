@@ -350,12 +350,10 @@ Next, create a ``genomic_resource.yaml`` file in the ``my_miniposition`` directo
 
     table:
       filename: hg38.phyloP7way.bw
-      header_mode: none
-    
+
     scores:
     - id: phyloP7way
       type: float
-      index: 3
 
     meta:
       summary: Conservation score based on the multiple alignment of 7 species

@@ -238,42 +238,56 @@ per-line object to hold it.  An out-of-tree reader that unpacked the payload
 as a pair now gets a ``ValueError``; unpack four, or index by the ``VARIANT``
 / ``ALLELE_INDEX`` / ``INFO`` / ``INFO_META`` constants in ``table_vcf``.
 
-**Deliberately NOT changed: the bigWig payload's four-tuple shape.**
-``BigWigTable`` builds ``payload = (chrom, pos_begin, pos_end, value)``, which
-repeats three fields the record already carries in its decoded slots, purely
-so that the single value is addressable at ``payload[3]``.  It reads as an
-internal adapter -- a binary format's one value wearing the shape of a tabular
-row -- and the obvious cleanup is to let the payload be the value.  It was
-investigated and rejected; recorded here because the reasons are not visible
-from ``build_bigwig_parser``, which is where someone would go to make the
-change.
+**Changed payload: a bigWig record's PAYLOAD is now the VALUE ITSELF.**
+``BigWigTable`` is in ``__all__`` below, so this changes public surface of
+``gain`` and is recorded for the same reason as everything above.  It was the
+four-tuple ``(chrom, pos_begin, pos_end, value)`` -- three fields the record
+already carries in its decoded slots, repeated purely so the single value was
+addressable at ``payload[3]``; it is now the bare ``float``.  An out-of-tree
+reader that indexed the payload gets a ``TypeError`` ('float' object is not
+subscriptable); read ``record[PAYLOAD]``, which IS the value, or go through
+``GenomicScore.get_score_from_record``.
 
-**The shape is config surface, not an implementation detail.**  A bigWig
-score's column is declared in its ``genomic_resource.yaml`` as ``index: 3``,
-and every deployed bigWig resource says so (the testing builder emits it from
-``_BIGWIG_VALUE_INDEX``, and the repo's own fixtures carry it throughout).
-Narrowing the payload changes what that 3 means, so it is a migration across
-every GRR that serves a bigWig, not a refactor.
+**This entry used to say the shape was deliberately NOT changed.**  It is
+kept, inverted, rather than deleted, because the three reasons it gave were
+real and someone will meet them again; each is answered below.  What dissolved
+them is that the alternative to preserving a shape is not "break the deployed
+configs" -- it is to keep the *config* and drop the *shape*.
 
-**Three consumers depend on it, and the third is the surprising one.**  The
-per-record read indexes it (``_extract_column_value`` reads the payload by
-the resolved column); so does the score config above; and so does
-``BigWigTable.get_region_value_arrays``, which serves *any* requested column
-out of a reconstructed four-tuple **on purpose** -- so that an out-of-range
-index raises the same ``IndexError`` the record path raises.  That is not
-incidental: a misconfigured index used to be served the chromosome string
-there, which turned an aborted repair into a silently all-zero histogram.  A
-narrowed payload has to reproduce that refusal or reintroduce the bug.
+*(a) "The shape is config surface: every deployed bigWig says ``index: 3``."*
+It is config surface, and 16 deployed resources do say it (one with the
+comment ``# this makes no sense and should be removed`` already in its yaml).
+But the key is answered by ACCEPTING it as a deprecated no-op, not by keeping
+a payload shape for it to index into: ``bigwig_scores`` takes ``index: 3`` at
+open, warns once naming the resource, and resolves it -- like the canonical
+config that addresses nothing at all -- to the one column a bigWig has.  No
+GRR has to change on the day this ships, and the warning is what gets the key
+deleted from them afterwards.  Any OTHER index is now refused at open, by
+name; before, ``index: 2`` read the position and called it a score.
 
-**And it buys nothing measurable.**  The per-record read was profiled while
-the per-line score-line objects were removed: the cost of this path is
-coordinate and per-line-object access, not the payload's width.  Removing the
-repeated fields was measured at no reliable saving, against a ~13% saving from
-reading coordinates straight off the record's slots.  So the
-change would carry a cross-repository config migration and a subtle
-error-semantics obligation to buy readability alone.  If it is ever revisited,
-those are the three things that have to be answered, and the ``index: 3``
-compatibility question is the one that decides it.
+*(b) "``get_region_value_arrays`` reconstructs the four-tuple so a bad index
+raises the same ``IndexError`` the record path raises."*  Superseded.  That
+reconstruction existed to reproduce a failure; the failure is now prevented.
+The record path indexes nothing at all, and a bad index is refused when the
+SCORE is opened, in a message naming both the resource and the score -- which
+is strictly better than an ``IndexError`` from inside a scan, and it fires
+before any file is opened rather than mid-repair.  The bulk read keeps a
+backstop of its own for a caller that reaches the table directly: it serves
+column 0 and refuses everything else with a ``KeyError`` naming the resource.
+The bug that motivated the reconstruction -- a misconfigured index served the
+chromosome string, turning an aborted repair into a silently all-zero
+histogram -- is unreachable from either direction.
+
+*(c) "It buys nothing measurable."*  That measurement was taken WITHOUT the
+parse removal, so it never argued against this change.  It compared payload
+widths while the read still went through ``parse_value``; narrowing the tuple
+alone saves an index, which is indeed noise.  What the narrowing enables is
+the removal of the *parse*: a bigWig value arrives from ``pyBigWig`` as a
+``float``, the score is ``type: float`` (anything else is now refused), and
+the NA default for a bigWig score is empty (``bigwig_scores``), so
+``parse_value`` on that pair is provably the identity -- and the read becomes
+``return record[PAYLOAD]``.  That is a real per-record saving, and it is only
+available once the payload is the value.
 
 """
 from .line import LineBuffer

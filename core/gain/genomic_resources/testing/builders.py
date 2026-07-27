@@ -615,11 +615,6 @@ class CnvCollectionBuilder(_TableScoreBuilder):
 
 _BIGWIG_FILENAME = "data.bw"
 
-# A bedGraph row is ``chrom start end value``, so the score column is
-# always the fourth.  The bigWig table has no header to name it, hence
-# positional ``index:`` addressing rather than ``column_name:``.
-_BIGWIG_VALUE_INDEX = 3
-
 _BIGWIG_DEFAULT_DATA = """
     chr1  0   10  0.1
     chr1  10  20  0.2
@@ -652,7 +647,17 @@ class BigWigScoreBuilder:
     Authored as bedGraph rows (``chrom start end value``), whose intervals
     are 0-based half-open -- 1-based position ``p`` reads the interval
     containing ``p - 1``.  Unlike the tabular builders this one declares
-    exactly one score, because a bigWig carries a single value column.
+    exactly one score, because a bigWig carries a single value -- and a
+    resource declaring more than one is refused at open
+    (``bigwig_scores.validate_bigwig_scoredefs``).
+
+    **The emitted score block addresses no column**, which is the canonical
+    bigWig config: a bigWig record's payload IS its value, so there is nothing
+    to address.  This builder used to emit ``index: 3``, which addressed the
+    value inside the four-element payload a bigWig record once carried; that
+    key is now a deprecated no-op, accepted with a warning for the deployed
+    resources that still carry it.  A test that wants that path authors it as
+    yaml -- see ``test_bigwig_scores.py``.
     """
 
     score_id: str = "score"
@@ -791,7 +796,6 @@ class BigWigScoreBuilder:
             "scores:\n"
             f"- id: {self.score_id}\n"
             f"  type: {self.value_type}\n"
-            f"  index: {_BIGWIG_VALUE_INDEX}\n"
         )
         if self.na_values is not None:
             na_yaml = yaml.safe_dump(

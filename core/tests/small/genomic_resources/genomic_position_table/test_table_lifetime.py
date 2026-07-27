@@ -967,7 +967,7 @@ def test_a_reopened_bigwig_table_does_not_answer_from_the_old_buffer(
 
     def values_at(begin: int, end: int) -> list[float]:
         return [
-            rec[5][3]
+            rec[PAYLOAD]
             for rec in table.get_records_in_region("chr1", begin, end)
         ]
 

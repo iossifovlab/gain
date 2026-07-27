@@ -18,7 +18,15 @@ from typing import (
 import numpy as np
 
 from gain import logging
+from gain.genomic_resources.bigwig_scores import (
+    BIGWIG_VALUE_COLUMN,
+    build_bigwig_scoredefs,
+    extract_bigwig_value,
+    extract_bigwig_value_na,
+    validate_bigwig_scoredefs,
+)
 from gain.genomic_resources.genomic_position_table import (
+    BigWigTable,
     VCFGenomicPositionTable,
     build_genomic_position_table,
 )
@@ -398,6 +406,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         if config_scoredefs is None:
             raise ValueError("No scores configured and not using a VCF")
 
+        if isinstance(self.table, BigWigTable):
+            return build_bigwig_scoredefs(self.config, config_scoredefs)
+
         return config_scoredefs
 
     def get_config(self) -> dict[str, Any]:
@@ -444,129 +455,189 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     def is_open(self) -> bool:
         return self.table_loaded
 
-    def open(self) -> Self:
-        """Open genomic score resource and returns it."""
-        if self.is_open():
-            logger.info(
-                "opening already opened genomic score: %s",
-                self.resource.resource_id)
-            return self
-        is_vcf = isinstance(self.table, VCFGenomicPositionTable)
-        # Choose the score line class per backend -- ONE decision, per table,
-        # made here rather than per line.  A VCF table's scores are INFO fields,
-        # so it goes to the extractor that performs the INFO lookup; any
-        # other record-yielding table's scores are read out of the record's
-        # payload by index, so it goes to the column extractor (every other
-        # backend -- in-memory, tabix and bigWig).  This is decided at open
-        # time, alongside the table's own parser/transform selection, and the
-        # table's yields_records claim is simply believed -- that every
-        # backend's claim matches what it really yields is pinned statically,
-        # over all four of them, by test_backend_record_contract.py, so the
-        # fetch path pays nothing.
-        #
-        # A table that claims neither is a programming error, not a data error:
-        # since #239 there is no adapter score line to fall back to, so a
-        # backend that leaves yields_records False has nothing that can read it
-        # and we refuse to open rather than guess.  (Nothing in the tree reaches
-        # this: it guards a backend added later without its migration.)
-        #
-        # Route BEFORE opening, and so before publishing.  Both inputs are
-        # known at construction -- the table's class, and yields_records, a
-        # ClassVar -- so routing needs nothing from the open handle and can
-        # precede it.  Two things fall out of that order:
-        #
-        # * the refusal below costs no handle.  Routing after ``table.open()``
-        #   would leave a caller that is not using the ``with`` form holding an
-        #   opened pysam handle it can no longer reach: ``table_loaded`` would
-        #   still be False, so ``close()`` would not have been reached.
-        #   Raising first means there is nothing to leak.
-        # * ``table_loaded = True`` is what makes this score look open to
-        #   everyone else: from that write on, another caller's open() takes the
-        #   is_open() early return above and reads _extract_value straight
-        #   away.  Routed last, that caller can catch the score
-        #   published-but-unrouted -- and since #239 left the routing with
-        #   no default at all, that caller reads an AttributeError.  Scores are
-        #   shared across threads (the process-wide in-memory CNV cache;
-        #   gain-web-api's thread pool), so the window is reachable; this
-        #   ordering keeps the ROUTING out of it.  Pinned by
-        #   test_the_score_is_routed_before_it_reports_itself_open.
-        #
-        # It does not make open() as a whole safe to race, and does not claim
-        # to: the score_index assignment below still runs after the score has
-        # published itself open, so a caller that catches that window reads a
-        # score def whose score_index is still None.  That window is older than
-        # this routing and untouched by it -- open() is not synchronised, and
-        # making it so is a separate change.
-        if is_vcf:
-            self._extract_value = extract_vcf_value
-        elif self.table.yields_records:
-            self._extract_value = extract_column_value
-        else:
-            raise TypeError(
-                f"{type(self.table).__name__} does not yield records, so "
-                f"there is no score line that can read it. A genomic "
-                f"position table backend must set yields_records = True "
-                f"and yield six-slot record tuples: see the record "
-                f"contract in gain.genomic_resources."
-                f"genomic_position_table.record, and "
-                f"test_backend_record_contract.py for what that backend "
-                f"is held to.")
-        self.table.open()
-        self.table_loaded = True
-        if "scores" in self.config:
-            self._validate_scoredefs()
+    def _select_value_extractor(
+        self, *, is_vcf: bool, is_bigwig: bool,
+    ) -> ValueExtractor:
+        """Pick the per-record value read for this table's payload.
 
+        ONE decision, per table, taken at open rather than per line.  What it
+        turns on is what a record's PAYLOAD *is*, which is whatever the backend
+        that built it says it is:
+
+        * a **VCF** record's payload carries the variant and the pysam INFO
+          proxies, and a VCF score is an INFO field addressed by name --
+          :func:`extract_vcf_value`;
+        * a **bigWig** record's payload IS the interval's value, so the read is
+          an identity (:func:`extract_bigwig_value`) -- or, for the rare
+          resource that configures NA sentinels, an identity plus one
+          membership test (:func:`extract_bigwig_value_na`).  Which of the two
+          is settled here, from the score definitions, and never per record:
+          the sentinel set is fixed for the life of the open score.  A bigWig
+          declares exactly one score (``validate_bigwig_scoredefs`` refuses
+          more), so there is a single answer to give; ``any`` states that
+          without depending on it;
+        * any other record-yielding table's payload is a raw row, read by
+          integer column -- :func:`extract_column_value`.
+
+        The table's ``yields_records`` claim is simply believed: that every
+        backend's claim matches what it really yields is pinned statically,
+        over all four of them, by test_backend_record_contract.py, so the fetch
+        path pays nothing for it.
+
+        A table that yields no records is a programming error, not a data
+        error: since #239 there is no adapter score line to fall back to, so a
+        backend leaving the flag False has nothing that can read it and we
+        refuse rather than guess.  (Nothing in the tree reaches it: it guards a
+        backend added later without its migration.)
+        """
+        if is_vcf:
+            return extract_vcf_value
+        if is_bigwig:
+            if any(score_def.na_values
+                   for score_def in self.score_definitions.values()):
+                return extract_bigwig_value_na
+            return extract_bigwig_value
+        if self.table.yields_records:
+            return extract_column_value
+        raise TypeError(
+            f"{type(self.table).__name__} does not yield records, so "
+            f"there is no score line that can read it. A genomic "
+            f"position table backend must set yields_records = True "
+            f"and yield six-slot record tuples: see the record "
+            f"contract in gain.genomic_resources."
+            f"genomic_position_table.record, and "
+            f"test_backend_record_contract.py for what that backend "
+            f"is held to.")
+
+    def _resolve_score_indices(
+        self, *, is_vcf: bool, is_bigwig: bool,
+    ) -> None:
+        """Resolve each score's configured address to a payload column.
+
+        Runs after ``table.open()``, because the by-NAME case is the one thing
+        here that has to consult the table's header.
+
+        These raise rather than assert: an assert reported a misconfigured
+        resource with a message-less AssertionError naming neither the resource
+        nor the score, and ``python -O`` strips it altogether, leaving the
+        by-name branch to call ``header.index(None)`` on a table whose header
+        may itself be ``None``.  A resource config is data, and bad data is
+        reported, not asserted away.
+        """
         if is_vcf:
             # A VCF score has no column to resolve: it is addressed by INFO
-            # KEY, which is ``col_name``, and :func:`extract_vcf_value`
-            # reads that
-            # attribute directly.  This branch used to copy the same string
-            # into ``score_index`` as well, which is what made that field
-            # ``int | str`` and forced an ``isinstance`` assert at the other
-            # end; the copy said nothing the original did not.  So all that is
-            # left here is the invariant the copy used to assert.
+            # KEY, which is ``col_name``, and :func:`extract_vcf_value` reads
+            # that attribute directly.  This branch used to copy the same
+            # string into ``score_index`` as well, which is what made that
+            # field ``int | str`` and forced an ``isinstance`` assert at the
+            # other end; the copy said nothing the original did not.  So all
+            # that is left here is the invariant the copy used to assert.
             for score_def in self.score_definitions.values():
                 if score_def.col_name is None:
                     raise ValueError(
                         f"score {score_def.score_id!r} of VCF resource "
                         f"{self.resource_id!r} has no INFO key; a VCF score "
                         f"is addressed by name")
-        else:
-            # Resolve each score's configured address to a payload column.
-            #
-            # Index first, because it needs nothing from the table -- only the
-            # by-NAME case has to consult the header.  These raise rather than
-            # assert: an assert here reported a misconfigured resource with a
-            # message-less AssertionError naming neither the resource nor the
-            # score, and ``python -O`` strips it altogether, leaving the by-name
-            # branch to call ``header.index(None)`` on a table whose header may
-            # itself be ``None``.  A resource config is data, and bad data is
-            # reported, not asserted away.
+            return
+
+        if is_bigwig:
+            # A bigWig has exactly one column -- the payload, which IS the
+            # value -- so there is nothing to resolve: the answer is 0, and it
+            # is the same 0 for the canonical config (which addresses no column
+            # at all) and for the deprecated ``index: 3`` that
+            # ``validate_bigwig_scoredefs`` has already warned about.  Only
+            # ``fetch_region_value_arrays`` reads it; the per-record path
+            # indexes nothing.
             for score_def in self.score_definitions.values():
-                if score_def.col_index is not None:
-                    if score_def.col_name is not None:
-                        raise ValueError(
-                            f"score {score_def.score_id!r} of resource "
-                            f"{self.resource_id!r} configures both a column "
-                            f"name ({score_def.col_name!r}) and a column "
-                            f"index ({score_def.col_index}); they are "
-                            f"mutually exclusive")
-                    score_def.score_index = score_def.col_index
-                elif score_def.col_name is not None:
-                    if self.table.header is None:
-                        raise ValueError(
-                            f"score {score_def.score_id!r} of resource "
-                            f"{self.resource_id!r} is addressed by column "
-                            f"name ({score_def.col_name!r}), but its table "
-                            f"has no header to resolve that name against; "
-                            f"address it by column_index instead")
-                    score_def.score_index = self.table.header.index(
-                        score_def.col_name)
-                else:
+                score_def.score_index = BIGWIG_VALUE_COLUMN
+            return
+
+        # Index first, because it needs nothing from the table.
+        for score_def in self.score_definitions.values():
+            if score_def.col_index is not None:
+                if score_def.col_name is not None:
                     raise ValueError(
                         f"score {score_def.score_id!r} of resource "
-                        f"{self.resource_id!r} configures neither "
-                        f"column_name nor column_index; one is required")
+                        f"{self.resource_id!r} configures both a column "
+                        f"name ({score_def.col_name!r}) and a column "
+                        f"index ({score_def.col_index}); they are "
+                        f"mutually exclusive")
+                score_def.score_index = score_def.col_index
+            elif score_def.col_name is not None:
+                if self.table.header is None:
+                    raise ValueError(
+                        f"score {score_def.score_id!r} of resource "
+                        f"{self.resource_id!r} is addressed by column "
+                        f"name ({score_def.col_name!r}), but its table "
+                        f"has no header to resolve that name against; "
+                        f"address it by column_index instead")
+                score_def.score_index = self.table.header.index(
+                    score_def.col_name)
+            else:
+                raise ValueError(
+                    f"score {score_def.score_id!r} of resource "
+                    f"{self.resource_id!r} configures neither "
+                    f"column_name nor column_index; one is required")
+
+    def open(self) -> Self:
+        """Open genomic score resource and returns it.
+
+        **Validate and route BEFORE opening, and so before publishing.**  Every
+        input to both steps is known at construction -- the table's class, its
+        ``yields_records`` ClassVar, and the score definitions -- so neither
+        needs the open handle, and two things fall out of that order:
+
+        * a refusal costs no handle.  Routing after ``table.open()`` would
+          leave a caller that is not using the ``with`` form holding an opened
+          pysam handle it can no longer reach: ``table_loaded`` would still be
+          False, so ``close()`` would not have been reached.  Raising first
+          means there is nothing to leak.  The bigWig config validation sits
+          here for exactly that reason.
+        * ``table_loaded = True`` is what makes this score look open to
+          everyone else: from that write on, another caller's open() takes the
+          is_open() early return above and reads ``_extract_value`` straight
+          away.  Routed last, that caller could catch the score
+          published-but-unrouted -- and since #239 left the routing with no
+          default at all, that caller reads an AttributeError.  Scores are
+          shared across threads (the process-wide in-memory CNV cache;
+          gain-web-api's thread pool), so the window is reachable; this
+          ordering keeps the ROUTING out of it.  Pinned by
+          test_the_score_is_routed_before_it_reports_itself_open.
+
+        It does not make open() as a whole safe to race, and does not claim to:
+        :meth:`_resolve_score_indices` still runs after the score has published
+        itself open, so a caller that catches that window reads a score def
+        with no ``score_index`` yet.  That window is older than this ordering
+        and untouched by it -- open() is not synchronised, and making it so is
+        a separate change.
+        """
+        if self.is_open():
+            logger.info(
+                "opening already opened genomic score: %s",
+                self.resource.resource_id)
+            return self
+        is_vcf = isinstance(self.table, VCFGenomicPositionTable)
+        is_bigwig = isinstance(self.table, BigWigTable)
+
+        if is_bigwig:
+            validate_bigwig_scoredefs(
+                self.resource_id, self.score_definitions)
+        self._extract_value = self._select_value_extractor(
+            is_vcf=is_vcf, is_bigwig=is_bigwig)
+
+        self.table.open()
+        self.table_loaded = True
+        # A bigWig's score config has already been validated, and by a stricter
+        # rule: ``validate_bigwig_scoredefs`` permits no column addressing at
+        # all (bar the deprecated ``index: 3``), where this method *demands*
+        # one whenever the table reports a header.  A bigWig table has no
+        # header to speak of -- but one whose config carries a stray
+        # ``header:``/``header_mode:`` pair reports one anyway, and those keys
+        # are ignored for bigWig (see ``genomic_position_table.utils``), so
+        # they must not decide how the scores are checked either.
+        if "scores" in self.config and not is_bigwig:
+            self._validate_scoredefs()
+        self._resolve_score_indices(is_vcf=is_vcf, is_bigwig=is_bigwig)
 
         return self
 

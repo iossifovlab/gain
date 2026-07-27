@@ -7,6 +7,9 @@ from typing import Any
 
 import pytest
 import pytest_mock
+from gain.genomic_resources.bigwig_scores import (
+    extract_bigwig_value,
+)
 from gain.genomic_resources.genomic_position_table.record import (
     ALT,
     CHROM,
@@ -28,9 +31,6 @@ from gain.genomic_resources.genomic_scores import (
     PositionScore,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
-from gain.genomic_resources.score_def import (
-    extract_column_value,
-)
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     setup_bigwig,
@@ -123,15 +123,15 @@ def test_get_all_records(bigwig_table: BigWigTable) -> None:
         assert line[CHROM] == "chr1"
         assert line[POS_BEGIN] == 1
         assert line[POS_END] == 10
-        assert line[PAYLOAD][3] == pytest.approx(0.01)
+        assert line[PAYLOAD] == pytest.approx(0.01)
 
 
 def test_bigwig_yields_plain_records(bigwig_table: BigWigTable) -> None:
     # The bigWig backend is on the record contract: every line it yields is a
     # plain record tuple (exact type, not an adapter), whose PAYLOAD is the
-    # four-element interval ``(chrom, pos_begin, pos_end, value)`` -- so the
-    # value column stays addressable at index 3, the way it was through the
-    # retired BigWigLine adapter.
+    # interval's VALUE -- a bare float.  It used to be the four-element
+    # interval ``(chrom, pos_begin, pos_end, value)``, which repeated three
+    # fields the record already decodes purely so the value sat at index 3.
     with bigwig_table:
         first = next(iter(bigwig_table.get_all_records()))
 
@@ -143,9 +143,7 @@ def test_bigwig_yields_plain_records(bigwig_table: BigWigTable) -> None:
         assert first[REF] is None
         assert first[ALT] is None
 
-        payload = first[PAYLOAD]
-        assert payload == ("chr1", 1, 10, pytest.approx(0.01))
-        assert payload[3] == pytest.approx(0.01)
+        assert first[PAYLOAD] == pytest.approx(0.01)
 
 
 def test_bigwig_parser_converts_zero_based_half_open_to_closed_one_based(
@@ -156,25 +154,26 @@ def test_bigwig_parser_converts_zero_based_half_open_to_closed_one_based(
     # BigWigLine adapter produced.  The ``+1`` on the begin lives in the fetch
     # methods (left untouched), so by the time the parser sees an interval it
     # is already ``(pos_begin_1based, pos_end, value)``; the parser assembles
-    # the record around it, and the PAYLOAD repeats the interval so the value
-    # stays at index 3.  A file interval ``[0, 10)`` for chr1 reaches the
-    # parser as ``(1, 10, 0.11)`` and must become this exact record.
+    # the record around it, and the PAYLOAD is the value alone.  A file
+    # interval ``[0, 10)`` for chr1 reaches the parser as ``(1, 10, 0.11)``
+    # and must become this exact record.
     parser = build_bigwig_parser()
     assert parser("chr1", (1, 10, 0.11)) == (
-        "chr1", 1, 10, None, None, ("chr1", 1, 10, 0.11))
-    # A mapped/reference contig threaded in from the query is carried on both
-    # the record's CHROM slot and inside the payload -- mapping-on-result.
+        "chr1", 1, 10, None, None, 0.11)
+    # A mapped/reference contig threaded in from the query is carried on the
+    # record's CHROM slot -- mapping-on-result.  The payload no longer repeats
+    # it, which is one of the three fields the narrowing removed.
     assert parser("2", (6, 10, 0.4)) == (
-        "2", 6, 10, None, None, ("2", 6, 10, 0.4))
+        "2", 6, 10, None, None, 0.4)
 
 
-def test_bigwig_score_reads_value_at_index_3(
+def test_bigwig_score_is_read_by_the_identity_extractor(
     tmp_path: pathlib.Path,
 ) -> None:
-    # A bigWig score is configured at column ``index: 3`` (the value column of
-    # the four-element interval payload).  GenomicScore.open must route it to
-    # the by-index column extractor, whose read of the payload resolves that
-    # score -- the record-path equivalent of the retired ``BigWigLine.get(3)``.
+    # A bigWig record's payload IS its value, so GenomicScore.open routes it
+    # to the identity extractor -- not to the by-index column extractor the
+    # other record backends use.  There is no column to resolve and no parse
+    # to run; see gain.genomic_resources.bigwig_scores.
     builder = (
         a_bigwig_score()
         .with_score("bw", "float")
@@ -184,7 +183,7 @@ def test_bigwig_score_reads_value_at_index_3(
     repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
     score = PositionScore(repo.get_resource("bw")).open()
     with score:
-        assert score._extract_value is extract_column_value
+        assert score._extract_value is extract_bigwig_value
         record = next(iter(score.fetch_records("chr1", 5, 5)))
         assert type(record) is tuple
         assert score.get_score_from_record(record, "bw") == \
@@ -957,8 +956,7 @@ def test_buffered_fetch_yields_nothing_at_a_position_inside_a_gap(
     ) as (table, recorder):
         expected = {
             pos: [
-                ("chr1", start + 1, stop, None, None,
-                 ("chr1", start + 1, stop, value))
+                ("chr1", start + 1, stop, None, None, value)
                 for start, stop, value in (
                     recorder.raw.intervals("chr1", pos - 1, pos) or [])
             ]
@@ -1030,8 +1028,7 @@ def test_chunking_is_invisible_in_the_records_yielded(
         direct_fetch_size=budget, buffer_fetch_size=budget,
     ) as (table, recorder):
         expected = [
-            ("chr1", start + 1, stop, None, None,
-             ("chr1", start + 1, stop, value))
+            ("chr1", start + 1, stop, None, None, value)
             for start, stop, value in recorder.raw.intervals(
                 "chr1", 0, chrom_len)
         ]

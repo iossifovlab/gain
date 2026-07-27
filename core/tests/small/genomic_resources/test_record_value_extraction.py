@@ -8,15 +8,18 @@ must return *exactly* what looping the single one returns -- including
 ``None`` for an absent key, ``None`` for a configured NA value, and ``None``
 (plus a logged parse failure) for an unparseable value.
 
-There are two extractors, chosen once per opened score by
+There are three extractors, chosen once per opened score by
 ``GenomicScore.open`` from the table's type, and they differ only in where a
 raw value comes from:
 
-``extract_column_value`` (the in-memory, tabix and bigWig record backends)
-indexes the record's payload by the resolved integer column.
+``extract_column_value`` (the in-memory and tabix record backends) indexes the
+record's payload by the resolved integer column.
 
 ``extract_vcf_value`` (the VCF backend) looks an INFO field up by name on the
 proxies the payload carries, and selects it by allele.
+
+``extract_bigwig_value`` (the bigWig backend) returns the payload, which IS
+the value -- no index, no parse.
 
 The NA and parse tests run against **both** column-payload record backends,
 because their payloads are different objects: the in-memory backend's payload
@@ -34,6 +37,9 @@ import logging
 from typing import Any
 
 import pytest
+from gain.genomic_resources.bigwig_scores import (
+    extract_bigwig_value,
+)
 from gain.genomic_resources.genomic_position_table.record import (
     ALT,
     CHROM,
@@ -301,13 +307,12 @@ def test_the_score_is_routed_before_it_reports_itself_open(tmp_path) -> None:
         assert seen_at_publication == [extract_column_value]
 
 
-def test_bigwig_backend_is_routed_to_the_column_extractor(tmp_path) -> None:
-    # Since #238 the bigWig backend is on the record contract too: it yields
-    # records whose payload is the four-element interval, so the score is routed
-    # to extract_column_value and read by index (``index: 3`` is the value
-    # cell), not
-    # to the retired adapter ScoreLine (deleted in #239).  It is the third
-    # backend on that leg, alongside in-memory and tabix.
+def test_bigwig_backend_is_routed_to_the_identity_extractor(tmp_path) -> None:
+    # Since #238 the bigWig backend is on the record contract too, and its
+    # payload is now the interval's VALUE rather than a four-element row.  So
+    # it is routed to extract_bigwig_value -- an identity, with no column index
+    # and no parse -- and not to the by-index extract_column_value the two
+    # tabular backends take.  See gain.genomic_resources.bigwig_scores.
     builder = (
         a_bigwig_score()
         .with_score("bw", "float")
@@ -323,7 +328,7 @@ def test_bigwig_backend_is_routed_to_the_column_extractor(tmp_path) -> None:
         assert score.table.yields_records is True
         record = next(iter(score.fetch_records("chr1", 5, 5)))
         assert type(record) is tuple
-        assert score._extract_value is extract_column_value
+        assert score._extract_value is extract_bigwig_value
         assert score.get_score_from_record(record, "bw") == pytest.approx(0.11)
 
 
