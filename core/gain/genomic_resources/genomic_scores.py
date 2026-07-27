@@ -1967,7 +1967,7 @@ class AlleleScore(GenomicScore):
     def __init__(self, resource: GenomicResource):
         if resource.get_type() not in {"allele_score", "np_score"}:
             raise ValueError(
-                "The resrouce provided to AlleleScore should be of"
+                "The resource provided to AlleleScore should be of "
                 f"'allele_score' type, not a '{resource.get_type()}'")
         if resource.get_type() == "np_score":
             logger.warning(
@@ -2304,7 +2304,7 @@ class CnvCollection(GenomicScore):
         return cast(dict[str, GenomicScoreDef], scores)
 
 
-_INMEMORY_CNV_CACHE: dict[str, CnvCollection] = {}
+_INMEMORY_CNV_CACHE: dict[tuple[str, str], CnvCollection] = {}
 _INMEMORY_CNV_CACHE_LOCK = Lock()
 
 
@@ -2329,8 +2329,10 @@ def build_allele_score_from_resource(
 ) -> AlleleScore:
     """Build an allele score from an `allele_score` resource.
 
-    The deprecated `np_score` resource type is accepted as well; it builds
-    an `AlleleScore` in substitutions mode.
+    The deprecated `np_score` resource type is accepted as well. It builds
+    an `AlleleScore` that defaults to substitutions mode -- unless the
+    resource configures `allele_score_mode` explicitly, which is honoured
+    for either resource type.
     """
     return AlleleScore(resource)
 
@@ -2350,11 +2352,16 @@ def build_cnv_collection_from_resource(
     """Build a CNV collection from a `cnv_collection` resource.
 
     CNV collections are cached in memory and shared process-wide, keyed by
-    resource id and repository URL. Callers must not assume they own the
-    returned object's lifecycle -- in particular, closing it closes it for
-    every other holder.
+    versioned resource id and repository URL. Callers must not assume they
+    own the returned object's lifecycle -- in particular, closing it closes
+    it for every other holder (see gain#350).
+
+    The key uses ``get_full_id()`` rather than ``get_id()``: the latter is
+    version-less, so two versions of one resource id would share a single
+    cache entry and the second caller would receive the first version's
+    data.
     """
-    cache_id = f"{resource.get_id()}_{resource.get_repo_url()}"
+    cache_id = (resource.get_full_id(), resource.get_repo_url())
 
     with _INMEMORY_CNV_CACHE_LOCK:
         if cache_id not in _INMEMORY_CNV_CACHE:
@@ -2379,6 +2386,13 @@ def build_score_from_resource(
     Dispatches on the resource type to the corresponding typed factory. Use
     the typed factories directly when the resource type is known statically;
     this one exists for callers handed a resource of unknown type.
+
+    Beware the asymmetry inherited from the typed factories: a
+    `cnv_collection` resource yields a process-wide CACHED, shared
+    `CnvCollection`, while `position_score` and `allele_score` yield a fresh
+    instance every call. A caller that closes what it got back therefore
+    closes it for every other holder of the cached collection (see
+    gain#350).
     """
     resource_type = resource.get_type()
     if resource_type == "position_score":

@@ -7,15 +7,13 @@ from gain.genomic_resources.genomic_position_table.record import (
     POS_BEGIN,
     POS_END,
 )
-from gain.genomic_resources.genomic_scores import build_score_from_resource
+from gain.genomic_resources.genomic_scores import (
+    build_position_score_from_resource,
+)
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
     a_position_score,
 )
-
-
-def _score(resource: object) -> object:
-    return build_score_from_resource(resource)  # type: ignore[arg-type]
 
 
 def test_region_value_arrays_one_based(tmp_path: pathlib.Path) -> None:
@@ -32,7 +30,7 @@ def test_region_value_arrays_one_based(tmp_path: pathlib.Path) -> None:
         .with_tabix()
         .build_resource(tmp_path)
     )
-    score = _score(resource)
+    score = build_position_score_from_resource(resource)
     with score.open() as opened:
         sidx = opened.score_definitions["s"].score_index
         batches = list(opened.table.get_region_value_arrays(
@@ -61,7 +59,7 @@ def test_region_value_arrays_zero_based(tmp_path: pathlib.Path) -> None:
         .with_tabix()
         .build_resource(tmp_path)
     )
-    score = _score(resource)
+    score = build_position_score_from_resource(resource)
     with score.open() as opened:
         sidx = opened.score_definitions["s"].score_index
         batches = list(opened.table.get_region_value_arrays(
@@ -96,7 +94,7 @@ def test_region_value_arrays_stops_at_query_end(
         .with_tabix()
         .build_resource(tmp_path)
     )
-    score = _score(resource)
+    score = build_position_score_from_resource(resource)
     with score.open() as opened:
         sidx = opened.score_definitions["s"].score_index
         # end=5: the row beginning at 7 is past the query and excluded,
@@ -125,7 +123,7 @@ def test_region_value_arrays_batches(tmp_path: pathlib.Path) -> None:
         .with_tabix()
         .build_resource(tmp_path)
     )
-    score = _score(resource)
+    score = build_position_score_from_resource(resource)
     with score.open() as opened:
         sidx = opened.score_definitions["s"].score_index
         batches = list(opened.table.get_region_value_arrays(
@@ -150,7 +148,7 @@ def test_bigwig_region_value_arrays(tmp_path: pathlib.Path) -> None:
         .with_chrom_lens({"chr1": 100})
         .build_resource(tmp_path)
     )
-    score = _score(resource)
+    score = build_position_score_from_resource(resource)
     with score.open() as opened:
         sidx = opened.score_definitions["bw"].score_index
         batches = list(opened.table.get_region_value_arrays(
@@ -187,7 +185,7 @@ def test_bigwig_region_value_arrays_out_of_range_column_raises(
         .with_chrom_lens({"chr1": 100})
         .build_resource(tmp_path)
     )
-    score = _score(resource)
+    score = build_position_score_from_resource(resource)
     with score.open() as opened:
         with pytest.raises(IndexError):
             list(opened.table.get_region_value_arrays(

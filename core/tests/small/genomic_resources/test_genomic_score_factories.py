@@ -8,11 +8,12 @@ a mismatched resource type, the CNV collection's shared-instance caching, and
 the ``_from_resource_id`` repository resolution.
 """
 import pathlib
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 
 import pytest
 import pytest_mock
 from gain.genomic_resources.genomic_scores import (
+    _INMEMORY_CNV_CACHE,
     AlleleScore,
     CnvCollection,
     GenomicScore,
@@ -38,10 +39,31 @@ from gain.genomic_resources.testing.builders import (
     an_allele_score,
 )
 
+# The wrong-resource-type rejection message, spelled out in full: the three
+# score constructors each build it by hand, so a loose `should be of` match
+# lets one of them drift (a dropped space, a misspelled word) unnoticed.
+_WRONG_TYPE_MESSAGE = (
+    r"The resource provided to \w+ should be of "
+    r"'\w+' type, not a '\w+'"
+)
+
 # A `build_*_from_resource` factory: resource in, concrete score out.
 FromResource = Callable[[GenomicResource], GenomicScore]
 # A `build_*_from_resource_id` factory: `grr` defaults to the ambient GRR.
 FromResourceId = Callable[..., GenomicScore]
+
+
+@pytest.fixture(autouse=True)
+def _clean_cnv_cache() -> Generator[None, None, None]:
+    """Isolate every test from the process-wide CNV collection cache.
+
+    The cache is a module global that outlives the test that filled it;
+    without this a stale entry from one test can satisfy another test's
+    lookup, and a test asserting on caching can pass for the wrong reason.
+    """
+    _INMEMORY_CNV_CACHE.clear()
+    yield
+    _INMEMORY_CNV_CACHE.clear()
 
 
 @pytest.fixture
@@ -102,7 +124,7 @@ def test_from_resource_rejects_a_mismatched_resource_type(
     factory: FromResource,
     resource_id: str,
 ) -> None:
-    with pytest.raises(ValueError, match="should be of"):
+    with pytest.raises(ValueError, match=_WRONG_TYPE_MESSAGE):
         factory(grr.get_resource(resource_id))
 
 
@@ -116,7 +138,7 @@ def test_from_resource_id_rejects_a_mismatched_resource_type(
     factory: FromResourceId,
     resource_id: str,
 ) -> None:
-    with pytest.raises(ValueError, match="should be of"):
+    with pytest.raises(ValueError, match=_WRONG_TYPE_MESSAGE):
         factory(resource_id, grr)
 
 
@@ -137,6 +159,44 @@ def test_cnv_collection_is_cached_and_shared(
     # ... and the generic dispatcher hands back that same cached instance.
     assert build_score_from_resource(resource) is first
     assert build_cnv_collection_from_resource_id("scores/cnv", grr) is first
+
+
+def test_cnv_collection_cache_does_not_collide_across_versions(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Two versions of one resource id are two distinct collections.
+
+    ``get_id()`` is version-less, so keying the cache on it alone makes
+    ``cnvs(2.0)`` collide with ``cnvs(1.0)`` and silently hand back the
+    older version's data.
+    """
+    repo = (
+        a_grr()
+        .with_resource("cnvs(1.0)", a_cnv_collection().with_data("""
+            chrom  pos_begin  pos_end  score
+            1      100        200      0.1
+        """))
+        .with_resource("cnvs(2.0)", a_cnv_collection().with_data("""
+            chrom  pos_begin  pos_end  score
+            1      300        400      0.2
+        """))
+        .build_repo(tmp_path)
+    )
+
+    old = build_cnv_collection_from_resource(repo.get_resource("cnvs(1.0)"))
+    new = build_cnv_collection_from_resource(repo.get_resource("cnvs(2.0)"))
+
+    assert old is not new
+    assert old.resource.get_full_id() == "cnvs(1.0)"
+    assert new.resource.get_full_id() == "cnvs(2.0)"
+
+    with old.open() as old_open, new.open() as new_open:
+        assert [(c.chrom, c.pos_begin, c.pos_end)
+                for c in old_open.fetch_cnvs("1", 1, 1000)] == \
+            [("1", 100, 200)]
+        assert [(c.chrom, c.pos_begin, c.pos_end)
+                for c in new_open.fetch_cnvs("1", 1, 1000)] == \
+            [("1", 300, 400)]
 
 
 def test_position_and_allele_scores_are_not_cached(
