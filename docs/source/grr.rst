@@ -337,24 +337,14 @@ Repository/Resource options:
 Searching resources
 -------------------
 
-Every GRR carries a full-text search (FTS) index of its resources. This index is what
-backs the ``-s/--search`` option of ``grr_browse`` and the resource search of the GAIn
-web interface. Because the index includes the ``meta.labels`` of each resource, labels
-are searchable: any label key you define becomes a field you can filter on.
+Every GRR carries a full-text search (FTS) index of its resources. This index is what backs the ``-s/--search`` option of ``grr_browse`` and the resource search of the GAIn web interface. Because the index includes the ``meta.labels`` of each resource, labels are searchable: any label key you define becomes a field you can filter on.
 
 The search index
 ^^^^^^^^^^^^^^^^
 
-The index is stored at the root of the repository as ``.CONTENTS.sqlite3.gz`` — a
-gzipped SQLite database holding a single `FTS5 <https://www.sqlite.org/fts5.html>`_
-virtual table named ``contents``.
+The index is stored at the root of the repository as ``.CONTENTS.sqlite3.gz`` — a gzipped SQLite database holding a single `FTS5 <https://www.sqlite.org/fts5.html>`_ virtual table named ``contents``.
 
-The index is built and refreshed by ``grr_manage repo-repair``. It is *not* created by
-``repo-init``, and *not* refreshed by ``repo-manifest``, ``repo-stats``, or
-``repo-info`` — so a repository that has never been repaired has no searchable index.
-Repair skips the rebuild when the repository contents are unchanged (the index records
-the md5 of the ``.CONTENTS`` file it was built from), so re-running it on an untouched
-repository is cheap.
+The index is built and refreshed by ``grr_manage repo-repair``. It is *not* created by ``repo-init``, and *not* refreshed by ``repo-manifest``, ``repo-stats``, or ``repo-info`` — so a repository that has never been repaired has no searchable index. Repair skips the rebuild when the repository contents are unchanged (the index records the md5 of the ``.CONTENTS`` file it was built from), so re-running it on an untouched repository is cheap.
 
 Indexed fields
 ^^^^^^^^^^^^^^
@@ -378,11 +368,9 @@ Each resource contributes one row. Five fields are always present:
    * - ``summary``
      - The ``meta.summary`` of the resource.
 
-Resource implementations may add their own fields — score resources, for example,
-contribute ``score_ids`` and ``score_descriptions``.
+Resource implementations may add their own fields — score resources, for example, contribute ``score_ids`` and ``score_descriptions``.
 
-**In addition, every key of ``meta.labels`` becomes a field of its own**, holding that
-resource's value for the label. A resource configured like this:
+**In addition, every key of ``meta.labels`` becomes a field of its own**, holding that resource's value for the label. A resource configured like this:
 
 .. code-block:: yaml
 
@@ -394,14 +382,9 @@ resource's value for the label. A resource configured like this:
         reference_genome: hg38/genomes/GRCh38-hg38
         assay_term_name: ChIP-seq
 
-contributes the fields ``reference_genome`` and ``assay_term_name`` alongside the fixed
-five.
+contributes the fields ``reference_genome`` and ``assay_term_name`` alongside the fixed five.
 
-The field set of a repository is the **union** of the fields of all its resources: a
-label defined by a single resource becomes a field of the whole index, empty for every
-other resource. This means the searchable fields differ from repository to repository,
-and a query naming a field that no resource in the target repository defines is an
-error rather than an empty result (see `Limitations`_ below).
+The field set of a repository is the **union** of the fields of all its resources: a label defined by a single resource becomes a field of the whole index, empty for every other resource. This means the searchable fields differ from repository to repository, and a query naming a field that no resource in the target repository defines is an error rather than an empty result (see `Limitations`_ below).
 
 Searching by label
 ^^^^^^^^^^^^^^^^^^
@@ -425,96 +408,38 @@ available. A label is queried with the ``<field> : <value>`` column filter:
     grr_browse -g grr_definition.yaml -s 'assay_term_name : "ChIP-seq" NOT target : CTCF'
     grr_browse -g grr_definition.yaml -s 'biosample_summary : liv*'
 
-A search term with no field prefix is matched against *all* fields at once, labels
-included:
+A search term with no field prefix is matched against *all* fields at once, labels included:
 
 .. code-block:: bash
 
     grr_browse -g grr_definition.yaml -s 'liver'
 
-``--search`` and ``--type`` are independent and combine with AND. Unlike ``--search``,
-``--type`` is an exact match on the resource type, not a full-text match:
+``--search`` and ``--type`` are independent and combine with AND. Unlike ``--search``, ``--type`` is an exact match on the resource type, not a full-text match:
 
 .. code-block:: bash
 
     grr_browse -g grr_definition.yaml -t position_score -s 'reference_genome : hg38'
 
-Listing the available fields
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Because the field set depends on the labels used in a given repository, there is no
-fixed list to consult. To see which fields a repository actually offers, read the
-schema of its index:
-
-.. code-block:: python
-
-    import gzip
-    import pathlib
-    import sqlite3
-
-    raw = gzip.decompress(
-        pathlib.Path("<repository root>/.CONTENTS.sqlite3.gz").read_bytes())
-
-    connection = sqlite3.connect(":memory:")
-    connection.deserialize(raw)
-    print(connection.execute(
-        "SELECT sql FROM sqlite_master WHERE name = 'contents'").fetchone()[0])
-
-For a remote repository, download ``.CONTENTS.sqlite3.gz`` from the repository URL
-first.
-
-Searching from the web API
-^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-The GAIn web API exposes the same index through ``GET /api/resources/search``, which
-accepts ``search``, ``type``, ``page``, and ``page_size`` query parameters. The
-``search`` value is the same FTS5 expression accepted by ``grr_browse -s``, so label
-filters work there too:
-
-.. code-block:: text
-
-    GET /api/resources/search?search=reference_genome%20%3A%20hg38&type=position_score
-
-Note that this endpoint only returns resources of the types the annotation pipeline
-editor supports (``position_score``, ``allele_score``, ``gene_score``,
-``gene_set_collection``, ``cnv_collection``, ``genome``, ``gene_models``, and
-``liftover_chain``); resources of other types are filtered out of the response even
-when they match the query.
-
 Limitations
 ^^^^^^^^^^^
 
-Label search inherits the constraints of the underlying FTS5 index. The following are
-worth knowing before relying on it.
+Label search inherits the constraints of the underlying FTS5 index. The following are worth knowing before relying on it.
 
-**Label keys must be valid SQLite identifiers.** Each key is used directly as a column
-name of the ``contents`` table. A key containing a hyphen or a space (``cell-type``,
-``cell type``) makes the index unbuildable — and because the table is created once from
-the union of all labels in the repository, a single such key breaks the index for the
-*entire* repository, not just for the offending resource. Use underscores
-(``cell_type``).
+**Label keys must be valid SQLite identifiers.** Each key is used directly as a column name of the ``contents`` table. A key containing a hyphen or a space (``cell-type``, ``cell type``) makes the index unbuildable — and because the table is created once from the union of all labels in the repository, a single such key breaks the index for the *entire* repository, not just for the offending resource. Use underscores (``cell_type``).
 
-**Avoid label keys that collide with the fixed fields.** A label named ``description``,
-``summary``, ``type``, ``id``, or ``full_id`` overwrites the corresponding built-in
-value for that resource in the index, which then becomes unsearchable.
+**Avoid label keys that collide with the fixed fields.** A label named ``description``, ``summary``, ``type``, ``id``, or ``full_id`` overwrites the corresponding built-in value for that resource in the index, which then becomes unsearchable.
 
 **Search terms are FTS5 expressions, not literal strings.** Characters that are
-meaningful to the query parser — most commonly ``-`` and ``:`` — must be quoted, or the
-search fails with an error rather than returning no results:
+meaningful to the query parser — most commonly ``-`` and ``:`` — must be quoted, or the search fails with an error rather than returning no results:
 
 .. code-block:: bash
 
     grr_browse -g grr_definition.yaml -s 'ChIP-seq'      # error: no such column: seq
     grr_browse -g grr_definition.yaml -s '"ChIP-seq"'    # correct
 
-**A query naming an unknown field is an error.** ``assay_term_name : foo`` fails with
-``no such column: assay_term_name`` against a repository in which no resource carries
-that label, rather than matching nothing.
+**A query naming an unknown field is an error.** ``assay_term_name : foo`` fails with ``no such column: assay_term_name`` against a repository in which no resource carries that label, rather than matching nothing.
 
-**Matching is by token, not by equality.** Label values are tokenized like any other
-text, so ``reference_genome : hg38`` matches the resource whose label value is
-``hg38/genomes/GRCh38.p14``. This is usually what you want, but it is not an exact-value
-filter; there is no faceted or exact-match search over label values.
+**Matching is by token, not by equality.** Label values are tokenized like any other text, so ``reference_genome : hg38`` matches the resource whose label value is ``hg38/genomes/GRCh38.p14``. This is usually what you want, but it is not an exact-value filter; there is no faceted or exact-match search over label values.
 
 
 Version control for GRRs
