@@ -134,6 +134,31 @@ def parse_vcf_scoredefs(
     config_scoredefs: dict[str, GenomicScoreDef] | None, *,
     merge: bool = False,
 ) -> dict[str, GenomicScoreDef]:
+    """Build score definitions from a VCF header's INFO metadata.
+
+    Every INFO field the header declares becomes a score, typed through
+    ``VCF_TYPE_CONVERSION_MAP`` and described by the header's own description.
+    This is why a VCF resource needs no ``scores:`` block to be usable: the
+    file documents its own scores.
+
+    ``value_parser`` is set to ``None`` for ``Number`` of 1, ``A`` or ``R``,
+    because pysam already decodes those to a scalar (or to a tuple that
+    :func:`extract_vcf_value` indexes by allele).  Every other shape keeps
+    ``converter``, which joins a tuple on '|' -- the VCF-local convention for
+    a field whose arity the header does not fix.
+
+    ``config_scoredefs`` is what the resource's own ``scores:`` block declared,
+    and overrides the header for the fields it names: value type, description,
+    aggregators and NA values all take the config's value when it gives one,
+    falling back to the header's.  Column addressing is NOT overridable -- a
+    VCF score is its INFO key, so ``col_name``/``col_index`` always come from
+    the header side.
+
+    ``merge`` decides what happens to header fields the config does not
+    mention: ``False`` (the default) returns only the configured scores, so
+    the config acts as a filter; ``True`` keeps the rest as the header
+    defined them.  It is the resource's ``merge_vcf_scores`` setting.
+    """
     def converter(val: Any) -> Any:
         try:
             if isinstance(val, tuple):
