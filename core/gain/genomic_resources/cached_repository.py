@@ -276,16 +276,41 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
             proto.invalidate()
         self._all_resources = None
 
+    def _to_cache_resource(
+        self, remote_resource: GenomicResource,
+    ) -> GenomicResource:
+        """Return the cache-backed twin of a resource from the child repo.
+
+        The child yields resources bound to the *remote* protocol; handing
+        those out would let callers read files straight from the remote,
+        neither consulting nor populating the cache. Every resource this
+        repository produces goes through here. See #428.
+
+        Prefers the caching protocol's memoized instance, so the resource is
+        the same object ``get_all_resources()`` hands out rather than a
+        parallel one. That dict is not always usable, though: cache
+        protocols are keyed by ``proto_id``, and two children of a group can
+        share one (``repository_factory`` defaults a group child's id to
+        ``""``), in which case the dict was built from a *different*
+        remote and simply does not hold this resource. Wrap directly rather
+        than raising -- such a repository still enumerates and searches on
+        the pre-#428 code, so failing here would be a regression. (Colliding
+        ids also make the two protocols share a cache directory, which this
+        does not attempt to fix.)
+        """
+        cache_proto = self._get_or_create_cache_proto(remote_resource.proto)
+        cached = cache_proto.get_all_resources_dict().get(
+            remote_resource.get_full_id())
+        if cached is not None:
+            return cached
+        return CacheResource(remote_resource, cache_proto)
+
     def get_all_resources(self) -> Generator[GenomicResource, None, None]:
         if self._all_resources is None:
-            self._all_resources = []
-            for remote_resource in self.child.get_all_resources():
-                cache_proto = self._get_or_create_cache_proto(
-                    remote_resource.proto)
-                version_constraint = f"={remote_resource.get_version_str()}"
-                self._all_resources.append(
-                    cache_proto.get_resource(
-                        remote_resource.resource_id, version_constraint))
+            self._all_resources = [
+                self._to_cache_resource(remote_resource)
+                for remote_resource in self.child.get_all_resources()
+            ]
         yield from self._all_resources
 
     def search_resources(
@@ -293,23 +318,12 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
         search_term: str | None = None,
         resource_type: str | None = None,
     ) -> Generator[GenomicResource, None, None]:
-        # The child yields resources bound to the *remote* protocol; handing
-        # those out would let callers read files straight from the remote,
-        # neither consulting nor populating the cache. Every resource this
-        # repository produces must be cache-backed, exactly as in
-        # get_all_resources/get_resource. See #428.
-        #
-        # The lookup cannot KeyError: the cache protocol's dict is keyed off
-        # the same remote_protocol.get_all_resources() that the child's FTS
-        # resolution indexes with an equally unguarded lookup. Nor does it
-        # cost an extra enumeration -- the FTS search already builds the
-        # remote's dict to resolve its own hits.
+        # Resolving each hit costs no extra remote enumeration: the FTS
+        # search already builds the remote's resource dict to resolve its
+        # own hits.
         for remote_resource in self.child.search_resources(
                 search_term, resource_type):
-            cache_proto = self._get_or_create_cache_proto(
-                remote_resource.proto)
-            yield cache_proto.get_all_resources_dict()[
-                remote_resource.get_full_id()]
+            yield self._to_cache_resource(remote_resource)
 
     def _get_or_create_cache_proto(
             self, proto: ReadOnlyRepositoryProtocol) -> CachingProtocol:
@@ -360,10 +374,7 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
         if remote_resource is None:
             return None
 
-        cache_proto = self._get_or_create_cache_proto(remote_resource.proto)
-        return cache_proto.get_resource(
-            remote_resource.resource_id,
-            f"={remote_resource.get_version_str()}")
+        return self._to_cache_resource(remote_resource)
 
     def get_resource(
             self, resource_id: str,

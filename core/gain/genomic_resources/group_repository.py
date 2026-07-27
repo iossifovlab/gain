@@ -30,12 +30,19 @@ class GenomicResourceGroupRepo(GenomicResourceRepo):
             repository_id: str | None = None) -> GenomicResource | None:
 
         for child_repo in self.children:
-            if repository_id is not None and \
-                    child_repo.repo_id is not None and \
-                    child_repo.repo_id != repository_id:
-                continue
-            res = child_repo.find_resource(
-                resource_id, version_constraint, repository_id)
+            if repository_id is not None \
+                    and child_repo.repo_id == repository_id:
+                # This child *is* the requested repository. Re-applying the
+                # filter inside it would compare repository_id against its
+                # own children's ids and find nothing.
+                res = child_repo.find_resource(
+                    resource_id, version_constraint)
+            else:
+                # Forward rather than skip: a non-matching child may be a
+                # nested group that contains the requested repository. A
+                # non-matching leaf repo filters itself out and returns None.
+                res = child_repo.find_resource(
+                    resource_id, version_constraint, repository_id)
             if res:
                 return res
 

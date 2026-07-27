@@ -1274,3 +1274,104 @@ def test_find_and_get_resource_agree_on_group_precedence(
     assert found.version == (1, 0)
     assert got.version == (1, 0)
     assert found.version == got.version
+
+
+def _proto_repo(
+    root: pathlib.Path, proto_id: str, content: dict[str, Any],
+) -> GenomicResourceProtocolRepo:
+    setup_directories(root, content)
+    proto = cast(
+        FsspecReadWriteProtocol, build_fsspec_protocol(proto_id, str(root)))
+    proto.build_content_file()
+    return GenomicResourceProtocolRepo(proto)
+
+
+@pytest.fixture
+def colliding_proto_id_repository(
+    tmp_path: pathlib.Path,
+) -> GenomicResourceCachedRepo:
+    """Cached repo whose two group children share one (empty) proto id.
+
+    Not contrived: ``repository_factory._build_group_repository`` defaults a
+    child's id to ``""``, so any group definition whose children omit ``id``
+    lands here. Cache protocols are keyed by ``proto_id``, so both children
+    resolve to a single caching protocol whose resource dict holds only the
+    first child's resources.
+    """
+    children: list[Any] = [
+        _proto_repo(tmp_path / "a", "", {
+            "one(1.0)": {GR_CONF_FILE_NAME: "", "data.txt": "a"},
+        }),
+        _proto_repo(tmp_path / "b", "", {
+            "two(1.0)": {GR_CONF_FILE_NAME: "", "data.txt": "b"},
+        }),
+    ]
+    return GenomicResourceCachedRepo(
+        GenomicResourceGroupRepo(children, "top"),
+        f"file://{tmp_path}/cache")
+
+
+def test_search_resources_survives_colliding_proto_ids(
+    colliding_proto_id_repository: GenomicResourceCachedRepo,
+) -> None:
+    """A resource missing from the cache proto's dict must not raise.
+
+    Resolving hits through that dict is an optimisation, not a guarantee.
+    Searching this repository worked before #428 and must keep working -- a
+    bare KeyError escaping the generator would surface as a 500 from the web
+    API search endpoint.
+    """
+    resources = list(colliding_proto_id_repository.search_resources())
+
+    assert {res.resource_id for res in resources} == {"one", "two"}
+    for res in resources:
+        assert isinstance(res.proto, CachingProtocol)
+
+
+def test_find_resource_returns_none_rather_than_raising(
+    colliding_proto_id_repository: GenomicResourceCachedRepo,
+) -> None:
+    """find_resource's contract is to return None, never to raise.
+
+    Resolving the wrapped resource via the cache protocol's *get_resource*
+    would raise FileNotFoundError here; annotation_factory branches on
+    ``resource is None`` and would surface that instead of its own message.
+
+    Enumerate first: that binds the shared (empty) proto id to the *first*
+    child's caching protocol. Without it a lone find_resource creates the
+    caching protocol from its own child and the ids never collide.
+    """
+    assert len(list(colliding_proto_id_repository.get_all_resources())) == 2
+
+    found = colliding_proto_id_repository.find_resource("two")
+    assert found is not None
+    assert isinstance(found.proto, CachingProtocol)
+
+    assert colliding_proto_id_repository.find_resource("no_such_res") is None
+
+
+def test_repository_id_reaches_a_repo_nested_in_a_subgroup(
+    tmp_path: pathlib.Path,
+) -> None:
+    """repository_id must descend through intermediate groups.
+
+    Skipping every child whose id does not match means a group never
+    descends into a sub-group holding the requested repository.
+    """
+    leaf = _proto_repo(tmp_path / "leaf", "leaf_repo", {
+        "one(1.0)": {GR_CONF_FILE_NAME: "", "data.txt": "leaf"},
+    })
+    other = _proto_repo(tmp_path / "other", "other_repo", {
+        "one(2.0)": {GR_CONF_FILE_NAME: "", "data.txt": "other"},
+    })
+    outer = GenomicResourceGroupRepo(
+        [other, GenomicResourceGroupRepo([leaf], "inner_group")],
+        "outer_group")
+
+    found = outer.find_resource("one", repository_id="leaf_repo")
+    assert found is not None
+    assert found.version == (1, 0)
+
+    assert outer.find_resource(
+        "one", repository_id="other_repo") is not None
+    assert outer.find_resource("one", repository_id="nope") is None
