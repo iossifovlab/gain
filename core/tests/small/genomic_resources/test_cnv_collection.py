@@ -136,7 +136,7 @@ def test_cnv_collection_resource(
     attributes: list[dict[str, Any]],
 ) -> None:
     with cnvs.open() as cnv_collection:
-        aaa = cast(CnvCollection, cnv_collection).fetch_cnvs(
+        aaa = cnv_collection.fetch_cnvs(
             chrom, beg, end)
         assert len(aaa) == count
         assert [a.attributes for a in aaa] == attributes

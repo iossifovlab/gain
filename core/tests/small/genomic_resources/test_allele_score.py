@@ -219,7 +219,10 @@ def test_allele_score_np_score_defaults_to_substitutions(
 
     assert score.substitutions_mode()
     assert not score.alleles_mode()
-    assert any("deprecated" in rec.message for rec in caplog.records)
+    # Exactly one -- the warning lives in AlleleScore.__init__ alone; the
+    # build_score_from_resource dispatcher used to emit a second copy.
+    assert len(
+        [rec for rec in caplog.records if "deprecated" in rec.message]) == 1
 
 
 def test_allele_score_fetch_scores_invalid_chromosome() -> None:

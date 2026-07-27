@@ -1,7 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 """Tests to improve coverage of genomic_scores module."""
 import logging
-from typing import cast
 
 import pytest
 from gain.genomic_resources import GenomicResource
@@ -11,6 +10,7 @@ from gain.genomic_resources.genomic_scores import (
     GenomicScoreDef,
     PositionScore,
     RecordScoreLine,
+    build_position_score_from_resource,
     build_score_from_resource,
 )
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME
@@ -643,7 +643,7 @@ def test_position_score_fetch_region_all() -> None:
         """,
     })
 
-    score = cast(PositionScore, build_score_from_resource(res))
+    score = build_position_score_from_resource(res)
     score.open()
     result = list(score.fetch_region(None, None, None))
     assert len(result) == 4
