@@ -573,6 +573,22 @@ class GenomicResource:
             self._manifest = self.proto.get_manifest(self)
         return self._manifest
 
+    def get_loaded_manifest(self) -> Manifest | None:
+        """Return the resource manifest without ever building one.
+
+        :meth:`get_manifest` falls back to *building* the manifest on a
+        read-write protocol -- an md5 scan of every byte of the resource
+        that also writes ``.grr/*.state`` files, and that fails outright on
+        a read-only GRR mount.  A pure read path that merely wants to
+        consult the manifest uses this instead and copes with ``None``.
+        """
+        if self._manifest is None:
+            try:
+                self._manifest = self.proto.load_manifest(self)
+            except FileNotFoundError:
+                return None
+        return self._manifest
+
     def get_file_url(self, filename: str) -> str:
         return self.proto.get_resource_file_url(self, filename)
 
@@ -627,9 +643,9 @@ TABIX_INDEX_SUFFIXES = (".tbi", ".csi")
 
 
 def resolve_tabix_index_filename(
-    resource: GenomicResource, filename: str,
+    manifest: Manifest, filename: str,
 ) -> str | None:
-    """Return the tabix index of ``filename`` as recorded in the manifest.
+    """Return the tabix index of ``filename`` as recorded in ``manifest``.
 
     Resolution is manifest-driven on purpose: the manifest is already loaded
     and is protocol-agnostic, whereas probing with ``file_exists`` costs a
@@ -639,12 +655,34 @@ def resolve_tabix_index_filename(
     decides whether that is a warning (the file set of an implementation) or
     an error (an open that needs an index).  See gain#430.
     """
-    manifest = resource.get_manifest()
     for suffix in TABIX_INDEX_SUFFIXES:
         index_filename = f"{filename}{suffix}"
         if index_filename in manifest:
             return index_filename
     return None
+
+
+def resolve_tabix_index_filename_for_read(
+    resource: GenomicResource, filename: str,
+) -> str:
+    """Return the index to read ``filename`` with, never building a manifest.
+
+    Consults the manifest only when it is already loaded or can be loaded
+    from the resource: an open must stay a pure read, and
+    :meth:`GenomicResource.get_manifest` would *build* -- md5-scanning the
+    whole resource and writing state files -- for a resource that carries no
+    ``.MANIFEST`` (gain#430).
+
+    With no manifest at hand, or with a manifest that records no index at
+    all, falls back to the historical ``.tbi`` guess so that whatever pysam
+    raises still names a concrete path.
+    """
+    manifest = resource.get_loaded_manifest()
+    resolved = (
+        resolve_tabix_index_filename(manifest, filename)
+        if manifest is not None else None
+    )
+    return resolved if resolved is not None else f"{filename}.tbi"
 
 
 class Mode(enum.Enum):

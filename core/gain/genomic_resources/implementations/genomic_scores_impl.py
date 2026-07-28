@@ -230,8 +230,10 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         filename = self.score.table.definition.filename
         files = {filename}
         if isinstance(self.score.table, TabixGenomicPositionTable):
+            # The statistics hash is computed against the same manifest, so
+            # resolving from it here is free and keeps the two consistent.
             index_filename = resolve_tabix_index_filename(
-                self.resource, filename)
+                self.resource.get_manifest(), filename)
             if index_filename is None:
                 logger.warning(
                     "resource <%s>: tabix table %s has no index "

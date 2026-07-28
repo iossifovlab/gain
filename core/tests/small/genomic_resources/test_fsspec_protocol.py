@@ -4,6 +4,7 @@ import gzip
 import inspect
 import io
 import pathlib
+import shutil
 from typing import Any, cast
 
 import pysam
@@ -12,9 +13,14 @@ from gain.genomic_resources.cli import (
     UnsupportedDvcDirectoryOutputError,
     collect_dvc_entries,
 )
-from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
+from gain.genomic_resources.fsspec_protocol import (
+    FsspecReadWriteProtocol,
+    build_fsspec_protocol,
+)
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
+    GR_CONTENTS_FILE_NAME,
+    GR_MANIFEST_FILE_NAME,
     ReadWriteRepositoryProtocol,
 )
 from gain.genomic_resources.testing import (
@@ -22,6 +28,7 @@ from gain.genomic_resources.testing import (
     build_inmemory_test_protocol,
     setup_directories,
 )
+from gain.genomic_resources.testing.builders import a_grr, a_position_score
 from pytest_mock import MockerFixture
 
 
@@ -1357,3 +1364,66 @@ def test_an_html_data_file_at_another_path_is_manifested() -> None:
     entries = proto.collect_resource_entries(res)
     assert "report.html" in entries
     assert "docs/index.html" in entries
+
+
+def _build_manifestless_tabix_grr(root: pathlib.Path) -> pathlib.Path:
+    """Realize a tabix score GRR, then strip every generated artifact.
+
+    This is the hand-authored GRR shape ``collect_all_resources``
+    explicitly tolerates: a resource directory with no ``.MANIFEST``, no
+    per-file state under ``.grr/`` and no repository ``.CONTENTS.json.gz``.
+    """
+    (
+        a_grr()
+        .with_resource(
+            "s",
+            a_position_score()
+            .with_tabix()
+            .with_zero_based()
+            .with_score("value", "float")
+            .with_data("""
+                chrom  pos_begin  pos_end  value
+                chr1   10         20       0.1
+            """),
+        )
+        .build_repo(root)
+    )
+    (root / "s" / GR_MANIFEST_FILE_NAME).unlink()
+    shutil.rmtree(root / "s" / ".grr")
+    (root / GR_CONTENTS_FILE_NAME).unlink()
+    return root
+
+
+def test_open_tabix_file_does_not_build_a_manifest(
+    tmp_path: pathlib.Path,
+) -> None:
+    """gain#430: opening a table must not md5-scan a manifest-less resource.
+
+    Building a manifest from the read path would turn a pure read into a
+    full-resource md5 scan that also writes ``.grr/*.state`` files.
+    """
+    root = _build_manifestless_tabix_grr(tmp_path / "grr")
+
+    proto = build_fsspec_protocol("t", f"file://{root}")
+    res = proto.get_resource("s")
+    with res.open_tabix_file("data.txt.gz") as tabix:
+        assert len(list(tabix.fetch("chr1", 10, 20))) == 1
+
+    assert not (root / "s" / ".grr").exists()
+    assert not (root / "s" / GR_MANIFEST_FILE_NAME).exists()
+
+
+def test_open_tabix_file_of_a_read_only_resource_directory(
+    tmp_path: pathlib.Path,
+) -> None:
+    """gain#430: a shared read-only GRR mount must still be readable."""
+    root = _build_manifestless_tabix_grr(tmp_path / "grr")
+
+    (root / "s").chmod(0o555)
+    try:
+        proto = build_fsspec_protocol("t", f"file://{root}")
+        res = proto.get_resource("s")
+        with res.open_tabix_file("data.txt.gz") as tabix:
+            assert len(list(tabix.fetch("chr1", 10, 20))) == 1
+    finally:
+        (root / "s").chmod(0o755)
