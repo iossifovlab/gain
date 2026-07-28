@@ -274,6 +274,84 @@ def labeled_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
     )
 
 
+@pytest.fixture
+def nonstring_labeled_grr(
+    tmp_path: pathlib.Path,
+) -> GenomicResourceProtocolRepo:
+    """A GRR whose labels are not strings.
+
+    ``meta.labels`` is a free-form YAML mapping, so a value is whatever
+    YAML made of it -- ``perturbed: False`` is a bool and ``year: 2019``
+    an int.  The production ``grr_encode`` carries tens of thousands of
+    such resources.
+    """
+    return (
+        a_grr()
+        .with_resource(
+            "perturbed-score",
+            a_position_score().with_labels(perturbed=False, year=2019),
+        )
+        .with_resource(
+            "clean-score",
+            a_position_score().with_labels(perturbed=True, year=2024),
+        )
+        .build_repo(tmp_path)
+    )
+
+
+def test_wildcard_label_in_against_a_bool_label(
+    nonstring_labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score: "*[\\"Fal\\" in perturbed]"
+    """, grr=nonstring_labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "perturbed-score",
+    ]
+
+
+def test_wildcard_label_in_against_an_int_label(
+    nonstring_labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score: "*[\\"19\\" in year]"
+    """, grr=nonstring_labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "perturbed-score",
+    ]
+
+
+def test_wildcard_label_equals_against_an_int_label(
+    nonstring_labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score: "*[year=\\"2024\\"]"
+    """, grr=nonstring_labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "clean-score",
+    ]
+
+
+def test_wildcard_label_query_against_a_mapping_label(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A label whose value is a nested mapping is matched, not crashed on."""
+    grr = (
+        a_grr()
+        .with_resource(
+            "nested",
+            a_position_score().with_labels(provenance={"source": "UCSC"}),
+        )
+        .build_repo(tmp_path)
+    )
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score: "*[\\"UCSC\\" in provenance]"
+    """, grr=grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "nested",
+    ]
+
+
 def test_wildcard_label_in_standalone(
     labeled_grr: GenomicResourceProtocolRepo,
 ) -> None:

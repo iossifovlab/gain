@@ -358,14 +358,22 @@ class AnnotationConfigParser:
     @staticmethod
     def match_labels_query(
         query: dict[str, Callable[[str], bool]],
-        resource_labels: dict[str, str],
+        resource_labels: dict[str, Any],
     ) -> bool:
-        """Check if the labels query for a wildcard matches."""
+        """Check if the labels query for a wildcard matches.
+
+        ``meta.labels`` is a free-form YAML mapping, so a label value is
+        whatever YAML made of it -- ``perturbed: False`` is a bool and
+        ``year: 2019`` an int, both of which the production GRRs carry in
+        bulk.  The query language only ever spells values as text, so every
+        label value is compared in its rendered form; without that both
+        ``in`` and ``=`` raise a bare ``TypeError`` out of the predicate.
+        """
         for k, v in query.items():
             if k not in resource_labels:
                 return False
 
-            if not v(resource_labels[k]):
+            if not v(str(resource_labels[k])):
                 return False
         return True
 
