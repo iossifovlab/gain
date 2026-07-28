@@ -5,6 +5,7 @@ import os
 import pathlib
 import textwrap
 import threading
+import time
 from collections.abc import Callable, Generator
 from contextlib import AbstractContextManager
 from typing import Any, cast
@@ -41,6 +42,8 @@ from gain.genomic_resources.testing import (
     setup_directories,
 )
 from pytest_mock import MockerFixture
+
+from .conftest import RunInThreads
 
 
 def test_create_definition_with_cache(tmp_path: pathlib.Path) -> None:
@@ -1480,3 +1483,120 @@ def test_empty_repository_id_is_not_a_filter(
 
     assert group.find_resource("one", repository_id="") == \
         group.find_resource("one")
+
+
+# ---------------------------------------------------------------------------
+# The lazily populated memo caches must be populated exactly once, even when
+# several threads reach them at the same time (#446).
+# ---------------------------------------------------------------------------
+
+
+def _slow_down_cache_proto_build(
+    mocker: MockerFixture, delay: float = 0.05,
+) -> None:
+    """Widen the window of the check-then-populate on ``cache_protos``.
+
+    Building the caching protocol already does filesystem work that releases
+    the GIL, so the race reproduces on its own; the delay only makes the
+    reproduction deterministic instead of merely very likely.
+    """
+    real_build = build_fsspec_protocol
+
+    def slow_build(*args: Any, **kwargs: Any) -> Any:
+        time.sleep(delay)
+        return real_build(*args, **kwargs)
+
+    mocker.patch(
+        "gain.genomic_resources.cached_repository.build_fsspec_protocol",
+        slow_build)
+
+
+@pytest.mark.grr_full
+def test_concurrent_get_resource_shares_one_caching_protocol(
+    cache_repository: CacheRepositoryBuilder,
+    mocker: MockerFixture,
+    run_in_threads: RunInThreads,
+) -> None:
+    """Racing first-calls must not hand out an orphaned caching protocol.
+
+    A protocol that lost the ``cache_protos`` assignment is unreachable from
+    ``invalidate()``, so a caller holding a resource bound to it keeps a
+    stale resource dict forever. See #446.
+    """
+    with cache_repository({
+            "one": {GR_CONF_FILE_NAME: "", "data.txt": "a"},
+            }) as cache_repo:
+        _slow_down_cache_proto_build(mocker)
+
+        resources, errors = run_in_threads(
+            lambda: cache_repo.get_resource("one"), 8)
+
+        assert not errors
+        assert len(resources) == 8
+        assert len(cache_repo.cache_protos) == 1
+        expected_proto = next(iter(cache_repo.cache_protos.values()))
+        assert {id(res.proto) for res in resources} == {id(expected_proto)}
+        assert len({id(res) for res in resources}) == 1
+
+
+@pytest.mark.grr_full
+def test_concurrent_get_all_resources_builds_the_list_once(
+    cache_repository: CacheRepositoryBuilder,
+    mocker: MockerFixture,
+    run_in_threads: RunInThreads,
+) -> None:
+    """Racing first enumerations must enumerate the child exactly once (#446).
+
+    Two threads building the memo in parallel walk the child twice and hand
+    out two different lists for the same repository.
+    """
+    with cache_repository({
+            "one": {GR_CONF_FILE_NAME: "", "data.txt": "a"},
+            "two": {GR_CONF_FILE_NAME: "", "data.txt": "b"},
+            }) as cache_repo:
+
+        enumerations = []
+        real_get_all_resources = cache_repo.child.get_all_resources
+
+        def slow_get_all_resources() -> Any:
+            enumerations.append(1)
+            time.sleep(0.05)
+            return real_get_all_resources()
+
+        mocker.patch.object(
+            cache_repo.child, "get_all_resources", slow_get_all_resources)
+
+        listings, errors = run_in_threads(
+            lambda: list(cache_repo.get_all_resources()), 8)
+
+        assert not errors
+        assert len(enumerations) == 1
+        assert all(len(listing) == 2 for listing in listings)
+        for index in range(2):
+            assert len({id(listing[index]) for listing in listings}) == 1
+
+
+@pytest.mark.grr_full
+def test_first_enumeration_of_a_cached_repo_does_not_deadlock(
+    cache_repository: CacheRepositoryBuilder,
+    run_in_threads: RunInThreads,
+) -> None:
+    """The memo guard must be reentrant (#446).
+
+    ``get_all_resources`` populates its memo by mapping every child resource
+    through ``_to_cache_resource``, which calls
+    ``_get_or_create_cache_proto`` -- the same thread re-enters the guarded
+    region. A single non-reentrant lock shared by both would deadlock right
+    here, so the enumeration runs in a joined-with-timeout thread and fails
+    loudly instead of hanging the suite.
+    """
+    with cache_repository({
+            "one": {GR_CONF_FILE_NAME: "", "data.txt": "a"},
+            "two": {GR_CONF_FILE_NAME: "", "data.txt": "b"},
+            }) as cache_repo:
+
+        listings, errors = run_in_threads(
+            lambda: list(cache_repo.get_all_resources()), 1, timeout=10)
+
+        assert not errors
+        assert len(listings[0]) == 2

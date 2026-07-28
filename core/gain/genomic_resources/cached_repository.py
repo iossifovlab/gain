@@ -57,6 +57,26 @@ class CachingProtocol(ReadOnlyRepositoryProtocol):
         super().__init__(local_protocol.proto_id, local_protocol.get_url())
         self.public_url = public_url or remote_protocol.get_public_url()
         self._all_resources: dict[str, CacheResource] | None = None
+        # Mirrors FsspecReadOnlyProtocol: the memo is populated lazily, so
+        # the check-then-populate has to be atomic or two threads build two
+        # sets of CacheResource objects for the same resources. A plain
+        # (non-reentrant) Lock is enough here -- nothing under it re-enters
+        # this protocol; the reentrant one lives on the repository, which
+        # does. See #446.
+        self._all_resources_lock = threading.Lock()
+
+    def __getstate__(self) -> dict[str, Any]:
+        state = self.__dict__.copy()
+        # A lock is unpicklable, and this class pickles today (a cache-backed
+        # resource carries its protocol along). Drop it here and rebuild it
+        # in __setstate__, exactly as FsspecReadOnlyProtocol does. The memo
+        # itself pickles fine and is kept.
+        del state["_all_resources_lock"]
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        self._all_resources_lock = threading.Lock()
 
     def get_url(self) -> str:
         return self.remote_protocol.get_url()
@@ -65,21 +85,27 @@ class CachingProtocol(ReadOnlyRepositoryProtocol):
         return self.public_url
 
     def invalidate(self) -> None:
-        self.remote_protocol.invalidate()
-        self.local_protocol.invalidate()
-        self._all_resources = None
+        # Under the same lock as the population below: clearing the memo
+        # while another thread is halfway through building it would leave
+        # that thread's freshly built dict installed over the invalidation.
+        with self._all_resources_lock:
+            self.remote_protocol.invalidate()
+            self.local_protocol.invalidate()
+            self._all_resources = None
 
     def get_all_resources(self) -> Generator[GenomicResource, None, None]:
         yield from self.get_all_resources_dict().values()
 
     def get_all_resources_dict(self) -> dict[str, GenomicResource]:
-        if self._all_resources is None:
-            self._all_resources = {
-                resource.get_full_id(): self._create_cache_resource(resource)
-                for resource in self.remote_protocol.get_all_resources()
-            }
-            self.local_protocol.invalidate()
-        return cast(dict[str, GenomicResource], self._all_resources)
+        with self._all_resources_lock:
+            if self._all_resources is None:
+                self._all_resources = {
+                    resource.get_full_id():
+                        self._create_cache_resource(resource)
+                    for resource in self.remote_protocol.get_all_resources()
+                }
+                self.local_protocol.invalidate()
+            return cast(dict[str, GenomicResource], self._all_resources)
 
     def _create_cache_resource(
             self, remote_resource: GenomicResource) -> CacheResource:
@@ -263,16 +289,41 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
         logger.debug(
             "creating cached GRR with cache url: %s", cache_url)
         self._all_resources: list[GenomicResource] | None = None
+        # Reentrant on purpose: ``get_all_resources`` populates its memo by
+        # mapping every child resource through ``_to_cache_resource``, which
+        # calls ``_get_or_create_cache_proto`` -- the same thread re-enters
+        # the guarded region, and a plain Lock would deadlock on the first
+        # enumeration. See #446.
+        self._memo_lock = threading.RLock()
         self.child: GenomicResourceRepo = child
         self.cache_url = cache_url
         self.cache_protos: dict[str, CachingProtocol] = {}
         self.additional_kwargs = kwargs
 
+    def __getstate__(self) -> dict[str, Any]:
+        state = self.__dict__.copy()
+        # A lock is unpicklable, and this repository pickles today (it
+        # travels to dask workers with the resources it hands out). Drop the
+        # guard here and rebuild it in __setstate__, as
+        # FsspecReadOnlyProtocol does with its own. The memoized state itself
+        # pickles fine and is kept.
+        del state["_memo_lock"]
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        self._memo_lock = threading.RLock()
+
     def invalidate(self) -> None:
-        self.child.invalidate()
-        for proto in self.cache_protos.values():
-            proto.invalidate()
-        self._all_resources = None
+        # Same lock as the memo population: invalidating while another thread
+        # is building either memo would leave that thread's result installed
+        # over the invalidation, and iterating ``cache_protos`` concurrently
+        # with an insertion into it is not safe either.
+        with self._memo_lock:
+            self.child.invalidate()
+            for proto in self.cache_protos.values():
+                proto.invalidate()
+            self._all_resources = None
 
     def _to_cache_resource(
         self, remote_resource: GenomicResource,
@@ -294,12 +345,17 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
             remote_resource.get_full_id()]
 
     def get_all_resources(self) -> Generator[GenomicResource, None, None]:
-        if self._all_resources is None:
-            self._all_resources = [
-                self._to_cache_resource(remote_resource)
-                for remote_resource in self.child.get_all_resources()
-            ]
-        yield from self._all_resources
+        # The memo is read into a local under the lock and yielded from
+        # outside it: the generator must not hold the lock while a consumer
+        # decides when to ask for the next resource.
+        with self._memo_lock:
+            if self._all_resources is None:
+                self._all_resources = [
+                    self._to_cache_resource(remote_resource)
+                    for remote_resource in self.child.get_all_resources()
+                ]
+            all_resources = self._all_resources
+        yield from all_resources
 
     def search_resources(
         self,
@@ -333,38 +389,44 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
         shadowed children), so nothing that worked is being taken away.
         """
         proto_id = proto.proto_id
-        existing = self.cache_protos.get(proto_id)
-        if existing is not None:
-            if existing.remote_protocol is not proto:
-                raise ValueError(
-                    f"repository id <{proto_id}> is used by more than one "
-                    f"repository in {self.repo_id} "
-                    f"({existing.remote_protocol.get_url()} and "
-                    f"{proto.get_url()}); caching requires distinct "
-                    f"repository ids -- give each child repository its own "
-                    f"'id' in the GRR definition")
-            return existing
+        # get / construct / assign must be atomic: two threads racing the
+        # first call for one ``proto_id`` would each build a protocol, and
+        # the one that lost the assignment is an orphan -- unreachable from
+        # ``cache_protos``, hence never invalidated, while its caller keeps
+        # holding resources bound to it. See #446.
+        with self._memo_lock:
+            existing = self.cache_protos.get(proto_id)
+            if existing is not None:
+                if existing.remote_protocol is not proto:
+                    raise ValueError(
+                        f"repository id <{proto_id}> is used by more than "
+                        f"one repository in {self.repo_id} "
+                        f"({existing.remote_protocol.get_url()} and "
+                        f"{proto.get_url()}); caching requires distinct "
+                        f"repository ids -- give each child repository its "
+                        f"own 'id' in the GRR definition")
+                return existing
 
-        cached_proto_url = os.path.join(self.cache_url, proto_id)
-        logger.debug(
-            "going to create cached protocol with url: %s",
-            cached_proto_url)
+            cached_proto_url = os.path.join(self.cache_url, proto_id)
+            logger.debug(
+                "going to create cached protocol with url: %s",
+                cached_proto_url)
 
-        cache_proto = build_fsspec_protocol(
-            f"{proto_id}.cached",
-            cached_proto_url,
-            **self.additional_kwargs)
-        if not isinstance(cache_proto, FsspecReadWriteProtocol):
-            # ValueError, not TypeError: this reports a bad cache_url in the
-            # GRR definition, not a caller passing the wrong type. (The rule
-            # only became visible here because dedenting this block moved the
-            # isinstance check to the function body.)
-            raise ValueError(  # noqa: TRY004
-                f"caching protocol should be RW;"
-                f"{cached_proto_url} is not RW")
-        self.cache_protos[proto_id] = CachingProtocol(proto, cache_proto)
+            cache_proto = build_fsspec_protocol(
+                f"{proto_id}.cached",
+                cached_proto_url,
+                **self.additional_kwargs)
+            if not isinstance(cache_proto, FsspecReadWriteProtocol):
+                # ValueError, not TypeError: this reports a bad cache_url in
+                # the GRR definition, not a caller passing the wrong type.
+                # (The rule only became visible here because dedenting this
+                # block moved the isinstance check to the function body.)
+                raise ValueError(  # noqa: TRY004
+                    f"caching protocol should be RW;"
+                    f"{cached_proto_url} is not RW")
+            self.cache_protos[proto_id] = CachingProtocol(proto, cache_proto)
 
-        return self.cache_protos[proto_id]
+            return self.cache_protos[proto_id]
 
     def find_resource(
         self, resource_id: str,

@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import os
+import time
 from collections.abc import Generator
 from typing import Any
 
@@ -18,6 +19,8 @@ from gain.genomic_resources.testing import (
     setup_genome_bgz,
     setup_tabix,
 )
+
+from .conftest import RunInThreads
 
 
 def test_caching_repo_simple(
@@ -452,3 +455,43 @@ def test_protocol_get_id(
     proto_id = caching_proto.get_id()
     assert proto_id is not None
     assert proto_id == caching_proto.local_protocol.proto_id
+
+
+def test_concurrent_get_all_resources_dict_builds_the_dict_once(
+    content_fixture: dict[str, Any],
+    tmp_path_factory: pytest.TempPathFactory,
+    mocker: pytest_mock.MockerFixture,
+    run_in_threads: RunInThreads,
+) -> None:
+    """Racing first-calls must enumerate the remote once and agree (#446).
+
+    Two threads building the memo in parallel produce two sets of
+    ``CacheResource`` objects for the same resources; whichever set loses the
+    assignment is handed to its caller anyway, breaking the identity promise
+    that a returned resource is the one the memo holds.
+    """
+    local_proto = build_filesystem_test_protocol(
+        tmp_path_factory.mktemp("concurrent_cache_proto"))
+    remote_proto = build_inmemory_test_protocol(content_fixture)
+    caching_proto = CachingProtocol(remote_proto, local_proto)
+
+    enumerations = []
+    real_get_all_resources = remote_proto.get_all_resources
+
+    def slow_get_all_resources() -> Any:
+        enumerations.append(1)
+        # Widen the check-then-populate window so the race is deterministic
+        # rather than merely likely.
+        time.sleep(0.05)
+        return real_get_all_resources()
+
+    mocker.patch.object(
+        remote_proto, "get_all_resources", slow_get_all_resources)
+
+    dicts, errors = run_in_threads(caching_proto.get_all_resources_dict, 8)
+
+    assert not errors
+    assert len(enumerations) == 1
+    assert len({id(resources) for resources in dicts}) == 1
+    for resource_id in dicts[0]:
+        assert len({id(resources[resource_id]) for resources in dicts}) == 1
