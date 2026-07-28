@@ -1366,7 +1366,9 @@ def test_an_html_data_file_at_another_path_is_manifested() -> None:
     assert "docs/index.html" in entries
 
 
-def _build_manifestless_tabix_grr(root: pathlib.Path) -> pathlib.Path:
+def _build_manifestless_tabix_grr(
+    root: pathlib.Path, *, csi: bool = False,
+) -> pathlib.Path:
     """Realize a tabix score GRR, then strip every generated artifact.
 
     This is the hand-authored GRR shape ``collect_all_resources``
@@ -1378,7 +1380,7 @@ def _build_manifestless_tabix_grr(root: pathlib.Path) -> pathlib.Path:
         .with_resource(
             "s",
             a_position_score()
-            .with_tabix()
+            .with_tabix(csi=csi)
             .with_zero_based()
             .with_score("value", "float")
             .with_data("""
@@ -1411,6 +1413,64 @@ def test_open_tabix_file_does_not_build_a_manifest(
 
     assert not (root / "s" / ".grr").exists()
     assert not (root / "s" / GR_MANIFEST_FILE_NAME).exists()
+
+
+def test_open_csi_tabix_file_of_a_manifestless_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    """gain#430: no ``.MANIFEST`` must not mean a hard-coded ``.tbi``.
+
+    With no manifest to consult the read path has to find the ``.csi``
+    some other way -- otherwise a manifest-less GRR directory keeps
+    failing with the exact pre-fix ``index ... not found``.
+    """
+    root = _build_manifestless_tabix_grr(tmp_path / "grr", csi=True)
+    assert (root / "s" / "data.txt.gz.csi").exists()
+    assert not (root / "s" / "data.txt.gz.tbi").exists()
+
+    proto = build_fsspec_protocol("t", f"file://{root}")
+    res = proto.get_resource("s")
+    with res.open_tabix_file("data.txt.gz") as tabix:
+        assert len(list(tabix.fetch("chr1", 10, 20))) == 1
+
+    assert not (root / "s" / ".grr").exists()
+    assert not (root / "s" / GR_MANIFEST_FILE_NAME).exists()
+
+
+def test_open_tabix_file_of_a_manifested_resource_does_not_probe(
+    tmp_path: pathlib.Path,
+    mocker: MockerFixture,
+) -> None:
+    """gain#430: the manifest answers -- probing would cost a round-trip.
+
+    ``file_exists`` is a network round-trip per candidate on the http and
+    s3 protocols, so it must stay off the manifest-backed read path.
+    """
+    root = tmp_path / "grr"
+    (
+        a_grr()
+        .with_resource(
+            "s",
+            a_position_score()
+            .with_tabix()
+            .with_zero_based()
+            .with_score("value", "float")
+            .with_data("""
+                chrom  pos_begin  pos_end  value
+                chr1   10         20       0.1
+            """),
+        )
+        .build_repo(root)
+    )
+
+    proto = build_fsspec_protocol("t", f"file://{root}")
+    res = proto.get_resource("s")
+    probe = mocker.spy(proto, "file_exists")
+
+    with res.open_tabix_file("data.txt.gz") as tabix:
+        assert len(list(tabix.fetch("chr1", 10, 20))) == 1
+
+    assert probe.call_count == 0
 
 
 def test_open_tabix_file_of_a_read_only_resource_directory(

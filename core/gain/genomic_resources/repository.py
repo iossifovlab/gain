@@ -673,16 +673,40 @@ def resolve_tabix_index_filename_for_read(
     whole resource and writing state files -- for a resource that carries no
     ``.MANIFEST`` (gain#430).
 
-    With no manifest at hand, or with a manifest that records no index at
-    all, falls back to the historical ``.tbi`` guess so that whatever pysam
-    raises still names a concrete path.
+    With no manifest at hand -- the hand-authored GRR directory shape that
+    ``collect_all_resources`` tolerates -- falls back to probing the
+    resource for each candidate index.  The probe is deliberately confined
+    to this branch: a manifest-backed resource must never pay the
+    per-candidate network round-trip the probe costs on the http and s3
+    protocols.
+
+    With a manifest that records no index at all, or when no probe
+    succeeds, falls back to the historical ``.tbi`` guess so that whatever
+    pysam raises still names a concrete path.
     """
     manifest = resource.get_loaded_manifest()
-    resolved = (
-        resolve_tabix_index_filename(manifest, filename)
-        if manifest is not None else None
-    )
+    if manifest is not None:
+        resolved = resolve_tabix_index_filename(manifest, filename)
+    else:
+        resolved = _probe_tabix_index_filename(resource, filename)
     return resolved if resolved is not None else f"{filename}.tbi"
+
+
+def _probe_tabix_index_filename(
+    resource: GenomicResource, filename: str,
+) -> str | None:
+    """Return the first candidate index that exists in ``resource``."""
+    for suffix in TABIX_INDEX_SUFFIXES:
+        index_filename = f"{filename}{suffix}"
+        try:
+            if resource.file_exists(index_filename):
+                return index_filename
+        except OSError:
+            logger.debug(
+                "unable to probe %s in resource %s",
+                index_filename, resource.resource_id, exc_info=True)
+            return None
+    return None
 
 
 class Mode(enum.Enum):
