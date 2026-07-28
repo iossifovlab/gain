@@ -185,7 +185,7 @@ def validate_bigwig_scoredefs(
                 f"{score_def.col_index}; a bigWig record's payload is its "
                 f"value, so there is no column {score_def.col_index} to "
                 f"read. Remove the column addressing")
-        logger.warning(
+        logger.info(
             "%s: 'index: %s' is deprecated and does nothing -- a bigWig "
             "record's payload is its value, not a %s-column row. Delete the "
             "key from the resource config (score %r)",

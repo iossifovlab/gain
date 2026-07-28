@@ -96,7 +96,7 @@ def _warn_inert_bigwig_keys(
     # ``bigwig_scores.validate_bigwig_scoredefs`` refuses that one.
     for inert_key in ("chrom", "pos_begin", "pos_end", "header"):
         if inert_key in table_definition:
-            logger.warning(
+            logger.info(
                 "'%s' is not supported for bigWig tables (a bigWig has "
                 "no columns and no header; its positions are decoded by "
                 "the backend), ignoring it in %s",
@@ -111,7 +111,7 @@ def _warn_inert_bigwig_keys(
     # are handled differently.
     for retired_key in ("buffer_fetch_size", "use_buffered_threshold"):
         if retired_key in table_definition:
-            logger.warning(
+            logger.info(
                 "'%s' no longer does anything: bigWig fetch buffering was "
                 "removed, leaving a single chunked fetch strategy sized by "
                 "'fetch_size'. Delete the key from %s",
