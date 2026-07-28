@@ -348,3 +348,25 @@ def test_user_definition_named_local_still_builds(
     child_ids = [child.repo_id for child in repo.children]
     assert child_ids[1] == "local"
     assert len(set(child_ids)) == len(repo.children) == 2
+
+
+@pytest.mark.parametrize("content", ["", "- a\n- b\n", "just a string\n"])
+def test_a_malformed_definition_file_is_reported_as_a_bad_definition(
+    tmp_path: pathlib.Path,
+    content: str,
+) -> None:
+    """A definition file that is not a mapping must not crash the CLI.
+
+    The id normalisation reads ``id`` off the loaded definition, which is
+    whatever ``yaml.safe_load`` returned -- ``None`` for an empty file, a
+    list, a bare string. Calling ``.get`` on that raises ``AttributeError``
+    and buries the real problem; the definition must reach the factory so
+    the user is told their definition is invalid.
+    """
+    definition_path = tmp_path / "grr.yaml"
+    definition_path.write_text(content)
+
+    with pytest.raises(ValueError, match="invalid GRR definition"):
+        _create_grr_repo(
+            argparse.Namespace(grr=str(definition_path)),
+            str(tmp_path / "local"))

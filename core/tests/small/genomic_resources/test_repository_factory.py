@@ -343,6 +343,29 @@ def test_duplicate_child_ids_in_a_nested_group_are_rejected() -> None:
             ]})
 
 
+def test_a_path_valued_directory_resolves_to_the_same_id_both_ways(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The validator and the builder must agree on a child's id.
+
+    ``_resolve_child_repo_id`` is one function, but the uniqueness check
+    feeds it attributes off the validated pydantic model while the builder
+    feeds it values popped from the raw definition dict. They agree only
+    while the field type does not coerce -- ``_PathOrStr`` is a smart union
+    today, so a ``pathlib.Path`` survives as itself on both sides. Were that
+    to change, validation would reason about one id while the repository
+    (and its cache directory) got another. Pin it with a definition whose
+    ``directory`` is a real ``Path`` rather than a ``str``.
+    """
+    directory = tmp_path / "grr"
+    with pytest.raises(ValueError, match="grr"):
+        build_genomic_resource_repository(
+            {"type": "group", "children": [
+                {"type": "directory", "directory": directory},
+                {"type": "directory", "directory": str(directory)},
+            ]})
+
+
 def test_the_same_directory_at_two_nesting_levels_is_rejected(
     tmp_path: pathlib.Path,
 ) -> None:
