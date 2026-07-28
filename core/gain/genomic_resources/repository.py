@@ -618,6 +618,35 @@ class GenomicResource:
         return self.proto.open_bigwig_file(self, filename)
 
 
+# The tabix index flavours htslib writes next to a bgzipped table, in
+# preference order.  ``.csi`` is what a contig beyond tabix's ~512 Mbp limit
+# requires; ``.tbi`` is the default everywhere else.  When a resource carries
+# both, ``.tbi`` wins -- the same order ``gain.utils.fs_utils`` uses for
+# plain filesystem paths.
+TABIX_INDEX_SUFFIXES = (".tbi", ".csi")
+
+
+def resolve_tabix_index_filename(
+    resource: GenomicResource, filename: str,
+) -> str | None:
+    """Return the tabix index of ``filename`` as recorded in the manifest.
+
+    Resolution is manifest-driven on purpose: the manifest is already loaded
+    and is protocol-agnostic, whereas probing with ``file_exists`` costs a
+    network round-trip per candidate on the http and s3 protocols.
+
+    Returns ``None`` when the manifest records neither index -- the caller
+    decides whether that is a warning (the file set of an implementation) or
+    an error (an open that needs an index).  See gain#430.
+    """
+    manifest = resource.get_manifest()
+    for suffix in TABIX_INDEX_SUFFIXES:
+        index_filename = f"{filename}{suffix}"
+        if index_filename in manifest:
+            return index_filename
+    return None
+
+
 class Mode(enum.Enum):
     """Enumeration of repository protocol access modes.
 

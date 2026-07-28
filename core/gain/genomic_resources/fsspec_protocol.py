@@ -55,6 +55,7 @@ from gain.genomic_resources.repository import (
     is_generated_info_page,
     is_gr_id_token,
     parse_gr_id_version_token,
+    resolve_tabix_index_filename,
 )
 from gain.templates import get_template
 from gain.utils.helpers import convert_size
@@ -556,7 +557,14 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         file_url = self._get_file_url(resource, filename)
 
         if index_filename is None:
-            index_filename = f"{filename}.tbi"
+            # The index may be a ``.tbi`` or a ``.csi``; ask the manifest
+            # which one this resource actually carries (gain#430).  With
+            # neither recorded, keep the historical ``.tbi`` guess so the
+            # failure pysam raises still names a concrete path.
+            index_filename = (
+                resolve_tabix_index_filename(resource, filename)
+                or f"{filename}.tbi"
+            )
         index_url = self._get_file_url(resource, index_filename)
 
         return pysam.TabixFile(  # pylint: disable=no-member

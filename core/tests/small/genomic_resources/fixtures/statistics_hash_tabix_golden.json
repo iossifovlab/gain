@@ -1,0 +1,39 @@
+{
+  "config": {
+    "histograms": [
+      {
+        "type": "number",
+        "view_range": {
+          "min": 0.0,
+          "max": 1.0
+        },
+        "number_of_bins": 4,
+        "x_log_scale": false,
+        "y_log_scale": false,
+        "x_min_log": null
+      }
+    ],
+    "table": {
+      "config": {
+        "filename": "data.txt.gz",
+        "format": "tabix",
+        "chrom_mapping": {
+          "add_prefix": "chr"
+        }
+      },
+      "files_md5": {
+        "data.txt.gz": "<md5 of data.txt.gz>",
+        "data.txt.gz.tbi": "<md5 of data.txt.gz.tbi>"
+      }
+    }
+  },
+  "score_config": [
+    {
+      "id": "tbx_val",
+      "type": "float",
+      "name": "tbx_val",
+      "index": null,
+      "na_values": "['', '.', 'NA', 'nan']"
+    }
+  ]
+}

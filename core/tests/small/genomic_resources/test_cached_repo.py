@@ -25,6 +25,7 @@ from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
     build_fsspec_protocol,
 )
+from gain.genomic_resources.genomic_scores import build_score_from_resource
 from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
@@ -35,11 +36,17 @@ from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
 from gain.genomic_resources.testing import (
+    build_filesystem_test_repository,
     build_inmemory_test_repository,
     build_s3_test_bucket,
     convert_to_tab_separated,
     s3_test_server_endpoint,
     setup_directories,
+)
+from gain.genomic_resources.testing.builders import (
+    a_grr,
+    a_position_score,
+    a_vcf_info_score,
 )
 from pytest_mock import MockerFixture
 
@@ -1600,3 +1607,74 @@ def test_first_enumeration_of_a_cached_repo_does_not_deadlock(
 
         assert not errors
         assert len(listings[0]) == 2
+
+
+def test_cache_resources_fetches_a_csi_index_and_the_cached_score_opens(
+    tmp_path: pathlib.Path,
+) -> None:
+    """gain#430: the cache prefetch must fetch the index that exists."""
+    source_dir = tmp_path / "grr_source"
+    (
+        a_grr()
+        .with_resource(
+            "csi_score",
+            a_position_score()
+            .with_tabix(csi=True)
+            .with_zero_based()
+            .with_score("value", "float")
+            .with_data("""
+                chrom  pos_begin  pos_end  value
+                chr1   10         20       0.1
+            """),
+        )
+        .build_repo(source_dir)
+    )
+    cache_repo = GenomicResourceCachedRepo(
+        build_filesystem_test_repository(source_dir),
+        f"file://{tmp_path}/cache")
+
+    cache_resources(cache_repo, ["csi_score"], workers=1, progress=False)
+
+    assert cache_repo.get_resource_cached_files("csi_score") == {
+        "data.txt.gz", "data.txt.gz.csi"}
+    score = build_score_from_resource(cache_repo.get_resource("csi_score"))
+    with score.open():
+        assert list(score.fetch_region("chr1", 11, 20, ["value"])) == [
+            (11, 20, [0.1])]
+
+
+def test_cache_resources_fetches_a_csi_index_of_a_vcf_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    """gain#430: the same resolution drives the cached VCF open path."""
+    source_dir = tmp_path / "grr_source"
+    (
+        a_grr()
+        .with_resource(
+            "csi_vcf_score",
+            a_vcf_info_score().with_csi_index().with_data("""
+##fileformat=VCFv4.2
+##INFO=<ID=value,Number=A,Type=Float,Description="value">
+##contig=<ID=chr1>
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   10  .  A   T   .    .      value=0.1
+"""),
+        )
+        .build_repo(source_dir)
+    )
+    cache_repo = GenomicResourceCachedRepo(
+        build_filesystem_test_repository(source_dir),
+        f"file://{tmp_path}/cache")
+
+    cache_resources(cache_repo, ["csi_vcf_score"], workers=1, progress=False)
+
+    # A VCF score also pulls its header companion files into the cache, so
+    # this is a containment check rather than an equality one.
+    assert {"data.vcf.gz", "data.vcf.gz.csi"} <= \
+        cache_repo.get_resource_cached_files("csi_vcf_score")
+    score = build_score_from_resource(
+        cache_repo.get_resource("csi_vcf_score"))
+    with score.open():
+        assert score.get_all_chromosomes() == ["chr1"]
+        assert list(score.fetch_region("chr1", 10, 10, ["value"])) == [
+            (10, "A", "T", [pytest.approx(0.1)])]

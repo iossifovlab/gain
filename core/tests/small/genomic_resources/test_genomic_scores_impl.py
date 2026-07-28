@@ -5,6 +5,7 @@ import pathlib
 import textwrap
 from typing import cast
 
+import pysam
 import pytest
 import pytest_mock
 from gain.genomic_resources.genomic_scores import (
@@ -38,7 +39,9 @@ from gain.genomic_resources.testing import (
 )
 from gain.genomic_resources.testing.builders import (
     PositionScoreBuilder,
+    a_grr,
     a_position_score,
+    a_vcf_info_score,
 )
 from gain.task_graph.cli_tools import task_graph_run
 from gain.task_graph.executor import (
@@ -908,3 +911,152 @@ def test_collect_index_info_row_length_matches_header() -> None:
     impl = build_score_implementation_from_resource(res)
     header, row = impl.collect_index_info()
     assert len(header) == len(row)
+
+
+# --- tabix index resolution (gain#430) ---------------------------------
+#
+# A tabix table may be indexed as ``.tbi`` or -- for contigs beyond tabix's
+# ~512 Mbp limit -- as ``.csi``.  The implementation must take the index name
+# from the resource manifest rather than assuming ``.tbi``.
+
+TABIX_INDEX_DATA = """
+    chrom  pos_begin  pos_end  value
+    chr1   10         20       0.1
+    chr1   30         40       0.2
+"""
+
+
+def a_tabix_position_score(*, csi: bool = False) -> PositionScoreBuilder:
+    """A tabix-backed position score, indexed as ``.csi`` on request."""
+    return (
+        a_position_score()
+        .with_tabix(csi=csi)
+        .with_zero_based()
+        .with_score("value", "float")
+        .with_data(TABIX_INDEX_DATA)
+    )
+
+
+def test_files_of_csi_indexed_tabix_score_names_the_csi_index(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = a_tabix_position_score(csi=True).build_resource(tmp_path)
+
+    impl = build_score_implementation_from_resource(res)
+
+    assert impl.files == {"data.txt.gz", "data.txt.gz.csi"}
+
+
+def test_statistics_hash_of_csi_indexed_score_carries_the_csi_md5(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = a_tabix_position_score(csi=True).build_resource(tmp_path)
+    impl = build_score_implementation_from_resource(res)
+
+    files_md5 = json.loads(
+        impl.calc_statistics_hash(),
+    )["config"]["table"]["files_md5"]
+
+    assert files_md5 == {
+        "data.txt.gz": res.get_manifest()["data.txt.gz"].md5,
+        "data.txt.gz.csi": res.get_manifest()["data.txt.gz.csi"].md5,
+    }
+
+
+def test_csi_indexed_score_fetches_the_same_region_as_its_tbi_twin(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = (
+        a_grr()
+        .with_resource("csi_score", a_tabix_position_score(csi=True))
+        .with_resource("tbi_score", a_tabix_position_score())
+        .build_repo(tmp_path)
+    )
+
+    def fetch_first_region(resource_id: str) -> list:
+        score = build_score_from_resource(repo.get_resource(resource_id))
+        with score.open():
+            return list(score.fetch_region("chr1", 11, 20, ["value"]))
+
+    assert fetch_first_region("csi_score") == [(11, 20, [0.1])]
+    assert fetch_first_region("csi_score") == fetch_first_region("tbi_score")
+
+
+def test_files_warns_and_omits_index_when_manifest_records_none(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    a_grr().with_resource(
+        "unindexed_score", a_tabix_position_score(),
+    ).build_repo(tmp_path)
+    (tmp_path / "unindexed_score" / "data.txt.gz.tbi").unlink()
+    res = build_filesystem_test_repository(tmp_path).get_resource(
+        "unindexed_score")
+    impl = build_score_implementation_from_resource(res)
+
+    with caplog.at_level("WARNING"):
+        files = impl.files
+
+    assert files == {"data.txt.gz"}
+    assert "unindexed_score" in caplog.text
+
+
+def test_files_prefers_tbi_when_the_manifest_records_both_indexes(
+    tmp_path: pathlib.Path,
+) -> None:
+    a_grr().with_resource(
+        "both_indexes", a_tabix_position_score(),
+    ).build_repo(tmp_path)
+    # Add a second, .csi index alongside the .tbi the builder wrote.
+    pysam.tabix_index(  # pylint: disable=no-member
+        str(tmp_path / "both_indexes" / "data.txt.gz"),
+        seq_col=0, start_col=1, end_col=2, csi=True)
+    res = build_filesystem_test_repository(tmp_path).get_resource(
+        "both_indexes")
+    assert "data.txt.gz.tbi" in res.get_manifest()
+    assert "data.txt.gz.csi" in res.get_manifest()
+
+    impl = build_score_implementation_from_resource(res)
+
+    assert impl.files == {"data.txt.gz", "data.txt.gz.tbi"}
+
+
+# ``VCFGenomicPositionTable`` subclasses ``TabixGenomicPositionTable``, and
+# its chromosome listing routes through ``open_tabix_file`` -- so a
+# .csi-indexed VCF score exercises the same resolution.
+VCF_INDEX_DATA = """
+##fileformat=VCFv4.2
+##INFO=<ID=value,Number=A,Type=Float,Description="value">
+##contig=<ID=chr1>
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   10  .  A   T   .    .      value=0.1
+chr1   30  .  C   G   .    .      value=0.2
+"""
+
+
+def test_csi_indexed_vcf_score_reads_back_like_its_tbi_twin(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = (
+        a_grr()
+        .with_resource(
+            "csi_vcf",
+            a_vcf_info_score().with_data(VCF_INDEX_DATA).with_csi_index())
+        .with_resource(
+            "tbi_vcf", a_vcf_info_score().with_data(VCF_INDEX_DATA))
+        .build_repo(tmp_path)
+    )
+
+    def read(resource_id: str) -> tuple[list[str], list]:
+        score = build_score_from_resource(repo.get_resource(resource_id))
+        with score.open():
+            return (
+                score.get_all_chromosomes(),
+                list(score.fetch_region("chr1", 10, 10, ["value"])),
+            )
+
+    impl = build_score_implementation_from_resource(repo.get_resource(
+        "csi_vcf"))
+    assert impl.files == {"data.vcf.gz", "data.vcf.gz.csi"}
+    assert read("csi_vcf")[0] == ["chr1"]
+    assert read("csi_vcf") == read("tbi_vcf")

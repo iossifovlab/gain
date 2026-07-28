@@ -42,6 +42,7 @@ from gain.genomic_resources.reference_genome import (
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
+    resolve_tabix_index_filename,
 )
 from gain.genomic_resources.resource_implementation import (
     InfoImplementationMixin,
@@ -226,10 +227,19 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
     @property
     def files(self) -> set[str]:
-        files = set()
-        files.add(self.score.table.definition.filename)
+        filename = self.score.table.definition.filename
+        files = {filename}
         if isinstance(self.score.table, TabixGenomicPositionTable):
-            files.add(f"{self.score.table.definition.filename}.tbi")
+            index_filename = resolve_tabix_index_filename(
+                self.resource, filename)
+            if index_filename is None:
+                logger.warning(
+                    "resource <%s>: tabix table %s has no index "
+                    "(neither %s.tbi nor %s.csi) in the resource manifest; "
+                    "the index is left out of the resource file set",
+                    self.resource.resource_id, filename, filename, filename)
+            else:
+                files.add(index_filename)
         return files
 
     @staticmethod
