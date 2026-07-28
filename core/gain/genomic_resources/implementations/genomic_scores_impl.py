@@ -97,27 +97,43 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def _do_noregion_histograms(
         resource: GenomicResource,
     ) -> None:
+        """Compute a resource's statistics in one task, contig by contig.
+
+        The ``--region-size 0`` path: one task, no splitting *within* a
+        contig.  It used to be one scan of the whole table, expressed by
+        handing ``chrom=None`` down to the score -- and ``_get_chrom_regions``
+        manufactured a ``Region(None, None, None)`` to say so, with a
+        ``# type: ignore`` and a comment conceding it was "a bit hacky".  The
+        region-read family now requires a contig, so the iteration is stated
+        here instead of smuggled through as a null.
+
+        Each contig is scanned by the very functions the per-region tasks use
+        and folded together by the very functions that fold those tasks'
+        results, so this produces what a split run produces -- not something
+        merely believed to match.  An empty contig (an unscored alt, of which
+        hg38 has hundreds) contributes an empty histogram, which merges
+        cleanly; ``_merge_histograms`` only nullifies on a genuine error.
+        """
         impl = build_score_implementation_from_resource(resource)
         all_min_max_scores, all_hist_confs = \
             impl._unpack_score_defs(resource)  # noqa: SLF001
 
+        with impl.score.open() as score:
+            chroms = list(score.get_all_chromosomes())
+
         if all_min_max_scores:
-            min_max_result = GenomicScoreImplementation._do_min_max(
-                resource,
+            all_hist_confs = GenomicScoreImplementation._merge_min_max(
                 all_min_max_scores,
-                None,
-                None,
-                None,
+                all_hist_confs,
+                *(GenomicScoreImplementation._do_min_max(
+                    resource, all_min_max_scores, chrom, None, None)
+                  for chrom in chroms),
             )
-            all_hist_confs = \
-                GenomicScoreImplementation._update_hist_confs(
-                    all_hist_confs, min_max_result)
-        hist_result = GenomicScoreImplementation._do_histogram(
+        hist_result = GenomicScoreImplementation._merge_histograms(
             resource,
-            all_hist_confs,
-            None,
-            None,
-            None,
+            *(GenomicScoreImplementation._do_histogram(
+                resource, all_hist_confs, chrom, None, None)
+              for chrom in chroms),
         )
         GenomicScoreImplementation._save_histograms(
             resource,
@@ -277,11 +293,6 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         self, region_size: int, grr: GenomicResourceRepo | None = None,
     ) -> list[Region]:
 
-        if region_size <= 0:
-            # Forcefully setting the chromosome to None is a bit hacky,
-            # but is more elegant than properly supporting it in Region.
-            return [Region(None, None, None)]  # type: ignore
-
         regions = []
         ref_genome_id = cast(
             str,
@@ -346,7 +357,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def _do_min_max(
         resource: GenomicResource,
         score_ids: list[str],
-        chrom: str | None,
+        chrom: str,
         start: int | None,
         end: int | None,
     ) -> dict[str, MinMaxValue]:
@@ -421,7 +432,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def _do_histogram(
         resource: GenomicResource,
         all_hist_confs: dict[str, HistogramConfig],
-        chrom: str | None,
+        chrom: str,
         start: int | None,
         end: int | None,
     ) -> dict[str, Histogram]:
@@ -506,7 +517,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         accumulate: Callable[
             [tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]],
              dict[str, _AccT],
-             tuple[str | None, int | None, int | None], int | None],
+             tuple[str, int | None, int | None], int | None],
             int | None],
     ) -> dict[str, _AccT]:
         """Drive a bulk region scan, folding each batch into ``result``.
@@ -535,7 +546,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def _accumulate_arrays(
         arrays: tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]],
         result: dict[str, Histogram],
-        region: tuple[str | None, int | None, int | None],
+        region: tuple[str, int | None, int | None],
         prev_right: int | None,
     ) -> int | None:
         """Fold one batch of column arrays into the per-score histograms.
@@ -565,7 +576,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def _clip_keep_guard(
         pos_begin: np.ndarray,
         pos_end: np.ndarray,
-        region: tuple[str | None, int | None, int | None],
+        region: tuple[str, int | None, int | None],
         prev_right: int | None,
     ) -> tuple[np.ndarray, np.ndarray, int | None]:
         """Clip a batch to the region and enforce the overlap guard.
@@ -664,7 +675,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def _do_min_max_task(
         resource: GenomicResource,
         score_ids: list[str],
-        chrom: str | None,
+        chrom: str,
         start: int | None,
         end: int | None,
     ) -> dict[str, MinMaxValue]:
@@ -687,7 +698,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def _do_histogram_task(
         resource: GenomicResource,
         all_hist_confs: dict[str, HistogramConfig],
-        chrom: str | None,
+        chrom: str,
         start: int | None,
         end: int | None,
     ) -> dict[str, Histogram]:
@@ -733,7 +744,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     def _accumulate_min_max(
         arrays: tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]],
         result: dict[str, MinMaxValue],
-        region: tuple[str | None, int | None, int | None],
+        region: tuple[str, int | None, int | None],
         prev_right: int | None,
     ) -> int | None:
         """Fold one batch of column arrays into the per-score min/max.

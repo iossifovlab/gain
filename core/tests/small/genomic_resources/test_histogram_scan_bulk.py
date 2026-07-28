@@ -216,14 +216,16 @@ def test_dispatch_uses_bulk_for_float_tabix(tmp_path: pathlib.Path) -> None:
 def test_dispatch_falls_back_for_whole_table_scan(
     tmp_path: pathlib.Path,
 ) -> None:
-    # chrom=None (whole-table) is not bulk-eligible: the overlap guard runs
-    # per contig, so it keeps the per-record path.
+    # An UNBOUNDED region -- a contig with no start/end -- is not
+    # bulk-eligible: the bulk path wants concrete bounds.  This is the shape
+    # ``--region-size 0`` produces now that a contig is required, where it
+    # used to be spelled ``chrom=None``.
     resource = _multiscore_tabix(tmp_path)
     confs: dict = {"s1": _hist_conf(), "s2": _hist_conf()}
     via_task = GenomicScoreImplementation._do_histogram_task(
-        resource, confs, None, None, None)
+        resource, confs, "chr1", None, None)
     ref = GenomicScoreImplementation._do_histogram(
-        resource, confs, None, None, None)
+        resource, confs, "chr1", None, None)
     _assert_hists_equal(via_task, ref)
 
 

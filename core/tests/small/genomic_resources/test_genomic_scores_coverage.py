@@ -648,7 +648,13 @@ def test_position_score_fetch_region_all() -> None:
 
     score = build_position_score_from_resource(res)
     score.open()
-    result = list(score.fetch_region(None, None, None))
+    # A contig is required, so "every record" is a loop over the contigs --
+    # the same idiom ``_do_noregion_histograms`` uses for --region-size 0.
+    result = [
+        rec
+        for chrom in score.get_all_chromosomes()
+        for rec in score.fetch_region(chrom, None, None)
+    ]
     assert len(result) == 4
 
 
@@ -685,5 +691,9 @@ def test_allele_score_fetch_region_all() -> None:
     score = AlleleScore(res)
     score.open()
 
-    result = list(score.fetch_region(None, None, None))
+    result = [
+        rec
+        for chrom in score.get_all_chromosomes()
+        for rec in score.fetch_region(chrom, None, None)
+    ]
     assert len(result) == 9

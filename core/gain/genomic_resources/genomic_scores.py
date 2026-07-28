@@ -703,7 +703,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
     def fetch_records(
         self,
-        chrom: str | None,
+        chrom: str,
         pos_begin: int | None,
         pos_end: int | None,
     ) -> Iterator[Record]:
@@ -723,23 +723,15 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         context, and so that a caller need not reach past the score to its
         table.
 
-        **``chrom=None`` means the whole table**, and this is the one place
-        that is decided.  It used to be decided in each backend, which opened
-        ``get_records_in_region`` with ``if chrom is None: yield from
-        self.get_all_records()`` -- the same three lines in three tables, and
-        a region read whose signature said a contig was optional when what it
-        really offered was a second method under the same name.  The tables
-        now require a contig; the choice between the two reads lives here,
-        where the nullable parameter actually comes from.
-
-        It is not a convenience: ``grr_manage --region-size 0`` computes a
-        resource's statistics in a single whole-table pass, and reaches this
-        through ``_do_noregion_histograms`` with no contig at all.
+        **A contig is required**, here and everywhere in the region-read
+        family.  This method briefly accepted ``None`` for "the whole table",
+        absorbing a mode the tables had just given up; nothing needs it now.
+        ``grr_manage --region-size 0`` was the only caller, and it iterates
+        contigs instead (see ``_do_noregion_histograms``).  A caller that
+        genuinely wants every record of a table asks the table:
+        ``score.table.get_all_records()``.
         """
         try:
-            if chrom is None:
-                yield from self.table.get_all_records()
-                return
             yield from self.table.get_records_in_region(
                 chrom, pos_begin, pos_end)
         except Exception:
@@ -918,7 +910,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
     def _fetch_region_records(
         self,
-        chrom: str | None,
+        chrom: str,
         pos_begin: int | None,
         pos_end: int | None,
         scores: list[str] | None = None,
@@ -934,7 +926,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         if not self.is_open():
             raise ValueError(f"genomic score <{self.resource_id}> is not open")
 
-        if chrom is not None and chrom not in self.get_all_chromosomes():
+        if chrom not in self.get_all_chromosomes():
             raise ValueError(
                 f"{chrom} is not among the available chromosomes.")
 
@@ -967,7 +959,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     @abc.abstractmethod
     def fetch_region_values(
         self,
-        chrom: str | None = None,
+        chrom: str,
         pos_begin: int | None = None,
         pos_end: int | None = None,
         scores: list[str] | None = None,
@@ -1048,7 +1040,7 @@ class PositionScore(GenomicScore):
 
     def fetch_region_values(
         self,
-        chrom: str | None = None,
+        chrom: str,
         pos_begin: int | None = None,
         pos_end: int | None = None,
         scores: list[str] | None = None,
@@ -1077,7 +1069,7 @@ class PositionScore(GenomicScore):
             yield (left, right, val)
 
     def fetch_region(
-        self, chrom: str | None,
+        self, chrom: str,
         pos_begin: int | None,
         pos_end: int | None,
         scores: list[str] | None = None,
@@ -1088,7 +1080,7 @@ class PositionScore(GenomicScore):
 
     def fetch_region_weighted_values(
         self,
-        chrom: str | None = None,
+        chrom: str,
         pos_begin: int | None = None,
         pos_end: int | None = None,
         scores: list[str] | None = None,
@@ -1325,7 +1317,7 @@ class AlleleScore(GenomicScore):
 
     def fetch_region_values(
         self,
-        chrom: str | None = None,
+        chrom: str,
         pos_begin: int | None = None,
         pos_end: int | None = None,
         scores: list[str] | None = None,
@@ -1338,7 +1330,7 @@ class AlleleScore(GenomicScore):
 
     def fetch_region(
         self,
-        chrom: str | None,
+        chrom: str,
         pos_begin: int | None,
         pos_end: int | None,
         scores: list[str] | None = None,
@@ -1486,7 +1478,7 @@ class CnvCollection(GenomicScore):
 
     def fetch_region_values(
         self,
-        chrom: str | None = None,
+        chrom: str,
         pos_begin: int | None = None,
         pos_end: int | None = None,
         scores: list[str] | None = None,
