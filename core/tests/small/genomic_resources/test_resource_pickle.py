@@ -4,6 +4,10 @@ import pickle  # noqa: S403
 import textwrap
 
 import pytest
+from gain.genomic_resources.cached_repository import (
+    CachingProtocol,
+    GenomicResourceCachedRepo,
+)
 from gain.genomic_resources.fsspec_protocol import FsspecReadOnlyProtocol
 from gain.genomic_resources.repository import (
     GenomicResourceRepo,
@@ -17,10 +21,7 @@ from gain.genomic_resources.testing import (
 )
 
 
-@pytest.fixture
-def grr_fixture(tmp_path: pathlib.Path) -> GenomicResourceRepo:
-    root_path = tmp_path / "test_local_grr"
-
+def _setup_scores(root_path: pathlib.Path) -> None:
     setup_directories(
         root_path,
         {
@@ -74,11 +75,33 @@ def grr_fixture(tmp_path: pathlib.Path) -> GenomicResourceRepo:
             },
         },
     )
+
+
+@pytest.fixture
+def grr_fixture(tmp_path: pathlib.Path) -> GenomicResourceRepo:
+    root_path = tmp_path / "test_local_grr"
+    _setup_scores(root_path)
     return build_genomic_resource_repository({
         "id": "test_local",
         "type": "directory",
         "directory": str(root_path),
     })
+
+
+@pytest.fixture
+def cached_grr_fixture(
+    tmp_path: pathlib.Path,
+) -> GenomicResourceCachedRepo:
+    root_path = tmp_path / "test_local_grr"
+    _setup_scores(root_path)
+    repo = build_genomic_resource_repository({
+        "id": "test_local",
+        "type": "directory",
+        "directory": str(root_path),
+        "cache_dir": str(tmp_path / "cache"),
+    })
+    assert isinstance(repo, GenomicResourceCachedRepo)
+    return repo
 
 
 def test_pickle_genomic_score(grr_fixture: GenomicResourceRepo) -> None:
@@ -92,3 +115,43 @@ def test_pickle_genomic_score(grr_fixture: GenomicResourceRepo) -> None:
     assert isinstance(res_one_u.proto, FsspecReadOnlyProtocol)
 
     assert id(res_one.proto) == id(res_one_u.proto)
+
+
+def test_pickle_cache_backed_resource(
+    cached_grr_fixture: GenomicResourceCachedRepo,
+) -> None:
+    """A cache-backed resource carries its caching protocol through pickle.
+
+    The protocol memoizes its resource dict behind a lock, and a lock is
+    unpicklable -- so the guard added in #446 has to be dropped and rebuilt
+    around the round-trip, or every dask worker read of a cached GRR breaks.
+    """
+    res_one = cached_grr_fixture.get_resource("one")
+    assert isinstance(res_one.proto, CachingProtocol)
+
+    res_one_u = pickle.loads(pickle.dumps(res_one))
+
+    assert isinstance(res_one_u.proto, CachingProtocol)
+    assert res_one_u.resource_id == "one"
+    assert res_one_u.get_type() == "position_score"
+    with res_one_u.open_raw_file("data.txt") as infile:
+        assert "1.01" in infile.read()
+
+
+def test_pickle_cached_repository(
+    cached_grr_fixture: GenomicResourceCachedRepo,
+) -> None:
+    """The cached repository itself survives a round-trip and still resolves.
+
+    Its memo guard is a reentrant lock (see #446); like the protocol's, it
+    must not reach the pickle.
+    """
+    repo_u = pickle.loads(pickle.dumps(cached_grr_fixture))
+
+    assert isinstance(repo_u, GenomicResourceCachedRepo)
+
+    res_two = repo_u.get_resource("two")
+    assert res_two.resource_id == "two"
+    assert isinstance(res_two.proto, CachingProtocol)
+    with res_two.open_raw_file("data.txt") as infile:
+        assert "2.11" in infile.read()

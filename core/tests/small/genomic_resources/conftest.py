@@ -4,7 +4,8 @@ import gzip
 import logging
 import os
 import pathlib
-from collections.abc import Generator
+import threading
+from collections.abc import Callable, Generator
 from typing import Any
 
 import pytest
@@ -110,3 +111,60 @@ def fsspec_proto(
         return
 
     raise ValueError(f"unexpected protocol scheme: <{grr_scheme}>")
+
+
+#: Run a callable in N threads whose starts are aligned by a barrier, and
+#: return ``(results, errors)``. See the ``run_in_threads`` fixture.
+RunInThreads = Callable[..., tuple[list[Any], list[BaseException]]]
+
+
+@pytest.fixture
+def run_in_threads() -> RunInThreads:
+    """Run a callable concurrently in several threads, starts aligned.
+
+    The barrier is what makes a check-then-populate race reproducible rather
+    than merely likely: every thread is released into ``work`` at the same
+    moment. Every thread is joined with a timeout and its liveness asserted,
+    so a lock-ordering regression fails the test loudly instead of hanging
+    the suite.
+    """
+
+    def run(
+        work: Callable[[], Any],
+        threads_count: int = 8,
+        timeout: float = 60.0,
+    ) -> tuple[list[Any], list[BaseException]]:
+        barrier = threading.Barrier(threads_count)
+        guard = threading.Lock()
+        results: list[Any] = []
+        errors: list[BaseException] = []
+
+        def target() -> None:
+            # pylint: disable=broad-exception-caught
+            try:
+                barrier.wait()
+                result = work()
+            except BaseException as exc:  # noqa: BLE001
+                with guard:
+                    errors.append(exc)
+            else:
+                with guard:
+                    results.append(result)
+
+        # Daemon threads on purpose: a thread stuck on a lock would otherwise
+        # keep the interpreter alive at exit and hang the whole suite long
+        # after this test has already reported its failure.
+        threads = [
+            threading.Thread(target=target, daemon=True)
+            for _ in range(threads_count)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=timeout)
+            assert not thread.is_alive(), \
+                "thread did not finish in time -- deadlock?"
+
+        return results, errors
+
+    return run
