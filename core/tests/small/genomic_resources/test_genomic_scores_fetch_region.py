@@ -1,13 +1,13 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import textwrap
-from typing import cast
 
 import pytest
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     PositionScore,
     ScoreValue,
-    build_score_from_resource,
+    build_allele_score_from_resource,
+    build_position_score_from_resource,
 )
 from gain.genomic_resources.testing import (
     build_filesystem_test_resource,
@@ -59,12 +59,12 @@ def position_score(tmp_path_factory: pytest.TempPathFactory) -> PositionScore:
         """).strip(),
         seq_col=0, start_col=1, end_col=2)
     res = build_filesystem_test_resource(root_path)
-    score = build_score_from_resource(res)
+    score = build_position_score_from_resource(res)
     score.open()
     assert len(score.score_definitions) == 2
     assert "s1" in score.score_definitions
     assert "s2" in score.score_definitions
-    return cast(PositionScore, score)
+    return score
 
 
 @pytest.mark.parametrize("begin,end,scores,expected", [
@@ -172,14 +172,14 @@ def np_score(tmp_path_factory: pytest.TempPathFactory) -> AlleleScore:
         """).strip(),
         seq_col=0, start_col=1, end_col=1)
     res = build_filesystem_test_resource(root_path)
-    score = build_score_from_resource(res)
+    score = build_allele_score_from_resource(res)
     score.open()
 
     assert len(score.score_definitions) == 2
     assert "s1" in score.score_definitions
     assert "s2" in score.score_definitions
 
-    return cast(AlleleScore, score)
+    return score
 
 
 @pytest.mark.parametrize("begin,end,scores,expected", [
@@ -296,14 +296,14 @@ def np_score2(tmp_path_factory: pytest.TempPathFactory) -> AlleleScore:
         """).strip(),
         seq_col=0, start_col=1, end_col=1, line_skip=1)
     res = build_filesystem_test_resource(root_path)
-    score = build_score_from_resource(res)
+    score = build_allele_score_from_resource(res)
     score.open()
 
     assert len(score.score_definitions) == 2
     assert "s1" in score.score_definitions
     assert "s2" in score.score_definitions
 
-    return cast(AlleleScore, score)
+    return score
 
 
 @pytest.mark.parametrize("begin,end,scores,expected", [
@@ -430,14 +430,14 @@ def allele_score(tmp_path_factory: pytest.TempPathFactory) -> AlleleScore:
         """).strip(),
         seq_col=0, start_col=1, end_col=1, line_skip=1)
     res = build_filesystem_test_resource(root_path)
-    score = build_score_from_resource(res)
+    score = build_allele_score_from_resource(res)
     score.open()
 
     assert len(score.score_definitions) == 2
     assert "s1" in score.score_definitions
     assert "s2" in score.score_definitions
 
-    return cast(AlleleScore, score)
+    return score
 
 
 @pytest.mark.parametrize("begin,end,scores,expected", [

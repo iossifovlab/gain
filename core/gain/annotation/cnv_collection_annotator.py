@@ -64,6 +64,12 @@ class CnvCollectionAnnotator(AnnotatorBase):
             raise ValueError(f"Can't create {info.type}: "
                              "no resrouce_id parameter.")
         resource = pipeline.repository.get_resource(cnv_collection_resrouce_id)
+        # Deliberately constructed directly rather than through
+        # `build_cnv_collection_from_resource`: that factory returns a
+        # process-wide shared instance, and `self.close()` below closes the
+        # collection -- which would tear it down for every other holder.
+        # `CnvCollection.__init__` validates the resource type, so nothing is
+        # lost by bypassing the factory here.
         self.cnv_collection = CnvCollection(resource)
         info.resources.append(resource)
 

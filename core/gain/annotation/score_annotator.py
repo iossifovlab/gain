@@ -31,11 +31,11 @@ from gain.genomic_resources.aggregators import (
     WeightedValues,
 )
 from gain.genomic_resources.genomic_scores import (
-    AlleleScore,
     GenomicScore,
     GenomicScoreDef,
-    PositionScore,
     ScoreLineBase,
+    build_allele_score_from_resource,
+    build_position_score_from_resource,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.templates import get_template
@@ -259,7 +259,7 @@ class PositionScoreAnnotator(GenomicScoreAnnotatorBase):
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
 
         resource = get_genomic_resource(pipeline, info, {"position_score"})
-        self.position_score = PositionScore(resource)
+        self.position_score = build_position_score_from_resource(resource)
         super().__init__(pipeline, info, self.position_score)
 
         info.documentation += textwrap.dedent(f"""
@@ -431,7 +431,7 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
         resource = get_genomic_resource(
             pipeline, info, {"np_score", "allele_score"})
-        self.allele_score = AlleleScore(resource)
+        self.allele_score = build_allele_score_from_resource(resource)
         self.filter_parser = Lark(self.ALLELE_FILTER_GRAMMAR)
         self.allele_filter = None
         allele_filter_str = info.parameters.get("allele_filter")

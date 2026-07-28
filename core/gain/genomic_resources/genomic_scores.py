@@ -12,6 +12,7 @@ from types import TracebackType
 from typing import (
     TYPE_CHECKING,
     Any,
+    Self,
     cast,
 )
 
@@ -1368,7 +1369,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     def is_open(self) -> bool:
         return self.table_loaded
 
-    def open(self) -> GenomicScore:
+    def open(self) -> Self:
         """Open genomic score resource and returns it."""
         if self.is_open():
             logger.info(
@@ -1457,7 +1458,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                     score_def.score_index = score_def.col_index
         return self
 
-    def __enter__(self) -> GenomicScore:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(
@@ -1761,15 +1762,19 @@ class PositionScore(GenomicScore):
             in a genomic region, for a caller that aggregates it
     """
 
+    def __init__(self, resource: GenomicResource):
+        if resource.get_type() != "position_score":
+            raise ValueError(
+                "The resource provided to PositionScore should be of "
+                f"'position_score' type, not a '{resource.get_type()}'")
+        super().__init__(resource)
+
     @staticmethod
     def get_schema() -> dict[str, Any]:
         schema = copy.deepcopy(GenomicScore.get_schema())
         scores_schema = schema["scores"]["schema"]["schema"]
         scores_schema["position_aggregator"] = AGGREGATOR_SCHEMA
         return schema
-
-    def open(self) -> PositionScore:
-        return cast(PositionScore, super().open())
 
     def fetch_region_values(
         self,
@@ -1962,7 +1967,7 @@ class AlleleScore(GenomicScore):
     def __init__(self, resource: GenomicResource):
         if resource.get_type() not in {"allele_score", "np_score"}:
             raise ValueError(
-                "The resrouce provided to AlleleScore should be of"
+                "The resource provided to AlleleScore should be of "
                 f"'allele_score' type, not a '{resource.get_type()}'")
         if resource.get_type() == "np_score":
             logger.warning(
@@ -2049,9 +2054,6 @@ class AlleleScore(GenomicScore):
         scores_schema["allele_aggregator"] = AGGREGATOR_SCHEMA
         scores_schema["nucleotide_aggregator"] = AGGREGATOR_SCHEMA
         return schema
-
-    def open(self) -> AlleleScore:
-        return cast(AlleleScore, super().open())
 
     def fetch_region_values(
         self,
@@ -2215,9 +2217,6 @@ class CnvCollection(GenomicScore):
         scores_schema["allele_aggregator"] = AGGREGATOR_SCHEMA
         return schema
 
-    def open(self) -> CnvCollection:
-        return cast(CnvCollection, super().open())
-
     def fetch_region_values(
         self,
         chrom: str | None = None,
@@ -2305,40 +2304,107 @@ class CnvCollection(GenomicScore):
         return cast(dict[str, GenomicScoreDef], scores)
 
 
-_INMEMORY_CNV_CACHE: dict[str, GenomicScore] = {}
+_INMEMORY_CNV_CACHE: dict[tuple[str, str], CnvCollection] = {}
 _INMEMORY_CNV_CACHE_LOCK = Lock()
+
+
+def build_position_score_from_resource(
+    resource: GenomicResource,
+) -> PositionScore:
+    """Build a position score from a `position_score` resource."""
+    return PositionScore(resource)
+
+
+def build_position_score_from_resource_id(
+    resource_id: str, grr: GenomicResourceRepo | None = None,
+) -> PositionScore:
+    """Build a position score from a `position_score` resource id."""
+    if grr is None:
+        grr = build_genomic_resource_repository()
+    return build_position_score_from_resource(grr.get_resource(resource_id))
+
+
+def build_allele_score_from_resource(
+    resource: GenomicResource,
+) -> AlleleScore:
+    """Build an allele score from an `allele_score` resource.
+
+    The deprecated `np_score` resource type is accepted as well. It builds
+    an `AlleleScore` that defaults to substitutions mode -- unless the
+    resource configures `allele_score_mode` explicitly, which is honoured
+    for either resource type.
+    """
+    return AlleleScore(resource)
+
+
+def build_allele_score_from_resource_id(
+    resource_id: str, grr: GenomicResourceRepo | None = None,
+) -> AlleleScore:
+    """Build an allele score from an `allele_score` resource id."""
+    if grr is None:
+        grr = build_genomic_resource_repository()
+    return build_allele_score_from_resource(grr.get_resource(resource_id))
+
+
+def build_cnv_collection_from_resource(
+    resource: GenomicResource,
+) -> CnvCollection:
+    """Build a CNV collection from a `cnv_collection` resource.
+
+    CNV collections are cached in memory and shared process-wide, keyed by
+    versioned resource id and repository URL. Callers must not assume they
+    own the returned object's lifecycle -- in particular, closing it closes
+    it for every other holder (see gain#350).
+
+    The key uses ``get_full_id()`` rather than ``get_id()``: the latter is
+    version-less, so two versions of one resource id would share a single
+    cache entry and the second caller would receive the first version's
+    data.
+    """
+    cache_id = (resource.get_full_id(), resource.get_repo_url())
+
+    with _INMEMORY_CNV_CACHE_LOCK:
+        if cache_id not in _INMEMORY_CNV_CACHE:
+            _INMEMORY_CNV_CACHE[cache_id] = CnvCollection(resource)
+        return _INMEMORY_CNV_CACHE[cache_id]
+
+
+def build_cnv_collection_from_resource_id(
+    resource_id: str, grr: GenomicResourceRepo | None = None,
+) -> CnvCollection:
+    """Build a CNV collection from a `cnv_collection` resource id."""
+    if grr is None:
+        grr = build_genomic_resource_repository()
+    return build_cnv_collection_from_resource(grr.get_resource(resource_id))
 
 
 def build_score_from_resource(
     resource: GenomicResource,
 ) -> GenomicScore:
-    """Build a genomic score resource and return the coresponding score."""
-    if resource.get_type() == "position_score":
-        return PositionScore(resource)
-    if resource.get_type() == "np_score":
-        logger.warning(
-            "The resource type `np_score` is deprecated. "
-            "Please use `allele_score` instead for resource %s.",
-            resource.get_id())
-        return AlleleScore(resource)
-    if resource.get_type() == "allele_score":
-        return AlleleScore(resource)
+    """Build a genomic score resource and return the coresponding score.
 
-    if resource.get_type() == "cnv_collection":
-        cache_id = f"{resource.get_id()}_{resource.get_repo_url()}"
+    Dispatches on the resource type to the corresponding typed factory. Use
+    the typed factories directly when the resource type is known statically;
+    this one exists for callers handed a resource of unknown type.
 
-        with _INMEMORY_CNV_CACHE_LOCK:
-            if cache_id not in _INMEMORY_CNV_CACHE:
-                score = CnvCollection(resource)
-                if score is None:
-                    raise ValueError(
-                        f"Resource {resource.get_id()} is not of score type")
-                _INMEMORY_CNV_CACHE[cache_id] = score
-            return _INMEMORY_CNV_CACHE[cache_id]
+    Beware the asymmetry inherited from the typed factories: a
+    `cnv_collection` resource yields a process-wide CACHED, shared
+    `CnvCollection`, while `position_score` and `allele_score` yield a fresh
+    instance every call. A caller that closes what it got back therefore
+    closes it for every other holder of the cached collection (see
+    gain#350).
+    """
+    resource_type = resource.get_type()
+    if resource_type == "position_score":
+        return build_position_score_from_resource(resource)
+    if resource_type in {"allele_score", "np_score"}:
+        return build_allele_score_from_resource(resource)
+    if resource_type == "cnv_collection":
+        return build_cnv_collection_from_resource(resource)
 
     raise ValueError(
         f"Resource {resource.get_id()} is not of score type; "
-        f"unexpected resource type {resource.get_type()}")
+        f"unexpected resource type {resource_type}")
 
 
 def build_score_from_resource_id(
