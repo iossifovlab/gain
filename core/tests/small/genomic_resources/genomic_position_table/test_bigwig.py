@@ -1023,7 +1023,10 @@ def test_the_retired_buffering_keys_are_accepted_and_ignored(
         "chr1  0  10  0.11", {"chr1": 1000})
     grr = build_filesystem_test_repository(root_path)
 
-    with caplog.at_level("WARNING"):
+    # INFO, not WARNING: these name a feature that no longer exists, so
+    # their presence is a historical artifact rather than a misreading of
+    # the format (see ``_warn_inert_bigwig_keys``).
+    with caplog.at_level("INFO"):
         score = PositionScore(grr.get_resource("test_score"))
 
     warnings = "\n".join(caplog.messages)

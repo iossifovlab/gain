@@ -315,33 +315,39 @@ def test_the_canonical_bigwig_config_addresses_no_column_at_all(
 
 
 @pytest.mark.parametrize("key", ["index", "column_index"])
-def test_the_deprecated_value_index_opens_and_warns_once(
+def test_the_deprecated_value_index_opens_and_reports_once(
     tmp_path: pathlib.Path,
     caplog: pytest.LogCaptureFixture,
     key: str,
 ) -> None:
     """``index: 3`` still opens -- and says, once per open, to delete it.
 
-    16 deployed bigWig resources carry the key (one of them with the comment
+    All 150 deployed bigWig resources carry the key (one with the comment
     "this makes no sense and should be removed" already in its yaml), so
     refusing it would break every one of them on the day this ships.  It
     addressed the value inside the four-element payload a bigWig record used
     to carry; the payload is now the value, so the key resolves to nothing and
-    is accepted as a no-op.  The warning is what gets it deleted from the GRRs.
+    is accepted as a no-op.
+
+    Reported at INFO, not WARNING: all 150 deployed bigWig resources carry
+    the key, so a warning would fire for every one of them on every open --
+    noise with a severity label on it.  The trade is that the message no
+    longer drives the cleanup on its own; deleting the key from the GRRs is
+    a deliberate pass, not something a log level will nag into happening.
     """
     score = _a_bigwig_resource(tmp_path, _indexed(3, key=key))
-    with caplog.at_level("WARNING"), score.open():
+    with caplog.at_level("INFO"), score.open():
         record = next(iter(score.fetch_records("chr1", 5, 5)))
         assert score.get_score_from_record(record, "bw") == \
             pytest.approx(0.11)
 
-    warnings = [
+    reported = [
         rec.getMessage() for rec in caplog.records
-        if rec.levelname == "WARNING" and "deprecated" in rec.getMessage()
+        if rec.levelname == "INFO" and "deprecated" in rec.getMessage()
     ]
-    assert len(warnings) == 1, warnings
-    assert score.resource_id in warnings[0]
-    assert "bw" in warnings[0]
+    assert len(reported) == 1, reported
+    assert score.resource_id in reported[0]
+    assert "bw" in reported[0]
 
 
 def test_a_broken_bigwig_resource_can_still_be_described(
@@ -461,22 +467,27 @@ _LINSIGHT_SHAPED = """
 """
 
 
-def test_a_linsight_shaped_bigwig_table_warns_opens_and_reads(
+def test_a_linsight_shaped_bigwig_table_reports_opens_and_reads(
     tmp_path: pathlib.Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Inert config is warned about and ignored -- never refused.
+    """Inert config is reported and ignored -- never refused.
 
     The other side of the principle from the refusals above: these keys
     corrupt nothing, so refusing them would break a deployed resource to no
-    purpose.  The warning names each ignored key so the config can be cleaned
+    purpose.  The message names each ignored key so the config can be cleaned
     up; the read is unaffected.
+
+    At INFO, because 142 of the 150 deployed bigWig resources carry exactly
+    this shape.  ``_warn_inert_bigwig_keys`` keeps ``zero_based`` and
+    ``header_mode`` at WARNING for the opposite reason: nobody sets those, so
+    one appearing is a real misreading of the format rather than boilerplate.
     """
-    with caplog.at_level("WARNING"):
+    with caplog.at_level("INFO"):
         score = _a_bigwig_resource(tmp_path, _LINSIGHT_SHAPED)
     warned = " ".join(
         rec.getMessage() for rec in caplog.records
-        if rec.levelname == "WARNING")
+        if rec.levelname == "INFO")
     for key in ("chrom", "pos_begin", "pos_end"):
         assert key in warned, (key, warned)
 

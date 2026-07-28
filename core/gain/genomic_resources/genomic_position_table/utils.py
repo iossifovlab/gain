@@ -72,7 +72,32 @@ def build_genomic_position_table(
 def _warn_inert_bigwig_keys(
     resource: GenomicResource, table_definition: dict,
 ) -> None:
-    """Warn about table keys a bigWig reads nothing from, and ignore them."""
+    """Report table keys a bigWig reads nothing from, and ignore them.
+
+    **Two levels, and the split is by how often the key actually appears.**
+    A message that fires for nearly every resource is not a warning, it is
+    noise with a severity label on it, and it trains a reader to ignore the
+    level.  Measured across the 150 deployed bigWig resources:
+
+    * ``chrom``/``pos_begin``/``pos_end`` -- 142 of 150.  Endemic
+      boilerplate, copied from resource to resource.  INFO.
+    * the retired ``buffer_fetch_size``/``use_buffered_threshold`` -- 0 of
+      150.  INFO as well: they name a feature that no longer exists, so
+      their presence is a historical artifact rather than a misreading of
+      the format, and at zero deployments the level is moot anyway.
+    * ``header_mode`` and ``zero_based`` -- 0 of 150, and both are
+      meaningful keys on OTHER backends.  WARNING.  Setting either on a
+      bigWig says the author thinks this file has a header, or that its
+      coordinate convention is theirs to choose; neither is true, and
+      because nobody sets them today such a message would fire only for a
+      genuinely unusual config.  Rare is what makes it signal.
+
+    Nothing here refuses: every one of these keys is inert, and refusing
+    would take a working resource offline to report yaml that changes no
+    value.  Contrast the SCORE config, where a column address really would
+    name a column that is not the value --
+    ``bigwig_scores.validate_bigwig_scoredefs`` refuses that one.
+    """
     if table_definition.get("header_mode") is not None:
         logger.warning(
             "header_mode is not supported for bigwig tables, "
@@ -88,12 +113,8 @@ def _warn_inert_bigwig_keys(
     # ``table_bigwig`` reads any of the three.  So they are inert, not
     # wrong: they corrupt no value, and this is the MAJORITY shape in the
     # deployed GRRs -- 142 of the 150 bigWig resources carry it (every
-    # FitCons2 per-cell-type track, plus Linsight).  Refusing them would
-    # take 142 working resources offline to report six lines of yaml that
-    # change nothing.  Warn so they can be cleaned out of the GRRs; do not
-    # refuse.  Contrast the SCORE config, where a column address really
-    # would name a column that is not the value --
-    # ``bigwig_scores.validate_bigwig_scoredefs`` refuses that one.
+    # FitCons2 per-cell-type track, plus Linsight).  That majority is why
+    # this reports at INFO rather than WARNING; see the docstring.
     for inert_key in ("chrom", "pos_begin", "pos_end", "header"):
         if inert_key in table_definition:
             logger.info(

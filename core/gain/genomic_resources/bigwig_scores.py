@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 # The one column index a bigWig score config may still name.  It addressed the
 # value inside the four-element payload a bigWig record used to carry; the
 # payload is now the value itself, so the key means nothing and is accepted
-# only as a no-op, with a deprecation warning per open.  See
+# only as a no-op, reported once per open.  See
 # :func:`validate_bigwig_scoredefs`.
 DEPRECATED_VALUE_INDEX = 3
 
@@ -149,7 +149,9 @@ def validate_bigwig_scoredefs(
     * **a column NAME** -- a bigWig has no header, so there is nothing to
       resolve the name against.
 
-    ``index: 3`` is the one exception, accepted with a deprecation warning:
+    ``index: 3`` is the one exception, accepted with a deprecation
+    notice at INFO -- all 150 deployed bigWig resources carry it, so a
+    warning would fire for every one on every open:
     see :data:`DEPRECATED_VALUE_INDEX`.
 
     A score that declares no ``type:`` at all is let through.  That is not a

@@ -259,11 +259,21 @@ It is config surface, and 16 deployed resources do say it (one with the
 comment ``# this makes no sense and should be removed`` already in its yaml).
 But the key is answered by ACCEPTING it as a deprecated no-op, not by keeping
 a payload shape for it to index into: ``bigwig_scores`` takes ``index: 3`` at
-open, warns once naming the resource, and resolves it -- like the canonical
-config that addresses nothing at all -- to the one column a bigWig has.  No
-GRR has to change on the day this ships, and the warning is what gets the key
-deleted from them afterwards.  Any OTHER index is now refused at open, by
-name; before, ``index: 2`` read the position and called it a score.
+open, reports it once naming the resource, and resolves it -- like the
+canonical config that addresses nothing at all -- to the one column a bigWig
+has.  No GRR has to change on the day this ships.  Any OTHER index is now
+refused at open, by name; before, ``index: 2`` read the position and called
+it a score.
+
+That report is at INFO, not WARNING, and deliberately: all 150 deployed
+bigWig resources carry ``index: 3``, so a warning would fire for every one of
+them on every open, which is noise wearing a severity label.  The cost is
+that the message does not by itself drive the key out of the GRRs -- that is
+a deliberate cleanup pass now, not something a log level nags into happening.
+``_warn_inert_bigwig_keys`` splits the same way and says why: endemic keys
+report at INFO, keys nobody sets (``zero_based``, ``header_mode``) stay at
+WARNING, because a message that fires for nearly every resource trains its
+reader to ignore the level.
 
 *(b) "``get_region_value_arrays`` reconstructs the four-tuple so a bad index
 raises the same ``IndexError`` the record path raises."*  Superseded.  That
