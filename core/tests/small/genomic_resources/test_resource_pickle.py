@@ -137,6 +137,28 @@ def test_pickle_cache_backed_resource(
     with res_one_u.open_raw_file("data.txt") as infile:
         assert "1.01" in infile.read()
 
+    # The lock-guarded memo is the point of the round-trip: a worker that
+    # unpickles a cache-backed resource and enumerates through its protocol
+    # is the realistic path, and it needs the rebuilt lock.
+    assert "one" in res_one_u.proto.get_all_resources_dict()
+
+
+def test_pickle_cache_backed_resource_can_be_invalidated(
+    cached_grr_fixture: GenomicResourceCachedRepo,
+) -> None:
+    """An unpickled caching protocol can still be invalidated.
+
+    ``invalidate`` is the second entry point behind the memo guard (see
+    #446); a worker that drops its cached view of an unpickled resource
+    reaches it without ever enumerating.
+    """
+    res_one = cached_grr_fixture.get_resource("one")
+    res_one_u = pickle.loads(pickle.dumps(res_one))
+
+    res_one_u.proto.invalidate()
+
+    assert "one" in res_one_u.proto.get_all_resources_dict()
+
 
 def test_pickle_cached_repository(
     cached_grr_fixture: GenomicResourceCachedRepo,
@@ -144,11 +166,18 @@ def test_pickle_cached_repository(
     """The cached repository itself survives a round-trip and still resolves.
 
     Its memo guard is a reentrant lock (see #446); like the protocol's, it
-    must not reach the pickle.
+    must not reach the pickle. The repository is primed before the
+    round-trip so that ``cache_protos`` travels populated -- a cold
+    repository builds a brand new caching protocol on the other side and
+    never exercises the unpickled one.
     """
+    cached_grr_fixture.get_resource("one")
+    assert cached_grr_fixture.cache_protos
+
     repo_u = pickle.loads(pickle.dumps(cached_grr_fixture))
 
     assert isinstance(repo_u, GenomicResourceCachedRepo)
+    assert repo_u.cache_protos
 
     res_two = repo_u.get_resource("two")
     assert res_two.resource_id == "two"
