@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pathlib
 
+import pytest
 import yaml
 from gain.genomic_resources.cached_repository import GenomicResourceCachedRepo
 from gain.genomic_resources.fsspec_protocol import (
@@ -226,6 +227,111 @@ def test_build_a_configuration_with_embedded() -> None:
     score = PositionScore(res)
     score.open()
     assert score.fetch_scores("chr1", 23) == [0.01]
+
+
+# ---------------------------------------------------------------------------
+# Child repository ids within a group must be unique (#445)
+# ---------------------------------------------------------------------------
+
+
+def test_group_with_duplicate_explicit_child_ids_is_rejected() -> None:
+    with pytest.raises(ValueError, match="dup"):
+        build_genomic_resource_repository(
+            {"type": "group", "children": [
+                {"id": "dup", "type": "embedded", "content": {}},
+                {"id": "dup", "type": "embedded", "content": {}},
+            ]})
+
+
+def test_group_with_id_less_children_gets_distinct_child_ids() -> None:
+    repo = build_genomic_resource_repository(
+        {"type": "group", "children": [
+            {"type": "http", "url": "https://one.example.com"},
+            {"type": "http", "url": "https://two.example.com"},
+        ]})
+    assert isinstance(repo, GenomicResourceGroupRepo)
+
+    child_ids = [child.repo_id for child in repo.children]
+    assert all(child_ids), child_ids
+    assert len(set(child_ids)) == 2, child_ids
+
+
+def test_synthesised_child_ids_are_deterministic() -> None:
+    def build_child_ids() -> list[str]:
+        repo = build_genomic_resource_repository(
+            {"type": "group", "children": [
+                {"type": "http", "url": "https://one.example.com"},
+                {"type": "embedded", "content": {}},
+            ]})
+        assert isinstance(repo, GenomicResourceGroupRepo)
+        return [child.repo_id for child in repo.children]
+
+    assert build_child_ids() == build_child_ids()
+
+
+def test_group_with_the_same_directory_listed_twice_is_rejected(
+    tmp_path: pathlib.Path,
+) -> None:
+    with pytest.raises(ValueError, match=str(tmp_path.name)):
+        build_genomic_resource_repository(
+            {"type": "group", "children": [
+                {"type": "directory", "directory": str(tmp_path / "grr")},
+                {"type": "directory", "directory": str(tmp_path / "grr")},
+            ]})
+
+
+def test_duplicate_child_ids_in_a_nested_group_are_rejected() -> None:
+    with pytest.raises(ValueError, match="inner_dup"):
+        build_genomic_resource_repository(
+            {"type": "group", "children": [
+                {"id": "outer", "type": "embedded", "content": {}},
+                {"id": "nested", "type": "group", "children": [
+                    {"id": "inner_dup", "type": "embedded", "content": {}},
+                    {"id": "inner_dup", "type": "embedded", "content": {}},
+                ]},
+            ]})
+
+
+def test_duplicate_child_id_error_does_not_echo_a_password() -> None:
+    secret = "s3cr3t-445"  # noqa: S105
+    with pytest.raises(ValueError, match="dup") as exc_info:
+        build_genomic_resource_repository(
+            {"type": "group", "children": [
+                {"id": "dup", "type": "http", "url": "https://a.example.com",
+                 "user": "alice", "password": secret},
+                {"id": "dup", "type": "http", "url": "https://b.example.com"},
+            ]})
+    assert secret not in str(exc_info.value)
+
+
+def test_synthesised_child_id_does_not_echo_a_url_password() -> None:
+    secret = "s3cr3t-url-445"  # noqa: S105
+    repo = build_genomic_resource_repository(
+        {"type": "group", "children": [
+            {"type": "http", "url": f"https://alice:{secret}@a.example.com"},
+        ]})
+    assert isinstance(repo, GenomicResourceGroupRepo)
+    assert secret not in repo.children[0].repo_id
+
+
+def test_id_less_group_children_are_individually_addressable() -> None:
+    repo = build_genomic_resource_repository(
+        {"type": "group", "children": [
+            {"type": "embedded", "content": {
+                "one": {GR_CONF_FILE_NAME: "type: position_score",
+                        "data.txt": "AAAA-from-a"}}},
+            {"type": "embedded", "content": {
+                "one": {GR_CONF_FILE_NAME: "type: position_score",
+                        "data.txt": "BBBB-from-b"}}},
+        ]})
+    assert isinstance(repo, GenomicResourceGroupRepo)
+    first_id, second_id = (child.repo_id for child in repo.children)
+
+    first = repo.get_resource("one", repository_id=first_id)
+    second = repo.get_resource("one", repository_id=second_id)
+
+    assert first.get_file_content("data.txt") == "AAAA-from-a"
+    assert second.get_file_content("data.txt") == "BBBB-from-b"
 
 
 def test_read_only_filesystem_repo(

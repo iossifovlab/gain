@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import os
 import pathlib
+import re
 import tempfile
 from typing import Annotated, Any, Literal, cast
 from urllib.parse import urlparse
@@ -187,11 +189,51 @@ class EmbeddedRepoDefinition(_RepoDefinitionBase):
 
 
 class GroupRepoDefinition(_RepoDefinitionBase):
-    """Definition for a group of genomic resource repositories."""
+    """Definition for a group of genomic resource repositories.
+
+    The ids of a group's children must be distinct: a child id selects a
+    repository (``find_resource``/``get_resource`` take a ``repository_id``)
+    and, for a cached repository, names the child's cache directory, so two
+    children sharing an id leave the second one unreachable. Duplicates are
+    a configuration error, rejected here when the definition is validated.
+
+    Spelling ``id`` on a child is optional. A child that omits it gets a
+    deterministic id synthesised from its own identity -- its ``url`` or
+    ``directory``, or its position in ``children`` for an ``embedded`` /
+    ``memory`` child or a nested ``group``, which have neither. The
+    synthesised id is never empty, and two children that would synthesise
+    the same id (the same directory listed twice, say) are duplicates like
+    any other.
+    """
 
     type: Literal["group"]
     children: list[RepoDefinition]
     cache_dir: _PathOrStr | None = None
+
+    @model_validator(mode="after")
+    def check_child_ids_are_unique(self) -> GroupRepoDefinition:
+        """Reject a group whose children do not have distinct ids.
+
+        Compares the *resolved* ids -- an explicit ``id`` where the child
+        spells one, the synthesised id otherwise -- so a pair that would end
+        up sharing an id is refused whether or not the collision was
+        spelled out.
+        """
+        seen: dict[str, int] = {}
+        for index, child in enumerate(self.children):
+            child_id = _resolve_child_repo_id(
+                child.id, child.type,
+                getattr(child, "url", None),
+                getattr(child, "directory", None),
+                index)
+            if child_id in seen:
+                raise ValueError(
+                    f"duplicate child repository id <{child_id}> in a group "
+                    f"repository definition (children at positions "
+                    f"{seen[child_id]} and {index}); every child of a group "
+                    f"must have its own unique 'id'")
+            seen[child_id] = index
+        return self
 
 
 RepoDefinition = Annotated[
@@ -253,6 +295,65 @@ def _redact_url_userinfo(value: str) -> str:
     username, sep, _password = userinfo.partition(":")
     redacted_netloc = f"{username}:***@{hostinfo}" if sep else f"***@{hostinfo}"
     return parsed._replace(netloc=redacted_netloc).geturl()
+
+
+# A synthesised child repository id is `<slug>_<digest>`: the slug keeps the
+# id readable (it shows up in log messages and, for a cached repository, as a
+# cache directory name), the digest keeps it unique -- two identities that
+# sanitise to the same slug still differ. Only the tail of the identity is
+# slugified: the distinguishing part of a URL or a directory path is at its
+# end.
+_SYNTHESISED_ID_SLUG_MAX = 40
+_SYNTHESISED_ID_DIGEST_LEN = 8
+_NON_ID_CHARS_RE = re.compile(r"[^A-Za-z0-9]+")
+
+
+def _repo_definition_identity(url: Any, directory: Any) -> str | None:
+    """Return the string identifying a repository, or None if it has none.
+
+    A repository is identified by its ``url`` or its ``directory``; the
+    ``embedded``/``memory`` and ``group`` types have neither. Credentials
+    embedded in a URL's userinfo are redacted, so a synthesised id can never
+    carry a secret and stays stable when a password is rotated.
+    """
+    if url is not None:
+        return _redact_url_userinfo(str(url))
+    if directory is not None:
+        return str(directory)
+    return None
+
+
+def _synthesise_repo_id(
+        identity: str | None, repo_type: str, index: int) -> str:
+    """Build a deterministic, non-empty id for a child that omits ``id``.
+
+    Derived from the child's own identity (its url or directory) so that the
+    id is stable across runs and across processes -- the digest is a SHA-256
+    prefix, not Python's salted ``hash()``. A child with no identity of its
+    own (``embedded``/``memory``, or a nested ``group``) falls back to its
+    position in the parent's ``children`` list.
+    """
+    if not identity:
+        return f"{repo_type}_{index}"
+    slug = _NON_ID_CHARS_RE.sub("_", identity)[-_SYNTHESISED_ID_SLUG_MAX:]
+    slug = slug.strip("_")
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    return f"{slug}_{digest[:_SYNTHESISED_ID_DIGEST_LEN]}"
+
+
+def _resolve_child_repo_id(
+        child_id: str | None, repo_type: str,
+        url: Any, directory: Any, index: int) -> str:
+    """Return the id a group child is built with -- never the empty string.
+
+    The single source of truth for child-id resolution: used both by
+    ``GroupRepoDefinition``'s uniqueness check and by the group builder, so
+    the ids validation reasons about are the ids the repositories get.
+    """
+    if child_id:
+        return child_id
+    return _synthesise_repo_id(
+        _repo_definition_identity(url, directory), repo_type, index)
 
 
 def redact_definition(definition: Any) -> Any:
@@ -392,8 +493,10 @@ def _build_group_repository(
         children: list[dict], **kwargs: Any) -> GenomicResourceRepo:
 
     result: list[GenomicResourceRepo] = []
-    for child in children:
-        child_id: str = child.pop("id", "")
+    for index, child in enumerate(children):
+        child_id: str = _resolve_child_repo_id(
+            child.pop("id", None), child["type"],
+            child.get("url"), child.get("directory"), index)
         proto_type = child.pop("type")
         if proto_type == "group":
             repo: GenomicResourceRepo = \

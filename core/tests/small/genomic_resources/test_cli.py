@@ -1,10 +1,16 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import argparse
 import os
 import pathlib
 
 import pytest
 import pytest_mock
-from gain.genomic_resources.cli import _find_resources, cli_manage
+from gain.genomic_resources.cli import (
+    _create_grr_repo,
+    _find_resources,
+    cli_manage,
+)
+from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
@@ -289,3 +295,36 @@ def test_repo_init_refuses_dry_run_and_force(
     # ... and the repository was left uninitialised
     assert not (path / GR_CONTENTS_FILE_NAME).exists()
     assert not (path / GR_CONTENTS_FILE_NAME[:-3]).exists()
+
+
+# ---------------------------------------------------------------------------
+# gain#445: the user GRR definition nested under the CLI's synthetic group
+# ---------------------------------------------------------------------------
+
+def test_id_less_user_definition_gets_a_stable_id(
+    tmp_path: pathlib.Path,
+) -> None:
+    definition_path = tmp_path / "grr.yaml"
+    definition_path.write_text(
+        "type: http\nurl: https://grr.example.com\n")
+
+    repo = _create_grr_repo(
+        argparse.Namespace(grr=str(definition_path)), str(tmp_path / "local"))
+
+    assert isinstance(repo, GenomicResourceGroupRepo)
+    assert [child.repo_id for child in repo.children] == [
+        "local", "default_grr"]
+
+
+def test_user_definition_keeps_its_own_id(
+    tmp_path: pathlib.Path,
+) -> None:
+    definition_path = tmp_path / "grr.yaml"
+    definition_path.write_text(
+        "id: my-grr\ntype: http\nurl: https://grr.example.com\n")
+
+    repo = _create_grr_repo(
+        argparse.Namespace(grr=str(definition_path)), str(tmp_path / "local"))
+
+    assert isinstance(repo, GenomicResourceGroupRepo)
+    assert [child.repo_id for child in repo.children] == ["local", "my-grr"]

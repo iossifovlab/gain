@@ -387,11 +387,12 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
         the configuration instead: it is not resolvable, and the cache
         directory collision would corrupt cached data either way.
 
-        This is reachable from ``repository_factory``, which defaults a
-        group child's id to ``""`` -- so a group whose children omit ``id``
-        gives every child the same empty ``proto_id``. Such a repository
-        already fails to enumerate (``get_all_resources`` cannot resolve the
-        shadowed children), so nothing that worked is being taken away.
+        Defense in depth. A repository built from a GRR definition can no
+        longer reach this: ``GroupRepoDefinition`` rejects duplicate child
+        ids at validation time and synthesises a distinct id for a child
+        that omits one (#445). A group assembled programmatically from
+        protocols -- as tests and embedding code do -- bypasses that check,
+        so the guard stays here too.
         """
         proto_id = proto.proto_id
         # get / construct / assign must be atomic: two threads racing the

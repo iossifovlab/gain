@@ -1321,6 +1321,14 @@ def _create_grr_repo(
         extra_definition = load_definition_file(extra_definition_path)
     else:
         extra_definition = get_default_grr_definition()
+    if not extra_definition.get("id"):
+        # A top-level GRR definition may omit ``id``; nested here as a group
+        # child it would then get a synthesised, url-derived id (see
+        # ``repository_factory``). Name it instead, so the child id -- and,
+        # with it, the cache directory of a cached repository -- stays the
+        # same predictable value no matter what the user's definition points
+        # at (#445).
+        extra_definition = {**extra_definition, "id": "default_grr"}
     grr_definition = {
         "id": "cli_grr",
         "type": "group",

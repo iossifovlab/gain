@@ -1,6 +1,26 @@
 Release Notes
 =============
 
+* unreleased
+    * **Behavior change:** the children of a ``group`` repository must now
+      have distinct ids. A group definition whose children share an ``id``
+      — spelled out, or arrived at by listing the same ``url`` /
+      ``directory`` twice — is rejected when the GRR definition is
+      validated, naming the duplicated id, instead of silently leaving the
+      second child unreachable (#445).
+    * **Behavior change:** a group child that omits ``id`` no longer gets
+      the empty id; it gets a deterministic id derived from its ``url`` or
+      ``directory`` (or from its position, for an ``embedded`` child or a
+      nested ``group``), so every child is addressable through the
+      ``repository_id`` argument of ``find_resource``/``get_resource``
+      (#445).
+    * **Upgrade note:** because a cached repository derives its cache
+      directory from the child's id, a previously id-less child of a
+      ``group`` with a ``cache_dir`` now caches under its synthesised id
+      rather than under the empty one — a one-time re-download, not a
+      corruption. Delete the old, now-unused cache directory to reclaim the
+      space; naming such a child explicitly pins the directory (#445).
+
 * 2026.7.4
     * **Fixed:** a ``data_frame`` resource with ``format: excel`` — the
       format announced in 2026.7.3 — could not be read by a stock

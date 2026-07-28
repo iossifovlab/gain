@@ -167,6 +167,45 @@ def test_group_missing_children_is_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Child repository ids within a group must be unique (#445)
+# ---------------------------------------------------------------------------
+
+def test_group_with_duplicate_explicit_child_ids_is_rejected() -> None:
+    err = _invalid({"type": "group", "children": [
+        {"id": "same", "type": "http", "url": "https://a.example.com"},
+        {"id": "same", "type": "http", "url": "https://b.example.com"},
+    ]})
+    assert "same" in str(err)
+
+
+def test_group_with_distinct_id_less_children_is_valid() -> None:
+    _valid({"type": "group", "children": [
+        {"type": "http", "url": "https://a.example.com"},
+        {"type": "http", "url": "https://b.example.com"},
+        {"type": "embedded", "content": {}},
+        {"type": "embedded", "content": {}},
+    ]})
+
+
+def test_group_with_the_same_url_listed_twice_is_rejected() -> None:
+    err = _invalid({"type": "group", "children": [
+        {"type": "http", "url": "https://a.example.com"},
+        {"type": "http", "url": "https://a.example.com"},
+    ]})
+    assert "a_example_com" in str(err)
+
+
+def test_nested_group_duplicate_child_ids_are_rejected() -> None:
+    err = _invalid({"type": "group", "children": [
+        {"type": "group", "children": [
+            {"id": "inner", "type": "http", "url": "https://a.example.com"},
+            {"id": "inner", "type": "http", "url": "https://b.example.com"},
+        ]},
+    ]})
+    assert "inner" in str(err)
+
+
+# ---------------------------------------------------------------------------
 # Unknown type
 # ---------------------------------------------------------------------------
 

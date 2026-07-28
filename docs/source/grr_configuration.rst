@@ -132,6 +132,14 @@ Repository types
 
     | **children** (list, required): A list of repository configurations (each a real repository or another ``group``).
 
+    The children of a group must have **distinct ids**; a group whose children
+    share an id is rejected when the configuration is loaded. Spelling ``id``
+    on a child stays optional — a child that omits it gets a deterministic id
+    derived from its ``url`` or ``directory`` (or from its position, for an
+    ``embedded`` child or a nested ``group``) — but listing the same
+    repository twice is an error, and naming each child explicitly is
+    recommended.
+
 
 Search order
 ^^^^^^^^^^^^
