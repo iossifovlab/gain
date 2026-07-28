@@ -578,8 +578,17 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         if is_vcf:
             return extract_vcf_value
         if is_bigwig:
-            if any(score_def.na_values
-                   for score_def in self.score_definitions.values()):
+            # A bigWig value is a float, so only a NUMERIC sentinel can
+            # ever match it -- the four text tokens a float score defaults
+            # to ("", "nan", ".", "NA") cannot.  Testing for those rather
+            # than for a non-empty set is what lets the definition keep its
+            # default (and so its statistics hash) while every unconfigured
+            # bigWig still takes the identity read.
+            if any(
+                not isinstance(sentinel, str)
+                for score_def in self.score_definitions.values()
+                for sentinel in score_def.na_values
+            ):
                 return extract_bigwig_value_na
             return extract_bigwig_value
         if self.table.yields_records:

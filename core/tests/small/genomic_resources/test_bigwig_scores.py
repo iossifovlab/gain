@@ -369,28 +369,38 @@ def test_a_broken_bigwig_resource_can_still_be_described(
 # --- the NA default --------------------------------------------------------
 
 
-def test_a_bigwig_float_score_defaults_to_no_na_values(
+def test_a_bigwig_float_score_keeps_the_default_but_reads_by_identity(
     tmp_path: pathlib.Path,
 ) -> None:
-    """The float default is text sentinels a float payload cannot equal.
+    """Text sentinels a float cannot match: kept, but routed around.
 
-    ``("", "nan", ".", "NA")`` exists because a tabular backend hands the score
-    layer strings.  A bigWig hands it a ``float``, so not one of the four can
-    ever match -- dead config, a set membership test per value, and four
-    tokens of noise in the resource's statistics hash.  Emptying it is also
-    what puts every deployed bigWig resource on the identity extractor rather
-    than the NA one.
+    A float score defaults to ``("", "nan", ".", "NA")``, which exists because
+    a tabular backend hands the score layer strings.  A bigWig hands it a
+    ``float``, so not one of the four can ever match.
+
+    The set is nonetheless KEPT rather than emptied, because
+    ``calc_statistics_hash`` folds ``na_values`` in verbatim: emptying it
+    marked all 150 deployed bigWig resources stale and would have rescanned
+    ~74.7 G records to reach byte-identical statistics.  Verified against the
+    stored ``stats_hash`` of every one of them -- 0 differ with the default
+    kept.
+
+    What the emptying was reaching for is taken from the data instead: the
+    extractor is chosen by whether any sentinel could actually match a float,
+    so a text-only set takes the identity read.  Every unconfigured bigWig
+    lands there.
     """
     score = _open_bigwig(tmp_path)
     with score:
-        assert score.score_definitions["bw"].na_values == set()
+        assert score.score_definitions["bw"].na_values == {
+            "", "nan", ".", "NA"}
         assert score._extract_value is extract_bigwig_value
 
 
 def test_a_tabix_float_score_keeps_the_text_na_default(
     tmp_path: pathlib.Path,
 ) -> None:
-    """The emptying is bigWig's alone -- a text backend still needs the four.
+    """A text backend needs the four, and reads through the NA path.
 
     The other half of the previous test: this is a change to what ONE backend
     defaults to, not to ``normalize_na_values``.

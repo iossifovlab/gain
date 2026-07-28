@@ -29,7 +29,6 @@ and it is why the table layer still imports nothing from the score layer.
 """
 from __future__ import annotations
 
-import dataclasses
 from typing import Any
 
 from gain import logging
@@ -196,43 +195,34 @@ def validate_bigwig_scoredefs(
 
 
 def build_bigwig_scoredefs(
-    config: dict[str, Any],
+    config: dict[str, Any],  # noqa: ARG001
     config_scoredefs: dict[str, GenomicScoreDef],
 ) -> dict[str, GenomicScoreDef]:
-    """Finish a bigWig resource's score definitions: empty the NA default.
+    """Finish a bigWig resource's score definitions.
 
-    The definitions arrive already parsed from the ``scores:`` block, exactly
-    as for any other backend.  The one thing that is bigWig-specific is the
-    **default** ``na_values``: for a ``float`` score that default is
-    ``("", "nan", ".", "NA")`` -- four *text* sentinels, which exist because a
-    tabular backend hands the score layer strings.  A bigWig hands it a
-    ``float``, which can never equal any of them, so the set is dead config on
-    this backend; it costs a set membership test per value, and -- because
-    ``GenomicScoreImplementation.calc_statistics_hash`` folds ``na_values`` in
-    -- it is four tokens of noise in every bigWig resource's statistics hash.
+    Currently a pass-through, and kept as the seam rather than deleted: it is
+    where ``GenomicScore._build_scoredefs`` routes a bigWig, matching the VCF
+    branch beside it, so bigWig-specific definition work has an obvious home.
 
-    Emptying it is also what makes :func:`extract_bigwig_value`, rather than
-    :func:`extract_bigwig_value_na`, the path every deployed bigWig resource
-    takes.
+    **It used to empty the default ``na_values``**, and that is worth
+    recording because the reasoning was right and the decision still wrong.
+    A ``float`` score defaults to the sentinels ``("", "nan", ".", "NA")`` --
+    four TEXT tokens, which exist because a tabular backend hands the score
+    layer strings.  A bigWig hands it a ``float``, which can never equal any
+    of them, so on this backend the set is dead config.
 
-    **Only where the raw config omits the key.**  A resource that states
-    ``na_values: "-1"`` means it, and keeps it -- the sentinel is a real value
-    the file carries and the NA extractor still tests for it.  So the decision
-    is read off the raw ``scores:`` entries rather than off the parsed
-    definition, whose ``na_values`` is already the default by the time it gets
-    here and no longer says whether the config asked for it.
+    Emptying it changed nothing at runtime but everything to
+    ``GenomicScoreImplementation.calc_statistics_hash``, which folds
+    ``na_values`` in verbatim: every one of the 150 deployed bigWig resources
+    would have gone stale and been rescanned -- ~74.7 G records, hours of
+    compute -- to arrive at byte-identical statistics.  Verified against a
+    deployed resource's stored ``stats_hash``: ``na_values`` was the ONLY
+    field that differed.
 
-    ``na_values=()`` is spelled as an empty tuple because
-    ``normalize_na_values`` already turns a tuple into a set of its members --
-    ``None`` would select the very default this exists to remove.
+    The runtime saving it was reaching for is kept, and taken from the data
+    instead: ``GenomicScore._select_value_extractor`` binds the identity read
+    unless the NA set holds a sentinel a float could actually match.  A
+    text-only set -- which is every unconfigured bigWig score -- takes the
+    identity path either way.
     """
-    configured_na = {
-        score_conf["id"]
-        for score_conf in config.get("scores", [])
-        if "na_values" in score_conf
-    }
-    return {
-        score_id: score_def if score_id in configured_na
-        else dataclasses.replace(score_def, na_values=())
-        for score_id, score_def in config_scoredefs.items()
-    }
+    return config_scoredefs
