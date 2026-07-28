@@ -719,9 +719,29 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         this removal exists to avoid, which is the trade #239 examined and
         rejected for the line adapters.
 
-        This adds nothing to what the table yields; it exists for the error
-        context, and so that a caller need not reach past the score to its
-        table.
+        This adds nothing to what the table yields.  It exists so a caller
+        need not reach past the score to its table, and it is kept public
+        because the record-consuming half of this API
+        (:meth:`get_score_from_record`, :meth:`get_values_from_record`) is
+        public and has an out-of-package consumer -- ``AlleleScoreAnnotator``
+        filters records with a ``Callable[[Record], bool]`` and reads their
+        REF/ALT slots.  A public consumer of records with no public producer
+        would be incoherent.
+
+        **Not a generator, deliberately.**  It used to be one, wrapping the
+        table's records in ``yield from`` inside a ``try/except`` that logged
+        and re-raised.  Delegating through a generator frame costs ~59 ns per
+        record (measured on a trivial generator: 135.7 -> 194.3 ns/item),
+        which is 5-6% of this path's per-record cost and a third of what the
+        identity value read won.  Returning the table's generator instead of
+        delegating to it pays that once per call rather than once per record.
+
+        The ``try/except`` went with it.  It logged and re-raised, so the
+        error was reported twice; its one real contribution was naming the
+        resource when ``BigWigTable`` refused an unknown contig with a bare
+        ``raise KeyError``.  That exception now names the contig, the
+        resource and the file's contigs itself, which is where the
+        information belonged.
 
         **A contig is required**, here and everywhere in the region-read
         family.  This method briefly accepted ``None`` for "the whole table",
@@ -731,14 +751,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         genuinely wants every record of a table asks the table:
         ``score.table.get_all_records()``.
         """
-        try:
-            yield from self.table.get_records_in_region(
-                chrom, pos_begin, pos_end)
-        except Exception:
-            logger.exception(
-                "Error fetching records for region %s:%s-%s in resource %s",
-                chrom, pos_begin, pos_end, self.resource_id)
-            raise
+        return self.table.get_records_in_region(chrom, pos_begin, pos_end)
 
     def get_score_from_record(
         self, record: Record, score_id: str,

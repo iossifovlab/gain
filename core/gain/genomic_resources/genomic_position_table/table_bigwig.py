@@ -310,7 +310,19 @@ class BigWigTable(GenomicPositionTable):
 
         fchrom = self._map_file_chrom(chrom)
         if fchrom not in self.chroms:
-            raise KeyError
+            # Says which contig, which resource, and what the file does have
+            # -- the last is the actual diagnostic, since the usual cause is a
+            # 'chr1' / '1' spelling mismatch the chrom_mapping did not cover.
+            # This was a bare ``raise KeyError``: no argument, no message, so
+            # the only thing naming the resource was a log line one layer up
+            # in ``GenomicScore.fetch_records``.  Same defect, same fix, as
+            # ``get_chromosome_length`` and ``_load_file_chromosomes``
+            # (gain#358).  The TYPE stays ``KeyError`` -- callers catch it.
+            raise KeyError(
+                f"bigwig table of resource "
+                f"{self.genomic_resource.resource_id}: contig {chrom!r} "
+                f"(mapped to {fchrom!r}) is not among the file's contigs: "
+                f"{sorted(self.chroms)}")
         if pos_begin is None:
             pos_begin = 0
         if pos_end is None:
