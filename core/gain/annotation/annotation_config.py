@@ -334,9 +334,9 @@ class AnnotationConfigParser:
 
         ?resource_id: (resource_name | wildcard)
 
-        wildcard: /[\\w\\d\\/_*]+/
+        wildcard: /[\\w\\d\\/_\\-*]+/
 
-        filter: "[" (equals | and_)+ "]"
+        filter: "[" (equals | in | and_)+ "]"
 
         and_: operation "and" operation
 
@@ -386,8 +386,10 @@ class AnnotationConfigParser:
                 labels_query[key] = \
                     lambda x, v=value: x == v or fnmatch.fnmatch(x, v)
             elif child.data.value == "in":
-                key = child.children[0].value
-                value = child.children[1].value
+                # the `in` rule spells the value BEFORE the label name
+                # (`"value" in name`), the opposite of `equals`
+                value = child.children[0].value
+                key = child.children[1].value
 
                 labels_query[key] = lambda x, v=value: v in x
             elif child.data.value == "and_":

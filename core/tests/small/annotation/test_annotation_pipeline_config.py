@@ -6,19 +6,27 @@ import textwrap
 import pytest
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
+    AnnotationConfigurationError,
     AnnotatorInfo,
     AttributeConfig,
 )
 from gain.annotation.annotation_pipeline import (
     AnnotationPreamble,
 )
-from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.repository import (
+    GenomicResourceProtocolRepo,
+    GenomicResourceRepo,
+)
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
 from gain.genomic_resources.testing import (
     convert_to_tab_separated,
     setup_directories,
+)
+from gain.genomic_resources.testing.builders import (
+    a_grr,
+    a_position_score,
 )
 
 
@@ -231,6 +239,105 @@ def test_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
     return build_genomic_resource_repository(file_name=str(
         root_path / "grr_group.yaml",
     ))
+
+
+@pytest.fixture
+def labeled_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
+    """A GRR of position scores carrying phenotype/source labels.
+
+    Includes a resource whose id contains a dash and one carrying no
+    labels at all, so a label query can be shown to select neither by
+    accident.
+    """
+    return (
+        a_grr()
+        .with_resource(
+            "phastcons100-way",
+            a_position_score().with_labels(
+                phenotype="autism spectrum", source="UCSC"),
+        )
+        .with_resource(
+            "phastcons20_way",
+            a_position_score().with_labels(
+                phenotype="autism", source="NCBI"),
+        )
+        .with_resource(
+            "mpc",
+            a_position_score().with_labels(
+                phenotype="schizophrenia", source="UCSC"),
+        )
+        .with_resource(
+            "unlabeled",
+            a_position_score(),
+        )
+        .build_repo(tmp_path)
+    )
+
+
+def test_wildcard_label_in_standalone(
+    labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score: "*[\\"tism\\" in phenotype]"
+    """, grr=labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "phastcons100-way", "phastcons20_way",
+    ]
+
+
+def test_wildcard_label_in_combined_with_and(
+    labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score: "*[source=\\"UCSC\\" and \\"tism\\" in phenotype]"
+    """, grr=labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "phastcons100-way",
+    ]
+
+
+def test_wildcard_label_in_as_first_operand_of_and(
+    labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score: "*[\\"tism\\" in phenotype and source=\\"NCBI\\"]"
+    """, grr=labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "phastcons20_way",
+    ]
+
+
+def test_wildcard_label_in_matches_nothing(
+    labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    with pytest.raises(
+        AnnotationConfigurationError, match="No resources match",
+    ):
+        AnnotationConfigParser.parse_str("""
+            - position_score: "*[\\"cancer\\" in phenotype]"
+        """, grr=labeled_grr)
+
+
+def test_wildcard_label_in_single_quotes(
+    labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score: "*['schizo' in phenotype]"
+    """, grr=labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "mpc",
+    ]
+
+
+def test_wildcard_with_dash_in_resource_id(
+    labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score: "phastcons*-way"
+    """, grr=labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "phastcons100-way",
+    ]
 
 
 def test_simple_annotator_simple() -> None:
