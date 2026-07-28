@@ -240,7 +240,7 @@ def test_get_records_in_region_missing_chrom(bigwig_table: BigWigTable) -> None:
 
 def test_get_records_in_region_without_chrom(bigwig_table: BigWigTable) -> None:
     with bigwig_table:
-        vs = list(bigwig_table.get_records_in_region())
+        vs = list(bigwig_table.get_all_records())
         assert len(vs) == 9
 
 

@@ -2678,7 +2678,7 @@ def test_tabix_get_records_in_region_without_chrom(
     tabix_table: GenomicPositionTable,
 ) -> None:
     table = cast(TabixGenomicPositionTable, tabix_table)
-    res = list(table.get_records_in_region())
+    res = list(table.get_all_records())
     assert len(res) == 12
 
 

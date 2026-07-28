@@ -291,7 +291,7 @@ class BigWigTable(GenomicPositionTable):
 
     def get_records_in_region(
         self,
-        chrom: str | None = None,
+        chrom: str,
         pos_begin: int | None = None,
         pos_end: int | None = None,
     ) -> Generator[Record, None, None]:
@@ -305,10 +305,6 @@ class BigWigTable(GenomicPositionTable):
         the record contract's closed one-based coordinates (the ``+1`` lives in
         the fetch methods); the parser only assembles the record around it.
         """
-        if chrom is None:
-            yield from self.get_all_records()
-            return
-
         assert self.parser is not None
         parser = self.parser
 

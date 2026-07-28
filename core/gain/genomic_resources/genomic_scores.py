@@ -722,8 +722,24 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         This adds nothing to what the table yields; it exists for the error
         context, and so that a caller need not reach past the score to its
         table.
+
+        **``chrom=None`` means the whole table**, and this is the one place
+        that is decided.  It used to be decided in each backend, which opened
+        ``get_records_in_region`` with ``if chrom is None: yield from
+        self.get_all_records()`` -- the same three lines in three tables, and
+        a region read whose signature said a contig was optional when what it
+        really offered was a second method under the same name.  The tables
+        now require a contig; the choice between the two reads lives here,
+        where the nullable parameter actually comes from.
+
+        It is not a convenience: ``grr_manage --region-size 0`` computes a
+        resource's statistics in a single whole-table pass, and reaches this
+        through ``_do_noregion_histograms`` with no contig at all.
         """
         try:
+            if chrom is None:
+                yield from self.table.get_all_records()
+                return
             yield from self.table.get_records_in_region(
                 chrom, pos_begin, pos_end)
         except Exception:

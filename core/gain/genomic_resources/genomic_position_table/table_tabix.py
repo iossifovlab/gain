@@ -348,7 +348,7 @@ class TabixGenomicPositionTable(GenomicPositionTable):
 
     def get_records_in_region(
         self,
-        chrom: str | None = None,
+        chrom: str,
         pos_begin: int | None = None,
         pos_end: int | None = None,
     ) -> Generator[Record, None, None]:
@@ -370,10 +370,6 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         what lets the buffer and the read cascade below treat all records alike.
         """
         self.stats["calls"] += 1
-
-        if chrom is None:
-            yield from self.get_all_records()
-            return
 
         if chrom not in self.get_chromosomes():
             logger.error(

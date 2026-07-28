@@ -319,6 +319,29 @@ what would have to be true to reinstate it: see
 ``docs/adr/0002-remove-bigwig-fetch-buffering.md``.  Bringing it back for
 high-latency (``http``/``s3``) repositories is tracked as gain#449.
 
+**Changed signature: ``get_records_in_region(chrom)`` is now REQUIRED and
+non-optional.**  It was ``chrom: str | None = None``, and ``None`` meant
+"every record in the table" -- each of the three record backends opened the
+method with ``if chrom is None: yield from self.get_all_records()``.  An
+out-of-tree caller writing ``table.get_records_in_region()`` now gets a
+``TypeError``; call :meth:`get_all_records` instead, which is what those three
+lines did and what the name says.
+
+Two things made the old shape worth giving up.  The default argument list was
+itself a legal call, so ``get_records_in_region()`` -- easy to write by
+accident, and written by three tests in this repo -- quietly scanned a whole
+genome.  And the delegation was stated three times, once per backend, for a
+method that then had two jobs whose only shared code was the delegation
+itself.  ``get_region_value_arrays`` had already settled on ``chrom: str``,
+so the two region reads now agree.
+
+**The whole-table mode is not gone, only moved.**  It is live -- ``grr_manage
+--region-size 0`` computes statistics in a single pass with no contig, via
+``_do_noregion_histograms`` -- and it is now dispatched once, in
+``GenomicScore.fetch_records``, which is where the nullable contig actually
+originates.  The score layer's ``fetch_region_values`` / ``fetch_region``
+keep accepting ``chrom=None`` and are unchanged.
+
 """
 from .line import LineBuffer
 from .table_bigwig import BigWigTable

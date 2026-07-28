@@ -187,7 +187,7 @@ def test_get_records_in_region_without_chrom(tmp_path: pathlib.Path) -> None:
     assert res.config is not None
     tab = build_genomic_position_table(res, res.config["table"])
     tab.open()
-    assert len(list(tab.get_records_in_region())) == 2
+    assert len(list(tab.get_all_records())) == 2
 
 
 def _empty_mapped_contig_table(tmp_path: pathlib.Path):
