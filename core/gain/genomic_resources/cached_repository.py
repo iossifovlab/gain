@@ -24,9 +24,6 @@ from gain.genomic_resources.repository import (
     GenomicResourceRepo,
     Manifest,
     ReadOnlyRepositoryProtocol,
-    is_version_constraint_satisfied,
-    parse_resource_id_version,
-    version_tuple_to_string,
 )
 
 from .fsspec_protocol import build_fsspec_protocol
@@ -277,16 +274,31 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
             proto.invalidate()
         self._all_resources = None
 
+    def _to_cache_resource(
+        self, remote_resource: GenomicResource,
+    ) -> GenomicResource:
+        """Return the cache-backed twin of a resource from the child repo.
+
+        The child yields resources bound to the *remote* protocol; handing
+        those out would let callers read files straight from the remote,
+        neither consulting nor populating the cache. Every resource this
+        repository produces goes through here. See #428.
+
+        Returns the caching protocol's memoized instance, so the resource is
+        the same object ``get_all_resources()`` hands out rather than a
+        parallel one. ``_get_or_create_cache_proto`` guarantees the protocol
+        wraps this resource's own remote, so the dict holds it.
+        """
+        cache_proto = self._get_or_create_cache_proto(remote_resource.proto)
+        return cache_proto.get_all_resources_dict()[
+            remote_resource.get_full_id()]
+
     def get_all_resources(self) -> Generator[GenomicResource, None, None]:
         if self._all_resources is None:
-            self._all_resources = []
-            for remote_resource in self.child.get_all_resources():
-                cache_proto = self._get_or_create_cache_proto(
-                    remote_resource.proto)
-                version_constraint = f"={remote_resource.get_version_str()}"
-                self._all_resources.append(
-                    cache_proto.get_resource(
-                        remote_resource.resource_id, version_constraint))
+            self._all_resources = [
+                self._to_cache_resource(remote_resource)
+                for remote_resource in self.child.get_all_resources()
+            ]
         yield from self._all_resources
 
     def search_resources(
@@ -294,29 +306,63 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
         search_term: str | None = None,
         resource_type: str | None = None,
     ) -> Generator[GenomicResource, None, None]:
-        yield from self.child.search_resources(search_term, resource_type)
+        # Resolving each hit costs no extra remote enumeration: the FTS
+        # search already builds the remote's resource dict to resolve its
+        # own hits.
+        for remote_resource in self.child.search_resources(
+                search_term, resource_type):
+            yield self._to_cache_resource(remote_resource)
 
     def _get_or_create_cache_proto(
             self, proto: ReadOnlyRepositoryProtocol) -> CachingProtocol:
-        proto_id = proto.proto_id
-        if proto_id not in self.cache_protos:
-            cached_proto_url = os.path.join(self.cache_url, proto_id)
-            logger.debug(
-                "going to create cached protocol with url: %s",
-                cached_proto_url)
+        """Return the caching protocol wrapping ``proto``.
 
-            cache_proto = build_fsspec_protocol(
-                f"{proto_id}.cached",
-                cached_proto_url,
-                **self.additional_kwargs)
-            if not isinstance(cache_proto, FsspecReadWriteProtocol):
+        Caching protocols are keyed by ``proto_id``, and the cache directory
+        is derived from it, so two remote protocols sharing a ``proto_id``
+        would share a caching protocol *and* a cache directory. Resources of
+        the second one would then be handed out bound to the first one's
+        remote and read the first one's bytes -- a resource id present in
+        both repositories silently returns the wrong file's content. Refuse
+        the configuration instead: it is not resolvable, and the cache
+        directory collision would corrupt cached data either way.
+
+        This is reachable from ``repository_factory``, which defaults a
+        group child's id to ``""`` -- so a group whose children omit ``id``
+        gives every child the same empty ``proto_id``. Such a repository
+        already fails to enumerate (``get_all_resources`` cannot resolve the
+        shadowed children), so nothing that worked is being taken away.
+        """
+        proto_id = proto.proto_id
+        existing = self.cache_protos.get(proto_id)
+        if existing is not None:
+            if existing.remote_protocol is not proto:
                 raise ValueError(
-                    f"caching protocol should be RW;"
-                    f"{cached_proto_url} is not RW")
-            self.cache_protos[proto_id] = \
-                CachingProtocol(
-                    proto,
-                    cache_proto)
+                    f"repository id <{proto_id}> is used by more than one "
+                    f"repository in {self.repo_id} "
+                    f"({existing.remote_protocol.get_url()} and "
+                    f"{proto.get_url()}); caching requires distinct "
+                    f"repository ids -- give each child repository its own "
+                    f"'id' in the GRR definition")
+            return existing
+
+        cached_proto_url = os.path.join(self.cache_url, proto_id)
+        logger.debug(
+            "going to create cached protocol with url: %s",
+            cached_proto_url)
+
+        cache_proto = build_fsspec_protocol(
+            f"{proto_id}.cached",
+            cached_proto_url,
+            **self.additional_kwargs)
+        if not isinstance(cache_proto, FsspecReadWriteProtocol):
+            # ValueError, not TypeError: this reports a bad cache_url in the
+            # GRR definition, not a caller passing the wrong type. (The rule
+            # only became visible here because dedenting this block moved the
+            # isinstance check to the function body.)
+            raise ValueError(  # noqa: TRY004
+                f"caching protocol should be RW;"
+                f"{cached_proto_url} is not RW")
+        self.cache_protos[proto_id] = CachingProtocol(proto, cache_proto)
 
         return self.cache_protos[proto_id]
 
@@ -325,48 +371,37 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
         version_constraint: str | None = None,
         repository_id: str | None = None,
     ) -> GenomicResource | None:
-        """Return requested resource or None if not found."""
-        if version_constraint is None:
-            resource_id, version = parse_resource_id_version(resource_id)
-            if version is not None:
-                version_constraint = f"={version_tuple_to_string(version)}"
-        matching_resources: list[GenomicResource] = []
-        for res in self.get_all_resources():
-            if res.resource_id != resource_id:
-                continue
-            if repository_id is not None and \
-                    res.proto.proto_id != repository_id:
-                continue
-            if is_version_constraint_satisfied(
-                    version_constraint, res.version):
-                matching_resources.append(res)
-        if not matching_resources:
+        """Return requested resource or None if not found.
+
+        Mirrors get_resource: the child resolves the resource (and owns
+        repository_id semantics), then the hit is wrapped so the returned
+        resource is cache-backed.
+
+        This used to enumerate every resource and pick the highest version
+        across protocols, which had two defects. It filtered repository_id
+        against the *cache* protocol's id -- registered as
+        ``f"{proto_id}.cached"`` -- so the filter never matched anything. And
+        because get_resource already delegated, the two methods could return
+        different versions of the same id when a group repository's children
+        overlapped. Group child order is a priority list; first child wins.
+        See #429.
+        """
+        remote_resource = self.child.find_resource(
+            resource_id, version_constraint, repository_id)
+        if remote_resource is None:
             return None
 
-        def get_resource_version(res: GenomicResource) -> tuple[int, ...]:
-            return res.version
-
-        return max(
-            matching_resources,
-            key=get_resource_version)
+        return self._to_cache_resource(remote_resource)
 
     def get_resource(
             self, resource_id: str,
             version_constraint: str | None = None,
             repository_id: str | None = None) -> GenomicResource:
 
-        if version_constraint is None:
-            resource_id, version = parse_resource_id_version(resource_id)
-            if version is not None:
-                version_constraint = f"={version_tuple_to_string(version)}"
-
         remote_resource = self.child.get_resource(
             resource_id, version_constraint, repository_id)
 
-        cache_proto = self._get_or_create_cache_proto(
-            remote_resource.proto)
-        version_constraint = f"={remote_resource.get_version_str()}"
-        return cache_proto.get_resource(resource_id, version_constraint)
+        return self._to_cache_resource(remote_resource)
 
     def get_resource_cached_files(self, resource_id: str) -> set[str]:
         """Get a set of filenames of cached files for a given resource."""

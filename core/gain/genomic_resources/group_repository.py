@@ -30,12 +30,21 @@ class GenomicResourceGroupRepo(GenomicResourceRepo):
             repository_id: str | None = None) -> GenomicResource | None:
 
         for child_repo in self.children:
-            if repository_id is not None and \
-                    child_repo.repo_id is not None and \
-                    child_repo.repo_id != resource_id:
-                continue
-            res = child_repo.find_resource(
-                resource_id, version_constraint)
+            # Truthiness, not `is not None`: GenomicResourceProtocolRepo
+            # ignores a falsy repository_id, so treating "" as a real filter
+            # here would make the two layers disagree.
+            if repository_id and child_repo.repo_id == repository_id:
+                # This child *is* the requested repository. Re-applying the
+                # filter inside it would compare repository_id against its
+                # own children's ids and find nothing.
+                res = child_repo.find_resource(
+                    resource_id, version_constraint)
+            else:
+                # Forward rather than skip: a non-matching child may be a
+                # nested group that contains the requested repository. A
+                # non-matching leaf repo filters itself out and returns None.
+                res = child_repo.find_resource(
+                    resource_id, version_constraint, repository_id)
             if res:
                 return res
 
@@ -53,15 +62,13 @@ class GenomicResourceGroupRepo(GenomicResourceRepo):
             self, resource_id: str, version_constraint: str | None = None,
             repository_id: str | None = None) -> GenomicResource:
 
-        for child_repo in self.children:
-            if repository_id is not None and \
-                    child_repo.repo_id is not None and \
-                    child_repo.repo_id != resource_id:
-                continue
-            res = child_repo.find_resource(
-                resource_id, version_constraint, repository_id)
-            if res:
-                return res
-        raise ValueError(
-            f"resource {resource_id} {version_constraint} "
-            f"({repository_id}) not found")
+        # Delegates to find_resource so the two cannot drift apart: they
+        # previously carried duplicate copies of the child filter, and only
+        # one of them forwarded repository_id to the child. See #429.
+        res = self.find_resource(
+            resource_id, version_constraint, repository_id)
+        if res is None:
+            raise ValueError(
+                f"resource {resource_id} {version_constraint} "
+                f"({repository_id}) not found")
+        return res
