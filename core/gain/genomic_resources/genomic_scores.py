@@ -302,7 +302,20 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 # ``table_bigwig``).  The backend has always read all three off
                 # the table definition; before #259 the schema rejected them as
                 # unknown fields, so configuring one failed validation outright.
-                "direct_fetch_size": {"type": "integer", "min": 1},
+                # ``fetch_size`` is a budget in RECORDS per range query -- the
+                # bigWig backend adapts its base-pair window toward it.  It was
+                # called ``direct_fetch_size`` while a second, buffered fetch
+                # strategy existed; that strategy is gone, so the name is too.
+                # The rename is deliberately NOT aliased: the capability still
+                # exists, so a config naming it the old way means something
+                # specific, and failing validation lets the operator rename it
+                # rather than silently getting the default.
+                "fetch_size": {"type": "integer", "min": 1},
+                # The buffered strategy's two knobs, kept in the schema and
+                # ignored.  Unlike the rename above, these configure a feature
+                # that no longer EXISTS, so there is nothing for an operator to
+                # rename to -- refusing the resource would take it offline to
+                # tell it that.  ``build_genomic_position_table`` warns.
                 "buffer_fetch_size": {"type": "integer", "min": 1},
                 "use_buffered_threshold": {"type": "integer", "min": 0},
             }},

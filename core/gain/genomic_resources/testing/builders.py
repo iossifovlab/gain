@@ -669,28 +669,17 @@ class BigWigScoreBuilder:
     fetch_budgets: dict[str, int] | None = None
     zero_based: bool = False
 
-    def with_fetch_budgets(
-        self, *,
-        direct_fetch_size: int | None = None,
-        buffer_fetch_size: int | None = None,
-        use_buffered_threshold: int | None = None,
-    ) -> Self:
-        """Emit the bigWig fetch-tuning keys in the ``table:`` config.
+    def with_fetch_size(self, fetch_size: int) -> Self:
+        """Emit ``fetch_size:`` in the ``table:`` config.
 
-        The fetch sizes are budgets in *records per range query*, not base
-        pairs; ``use_buffered_threshold`` is the region width above which
-        the direct strategy gives way to the buffered one.  Only the keys
-        passed are emitted, so a test can pin one without implying the
-        others.
+        A budget in *records per range query*, not base pairs.  This used to
+        offer the two buffered-strategy knobs as well; that strategy is gone
+        (see ``docs/adr/0002-remove-bigwig-fetch-buffering.md``), and the
+        builder is ours rather than config surface, so it stops offering
+        knobs that do nothing rather than keeping them for compatibility.
         """
-        budgets = {
-            key: value for key, value in (
-                ("direct_fetch_size", direct_fetch_size),
-                ("buffer_fetch_size", buffer_fetch_size),
-                ("use_buffered_threshold", use_buffered_threshold),
-            ) if value is not None
-        }
-        return dataclasses.replace(self, fetch_budgets=budgets)
+        return dataclasses.replace(
+            self, fetch_budgets={"fetch_size": fetch_size})
 
     def with_score(self, score_id: str, value_type: str = "float") -> Self:
         """Name the single score this bigWig exposes."""

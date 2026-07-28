@@ -9,9 +9,15 @@ handle -- so this pins the fetch path's *output* without encoding anything
 about how the fetch is chunked or strided.
 
 That independence is the point.  The chunking is an implementation detail
-that has changed more than once (a fixed 50 bp window, then the adaptive
-record-count budget), and each change had to be argued as
+that has changed more than once -- a fixed 50 bp window, then the adaptive
+record-count budget, then the removal of the second (buffered) strategy
+that used to sit beside it -- and each change had to be argued as
 records-preserving.  Here that argument is a test.
+
+It was written while both strategies still existed and run against each of
+them, so the records the surviving one yields are known to be the records
+the retired one yielded.  See
+``docs/adr/0002-remove-bigwig-fetch-buffering.md``.
 """
 from __future__ import annotations
 
@@ -32,21 +38,12 @@ from gain.genomic_resources.genomic_position_table.table_bigwig import (
 )
 from gain.genomic_resources.testing.builders import a_bigwig_score, a_grr
 
-# Force one fetch strategy or the other.  ``buffered`` sets the threshold
-# past any distance two queries can be apart, so the routing in
-# ``get_records_in_region`` always picks the buffered walk; ``direct`` binds
-# the buffered entry point to the direct one on the instance, so the direct
-# code runs whatever the routing decides.  Both arms are checked against the
-# same oracle, which is what makes them checked against each other.
-STRATEGIES = ("direct", "buffered")
-
 
 @contextlib.contextmanager
 def _table(
     tmp_path: pathlib.Path,
     data: str,
     chrom_lens: dict[str, int],
-    strategy: str,
 ) -> Iterator[tuple[BigWigTable, Any]]:
     builder = (
         a_bigwig_score()
@@ -56,12 +53,7 @@ def _table(
     )
     repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
     res = repo.get_resource("bw")
-    definition = dict(res.get_config()["table"])
-    if strategy == "buffered":
-        definition["use_buffered_threshold"] = 10**18
-    table = BigWigTable(res, definition).open()
-    if strategy == "direct":
-        table._fetch_buffered = table._fetch_direct  # type: ignore[method-assign]
+    table = BigWigTable(res, dict(res.get_config()["table"])).open()
     try:
         yield table, table._bw_file
     finally:
@@ -132,30 +124,25 @@ def _random_queries(
     return queries
 
 
-@pytest.mark.parametrize("strategy", STRATEGIES)
 @pytest.mark.parametrize("seed", range(12))
 def test_a_region_fetch_yields_exactly_what_the_file_holds(
-    tmp_path: pathlib.Path, seed: int, strategy: str,
+    tmp_path: pathlib.Path, seed: int,
 ) -> None:
     rng = random.Random(seed)
     data, chrom_len = _random_track(rng)
     queries = _random_queries(rng, chrom_len)
 
-    with _table(tmp_path, data, {"chr1": chrom_len}, strategy) as (table, raw):
+    with _table(tmp_path, data, {"chr1": chrom_len}) as (table, raw):
         for pos_begin, pos_end in queries:
             found = list(
                 table.get_records_in_region("chr1", pos_begin, pos_end))
-            expected = _oracle(
-                raw.raw if hasattr(raw, "raw") else raw,
-                "chr1", pos_begin, pos_end, chrom_len)
+            expected = _oracle(raw, "chr1", pos_begin, pos_end, chrom_len)
             assert found == expected, (
-                f"seed={seed} strategy={strategy} "
-                f"query=({pos_begin}, {pos_end})")
+                f"seed={seed} query=({pos_begin}, {pos_end})")
 
 
-@pytest.mark.parametrize("strategy", STRATEGIES)
 def test_a_whole_contig_scan_yields_every_interval_once(
-    tmp_path: pathlib.Path, strategy: str,
+    tmp_path: pathlib.Path,
 ) -> None:
     # The scan a statistics run makes, held to the same oracle: no interval
     # dropped at a chunk boundary, and none yielded twice by a window that
@@ -163,11 +150,9 @@ def test_a_whole_contig_scan_yields_every_interval_once(
     rng = random.Random(101)
     data, chrom_len = _random_track(rng)
 
-    with _table(tmp_path, data, {"chr1": chrom_len}, strategy) as (table, raw):
+    with _table(tmp_path, data, {"chr1": chrom_len}) as (table, raw):
         found = list(table.get_records_in_region("chr1", 1, chrom_len))
-        expected = _oracle(
-            raw.raw if hasattr(raw, "raw") else raw,
-            "chr1", 1, chrom_len, chrom_len)
+        expected = _oracle(raw, "chr1", 1, chrom_len, chrom_len)
 
     assert found == expected
     assert len(found) == len({(r[1], r[2]) for r in found})

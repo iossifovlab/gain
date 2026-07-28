@@ -1662,42 +1662,31 @@ def test_bigwig_rejects_malformed_bedgraph_row(tmp_path: pathlib.Path) -> None:
         builder.build_resource(tmp_path)
 
 
-def test_bigwig_fetch_budgets_reach_the_table(tmp_path: pathlib.Path) -> None:
+def test_bigwig_fetch_size_reaches_the_table(tmp_path: pathlib.Path) -> None:
     res = (
         a_bigwig_score()
         .with_data("chr1  0  10  0.11")
         .with_chrom_lens({"chr1": 1000})
-        .with_fetch_budgets(
-            direct_fetch_size=1000,
-            buffer_fetch_size=2000,
-            use_buffered_threshold=100,
-        )
+        .with_fetch_size(1000)
         .build_resource(tmp_path)
     )
     table = res.get_config()["table"]
 
-    assert table["direct_fetch_size"] == 1000
-    assert table["buffer_fetch_size"] == 2000
-    assert table["use_buffered_threshold"] == 100
+    assert table["fetch_size"] == 1000
 
 
-def test_bigwig_emits_only_the_budgets_it_was_given(
+def test_bigwig_emits_no_fetch_size_unless_asked(
     tmp_path: pathlib.Path,
 ) -> None:
-    # Pinning one knob must not imply a value for the others -- an omitted
-    # key has to stay absent so the backend's own default still applies.
+    # An omitted key has to stay absent so the backend's own default applies.
     res = (
         a_bigwig_score()
         .with_data("chr1  0  10  0.11")
         .with_chrom_lens({"chr1": 1000})
-        .with_fetch_budgets(direct_fetch_size=7)
         .build_resource(tmp_path)
     )
-    table = res.get_config()["table"]
 
-    assert table["direct_fetch_size"] == 7
-    assert "buffer_fetch_size" not in table
-    assert "use_buffered_threshold" not in table
+    assert "fetch_size" not in res.get_config()["table"]
 
 
 def test_bare_cnv_collection_is_readable_minimal(

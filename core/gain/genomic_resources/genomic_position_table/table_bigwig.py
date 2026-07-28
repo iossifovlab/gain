@@ -10,15 +10,14 @@ from gain.genomic_resources.genomic_position_table.table import (
     GenomicPositionTable,
 )
 from gain.genomic_resources.repository import GenomicResource
-from gain.utils.regions import Region
 
 # One already-fetched bigWig interval: begin, end and value, with begin and end
 # ALREADY converted from the file's 0-based half-open coordinates to the closed
 # one-based interval of the record contract.  That ``+1`` conversion lives in
-# the fetch methods (``_fetch_buffered``/``_fetch_direct``) and is deliberately
-# left there untouched -- the record migration changes what a fetch *yields*,
-# not how it fetches -- so a bigWig parser, unlike the tabular one, has no
-# coordinate transform of its own to fold in.
+# :meth:`BigWigTable._fetch` and is deliberately left there -- what a fetch
+# *yields* has changed more than once, how it converts coordinates has not --
+# so a bigWig parser, unlike the tabular one, has no coordinate transform of
+# its own to fold in.
 BigWigInterval = tuple[int, int, float]
 
 # The one column a bigWig has, for the bulk column-array read.  A record's
@@ -56,10 +55,22 @@ BigWigParser = Callable[[str, BigWigInterval], Record]
 # next window by ``target / observed``.  Density-independent by construction --
 # dense ranges converge to a small window (bounding memory), sparse ranges to a
 # large one (collapsing the empty-gap walk).
+#
+# This is the ONLY chunking there is.  A second strategy used to sit beside it,
+# keeping the fetched intervals in a buffer retained across calls and serving a
+# later query out of it by binary search; ``use_buffered_threshold`` chose
+# between them by how far apart two queries started.  It was measured to lose
+# on every access pattern real data produces -- irregular query spacing mixes
+# the two paths, so each short gap pays for a fill that the next long gap
+# discards -- and removed.  It does win when an ``intervals()`` call carries
+# network latency, which is a live configuration (``open_bigwig_file`` accepts
+# ``http``/``s3``); bringing it back for that case is gain#449.  The
+# measurements, and what would have to be true to reinstate it, are in
+# ``docs/adr/0002-remove-bigwig-fetch-buffering.md``.
 
 # Records per ``intervals()`` call the window is retuned toward.  At ~160 bytes
-# per interval this is ~0.8 MB of live intervals per call, and it is what both
-# fetch strategies default to.
+# per interval this is ~0.8 MB of live intervals per call.  Overridable per
+# resource as ``fetch_size``.
 DEFAULT_FETCH_TARGET_RECORDS = 5_000
 
 # Base-pair window the retuning starts from, before any density is observed.
@@ -166,25 +177,13 @@ class BigWigTable(GenomicPositionTable):
         super().__init__(genomic_resource, table_definition)
         self._bw_file = None
         self.chroms: dict[str, int] = {}
-        self._buffer: list[tuple[int, int, float]] = []
-        self._buffer_region: Region = Region("?", -1, -1)
 
-        # Both fetch sizes are budgets in RECORDS per ``intervals()`` call --
-        # not in base pairs, which is what they used to mean and what made a
-        # region fetch cost one range query per 50 bp (see the module notes on
-        # adaptive chunking).  Both are accepted by the table schema.
-        self.direct_fetch_size = self.definition.get(
-            "direct_fetch_size", DEFAULT_FETCH_TARGET_RECORDS)
-        self.buffer_fetch_size = self.definition.get(
-            "buffer_fetch_size", DEFAULT_FETCH_TARGET_RECORDS)
-        self.use_buffered_threshold = \
-            self.definition.get("use_buffered_threshold", 500)
-
-        self._direct_window = AdaptiveFetchWindow(self.direct_fetch_size)
-        self._buffer_window = AdaptiveFetchWindow(self.buffer_fetch_size)
-
-        # this forces the initial fetch to be made directly
-        self._last_pos = -(self.use_buffered_threshold + 1)
+        # A budget in RECORDS per ``intervals()`` call -- not in base pairs,
+        # which is what it used to mean and what made a region fetch cost one
+        # range query per 50 bp (see the module notes on adaptive chunking).
+        self.fetch_size = self.definition.get(
+            "fetch_size", DEFAULT_FETCH_TARGET_RECORDS)
+        self._window = AdaptiveFetchWindow(self.fetch_size)
 
         # Built in open(): a bigWig parser closes over nothing, but it is built
         # there and torn down in close() to keep the record backends uniform.
@@ -199,14 +198,6 @@ class BigWigTable(GenomicPositionTable):
         self._set_core_column_keys()
         self._build_chrom_mapping()
         self.parser = build_bigwig_parser()
-        # A reopened table must not answer out of the previous open's buffer.
-        # The buffer is keyed by region, not by file, so a table closed and
-        # reopened over CHANGED data served the old file's values for any query
-        # landing in the retained span -- silently, since a buffer hit never
-        # falls through to the file.  This is the invariant's home: close()
-        # clears the buffer as well, but only to release the memory, and a
-        # caller is not required to have called it.
-        self._discard_buffer()
         return self
 
     def close(self) -> None:
@@ -223,17 +214,10 @@ class BigWigTable(GenomicPositionTable):
         # also drops -- so a closed table holds a copy nothing can reach
         # (gain#350).
         self.chroms = {}
-        # Release the fetched intervals too.  open() re-establishes this
-        # anyway, so what the clearing here buys is memory, not correctness: a
-        # closed table that still holds its last chunk keeps up to a full fetch
-        # window of intervals alive for as long as anything holds the table,
-        # which is what made gain#345 expensive rather than merely untidy.
-        self._discard_buffer()
-
-    def _discard_buffer(self) -> None:
-        """Drop the buffered intervals and the region they cover."""
-        self._buffer = []
-        self._buffer_region = Region("?", -1, -1)
+        # There is no fetched-interval state to release here any more: a fetch
+        # materialises one chunk at a time inside the generator that yields it,
+        # so nothing survives the call (gain#345 was about a retained buffer,
+        # which this backend no longer keeps).
 
     def _fetch_chunk(
         self, window: AdaptiveFetchWindow,
@@ -270,139 +254,36 @@ class BigWigTable(GenomicPositionTable):
             pos = end
         return [], pos
 
-    def _fill(self, chrom: str, start: int, stop: int) -> None:
-        """
-        Attempts to fill the buffer with records for the given range.
-
-        Fetches adaptively-sized ranges starting from ``start`` until either
-        results are found or ``stop`` is reached.  As before, a range may
-        reach past ``stop`` (up to the end of the contig), so the buffer can
-        hold records beyond the requested end -- it is a buffer, and
-        :meth:`_fetch_buffered` bounds what it yields out of it.
-        """
-        assert self._bw_file is not None
-        self._buffer = []
-        self._buffer_region = Region("?", -1, -1)
-
-        chromlen = self.chroms[chrom]
-        res, _ = self._fetch_chunk(
-            self._buffer_window, chrom, start, min(stop, chromlen), chromlen)
-
-        self._buffer = res
-        if res:
-            self._buffer_region = Region(
-                chrom,
-                self._buffer[0][0] + 1,
-                self._buffer[-1][1])
-
-    def _find(self, chrom: str, pos_begin: int, pos_end: int) -> int:
-        """Return the buffer index the query starts at, or -1 to refill.
-
-        On a hit, that is the first buffered interval overlapping the query.
-        On a miss -- the query falls in an unscored gap *between* two buffered
-        intervals -- it is the insertion point: the first interval that is not
-        entirely to the LEFT of the query.  Returning the left-hand neighbour
-        instead would make :meth:`_fetch_buffered`, which bounds only the right
-        side of what it yields, emit a record from before the query.  That is a
-        real score value at a position the track does not cover, and the wider
-        the fill window, the more often a query lands inside the buffer's span
-        rather than outside it.
-        """
-
-        def _left_right_helper(
-            q_start: int, q_stop: int,
-            start: int, stop: int,
-        ) -> int:
-            if q_stop <= start:
-                return -1
-            if q_start >= stop:
-                return 1
-            return 0
-
-        query = Region(chrom, pos_begin + 1, pos_end)
-        if not query.intersects(self._buffer_region):
-            return -1
-
-        # do binary search on buffer, get idx
-        l_bound = 0
-        r_bound = len(self._buffer) - 1
-        while l_bound <= r_bound:
-            idx: int = (r_bound + l_bound) // 2
-            line = self._buffer[idx]
-            res = _left_right_helper(
-                pos_begin, pos_end, line[0], line[1])
-            if res == 1:
-                l_bound = idx + 1
-            elif res == -1:
-                r_bound = idx - 1
-            elif res == 0:
-                if idx == 0:
-                    return idx
-                prevline = self._buffer[idx - 1]
-                subres = _left_right_helper(
-                    pos_begin, pos_end, prevline[0], prevline[1])
-                if subres == 0:
-                    r_bound = idx - 1
-                else:
-                    return idx
-        # No overlap: ``l_bound`` is the insertion point.  It is always a valid
-        # index here -- the query intersects the buffer's region, so the last
-        # buffered interval cannot be entirely to the query's left, and only an
-        # entirely-left interval advances ``l_bound`` past its index.
-        return l_bound
-
-    def _fetch_buffered(
+    def _fetch(
         self, chrom: str, pos_begin: int, pos_end: int,
     ) -> Generator[tuple[int, int, float], None, None]:
-        pos_current = pos_begin
+        """Walk the region in adaptively-sized chunks, yielding intervals.
 
-        idx = self._find(chrom, pos_begin, pos_begin + 1)
-        if idx == -1:
-            self._fill(chrom, pos_begin, pos_end)
-            idx = self._find(chrom, pos_begin, pos_begin + 1)
-
-        if idx == -1:
-            # there's no direct match for (pos_begin, pos_begin + 1), but
-            # we set the idx to 0 anyways since there might be something
-            # in the buffer to yield (since _fill is called with pos_end)
-            idx = 0
-
-        while True:
-            # A generator that outlives close() must not look like a complete,
-            # shorter result set.  The handle is what says the table is still
-            # usable, and the check has to come BEFORE the buffer is consulted:
-            # close() empties the buffer as well as nulling the handle, so a
-            # ``while self._buffer:`` header falls out of the loop on resume --
-            # a silently truncated scan, and an unreachable guard behind it.
-            # A fetch *started* after close already raises on the parser assert
-            # in get_records_in_region.
-            assert self._bw_file is not None, \
-                "bigWig table closed while a region fetch was in flight"
-            if not self._buffer:
-                return
-            line = self._buffer[idx]
-            if line[0] + 1 > pos_end:
-                return
-            yield (line[0] + 1, line[1], line[2])
-            pos_current = line[1]
-            if pos_current >= pos_end:
-                return
-            idx += 1
-            if idx == len(self._buffer):
-                self._fill(chrom, pos_current, pos_end)
-                idx = 0
-
-    def _fetch_direct(
-        self, chrom: str, pos_begin: int, pos_end: int,
-    ) -> Generator[tuple[int, int, float], None, None]:
+        The only fetch strategy.  There used to be a second one that kept a
+        retained buffer across calls and was chosen when a query started
+        within ``use_buffered_threshold`` of the last; it was measured to be a
+        net loss on every access pattern real data produces and removed. See
+        ``docs/adr/0002-remove-bigwig-fetch-buffering.md``.
+        """
         assert self._bw_file is not None
         chrom_len = self.chroms[chrom]
         pos_end = min(pos_end, chrom_len)
 
         start = pos_begin
         while start < pos_end:
+            # A generator that outlives close() must not look like a complete,
+            # shorter result set.  The handle is what says the table is still
+            # usable, and it is checked per chunk rather than once on entry:
+            # the assert above runs at the first ``next()``, and a close landing
+            # between two chunks is exactly the case a lazily-consumed fetch
+            # produces.  Stated here with a message because the message is the
+            # whole point -- a truncated score list is indistinguishable from a
+            # complete one at the call site, and for an annotation read that is
+            # wrong data rather than an error.
+            assert self._bw_file is not None, \
+                "bigWig table closed while a region fetch was in flight"
             intervals, start = self._fetch_chunk(
-                self._direct_window, chrom, start, pos_end, pos_end)
+                self._window, chrom, start, pos_end, pos_end)
             if not intervals:
                 return
             for interval in intervals:
@@ -441,13 +322,7 @@ class BigWigTable(GenomicPositionTable):
 
         pos_begin = max(0, pos_begin - 1)
 
-        fetch_method = self._fetch_buffered \
-            if pos_begin - self._last_pos <= self.use_buffered_threshold \
-            else self._fetch_direct
-
-        self._last_pos = pos_begin
-
-        for interval in fetch_method(fchrom, pos_begin, pos_end):
+        for interval in self._fetch(fchrom, pos_begin, pos_end):
             yield parser(chrom, interval)
 
     def get_region_value_arrays(
@@ -501,13 +376,10 @@ class BigWigTable(GenomicPositionTable):
                 f"{self.genomic_resource.resource_id}: a bigWig record's "
                 f"payload is its value, so column {VALUE_COLUMN} is the only "
                 f"one there is; asked for {bad_columns}")
-        # Mirror the cursor update get_records_in_region makes, so a later read
-        # on the same open table observes the same state.
-        self._last_pos = pos
 
         while pos < scan_stop:
             intervals, pos = self._fetch_chunk(
-                self._direct_window, fchrom, pos, scan_stop, scan_stop)
+                self._window, fchrom, pos, scan_stop, scan_stop)
             if not intervals:
                 return
             raw = np.array(intervals, dtype=np.float64)

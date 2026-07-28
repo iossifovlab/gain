@@ -289,6 +289,36 @@ the NA default for a bigWig score is empty (``bigwig_scores``), so
 ``return record[PAYLOAD]``.  That is a real per-record saving, and it is only
 available once the payload is the value.
 
+**Renamed attribute: ``BigWigTable.direct_fetch_size`` -> ``fetch_size``, and
+the config key with it.**  ``BigWigTable`` is exported, so this is public
+surface.  It was "direct" only in contrast to a second, *buffered* fetch
+strategy, and that strategy is gone: the table keeps no interval buffer
+across calls, and ``use_buffered_threshold`` no longer routes anything.  The
+rename is **not** aliased -- the capability survives, so a config naming it
+the old way means something specific, and failing validation lets an operator
+rename it rather than silently receive the default.
+
+The two retired knobs, ``buffer_fetch_size`` and ``use_buffered_threshold``,
+are the opposite case and are handled the opposite way: they configured a
+feature that no longer exists, so there is nothing to rename them to and
+refusing would take a resource offline to report a key that changes nothing.
+They stay accepted by the schema and are warned about (see
+``utils._warn_inert_bigwig_keys``).
+
+The private buffer machinery went with them -- ``_buffer``,
+``_buffer_region``, ``_fill``, ``_find``, ``_fetch_buffered``, ``_last_pos``
+-- and ``_fetch_direct`` is now simply ``_fetch``.  None of those were
+exported; they are named here only because the two invariants they carried
+were load-bearing enough to have their own regression tests, and both are now
+unreachable rather than maintained: a reopened table cannot serve a previous
+open's values, and a fetch cannot resume from retained state after
+``close()``.
+
+**Why** -- the measurements, the one workload where buffering still wins, and
+what would have to be true to reinstate it: see
+``docs/adr/0002-remove-bigwig-fetch-buffering.md``.  Bringing it back for
+high-latency (``http``/``s3``) repositories is tracked as gain#449.
+
 """
 from .line import LineBuffer
 from .table_bigwig import BigWigTable

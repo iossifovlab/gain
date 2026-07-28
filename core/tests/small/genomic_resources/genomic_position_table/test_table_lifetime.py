@@ -61,8 +61,9 @@ budget somewhere to be exceeded.
 Asked of **all four backends**, not just bigWig: the retention mechanism is a
 property of the table base class and its decorators, so a backend is not
 special until it is measured to be.  bigWig is merely where it hurt first,
-because its instances retain a contig dict and an interval buffer, and it is
-the backend whole-genome repair scans.
+because its instances retained a contig dict (and, until the buffered fetch
+strategy was removed, an interval buffer), and it is the backend whole-genome
+repair scans.
 """
 from __future__ import annotations
 
@@ -330,11 +331,6 @@ _MAY_SURVIVE_CLOSE = {
         "describing a CALL, not file content, and the tabix read cascade's "
         "own cursor. Bounded at three."
     ),
-    "_last_pos": (
-        "the previous query's start position -- one int, describing a call "
-        "rather than the file, which only routes the next bigWig fetch "
-        "between the buffered and direct strategies. Bounded at one."
-    ),
 }
 
 
@@ -344,8 +340,8 @@ def _is_released(value: object, before_open: object) -> bool:
     Released means one of: ``None``; an empty container; or back to the value
     the table was constructed with -- the three shapes the backends' releases
     actually take (``self.parser = None``, ``self.records_by_chr = {}``,
-    ``self._buffer_region = Region("?", -1, -1)``).  What they have in common
-    is that the field no longer holds anything read out of the file.
+    ``self.chroms = {}``).  What they have in common is that the field no
+    longer holds anything read out of the file.
     """
     if value is None:
         return True
@@ -397,18 +393,15 @@ def test_a_closed_table_releases_what_open_established(
       container -- must be empty.  This is the question about payload, and it
       is the one that does not care *how* the payload arrived: a dict filled by
       ``update()`` is the same object it was at construction, so the rebinding
-      diff never sees it, and it is precisely how a contig dict or a fetch
+      diff never sees it, and it is precisely how a contig dict or a line
       buffer grows.
 
     And the table is **read** before it is closed, not merely opened -- twice
-    over the same region.  The bigWig interval buffer, the tabix line buffer
-    and the read cascade's counters are all populated by a fetch and by nothing
-    before it, so an open-then-close test inspects them while they are still
-    empty and finds them released whatever ``close()`` does or does not do.
-    The repeat is what reaches the *buffered* fetch strategies: a bigWig table
-    routes on the distance from the previous query and starts far enough back
-    to force the first fetch down the direct path, which never touches the
-    buffer at all (see the reopen test for the same rule stated as routing).
+    over the same region.  The tabix line buffer and the read cascade's
+    counters are populated by a fetch and by nothing before it, so an
+    open-then-close test inspects them while they are still empty and finds
+    them released whatever ``close()`` does or does not do.  The repeat is
+    what reaches the state a second, nearby query establishes.
 
     This is also what makes the base class's own chromosome state -- the
     ``get_file_chromosomes`` memo, ``chrom_order`` and the maps
@@ -425,8 +418,8 @@ def test_a_closed_table_releases_what_open_established(
 
     table.open()
     # READ, don't just open, and read TWICE: the buffers and counters below
-    # exist only once a fetch has run through them, and the buffered fetch
-    # strategies only once a second, nearby query has been asked.
+    # exist only once a fetch has run through them, and some of them only
+    # once a second, nearby query has been asked.
     assert list(table.get_records_in_region(*region)), (
         f"the fixture region yields no records from a "
         f"{type(table).__name__}: the fetch-path state this test exists to "
@@ -894,40 +887,42 @@ def test_a_bigwig_fetch_in_flight_when_close_lands_raises(
 ) -> None:
     """A fetch straddling close() must fail loudly, not come back short.
 
-    Consuming a fetch lazily outside the block that opened the table is easy to
-    write by accident -- ``gen = score.fetch_region(...)`` inside a ``with``,
-    ``list(gen)`` after it -- and the buffered bigWig path resumes from a
-    buffer, so it does not have to touch the closed file handle to keep going.
-    Whatever it does then, it must not be *silently* short: a truncated score
-    list is indistinguishable from a complete one at the call site, and for an
-    annotation read that is wrong data rather than an error.
+    Consuming a fetch lazily outside the block that opened the table is easy
+    to write by accident -- ``gen = score.fetch_region(...)`` inside a
+    ``with``, ``list(gen)`` after it.  Whatever the fetch does then, it must
+    not be *silently* short: a truncated score list is indistinguishable from
+    a complete one at the call site, and for an annotation read that is wrong
+    data rather than an error.
 
-    This is a live risk of the gain#345 fix specifically.  ``close()`` now
-    discards the buffer, and the fetch loop's guard was the buffer itself, so
-    an interrupted scan stopped looking exhausted-and-correct rather than
-    hitting the file and raising.  The handle, not the buffer, is what says the
-    table is still usable.
+    The handle is what says the table is still usable, and the fetch checks it
+    once per chunk rather than once on entry -- a close landing between two
+    chunks is exactly what a lazily-consumed fetch produces.  The rule
+    outlived the buffered strategy this was originally written against
+    (gain#345): there is no retained state to resume from any more, but a
+    generator mid-walk still has to notice.
     """
-    chrom_lens = {"chr1": 1000}
-    data = "\n".join(f"chr1  {i * 10}  {i * 10 + 10}  0.5" for i in range(50))
+    chrom_lens = {"chr1": 100_000}
+    data = "\n".join(
+        f"chr1  {i * 10}  {i * 10 + 10}  0.5" for i in range(5_000))
     builder = (
         a_bigwig_score()
         .with_score("score", "float")
         .with_data(data)
         .with_chrom_lens(chrom_lens)
+        # A small records-per-call budget, so the region below spans MANY
+        # chunks.  A walk that fits in one chunk has already read everything
+        # it will yield by the time close() lands, and finishing it is
+        # correct -- the guard is about chunks still to fetch.
+        .with_fetch_size(50)
     )
     repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
     table = PositionScore(repo.get_resource("bw")).table
 
     table.open()
-    # the first fetch takes _fetch_direct, which never touches the buffer;
-    # warming it -- so that the interrupted fetch below is the buffered one --
-    # takes a second, nearby query (see the reopen test for the routing rule)
-    list(table.get_records_in_region("chr1", 1, 20))
-
-    records = table.get_records_in_region("chr1", 21, 500)
+    # Interrupt the walk PART WAY: pulling a single record leaves the
+    # generator suspended with chunks still to fetch.
+    records = table.get_records_in_region("chr1", 21, 50_000)
     next(records)
-    assert table._buffer, "buffer not warm: the fetch would not be resumable"
 
     table.close()
 
@@ -935,25 +930,22 @@ def test_a_bigwig_fetch_in_flight_when_close_lands_raises(
         list(records)
 
 
-def test_a_reopened_bigwig_table_does_not_answer_from_the_old_buffer(
+def test_a_reopened_bigwig_table_reads_the_current_file(
     tmp_path: pathlib.Path,
 ) -> None:
-    """open() must not serve the previous open's buffered values.
+    """A reopened table answers from the file it has now, not the one it had.
 
-    ``BigWigTable`` buffers fetched intervals and keys that buffer by
-    **region**, not by file or by open handle -- and a buffer hit never falls
-    through to the file.  So a table reopened over changed data answered any
-    query landing inside the retained span from the old data, silently and
-    with no error to attach a report to.
+    ``BigWigTable`` used to buffer fetched intervals and key that buffer by
+    **region**, not by file or by open handle -- and a buffer hit never fell
+    through to the file, so a table reopened over changed data answered from
+    the old data, silently (gain#345).  ``open()`` discarding the buffer was
+    the fix; removing the buffer outright is what makes the bug unreachable.
 
-    Driven against the **table**, and reopening WITHOUT an intervening
-    ``close()``, which is what makes this a test of ``open()``.  Routed through
-    ``GenomicScore`` instead it would prove nothing about ``open()`` at all:
-    ``score.open()`` early-returns on an already-open score, so the only way to
-    reach a second open is via the ``with`` block's ``close()`` -- and
-    ``close()`` discards the buffer too, for memory. That variant passes with
-    the ``open()`` discard removed, which is exactly why it is not the test
-    written here.
+    Kept as a regression test rather than deleted with the buffer: it states
+    the property directly, in terms no implementation detail owns, so it
+    still fails if caching is ever reintroduced without an invalidation rule.
+    Driven against the **table** and reopening WITHOUT an intervening
+    ``close()``, which is what makes it a test of ``open()``.
     """
     chrom_lens = {"chr1": 1000}
     builder = (
@@ -972,13 +964,8 @@ def test_a_reopened_bigwig_table_does_not_answer_from_the_old_buffer(
         ]
 
     table.open()
-    # The FIRST fetch takes _fetch_direct, which never touches _buffer:
-    # get_records_in_region routes on `pos_begin - _last_pos`, and _last_pos
-    # starts below -use_buffered_threshold precisely to force that.  So warming
-    # the buffer -- what this test is about -- takes a second, nearby query.
     assert values_at(5, 10) == [pytest.approx(0.11)]
     assert values_at(20, 30) == [pytest.approx(0.11)]
-    assert table._buffer, "buffer not warm: the test would prove nothing"
 
     # same table object, different data underneath, and NO close()
     setup_bigwig(next(tmp_path.rglob("*.bw")), "chr1  0  100  0.99",
@@ -989,8 +976,8 @@ def test_a_reopened_bigwig_table_does_not_answer_from_the_old_buffer(
     table.close()
 
     assert after == [pytest.approx(0.99)], (
-        f"reopened table served {after} -- the previous open's buffered "
-        f"intervals, not the current file (gain#345)."
+        f"reopened table served {after} -- the previous open's intervals, "
+        f"not the current file (gain#345)."
     )
 
 

@@ -86,11 +86,13 @@ def _warn_inert_bigwig_keys(
     # ``_set_core_column_keys()``, so these keys DO set
     # ``chrom_key``/``pos_begin_key``/``pos_end_key`` -- and nothing in
     # ``table_bigwig`` reads any of the three.  So they are inert, not
-    # wrong: they corrupt no value, and a deployed resource carrying them
-    # (``hg19/scores/Linsight`` configures all three) must keep opening
-    # and annotating exactly as before.  Warn so they can be cleaned out
-    # of the GRRs; do not refuse.  Contrast the SCORE config, where a
-    # column address really would name a column that is not the value --
+    # wrong: they corrupt no value, and this is the MAJORITY shape in the
+    # deployed GRRs -- 142 of the 150 bigWig resources carry it (every
+    # FitCons2 per-cell-type track, plus Linsight).  Refusing them would
+    # take 142 working resources offline to report six lines of yaml that
+    # change nothing.  Warn so they can be cleaned out of the GRRs; do not
+    # refuse.  Contrast the SCORE config, where a column address really
+    # would name a column that is not the value --
     # ``bigwig_scores.validate_bigwig_scoredefs`` refuses that one.
     for inert_key in ("chrom", "pos_begin", "pos_end", "header"):
         if inert_key in table_definition:
@@ -99,6 +101,21 @@ def _warn_inert_bigwig_keys(
                 "no columns and no header; its positions are decoded by "
                 "the backend), ignoring it in %s",
                 inert_key, resource.get_full_id(),
+            )
+    # The retired buffered-fetch strategy's two knobs.  They configured a
+    # second fetch path that no longer exists (gain#449 tracks bringing it
+    # back for high-latency repositories), so there is nothing to rename
+    # them to -- ignore them rather than refuse the resource.  The surviving
+    # knob was renamed ``direct_fetch_size`` -> ``fetch_size`` and is NOT
+    # aliased: see the schema in ``genomic_scores`` for why those two cases
+    # are handled differently.
+    for retired_key in ("buffer_fetch_size", "use_buffered_threshold"):
+        if retired_key in table_definition:
+            logger.warning(
+                "'%s' no longer does anything: bigWig fetch buffering was "
+                "removed, leaving a single chunked fetch strategy sized by "
+                "'fetch_size'. Delete the key from %s",
+                retired_key, resource.get_full_id(),
             )
     if "zero_based" in table_definition:
         logger.warning(
