@@ -2,7 +2,9 @@
 import pathlib
 
 import pytest
-from gain.genomic_resources.genomic_scores import build_score_from_resource
+from gain.genomic_resources.genomic_scores import (
+    build_score_from_resource,
+)
 from gain.genomic_resources.implementations.annotation_pipeline_impl import (
     AnnotationPipelineImplementation,
 )

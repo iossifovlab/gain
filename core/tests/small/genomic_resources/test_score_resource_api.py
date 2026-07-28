@@ -19,7 +19,9 @@ This is deliberately NOT a ``pytestarch`` rule: pytestarch reasons about module
 *imports* and cannot express "this class must not grow this method".
 """
 from gain.gene_scores.gene_scores import GeneScore
-from gain.genomic_resources.genomic_scores import GenomicScore
+from gain.genomic_resources.genomic_scores import (
+    GenomicScore,
+)
 from gain.genomic_resources.score_resource import ScoreResource
 
 # The complete, intended public surface of ScoreResource.  Grow this ONLY when
@@ -44,7 +46,7 @@ ALLOWED_PUBLIC_METHODS = {
 # Listed explicitly so a regression reads as intent, not a set-difference.
 FORBIDDEN_ON_BASE = {
     "open", "close", "is_open", "__enter__", "__exit__",
-    "fetch_lines", "fetch_scores", "fetch_region", "fetch_region_values",
+    "fetch_records", "fetch_scores", "fetch_region", "fetch_region_values",
     "fetch_scores_agg", "get_all_chromosomes",
 }
 

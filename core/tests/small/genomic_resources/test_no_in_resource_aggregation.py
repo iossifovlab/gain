@@ -10,7 +10,10 @@ removed; this pins it out, so a resurrected ``fetch_scores_agg`` fails here
 instead of quietly re-splitting aggregation across two layers.
 """
 from gain.genomic_resources import genomic_scores
-from gain.genomic_resources.genomic_scores import AlleleScore, PositionScore
+from gain.genomic_resources.genomic_scores import (
+    AlleleScore,
+    PositionScore,
+)
 
 # Every name of the superseded in-resource engine, per class.
 REMOVED_ALLELE_SCORE_METHODS = {

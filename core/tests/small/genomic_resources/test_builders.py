@@ -1662,42 +1662,31 @@ def test_bigwig_rejects_malformed_bedgraph_row(tmp_path: pathlib.Path) -> None:
         builder.build_resource(tmp_path)
 
 
-def test_bigwig_fetch_budgets_reach_the_table(tmp_path: pathlib.Path) -> None:
+def test_bigwig_fetch_size_reaches_the_table(tmp_path: pathlib.Path) -> None:
     res = (
         a_bigwig_score()
         .with_data("chr1  0  10  0.11")
         .with_chrom_lens({"chr1": 1000})
-        .with_fetch_budgets(
-            direct_fetch_size=1000,
-            buffer_fetch_size=2000,
-            use_buffered_threshold=100,
-        )
+        .with_fetch_size(1000)
         .build_resource(tmp_path)
     )
     table = res.get_config()["table"]
 
-    assert table["direct_fetch_size"] == 1000
-    assert table["buffer_fetch_size"] == 2000
-    assert table["use_buffered_threshold"] == 100
+    assert table["fetch_size"] == 1000
 
 
-def test_bigwig_emits_only_the_budgets_it_was_given(
+def test_bigwig_emits_no_fetch_size_unless_asked(
     tmp_path: pathlib.Path,
 ) -> None:
-    # Pinning one knob must not imply a value for the others -- an omitted
-    # key has to stay absent so the backend's own default still applies.
+    # An omitted key has to stay absent so the backend's own default applies.
     res = (
         a_bigwig_score()
         .with_data("chr1  0  10  0.11")
         .with_chrom_lens({"chr1": 1000})
-        .with_fetch_budgets(direct_fetch_size=7)
         .build_resource(tmp_path)
     )
-    table = res.get_config()["table"]
 
-    assert table["direct_fetch_size"] == 7
-    assert "buffer_fetch_size" not in table
-    assert "use_buffered_threshold" not in table
+    assert "fetch_size" not in res.get_config()["table"]
 
 
 def test_bare_cnv_collection_is_readable_minimal(
@@ -1836,10 +1825,11 @@ def test_zero_based_invalid_row_rejected_by_score_layer(
 def test_invalid_region_error_names_the_offending_line(
     tmp_path: pathlib.Path,
 ) -> None:
-    # The OSError raised for an end < begin row interpolates the score line
-    # itself.  Without a __repr__ that reads
-    # "<gain...RecordScoreLine object at 0x7f...>" -- an address, useless for
-    # diagnosis.  The message must name the contig and the two positions.
+    # The OSError raised for an end < begin row must name the offending row.
+    # It is built from the record's DECODED slots rather than interpolating
+    # the record: a record's last slot is the backend's payload, so
+    # f"{record}" would print a whole pysam.VariantRecord or a TupleProxy.
+    # (The retired score line had a __repr__ written for the same reason.)
     score = PositionScore(
         a_position_score()
         .with_score("v", "float")
@@ -1850,7 +1840,7 @@ def test_invalid_region_error_names_the_offending_line(
         """)
         .build_resource(tmp_path),
     ).open()
-    with pytest.raises(OSError, match=re.escape("RecordScoreLine(1:6-3")):
+    with pytest.raises(OSError, match=re.escape("record 1:6-3")):
         list(score.fetch_region_values("1", 1, 100))
 
 
@@ -2079,20 +2069,20 @@ def test_build_definition_writes_a_usable_grr_yaml(
     assert not (tmp_path / "grr" / "grr.yaml").exists()
 
 
-def test_with_position_aggregator_emits_the_field(
+def test_with_aggregator_emits_the_field(
     tmp_path: pathlib.Path,
 ) -> None:
     resource = (
         a_position_score()
         .with_score("phastCons", "float")
-        .with_position_aggregator("join(, )")
+        .with_aggregator("join(, )")
         .with_score_line(chrom="1", pos_begin="10", phastCons="0.1")
         .build_resource(tmp_path)
     )
 
     config = yaml.safe_load(resource.get_file_content("genomic_resource.yaml"))
 
-    assert config["scores"][0]["position_aggregator"] == "join(, )"
+    assert config["scores"][0]["aggregator"] == "join(, )"
 
 
 def test_with_allele_aggregator_targets_a_named_score(
@@ -2102,7 +2092,7 @@ def test_with_allele_aggregator_targets_a_named_score(
         an_allele_score()
         .with_score("freq", "float")
         .with_score("qual", "float")
-        .with_allele_aggregator("count", score_id="freq")
+        .with_aggregator("count", score_id="freq")
         .with_score_line(
             chrom="1", pos_begin="10", reference="A", alternative="G",
             freq="0.1", qual="10")
@@ -2112,14 +2102,14 @@ def test_with_allele_aggregator_targets_a_named_score(
     config = yaml.safe_load(resource.get_file_content("genomic_resource.yaml"))
 
     by_id = {score["id"]: score for score in config["scores"]}
-    assert by_id["freq"]["allele_aggregator"] == "count"
-    assert "allele_aggregator" not in by_id["qual"]
+    assert by_id["freq"]["aggregator"] == "count"
+    assert "aggregator" not in by_id["qual"]
 
 
 def test_with_position_aggregator_before_any_score_raises() -> None:
     with pytest.raises(
             ResourceValidationError, match="call with_score first"):
-        a_position_score().with_position_aggregator("count")
+        a_position_score().with_aggregator("count")
 
 
 def test_with_allele_aggregator_unknown_score_raises() -> None:
@@ -2127,7 +2117,7 @@ def test_with_allele_aggregator_unknown_score_raises() -> None:
         (
             an_allele_score()
             .with_score("freq", "float")
-            .with_allele_aggregator("count", score_id="nope")
+            .with_aggregator("count", score_id="nope")
         )
 
 

@@ -1,9 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613,C0415
-import gc
 import pathlib
 import textwrap
-import weakref
-from collections.abc import Callable
 from typing import Any, cast
 
 import pysam
@@ -15,16 +12,23 @@ from gain.genomic_resources.fsspec_protocol import (
 from gain.genomic_resources.genomic_position_table import (
     VCFGenomicPositionTable,
 )
-from gain.genomic_resources.genomic_position_table.record import PAYLOAD
+from gain.genomic_resources.genomic_position_table.record import (
+    ALT,
+    CHROM,
+    PAYLOAD,
+    POS_BEGIN,
+    POS_END,
+    REF,
+    Record,
+)
+from gain.genomic_resources.genomic_position_table.table_vcf import (
+    build_vcf_parser,
+)
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     CnvCollection,
     GenomicScore,
-    GenomicScoreDef,
     PositionScore,
-    RecordScoreLine,
-    ScoreLineBase,
-    VCFScoreLine,
     build_allele_score_from_resource,
     build_position_score_from_resource_id,
     build_score_from_resource,
@@ -330,11 +334,11 @@ def test_score_definition_via_index_headerless_tabix(
     res = build_filesystem_test_resource(tmp_path)
     score = build_score_from_resource(res)
     score.open()
-    score_line = next(score.fetch_lines("1", 10, 12))
+    score_line = next(score.fetch_records("1", 10, 12))
     assert len(score.score_definitions) == 1
     assert "piscore" in score.score_definitions
-    assert score_line.get_available_scores() == ("piscore",)
-    assert score_line.get_score("piscore") == 3.14
+    assert tuple(score.get_all_scores()) == ("piscore",)
+    assert score.get_score_from_record(score_line, "piscore") == 3.14
 
 
 def test_score_definition_list_header_tabix(tmp_path: pathlib.Path) -> None:
@@ -374,16 +378,16 @@ def test_score_definition_list_header_tabix(tmp_path: pathlib.Path) -> None:
     res = build_filesystem_test_resource(tmp_path)
     score = build_score_from_resource(res)
     score.open()
-    score_line = next(score.fetch_lines("1", 10, 12))
+    score_line = next(score.fetch_records("1", 10, 12))
     assert len(score.score_definitions) == 1
     assert "piscore" in score.score_definitions
-    assert score_line.get_available_scores() == ("piscore",)
-    assert score_line.chrom == "1"
-    assert score_line.pos_begin == 10
-    assert score_line.pos_end == 12
-    assert score_line.ref == "A"
-    assert score_line.alt == "G"
-    assert score_line.get_score("piscore") == 3.14
+    assert tuple(score.get_all_scores()) == ("piscore",)
+    assert score_line[CHROM] == "1"
+    assert score_line[POS_BEGIN] == 10
+    assert score_line[POS_END] == 12
+    assert score_line[REF] == "A"
+    assert score_line[ALT] == "G"
+    assert score.get_score_from_record(score_line, "piscore") == 3.14
 
 
 def test_forbid_column_names_in_scores_when_no_header_configured() -> None:
@@ -506,7 +510,9 @@ def test_line_score_value_parsing(tmp_path: pathlib.Path) -> None:
     res = build_filesystem_test_resource(tmp_path)
     score = build_score_from_resource(res)
     score.open()
-    result = [line.get_score("c2") for line in score.fetch_lines("1", 10, 30)]
+    result = [
+        score.get_score_from_record(line, "c2")
+        for line in score.fetch_records("1", 10, 30)]
     assert result == [3.14, 4.14, 5.14]
 
 
@@ -621,21 +627,25 @@ def test_line_score_na_values(tmp_path: pathlib.Path) -> None:
 
     score = build_score_from_resource(res)
     score.open()
-    result = [line.get_score("c2") for line in score.fetch_lines("1", 10, 30)]
+    result = [
+        score.get_score_from_record(line, "c2")
+        for line in score.fetch_records("1", 10, 30)]
     assert result == [3.14, None, None]
 
 
-def test_line_get_available_score_columns(vcf_score: AlleleScore) -> None:
+def test_score_lists_its_available_score_columns(
+    vcf_score: AlleleScore,
+) -> None:
     vcf_score.open()
-    score_line = next(vcf_score.fetch_lines("chr1", 2, 30))
-    assert set(score_line.get_available_scores()) == {"A", "B", "C", "D"}
+    assert set(vcf_score.get_all_scores()) == {"A", "B", "C", "D"}
 
 
 def test_vcf_tuple_scores_autoconcat_to_string(vcf_score: AlleleScore) -> None:
     vcf_score.open()
     results = tuple(
-        (r.chrom, r.pos_begin, r.pos_end, r.get_score("B"))
-        for r in vcf_score.fetch_lines("chr1", 2, 30)
+        (r[CHROM], r[POS_BEGIN], r[POS_END],
+         vcf_score.get_score_from_record(r, "B"))
+        for r in vcf_score.fetch_records("chr1", 2, 30)
     )
     assert results == (
         ("chr1", 2, 2, "1|2|3"),
@@ -692,6 +702,29 @@ class _CountingVariant:
         self.info_reads = 0
         self.header_reads = 0
 
+    # The parser reads these to build a record's decoded slots; they are
+    # passthroughs, and deliberately not counted -- the counts this class
+    # exists for are the two PROXY reads.
+    @property
+    def contig(self) -> str:
+        return self._variant.contig
+
+    @property
+    def pos(self) -> int:
+        return self._variant.pos
+
+    @property
+    def stop(self) -> int:
+        return self._variant.stop
+
+    @property
+    def ref(self) -> str | None:
+        return self._variant.ref
+
+    @property
+    def alts(self) -> tuple[str, ...] | None:
+        return self._variant.alts
+
     @property
     def info(self) -> pysam.VariantRecordInfo:
         self.info_reads += 1
@@ -707,21 +740,24 @@ class _CountingVariant:
         return self._header.info.gets
 
 
-def _count_line(
-    line: ScoreLineBase, score_defs: dict[str, GenomicScoreDef],
-) -> tuple[VCFScoreLine, _CountingVariant]:
-    """Rebuild a VCF score line over a counting stand-in for its variant."""
-    assert isinstance(line, VCFScoreLine)
-    variant, allele_index = line.record[PAYLOAD]
+def _count_record(record: Record) -> tuple[Record, _CountingVariant]:
+    """Rebuild a VCF record over a counting stand-in for its variant.
+
+    Built through the real parser, so the proxy reads counted are exactly the
+    ones the backend makes when it constructs a record.
+    """
+    variant, allele_index, _info, _meta = record[PAYLOAD]
     counting = _CountingVariant(variant)
-    record = (*line.record[:PAYLOAD], (counting, allele_index))
-    return VCFScoreLine(record, score_defs), counting
+    parser = build_vcf_parser(None)
+    rebuilt = parser(counting, allele_index)
+    assert rebuilt is not None
+    return rebuilt, counting
 
 
-def test_vcf_score_line_reads_the_pysam_proxies_once_per_line(
+def test_vcf_reads_the_pysam_proxies_once_per_record(
     vcf_score: AlleleScore,
 ) -> None:
-    """The INFO proxy and its header metadata are read ONCE per line.
+    """The INFO proxy and its header metadata are read ONCE per record.
 
     Both ``variant.info`` and ``variant.header.info`` allocate a fresh pysam
     proxy on every access, so obtaining them per *score* would put ~170ns of
@@ -731,36 +767,39 @@ def test_vcf_score_line_reads_the_pysam_proxies_once_per_line(
     migration wins at every width.  They are properties of the LINE, not of a
     score, so they are obtained once and reused for every score read.
 
-    They are still obtained **lazily**, on the first score read: a line whose
-    scores are never read (an allele filtered out by REF/ALT in
-    ``AlleleScore.fetch_scores``) must pay nothing for them.
+    They used to be memoised on the score line, resolved on its first score
+    read.  With the score lines gone the value read is a pure function of the
+    record, so the proxies are resolved by the BACKEND, once, when it builds
+    the record, and carried in the payload.  The trade is that the resolution
+    is now eager -- a record whose scores are never read pays for them anyway
+    -- and this test therefore pins the count at record construction rather
+    than at first read.
     """
     with vcf_score.open():
         # A real, multi-allelic line -- the record whose INFO the counting
         # proxy stands in front of is the genuine pysam one.
-        line = next(iter(vcf_score.fetch_lines("chr1", 30, 30)))
-        counted_line, counting = _count_line(
-            line, vcf_score.score_definitions)
+        record = next(iter(vcf_score.fetch_records("chr1", 30, 30)))
+        counted, counting = _count_record(record)
 
-        # Nothing is read before a score is asked for.
-        assert (counting.info_reads, counting.header_reads) == (0, 0)
+        # Building the record reads each proxy exactly once...
+        assert (counting.info_reads, counting.header_reads) == (1, 1)
 
         score_defs = list(vcf_score.score_definitions.values())
         assert len(score_defs) == 4
-        values = counted_line.get_values(score_defs)
+        values = vcf_score.get_values_from_record(counted, score_defs)
 
-        # ...and the four scores read the two proxies exactly once between
-        # them -- not once each.
+        # ...and reading all four scores off it reads them no more: the
+        # extractor takes them from the payload, it does not go to the variant.
         assert counting.info_reads == 1
         assert counting.header_reads == 1
 
-        # The values are the same ones the real line reads: the hoist is a
-        # cost change, not a semantic one.
-        assert values == line.get_values(score_defs)
+        # The values are the ones the real record reads: moving the proxies
+        # into the payload is a cost change, not a semantic one.
+        assert values == vcf_score.get_values_from_record(record, score_defs)
         assert values == [3, "31", "c32", "d31"]
 
 
-def test_vcf_score_line_reads_the_info_metadata_only_for_a_tuple_value(
+def test_vcf_reads_the_info_metadata_only_for_a_tuple_value(
     vcf_score: AlleleScore,
 ) -> None:
     """The INFO metadata is looked up ONLY when the value is a tuple.
@@ -780,29 +819,27 @@ def test_vcf_score_line_reads_the_info_metadata_only_for_a_tuple_value(
     is pinned by the three tests below, unchanged.
     """
     with vcf_score.open():
-        line = next(iter(vcf_score.fetch_lines("chr1", 30, 30)))
-        counted_line, counting = _count_line(
-            line, vcf_score.score_definitions)
+        line = next(iter(vcf_score.fetch_records("chr1", 30, 30)))
+        counted_line, counting = _count_record(line)
 
         # A -- Number=1, so the value is a scalar and its number cannot
         # change which value this allele reads.  The metadata is never asked.
-        assert counted_line.get_score("A") == 3
+        assert vcf_score.get_score_from_record(counted_line, "A") == 3
         assert counting.meta_gets == 0
 
         # C -- Number=R, a tuple: the number is what says the reference sits
         # at offset 0, so the metadata IS read, once, for this key.
-        assert counted_line.get_score("C") == "c32"
+        assert vcf_score.get_score_from_record(counted_line, "C") == "c32"
         assert counting.meta_gets == 1
 
     # An absent key still answers None -- and does so without touching the
     # metadata and without raising.  (The no-ALT record at chr1:2 carries no
     # D at all.)
     with vcf_score.open():
-        absent = next(iter(vcf_score.fetch_lines("chr1", 2, 2)))
-        absent_line, absent_counting = _count_line(
-            absent, vcf_score.score_definitions)
+        absent = next(iter(vcf_score.fetch_records("chr1", 2, 2)))
+        absent_line, absent_counting = _count_record(absent)
 
-        assert absent_line.get_score("D") is None
+        assert vcf_score.get_score_from_record(absent_line, "D") is None
         assert absent_counting.meta_gets == 0
 
 
@@ -823,42 +860,7 @@ class _HeaderlessVariant:
         raise RuntimeError("no header on this variant")
 
 
-def test_vcf_score_line_that_fails_to_resolve_reports_the_same_error(
-    vcf_score: AlleleScore,
-) -> None:
-    """A line that fails to resolve reports the SAME failure on a re-read.
-
-    ``_info`` doubles as the "per-line state already resolved" flag, and the
-    state it guards is written across three statements.  Set the flag FIRST and
-    a raise from either of the other two strands the line half-initialised:
-    flagged as resolved, with a null ``_info_meta`` behind it.  The next read of
-    that same line then skips the resolve block and dies on the null --
-    ``AttributeError: 'NoneType' object has no attribute 'get'`` -- which says
-    nothing about the corrupt record that actually broke it.
-
-    So the flag is written LAST.  A line that failed to resolve is simply still
-    unresolved, and reading it again re-runs the resolve and re-reports the real
-    error.  (Only the tuple branch reads the metadata now, so the value below is
-    a tuple -- that is the path that would meet the null.)
-
-    No in-tree caller catches an exception out of a score read and then re-reads
-    the same line, so this is latent today.  It is pinned rather than argued
-    because it is what makes ``_info_meta``'s non-optional type -- and the
-    ``type: ignore`` on its null initialiser -- sound instead of merely
-    asserted: nothing can observe that null.
-    """
-    with vcf_score.open():
-        variant = _HeaderlessVariant({"D": ("d11",)})
-        record = ("chr1", 5, 5, "A", "T", (variant, 0))
-        line = VCFScoreLine(record, vcf_score.score_definitions)
-
-        for _ in range(2):
-            with pytest.raises(
-                    RuntimeError, match="no header on this variant"):
-                line.get_score("D")
-
-
-def test_vcf_score_line_selects_info_values_by_allele_index(
+def test_vcf_selects_info_values_by_allele_index(
     vcf_score: AlleleScore,
 ) -> None:
     """The INFO lookup, per allele -- the whole reason VCF has a score line.
@@ -878,12 +880,14 @@ def test_vcf_score_line_selects_info_values_by_allele_index(
     """
     vcf_score.open()
     with vcf_score:
-        lines = list(vcf_score.fetch_lines("chr1", 2, 30))
-        assert all(type(line) is VCFScoreLine for line in lines)
+        lines = list(vcf_score.fetch_records("chr1", 2, 30))
+        assert all(type(rec) is tuple for rec in lines)
 
         results = [
-            (line.chrom, line.pos_begin, line.alt,
-             line.get_score("A"), line.get_score("C"), line.get_score("D"))
+            (line[CHROM], line[POS_BEGIN], line[ALT],
+             vcf_score.get_score_from_record(line, "A"),
+             vcf_score.get_score_from_record(line, "C"),
+             vcf_score.get_score_from_record(line, "D"))
             for line in lines
         ]
 
@@ -901,7 +905,7 @@ def test_vcf_score_line_selects_info_values_by_allele_index(
         ]
 
 
-def test_vcf_score_line_yields_null_for_a_number_a_field_when_alt_is_absent(
+def test_vcf_yields_null_for_a_number_a_field_when_alt_is_absent(
     tmp_path: pathlib.Path,
 ) -> None:
     """A **Number=A** field on a record with no ALT yields a NULL score.
@@ -974,11 +978,12 @@ chr1   5   .  A   T   .    .       D=d11
     score = build_allele_score_from_resource(res)
 
     with score.open():
-        lines = list(score.fetch_lines("chr1", 1, 30))
-        assert all(type(line) is VCFScoreLine for line in lines)
+        lines = list(score.fetch_records("chr1", 1, 30))
+        assert all(type(rec) is tuple for rec in lines)
 
         results = [
-            (line.pos_begin, line.alt, line.get_score("D")) for line in lines
+            (line[POS_BEGIN], line[ALT],
+             score.get_score_from_record(line, "D")) for line in lines
         ]
 
     assert results == [
@@ -989,7 +994,7 @@ chr1   5   .  A   T   .    .       D=d11
     ]
 
 
-def test_vcf_score_line_number_a_null_reaches_an_autogenerated_def_too(
+def test_vcf_number_a_null_reaches_an_autogenerated_def_too(
     tmp_path: pathlib.Path,
 ) -> None:
     """The ALT-less **Number=A** null holds through an *autogenerated* def.
@@ -1037,7 +1042,8 @@ chr1   5   .  A   T   .    .       D=d11
         assert score.score_definitions["D"].value_parser is None
 
         values = [
-            line.get_score("D") for line in score.fetch_lines("chr1", 1, 30)
+            score.get_score_from_record(line, "D")
+            for line in score.fetch_records("chr1", 1, 30)
         ]
 
     assert values == [None, "d11"]
@@ -1045,7 +1051,7 @@ chr1   5   .  A   T   .    .       D=d11
     assert not isinstance(values[0], tuple)
 
 
-def test_vcf_score_line_number_a_null_holds_for_a_multi_value_field(
+def test_vcf_number_a_null_holds_for_a_multi_value_field(
     tmp_path: pathlib.Path,
 ) -> None:
     """The ALT-less **Number=A** null does not depend on the value COUNT.
@@ -1092,8 +1098,9 @@ chr1   5   .  A   T,G   .    .       D=d11,d12
 
     with score.open():
         results = [
-            (line.pos_begin, line.alt, line.get_score("D"))
-            for line in score.fetch_lines("chr1", 1, 30)
+            (line[POS_BEGIN], line[ALT],
+             score.get_score_from_record(line, "D"))
+            for line in score.fetch_records("chr1", 1, 30)
         ]
 
     assert results == [
@@ -1105,138 +1112,7 @@ chr1   5   .  A   T,G   .    .       D=d11,d12
     ]
 
 
-def test_a_record_score_lines_record_is_write_once(
-    vcf_score: AlleleScore,
-) -> None:
-    """A record-backed score line's ``record`` is **write-once**.
-
-    Both record-backed score lines memoise something derived from the payload of
-    the record they were built over: :class:`VCFScoreLine` hoists the two pysam
-    INFO proxies (and the allele index) on its first score read, and
-    :class:`RecordScoreLine` binds ``_get_raw`` to its payload's indexer in its
-    constructor.  Neither memo has an invalidation hook.
-
-    So a *rebound* ``record`` would produce the most confusing failure there is:
-    the core fields (chrom, pos, ref, alt) are read from the slots on every
-    access and would report the NEW record, while the scores would still be
-    served from the OLD one's payload.  The position says one row, the values
-    say another, and nothing raises.
-
-    Rather than pay to detect that on the hot path -- an identity check per
-    score read is exactly the per-line cost #237 exists to remove -- the line
-    refuses the rebinding at its public surface: ``record`` is a read-only
-    property, and that is what this test pins.
-
-    It pins a **guard-rail, not an impossibility**, and the difference matters.
-    ``_record`` is an ordinary attribute: ``line._record = other`` still stores,
-    and the line then really does report the new record's position with the old
-    record's scores, silently.  Nothing short of a per-read check could stop
-    that, and that check is the cost this class exists to avoid.  What the
-    property does buy is that the stale state cannot be reached through the name
-    a caller is meant to use.  A line is built over one record and reads that
-    record, and reuse (which #239 may want) has to add memo invalidation
-    *deliberately*, with this test to tell it so.
-    """
-    with vcf_score.open():
-        vcf_line = next(iter(vcf_score.fetch_lines("chr1", 30, 30)))
-    assert isinstance(vcf_line, VCFScoreLine)
-
-    position_score = build_score_from_resource(
-        build_simple_position_score_resource())
-    with position_score.open():
-        record_line = next(iter(position_score.fetch_lines("1", 10, 10)))
-    assert isinstance(record_line, RecordScoreLine)
-
-    # Reading a record is of course fine -- it is only rebinding that is not.
-    assert vcf_line.record[PAYLOAD] is not None
-    assert record_line.record[PAYLOAD] is not None
-
-    for line in (vcf_line, record_line):
-        with pytest.raises(AttributeError):
-            line.record = ("chr1", 1, 1, "A", "T", ())  # type: ignore[misc]
-
-
-def _dies_by_refcount(
-    build_line: Callable[[], ScoreLineBase],
-) -> bool:
-    """Whether a freshly built, fully read score line dies without the GC.
-
-    Builds one line, reads every score off it (so whatever the line memoises
-    on its first read is in place), drops the last reference to it with the
-    cycle collector **disabled**, and reports whether it was freed anyway.
-
-    A weak reference that has cleared can only mean the object's refcount
-    reached zero, so it is exactly the question "is this line in a cycle?" --
-    with no dependence on when a GC pass happens to run.
-    """
-    gc.disable()
-    try:
-        line = build_line()
-        line.get_values(list(line.score_defs.values()))
-        ref = weakref.ref(line)
-        del line
-        return ref() is None
-    finally:
-        gc.enable()
-
-
-def test_score_lines_are_freed_without_the_cycle_collector(
-    vcf_score: AlleleScore,
-) -> None:
-    """No score line is part of a reference cycle.
-
-    One score line is built **per line** of a fetch -- that is the whole cost
-    #237 is about -- so a line that can only be freed by the cycle collector
-    does not merely leak a few bytes: it turns a scan that produced *zero*
-    cyclic garbage into one that hands the collector thousands of objects to
-    free, and promotes the survivors to gen-1.  What those cycles hold alive
-    until then is the payload: a live ``pysam.VariantRecord`` (and the header it
-    pins), retained well past its last use instead of being freed by refcount
-    the moment the line goes out of scope.
-
-    Measured on a 3000-row VCF (fetch_lines + get_values over every line): with
-    the cycle the collector freed 11080/880/0 gen-0/1/2 objects over 28/2/0
-    passes -- 11960 in all, **4.0 per line**; without it, it freed *nothing*,
-    its 11/1/0 passes all empty.  The four, named with ``gc.DEBUG_SAVEALL`` on
-    one dropped line, are the ``VCFScoreLine``, the bound ``_get_raw`` method,
-    and the two pysam INFO proxies the line memoises -- a
-    ``pysam.VariantRecordInfo`` and a ``pysam.VariantHeaderMetadata``, which is
-    how the cycle keeps the live variant record and its header alive.  (The
-    instance ``__dict__`` is not one of them: CPython 3.12 manages it inline.)
-    Read the per-line figure off the total, not off gen-0 (~3.69/line), which
-    misses precisely the ~880 objects promoted to gen-1.
-
-    Count what the collector FREES, not how often it runs: the pass count never
-    reaches zero (CPython untracks tuples of immutables, so the gen-0 counter
-    creeps even in allocation-balanced code), which is why this test asserts on
-    liveness under a disabled collector rather than on a collection count.
-
-    The way to make a per-line object cyclic is to store a bound method **of
-    self** on self (``self._x = self._y`` -- self -> bound method -> self), and
-    that is exactly what a score line must not do.  Both record-backed lines
-    bind their raw-value lookup to something that is *not* self -- the payload's
-    indexer -- or reach it as a plain method, which allocates nothing per line
-    and refers to nothing.
-
-    Pinned for the whole family, over real fetched lines, so a future backend
-    (or #239's rework of the adapters) cannot quietly reintroduce it.
-    """
-    with vcf_score.open():
-        vcf_record = next(
-            iter(vcf_score.fetch_lines("chr1", 30, 30))).record
-        vcf_defs = vcf_score.score_definitions
-        assert _dies_by_refcount(
-            lambda: VCFScoreLine(vcf_record, vcf_defs))
-
-    position_score = build_score_from_resource(
-        build_simple_position_score_resource())
-    with position_score.open():
-        record = next(iter(position_score.fetch_lines("1", 10, 10))).record
-        defs = position_score.score_definitions
-        assert _dies_by_refcount(lambda: RecordScoreLine(record, defs))
-
-
-def test_vcf_score_line_joins_an_unbounded_string_info_field(
+def test_vcf_joins_an_unbounded_string_info_field(
     tmp_path: pathlib.Path,
 ) -> None:
     """An unbounded string INFO field (Number=., Type=String) joins on '|'.
@@ -1279,7 +1155,8 @@ chr1   9   .  A   T   .    .       S=solo
     with score.open():
         assert score.score_definitions["S"].value_parser is str
         assert [
-            line.get_score("S") for line in score.fetch_lines("chr1", 5, 9)
+            score.get_score_from_record(line, "S")
+            for line in score.fetch_records("chr1", 5, 9)
         ] == ["c11|c12", "solo"]
 
 
@@ -1361,10 +1238,10 @@ def test_score_definition_new_configuration_fields(
     assert "piscore" in score.score_definitions
     assert "2piscore" in score.score_definitions
 
-    score_line = next(score.fetch_lines("1", 10, 12))
-    assert score_line.get_available_scores() == ("piscore", "2piscore")
-    assert score_line.get_score("piscore") == 3.14
-    assert score_line.get_score("2piscore") == 6.28
+    score_line = next(score.fetch_records("1", 10, 12))
+    assert tuple(score.get_all_scores()) == ("piscore", "2piscore")
+    assert score.get_score_from_record(score_line, "piscore") == 3.14
+    assert score.get_score_from_record(score_line, "2piscore") == 6.28
 
 
 def test_score_definition_histograms(
@@ -1407,10 +1284,10 @@ def test_score_definition_histograms(
     assert "score1" in score.score_definitions
     assert "score2" in score.score_definitions
 
-    score_line = next(score.fetch_lines("1", 10, 10))
-    assert score_line.get_available_scores() == ("score1", "score2")
-    assert score_line.get_score("score1") == "aaa"
-    assert score_line.get_score("score2") == "bbb"
+    score_line = next(score.fetch_records("1", 10, 10))
+    assert tuple(score.get_all_scores()) == ("score1", "score2")
+    assert score.get_score_from_record(score_line, "score1") == "aaa"
+    assert score.get_score_from_record(score_line, "score2") == "bbb"
 
     score1_def = score.score_definitions["score1"]
     assert score1_def.hist_conf is None
@@ -1595,35 +1472,32 @@ def test_get_histogram_image_public_url() -> None:
     assert url != score.get_histogram_image_url("score")
 
 
-def test_fetch_region_lines_requires_open() -> None:
+def test_fetch_region_records_requires_open() -> None:
     score = build_score_from_resource(build_simple_position_score_resource())
 
-    region_iter = score._fetch_region_lines("1", 10, 10)
+    region_iter = score._fetch_region_records("1", 10, 10)
     with pytest.raises(ValueError, match="is not open"):
         next(region_iter)
 
 
-def test_fetch_region_lines_checks_available_chromosomes() -> None:
+def test_fetch_region_records_checks_available_chromosomes() -> None:
     score = build_score_from_resource(build_simple_position_score_resource())
     score.open()
 
     with pytest.raises(ValueError, match="not among the available"):
-        next(score._fetch_region_lines("2", 10, 10))
+        next(score._fetch_region_records("2", 10, 10))
 
 
-def test_line_to_begin_end_validates_order() -> None:
+def test_record_to_begin_end_validates_order() -> None:
     # A record whose interval runs backwards -- pos_end (10) before pos_begin
     # (20).  Built as a record rather than through the retired Line adapter
     # (#239): _line_to_begin_end reads the score line's core-field properties,
-    # which RecordScoreLine serves off the record's slots, so this is the same
+    # which the record's slots carry directly, so this is the same
     # check over the shape every backend now yields.
-    bad_line = RecordScoreLine(
-        ("1", 20, 10, None, None, ("1", "20", "10")),
-        {},
-    )
+    bad_record = ("1", 20, 10, None, None, ("1", "20", "10"))
 
     with pytest.raises(OSError, match="has a region"):
-        GenomicScore._line_to_begin_end(bad_line)
+        GenomicScore._record_to_begin_end(bad_record)
 
 
 def test_default_annotation_requires_list() -> None:
@@ -1723,14 +1597,16 @@ def test_bigwig_position_score_get_all_scores(
     assert bigwig_position_score.get_all_scores() == ["score"]
 
 
-def test_bigwig_position_score_fetch_lines(
+def test_bigwig_position_score_fetch_records(
     bigwig_position_score: GenomicScore,
 ) -> None:
     # BigWig [0,10) → GAIn [1,10]; [10,20) → [11,20]
-    lines = list(bigwig_position_score.fetch_lines("chr1", 1, 15))
+    lines = list(bigwig_position_score.fetch_records("chr1", 1, 15))
     assert len(lines) == 2
-    assert lines[0].get_score("score") == pytest.approx(0.1)
-    assert lines[1].get_score("score") == pytest.approx(0.2)
+    assert bigwig_position_score.get_score_from_record(
+        lines[0], "score") == pytest.approx(0.1)
+    assert bigwig_position_score.get_score_from_record(
+        lines[1], "score") == pytest.approx(0.2)
 
 
 def test_bigwig_position_score_fetch_region_values(
@@ -1762,10 +1638,12 @@ def test_bigwig_position_score_fetch_scores_at_position(
 def test_bigwig_position_score_multi_chrom(
     bigwig_position_score: GenomicScore,
 ) -> None:
-    lines_chr2 = list(bigwig_position_score.fetch_lines("chr2", 1, 20))
+    lines_chr2 = list(bigwig_position_score.fetch_records("chr2", 1, 20))
     assert len(lines_chr2) == 2
-    assert lines_chr2[0].get_score("score") == pytest.approx(0.4)
-    assert lines_chr2[1].get_score("score") == pytest.approx(0.5)
+    assert bigwig_position_score.get_score_from_record(
+        lines_chr2[0], "score") == pytest.approx(0.4)
+    assert bigwig_position_score.get_score_from_record(
+        lines_chr2[1], "score") == pytest.approx(0.5)
 
 
 def test_genomic_score_misspelled_histogram_type_fails_validation() -> None:

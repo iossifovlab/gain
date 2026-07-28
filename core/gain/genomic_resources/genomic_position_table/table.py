@@ -312,13 +312,24 @@ class GenomicPositionTable(abc.ABC):
     @abc.abstractmethod
     def get_records_in_region(
         self,
-        chrom: str | None = None,
+        chrom: str,
         pos_begin: int | None = None,
         pos_end: int | None = None,
     ) -> Generator[Record, None, None]:
         """Return an iterable over the records in the specified range.
 
-        The interval is closed on both sides and 1-based.
+        The interval is closed on both sides and 1-based.  ``pos_begin`` and
+        ``pos_end`` are optional and default to the contig's own bounds;
+        ``chrom`` is **required**.
+
+        It used to be optional, and passing ``None`` meant "every record in
+        the table" -- each backend opened with ``if chrom is None: yield from
+        self.get_all_records()``.  That made the default argument list a
+        legal call (``get_records_in_region()``) that quietly scanned a whole
+        genome, and it gave one method two jobs whose only shared code was
+        the delegation.  :meth:`get_all_records` is that second job, is not
+        going anywhere, and says what it does in its name.  Callers that
+        passed no contig call it directly instead.
         """
 
     def get_region_value_arrays(

@@ -126,9 +126,11 @@ def test_dispatch_min_max_uses_bulk_and_matches(
 def test_dispatch_min_max_falls_back_for_whole_table_scan(
     tmp_path: pathlib.Path,
 ) -> None:
+    # An unbounded region -- a contig with no start/end -- keeps the
+    # per-record path; see the histogram twin of this test.
     resource = _multiscore_tabix(tmp_path)
-    via_task = G._do_min_max_task(resource, ["s1"], None, None, None)
-    ref = G._do_min_max(resource, ["s1"], None, None, None)
+    via_task = G._do_min_max_task(resource, ["s1"], "chr1", None, None)
+    ref = G._do_min_max(resource, ["s1"], "chr1", None, None)
     _assert_min_max_equal(via_task, ref)
 
 

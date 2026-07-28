@@ -14,8 +14,16 @@ import pathlib
 import numpy as np
 import pytest
 from gain.genomic_resources.genomic_scores import (
-    GenomicScoreDef,
     PositionScore,
+    build_score_from_resource,
+)
+from gain.genomic_resources.score_def import (
+    GenomicScoreDef,
+    _parse_column_address,
+)
+from gain.genomic_resources.testing import (
+    build_inmemory_test_resource,
+    convert_to_tab_separated,
 )
 from gain.genomic_resources.testing.builders import a_position_score
 
@@ -61,7 +69,7 @@ _TOKENS = [
     # na_values="-1" config below exercises nothing at all, since no
     # other token matches it (found by mutation testing).
     "-1",
-    # ...and its OTHER spelling. _normalize_na_values stores both forms
+    # ...and its OTHER spelling. normalize_na_values stores both forms
     # of a sentinel ("-1" and -1.0), so a vectorized NA test that lets
     # numpy coerce that mixed set to one dtype stringifies the float and
     # starts matching "-1.0" too -- which parse_value never does.
@@ -150,3 +158,206 @@ def test_parse_array_agrees_with_parse_value_on_float_cells(
 
     assert np.array_equal(got, np.array(want), equal_nan=True), (got, want)
     assert np.isnan(got[0]), "the configured NA sentinel must not survive"
+
+
+# --- column addressing ------------------------------------------------------
+#
+# A score is addressed by column NAME or by column INDEX.  Index 0 is a legal
+# address and used to be silently discarded; see _parse_column_address.
+
+@pytest.mark.parametrize("key", ["column_index", "index"])
+@pytest.mark.parametrize("index", [0, 1, 3])
+def test_column_index_zero_is_a_real_address(key: str, index: int) -> None:
+    """Index 0 must survive parsing, under either spelling.
+
+    It is the only integer that is falsy, and the parsing this replaced tested
+    the value for truth twice -- once in an ``or`` between the modern key and
+    its legacy alias, once in a ternary -- so ``column_index: 0`` came back as
+    "no index configured" and the resource could not be opened at all.
+    """
+    col_name, col_index = _parse_column_address(
+        {"id": "s", "type": "float", key: index})
+
+    assert col_index == index
+    assert col_name is None
+
+
+def test_a_score_at_column_zero_can_be_read() -> None:
+    """End to end: a table whose score really is its first column.
+
+    Legal by construction -- chrom/pos_begin/pos_end are addressed
+    independently, so nothing reserves column 0 for the contig -- and the
+    validator explicitly permits ``0 <= column_index``.  Before the fix this
+    raised a message-less AssertionError out of ``open()``.
+    """
+    res = build_inmemory_test_resource({
+        "genomic_resource.yaml": """
+            type: position_score
+            table:
+                header_mode: none
+                filename: data.mem
+                chrom:
+                    index: 1
+                pos_begin:
+                    index: 2
+                pos_end:
+                    index: 3
+            scores:
+            - id: s
+              column_index: 0
+              type: float""",
+        "data.mem": convert_to_tab_separated("""
+            0.5   chr1  10  12
+            0.75  chr1  20  22
+        """),
+    })
+    score = build_score_from_resource(res)
+    with score.open():
+        assert score.score_definitions["s"].col_index == 0
+        assert score.score_definitions["s"].score_index == 0
+        values = list(score.fetch_region_values("chr1", 10, 22, ["s"]))
+
+    assert [value[2] for value in values] == [[0.5], [0.75]]
+
+
+def test_a_score_addressing_nothing_is_refused_by_name() -> None:
+    """No address at all is a config error, reported as one.
+
+    This used to be a bare ``assert score_def.col_name is not None`` -- no
+    message, no resource, no score id -- and under ``python -O`` no check at
+    all, leaving ``header.index(None)`` to fail later and less clearly.
+    """
+    res = build_inmemory_test_resource({
+        "genomic_resource.yaml": """
+            type: position_score
+            table:
+                header_mode: none
+                filename: data.mem
+                chrom:
+                    index: 0
+                pos_begin:
+                    index: 1
+                pos_end:
+                    index: 2
+            scores:
+            - id: s
+              type: float""",
+        "data.mem": convert_to_tab_separated("""
+            chr1  10  12  0.5
+        """),
+    })
+    with pytest.raises(ValueError, match="configures neither column_name"):
+        build_score_from_resource(res).open()
+
+
+def test_a_score_addressing_two_things_is_refused() -> None:
+    """Name and index together is refused by the SCHEMA, before open().
+
+    The resource schema declares ``column_name`` and ``column_index``
+    mutually exclusive (``excludes``), so a config carrying both never
+    reaches the resolution block -- which is why the guard there is stated in
+    terms of the score def and is reachable only by building one in code.
+    Both halves are worth pinning: this one is what a user with a bad yaml
+    actually gets, and the sibling below is what protects the resolution
+    itself.
+    """
+    res = build_inmemory_test_resource({
+        "genomic_resource.yaml": """
+            type: position_score
+            table:
+                header_mode: none
+                filename: data.mem
+                chrom:
+                    index: 0
+                pos_begin:
+                    index: 1
+                pos_end:
+                    index: 2
+            scores:
+            - id: s
+              column_name: s
+              column_index: 3
+              type: float""",
+        "data.mem": convert_to_tab_separated("""
+            chr1  10  12  0.5
+        """),
+    })
+    with pytest.raises(ValueError, match="Invalid configuration"):
+        build_score_from_resource(res)
+
+
+def test_the_resolution_guard_refuses_a_doubly_addressed_score_def() -> None:
+    """The open()-time half of the rule above, reachable only in code.
+
+    The schema stops a doubly-addressed *config*; this stops a doubly-
+    addressed *definition*, which is what the resolution block actually reads.
+    Without it the index would silently win and the name be ignored.
+    """
+    res = build_inmemory_test_resource({
+        "genomic_resource.yaml": """
+            type: position_score
+            table:
+                header_mode: none
+                filename: data.mem
+                chrom:
+                    index: 0
+                pos_begin:
+                    index: 1
+                pos_end:
+                    index: 2
+            scores:
+            - id: s
+              column_index: 3
+              type: float""",
+        "data.mem": convert_to_tab_separated("""
+            chr1  10  12  0.5
+        """),
+    })
+    score = build_score_from_resource(res)
+    # Score defs are built in __init__, so this is before any resolution.
+    score.score_definitions["s"].col_name = "s"
+
+    with pytest.raises(ValueError, match="configures both a column name"):
+        score.open()
+
+
+def test_score_index_does_not_exist_until_the_score_is_opened() -> None:
+    """"Unresolved" is the attribute's absence, not a sentinel value.
+
+    ``score_index`` is ``field(init=False)`` with no default, so a def that
+    has not been through ``GenomicScore.open`` has no such attribute and
+    reading it says so.  A sentinel would have to be a real int, and every
+    candidate is a valid payload index -- ``-1`` most treacherously, since it
+    would read the last column instead of failing.
+    """
+    res = build_inmemory_test_resource({
+        "genomic_resource.yaml": """
+            type: position_score
+            table:
+                header_mode: none
+                filename: data.mem
+                chrom:
+                    index: 0
+                pos_begin:
+                    index: 1
+                pos_end:
+                    index: 2
+            scores:
+            - id: s
+              column_index: 3
+              type: float""",
+        "data.mem": convert_to_tab_separated("""
+            chr1  10  12  0.5
+        """),
+    })
+    score = build_score_from_resource(res)
+    score_def = score.score_definitions["s"]
+
+    # Built in __init__, so the configured address is already known...
+    assert score_def.col_index == 3
+    # ...but nothing has resolved it to a payload column yet.
+    with pytest.raises(AttributeError, match="score_index"):
+        _ = score_def.score_index
+
+    with score.open():
+        assert score_def.score_index == 3

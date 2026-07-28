@@ -279,37 +279,24 @@ class _TableScoreBuilder:
                 self.scores, na_values, score_id=score_id),
         )
 
-    def with_position_aggregator(
+    def with_aggregator(
         self, aggregator: str, *, score_id: str | None = None,
     ) -> Self:
-        """Declare the score's default per-position aggregator.
+        """Declare the score's default aggregator.
 
-        Emitted under ``position_aggregator:`` -- the resource-level default a
-        pipeline uses when an attribute does not name one of its own.  With
-        ``score_id`` omitted it attaches to the most-recently-declared score.
-        The value is rendered verbatim, so an invalid one can be authored on
-        purpose to watch the resource schema reject it.
+        Emitted under ``aggregator:`` -- the resource-level default a pipeline
+        uses when an attribute does not name one of its own.  A score has one
+        aggregator; which reduction it names is fixed by the resource type
+        (over a region of positions, over the alleles at one, over overlapping
+        CNVs), so there is nothing to choose between here.  With ``score_id``
+        omitted it attaches to the most-recently-declared score.  The value is
+        rendered verbatim, so an invalid one can be authored on purpose to
+        watch the resource schema reject it.
         """
         return dataclasses.replace(
             self,
             scores=set_aggregator(
-                self.scores, "position_aggregator", aggregator,
-                score_id=score_id),
-        )
-
-    def with_allele_aggregator(
-        self, aggregator: str, *, score_id: str | None = None,
-    ) -> Self:
-        """Declare the score's default per-allele aggregator.
-
-        The allele-level counterpart of :meth:`with_position_aggregator`,
-        emitted under ``allele_aggregator:``.
-        """
-        return dataclasses.replace(
-            self,
-            scores=set_aggregator(
-                self.scores, "allele_aggregator", aggregator,
-                score_id=score_id),
+                self.scores, aggregator, score_id=score_id),
         )
 
     def with_data(self, data: str) -> Self:
@@ -615,11 +602,6 @@ class CnvCollectionBuilder(_TableScoreBuilder):
 
 _BIGWIG_FILENAME = "data.bw"
 
-# A bedGraph row is ``chrom start end value``, so the score column is
-# always the fourth.  The bigWig table has no header to name it, hence
-# positional ``index:`` addressing rather than ``column_name:``.
-_BIGWIG_VALUE_INDEX = 3
-
 _BIGWIG_DEFAULT_DATA = """
     chr1  0   10  0.1
     chr1  10  20  0.2
@@ -652,7 +634,17 @@ class BigWigScoreBuilder:
     Authored as bedGraph rows (``chrom start end value``), whose intervals
     are 0-based half-open -- 1-based position ``p`` reads the interval
     containing ``p - 1``.  Unlike the tabular builders this one declares
-    exactly one score, because a bigWig carries a single value column.
+    exactly one score, because a bigWig carries a single value -- and a
+    resource declaring more than one is refused at open
+    (``bigwig_scores.validate_bigwig_scoredefs``).
+
+    **The emitted score block addresses no column**, which is the canonical
+    bigWig config: a bigWig record's payload IS its value, so there is nothing
+    to address.  This builder used to emit ``index: 3``, which addressed the
+    value inside the four-element payload a bigWig record once carried; that
+    key is now a deprecated no-op, accepted with a warning for the deployed
+    resources that still carry it.  A test that wants that path authors it as
+    yaml -- see ``test_bigwig_scores.py``.
     """
 
     score_id: str = "score"
@@ -664,28 +656,17 @@ class BigWigScoreBuilder:
     fetch_budgets: dict[str, int] | None = None
     zero_based: bool = False
 
-    def with_fetch_budgets(
-        self, *,
-        direct_fetch_size: int | None = None,
-        buffer_fetch_size: int | None = None,
-        use_buffered_threshold: int | None = None,
-    ) -> Self:
-        """Emit the bigWig fetch-tuning keys in the ``table:`` config.
+    def with_fetch_size(self, fetch_size: int) -> Self:
+        """Emit ``fetch_size:`` in the ``table:`` config.
 
-        The fetch sizes are budgets in *records per range query*, not base
-        pairs; ``use_buffered_threshold`` is the region width above which
-        the direct strategy gives way to the buffered one.  Only the keys
-        passed are emitted, so a test can pin one without implying the
-        others.
+        A budget in *records per range query*, not base pairs.  This used to
+        offer the two buffered-strategy knobs as well; that strategy is gone
+        (see ``docs/adr/0002-remove-bigwig-fetch-buffering.md``), and the
+        builder is ours rather than config surface, so it stops offering
+        knobs that do nothing rather than keeping them for compatibility.
         """
-        budgets = {
-            key: value for key, value in (
-                ("direct_fetch_size", direct_fetch_size),
-                ("buffer_fetch_size", buffer_fetch_size),
-                ("use_buffered_threshold", use_buffered_threshold),
-            ) if value is not None
-        }
-        return dataclasses.replace(self, fetch_budgets=budgets)
+        return dataclasses.replace(
+            self, fetch_budgets={"fetch_size": fetch_size})
 
     def with_score(self, score_id: str, value_type: str = "float") -> Self:
         """Name the single score this bigWig exposes."""
@@ -791,7 +772,6 @@ class BigWigScoreBuilder:
             "scores:\n"
             f"- id: {self.score_id}\n"
             f"  type: {self.value_type}\n"
-            f"  index: {_BIGWIG_VALUE_INDEX}\n"
         )
         if self.na_values is not None:
             na_yaml = yaml.safe_dump(

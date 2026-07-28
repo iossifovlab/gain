@@ -8,7 +8,9 @@ from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
     FsspecRepositoryProtocol,
 )
-from gain.genomic_resources.genomic_scores import PositionScore
+from gain.genomic_resources.genomic_scores import (
+    PositionScore,
+)
 from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,

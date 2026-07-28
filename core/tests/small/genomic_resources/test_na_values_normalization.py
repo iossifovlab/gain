@@ -16,10 +16,14 @@ import pathlib
 
 import pytest
 from gain.genomic_resources.genomic_scores import (
-    GenomicScoreDef,
     PositionScore,
-    _normalize_na_values,
 )
+from gain.genomic_resources.repository import GR_CONF_FILE_NAME
+from gain.genomic_resources.score_def import (
+    GenomicScoreDef,
+    normalize_na_values,
+)
+from gain.genomic_resources.testing import build_inmemory_test_resource
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
     a_grr,
@@ -54,8 +58,8 @@ def test_scalar_na_value_marks_only_the_sentinel(
     score = _open_position(tmp_path, builder)
     with score:
         values = [
-            line.get_score("s")
-            for line in score.fetch_lines("1", 10, 11)
+            score.get_score_from_record(record, "s")
+            for record in score.fetch_records("1", 10, 11)
         ]
     assert values == [None, 1]
 
@@ -68,7 +72,7 @@ def test_bare_non_string_scalar_sentinel_is_wrapped() -> None:
     # into ``tuple(na_values)`` and raised ``TypeError: 'int' object is not
     # iterable``.  A bare numeric scalar must normalize like the "-1" string:
     # to a type-aware set that matches by value and never substring-matches.
-    na_values = _normalize_na_values(-1, "int")
+    na_values = normalize_na_values(-1, "int")
     # (b) matches the sentinel by value (int raw payload and its text form)...
     assert -1 in na_values
     assert "-1" in na_values
@@ -76,7 +80,7 @@ def test_bare_non_string_scalar_sentinel_is_wrapped() -> None:
     assert 1 not in na_values
     assert "1" not in na_values
     # A bare int scalar and the equivalent "-1" string normalize identically.
-    assert na_values == _normalize_na_values("-1", "int")
+    assert na_values == normalize_na_values("-1", "int")
 
 
 @pytest.mark.parametrize("tabix", [False, True])
@@ -106,8 +110,8 @@ def test_scalar_na_value_never_substring_matches(
     score = _open_position(tmp_path, builder)
     with score:
         values = [
-            line.get_score("s")
-            for line in score.fetch_lines("1", 10, 15)
+            score.get_score_from_record(record, "s")
+            for record in score.fetch_records("1", 10, 15)
         ]
     assert values == [None, 9, 99, 999, -9, -99]
 
@@ -134,12 +138,12 @@ def test_scalar_and_one_element_list_behave_identically(
     list_score = _open_position(tmp_path / "b", listed)
     with scalar_score, list_score:
         scalar_values = [
-            line.get_score("s")
-            for line in scalar_score.fetch_lines("1", 10, 11)
+            scalar_score.get_score_from_record(record, "s")
+            for record in scalar_score.fetch_records("1", 10, 11)
         ]
         list_values = [
-            line.get_score("s")
-            for line in list_score.fetch_lines("1", 10, 11)
+            list_score.get_score_from_record(record, "s")
+            for record in list_score.fetch_records("1", 10, 11)
         ]
     assert scalar_values == list_values == [None, 1]
 
@@ -167,8 +171,8 @@ def test_non_numeric_sentinel_is_na_tested_before_parsing(
     score = _open_position(tmp_path, builder)
     with caplog.at_level("ERROR"), score:
         values = [
-            line.get_score("s")
-            for line in score.fetch_lines("1", 10, 12)
+            score.get_score_from_record(record, "s")
+            for record in score.fetch_records("1", 10, 12)
         ]
     assert values == [None, None, 1.5]
     assert "unable to parse" not in caplog.text
@@ -193,8 +197,8 @@ def test_default_na_values_unchanged_when_absent(
     with score:
         na_values = score.score_definitions["s"].na_values
         values = [
-            line.get_score("s")
-            for line in score.fetch_lines("1", 10, 11)
+            score.get_score_from_record(record, "s")
+            for record in score.fetch_records("1", 10, 11)
         ]
     assert values == [None, 0.5]
     # The default float NA set is preserved verbatim.
@@ -222,10 +226,11 @@ def test_bigwig_scalar_na_value_matches_float_payload(
     )
     score = _open_position(tmp_path, builder, resource_id="bw")
     with score:
-        na_line = next(iter(score.fetch_lines("chr1", 1, 1)))
-        real_line = next(iter(score.fetch_lines("chr1", 11, 11)))
-        assert na_line.get_score("bw") is None
-        assert real_line.get_score("bw") == pytest.approx(1.0)
+        na_record = next(iter(score.fetch_records("chr1", 1, 1)))
+        real_record = next(iter(score.fetch_records("chr1", 11, 11)))
+        assert score.get_score_from_record(na_record, "bw") is None
+        assert score.get_score_from_record(real_record, "bw") == \
+            pytest.approx(1.0)
 
 
 def _serialized(na_values: object) -> str:
@@ -238,13 +243,13 @@ def _serialized(na_values: object) -> str:
 def test_default_na_values_is_a_fixed_point(value_type: str) -> None:
     # gain #268 (idempotency): the VCF scores-block merge re-normalizes an
     # already-normalized set (``GenomicScoreDef.__post_init__`` runs
-    # ``_normalize_na_values`` on ``config_scoredef.na_values``, which is
+    # ``normalize_na_values`` on ``config_scoredef.na_values``, which is
     # itself an already-normalized set).  Re-normalizing the default float/int
     # set must be a FIXED POINT -- pre-fix the second pass parsed the "nan"
     # text token and grew the set with a stray ``float('nan')``, changing the
     # statistics hash of VCF scores that configure no na_values.
-    once = _normalize_na_values(None, value_type)
-    twice = _normalize_na_values(once, value_type)
+    once = normalize_na_values(None, value_type)
+    twice = normalize_na_values(once, value_type)
     assert twice == once
     # And the exact serialized form the statistics hash consumes is unchanged.
     assert _serialized(twice) == _serialized(once)
@@ -254,8 +259,8 @@ def test_scalar_na_value_is_a_fixed_point() -> None:
     # gain #268 (idempotency): a configured scalar normalizes to
     # ``{'-1', -1.0}``; re-normalizing that set must not grow it (pre-fix it
     # added the ``str(-1.0)`` == '-1.0' text form).
-    once = _normalize_na_values("-1", "float")
-    twice = _normalize_na_values(once, "float")
+    once = normalize_na_values("-1", "float")
+    twice = normalize_na_values(once, "float")
     assert twice == once
     assert _serialized(twice) == _serialized(once)
 
@@ -270,7 +275,7 @@ def test_vcf_style_merge_reconstruction_keeps_default_na_values() -> None:
     def _score_def(na_values: object) -> GenomicScoreDef:
         return GenomicScoreDef(
             score_id="s", desc="", value_type="float",
-            pos_aggregator=None, allele_aggregator=None,
+            aggregator=None,
             small_values_desc=None, large_values_desc=None,
             hist_conf=None, col_name="s", col_index=None,
             value_parser=None, na_values=na_values,
@@ -303,7 +308,52 @@ def test_bigwig_scalar_na_value_never_substring_matches(
     )
     score = _open_position(tmp_path, builder, resource_id="bw")
     with score:
-        na_line = next(iter(score.fetch_lines("chr1", 1, 1)))
-        real_line = next(iter(score.fetch_lines("chr1", 11, 11)))
-        assert na_line.get_score("bw") is None
-        assert real_line.get_score("bw") == pytest.approx(99.0)
+        na_record = next(iter(score.fetch_records("chr1", 1, 1)))
+        real_record = next(iter(score.fetch_records("chr1", 11, 11)))
+        assert score.get_score_from_record(na_record, "bw") is None
+        assert score.get_score_from_record(real_record, "bw") == \
+            pytest.approx(99.0)
+
+
+def test_a_score_with_no_type_still_normalizes_its_na_values() -> None:
+    """``type:`` is optional, and omitting it must not bypass the fix.
+
+    ``GenomicScoreDef.__post_init__`` skips normalization when the value
+    type is unknown, and the value type used to be left unset whenever the
+    config did not state one -- so a score that omitted ``type:`` kept its
+    ``na_values`` as the raw string, and the membership test degraded into
+    the substring test this whole module exists to prevent: with
+    ``na_values: "-1"``, a real value of 1 read back as ``None``.
+
+    A config's silence about the type means float, which is what the value
+    parser has always assumed; ``_finish_scoredefs`` now says so, so an
+    untyped score is normalized exactly like a typed one.
+
+    Hand-rolled yaml because the builders cannot express this shape:
+    ``with_score`` takes a value type, so there is no way to author a score
+    that omits one.
+    """
+    res = build_inmemory_test_resource({
+        GR_CONF_FILE_NAME: """
+            type: position_score
+            table:
+                filename: data.mem
+            scores:
+                - id: untyped
+                  name: untyped
+                  na_values: "-1"
+        """,
+        "data.mem": """
+            chrom  pos_begin  pos_end  untyped
+            1      10         10       1
+        """,
+    })
+    score_def = PositionScore(res).score_definitions["untyped"]
+
+    assert score_def.value_type == "float"
+    # A set, not the raw string -- the raw string is what made the NA check
+    # a substring test, so that "1" in "-1" was True.
+    assert isinstance(score_def.na_values, set)
+    assert score_def.na_values == {"-1", -1.0}
+    # The value the substring test used to swallow.
+    assert score_def.parse_value("1") == pytest.approx(1.0)

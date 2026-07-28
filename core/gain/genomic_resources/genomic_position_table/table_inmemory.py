@@ -195,14 +195,10 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
 
     def get_records_in_region(
         self,
-        chrom: str | None = None,
+        chrom: str,
         pos_begin: int | None = None,
         pos_end: int | None = None,
     ) -> Generator[Record, None, None]:
-
-        if chrom is None:
-            yield from self.get_all_records()
-            return
 
         # An unknown contig is an error; a known-but-empty one yields nothing.
         # Probe the dict FIRST: this runs once per annotated variant, and

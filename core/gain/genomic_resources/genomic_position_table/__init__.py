@@ -7,8 +7,8 @@ other record backend.  This is a breaking export change, recorded here because
 nothing else records it: an importer of ``VCFLine`` now gets an ImportError.
 There is no drop-in replacement object, and none is wanted -- a VCF line is a
 record tuple, and what used to be read off a ``VCFLine`` is read from the
-record's slots (``CHROM`` ... ``ALT``) or, for scores, through the score layer's
-``VCFScoreLine``.
+record's slots (``CHROM`` ... ``ALT``) or, for scores, through the score
+layer's ``GenomicScore.get_score_from_record``.
 
 **Removed exports: ``Line`` and ``BigWigLine``** (and, with them, the
 ``LineBase`` protocol they satisfied and the ``row()`` method all three
@@ -27,7 +27,7 @@ The score layer's adapter-era ``ScoreLine`` was deleted by #239 too, but it was
 never exported from this package and was never an adapter itself -- it *wrapped*
 one, asserting its line was a ``Line`` or a ``BigWigLine``.  That assert is why
 it could not outlive them.  It has no bearing on this package's exports; a score
-caller goes through ``RecordScoreLine``/``VCFScoreLine`` (see below).
+caller goes through ``GenomicScore.get_score_from_record`` (see below).
 
 There is no replacement and no deprecation shim.  A shim was considered and
 rejected: it costs nothing to anyone who does not call it, but hands anyone who
@@ -38,18 +38,26 @@ record's slots instead (``record[CHROM]``, ``record[POS_BEGIN]``,
 ``line.get(key)`` for a column indexes the record's payload
 (``record[PAYLOAD][key]``); a caller wanting the whole raw row back takes
 ``tuple(record[PAYLOAD])``.  For scores, none of this is the intended route at
-all -- go through the score layer's ``RecordScoreLine``/``VCFScoreLine``, which
-read the same slots and additionally handle NA values, parsing and aggregation.
+all -- go through the score layer's ``GenomicScore.get_score_from_record``
+or ``get_values_from_record``, which read the same slots and additionally
+handle NA values, parsing and aggregation.
 
 **The ``tuple()`` around that last one is the migration, not noise.**
 ``row()`` returned ``tuple(self._data)`` in both adapters -- an immutable
 snapshot of the row, taken there and then.  ``record[PAYLOAD]`` is not that:
 the payload is the backend's row held **by reference**, deliberately neither
 copied nor frozen (``record.py``), and for the tabix backend it is a
-``pysam.TupleProxy`` that pysam reuses as the fetch advances and that
-``LineBuffer`` may still be holding.  Retain it past the iteration and its
-cells are whatever pysam has since put there; write to it and you mutate a
-buffered row (see ``line.py``).  ``tuple(record[PAYLOAD])`` reproduces what
+``pysam.TupleProxy`` that ``LineBuffer`` may still be holding: write to it and
+you mutate a buffered row (see ``line.py``).
+
+**It does NOT get reused as the fetch advances**, which an earlier version of
+this note claimed.  ``pysam.asTuple()`` hands up one proxy object PER LINE (as
+``TabixGenomicPositionTable.get_line_iterator`` says), so retaining a record
+past its iteration keeps its own cells: materialising a region with ``list()``
+and reading the payloads afterwards gives each row's real values, measured.
+The mutation hazard above is real; the aliasing one was not.
+
+``tuple(record[PAYLOAD])`` reproduces what
 ``row()`` handed back, and is what a ``row()`` caller migrates to.
 
 **``fchrom`` has no record equivalent, and is the one ``LineBase`` attribute
@@ -190,20 +198,159 @@ back unparsed and rows are not clipped to the region; both stay with the caller,
 as on the record path.  ``batch_size`` is a hint -- ``BigWigTable`` ignores it,
 its batches being sized by its own adaptive fetch window.
 
-**Ask the flag; do not test the class.**  The capability is not derivable from
-the class hierarchy: ``VCFGenomicPositionTable`` subclasses
-``TabixGenomicPositionTable`` and so *inherits* a working implementation it
-cannot honour -- its PAYLOAD is ``(variant, allele index)`` rather than a raw
-row, and a VCF score is an INFO field addressed by name, not by the integer
-column index this contract passes -- so it sets ``supports_value_arrays`` back
-to ``False``.  An out-of-tree caller that reaches for the method must consult
-the flag (or ``GenomicScore.supports_region_value_arrays(scores)``, which folds
-this flag together with the value types its own parse requires, and is
-answerable on an unopened score).  Probing by calling and catching
-does NOT work: an unguarded call on a VCF table reaches the inherited tabix
-implementation and trips its ``assert isinstance(self.pysam_file,
-pysam.TabixFile)``, yielding a message-less ``AssertionError`` -- and nothing at
-all under ``python -O``.
+**Ask the flag; do not test the class.**  The capability is NOT derivable from
+the class hierarchy -- ``VCFGenomicPositionTable`` subclasses
+``TabixGenomicPositionTable``, inherits its implementation, and sets
+``supports_value_arrays`` back to ``False``.  An out-of-tree caller reaching for
+the method must consult the flag (or
+``GenomicScore.supports_region_value_arrays(scores)``, which folds this flag
+together with the value types its own parse requires, and is answerable on an
+unopened score).  Probing by calling and catching does NOT work: an unguarded
+call on a VCF table reaches the inherited tabix implementation and trips its
+``assert isinstance(self.pysam_file, pysam.TabixFile)``, yielding a
+message-less ``AssertionError`` -- and nothing at all under ``python -O``.
+
+Why the capability is declared rather than inferred, why VCF cannot honour the
+contract it inherits, and why this read path exists at all: see
+``docs/adr/0001-bulk-read-path-for-statistics.md``.
+
+**Changed payload: a VCF record's PAYLOAD is now a FOUR-element tuple.**
+``VCFGenomicPositionTable`` is in ``__all__`` below, so this changes public
+surface of ``gain`` and is recorded for the same reason as everything above.
+It was ``(variant, allele index)``; it is now
+``(variant, allele index, info, info_meta)``, the last two being the pysam
+proxies an INFO lookup needs -- ``variant.info`` and ``variant.header.info``.
+
+They are there because pysam allocates a FRESH proxy on every access
+(``v.info is v.info`` is False, ~85ns each), so a reader that re-derived them
+per score paid ~170ns per score per record: measured, a 20-score read of a
+3000-row VCF went from 8.50 to 10.76us/line.  They used to be memoised on the
+per-line ``VCFScoreLine``, resolved on its first score read.  With the score
+lines removed, reading a value is a pure function of the record
+(``_extract_vcf_value``), so the memo had to move into the record -- which is
+what a backend-defined payload is for.
+
+The trade is that resolution is EAGER: a record whose scores are never read
+pays the ~170ns anyway.  That case is narrow (``AlleleScore`` fetches every
+record at a position and reads only the ref/alt match, so a 4-allele position
+wastes ~0.5us) and it buys a value read that needs no state, and so no
+per-line object to hold it.  An out-of-tree reader that unpacked the payload
+as a pair now gets a ``ValueError``; unpack four, or index by the ``VARIANT``
+/ ``ALLELE_INDEX`` / ``INFO`` / ``INFO_META`` constants in ``table_vcf``.
+
+**Changed payload: a bigWig record's PAYLOAD is now the VALUE ITSELF.**
+``BigWigTable`` is in ``__all__`` below, so this changes public surface of
+``gain`` and is recorded for the same reason as everything above.  It was the
+four-tuple ``(chrom, pos_begin, pos_end, value)`` -- three fields the record
+already carries in its decoded slots, repeated purely so the single value was
+addressable at ``payload[3]``; it is now the bare ``float``.  An out-of-tree
+reader that indexed the payload gets a ``TypeError`` ('float' object is not
+subscriptable); read ``record[PAYLOAD]``, which IS the value, or go through
+``GenomicScore.get_score_from_record``.
+
+**This entry used to say the shape was deliberately NOT changed.**  It is
+kept, inverted, rather than deleted, because the three reasons it gave were
+real and someone will meet them again; each is answered below.  What dissolved
+them is that the alternative to preserving a shape is not "break the deployed
+configs" -- it is to keep the *config* and drop the *shape*.
+
+*(a) "The shape is config surface: every deployed bigWig says ``index: 3``."*
+It is config surface, and 16 deployed resources do say it (one with the
+comment ``# this makes no sense and should be removed`` already in its yaml).
+But the key is answered by ACCEPTING it as a deprecated no-op, not by keeping
+a payload shape for it to index into: ``bigwig_scores`` takes ``index: 3`` at
+open, reports it once naming the resource, and resolves it -- like the
+canonical config that addresses nothing at all -- to the one column a bigWig
+has.  No GRR has to change on the day this ships.  Any OTHER index is now
+refused at open, by name; before, ``index: 2`` read the position and called
+it a score.
+
+That report is at INFO, not WARNING, and deliberately: all 150 deployed
+bigWig resources carry ``index: 3``, so a warning would fire for every one of
+them on every open, which is noise wearing a severity label.  The cost is
+that the message does not by itself drive the key out of the GRRs -- that is
+a deliberate cleanup pass now, not something a log level nags into happening.
+``_warn_inert_bigwig_keys`` splits the same way and says why: endemic keys
+report at INFO, keys nobody sets (``zero_based``, ``header_mode``) stay at
+WARNING, because a message that fires for nearly every resource trains its
+reader to ignore the level.
+
+*(b) "``get_region_value_arrays`` reconstructs the four-tuple so a bad index
+raises the same ``IndexError`` the record path raises."*  Superseded.  That
+reconstruction existed to reproduce a failure; the failure is now prevented.
+The record path indexes nothing at all, and a bad index is refused when the
+SCORE is opened, in a message naming both the resource and the score -- which
+is strictly better than an ``IndexError`` from inside a scan, and it fires
+before any file is opened rather than mid-repair.  The bulk read keeps a
+backstop of its own for a caller that reaches the table directly: it serves
+column 0 and refuses everything else with a ``KeyError`` naming the resource.
+The bug that motivated the reconstruction -- a misconfigured index served the
+chromosome string, turning an aborted repair into a silently all-zero
+histogram -- is unreachable from either direction.
+
+*(c) "It buys nothing measurable."*  That measurement was taken WITHOUT the
+parse removal, so it never argued against this change.  It compared payload
+widths while the read still went through ``parse_value``; narrowing the tuple
+alone saves an index, which is indeed noise.  What the narrowing enables is
+the removal of the *parse*: a bigWig value arrives from ``pyBigWig`` as a
+``float``, the score is ``type: float`` (anything else is now refused), and
+the NA default for a bigWig score is empty (``bigwig_scores``), so
+``parse_value`` on that pair is provably the identity -- and the read becomes
+``return record[PAYLOAD]``.  That is a real per-record saving, and it is only
+available once the payload is the value.
+
+**Renamed attribute: ``BigWigTable.direct_fetch_size`` -> ``fetch_size``, and
+the config key with it.**  ``BigWigTable`` is exported, so this is public
+surface.  It was "direct" only in contrast to a second, *buffered* fetch
+strategy, and that strategy is gone: the table keeps no interval buffer
+across calls, and ``use_buffered_threshold`` no longer routes anything.  The
+rename is **not** aliased -- the capability survives, so a config naming it
+the old way means something specific, and failing validation lets an operator
+rename it rather than silently receive the default.
+
+The two retired knobs, ``buffer_fetch_size`` and ``use_buffered_threshold``,
+are the opposite case and are handled the opposite way: they configured a
+feature that no longer exists, so there is nothing to rename them to and
+refusing would take a resource offline to report a key that changes nothing.
+They stay accepted by the schema and are warned about (see
+``utils._warn_inert_bigwig_keys``).
+
+The private buffer machinery went with them -- ``_buffer``,
+``_buffer_region``, ``_fill``, ``_find``, ``_fetch_buffered``, ``_last_pos``
+-- and ``_fetch_direct`` is now simply ``_fetch``.  None of those were
+exported; they are named here only because the two invariants they carried
+were load-bearing enough to have their own regression tests, and both are now
+unreachable rather than maintained: a reopened table cannot serve a previous
+open's values, and a fetch cannot resume from retained state after
+``close()``.
+
+**Why** -- the measurements, the one workload where buffering still wins, and
+what would have to be true to reinstate it: see
+``docs/adr/0002-remove-bigwig-fetch-buffering.md``.  Bringing it back for
+high-latency (``http``/``s3``) repositories is tracked as gain#449.
+
+**Changed signature: ``get_records_in_region(chrom)`` is now REQUIRED and
+non-optional.**  It was ``chrom: str | None = None``, and ``None`` meant
+"every record in the table" -- each of the three record backends opened the
+method with ``if chrom is None: yield from self.get_all_records()``.  An
+out-of-tree caller writing ``table.get_records_in_region()`` now gets a
+``TypeError``; call :meth:`get_all_records` instead, which is what those three
+lines did and what the name says.
+
+Two things made the old shape worth giving up.  The default argument list was
+itself a legal call, so ``get_records_in_region()`` -- easy to write by
+accident, and written by three tests in this repo -- quietly scanned a whole
+genome.  And the delegation was stated three times, once per backend, for a
+method that then had two jobs whose only shared code was the delegation
+itself.  ``get_region_value_arrays`` had already settled on ``chrom: str``,
+so the two region reads now agree.
+
+**The whole-table mode is not gone, only moved.**  It is live -- ``grr_manage
+--region-size 0`` computes statistics in a single pass with no contig, via
+``_do_noregion_histograms`` -- and it is now dispatched once, in
+``GenomicScore.fetch_records``, which is where the nullable contig actually
+originates.  The score layer's ``fetch_region_values`` / ``fetch_region``
+keep accepting ``chrom=None`` and are unchanged.
 
 """
 from .line import LineBuffer

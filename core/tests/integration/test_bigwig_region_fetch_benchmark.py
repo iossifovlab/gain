@@ -52,7 +52,6 @@ from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
     a_grr,
 )
-from gain.utils.regions import Region
 
 # The case the issue quotes: 1 Mb carrying 20,000 back-to-back 50 bp runs.
 # At the old 50 bp chunk size that is exactly one range query per record.
@@ -109,19 +108,16 @@ def dense_bigwig_score(
 def _cold_reset(score: PositionScore) -> Callable[[], None]:
     """Return a callable that puts the bigWig table back in a cold state.
 
-    Clears the buffer, rewinds the buffered/direct switch so every pass takes
-    the direct strategy, and rebuilds the adaptive windows so no pass inherits
-    the density another pass already learned.
+    Rebuilds the adaptive window so no pass inherits the density another pass
+    already learned.  That window is the only fetch state a table carries
+    across calls now; it used to have to clear an interval buffer and rewind
+    the buffered/direct switch as well.
     """
     table = score.table
     assert isinstance(table, BigWigTable)
 
     def reset() -> None:
-        table._buffer = []
-        table._buffer_region = Region("?", -1, -1)
-        table._last_pos = -(table.use_buffered_threshold + 1)
-        table._direct_window = AdaptiveFetchWindow(table.direct_fetch_size)
-        table._buffer_window = AdaptiveFetchWindow(table.buffer_fetch_size)
+        table._window = AdaptiveFetchWindow(table.fetch_size)
 
     return reset
 

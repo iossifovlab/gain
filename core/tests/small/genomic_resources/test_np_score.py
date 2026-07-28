@@ -1,6 +1,8 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 from gain.genomic_resources import GenomicResource
-from gain.genomic_resources.genomic_scores import AlleleScore
+from gain.genomic_resources.genomic_scores import (
+    AlleleScore,
+)
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import (
     build_inmemory_test_resource,
@@ -60,8 +62,8 @@ def test_np_score_fetch_region() -> None:
 
                 - id: cadd_test
                   type: int
-                  position_aggregator: max
-                  allele_aggregator: mean
+                  aggregator: max
+                  aggregator: mean
                   na_values: "-1"
                   desc: ""
                   name: s2

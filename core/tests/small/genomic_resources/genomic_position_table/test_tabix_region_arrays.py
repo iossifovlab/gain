@@ -163,16 +163,19 @@ def test_bigwig_region_value_arrays(tmp_path: pathlib.Path) -> None:
     assert list(values) == [0.0, 2.0, 4.0]
 
 
-def test_bigwig_region_value_arrays_out_of_range_column_raises(
+def test_bigwig_serves_only_the_one_column_it_has(
     tmp_path: pathlib.Path,
 ) -> None:
-    """An out-of-range column must fail as the record path fails.
+    """A bigWig payload IS its value, so column 0 is the only column.
 
-    A bigWig payload is the 4-tuple (chrom, pos_begin, pos_end, value), so
-    ``payload[4]`` raises IndexError on the record path.  This read used to
-    hand back the chromosome string for any index it did not recognise, so a
-    mistyped ``index:`` in a resource config turned an aborted repair into a
-    silently all-zero histogram.
+    Any other index names a column this backend does not have and is refused,
+    naming the resource -- it is not quietly served something else.  This read
+    used to reconstruct the retired four-tuple payload so that a bad index
+    raised the same ``IndexError`` the record path raised; the record path
+    indexes nothing now, and a misconfigured ``index:`` is refused when the
+    score is opened.  Before either, an unrecognised index came back as the
+    chromosome string here, which turned an aborted repair into a silently
+    all-zero histogram.
     """
     resource = (
         a_bigwig_score()
@@ -187,10 +190,10 @@ def test_bigwig_region_value_arrays_out_of_range_column_raises(
     )
     score = build_position_score_from_resource(resource)
     with score.open() as opened:
-        with pytest.raises(IndexError):
-            list(opened.table.get_region_value_arrays(
-                "chr1", 1, 4, [4], 100))
-        # column 0 IS the chromosome, and still is.
+        for column in (1, 2, 3, 4):
+            with pytest.raises(KeyError):
+                list(opened.table.get_region_value_arrays(
+                    "chr1", 1, 4, [column], 100))
         batches = list(opened.table.get_region_value_arrays(
             "chr1", 1, 4, [0], 100))
-    assert list(batches[0][2][0]) == ["chr1", "chr1"]
+    assert list(batches[0][2][0]) == pytest.approx([0.5, 0.7])

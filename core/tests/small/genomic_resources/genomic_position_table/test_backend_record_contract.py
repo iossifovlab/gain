@@ -15,12 +15,13 @@ it.
 turns on what a record's PAYLOAD means -- which is whatever the backend that
 built it says it means:
 
-* a record whose payload is a raw tabular row (in-memory, tabix) or the
-  four-element interval of a bigWig line is wrapped in
-  :class:`RecordScoreLine`, which reads score columns out of it by index;
-* a **VCF** record, whose payload is a ``(variant record, allele index)`` pair,
-  is wrapped in :class:`VCFScoreLine`, which looks INFO fields up by name and
-  selects them by allele.
+* a record whose payload is a raw tabular row (in-memory, tabix) is read by
+  :func:`extract_column_value`, which takes score columns out of it by index;
+* a **VCF** record, whose payload carries the variant, its allele index and
+  the two pysam INFO proxies, is read by :func:`extract_vcf_value`, which
+  looks INFO fields up by name and selects them by allele;
+* a **bigWig** record, whose payload IS the interval's value, is read by
+  :func:`extract_bigwig_value` -- an identity, with no index and no parse.
 
 #238 migrated bigWig -- the last adapter backend -- and #239 then deleted the
 line adapters, the ``LineBase`` protocol and the adapter-era ``ScoreLine``
@@ -47,8 +48,13 @@ from collections.abc import Callable
 
 import numpy as np
 import pytest
+from gain.genomic_resources.bigwig_scores import (
+    extract_bigwig_value,
+)
 from gain.genomic_resources.genomic_position_table.record import (
     PAYLOAD,
+    POS_BEGIN,
+    POS_END,
     RECORD_SLOTS,
     sort_key,
 )
@@ -56,15 +62,18 @@ from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     GenomicScore,
     PositionScore,
-    RecordScoreLine,
-    ScoreLineBase,
-    VCFScoreLine,
+)
+from gain.genomic_resources.score_def import (
+    extract_column_value,
 )
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
     a_grr,
     a_position_score,
     a_vcf_info_score,
+)
+from gain.genomic_resources.vcf_scores import (
+    extract_vcf_value,
 )
 
 # A region each backend's fixture data answers with at least one line.
@@ -131,10 +140,10 @@ def _build_bigwig(tmp_path: pathlib.Path) -> Backend:
 # to.  Every backend in the tree is here: a fifth one must be added, or nothing
 # checks that its claim is true.
 _BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
-    pytest.param(_build_inmemory, RecordScoreLine, id="inmemory"),
-    pytest.param(_build_tabix, RecordScoreLine, id="tabix"),
-    pytest.param(_build_vcf, VCFScoreLine, id="vcf"),
-    pytest.param(_build_bigwig, RecordScoreLine, id="bigwig"),
+    pytest.param(_build_inmemory, extract_column_value, id="inmemory"),
+    pytest.param(_build_tabix, extract_column_value, id="tabix"),
+    pytest.param(_build_vcf, extract_vcf_value, id="vcf"),
+    pytest.param(_build_bigwig, extract_bigwig_value, id="bigwig"),
 ]
 
 
@@ -151,8 +160,7 @@ _BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
 #   * VCF -- payload is a ``(pysam.VariantRecord, allele index)`` pair, and a
 #     ``pysam.VariantRecord`` is unhashable for the same reason, so hashing the
 #     pair -- and so the record -- raises ``TypeError``;
-#   * bigWig -- payload is a plain ``(chrom, pos_begin, pos_end, value)`` tuple
-#     of a str, two ints and a float, all hashable: hashes.
+#   * bigWig -- payload is the interval's value, a bare ``float``: hashes.
 #
 # test_every_record_backend_declares_whether_its_records_hash keeps this list
 # in step with what the backends in _BACKENDS actually claim.
@@ -181,17 +189,16 @@ def test_every_record_backend_declares_whether_its_records_hash(
     ``GenomicScore.open`` refuses outright.  Opening first would mean this loop
     could only ever see backends that already passed that gate.  It is
     deliberately NOT read off the score line class each backend is paired with
-    below: a migrating backend can arrive with a score line class of its own
-    (VCF did, at :class:`VCFScoreLine`) or reuse an existing one whose
-    hashability differs from every backend already routed there (bigWig, #238,
-    reuses :class:`RecordScoreLine` but -- unlike tabix, the other backend
-    routed there -- yields hashable records), and a check written against the
-    score line classes rather than the tables would miss both.  Ask the table,
-    and there is nothing to add to but _HASHABILITY.
+    below: a migrating backend can arrive with an extractor of its own (VCF
+    did, at :func:`extract_vcf_value`; bigWig has since acquired
+    :func:`extract_bigwig_value`) or reuse an existing one whose hashability
+    differs from every backend already routed there, and a check written
+    against the extractors rather than the tables would miss both.  Ask the
+    table, and there is nothing to add to but _HASHABILITY.
     """
     record_backends = set()
     for param in _BACKENDS:
-        build_backend, _score_line_cls = param.values
+        build_backend, _extractor = param.values
         # A repo per backend: two of them build a resource under the same name.
         backend_dir = tmp_path / str(param.id)
         backend_dir.mkdir()
@@ -253,11 +260,11 @@ def test_a_records_hashability_is_its_payloads(
                 _ = {first: 0}
 
 
-@pytest.mark.parametrize(("build_backend", "score_line_cls"), _BACKENDS)
+@pytest.mark.parametrize(("build_backend", "extractor"), _BACKENDS)
 def test_a_backend_yields_what_its_yields_records_claim_says(
     tmp_path: pathlib.Path,
     build_backend: Callable[[pathlib.Path], Backend],
-    score_line_cls: type[ScoreLineBase],
+    extractor: object,
 ) -> None:
     score, region = build_backend(tmp_path)
     table = score.table
@@ -298,52 +305,60 @@ def test_a_backend_yields_what_its_yields_records_claim_says(
             f"{backend} sets yields_records but yields a "
             f"{len(first)}-slot tuple; a record has {RECORD_SLOTS} slots")
         payload = first[PAYLOAD]
-        # Both record score lines index the payload -- RecordScoreLine binds
-        # _get_raw to payload.__getitem__ for a score column, VCFScoreLine
-        # reads the (variant, allele index) pair out of it -- so a payload
-        # must be indexable...
-        assert hasattr(payload, "__getitem__"), (
-            f"{backend} sets yields_records but its record's PAYLOAD is a "
-            f"{type(payload).__name__}, which is not indexable")
-        # ...and must not be a str/bytes: those are indexable, but index
-        # to *characters*, so every score would silently parse to None
-        # rather than raise.
-        assert not isinstance(payload, (str, bytes)), (
-            f"{backend} sets yields_records but its record's PAYLOAD is a "
-            f"{type(payload).__name__} -- indexing it yields characters, "
-            f"not cells")
+        # A payload must be readable by the extractor this backend is routed
+        # to, and there are two shapes of that.  An INDEXED payload -- a raw
+        # tabular row, or the VCF (variant, allele index, info, info_meta)
+        # tuple -- must be indexable, and must not be a str/bytes: those are
+        # indexable but index to *characters*, so every score would silently
+        # parse to None rather than raise.  A WHOLE-payload extractor
+        # (bigWig's identity) needs neither, and asking for indexability there
+        # would be asking for the repetition the narrowing removed.
+        if extractor is extract_bigwig_value:
+            assert isinstance(payload, float), (
+                f"{backend} is routed to the identity extractor, so its "
+                f"record's PAYLOAD must be the value itself; it is a "
+                f"{type(payload).__name__}")
+        else:
+            assert hasattr(payload, "__getitem__"), (
+                f"{backend} sets yields_records but its record's PAYLOAD is a "
+                f"{type(payload).__name__}, which is not indexable")
+            assert not isinstance(payload, (str, bytes)), (
+                f"{backend} sets yields_records but its record's PAYLOAD is a "
+                f"{type(payload).__name__} -- indexing it yields characters, "
+                f"not cells")
 
 
-@pytest.mark.parametrize(("build_backend", "score_line_cls"), _BACKENDS)
-def test_open_routes_a_backend_to_the_score_line_its_payload_needs(
+@pytest.mark.parametrize(("build_backend", "extractor"), _BACKENDS)
+def test_open_routes_a_backend_to_the_extractor_its_payload_needs(
     tmp_path: pathlib.Path,
     build_backend: Callable[[pathlib.Path], Backend],
-    score_line_cls: type[ScoreLineBase],
+    extractor: object,
 ) -> None:
-    # The other half: ``GenomicScore.open`` must route each backend to the score
-    # line that can actually read ITS payload.  Together with the test above --
-    # the claim about what is yielded is true -- this is what makes the routing
-    # correct for every backend, without any per-line check.
+    # The other half: ``GenomicScore.open`` must route each backend to the
+    # value extractor that can actually read ITS payload.  Together with the
+    # test above -- the claim about what is yielded is true -- this is what
+    # makes the routing correct for every backend, without any per-record
+    # check.
     score, region = build_backend(tmp_path)
     with score.open():
         # The choice is made once, at open: it is already installed before a
-        # single line is fetched.
-        assert score._score_line_class is score_line_cls, (
+        # single record is fetched.
+        assert score._extract_value is extractor, (
             f"{type(score.table).__name__} (yields_records="
             f"{score.table.yields_records}) was routed at open to "
-            f"{score._score_line_class.__name__}, "
-            f"not {score_line_cls.__name__}")
+            f"{score._extract_value.__name__}, "
+            f"not {extractor.__name__}")
 
-        line = next(iter(score.fetch_lines(*region)))
-        assert type(line) is score_line_cls, (
+        record = next(iter(score.fetch_records(*region)))
+        assert type(record) is tuple, (
             f"{type(score.table).__name__} yields_records="
             f"{score.table.yields_records} was routed to "
-            f"{type(line).__name__}")
-        # ...and the routed score line can actually read a score through it --
-        # which is what fails if a backend is routed to a score line whose raw
+            f"{type(record).__name__}")
+        # ...and the routed extractor can actually read a score off it --
+        # which is what fails if a backend is routed to an extractor whose raw
         # lookup does not fit its payload.
         score_id = next(iter(score.get_all_scores()))
-        assert line.get_score(score_id) is not None
+        assert score.get_score_from_record(record, score_id) is not None
 
 
 # Whether this backend serves ``get_region_value_arrays`` -- the OPTIONAL bulk
@@ -414,14 +429,15 @@ def test_a_backend_serves_value_arrays_exactly_when_it_claims_to(
 
         batches = list(
             opened.fetch_region_value_arrays(chrom, beg, end, [score_id]))
-        lines = list(opened.fetch_lines(chrom, beg, end))
+        records = list(opened.fetch_records(chrom, beg, end))
 
     spans = [
         (int(begin), int(stop))
         for pos_begin, pos_end, _ in batches
         for begin, stop in zip(pos_begin, pos_end, strict=True)
     ]
-    assert spans == [(line.pos_begin, line.pos_end) for line in lines]
+    assert spans == [
+        (rec[POS_BEGIN], rec[POS_END]) for rec in records]
 
     # The VALUES too, not just the spans -- this test used to promise
     # agreement with the record read and check only the coordinates, so a
@@ -429,7 +445,9 @@ def test_a_backend_serves_value_arrays_exactly_when_it_claims_to(
     values = [
         value for _, _, cols in batches for value in cols[score_id]
     ]
-    expected = [line.get_score(score_id) for line in lines]
+    expected = [
+        opened.get_score_from_record(rec, score_id)
+        for rec in records]
     assert np.array_equal(
         np.array(values, dtype=np.float64),
         np.array([np.nan if v is None else v for v in expected],

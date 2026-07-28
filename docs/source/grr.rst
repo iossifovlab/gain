@@ -344,7 +344,7 @@ The search index
 
 The index is stored at the root of the repository as ``.CONTENTS.sqlite3.gz`` — a gzipped SQLite database holding a single `FTS5 <https://www.sqlite.org/fts5.html>`_ virtual table named ``contents``.
 
-The index is built and refreshed by ``grr_manage repo-repair``. It is *not* created by ``repo-init``, and *not* refreshed by ``repo-manifest``, ``repo-stats``, or ``repo-info`` — so a repository that has never been repaired has no searchable index. Repair skips the rebuild when the repository contents are unchanged (the index records the md5 of the ``.CONTENTS`` file it was built from), so re-running it on an untouched repository is cheap.
+The index is built and refreshed by ``grr_manage repo-repair``. Repair skips the rebuild when the repository contents are unchanged (the index records the md5 of the ``.CONTENTS`` file it was built from), so re-running it on an untouched repository is cheap.
 
 Indexed fields
 ^^^^^^^^^^^^^^

@@ -197,10 +197,14 @@ def test_get_chrom_regions_region_size_zero() -> None:
     impl.score.open()
     regions = impl._get_chrom_regions(0)
 
-    assert len(regions) == 1
-    assert regions[0].chrom is None
-    assert regions[0].start is None
-    assert regions[0].stop is None
+    # One UNBOUNDED region per contig.  This used to be a single
+    # ``Region(None, None, None)`` -- a null contig smuggled through as a
+    # region -- which nothing can consume now that a contig is required.
+    # ``split_into_regions`` already answered a size of 0 with
+    # ``[Region(chrom)]``, so removing the special case left the general
+    # path doing the right thing.
+    assert [r.chrom for r in regions] == ["1"]
+    assert all(r.start is None and r.stop is None for r in regions)
 
 
 def test_get_chrom_regions_skips_empty_mapped_contig(

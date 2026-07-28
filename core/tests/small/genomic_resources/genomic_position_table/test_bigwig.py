@@ -6,7 +6,9 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
-import pytest_mock
+from gain.genomic_resources.bigwig_scores import (
+    extract_bigwig_value,
+)
 from gain.genomic_resources.genomic_position_table.record import (
     ALT,
     CHROM,
@@ -26,7 +28,6 @@ from gain.genomic_resources.genomic_position_table.utils import (
 )
 from gain.genomic_resources.genomic_scores import (
     PositionScore,
-    RecordScoreLine,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing import (
@@ -121,15 +122,15 @@ def test_get_all_records(bigwig_table: BigWigTable) -> None:
         assert line[CHROM] == "chr1"
         assert line[POS_BEGIN] == 1
         assert line[POS_END] == 10
-        assert line[PAYLOAD][3] == pytest.approx(0.01)
+        assert line[PAYLOAD] == pytest.approx(0.01)
 
 
 def test_bigwig_yields_plain_records(bigwig_table: BigWigTable) -> None:
     # The bigWig backend is on the record contract: every line it yields is a
     # plain record tuple (exact type, not an adapter), whose PAYLOAD is the
-    # four-element interval ``(chrom, pos_begin, pos_end, value)`` -- so the
-    # value column stays addressable at index 3, the way it was through the
-    # retired BigWigLine adapter.
+    # interval's VALUE -- a bare float.  It used to be the four-element
+    # interval ``(chrom, pos_begin, pos_end, value)``, which repeated three
+    # fields the record already decodes purely so the value sat at index 3.
     with bigwig_table:
         first = next(iter(bigwig_table.get_all_records()))
 
@@ -141,9 +142,7 @@ def test_bigwig_yields_plain_records(bigwig_table: BigWigTable) -> None:
         assert first[REF] is None
         assert first[ALT] is None
 
-        payload = first[PAYLOAD]
-        assert payload == ("chr1", 1, 10, pytest.approx(0.01))
-        assert payload[3] == pytest.approx(0.01)
+        assert first[PAYLOAD] == pytest.approx(0.01)
 
 
 def test_bigwig_parser_converts_zero_based_half_open_to_closed_one_based(
@@ -154,26 +153,26 @@ def test_bigwig_parser_converts_zero_based_half_open_to_closed_one_based(
     # BigWigLine adapter produced.  The ``+1`` on the begin lives in the fetch
     # methods (left untouched), so by the time the parser sees an interval it
     # is already ``(pos_begin_1based, pos_end, value)``; the parser assembles
-    # the record around it, and the PAYLOAD repeats the interval so the value
-    # stays at index 3.  A file interval ``[0, 10)`` for chr1 reaches the
-    # parser as ``(1, 10, 0.11)`` and must become this exact record.
+    # the record around it, and the PAYLOAD is the value alone.  A file
+    # interval ``[0, 10)`` for chr1 reaches the parser as ``(1, 10, 0.11)``
+    # and must become this exact record.
     parser = build_bigwig_parser()
     assert parser("chr1", (1, 10, 0.11)) == (
-        "chr1", 1, 10, None, None, ("chr1", 1, 10, 0.11))
-    # A mapped/reference contig threaded in from the query is carried on both
-    # the record's CHROM slot and inside the payload -- mapping-on-result.
+        "chr1", 1, 10, None, None, 0.11)
+    # A mapped/reference contig threaded in from the query is carried on the
+    # record's CHROM slot -- mapping-on-result.  The payload no longer repeats
+    # it, which is one of the three fields the narrowing removed.
     assert parser("2", (6, 10, 0.4)) == (
-        "2", 6, 10, None, None, ("2", 6, 10, 0.4))
+        "2", 6, 10, None, None, 0.4)
 
 
-def test_bigwig_score_reads_value_at_index_3_through_record_score_line(
+def test_bigwig_score_is_read_by_the_identity_extractor(
     tmp_path: pathlib.Path,
 ) -> None:
-    # A bigWig score is configured at column ``index: 3`` (the value column of
-    # the four-element interval payload).  Now that the backend yields records,
-    # GenomicScore.open must route it to RecordScoreLine, whose by-index read
-    # of the payload resolves that score -- the record-path equivalent of the
-    # retired ``BigWigLine.get(3)``.
+    # A bigWig record's payload IS its value, so GenomicScore.open routes it
+    # to the identity extractor -- not to the by-index column extractor the
+    # other record backends use.  There is no column to resolve and no parse
+    # to run; see gain.genomic_resources.bigwig_scores.
     builder = (
         a_bigwig_score()
         .with_score("bw", "float")
@@ -183,10 +182,11 @@ def test_bigwig_score_reads_value_at_index_3_through_record_score_line(
     repo = a_grr().with_resource("bw", builder).build_repo(tmp_path)
     score = PositionScore(repo.get_resource("bw")).open()
     with score:
-        assert score._score_line_class is RecordScoreLine
-        line = next(iter(score.fetch_lines("chr1", 5, 5)))
-        assert type(line) is RecordScoreLine
-        assert line.get_score("bw") == pytest.approx(0.11)
+        assert score._extract_value is extract_bigwig_value
+        record = next(iter(score.fetch_records("chr1", 5, 5)))
+        assert type(record) is tuple
+        assert score.get_score_from_record(record, "bw") == \
+            pytest.approx(0.11)
 
 
 def test_get_records_in_region(bigwig_table: BigWigTable) -> None:
@@ -240,7 +240,7 @@ def test_get_records_in_region_missing_chrom(bigwig_table: BigWigTable) -> None:
 
 def test_get_records_in_region_without_chrom(bigwig_table: BigWigTable) -> None:
     with bigwig_table:
-        vs = list(bigwig_table.get_records_in_region())
+        vs = list(bigwig_table.get_all_records())
         assert len(vs) == 9
 
 
@@ -371,7 +371,7 @@ def test_bigwig_correct_fetching_of_intervals(
         assert len(vs) == 3
 
 
-def test_no_repeating_in_buffered(
+def test_no_repeating_records_in_a_multi_chunk_walk(
     tmp_path: pathlib.Path,
 ) -> None:
     root_path = tmp_path
@@ -430,7 +430,7 @@ def test_no_repeating_in_buffered(
         assert vs[0][POS_END] == 1003
 
 
-def test_no_repeating_in_buffered_alt_case(
+def test_no_repeating_records_across_chunk_boundaries(
     tmp_path: pathlib.Path,
 ) -> None:
     root_path = tmp_path
@@ -470,7 +470,10 @@ def test_no_repeating_in_buffered_alt_case(
     assert grr is not None
     res = grr.get_resource("test_score")
     table_definition = res.get_config()["table"]
-    table_definition["buffer_fetch_size"] = 1  # important for bug reproduction!
+    # One chunk per 1 record(s): the boundary logic these fixtures
+    # were built to break is now the chunk boundary, not a buffer
+    # refill, and a tiny budget stresses it the same way.
+    table_definition["fetch_size"] = 1
     with BigWigTable(res, table_definition) as bigwig_table:
         vs = list(bigwig_table.get_records_in_region("chr1", 1, 1000))
         assert len(vs) == 1
@@ -489,7 +492,7 @@ def test_no_repeating_in_buffered_alt_case(
         assert vs[0][POS_END] == 1002
 
 
-def test_buffered_correctly_checks_if_query_is_in_buffer(
+def test_a_point_query_finds_its_own_interval_and_no_other(
     tmp_path: pathlib.Path,
 ) -> None:
     root_path = tmp_path
@@ -529,7 +532,10 @@ def test_buffered_correctly_checks_if_query_is_in_buffer(
     assert grr is not None
     res = grr.get_resource("test_score")
     table_definition = res.get_config()["table"]
-    table_definition["buffer_fetch_size"] = 2  # important for bug reproduction!
+    # One chunk per 2 record(s): the boundary logic these fixtures
+    # were built to break is now the chunk boundary, not a buffer
+    # refill, and a tiny budget stresses it the same way.
+    table_definition["fetch_size"] = 2
     with BigWigTable(res, table_definition) as bigwig_table:
         vs = list(bigwig_table.get_records_in_region("chr1", 1001, 1001))
         assert len(vs) == 1
@@ -548,7 +554,7 @@ def test_buffered_correctly_checks_if_query_is_in_buffer(
         assert vs[0][POS_END] == 1004
 
 
-def test_buffering_correctly_fetches_next_buffer(
+def test_consecutive_point_queries_walk_onto_the_next_chunk(
     tmp_path: pathlib.Path,
 ) -> None:
     root_path = tmp_path
@@ -590,7 +596,10 @@ def test_buffering_correctly_fetches_next_buffer(
     assert grr is not None
     res = grr.get_resource("test_score")
     table_definition = res.get_config()["table"]
-    table_definition["buffer_fetch_size"] = 3  # important for bug reproduction!
+    # One chunk per 3 record(s): the boundary logic these fixtures
+    # were built to break is now the chunk boundary, not a buffer
+    # refill, and a tiny budget stresses it the same way.
+    table_definition["fetch_size"] = 3
     with BigWigTable(res, table_definition) as bigwig_table:
         vs = list(bigwig_table.get_records_in_region("chr1", 1001, 1001))
         assert len(vs) == 1
@@ -615,67 +624,7 @@ def test_buffering_correctly_fetches_next_buffer(
         assert vs[2][POS_END] == 1005
 
 
-def test_bigwig_buffering_switching(
-    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
-) -> None:
-    root_path = tmp_path
-    setup_directories(
-        root_path,
-        {
-            "grr.yaml": textwrap.dedent(f"""
-                id: test_grr
-                type: directory
-                directory: {root_path!s}
-            """),
-            "test_score": {
-                "genomic_resource.yaml": textwrap.dedent("""
-                        type: position_score
-                        table:
-                            filename: data.bw
-                            format: bigWig
-                        scores:
-                        - id: score_one
-                          type: float
-                          index: 3
-                """),
-            },
-        },
-    )
-    data = textwrap.dedent("""
-        chr1   0        100       0.01
-        chr1   100      500       0.02
-        chr1   500      1500      0.03
-    """)
-    setup_bigwig(
-        root_path / "test_score" / "data.bw", data,
-        {"chr1": 100_000},
-    )
-    grr = build_filesystem_test_repository(root_path)
-    assert grr is not None
-    res = grr.get_resource("test_score")
-    table_definition = res.get_config()["table"]
-
-    mocker.spy(BigWigTable, "_fetch_direct")
-    mocker.spy(BigWigTable, "_fetch_buffered")
-
-    with BigWigTable(res, table_definition) as bigwig_table:
-        assert BigWigTable._fetch_direct.call_count == 0  # type: ignore
-        assert BigWigTable._fetch_buffered.call_count == 0  # type: ignore
-
-        list(bigwig_table.get_records_in_region("chr1", 0, 200))
-        assert BigWigTable._fetch_direct.call_count == 1  # type: ignore
-        assert BigWigTable._fetch_buffered.call_count == 0  # type: ignore
-
-        list(bigwig_table.get_records_in_region("chr1", 200, 500))
-        assert BigWigTable._fetch_direct.call_count == 1  # type: ignore
-        assert BigWigTable._fetch_buffered.call_count == 1  # type: ignore
-
-        list(bigwig_table.get_records_in_region("chr1", 1000, 1000))
-        assert BigWigTable._fetch_direct.call_count == 2  # type: ignore
-        assert BigWigTable._fetch_buffered.call_count == 1  # type: ignore
-
-
-def test_buffered_pos_begin_to_the_left_of_buffer_start(
+def test_pos_begin_to_the_left_of_the_first_fetched_interval(
     tmp_path: pathlib.Path,
 ) -> None:
     root_path = tmp_path
@@ -905,72 +854,44 @@ def test_sparse_region_fetch_crosses_an_unscored_gap_in_few_queries(
     assert len(recorder.calls) <= 10
 
 
-def test_buffered_region_fetch_crosses_an_unscored_gap_in_few_queries(
-    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
-) -> None:
-    # The same gap, crossed by the *buffered* strategy -- the one a sequential
-    # annotation run takes, since every query after the first lands within
-    # ``use_buffered_threshold`` of the last.  The buffer is refilled by its own
-    # walk, so it needs its own budget: filling across a ~1 Mb gap must take a
-    # handful of widening strides, not one fixed probe per 500 bp of it.
-    with _recorded_bigwig(
-        tmp_path, _sparse_bedgraph(), {"chr1": _SPARSE_LEN},
-    ) as (table, recorder):
-        # The first fetch of a fresh table takes the direct strategy; it is
-        # only here to bring ``_last_pos`` next to the second fetch's start.
-        primer = list(table.get_records_in_region("chr1", 1, 60))
-        calls_after_primer = len(recorder.calls)
-
-        buffered_fetch = mocker.spy(BigWigTable, "_fetch_buffered")
-        records = list(table.get_records_in_region("chr1", 1, _SPARSE_LEN))
-        buffered_calls = len(recorder.calls) - calls_after_primer
-
-    assert buffered_fetch.call_count == 1
-    assert len(primer) == 1
-    assert len(records) == 2
-    assert buffered_calls <= 10
-
-
 # A gapped fixture: three short scored runs with wide unscored gaps between
-# them, so that a buffer filled at one of them spans -- and reaches well past --
-# positions the track does not cover.
+# them, so that a fetch chunk taken at one of them reaches well past positions
+# the track does not cover.
 def _gapped_bedgraph() -> str:
     return _bedgraph([(300, 350), (3100, 3150), (6700, 6750)])
 
 
-def test_buffered_fetch_yields_nothing_at_a_position_inside_a_gap(
-    tmp_path: pathlib.Path, mocker: pytest_mock.MockerFixture,
+def test_a_fetch_yields_nothing_at_a_position_inside_a_gap(
+    tmp_path: pathlib.Path,
 ) -> None:
-    # A buffer spans as far as its fill window reached, so a later query can
-    # land in an unscored gap *inside* the buffered range.  The buffer's binary
-    # search finds no record there and must say so -- it must not fall back to
-    # the nearest record on its left, which would emit a score at a position
-    # the track does not cover.  Positions inside a scored run are queried in
-    # the same sweep, so the answer is pinned in both directions.
+    # A fetch chunk reaches as far as its window took it, so a query can land
+    # in an unscored gap *inside* the range a chunk covered.  The answer there
+    # is nothing -- never the nearest record to the left, which would be a
+    # score at a position the track does not cover.  Positions inside a scored
+    # run are queried in the same sweep, so the answer is pinned in both
+    # directions.
+    #
+    # This was a real defect in the retired buffered strategy, whose binary
+    # search returned the left-hand neighbour on a miss.  The geometry is kept
+    # because the geometry is what found it.
     positions = [1, 201, 320, 401, 601, 1001]
 
-    buffered_fetch = mocker.spy(BigWigTable, "_fetch_buffered")
     with _recorded_bigwig(
         tmp_path, _gapped_bedgraph(), {"chr1": _SPARSE_LEN},
     ) as (table, recorder):
         expected = {
             pos: [
-                ("chr1", start + 1, stop, None, None,
-                 ("chr1", start + 1, stop, value))
+                ("chr1", start + 1, stop, None, None, value)
                 for start, stop, value in (
                     recorder.raw.intervals("chr1", pos - 1, pos) or [])
             ]
             for pos in positions
         }
-        # Queried in ascending order and closer together than
-        # ``use_buffered_threshold``, so every query but the first is served
-        # from the buffer.
         found = {
             pos: list(table.get_records_in_region("chr1", pos, pos))
             for pos in positions
         }
 
-    assert buffered_fetch.call_count == len(positions) - 1
     assert found == expected
 
 
@@ -1014,52 +935,46 @@ def test_whole_chromosome_scan_of_per_base_bigwig_stays_memory_bounded(
 def test_chunking_is_invisible_in_the_records_yielded(
     tmp_path: pathlib.Path, shape: str, budget: int,
 ) -> None:
-    # The chunking exists only to bound memory, so it must not be observable in
-    # the result: whatever the records-per-call budget, and whichever fetch
-    # strategy runs, a region fetch must yield exactly the records of a single
-    # unchunked ``intervals()`` call over the same range -- same values, same
-    # order, same closed one-based coordinates.
+    # The chunking exists only to bound memory, so it must not be observable
+    # in the result: whatever the records-per-call budget, a region fetch must
+    # yield exactly the records of a single unchunked ``intervals()`` call over
+    # the same range -- same values, same order, same closed one-based
+    # coordinates.  The general form of this is test_bigwig_fetch_oracle.py;
+    # this one pins the budget extremes specifically.
     data, chrom_len = (
         (_dense_bedgraph(), _DENSE_LEN) if shape == "dense"
         else (_sparse_bedgraph(), _SPARSE_LEN)
     )
     with _recorded_bigwig(
         tmp_path, data, {"chr1": chrom_len},
-        direct_fetch_size=budget, buffer_fetch_size=budget,
+        fetch_size=budget,
     ) as (table, recorder):
         expected = [
-            ("chr1", start + 1, stop, None, None,
-             ("chr1", start + 1, stop, value))
+            ("chr1", start + 1, stop, None, None, value)
             for start, stop, value in recorder.raw.intervals(
                 "chr1", 0, chrom_len)
         ]
-        # The first fetch of a fresh table takes the direct strategy; a second
-        # fetch of the same region is within ``use_buffered_threshold`` of the
-        # first, so it takes the buffered one.  Both are checked.
-        direct = list(table.get_records_in_region("chr1", 1, chrom_len))
-        buffered = list(table.get_records_in_region("chr1", 1, chrom_len))
+        # Fetched twice: a table carries its retuned window across calls, so
+        # the second fetch starts from a window the first one shaped.
+        first = list(table.get_records_in_region("chr1", 1, chrom_len))
+        second = list(table.get_records_in_region("chr1", 1, chrom_len))
 
-    assert direct == expected
-    assert buffered == expected
+    assert first == expected
+    assert second == expected
 
 
-def test_table_schema_accepts_the_fetch_budget_keys(
+def test_table_schema_accepts_the_fetch_size_key(
     tmp_path: pathlib.Path,
 ) -> None:
-    # The fetch budgets are read off the table definition, so they must be
-    # spellable in a ``genomic_resource.yaml``: a knob the code reads and the
-    # schema rejects is not a knob.  Configuring all three must validate, and
-    # the configured values must reach the table.
+    # ``fetch_size`` is read off the table definition, so it must be spellable
+    # in a ``genomic_resource.yaml``: a knob the code reads and the schema
+    # rejects is not a knob.
     builder = (
         a_bigwig_score()
         .with_score("score_one", "float")
         .with_data("chr1  0  10  0.11")
         .with_chrom_lens({"chr1": 1000})
-        .with_fetch_budgets(
-            direct_fetch_size=1000,
-            buffer_fetch_size=2000,
-            use_buffered_threshold=100,
-        )
+        .with_fetch_size(1000)
     )
     grr = a_grr().with_resource("test_score", builder).build_repo(tmp_path)
 
@@ -1067,6 +982,60 @@ def test_table_schema_accepts_the_fetch_budget_keys(
 
     table = score.table
     assert isinstance(table, BigWigTable)
-    assert table.direct_fetch_size == 1000
-    assert table.buffer_fetch_size == 2000
-    assert table.use_buffered_threshold == 100
+    assert table.fetch_size == 1000
+
+
+def test_the_retired_buffering_keys_are_accepted_and_ignored(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    # ``buffer_fetch_size`` and ``use_buffered_threshold`` configured a second
+    # fetch strategy that no longer exists.  They stay in the schema -- there
+    # is nothing to rename them to, so refusing would take a resource offline
+    # to report a key that changes nothing -- and are warned about instead.
+    # Contrast ``direct_fetch_size``, whose capability survived under a new
+    # name and which is therefore NOT accepted: see the schema in
+    # ``genomic_scores``.
+    root_path = tmp_path
+    setup_directories(
+        root_path,
+        {
+            "grr.yaml": textwrap.dedent(f"""
+                id: test_grr
+                type: directory
+                directory: {root_path!s}
+            """),
+            "test_score": {
+                "genomic_resource.yaml": textwrap.dedent("""
+                    type: position_score
+                    table:
+                        filename: data.bw
+                        buffer_fetch_size: 2000
+                        use_buffered_threshold: 100
+                    scores:
+                    - id: score_one
+                      type: float
+                """),
+            },
+        },
+    )
+    setup_bigwig(
+        root_path / "test_score" / "data.bw",
+        "chr1  0  10  0.11", {"chr1": 1000})
+    grr = build_filesystem_test_repository(root_path)
+
+    # INFO, not WARNING: these name a feature that no longer exists, so
+    # their presence is a historical artifact rather than a misreading of
+    # the format (see ``_warn_inert_bigwig_keys``).
+    with caplog.at_level("INFO"):
+        score = PositionScore(grr.get_resource("test_score"))
+
+    warnings = "\n".join(caplog.messages)
+    assert "buffer_fetch_size" in warnings
+    assert "use_buffered_threshold" in warnings
+    table = score.table
+    assert isinstance(table, BigWigTable)
+    # Ignored, not honoured: the surviving budget keeps its default.
+    assert table.fetch_size == DEFAULT_FETCH_TARGET_RECORDS
+    with score.open() as opened:
+        records = list(opened.fetch_records("chr1", 1, 10))
+    assert len(records) == 1

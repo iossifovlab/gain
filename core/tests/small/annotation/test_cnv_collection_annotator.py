@@ -34,7 +34,7 @@ def grr() -> GenomicResourceRepo:
                 - id: affected_status
                   name: affected_status
                   type: str
-                  allele_aggregator: join(,)
+                  aggregator: join(,)
                   desc: |
                         shows if the child that has the de novo is
                         affected or unaffected
