@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
-from typing import Any, Literal, get_args
+from typing import Any
 
 import yaml
 
@@ -60,8 +60,7 @@ class ScoreSpec:
     desc: str | None = None
     histogram: dict[str, Any] | None = None
     na_values: str | list[str] | None = None
-    position_aggregator: str | None = None
-    allele_aggregator: str | None = None
+    aggregator: str | None = None
 
 
 def append_score(
@@ -144,42 +143,27 @@ def set_na_values(
     )
 
 
-# The score-level aggregator fields a resource may configure, in the order
-# they are rendered.  ``nucleotide_aggregator`` is deliberately absent: the
-# resource schema still accepts it, but reading it is deprecated, so the DSL
-# does not offer a way to author a new resource that uses it.
-AggregatorField = Literal["position_aggregator", "allele_aggregator"]
-AGGREGATOR_FIELDS: tuple[AggregatorField, ...] = get_args(AggregatorField)
-
-
 def set_aggregator(
     scores: tuple[ScoreSpec, ...],
-    field: AggregatorField, aggregator: str, *,
+    aggregator: str, *,
     score_id: str | None = None,
 ) -> tuple[ScoreSpec, ...]:
-    """Return ``scores`` with one aggregator ``field`` set on one score.
+    """Return ``scores`` with ``aggregator`` set on one score.
 
-    Shared by the table-score builders' ``with_position_aggregator`` /
-    ``with_allele_aggregator``.  With ``score_id`` omitted the aggregator is
-    attached to the most-recently-declared score; passing ``score_id`` targets
-    that specific score.  The value is rendered verbatim, so a test can author
-    an INVALID aggregator on purpose and watch the resource schema reject it.
+    There used to be two fields to choose between -- ``position_aggregator``
+    and ``allele_aggregator``.  A score has one aggregator now; which
+    reduction it names is fixed by the resource type.  With ``score_id``
+    omitted the aggregator is attached to the most-recently-declared score;
+    passing ``score_id`` targets that specific score.  The value is rendered
+    verbatim, so a test can author an INVALID aggregator on purpose and watch
+    the resource schema reject it.
     """
-    target_index = _target_index(scores, score_id, method=f"with_{field}")
+    target_index = _target_index(scores, score_id, method="with_aggregator")
     return tuple(
-        _replace_aggregator(spec, field, aggregator)
+        dataclasses.replace(spec, aggregator=aggregator)
         if i == target_index else spec
         for i, spec in enumerate(scores)
     )
-
-
-def _replace_aggregator(
-    spec: ScoreSpec, field: AggregatorField, aggregator: str,
-) -> ScoreSpec:
-    """Return ``spec`` with the named aggregator field replaced."""
-    if field == "position_aggregator":
-        return dataclasses.replace(spec, position_aggregator=aggregator)
-    return dataclasses.replace(spec, allele_aggregator=aggregator)
 
 
 def _target_index(
@@ -237,15 +221,12 @@ def render_score_specs_yaml(scores: tuple[ScoreSpec, ...]) -> str:
                 f"  {na_line}" if na_line else ""
                 for na_line in na_yaml.rstrip("\n").split("\n")
             )
-        for field in AGGREGATOR_FIELDS:
-            aggregator = getattr(spec, field)
-            if aggregator is None:
-                continue
+        if spec.aggregator is not None:
             # Emit through yaml so a parametrized spelling whose separator
             # needs quoting -- ``join(, )``, with its trailing space -- stays
             # the string it was authored as.
             agg_yaml = yaml.safe_dump(
-                {field: aggregator}, default_flow_style=False,
+                {"aggregator": spec.aggregator}, default_flow_style=False,
                 sort_keys=False).rstrip("\n")
             lines.append(f"  {agg_yaml}")
         if spec.desc is not None:

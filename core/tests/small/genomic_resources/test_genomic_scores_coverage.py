@@ -39,8 +39,7 @@ def test_score_line_get_score_value_parser_exception(
             score_id="test_score",
             desc="",
             value_type="float",
-            pos_aggregator=None,
-            allele_aggregator=None,
+            aggregator=None,
             small_values_desc=None,
             large_values_desc=None,
             col_name="score",
@@ -62,10 +61,18 @@ def test_score_line_get_score_value_parser_exception(
         for rec in caplog.records)
 
 
-def test_deprecated_nucleotide_aggregator(
+def test_a_retired_aggregator_key_is_refused(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Test deprecated nucleotide_aggregator configuration."""
+    """``allele_aggregator`` no longer names anything.
+
+    It, ``position_aggregator`` and ``nucleotide_aggregator`` collapsed into
+    a single ``aggregator``.  The old spellings are not accepted and not
+    silently ignored: the schema is strict, so a resource still using one
+    fails validation naming the field, which is what tells an author what to
+    rename.  (``nucleotide_aggregator`` had been deprecated-with-a-warning in
+    favour of ``allele_aggregator``; that ladder is gone with the keys.)
+    """
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
             type: allele_score
@@ -80,16 +87,15 @@ def test_deprecated_nucleotide_aggregator(
                   type: float
                   desc: ""
                   name: freq
-                  nucleotide_aggregator: max
+                  allele_aggregator: max
         """,
         "data.mem": """
             chrom  pos_begin  reference  alternative  freq
             1      10         A          G            0.02
         """,
     })
-    score = AlleleScore(res)
-    score.open()
-    assert any("deprecated" in rec.message for rec in caplog.records)
+    with pytest.raises(ValueError, match="Invalid configuration"):
+        AlleleScore(res)
 
 
 def test_default_annotation_attribute() -> None:
@@ -616,7 +622,7 @@ def test_cnv_collection_get_schema() -> None:
     """Test CnvCollection.get_schema() method."""
     schema = CnvCollection.get_schema()
     assert "scores" in schema
-    assert "allele_aggregator" in schema["scores"]["schema"]["schema"]
+    assert "aggregator" in schema["scores"]["schema"]["schema"]
 
 
 def test_position_score_fetch_region_all() -> None:
@@ -673,7 +679,7 @@ def test_allele_score_fetch_region_all() -> None:
                   type: float
                   desc: ""
                   name: freq
-                  nucleotide_aggregator: max
+                  aggregator: max
         """,
         "data.mem": """
             chrom  pos_begin  reference  alternative  freq

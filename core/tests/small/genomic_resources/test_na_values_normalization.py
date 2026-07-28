@@ -273,7 +273,7 @@ def test_vcf_style_merge_reconstruction_keeps_default_na_values() -> None:
     def _score_def(na_values: object) -> GenomicScoreDef:
         return GenomicScoreDef(
             score_id="s", desc="", value_type="float",
-            pos_aggregator=None, allele_aggregator=None,
+            aggregator=None,
             small_values_desc=None, large_values_desc=None,
             hist_conf=None, col_name="s", col_index=None,
             value_parser=None, na_values=na_values,

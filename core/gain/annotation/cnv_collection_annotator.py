@@ -128,7 +128,7 @@ class CnvCollectionAnnotator(AnnotatorBase):
     ) -> dict[str, Any]:
         score_def = self.cnv_collection.get_score_definition(spec.source)
         if score_def is not None:
-            return {"aggregator": score_def.allele_aggregator}
+            return {"aggregator": score_def.aggregator}
         return {}
 
     @classmethod

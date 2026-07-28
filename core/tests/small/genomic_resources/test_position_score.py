@@ -54,7 +54,7 @@ def test_region_score() -> None:
                 name: s1
               - id: phastCons5way
                 type: int
-                position_aggregator: max
+                aggregator: max
                 na_values: "-1"
                 desc: "The phastCons computed over the tree of 5 \
                        verterbarte species"
@@ -128,7 +128,7 @@ def test_position_score_fetch_region() -> None:
                 name: s1
               - id: phastCons5way
                 type: int
-                position_aggregator: max
+                aggregator: max
                 na_values: "-1"
                 desc: "The phastCons computed over the tree of 5 \
                        verterbarte species"

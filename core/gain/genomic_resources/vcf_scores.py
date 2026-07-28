@@ -185,8 +185,7 @@ def parse_vcf_scoredefs(
             value_type=VCF_TYPE_CONVERSION_MAP[value.type],
             value_parser=value_parser,
             na_values=(),
-            pos_aggregator=None,
-            allele_aggregator=None,
+            aggregator=None,
             small_values_desc=None,
             large_values_desc=None,
             hist_conf=None,
@@ -206,8 +205,7 @@ def parse_vcf_scoredefs(
             desc=config_scoredef.desc or vcf_scoredef.desc,
             value_type=value_type,
 
-            pos_aggregator=config_scoredef.pos_aggregator,
-            allele_aggregator=config_scoredef.allele_aggregator,
+            aggregator=config_scoredef.aggregator,
 
             small_values_desc=config_scoredef.small_values_desc,
             large_values_desc=config_scoredef.large_values_desc,

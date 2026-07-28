@@ -279,37 +279,24 @@ class _TableScoreBuilder:
                 self.scores, na_values, score_id=score_id),
         )
 
-    def with_position_aggregator(
+    def with_aggregator(
         self, aggregator: str, *, score_id: str | None = None,
     ) -> Self:
-        """Declare the score's default per-position aggregator.
+        """Declare the score's default aggregator.
 
-        Emitted under ``position_aggregator:`` -- the resource-level default a
-        pipeline uses when an attribute does not name one of its own.  With
-        ``score_id`` omitted it attaches to the most-recently-declared score.
-        The value is rendered verbatim, so an invalid one can be authored on
-        purpose to watch the resource schema reject it.
+        Emitted under ``aggregator:`` -- the resource-level default a pipeline
+        uses when an attribute does not name one of its own.  A score has one
+        aggregator; which reduction it names is fixed by the resource type
+        (over a region of positions, over the alleles at one, over overlapping
+        CNVs), so there is nothing to choose between here.  With ``score_id``
+        omitted it attaches to the most-recently-declared score.  The value is
+        rendered verbatim, so an invalid one can be authored on purpose to
+        watch the resource schema reject it.
         """
         return dataclasses.replace(
             self,
             scores=set_aggregator(
-                self.scores, "position_aggregator", aggregator,
-                score_id=score_id),
-        )
-
-    def with_allele_aggregator(
-        self, aggregator: str, *, score_id: str | None = None,
-    ) -> Self:
-        """Declare the score's default per-allele aggregator.
-
-        The allele-level counterpart of :meth:`with_position_aggregator`,
-        emitted under ``allele_aggregator:``.
-        """
-        return dataclasses.replace(
-            self,
-            scores=set_aggregator(
-                self.scores, "allele_aggregator", aggregator,
-                score_id=score_id),
+                self.scores, aggregator, score_id=score_id),
         )
 
     def with_data(self, data: str) -> Self:

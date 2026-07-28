@@ -226,7 +226,7 @@ def test_stats_position_score(tmp_path: pathlib.Path) -> None:
                           max: 1.0
                     - id: phastCons5way
                       type: int
-                      position_aggregator: max
+                      aggregator: max
                       na_values: "-1"
                       desc: "The phastCons computed over the tree of 5 \
                               verterbarte species"
@@ -326,8 +326,8 @@ def test_stats_np_score(tmp_path: pathlib.Path) -> None:
 
                     - id: cadd_test
                       type: int
-                      position_aggregator: max
-                      allele_aggregator: mean
+                      aggregator: max
+                      aggregator: mean
                       na_values: "-1"
                       desc: ""
                       name: s2

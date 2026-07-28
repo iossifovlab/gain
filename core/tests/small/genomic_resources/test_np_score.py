@@ -62,8 +62,8 @@ def test_np_score_fetch_region() -> None:
 
                 - id: cadd_test
                   type: int
-                  position_aggregator: max
-                  allele_aggregator: mean
+                  aggregator: max
+                  aggregator: mean
                   na_values: "-1"
                   desc: ""
                   name: s2

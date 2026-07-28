@@ -40,7 +40,6 @@ from gain.genomic_resources.genomic_position_table.record import (
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     GenomicScore,
-    GenomicScoreDef,
     build_allele_score_from_resource,
     build_position_score_from_resource,
 )
@@ -161,35 +160,22 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
         aggregator: str,
         attribute_conf_agg: AggregatorSource | None,
     ) -> str:
-        """Collect score aggregator documentation."""
-        default_aggregators = {
-            "position_aggregator": {
-                "float": "mean",
-                "int": "mean",
-                "str": "list",
-            },
-            "allele_aggregator": {
-                "float": "max",
-                "int": "max",
-                "str": "list",
-            },
-        }
-        aggregators_score_def_att: \
-            dict[str, Callable[[GenomicScoreDef], str | None]] = {
-                "position_aggregator":
-                lambda sc: sc.pos_aggregator,
-                "allele_aggregator":
-                lambda sc: sc.allele_aggregator,
-            }
+        """Collect score aggregator documentation.
+
+        This carried its own copy of the per-value-type default tables, as a
+        fallback for a definition whose aggregator was unset.  Both copies
+        are gone: the score class owns the table
+        (``GenomicScore.DEFAULT_AGGREGATORS``) and ``_build_scoredefs``
+        applies it, so a definition's ``aggregator`` is always resolved by
+        the time anything reads it.  The fallback was unreachable anyway --
+        ``__post_init__`` filled the fields for every score with a value
+        type -- so it was a second statement of the defaults that no test
+        could catch drifting.
+        """
         if attribute_conf_agg is None:
             score_def = self.score.get_score_definition(attr.source)
             assert score_def is not None
-            value = aggregators_score_def_att[aggregator](score_def)
-            if value is not None:
-                value_str = f"`{value}` [default]"
-            else:
-                value = default_aggregators[aggregator][score_def.value_type]
-                value_str = f"`{value}` [type default]"
+            value_str = f"`{score_def.aggregator}` [default]"
         else:
             value_str = str(attribute_conf_agg)
         return f"**{aggregator}**: {value_str}"
@@ -282,7 +268,7 @@ phastCons, phyloP, FitCons2, etc.
             self._attributes, self.get_info().attributes, strict=True,
         ):
             self.add_score_aggregator_documentation(
-                attr, "position_aggregator", attr_config.aggregator)
+                attr, "aggregator", attr_config.aggregator)
 
     def get_attribute_defaults(
         self, spec: AttributeSpec,
@@ -290,8 +276,8 @@ phastCons, phyloP, FitCons2, etc.
         defaults = super().get_attribute_defaults(spec)
         if "aggregator" not in defaults:
             score_def = self.position_score.get_score_definition(spec.source)
-            if score_def is not None and score_def.pos_aggregator is not None:
-                defaults["aggregator"] = score_def.pos_aggregator
+            if score_def is not None and score_def.aggregator is not None:
+                defaults["aggregator"] = score_def.aggregator
         return defaults
 
     def build_score_aggregator_documentation(
@@ -299,7 +285,7 @@ phastCons, phyloP, FitCons2, etc.
     ) -> list[str]:
         """Collect score aggregator documentation."""
         doc = self._build_score_aggregator_documentation(
-            attr, "position_aggregator", attr.aggregator)
+            attr, "aggregator", attr.aggregator)
         return [doc]
 
     def _fetch_raw_region_scores(
@@ -494,7 +480,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
                 continue
             self.allele_score_sources.append(attr.source)
             self.add_score_aggregator_documentation(
-                attr, "allele_aggregator", attr.aggregator)
+                attr, "aggregator", attr.aggregator)
 
     @classmethod
     def _build_allele_filter_func(
@@ -594,8 +580,8 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         if "aggregator" not in defaults:
             score_def = self.allele_score.get_score_definition(spec.source)
             if score_def is not None \
-                    and score_def.allele_aggregator is not None:
-                defaults["aggregator"] = score_def.allele_aggregator
+                    and score_def.aggregator is not None:
+                defaults["aggregator"] = score_def.aggregator
         return defaults
 
     def get_attribute_specs(self) -> dict[str, AttributeSpec]:
@@ -615,7 +601,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
     ) -> list[str]:
         """Collect score aggregator documentation."""
         allele_doc = self._build_score_aggregator_documentation(
-            attr, "allele_aggregator", attr.aggregator,
+            attr, "aggregator", attr.aggregator,
         )
         return [allele_doc]
 

@@ -118,7 +118,7 @@ def test_position_score_annotator(
                 attributes:
                 - source: test100way
                   name: test100
-                  position_aggregator: {pos_aggregator}
+                  aggregator: {pos_aggregator}
             """)
 
     pipeline = load_pipeline_from_yaml(pipeline_config, fixture_repo)

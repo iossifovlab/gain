@@ -165,8 +165,20 @@ class GenomicScoreDef(ScoreDef):
     """
 
     # pylint: disable=too-many-instance-attributes
-    pos_aggregator: str | None     # a valid aggregator type
-    allele_aggregator: str | None  # a valid aggregator type
+    # How a caller that reads SEVERAL values for one annotatable reduces them
+    # to one -- a region of positions, the alleles at a position, the CNVs
+    # overlapping a span.  A valid aggregator type, or ``None`` until
+    # ``GenomicScore._build_scoredefs`` fills the resource type's default.
+    #
+    # There were two of these, ``pos_aggregator`` and ``allele_aggregator``,
+    # and every def carried both because the definition cannot know which
+    # kind of score it belongs to.  Only ever ONE was read: a position score
+    # is only read by the position annotator, an allele or np score only by
+    # the allele annotator, a cnv_collection only by the CNV annotator.  So
+    # the second field was dead on every def, and the config surface offered
+    # a key that did nothing (``position_aggregator`` on an allele score was
+    # accepted by the schema and consulted by nothing).
+    aggregator: str | None
 
     col_name: str | None                       # internal
     col_index: int | None                      # internal
@@ -193,25 +205,14 @@ class GenomicScoreDef(ScoreDef):
     score_index: int = field(init=False)        # internal
 
     def __post_init__(self) -> None:
+        # The aggregator default is deliberately NOT resolved here.  It
+        # depends on how the score is aggregated -- ``mean`` over a region of
+        # positions, ``max`` over the alleles at one -- which is a property of
+        # the resource TYPE, and a definition does not know its own.  Filling
+        # it here is what forced two fields; ``GenomicScore._build_scoredefs``
+        # fills the one field from its class's table instead.
         if self.value_type is None:
             return
-        default_pos_aggregators = {
-            "float": "mean",
-            "int": "mean",
-            "str": "list",
-            "bool": None,
-        }
-        default_allele_aggregators = {
-            "float": "max",
-            "int": "max",
-            "str": "list",
-            "bool": None,
-        }
-        if self.pos_aggregator is None:
-            self.pos_aggregator = default_pos_aggregators[self.value_type]
-        if self.allele_aggregator is None:
-            self.allele_aggregator = \
-                default_allele_aggregators[self.value_type]
         self.na_values = normalize_na_values(
             self.na_values, self.value_type)
 

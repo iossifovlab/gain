@@ -114,7 +114,7 @@ def test_position_score_annotator_all_attributes(
                 attributes:
                 - source: test100way
                   name: test100
-                  position_aggregator: max
+                  aggregator: max
             """)
 
     pipeline = load_pipeline_from_yaml(pipeline_config, position_score_repo)
@@ -226,7 +226,7 @@ def test_position_score_annotator(
                 attributes:
                 - source: test100way
                   name: test100
-                  position_aggregator: {pos_aggregator}
+                  aggregator: {pos_aggregator}
             """)
 
     pipeline = load_pipeline_from_yaml(pipeline_config, position_score_repo)
@@ -294,7 +294,7 @@ def test_position_annotator_schema_one_source_two_dest_schema(
                   name: test100
                 - source: test100way
                   name: test100max
-                  position_aggregator: max
+                  aggregator: max
             """)
 
     pipeline = load_pipeline_from_yaml(pipeline_config, position_score_repo)
@@ -328,7 +328,7 @@ def test_position_annotator_join_aggregation(
                 attributes:
                 - source: test100way
                   name: test100
-                  position_aggregator: join(, )
+                  aggregator: join(, )
             """)
     print(pipeline_config)
 
@@ -351,10 +351,10 @@ def test_position_annotator_schema_one_source_two_dest_annotate(
                 attributes:
                 - source: test100way
                   name: test100min
-                  position_aggregator: min
+                  aggregator: min
                 - source: test100way
                   name: test100max
-                  position_aggregator: max
+                  aggregator: max
             """)
 
     pipeline = load_pipeline_from_yaml(pipeline_config, position_score_repo)
@@ -385,8 +385,8 @@ def test_position_score_annotator_attributes_with_aggr_fails(
                 attributes:
                 - source: test100way
                   name: test100min
-                  position_aggregator: min
-                  nucleotide_aggregator: mean
+                  aggregator: min
+                  position_aggregator: mean
         """, position_score_repo)
 
 
@@ -402,7 +402,7 @@ def test_position_score_annotator_invalid_aggregator(
                 attributes:
                 - source: test100way
                   name: test100min
-                  position_aggregator: minn
+                  aggregator: minn
         """, position_score_repo)
 
 
@@ -414,10 +414,10 @@ def test_position_annotator_documentation(
                 attributes:
                 - source: test100way
                   name: test100min
-                  position_aggregator: min
+                  aggregator: min
                 - source: test100way
                   name: test100max
-                  position_aggregator: max
+                  aggregator: max
                 - source: test100way
                   name: test100default
             """)
@@ -480,7 +480,7 @@ def test_position_annotator_add_chrom_prefix_tabix_table(
                 resource_id: position_score1
                 attributes:
                 - source: test100way
-                  position_aggregator: min
+                  aggregator: min
             """)
 
     pipeline = load_pipeline_from_yaml(pipeline_config, repo)
@@ -530,7 +530,7 @@ def test_position_annotator_add_chrom_prefix_inmemory_table(
                 resource_id: position_score1
                 attributes:
                 - source: test100way
-                  position_aggregator: min
+                  aggregator: min
             """)
 
     pipeline = load_pipeline_from_yaml(pipeline_config, repo)

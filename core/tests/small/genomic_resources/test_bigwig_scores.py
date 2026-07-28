@@ -97,7 +97,7 @@ def test_the_identity_extractor_is_a_pure_function_of_the_payload() -> None:
 def _a_scoredef(na_values: Any = ()) -> GenomicScoreDef:
     return GenomicScoreDef(
         score_id="bw", desc="", value_type="float",
-        pos_aggregator=None, allele_aggregator=None,
+        aggregator=None,
         small_values_desc=None, large_values_desc=None,
         hist_conf=None, col_name=None, col_index=None,
         value_parser=float, na_values=na_values,

@@ -11,6 +11,7 @@ from types import TracebackType
 from typing import (
     TYPE_CHECKING,
     Any,
+    ClassVar,
     Self,
     cast,
 )
@@ -58,7 +59,6 @@ from gain.genomic_resources.score_def import (
     ValueExtractor,
     _parse_column_address,
     extract_column_value,
-    normalize_na_values,
 )
 from gain.genomic_resources.score_resource import ScoreResource
 from gain.genomic_resources.vcf_scores import (
@@ -127,8 +127,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         - **desc**: Human-readable description
         - **na_values**: Values to treat as missing/NA (optional)
         - **hist_conf**: Histogram configuration for statistics (optional)
-        - **position_aggregator**: Default aggregator for positions (optional)
-        - **allele_aggregator**: Default aggregator for alleles (optional)
+        - **aggregator**: Default aggregator (optional). How several
+          values for one annotatable are reduced to one; the default
+          depends on the resource type and the score's value type.
 
     Usage Pattern:
         Genomic scores follow a resource lifecycle pattern:
@@ -200,6 +201,19 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     # reading a VCF record as a row; open() installs it *before* publishing
     # table_loaded, so no caller can observe the gap (see open()).
     _extract_value: ValueExtractor
+
+    # How a score of this resource type is reduced when a caller reads several
+    # values for one annotatable, keyed by the score's value type.  Declared
+    # per CLASS because the reduction is a property of the resource type -- a
+    # position score is aggregated over a region of positions, an allele score
+    # over the alleles at one -- and a ``GenomicScoreDef`` cannot know which
+    # kind it belongs to.  That is why there used to be two fields on the
+    # definition and only ever one of them read.
+    #
+    # Applied by :meth:`_apply_default_aggregator` to every score whose config
+    # does not state an ``aggregator:``, which today is every deployed score:
+    # 0 of 16502 resource configs set one.
+    DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {}
 
     def __init__(self, resource: GenomicResource):
         self.resource = resource
@@ -338,21 +352,14 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             col_name, col_index = _parse_column_address(score_conf)
 
             hist_conf = build_histogram_config(score_conf)
-            nuc_aggregator = score_conf.get("nucleotide_aggregator")
-            allele_aggregator = score_conf.get("allele_aggregator")
-            if nuc_aggregator is not None:
-                logger.warning(
-                    "Use of 'nucleotide_aggregator' is deprecated, use "
-                    "'allele_aggregator' instead.")
-                assert allele_aggregator is None
-                allele_aggregator = nuc_aggregator
 
             score_def = GenomicScoreDef(
                 score_id=score_conf["id"],
                 desc=score_conf.get("desc", ""),
                 value_type=score_conf.get("type"),
-                pos_aggregator=score_conf.get("position_aggregator"),
-                allele_aggregator=allele_aggregator,
+                # Left as the config stated it, ``None`` when unstated;
+                # ``_build_scoredefs`` fills the resource type's default.
+                aggregator=score_conf.get("aggregator"),
                 small_values_desc=score_conf.get("small_values_desc"),
                 large_values_desc=score_conf.get("large_values_desc"),
                 col_name=col_name,
@@ -403,6 +410,32 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                     raise AssertionError("Either an index or name must"
                                          " be configured for scores!")
 
+    def _apply_default_aggregator(
+        self, score_defs: dict[str, GenomicScoreDef],
+    ) -> dict[str, GenomicScoreDef]:
+        """Fill each score's aggregator from this resource type's table.
+
+        The default depends on how the score is reduced, which is fixed by
+        the resource type -- ``mean`` over a region of positions, ``max``
+        over the alleles at one, ``join(,)`` rather than ``list`` for a
+        CNV collection's strings -- so it belongs to the score CLASS, not to
+        the definition.  Resolving it here rather than in
+        ``GenomicScoreDef.__post_init__`` is what lets one field replace the
+        ``pos_aggregator``/``allele_aggregator`` pair.
+
+        Applied at the convergence point of all three construction routes --
+        the ``scores:`` block, a VCF header, a bigWig -- because a default
+        applied in only one of them is the same bug in a new place: a
+        VCF-derived def would arrive with ``aggregator=None``, and the CNV
+        annotator drops an attribute whose aggregator is None *silently*.
+        """
+        for score_def in score_defs.values():
+            if score_def.aggregator is None and \
+                    score_def.value_type is not None:
+                score_def.aggregator = \
+                    self.DEFAULT_AGGREGATORS[score_def.value_type]
+        return score_defs
+
     def _build_scoredefs(self) -> dict[str, GenomicScoreDef]:
         config_scoredefs = None
         if "scores" in self.config:
@@ -411,18 +444,19 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         if isinstance(self.table, VCFGenomicPositionTable):
             merge = bool(self.config.get("merge_vcf_scores", False))
 
-            return parse_vcf_scoredefs(
+            return self._apply_default_aggregator(parse_vcf_scoredefs(
                 cast(dict[str, Any], self.table.header),
                 config_scoredefs,
-                merge=merge)
+                merge=merge))
 
         if config_scoredefs is None:
             raise ValueError("No scores configured and not using a VCF")
 
         if isinstance(self.table, BigWigTable):
-            return build_bigwig_scoredefs(self.config, config_scoredefs)
+            return self._apply_default_aggregator(
+                build_bigwig_scoredefs(self.config, config_scoredefs))
 
-        return config_scoredefs
+        return self._apply_default_aggregator(config_scoredefs)
 
     def get_config(self) -> dict[str, Any]:
         return self.config
@@ -1037,6 +1071,15 @@ class PositionScore(GenomicScore):
             in a genomic region, for a caller that aggregates it
     """
 
+    # A region of positions reduces by ``mean``: each position's value counts
+    # once per base pair it covers (see fetch_region_weighted_values).
+    DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {
+        "float": "mean",
+        "int": "mean",
+        "str": "list",
+        "bool": None,
+    }
+
     def __init__(self, resource: GenomicResource):
         if resource.get_type() != "position_score":
             raise ValueError(
@@ -1048,7 +1091,7 @@ class PositionScore(GenomicScore):
     def get_schema() -> dict[str, Any]:
         schema = copy.deepcopy(GenomicScore.get_schema())
         scores_schema = schema["scores"]["schema"]["schema"]
-        scores_schema["position_aggregator"] = AGGREGATOR_SCHEMA
+        scores_schema["aggregator"] = AGGREGATOR_SCHEMA
         return schema
 
     def fetch_region_values(
@@ -1219,9 +1262,18 @@ class AlleleScore(GenomicScore):
         - table.reference: Column/field containing reference alleles
         - table.alternative: Column/field containing alternative alleles
         - allele_score_mode: Either "substitutions" or "alleles" (optional)
-        - scores: List of score definitions with optional position_aggregator
-                 and allele_aggregator specifications
+        - scores: List of score definitions with an optional
+                 aggregator specification
     """
+
+    # The alleles at a position reduce by ``max``, not ``mean``: a variant's
+    # score is the worst of the alleles it could be, not their average.
+    DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {
+        "float": "max",
+        "int": "max",
+        "str": "list",
+        "bool": None,
+    }
 
     class Mode(enum.Enum):
         """Allele score mode."""
@@ -1323,9 +1375,7 @@ class AlleleScore(GenomicScore):
             },
         }
         scores_schema = schema["scores"]["schema"]["schema"]
-        scores_schema["position_aggregator"] = AGGREGATOR_SCHEMA
-        scores_schema["allele_aggregator"] = AGGREGATOR_SCHEMA
-        scores_schema["nucleotide_aggregator"] = AGGREGATOR_SCHEMA
+        scores_schema["aggregator"] = AGGREGATOR_SCHEMA
         return schema
 
     def fetch_region_values(
@@ -1445,35 +1495,23 @@ class CNV:
         return self.pos_end - self.pos_begin
 
 
-@dataclass
-class _CNVScoreDef(GenomicScoreDef):
-
-    def __post_init__(self) -> None:
-        if self.value_type is None:
-            return
-        default_pos_aggregators = {
-            "float": "mean",
-            "int": "mean",
-            "str": "join(,)",
-            "bool": None,
-        }
-        default_allele_aggregators = {
-            "float": "max",
-            "int": "max",
-            "str": "join(,)",
-            "bool": None,
-        }
-        if self.pos_aggregator is None:
-            self.pos_aggregator = default_pos_aggregators[self.value_type]
-        if self.allele_aggregator is None:
-            self.allele_aggregator = \
-                default_allele_aggregators[self.value_type]
-        self.na_values = normalize_na_values(
-            self.na_values, self.value_type)
-
-
 class CnvCollection(GenomicScore):
     """A collection of CNVs."""
+
+    # As AlleleScore, except that strings join rather than list -- a CNV
+    # collection's string attributes are rendered into one cell.  This table
+    # is the whole of what ``_CNVScoreDef`` existed for: it was a subclass of
+    # ``GenomicScoreDef`` whose only member was a ``__post_init__`` carrying
+    # these defaults, and ``_parse_scoredef_config`` was overridden here
+    # solely to construct it.  With the defaults owned by the score class,
+    # both were exact copies of the base and are gone -- which also retires
+    # the near-copy that ``_parse_column_address`` warns about.
+    DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {
+        "float": "max",
+        "int": "max",
+        "str": "join(,)",
+        "bool": None,
+    }
 
     def __init__(self, resource: GenomicResource):
         if resource.get_type() != "cnv_collection":
@@ -1486,7 +1524,7 @@ class CnvCollection(GenomicScore):
     def get_schema() -> dict[str, Any]:
         schema = copy.deepcopy(GenomicScore.get_schema())
         scores_schema = schema["scores"]["schema"]["schema"]
-        scores_schema["allele_aggregator"] = AGGREGATOR_SCHEMA
+        scores_schema["aggregator"] = AGGREGATOR_SCHEMA
         return schema
 
     def fetch_region_values(
@@ -1533,50 +1571,6 @@ class CnvCollection(GenomicScore):
                             record[POS_END], attributes))
         return cnvs
 
-    @staticmethod
-    def _parse_scoredef_config(
-        config: dict[str, Any],
-    ) -> dict[str, GenomicScoreDef]:
-        """Parse ScoreDef configuration."""
-        scores = {}
-
-        for score_conf in config["scores"]:
-            value_parser = SCORE_TYPE_PARSERS[score_conf.get("type", "float")]
-
-            col_name, col_index = _parse_column_address(score_conf)
-
-            hist_conf = build_histogram_config(score_conf)
-            nuc_aggregator = score_conf.get("nucleotide_aggregator")
-            allele_aggregator = score_conf.get("allele_aggregator")
-            if nuc_aggregator is not None:
-                logger.warning(
-                    "Use of 'nucleotide_aggregator' is deprecated, use "
-                    "'allele_aggregator' instead.")
-                assert allele_aggregator is None
-                allele_aggregator = nuc_aggregator
-
-            score_def = _CNVScoreDef(
-                score_id=score_conf["id"],
-                desc=score_conf.get("desc", ""),
-                value_type=score_conf.get("type"),
-                pos_aggregator=score_conf.get("position_aggregator"),
-                allele_aggregator=allele_aggregator,
-                small_values_desc=score_conf.get("small_values_desc"),
-                large_values_desc=score_conf.get("large_values_desc"),
-                col_name=col_name,
-                col_index=col_index,
-                hist_conf=hist_conf,
-                value_parser=value_parser,
-                na_values=score_conf.get("na_values"),
-            )
-
-            scores[score_conf["id"]] = score_def
-        return cast(dict[str, GenomicScoreDef], scores)
-
-
-_INMEMORY_CNV_CACHE: dict[tuple[str, str], CnvCollection] = {}
-_INMEMORY_CNV_CACHE_LOCK = Lock()
-
 
 def build_position_score_from_resource(
     resource: GenomicResource,
@@ -1614,6 +1608,10 @@ def build_allele_score_from_resource_id(
     if grr is None:
         grr = build_genomic_resource_repository()
     return build_allele_score_from_resource(grr.get_resource(resource_id))
+
+
+_INMEMORY_CNV_CACHE: dict[tuple[str, str], CnvCollection] = {}
+_INMEMORY_CNV_CACHE_LOCK = Lock()
 
 
 def build_cnv_collection_from_resource(
