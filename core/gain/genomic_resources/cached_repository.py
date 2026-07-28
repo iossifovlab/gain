@@ -388,11 +388,15 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
         directory collision would corrupt cached data either way.
 
         Defense in depth. A repository built from a GRR definition can no
-        longer reach this: ``GroupRepoDefinition`` rejects duplicate child
-        ids at validation time and synthesises a distinct id for a child
-        that omits one (#445). A group assembled programmatically from
-        protocols -- as tests and embedding code do -- bypasses that check,
-        so the guard stays here too.
+        longer reach this: ``GroupRepoDefinition`` walks its whole subtree at
+        validation time and rejects duplicate repository ids, and a child
+        that omits ``id`` is given one synthesised from its path through the
+        definition, which is distinct by construction (#445). The walk has to
+        be tree-wide for that claim to hold -- a sibling-only check still let
+        two id-less children at index 0 of two different groups arrive here
+        sharing one id. A group assembled programmatically from protocols --
+        as tests and embedding code do -- bypasses validation entirely, so
+        the guard stays here too.
         """
         proto_id = proto.proto_id
         # get / construct / assign must be atomic: two threads racing the

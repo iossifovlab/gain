@@ -1,5 +1,11 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import copy
+import json
+import os
 import pathlib
+import subprocess
+import sys
+from typing import cast
 
 import pytest
 import yaml
@@ -256,17 +262,62 @@ def test_group_with_id_less_children_gets_distinct_child_ids() -> None:
     assert len(set(child_ids)) == 2, child_ids
 
 
-def test_synthesised_child_ids_are_deterministic() -> None:
-    def build_child_ids() -> list[str]:
-        repo = build_genomic_resource_repository(
-            {"type": "group", "children": [
-                {"type": "http", "url": "https://one.example.com"},
-                {"type": "embedded", "content": {}},
-            ]})
-        assert isinstance(repo, GenomicResourceGroupRepo)
-        return [child.repo_id for child in repo.children]
+# The definition used by both determinism tests below. Kept module-level so
+# the in-process test and the subprocess test cannot drift apart.
+_DETERMINISM_DEFINITION = {
+    "type": "group", "children": [
+        {"type": "http", "url": "https://one.example.com"},
+        {"type": "embedded", "content": {}},
+    ]}
 
-    assert build_child_ids() == build_child_ids()
+# Pinned literals, not a recomputation of the implementation's own formula:
+# asserting the exact strings is what makes this test able to notice a change
+# of scheme (a different digest, a different slug rule, or a switch away from
+# SHA-256). ``<slug>_<sha256(identity)[:8]>`` for a child with a url, and
+# ``<type>_<path>`` for one with no identity of its own.
+_DETERMINISM_EXPECTED_IDS = [
+    "https_one_example_com_933c1326",
+    "embedded_1",
+]
+
+
+def test_synthesised_child_ids_are_deterministic() -> None:
+    repo = build_genomic_resource_repository(
+        copy.deepcopy(_DETERMINISM_DEFINITION))
+    assert isinstance(repo, GenomicResourceGroupRepo)
+
+    assert [
+        child.repo_id for child in repo.children
+    ] == _DETERMINISM_EXPECTED_IDS
+
+
+def test_synthesised_child_ids_are_stable_across_processes() -> None:
+    """Ids must not depend on Python's per-process hash randomisation.
+
+    The in-process test above cannot catch a switch from ``hashlib.sha256``
+    to the builtin salted ``hash()``: ``core/pytest.ini`` pins
+    ``PYTHONHASHSEED=0``, so even the pinned literals would keep matching
+    under a salted scheme. Only building the same definition in two
+    interpreters started with *different* seeds proves the ids are stable
+    for a cache directory that outlives the process that created it.
+    """
+    script = (
+        "import json;"
+        "from gain.genomic_resources.repository_factory import "
+        "build_genomic_resource_repository as b;"
+        f"r=b({_DETERMINISM_DEFINITION!r});"
+        "print(json.dumps([c.repo_id for c in r.children]))"
+    )
+
+    def child_ids_under_seed(seed: str) -> list[str]:
+        env = {**os.environ, "PYTHONHASHSEED": seed}
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            check=True, capture_output=True, text=True, env=env)
+        return cast(list[str], json.loads(completed.stdout))
+
+    assert child_ids_under_seed("0") == _DETERMINISM_EXPECTED_IDS
+    assert child_ids_under_seed("1") == _DETERMINISM_EXPECTED_IDS
 
 
 def test_group_with_the_same_directory_listed_twice_is_rejected(
@@ -290,6 +341,85 @@ def test_duplicate_child_ids_in_a_nested_group_are_rejected() -> None:
                     {"id": "inner_dup", "type": "embedded", "content": {}},
                 ]},
             ]})
+
+
+def test_the_same_directory_at_two_nesting_levels_is_rejected(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A collision across nesting levels is still a collision.
+
+    The synthesised id is derived from the child's ``directory``, which does
+    not depend on where in the tree the child sits -- so listing one
+    directory at two different levels resolves to one id twice.
+    """
+    with pytest.raises(ValueError, match=str(tmp_path.name)):
+        build_genomic_resource_repository(
+            {"id": "top", "type": "group", "children": [
+                {"type": "directory", "directory": str(tmp_path / "grr")},
+                {"id": "nested", "type": "group", "children": [
+                    {"type": "directory", "directory": str(tmp_path / "grr")},
+                ]},
+            ]})
+
+
+def test_id_less_children_of_nested_groups_are_addressable() -> None:
+    """Positional ids must be unique across the whole definition tree.
+
+    A fallback id built from the child's index among its *siblings* gives the
+    first child of the top group and the first child of a nested group the
+    same id -- reintroducing, one level down, the exact ambiguity #445 is
+    about.
+    """
+    repo = build_genomic_resource_repository(
+        {"id": "top", "type": "group", "children": [
+            {"type": "embedded", "content": {
+                "one": {GR_CONF_FILE_NAME: "type: position_score",
+                        "data.txt": "AAAA-from-a"}}},
+            {"id": "nested", "type": "group", "children": [
+                {"type": "embedded", "content": {
+                    "one": {GR_CONF_FILE_NAME: "type: position_score",
+                            "data.txt": "BBBB-from-b"}}},
+            ]},
+        ]})
+    assert isinstance(repo, GenomicResourceGroupRepo)
+
+    outer = repo.children[0]
+    nested = repo.children[1]
+    assert isinstance(nested, GenomicResourceGroupRepo)
+    inner = nested.children[0]
+    assert outer.repo_id != inner.repo_id
+
+    assert repo.get_resource(
+        "one", repository_id=outer.repo_id,
+    ).get_file_content("data.txt") == "AAAA-from-a"
+    assert repo.get_resource(
+        "one", repository_id=inner.repo_id,
+    ).get_file_content("data.txt") == "BBBB-from-b"
+
+
+def test_cached_group_with_id_less_children_of_nested_groups(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The cached-repo collision guard must not be reachable from a definition.
+
+    With sibling-scoped positional ids this raised ``repository id
+    <embedded_0> is used by more than one repository`` on first enumeration
+    -- a crash the operator cannot act on, naming a group they never wrote.
+    """
+    repo = build_genomic_resource_repository(
+        {"id": "top", "type": "group", "cache_dir": str(tmp_path / "cache"),
+         "children": [
+             {"type": "embedded", "content": {
+                 "one": {GR_CONF_FILE_NAME: "type: position_score"}}},
+             {"id": "nested", "type": "group", "children": [
+                 {"type": "embedded", "content": {
+                     "two": {GR_CONF_FILE_NAME: "type: position_score"}}},
+             ]},
+         ]})
+
+    assert {
+        res.get_full_id() for res in repo.get_all_resources()
+    } == {"one", "two"}
 
 
 def test_duplicate_child_id_error_does_not_echo_a_password() -> None:

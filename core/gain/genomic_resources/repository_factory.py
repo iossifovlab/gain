@@ -8,6 +8,7 @@ import os
 import pathlib
 import re
 import tempfile
+from collections.abc import Iterator
 from typing import Annotated, Any, Literal, cast
 from urllib.parse import urlparse
 
@@ -191,19 +192,21 @@ class EmbeddedRepoDefinition(_RepoDefinitionBase):
 class GroupRepoDefinition(_RepoDefinitionBase):
     """Definition for a group of genomic resource repositories.
 
-    The ids of a group's children must be distinct: a child id selects a
-    repository (``find_resource``/``get_resource`` take a ``repository_id``)
-    and, for a cached repository, names the child's cache directory, so two
-    children sharing an id leave the second one unreachable. Duplicates are
-    a configuration error, rejected here when the definition is validated.
+    Repository ids must be distinct across the whole definition tree, not
+    merely among siblings: an id selects a repository
+    (``find_resource``/``get_resource`` take a ``repository_id``) and, for a
+    cached repository, names that repository's cache directory. Two
+    repositories sharing an id -- at the same level or at different ones --
+    leave the second unreachable. Duplicates are a configuration error,
+    rejected here when the definition is validated.
 
     Spelling ``id`` on a child is optional. A child that omits it gets a
     deterministic id synthesised from its own identity -- its ``url`` or
-    ``directory``, or its position in ``children`` for an ``embedded`` /
-    ``memory`` child or a nested ``group``, which have neither. The
-    synthesised id is never empty, and two children that would synthesise
-    the same id (the same directory listed twice, say) are duplicates like
-    any other.
+    ``directory``, or its *path* from the definition root for an
+    ``embedded`` / ``memory`` child or a nested ``group``, which have
+    neither. The synthesised id is never empty, and two children that would
+    synthesise the same id (the same directory listed twice, say) are
+    duplicates like any other.
     """
 
     type: Literal["group"]
@@ -212,27 +215,33 @@ class GroupRepoDefinition(_RepoDefinitionBase):
 
     @model_validator(mode="after")
     def check_child_ids_are_unique(self) -> GroupRepoDefinition:
-        """Reject a group whose children do not have distinct ids.
+        """Reject a group whose descendants do not have distinct ids.
 
         Compares the *resolved* ids -- an explicit ``id`` where the child
         spells one, the synthesised id otherwise -- so a pair that would end
         up sharing an id is refused whether or not the collision was
         spelled out.
+
+        The walk covers the whole subtree, not just the direct children.
+        Repository ids share one namespace across nesting levels: a
+        ``repository_id`` filter is matched against every repository in the
+        tree, and a cached repository derives each child's cache directory
+        from its id, so two repositories at *different* levels sharing an id
+        are as ambiguous as two siblings. Pydantic validates bottom-up, so a
+        nested group has already checked its own subtree by the time this
+        runs; repeating the walk from here is what catches the cross-level
+        pairs a nested group cannot see.
         """
-        seen: dict[str, int] = {}
-        for index, child in enumerate(self.children):
-            child_id = _resolve_child_repo_id(
-                child.id, child.type,
-                getattr(child, "url", None),
-                getattr(child, "directory", None),
-                index)
+        seen: dict[str, tuple[int, ...]] = {}
+        for path, child_id in _walk_resolved_child_ids(self.children):
             if child_id in seen:
                 raise ValueError(
                     f"duplicate child repository id <{child_id}> in a group "
                     f"repository definition (children at positions "
-                    f"{seen[child_id]} and {index}); every child of a group "
-                    f"must have its own unique 'id'")
-            seen[child_id] = index
+                    f"{_format_definition_path(seen[child_id])} and "
+                    f"{_format_definition_path(path)}); every repository in a "
+                    f"group must have its own unique 'id'")
+            seen[child_id] = path
         return self
 
 
@@ -323,18 +332,26 @@ def _repo_definition_identity(url: Any, directory: Any) -> str | None:
     return None
 
 
+def _format_definition_path(path: tuple[int, ...]) -> str:
+    """Render a child's path through ``children`` lists for an error message."""
+    return ".".join(str(index) for index in path)
+
+
 def _synthesise_repo_id(
-        identity: str | None, repo_type: str, index: int) -> str:
+        identity: str | None, repo_type: str, path: tuple[int, ...]) -> str:
     """Build a deterministic, non-empty id for a child that omits ``id``.
 
     Derived from the child's own identity (its url or directory) so that the
     id is stable across runs and across processes -- the digest is a SHA-256
     prefix, not Python's salted ``hash()``. A child with no identity of its
     own (``embedded``/``memory``, or a nested ``group``) falls back to its
-    position in the parent's ``children`` list.
+    *path* from the definition root, not its index among its siblings: two
+    children at index 0 of two different groups are different repositories
+    and must not resolve to one id. Because the path is the full index chain,
+    distinct positions always yield distinct ids.
     """
     if not identity:
-        return f"{repo_type}_{index}"
+        return f"{repo_type}_{'_'.join(str(index) for index in path)}"
     slug = _NON_ID_CHARS_RE.sub("_", identity)[-_SYNTHESISED_ID_SLUG_MAX:]
     slug = slug.strip("_")
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
@@ -343,7 +360,7 @@ def _synthesise_repo_id(
 
 def _resolve_child_repo_id(
         child_id: str | None, repo_type: str,
-        url: Any, directory: Any, index: int) -> str:
+        url: Any, directory: Any, path: tuple[int, ...]) -> str:
     """Return the id a group child is built with -- never the empty string.
 
     The single source of truth for child-id resolution: used both by
@@ -353,7 +370,28 @@ def _resolve_child_repo_id(
     if child_id:
         return child_id
     return _synthesise_repo_id(
-        _repo_definition_identity(url, directory), repo_type, index)
+        _repo_definition_identity(url, directory), repo_type, path)
+
+
+def _walk_resolved_child_ids(
+    children: list[RepoDefinition],
+    prefix: tuple[int, ...] = (),
+) -> Iterator[tuple[tuple[int, ...], str]]:
+    """Yield ``(path, resolved id)`` for every repository below a group.
+
+    Depth-first over the definition tree. A nested group yields its own
+    resolved id before its descendants', because a group repository is
+    addressable by ``repository_id`` exactly like a leaf one.
+    """
+    for index, child in enumerate(children):
+        path = (*prefix, index)
+        yield path, _resolve_child_repo_id(
+            child.id, child.type,
+            getattr(child, "url", None),
+            getattr(child, "directory", None),
+            path)
+        if isinstance(child, GroupRepoDefinition):
+            yield from _walk_resolved_child_ids(child.children, path)
 
 
 def redact_definition(definition: Any) -> Any:
@@ -490,18 +528,24 @@ def _build_real_repository(
 
 def _build_group_repository(
         repo_id: str,
-        children: list[dict], **kwargs: Any) -> GenomicResourceRepo:
+        children: list[dict],
+        path: tuple[int, ...] = (),
+        **kwargs: Any) -> GenomicResourceRepo:
 
     result: list[GenomicResourceRepo] = []
     for index, child in enumerate(children):
+        # ``path`` must match the one ``GroupRepoDefinition``'s uniqueness
+        # check walked the definition with, or the ids that were validated
+        # are not the ids the repositories get built with.
+        child_path = (*path, index)
         child_id: str = _resolve_child_repo_id(
             child.pop("id", None), child["type"],
-            child.get("url"), child.get("directory"), index)
+            child.get("url"), child.get("directory"), child_path)
         proto_type = child.pop("type")
         if proto_type == "group":
             repo: GenomicResourceRepo = \
                 _build_group_repository(
-                    child_id, child.pop("children"), **child)
+                    child_id, child.pop("children"), child_path, **child)
             result.append(repo)
             continue
 
