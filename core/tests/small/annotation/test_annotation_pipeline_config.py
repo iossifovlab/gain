@@ -329,6 +329,30 @@ def test_wildcard_label_in_single_quotes(
     ]
 
 
+def test_wildcard_two_in_conditions_on_the_same_label(
+    labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score:
+            "*[\\"spectrum\\" in phenotype and \\"autism\\" in phenotype]"
+    """, grr=labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "phastcons100-way",
+    ]
+
+
+def test_wildcard_equals_and_in_on_the_same_label(
+    labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score:
+            "*[phenotype=\\"autism\\" and \\"tism\\" in phenotype]"
+    """, grr=labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "phastcons20_way",
+    ]
+
+
 def test_wildcard_with_dash_in_resource_id(
     labeled_grr: GenomicResourceProtocolRepo,
 ) -> None:

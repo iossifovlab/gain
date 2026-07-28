@@ -370,6 +370,39 @@ class AnnotationConfigParser:
         return True
 
     @staticmethod
+    def _add_label_predicate(
+        labels_query: dict[str, Any],
+        key: str,
+        predicate: Callable[[str], bool],
+    ) -> None:
+        """Conjoin a predicate with the ones already collected for ``key``.
+
+        Several conditions of an `and` query may constrain the same label
+        (``"a" in pheno and "b" in pheno``); all of them must hold.
+        """
+        existing = labels_query.get(key)
+        if existing is None:
+            labels_query[key] = predicate
+            return
+
+        def combined(label: str) -> bool:
+            return bool(existing(label)) and predicate(label)
+
+        labels_query[key] = combined
+
+    @staticmethod
+    def _equals_predicate(value: str) -> Callable[[str], bool]:
+        def predicate(label: str) -> bool:
+            return label == value or fnmatch.fnmatch(label, value)
+        return predicate
+
+    @staticmethod
+    def _contains_predicate(value: str) -> Callable[[str], bool]:
+        def predicate(label: str) -> bool:
+            return value in label
+        return predicate
+
+    @staticmethod
     def build_labels_query(
         node: Any,
         labels_query: dict[str, Any] | None = None,
@@ -383,15 +416,20 @@ class AnnotationConfigParser:
                 key = child.children[0].value
                 value = child.children[1].value
 
-                labels_query[key] = \
-                    lambda x, v=value: x == v or fnmatch.fnmatch(x, v)
+                AnnotationConfigParser._add_label_predicate(
+                    labels_query, key,
+                    AnnotationConfigParser._equals_predicate(value),
+                )
             elif child.data.value == "in":
                 # the `in` rule spells the value BEFORE the label name
                 # (`"value" in name`), the opposite of `equals`
                 value = child.children[0].value
                 key = child.children[1].value
 
-                labels_query[key] = lambda x, v=value: v in x
+                AnnotationConfigParser._add_label_predicate(
+                    labels_query, key,
+                    AnnotationConfigParser._contains_predicate(value),
+                )
             elif child.data.value == "and_":
                 AnnotationConfigParser.build_labels_query(
                     child, labels_query)
