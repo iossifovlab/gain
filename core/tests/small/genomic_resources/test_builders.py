@@ -5,6 +5,9 @@ import re
 import pytest
 import yaml
 from gain.gene_scores.gene_scores import build_gene_score_from_resource
+from gain.genomic_resources.data_frame_resource import (
+    load_data_frame_from_resource,
+)
 from gain.genomic_resources.genomic_position_table.record import (
     POS_BEGIN,
     POS_END,
@@ -35,6 +38,7 @@ from gain.genomic_resources.testing.builders import (
     build_repo_tempdir,
     build_resource_tempdir,
 )
+from gain.genomic_resources.testing.data_frame_builder import a_data_frame
 
 
 def test_bare_default_is_a_readable_minimal_score(
@@ -2260,3 +2264,123 @@ def test_header_mode_list_moves_the_header_into_the_config(
 
     score = PositionScore(resource).open()
     assert score.fetch_scores("1", 10) == [0.5]
+
+
+def test_a_bare_data_frame_is_a_readable_minimal_csv(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = a_data_frame().build_resource(tmp_path)
+
+    config = yaml.safe_load(resource.get_file_content("genomic_resource.yaml"))
+    assert config["type"] == "data_frame"
+    assert config["file"] == "data.csv"
+    assert config["format"] == "csv"
+
+    frame = load_data_frame_from_resource(resource)
+    assert list(frame.columns) == ["gene", "score", "label"]
+
+
+def test_the_data_frame_filename_follows_the_format(
+    tmp_path: pathlib.Path,
+) -> None:
+    for file_format, filename in (
+        ("csv", "data.csv"), ("tsv", "data.tsv"), ("excel", "data.xlsx"),
+    ):
+        resource = (
+            a_data_frame()
+            .with_format(file_format)
+            .build_resource(tmp_path / file_format)
+        )
+        config = yaml.safe_load(
+            resource.get_file_content("genomic_resource.yaml"))
+        assert config["file"] == filename
+        assert config["format"] == file_format
+
+
+def test_with_file_overrides_the_derived_data_frame_filename(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        a_data_frame().with_file("genes.csv").build_resource(tmp_path)
+    )
+
+    config = yaml.safe_load(resource.get_file_content("genomic_resource.yaml"))
+    assert config["file"] == "genes.csv"
+    assert load_data_frame_from_resource(resource) is not None
+
+
+def test_with_declared_format_leaves_realization_alone(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The knob that builds a resource whose declared format disagrees with
+    # the bytes on disk -- the only way to reach the loader's unknown-format
+    # and mismatch branches.
+    resource = (
+        a_data_frame()
+        .with_format("csv")
+        .with_declared_format("parquet")
+        .build_resource(tmp_path)
+    )
+
+    config = yaml.safe_load(resource.get_file_content("genomic_resource.yaml"))
+    assert config["format"] == "parquet"
+    assert config["file"] == "data.csv"
+    assert "gene,score,label" in resource.get_file_content("data.csv")
+
+
+def test_data_frame_builders_are_immutable(
+    tmp_path: pathlib.Path,
+) -> None:
+    base = a_data_frame().with_data("""
+        a  b
+        1  2
+    """)
+    as_tsv = base.with_format("tsv")
+
+    assert base.file_format == "csv"
+    assert as_tsv.file_format == "tsv"
+    assert base.build_resource(tmp_path / "csv").get_file_content(
+        "data.csv") == "a,b\n1,2\n"
+
+
+def test_with_format_rejects_an_unrealizable_format() -> None:
+    with pytest.raises(ResourceValidationError, match="unknown data_frame"):
+        a_data_frame().with_format("parquet")
+
+
+def test_data_frame_rejects_both_authoring_modes_at_once(
+    tmp_path: pathlib.Path,
+) -> None:
+    builder = (
+        a_data_frame()
+        .with_data("a b\n1 2")
+        .with_raw_content("a,b\n1,2\n")
+    )
+
+    with pytest.raises(ResourceValidationError, match="not both"):
+        builder.build_resource(tmp_path)
+
+
+def test_data_frame_rejects_raw_content_for_excel(
+    tmp_path: pathlib.Path,
+) -> None:
+    builder = (
+        a_data_frame().with_format("excel").with_raw_content("a,b\n1,2\n")
+    )
+
+    with pytest.raises(ResourceValidationError, match="rendered workbook"):
+        builder.build_resource(tmp_path)
+
+
+def test_a_data_frame_composes_into_a_grr_with_other_resource_types(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = (
+        a_grr()
+        .with_resource("scores/pos", a_position_score())
+        .with_resource("tables/genes", a_data_frame())
+        .build_repo(tmp_path)
+    )
+
+    assert repo.get_resource("tables/genes").get_type() == "data_frame"
+    assert repo.get_resource("scores/pos").get_type() == "position_score"
