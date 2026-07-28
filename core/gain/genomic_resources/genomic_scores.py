@@ -59,6 +59,7 @@ from gain.genomic_resources.score_def import (
     ValueExtractor,
     _parse_column_address,
     extract_column_value,
+    normalize_na_values,
 )
 from gain.genomic_resources.score_resource import ScoreResource
 from gain.genomic_resources.vcf_scores import (
@@ -347,6 +348,16 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         scores = {}
 
         for score_conf in config["scores"]:
+            # ``None`` means the config did not state a type, which is NOT
+            # the same as "float" here: for a VCF score, silence means "take
+            # the type the file's header declares" (see
+            # ``parse_vcf_scoredefs``, which prefers the config's type and
+            # falls back to the header's).  Defaulting at this point would
+            # override an INFO field's declared ``int`` with ``float``.
+            # ``_finish_scoredefs`` resolves it once the merge has happened.
+            #
+            # The value PARSER defaults to float regardless, as it always
+            # has -- an unstated type has always been read as a float.
             value_parser = SCORE_TYPE_PARSERS[score_conf.get("type", "float")]
 
             col_name, col_index = _parse_column_address(score_conf)
@@ -410,10 +421,30 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                     raise AssertionError("Either an index or name must"
                                          " be configured for scores!")
 
-    def _apply_default_aggregator(
+    def _finish_scoredefs(
         self, score_defs: dict[str, GenomicScoreDef],
     ) -> dict[str, GenomicScoreDef]:
-        """Fill each score's aggregator from this resource type's table.
+        """Fill in what a definition cannot decide for itself.
+
+        **The value type.**  ``type:`` is optional, and an unstated one has
+        always been READ as a float -- that is what the value parser
+        defaults to.  The declared type used to be left at ``None``, so such
+        a score parsed as a float while reporting no type, and everything
+        keyed on the type quietly opted out.  Most damagingly
+        ``GenomicScoreDef.__post_init__`` returns early on a ``None`` type,
+        so ``na_values`` was never normalized: it stayed the raw string the
+        config gave, which turns the NA check into a SUBSTRING test, and a
+        score configured ``na_values: "-1"`` silently read a real value of 1
+        as a null.  That is the exact defect ``normalize_na_values`` exists
+        to prevent, reachable by omitting one key.
+
+        It is resolved HERE rather than at parse time because for a VCF
+        score an unstated type means "the type the file's header declares",
+        and defaulting before the merge would override a declared ``int``
+        with ``float``.  Filling it afterwards leaves that inheritance
+        intact and still leaves no definition without a type.
+
+        **The aggregator.**
 
         The default depends on how the score is reduced, which is fixed by
         the resource type -- ``mean`` over a region of positions, ``max``
@@ -430,8 +461,14 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         annotator drops an attribute whose aggregator is None *silently*.
         """
         for score_def in score_defs.values():
-            if score_def.aggregator is None and \
-                    score_def.value_type is not None:
+            if score_def.value_type is None:
+                score_def.value_type = "float"
+                # __post_init__ skipped this when the type was unknown.
+                # normalize_na_values is idempotent, so re-running it on an
+                # already-normalized set is a no-op for every other score.
+                score_def.na_values = normalize_na_values(
+                    score_def.na_values, score_def.value_type)
+            if score_def.aggregator is None:
                 score_def.aggregator = \
                     self.DEFAULT_AGGREGATORS[score_def.value_type]
         return score_defs
@@ -444,7 +481,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         if isinstance(self.table, VCFGenomicPositionTable):
             merge = bool(self.config.get("merge_vcf_scores", False))
 
-            return self._apply_default_aggregator(parse_vcf_scoredefs(
+            return self._finish_scoredefs(parse_vcf_scoredefs(
                 cast(dict[str, Any], self.table.header),
                 config_scoredefs,
                 merge=merge))
@@ -453,10 +490,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             raise ValueError("No scores configured and not using a VCF")
 
         if isinstance(self.table, BigWigTable):
-            return self._apply_default_aggregator(
+            return self._finish_scoredefs(
                 build_bigwig_scoredefs(self.config, config_scoredefs))
 
-        return self._apply_default_aggregator(config_scoredefs)
+        return self._finish_scoredefs(config_scoredefs)
 
     def get_config(self) -> dict[str, Any]:
         return self.config

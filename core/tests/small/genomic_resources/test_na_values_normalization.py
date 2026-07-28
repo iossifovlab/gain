@@ -18,10 +18,12 @@ import pytest
 from gain.genomic_resources.genomic_scores import (
     PositionScore,
 )
+from gain.genomic_resources.repository import GR_CONF_FILE_NAME
 from gain.genomic_resources.score_def import (
     GenomicScoreDef,
     normalize_na_values,
 )
+from gain.genomic_resources.testing import build_inmemory_test_resource
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
     a_grr,
@@ -311,3 +313,47 @@ def test_bigwig_scalar_na_value_never_substring_matches(
         assert score.get_score_from_record(na_record, "bw") is None
         assert score.get_score_from_record(real_record, "bw") == \
             pytest.approx(99.0)
+
+
+def test_a_score_with_no_type_still_normalizes_its_na_values() -> None:
+    """``type:`` is optional, and omitting it must not bypass the fix.
+
+    ``GenomicScoreDef.__post_init__`` skips normalization when the value
+    type is unknown, and the value type used to be left unset whenever the
+    config did not state one -- so a score that omitted ``type:`` kept its
+    ``na_values`` as the raw string, and the membership test degraded into
+    the substring test this whole module exists to prevent: with
+    ``na_values: "-1"``, a real value of 1 read back as ``None``.
+
+    A config's silence about the type means float, which is what the value
+    parser has always assumed; ``_finish_scoredefs`` now says so, so an
+    untyped score is normalized exactly like a typed one.
+
+    Hand-rolled yaml because the builders cannot express this shape:
+    ``with_score`` takes a value type, so there is no way to author a score
+    that omits one.
+    """
+    res = build_inmemory_test_resource({
+        GR_CONF_FILE_NAME: """
+            type: position_score
+            table:
+                filename: data.mem
+            scores:
+                - id: untyped
+                  name: untyped
+                  na_values: "-1"
+        """,
+        "data.mem": """
+            chrom  pos_begin  pos_end  untyped
+            1      10         10       1
+        """,
+    })
+    score_def = PositionScore(res).score_definitions["untyped"]
+
+    assert score_def.value_type == "float"
+    # A set, not the raw string -- the raw string is what made the NA check
+    # a substring test, so that "1" in "-1" was True.
+    assert isinstance(score_def.na_values, set)
+    assert score_def.na_values == {"-1", -1.0}
+    # The value the substring test used to swallow.
+    assert score_def.parse_value("1") == pytest.approx(1.0)
