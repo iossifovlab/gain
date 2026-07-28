@@ -200,10 +200,43 @@ def test_exception_mapping_helper_not_found() -> None:
 # Threaded non-blocking proof: a slow build must not park the event loop
 # ---------------------------------------------------------------------------
 
+# Latency injected into a single pipeline build, in seconds. This is the
+# *signal* size: if the build is resolved on the event-loop thread, the loop
+# parks for about this long. Deliberately much larger than the stall threshold
+# below -- see the rationale on STALL_THRESHOLD_SECONDS (#433).
+SLOW_BUILD_SECONDS = 2.0
+
+# Longest single event-loop park the test tolerates, in seconds.
+#
+# This value is deliberately NOT SLOW_BUILD_SECONDS. Measured gaps:
+#
+#   healthy, idle machine ............. ~0.02s   (one heartbeat period)
+#   healthy, loaded CI agent .......... up to ~0.53s (scheduler noise; the
+#                                       flake in #433 was a 0.533s gap)
+#   broken (build resolved on loop) ... ~SLOW_BUILD_SECONDS (measured 2.07s)
+#
+# 1.0s sits cleanly between the noise band and the signal: ~45x margin over a
+# healthy run, 2x headroom below the broken one.
+#
+# NOTE -- the broken case stalls for ONE build's duration, not N x the sleep,
+# even though N=4 requests are fired. LRUPipelineCache.put_pipeline dedupes
+# concurrent readers: the first caller installs the LoadingDetails future and
+# the rest take the same_config branch and await that *shared* future (the
+# documented contract in the BuildCancelled docstring, #140/#163). So raising
+# the threshold on the theory that the regression costs 4 x the sleep would be
+# wrong -- it would put the threshold above the signal and make this test
+# permanently green. Enlarging the injected sleep is what separates the bands.
+STALL_THRESHOLD_SECONDS = 1.0
+
+
 @pytest.fixture
 def slow_build(mocker: MockerFixture) -> float:
-    """Make pipeline builds take ~SLOW seconds on the loader thread."""
-    slow_seconds = 0.4
+    """Make pipeline builds take ~SLOW_BUILD_SECONDS on the loader thread.
+
+    Returns the injected latency for use in diagnostics only -- the stall
+    threshold is the independent STALL_THRESHOLD_SECONDS (#433).
+    """
+    slow_seconds = SLOW_BUILD_SECONDS
     real_load = LRUPipelineCache._load_pipeline_raw
 
     def slow_load(raw, grr, pipeline_id="unknown"):  # type: ignore
@@ -225,8 +258,9 @@ async def test_concurrent_slow_builds_do_not_park_event_loop(
 
     Uses the REAL ThreadedTaskExecutor (production path). With the build wait
     awaited off-thread, a cheap heartbeat coroutine keeps ticking on the loop
-    while N annotate requests block on slow builds. If the build were resolved
-    on the loop thread (the bug this issue fixes), the heartbeat would stall.
+    while N annotate requests block on the slow build they share. If the build
+    were resolved on the loop thread (the bug this issue fixes), the heartbeat
+    would stall for the length of that one build.
     """
     # Force a cold cache so each request actually waits on a build.
     SingleAnnotation.lru_cache.unload_pipeline("t4c8/t4c8_pipeline")
@@ -259,16 +293,28 @@ async def test_concurrent_slow_builds_do_not_park_event_loop(
 
     assert all(s == 200 for s in statuses), statuses
 
-    # The event loop kept ticking throughout the slow builds: the heartbeat
-    # fired many times and never went silent for longer than the slow-build
-    # window. A loop parked on future.result() would show a single long gap.
-    assert len(heartbeats) >= 5
+    # The event loop kept ticking throughout the slow build: the heartbeat
+    # never went silent for longer than STALL_THRESHOLD_SECONDS. A loop parked
+    # on future.result() shows a single gap of roughly one build's duration.
+    #
+    # The stall check comes first so that a regression reports the stall it
+    # actually caused; the tick-count guard below would otherwise fire first
+    # (a parked loop also ticks fewer times) and misreport the cause.
+    assert len(heartbeats) >= 2, (
+        f"heartbeat coroutine barely ran ({len(heartbeats)} ticks) -- "
+        f"no gap to measure"
+    )
     gaps = [
         heartbeats[i + 1] - heartbeats[i]
         for i in range(len(heartbeats) - 1)
     ]
     max_gap = max(gaps)
-    assert max_gap < slow_build, (
+    assert max_gap < STALL_THRESHOLD_SECONDS, (
         f"event loop stalled for {max_gap:.3f}s "
-        f"(>= slow build {slow_build:.3f}s) -- build ran ON the loop"
+        f"(>= threshold {STALL_THRESHOLD_SECONDS:.3f}s, injected build "
+        f"latency {slow_build:.3f}s) -- build ran ON the loop"
     )
+    # A responsive loop ticking every 0.02s across a ~SLOW_BUILD_SECONDS build
+    # fires far more than 5 times; this only guards against the heartbeat
+    # having been starved in some way the gap metric cannot see.
+    assert len(heartbeats) >= 5, len(heartbeats)
