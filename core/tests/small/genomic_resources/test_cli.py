@@ -328,3 +328,23 @@ def test_user_definition_keeps_its_own_id(
 
     assert isinstance(repo, GenomicResourceGroupRepo)
     assert [child.repo_id for child in repo.children] == ["local", "my-grr"]
+
+
+def test_user_definition_named_local_still_builds(
+    tmp_path: pathlib.Path,
+) -> None:
+    # ``id: "local"`` is what the GRR definitions shipped in this repo use --
+    # ``web_api/scripts/grr-definition-dir.yaml`` and
+    # ``spliceai_annotator/tests/integration_grr_definition.yaml`` -- so it
+    # must not collide with the id the CLI gives its own child (#445).
+    definition_path = tmp_path / "grr.yaml"
+    definition_path.write_text(
+        'id: "local"\ntype: http\nurl: https://grr.example.com\n')
+
+    repo = _create_grr_repo(
+        argparse.Namespace(grr=str(definition_path)), str(tmp_path / "local"))
+
+    assert isinstance(repo, GenomicResourceGroupRepo)
+    child_ids = [child.repo_id for child in repo.children]
+    assert child_ids[1] == "local"
+    assert len(set(child_ids)) == len(repo.children) == 2

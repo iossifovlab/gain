@@ -1329,12 +1329,22 @@ def _create_grr_repo(
         # same predictable value no matter what the user's definition points
         # at (#445).
         extra_definition = {**extra_definition, "id": "default_grr"}
+    local_id = "local"
+    if extra_definition["id"] == local_id:
+        # A user definition may legitimately be named ``local`` -- the ones
+        # shipped in this repo are -- and it is nested here as a sibling of
+        # the CLI's own child, where child ids must be unique. The synthetic
+        # group is the CLI's own invention, invisible to the user, so the CLI
+        # renames its own child rather than refusing to run (#445). The
+        # fallback cannot collide in turn: it is only used when the user
+        # definition is called ``local``.
+        local_id = "cli_local"
     grr_definition = {
         "id": "cli_grr",
         "type": "group",
         "children": [
             {
-                "id": "local",
+                "id": local_id,
                 "type": "dir",
                 "directory": repo_url,
             },
