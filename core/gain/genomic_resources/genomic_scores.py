@@ -6,6 +6,7 @@ import copy
 import enum
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass
+from itertools import starmap
 from threading import Lock
 from types import TracebackType
 from typing import (
@@ -67,7 +68,7 @@ from gain.genomic_resources.vcf_scores import (
     parse_vcf_scoredefs,
 )
 
-from .aggregators import AGGREGATOR_SCHEMA
+from .aggregators import AGGREGATOR_SCHEMA, Aggregator
 
 if TYPE_CHECKING:
     # Only ever needed to type the VCF INFO proxies in annotations.  pysam
@@ -1054,6 +1055,143 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         This method is used for calculation of score statistics.
         """
 
+    @staticmethod
+    def _record_weight(left: int, right: int) -> int:  # noqa: ARG004
+        """How many times one record's value counts when aggregating.
+
+        The rule is a property of the resource TYPE, and ``WeightedValues``
+        already states it: "a position-score record counts once per base
+        pair of the queried region it covers, an allele line counts once, a
+        CNV counts once however long it is".  One record, one count, is the
+        answer for everything except a position score, which overrides.
+
+        This exists so :meth:`aggregate_region` can live on the base class
+        and still agree with the annotators, which apply exactly this rule.
+        Deriving a weight from ``pos_begin``/``pos_end`` in the base instead
+        would give a CNV its length as a weight and silently disagree with
+        the CNV annotator for every CNV longer than one base pair.
+        """
+        return 1
+
+    def aggregate_region(
+        self,
+        chrom: str,
+        pos_begin: int | None = None,
+        pos_end: int | None = None,
+        scores: list[str | tuple[str, str]] | None = None,
+    ) -> list[ScoreValue]:
+        """Reduce a region to one value per requested score.
+
+        The aggregating counterpart of :meth:`fetch_region_values`, which it
+        is built on: that method yields one entry per record, this one folds
+        those entries into a single value per request.
+
+        Each request is either a score id -- aggregated with the resource's
+        own default, which :meth:`_finish_scoredefs` resolved from the score
+        class's ``DEFAULT_AGGREGATORS`` -- or a ``(score_id, aggregator)``
+        pair naming one explicitly.  The aggregator string is whatever the
+        config accepts, parametrized forms (``join(,)``) included.
+
+        **Returns a list parallel to ``scores``, not a dict.**  One score
+        may legitimately be requested twice with different aggregators --
+        ``["s", ("s", "max")]``, which is what an annotation config does
+        when it exposes one source as both a min and a max attribute -- and
+        a dict keyed by score id would silently drop one of them.
+
+        An empty region is not an error: each aggregator answers for
+        itself.  ``list`` returns ``[]``; ``max`` returns ``None``; and so
+        does ``count``, which chooses to report nothing rather than 0 for an
+        empty region (see ``CountAggregator.get_final``).  This method does
+        not second-guess any of them.  That is deliberately unlike
+        :meth:`fetch_scores`, which
+        returns ``None`` for a position with no data -- aggregating nothing
+        is a well-defined question, reading a value where there is none is
+        not.
+
+        Values reach the aggregator exactly as the record carried them,
+        ``None`` included, because that is what the annotators do (each
+        aggregator decides what a null means for it) and the point of this
+        method is to give the answer they would.
+        """
+        requests = self._resolve_aggregator_requests(scores)
+        aggregators = list(starmap(self._build_region_aggregator, requests))
+        # One fetch serves every request: ask for each DISTINCT score once,
+        # then fan each record out to the requests that want it.  Two
+        # requests for one score share the fetch and keep separate
+        # accumulators.
+        score_ids = list(dict.fromkeys(sid for sid, _ in requests))
+        column_of = {sid: i for i, sid in enumerate(score_ids)}
+        targets = [
+            (aggregator, column_of[score_id])
+            for aggregator, (score_id, _) in zip(
+                aggregators, requests, strict=True)
+        ]
+
+        for left, right, values in self.fetch_region_values(
+                chrom, pos_begin, pos_end, score_ids):
+            if values is None:
+                continue
+            weight = self._record_weight(left, right)
+            if weight <= 0:
+                continue
+            for aggregator, column in targets:
+                aggregator.add(values[column], weight)
+
+        return [aggregator.get_final() for aggregator in aggregators]
+
+    def _resolve_aggregator_requests(
+        self, scores: list[str | tuple[str, str]] | None,
+    ) -> list[tuple[str, str]]:
+        """Normalize the request list to ``(score_id, aggregator)`` pairs."""
+        if scores is None:
+            scores = list(self.get_all_scores())
+
+        requests = []
+        for request in scores:
+            score_id, aggregator = (
+                (request, None) if isinstance(request, str) else request)
+            score_def = self.score_definitions.get(score_id)
+            if score_def is None:
+                raise ValueError(
+                    f"score {score_id!r} is not defined by resource "
+                    f"{self.resource_id!r}; it has "
+                    f"{sorted(self.score_definitions)}")
+            resolved = aggregator or score_def.aggregator
+            if resolved is None:
+                # Every score has a value type, so the only way to get here
+                # is a type whose class default is deliberately None --
+                # ``bool``, which has no meaningful reduction to pick for
+                # the caller.  Name one and it works.
+                raise ValueError(
+                    f"score {score_id!r} of resource {self.resource_id!r} "
+                    f"has no default aggregator for value type "
+                    f"{score_def.value_type!r}; name one explicitly as "
+                    f"(score_id, aggregator)")
+            requests.append((score_id, resolved))
+        return requests
+
+    def _build_region_aggregator(
+        self, score_id: str, aggregator: str,
+    ) -> Aggregator:
+        """Build a FRESH aggregator, naming the resource if it cannot.
+
+        Fresh per call, not reused: an aggregator is a mutable accumulator
+        and explicitly not thread-safe (see :class:`Aggregator`).  Reuse is
+        an annotator optimisation resting on being single-threaded; a score
+        is shared process-wide (the CNV cache, the web api's thread pool),
+        so this cannot assume the same.
+
+        ``Aggregator.build`` raises a bare ``KeyError('mediann')`` for an
+        unknown name, saying nothing about which score asked for it.
+        """
+        try:
+            return Aggregator.build(aggregator)
+        except (KeyError, ValueError, TypeError) as err:
+            raise ValueError(
+                f"score {score_id!r} of resource {self.resource_id!r} asks "
+                f"for aggregator {aggregator!r}, which is not valid: "
+                f"{err}") from err
+
 
 class PositionScore(GenomicScore):
     """Position-based genomic score resource.
@@ -1108,8 +1246,13 @@ class PositionScore(GenomicScore):
             in a genomic region, for a caller that aggregates it
     """
 
+    @staticmethod
+    def _record_weight(left: int, right: int) -> int:
+        """A position-score record counts once per base pair it covers."""
+        return right - left + 1
+
     # A region of positions reduces by ``mean``: each position's value counts
-    # once per base pair it covers (see fetch_region_weighted_values).
+    # once per base pair it covers (see _record_weight).
     DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {
         "float": "mean",
         "int": "mean",
@@ -1191,7 +1334,7 @@ class PositionScore(GenomicScore):
         for left, right, values in self.fetch_region_values(
             chrom, pos_begin, pos_end, scores,
         ):
-            weight = right - left + 1
+            weight = self._record_weight(left, right)
             if weight <= 0:
                 continue
             yield (values, weight)
