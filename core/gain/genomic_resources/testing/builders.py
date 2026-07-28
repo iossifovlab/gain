@@ -136,8 +136,7 @@ class _TableScoreBuilder(MetaMixin):
     data: str | None = None
     rows: tuple[tuple[tuple[str, str], ...], ...] = ()
     tabix: bool = False
-    # Only meaningful with ``tabix``: index as ``.csi`` instead of ``.tbi``.
-    csi: bool = False
+    csi: bool = False  # only meaningful with ``tabix``
     chrom_mapping: dict[str, Any] | None = None
     zero_based: bool = False
     header_mode: str | None = None
@@ -341,12 +340,9 @@ class _TableScoreBuilder(MetaMixin):
         The default is a plain ``.txt`` table; ``with_tabix`` switches the
         realize path to :func:`setup_tabix` and points ``table.filename`` at
         the ``.txt.gz`` with ``format: tabix``.  The resource reads back
-        identically to the plain form.
-
-        With ``csi=True`` the table is indexed as a ``.csi`` instead -- the
-        index flavour a contig longer than tabix's ~512 Mbp limit requires.
-        Nothing else about the resource changes; only the index file name
-        and format differ.
+        identically to the plain form.  With ``csi=True`` the index is a
+        ``.csi`` -- the flavour a contig beyond tabix's ~512 Mbp limit
+        requires -- rather than the default ``.tbi``.
 
         Precondition: the authored rows (via :meth:`with_data` or
         :meth:`with_score_line`) must be position-sorted -- ascending by
@@ -831,11 +827,7 @@ class VcfInfoScoreBuilder(MetaMixin):
         return dataclasses.replace(self, data=data)
 
     def with_csi_index(self) -> Self:
-        """Index the bgzipped VCF as ``.csi`` instead of the default ``.tbi``.
-
-        The index flavour a contig longer than tabix's ~512 Mbp limit
-        requires.  Nothing else about the resource changes.
-        """
+        """Index the bgzipped VCF as ``.csi``, not the default ``.tbi``."""
         return dataclasses.replace(self, csi=True)
 
     def with_zero_based(self) -> Self:
@@ -1071,10 +1063,9 @@ def _build_single_resource(
 
 
 def _realize_tabix_table(
-    tabix_path: pathlib.Path, data: str, *, write_header: bool = True,
-    csi: bool = False,
-) -> None:
-    """Realize ``data`` as a tabix table (``.txt.gz`` + ``.tbi``).
+    tabix_path: pathlib.Path, data: str, *,
+    write_header: bool = True, csi: bool = False) -> None:
+    """Realize ``data`` as a tabix table (``.txt.gz`` + its index).
 
     With ``write_header`` (the default, the ``header_mode: file`` path) the
     header line is emitted as a ``#`` comment so the tabix table reads its
