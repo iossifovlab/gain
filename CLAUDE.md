@@ -286,11 +286,29 @@ multi-resource repo with
 `build_resource(tmp_path)` is the single-resource
 shorthand.
 
+Every builder also carries the resource-level `meta:`
+block — `with_meta(summary=…, description=…)` and
+`with_labels(**labels)` — through the shared
+`MetaMixin` in
+`gain.genomic_resources.testing.resource_meta`, so a
+test can assert on `resource.get_summary()` /
+`get_description()` / `get_labels()` without
+hand-rolling yaml. Label keys are passed through
+verbatim (the `with_chrom_mapping` precedent) and the
+mapping is deep-copied; `with_meta` accumulates across
+calls, `with_labels` replaces. Omit both and no `meta:`
+key is emitted at all. A NEW builder gets this by
+inheriting `MetaMixin` and either appending
+`self.render_meta()` to the config text it renders or
+calling `self.append_meta_into(resource_dir)` after a
+`setup_*` helper wrote the config for it (the
+reference-genome path).
+
 **`a_data_frame` is the one factory NOT in
 `builders.py`** — import it from
 `gain.genomic_resources.testing.data_frame_builder`.
-`builders.py` was within nine lines of pylint's
-1500-line module ceiling before it was written, so it
+`builders.py` is within five lines of pylint's
+1500-line module ceiling, so it
 lives in a sibling module that imports the shared
 single-realize seam one way; `builders` does not import
 back, and there is no re-export. It composes into
@@ -315,7 +333,7 @@ large and structural, not an oversight to work around.**
 There is no builder for `gene_models`, `liftover_chain`,
 `annotation_pipeline` or `gene_set_collection`, and no
 `with_*` for
-`meta`/`labels`, `default_annotation`, or explicit
+`default_annotation` or explicit
 `chrom`/`pos_begin` `column_name`/`column_index`
 mappings. Hand-rolled yaml is still the majority in
 `core/tests` and is the correct answer for all of the
