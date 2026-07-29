@@ -559,8 +559,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         column-array batches through ``accumulate`` (which mutates ``result``
         and carries the overlap guard's ``prev_right``).  The caller supplies
         the pre-built ``result`` -- empty histograms or seeded ``MinMaxValue``
-        -- and the matching accumulator.  The opened score travels with every batch
-        because it is what states this resource kind's record semantics
+        -- and the matching accumulator.  The opened score travels with each
+        batch because it is what states this resource kind's record semantics
         (``RECORD_ORDERING``, ``RECORD_WEIGHT_IS_SPAN``,
         ``RECORDS_ARE_COUNTED``) -- read here and by the per-record path from
         that one place.  Batches are keyed by SCORE ID: the
