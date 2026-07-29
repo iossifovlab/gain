@@ -276,6 +276,49 @@ def build_inmemory_protocol(
     return proto
 
 
+def symlinked_directory_reason(
+    root_path: str, relative_path: str,
+) -> str | None:
+    """Return why ``relative_path`` traverses a symlinked dir, or ``None``.
+
+    gain#467 contained the resource file NAME; this answers the question a
+    name cannot -- where the name RESOLVES. A contained name still reads
+    outside the GRR root when something on its path is a symlink.
+
+    Only a symlinked DIRECTORY is refused. A symlinked leaf FILE is
+    allowed, and may resolve anywhere: that is DVC's ``symlink`` cache
+    fallback, which materializes a resource file as a link into a shared
+    cache placed deliberately outside the repository (gain#483).
+
+    The walk starts AT ``root_path`` and only ever tests components BELOW
+    it, so the repository root's own linkness is never examined -- which
+    is what keeps the atomic-flip publish layout working, where the served
+    root IS a symlink (``/repo/<name> -> <name>.<sha>``).
+
+    Classification is by ``islink`` + ``isdir``, not ``isdir`` alone:
+    ``isdir`` follows links, so a symlink POINTING AT a directory would
+    otherwise be traversed as though it were a real one.
+    """
+    current = root_path
+    # Split on ``/`` alone, NOT on the backslash the name-containment rule
+    # also treats as a separator: this walks a real local filesystem, where
+    # a backslash is an ordinary character in a file name rather than a
+    # path separator, so splitting on it would test components that do not
+    # exist and miss the one that does.
+    segments = [
+        segment for segment in relative_path.split("/") if segment
+    ]
+    for index, segment in enumerate(segments):
+        current = os.path.join(current, segment)
+        if not os.path.islink(current):
+            continue
+        is_leaf = index == len(segments) - 1
+        if is_leaf and not os.path.isdir(current):
+            return None
+        return f"traverses the symlinked directory <{segment}>"
+    return None
+
+
 class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
     """Provides fsspec genomic resources repository protocol."""
 
@@ -394,6 +437,75 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         return os.path.join(
             self._fetch_url,
             resource.get_genomic_resource_id_version())
+
+    def _validate_symlink_containment(
+        self, resource: GenomicResource, filename: str,
+    ) -> None:
+        """Raise unless ``filename`` avoids every symlinked directory.
+
+        A no-op off the local filesystem: ``http`` and ``s3`` have no
+        symlinks, so the question does not arise there (gain#483).
+        """
+        if self.scheme != "file":
+            return
+        relative_path = os.path.join(
+            resource.get_genomic_resource_id_version(), filename)
+        reason = symlinked_directory_reason(self.root_path, relative_path)
+        if reason is not None:
+            raise ValueError(
+                f"resource file name <{filename}> {reason}; "
+                f"resource <{resource.resource_id}>")
+
+    def _validate_symlink_write_target(
+        self, resource: GenomicResource, filename: str,
+    ) -> None:
+        """Raise if a write would follow a symlinked leaf out of the resource.
+
+        Reading a link out is deliberate (the shared DVC cache); writing
+        through one is a different act -- it mutates a file the resource
+        does not own. Refused wherever it points, including back inside
+        the resource: nothing GAIn writes is legitimately a symlink, and
+        the DVC-materialized files that ARE links are ones GAIn only ever
+        reads (gain#483).
+        """
+        if self.scheme != "file":
+            return
+        path = os.path.join(
+            self.root_path,
+            resource.get_genomic_resource_id_version(),
+            filename)
+        if os.path.islink(path):
+            raise ValueError(
+                f"resource file name <{filename}> is a symlink and must "
+                f"not be written through; "
+                f"resource <{resource.resource_id}>")
+
+    def _is_symlinked_directory(self, path: str, name: str) -> bool:
+        """Return whether ``name`` in ``path`` is a link to a directory.
+
+        ``islink`` AND ``isdir``: a symlink pointing at a directory must
+        count as one, and ``isdir`` alone follows the link and would say
+        yes to a real directory too (gain#483).
+        """
+        if self.scheme != "file":
+            return False
+        entry = os.path.join(path, name)
+        return os.path.islink(entry) and os.path.isdir(entry)
+
+    def get_resource_file_url(
+        self, resource: GenomicResource, filename: str,
+    ) -> str:
+        """Return url of a file in the resource.
+
+        The name-containment check lives in the base class; the
+        RESOLUTION check is added here because it needs a local
+        filesystem and a scheme, neither of which the base class has.
+        Hooking the same join keeps both halves of containment at one
+        choke point, so every read sink inherits it (gain#483).
+        """
+        url = super().get_resource_file_url(resource, filename)
+        self._validate_symlink_containment(resource, filename)
+        return url
 
     def get_public_url(self) -> str:
         return self.public_url
@@ -526,6 +638,7 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
                 raise OSError(
                     f"Read-Only protocol {self.get_id()} trying to open "
                     f"{filepath} for writing")
+            self._validate_symlink_write_target(resource, filename)
 
             # Create the containing directory if it doesn't exists.
             parent = os.path.dirname(filepath)
@@ -707,11 +820,14 @@ class FsspecReadWriteProtocol(
 
         Another join of its own, so it repeats the containment check --
         ``filelock`` creates and truncates the lockfile on acquire
-        (gain#467).
+        (gain#467), which is exactly the write a symlinked ``.grr``
+        would redirect out of the resource (gain#483).
         """
         if self.scheme != "file":
             raise NotImplementedError(self._non_local_lock_message())
         validate_resource_file_name(resource.resource_id, filename)
+        self._validate_symlink_containment(
+            resource, f".grr/{filename}.lockfile")
         resource_url = self.get_resource_url(resource)
         path = os.path.join(resource_url, ".grr", f"{filename}.lockfile")
         return path.removeprefix(f"{self.scheme}://")
@@ -758,6 +874,17 @@ class FsspecReadWriteProtocol(
                 direntry = direntry[len(self.netloc):]
             name = os.path.relpath(direntry, path)
             if name.startswith("."):
+                continue
+            if self._is_symlinked_directory(path, name):
+                # Skipped like a dot-directory, but LOGGED: someone created
+                # this link deliberately, so a silent disappearance turns
+                # into a debugging session. Never raised -- a raise here
+                # kills the generator before a single resource is yielded,
+                # which is the gain#464 shape ADR 0003 refused (gain#483).
+                logger.warning(
+                    "skipping symlinked directory <%s> in <%s>: a resource "
+                    "must not be reached through a symlinked directory",
+                    name, path)
                 continue
             content.append(name)
 
@@ -816,6 +943,18 @@ class FsspecReadWriteProtocol(
 
             name = os.path.relpath(direntry, path)
             if name.startswith("."):
+                continue
+            if self._is_symlinked_directory(path, name):
+                # A symlinked LEAF file is not skipped here -- it is an
+                # ordinary manifest entry, readable wherever it resolves
+                # (the shared-DVC-cache case). Only the directory is
+                # refused, and skipping it keeps the rest of the resource
+                # scannable (gain#483).
+                logger.warning(
+                    "skipping symlinked directory <%s> in <%s>: resource "
+                    "files must not be reached through a symlinked "
+                    "directory",
+                    name, path)
                 continue
             raw_names.append(name)
 
@@ -1057,9 +1196,13 @@ class FsspecReadWriteProtocol(
 
         This joins the resource url itself and so does NOT go through
         ``get_resource_file_url``; the containment check is repeated here on
-        purpose -- see gain#467.
+        purpose -- see gain#467. Both halves are repeated: a ``.grr``
+        that is itself a symlink puts the state file outside the resource
+        just as surely as a traversing name does (gain#483).
         """
         validate_resource_file_name(resource.resource_id, filename)
+        self._validate_symlink_containment(
+            resource, f".grr/{filename}.state")
         resource_url = self.get_resource_url(resource)
         return os.path.join(resource_url, ".grr", f"{filename}.state")
 

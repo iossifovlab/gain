@@ -172,7 +172,7 @@ Resolving such a hit through the resource dict raised `KeyError` and took
 search down for the whole repository — the same shape again — so
 `search_resources` now skips an unresolvable row with a warning.
 
-### Known gap, out of scope: symlinks
+### Gap closed elsewhere: symlinks
 
 Containment is enforced on the *name*, and a symlink moves the escape into
 the *resolution*. A resource containing `sneak.txt -> /outside/secret.txt`
@@ -181,9 +181,11 @@ local `file` protocol — confirmed by execution. It is reachable in principle
 rather than theoretical: the mirrors grr-sync maintains are git clones, and
 git carries symlinks.
 
-Nothing here addresses that, and this ADR should not be read as claiming
-otherwise. Closing it means resolving each name against the resource root
-before opening it (or refusing to follow links at all), which is a different
-mechanism at a different layer — one that has to be reasoned about
-per-backend, since only `file` has symlinks at all. It is tracked as
-gain#483.
+Nothing in *this* ADR addresses that, and it should not be read as claiming
+otherwise. It is a different mechanism at a different layer, reasoned about
+per-backend since only `file` has symlinks at all, and it is decided in
+[0004](0004-resource-symlink-containment.md): symlinks are allowed, symlinked
+*directories* are not, and a symlinked leaf file may be read wherever it
+resolves but never written through. Note that the read-only framing above
+turned out to be too narrow — the same escape was a write and a delete, which
+0004 records.
