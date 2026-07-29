@@ -254,6 +254,11 @@ def test_cached_repository_inherits_containment(
 
     It also takes a per-file lock in the cache before delegating, and that
     lockfile path is built by a separate join of its own.
+
+    The remote is named ``remote`` rather than by its own directory: a
+    cached repo derives its cache directory from the protocol id, so the
+    absolute id ``build_filesystem_test_repository`` hands out by default is
+    refused outright (#460) and this test never reached its subject (#486).
     """
     remote_root = tmp_path / "remote"
     setup_directories(remote_root, {
@@ -262,7 +267,8 @@ def test_cached_repository_inherits_containment(
             "data.txt": "alabala",
         },
     })
-    remote_repo = build_filesystem_test_repository(remote_root)
+    remote_repo = build_filesystem_test_repository(
+        remote_root, proto_id="remote")
     cached_repo = GenomicResourceCachedRepo(
         remote_repo, str(tmp_path / "cache"))
 
