@@ -918,9 +918,14 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         facade parses, so it is float-only (an ``int`` score needs ``int()``
         semantics -- ``int("3.5")`` raises where ``float("3.5")`` does not).
         What a *consumer* additionally needs stays with the consumer: the
-        statistics scan also requires a position score, because its
-        accumulators assume a span weight and one value per position, and it
-        keeps asking that itself.
+        statistics scan also requires a bounded region and a resource kind it
+        is exercised against, and it keeps asking that itself (see
+        ``GenomicScoreImplementation._bulk_scan_eligible``).  What it does
+        NOT require is a particular record shape -- the accumulators used to
+        assume a position score's span weight and one value per position, and
+        since gain#421 they read the kind's own
+        ``RECORD_ORDERING``/``RECORD_WEIGHT_IS_SPAN``/``RECORDS_ARE_COUNTED``
+        instead, which is what let an allele and a fragment score in.
 
         Answerable on an UNOPENED score: the table and the score definitions
         are both built in ``__init__``, so nothing here touches the file.
