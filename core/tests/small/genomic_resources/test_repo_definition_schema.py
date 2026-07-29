@@ -237,6 +237,95 @@ def test_id_less_children_at_index_zero_of_two_groups_are_valid() -> None:
 
 
 # ---------------------------------------------------------------------------
+# A repository id must be a single safe path segment (#460)
+# ---------------------------------------------------------------------------
+
+def test_the_rejection_names_the_offending_child_id() -> None:
+    """The error has to say which id is wrong -- a group can have many."""
+    err = _invalid({"type": "group", "children": [
+        {"id": "ok", "type": "http", "url": "https://a.example.com"},
+        {"id": "../../escaped", "type": "http",
+         "url": "https://b.example.com"},
+    ]})
+    assert "../../escaped" in str(err)
+
+
+@pytest.mark.parametrize("unsafe_id", [
+    "../../escaped",
+    "sub/dir",
+    "windows\\dir",
+    "/etc/grrcache",
+    "C:cache",
+    "..",
+    ".",
+], ids=[
+    "traversal", "posix-separator", "windows-separator", "absolute",
+    "drive-prefix", "parent-dir", "current-dir",
+])
+def test_unsafe_child_id_is_rejected(unsafe_id: str) -> None:
+    """An id that is not a single path segment names a cache directory.
+
+    ``..`` and ``.`` are the cases a character-class check lets through:
+    both fully match the ``[a-zA-Z0-9._-]`` class of ``is_gr_id_token``,
+    and a single-segment ``..`` still escapes one directory level.
+    """
+    _invalid({"type": "group", "children": [
+        {"id": unsafe_id, "type": "http", "url": "https://a.example.com"},
+    ]})
+
+
+@pytest.mark.parametrize("unsafe_id", [
+    "..\n",
+    "\n..",
+    "..\t",
+    "..\r",
+    "a\nb",
+    "\x00",
+    "a\x00b",
+    "a\x1fb",
+    "a\x7fb",
+], ids=[
+    "parent-newline", "newline-parent", "parent-tab", "parent-cr",
+    "embedded-newline", "nul", "embedded-nul", "unit-separator", "delete",
+])
+def test_child_id_carrying_a_control_character_is_rejected(
+    unsafe_id: str,
+) -> None:
+    """A control character survives the segment check but not the url.
+
+    The id is joined onto a url and re-parsed to derive the cache path, and
+    ``urllib.parse.urlsplit`` DELETES tab, CR and LF from anywhere in a url.
+    So ``"..\\n"`` reads as a single segment here yet resolves to ``..`` --
+    one directory level above the configured ``cache_dir`` -- and ``"a\\nb"``
+    resolves to the same cache directory as the *different* id ``"ab"``,
+    which is the silent wrong-file collision the duplicate-id guard exists
+    to prevent. A NUL never reaches a filesystem call at all. The whole
+    class is rejected (#460).
+    """
+    _invalid({"type": "group", "children": [
+        {"id": unsafe_id, "type": "http", "url": "https://a.example.com"},
+    ]})
+
+
+@pytest.mark.parametrize("unsafe_id", ["../../escaped", "/etc/grrcache"])
+def test_unsafe_top_level_id_is_rejected(unsafe_id: str) -> None:
+    """A top-level repository names a cache directory by its own id too."""
+    _invalid({"id": unsafe_id, "type": "http", "url": "https://a.example.com",
+              "cache_dir": "/var/cache/grr"})
+
+
+@pytest.mark.parametrize("safe_id", [
+    "grr.iossifovlab.com", "my_repo-1", "main-GRR", "a", "..dotted",
+    "my grr",
+])
+def test_ordinary_single_segment_ids_stay_valid(safe_id: str) -> None:
+    """The check is about path shape only -- it is not an id-format policy."""
+    _valid({"type": "group", "children": [
+        {"id": safe_id, "type": "http", "url": "https://a.example.com"},
+    ]})
+
+
+# ---------------------------------------------------------------------------
 # Unknown type
 # ---------------------------------------------------------------------------
 

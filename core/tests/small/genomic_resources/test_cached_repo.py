@@ -24,6 +24,7 @@ from gain.genomic_resources.cli import (
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
     build_fsspec_protocol,
+    build_inmemory_protocol,
 )
 from gain.genomic_resources.genomic_scores import build_score_from_resource
 from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
@@ -36,7 +37,6 @@ from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
 from gain.genomic_resources.testing import (
-    build_inmemory_test_repository,
     build_s3_test_bucket,
     convert_to_tab_separated,
     s3_test_server_endpoint,
@@ -83,7 +83,24 @@ def cache_repository(
     def builder(
         content: dict[str, Any],
     ) -> Generator[GenomicResourceCachedRepo, None, None]:
-        remote_repo = build_inmemory_test_repository(content)
+        # A SHORT remote proto id, not ``build_inmemory_test_repository``'s
+        # absolute temp-dir path: the cache url is built with
+        # ``os.path.join(cache_url, proto_id)``, which an absolute proto id
+        # swallows whole -- the "cache" would land outside the configured
+        # cache directory entirely, which is now refused (#460). Same
+        # workaround as ``indexed_cache_repository`` and ``_build_cache_repo``
+        # below -- every shared helper that mints a protocol names it after
+        # its own absolute temp path, and changing that is a repo-wide edit
+        # of its own, so cache-backed fixtures work around it one at a time.
+        #
+        # This is also what made the ``[s3]`` parametrization of this
+        # fixture live for the first time: with an absolute proto id
+        # ``os.path.join`` discarded the s3 cache url, so ``[s3]`` quietly
+        # re-ran the ``[file]`` case on a local directory. What the live
+        # coverage exposed is gain#473.
+        remote_repo = GenomicResourceProtocolRepo(
+            build_inmemory_protocol(
+                "remote_repo", str(tmp_path / "remote"), content))
         scheme = grr_scheme
         if scheme == "s3":
             endpoint_url = s3_test_server_endpoint()
@@ -297,7 +314,22 @@ def test_cached_repository_file_level_cache(
 @pytest.mark.grr_full
 def test_filesystem_lock_implementation(
     cache_repository: CacheRepositoryBuilder,
+    grr_scheme: str,
+    request: pytest.FixtureRequest,
 ) -> None:
+    # KNOWN BROKEN on an S3 cache -- gain#473. ``obtain_resource_file_lock``
+    # returns a no-op ``NoLock`` for every scheme but ``file``, so both
+    # acquisitions below succeed and nothing times out. Deterministic, hence
+    # strict: the day the lock exists, this must stop being an xfail.
+    #
+    # The coverage is NEW, not newly broken: until #460 the fixture's remote
+    # carried an absolute proto id, which made ``os.path.join`` swallow the
+    # s3 cache url whole -- so ``[s3]`` cached to a LOCAL directory and
+    # silently re-ran the ``[file]`` case.
+    if grr_scheme == "s3":
+        request.applymarker(pytest.mark.xfail(
+            strict=True,
+            reason="gain#473: no file lock on a non-file cache scheme"))
     with cache_repository({
             "one": {
                 GR_CONF_FILE_NAME: "config",
@@ -719,8 +751,27 @@ def test_caching_protocol_file_exists(
 
 @pytest.mark.grr_full
 def test_concurrent_resource_access(
-        cache_repository: CacheRepositoryBuilder) -> None:
+        cache_repository: CacheRepositoryBuilder,
+        grr_scheme: str,
+        request: pytest.FixtureRequest) -> None:
     """Test concurrent access to same resource from multiple threads."""
+    # KNOWN BROKEN on an S3 cache -- gain#473, the same missing lock as in
+    # ``test_filesystem_lock_implementation``. Five threads race the same
+    # download onto one S3 key and a loser reads the half-written object
+    # -- it logs a truncated copy of data.txt, 0 bytes where 12 were
+    # expected, and then returns either an OSError from S3 or content that
+    # is not the file's.
+    #
+    # NOT strict, unlike the lock test above: this one is a race, and the
+    # threads occasionally miss each other. Measured on this branch, 6 of 7
+    # runs under the CI configuration (-n 5 --enable-s3-testing) fail and
+    # the seventh passed; run alone and unparallelised it passes every
+    # time. A strict xfail would turn a known bug into an intermittently
+    # red build.
+    if grr_scheme == "s3":
+        request.applymarker(pytest.mark.xfail(
+            strict=False,
+            reason="gain#473: no file lock on a non-file cache scheme"))
     with cache_repository({
             "one": {
                 GR_CONF_FILE_NAME: "",
@@ -1395,6 +1446,251 @@ def test_colliding_repository_ids_name_both_urls(
     assert "/a" in message
     assert "/b" in message
     assert "'id'" in message
+
+
+@pytest.mark.parametrize("unsafe_proto_id", [
+    "../../escaped", "sub/dir", "..", ".", "/absolute/gain460",
+    "..\n", "\n..", "..\t", "..\r", "a\nb", "\x00",
+], ids=[
+    "traversal", "separator", "parent-dir", "current-dir", "absolute",
+    "parent-newline", "newline-parent", "parent-tab", "parent-cr",
+    "embedded-newline", "nul",
+])
+def test_unsafe_repository_id_is_refused_by_the_cache(
+    tmp_path: pathlib.Path, unsafe_proto_id: str,
+) -> None:
+    """The cache directory is derived from the id, so it must be a segment.
+
+    Assembled from protocols directly, bypassing the factory -- the shape a
+    definition can no longer produce, since an unsafe ``id`` is now rejected
+    at validation. A group assembled programmatically never sees that
+    validation, so the guard has to hold here too (#460).
+
+    The absolute id is the shape the shared testing helpers mint
+    (``build_inmemory_test_repository`` names a protocol by its own
+    ``/tmp/...`` directory), and it is the one that discards the cache url
+    rather than merely climbing out of it. The control-character ids are
+    the ones a segment check alone waves through: ``urlsplit`` deletes tab,
+    CR and LF from the url the cache path is parsed out of, so ``"..\\n"``
+    resolves to ``..`` and ``"a\\nb"`` resolves to ``ab``.
+    """
+    repo = GenomicResourceCachedRepo(
+        GenomicResourceGroupRepo([_proto_repo(
+            tmp_path / "remote", unsafe_proto_id, {
+                "one(1.0)": {GR_CONF_FILE_NAME: "", "data.txt": "a"},
+            })], "top"),
+        f"file://{tmp_path}/cache")
+
+    with pytest.raises(ValueError, match="single path segment"):
+        list(repo.get_all_resources())
+
+
+def test_two_ids_a_url_folds_together_are_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Distinct ids that name ONE cache directory are the #445 corruption.
+
+    ``"ab"`` and ``"a\\nb"`` are different strings, so the duplicate-id
+    guard sees no collision -- but ``urlsplit`` deletes the newline from the
+    url the cache path comes from, so both resolve to the cache directory
+    ``ab``. The second repository's resources would then be served the
+    first's bytes, which is exactly what keying the cache by id is supposed
+    to prevent. Refused (#460).
+    """
+    repo = GenomicResourceCachedRepo(
+        GenomicResourceGroupRepo([
+            _proto_repo(tmp_path / "first", "ab", {
+                "one(1.0)": {GR_CONF_FILE_NAME: "", "data.txt": "first"},
+            }),
+            _proto_repo(tmp_path / "second", "a\nb", {
+                "one(1.0)": {GR_CONF_FILE_NAME: "", "data.txt": "second"},
+            }),
+        ], "top"),
+        f"file://{tmp_path}/cache")
+
+    with pytest.raises(ValueError, match="single path segment"):
+        list(repo.get_all_resources())
+
+    assert not (tmp_path / "cache" / "ab" / "one").exists()
+
+
+@pytest.mark.parametrize("mangled_proto_id", [
+    "..\n", "a\nb",
+], ids=["escape", "alias"])
+def test_the_cache_path_check_holds_without_the_id_predicate(
+    tmp_path: pathlib.Path, mocker: MockerFixture,
+    mangled_proto_id: str,
+) -> None:
+    """The two guards are independently sensitive -- on purpose.
+
+    ``is_safe_repo_id`` is a blocklist of what today's url parser mangles;
+    the next mangling surprise walks around it. So the join site also
+    asserts, positively, that the cache directory it is about to use is the
+    single directory ``<cache_url>/<proto_id>``. With the predicate stubbed
+    out to always say "safe", that assertion alone still refuses both an
+    escape and a fold-together -- and refuses them BEFORE anything is
+    created, since building a read-write protocol makes its root directory.
+    """
+    mocker.patch(
+        "gain.genomic_resources.cached_repository.is_safe_repo_id",
+        return_value=True)
+    repo = GenomicResourceCachedRepo(
+        GenomicResourceGroupRepo([_proto_repo(
+            tmp_path / "remote", mangled_proto_id, {
+                "one(1.0)": {GR_CONF_FILE_NAME: "", "data.txt": "a"},
+            })], "top"),
+        f"file://{tmp_path}/cache/inner")
+
+    with pytest.raises(ValueError, match="resolves to"):
+        list(repo.get_all_resources())
+
+    assert not (tmp_path / "cache").exists()
+
+
+def test_a_cache_protocol_that_resolved_elsewhere_is_refused(
+    tmp_path: pathlib.Path, mocker: MockerFixture,
+) -> None:
+    """The join site asks the built protocol where it actually landed.
+
+    Re-deriving the cache path from the url is the same arithmetic the
+    protocol does, so on its own it could only ever agree with itself. The
+    check is repeated against ``root_path`` of the object that was actually
+    built, which is what the caching writes go through -- if the two ever
+    disagree, the guard refuses rather than trusting its own copy of the
+    rule. Simulated here by a builder that hands back a protocol rooted
+    somewhere else entirely.
+    """
+    real_build = build_fsspec_protocol
+
+    def build_elsewhere(
+        proto_id: str, _url: str, **kwargs: Any,
+    ) -> Any:
+        return real_build(proto_id, f"file://{tmp_path}/elsewhere", **kwargs)
+
+    mocker.patch(
+        "gain.genomic_resources.cached_repository.build_fsspec_protocol",
+        side_effect=build_elsewhere)
+    repo = GenomicResourceCachedRepo(
+        GenomicResourceGroupRepo([_proto_repo(
+            tmp_path / "remote", "remote_repo", {
+                "one(1.0)": {GR_CONF_FILE_NAME: "", "data.txt": "a"},
+            })], "top"),
+        f"file://{tmp_path}/cache")
+
+    with pytest.raises(ValueError, match="resolves to"):
+        list(repo.get_all_resources())
+
+
+def _a_one_resource_grr(source_dir: pathlib.Path) -> None:
+    """Realize a filesystem GRR with a single ``one`` position score."""
+    (
+        a_grr()
+        .with_resource(
+            "one",
+            a_position_score()
+            .with_score("score", "float")
+            .with_data("""
+                chrom  pos_begin  score
+                chr1   10         0.1
+            """),
+        )
+        .build_repo(source_dir)
+    )
+
+
+@pytest.mark.parametrize("unsafe_id_template", [
+    "../../escaped",
+    "{tmp_path}/escaped",
+], ids=["traversal", "absolute"])
+def test_an_unsafe_child_id_never_writes_outside_the_cache_dir(
+    tmp_path: pathlib.Path,
+    unsafe_id_template: str,
+) -> None:
+    """The two reproductions from #460 must fail loudly, not write.
+
+    A child id is joined onto the cache url to name that child's cache
+    directory, so ``../../escaped`` climbed two levels out of the configured
+    ``cache_dir`` and an absolute id made the join discard the cache url
+    altogether -- the configured ``cache_dir`` was silently ignored and the
+    process wrote wherever the definition pointed. Both are refused now, and
+    ``<tmp_path>/escaped`` -- where each variant used to land -- stays absent.
+    """
+    source_dir = tmp_path / "grr_source"
+    _a_one_resource_grr(source_dir)
+    cache_dir = tmp_path / "cache" / "inner"
+
+    def build_and_cache() -> None:
+        repo = build_genomic_resource_repository({
+            "type": "group",
+            "cache_dir": str(cache_dir),
+            "children": [
+                {"id": unsafe_id_template.format(tmp_path=tmp_path),
+                 "type": "directory", "directory": str(source_dir)},
+            ]})
+        cache_resources(repo, ["one"], workers=1, progress=False)
+
+    with pytest.raises(ValueError, match="single path segment"):
+        build_and_cache()
+
+    assert not (tmp_path / "escaped").exists()
+    assert not cache_dir.exists()
+
+
+def test_a_control_character_child_id_never_writes_above_the_cache_dir(
+    tmp_path: pathlib.Path,
+) -> None:
+    """#460's criterion again, for the id that reads as a safe segment.
+
+    ``"..\\n"`` carries no separator and is not ``..``, so a segment check
+    alone passes it -- but the cache directory is parsed out of a url and
+    the parser drops the newline, so the cached bytes landed in
+    ``<cache_dir>/..``: one level above the configured cache directory,
+    which is what a cache_dir is supposed to bound. Refused when the
+    definition is loaded, and nothing under ``<tmp_path>/cache`` -- neither
+    the escape nor the cache directory itself -- is created.
+    """
+    source_dir = tmp_path / "grr_source"
+    _a_one_resource_grr(source_dir)
+
+    def build_and_cache() -> None:
+        repo = build_genomic_resource_repository({
+            "type": "group",
+            "cache_dir": str(tmp_path / "cache" / "inner"),
+            "children": [
+                {"id": "..\n",
+                 "type": "directory", "directory": str(source_dir)},
+            ]})
+        cache_resources(repo, ["one"], workers=1, progress=False)
+
+    with pytest.raises(ValueError, match="single path segment"):
+        build_and_cache()
+
+    assert not (tmp_path / "cache").exists()
+
+
+def test_children_that_omit_an_id_cache_under_the_cache_dir(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A synthesised id is a safe segment and must keep working.
+
+    The synthesis path (``_synthesise_repo_id``) is untouched by #460: it
+    slugifies the child's identity through a non-alphanumeric class and
+    appends a digest, so what it produces is always a single segment. This
+    pins that -- the cached bytes land under the configured ``cache_dir``.
+    """
+    source_dir = tmp_path / "grr_source"
+    _a_one_resource_grr(source_dir)
+    cache_dir = tmp_path / "cache"
+
+    repo = build_genomic_resource_repository({
+        "type": "group",
+        "cache_dir": str(cache_dir),
+        "children": [
+            {"type": "directory", "directory": str(source_dir)},
+        ]})
+    cache_resources(repo, ["one"], workers=1, progress=False)
+
+    assert [path.name for path in cache_dir.glob("*/one/*.txt")] == ["data.txt"]
 
 
 def test_find_and_get_resource_agree_on_a_missing_resource(
