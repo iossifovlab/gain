@@ -522,6 +522,72 @@ def test_allele_score_region_allele_filter(
     assert set(result["allele"]) == expected_alleles
 
 
+@pytest.mark.parametrize("allele_filter, expected_alleles", [
+    # a string literal on the left: substring of the column value
+    (
+        '"c" in ID',
+        {"1:10:A:C", "1:16:CA:G", "1:16:C:T", "1:16:C:A",
+         "1:16:C:CA", "1:16:C:CG"},
+    ),
+    (
+        '"cc" in ID',
+        {"1:16:C:CA", "1:16:C:CG"},
+    ),
+    # ... and the other way around: the column value inside the literal
+    (
+        'ID in "cag"',
+        {"1:10:A:G", "1:16:C:A", "1:16:CA:G"},
+    ),
+])
+def test_allele_score_region_allele_filter_in_operator(
+    allele_score_repository: GenomicResourceRepo,
+    allele_filter: str,
+    expected_alleles: set,
+) -> None:
+    """``in`` is containment, in both operand directions.
+
+    Documented in ``docs/source/annotation_infrastructure.rst``; the
+    published docs used to omit this operator entirely (#496).  The YAML
+    value is single-quoted so the literal's double quotes survive to the
+    filter parser.
+    """
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent(f"""
+            - allele_score:
+                resource_id: allele_score
+                allele_filter: '{allele_filter}'
+                attributes:
+                - source: allele
+        """),
+        allele_score_repository,
+    )
+    with pipeline.open() as work_pipeline:
+        result = work_pipeline.annotate(Region("1", 10, 16))
+    assert set(result["allele"]) == expected_alleles
+
+
+def test_allele_score_exact_match_allele_filter_in_operator(
+    allele_score_repository: GenomicResourceRepo,
+) -> None:
+    """``in`` filters exact-match lookups the same way as region ones."""
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent("""
+            - allele_score:
+                resource_id: allele_score
+                allele_filter: '"a" in ID'
+                attributes:
+                - source: freq
+                  name: allele_freq
+        """),
+        allele_score_repository,
+    )
+    with pipeline.open() as work_pipeline:
+        kept = work_pipeline.annotate(VCFAllele("1", 10, "A", "C"))
+        skipped = work_pipeline.annotate(VCFAllele("1", 16, "C", "CG"))
+    assert kept["allele_freq"] == pytest.approx(0.03)
+    assert skipped["allele_freq"] is None
+
+
 _UNPARSABLE_ALLELE_FILTER_CONFIG = textwrap.dedent("""
     - allele_score:
         resource_id: allele_score

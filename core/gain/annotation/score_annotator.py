@@ -384,7 +384,7 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
     ``allele_filter``
     -----------------
     An optional annotator-level boolean expression evaluated against each
-    the record predicate before it is included in the result.  Supported
+    record before it is included in the result.  Supported
     operators: ``>``, ``<``, ``==``, ``in``, ``and``, ``or``.  Variables
     resolve via ``GenomicScore.get_score_from_record``.
     """
