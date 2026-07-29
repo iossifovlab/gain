@@ -47,6 +47,26 @@ _PathOrStr = str | pathlib.Path
 # localhost/dev GRRs legitimately use it).
 _LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
+# A GRR cache is always a local directory: the caching protocol serialises
+# concurrent downloads with a lockfile, which only provides mutual exclusion
+# on a local filesystem. A ``cache_dir`` that carries a URL scheme used to be
+# interpolated into ``file://{cache_dir}``, silently producing a local
+# directory literally named ``s3:``. See #473.
+_URL_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://")
+
+
+def _build_cached_repository(
+    repo: GenomicResourceRepo, cache_dir: _PathOrStr,
+) -> GenomicResourceCachedRepo:
+    """Wrap ``repo`` in a cached repository rooted at a local ``cache_dir``."""
+    cache_dir = str(cache_dir)
+    if _URL_SCHEME_RE.match(cache_dir):
+        raise ValueError(
+            f"the GRR cache_dir must be a local filesystem path, not a URL: "
+            f"<{_redact_url_userinfo(cache_dir)}>; a GRR cache on a remote "
+            f"filesystem is not supported")
+    return GenomicResourceCachedRepo(repo, f"file://{cache_dir}")
+
 
 class _RepoDefinitionBase(BaseModel):
     # ``hide_input_in_errors=True`` keeps the raw input dict — which may carry
@@ -602,7 +622,7 @@ def _build_real_repository(
         return repo
 
     cache_dir = kwargs.pop("cache_dir")
-    return GenomicResourceCachedRepo(repo, f"file://{cache_dir}")
+    return _build_cached_repository(repo, cache_dir)
 
 
 def _build_group_repository(
@@ -638,7 +658,7 @@ def _build_group_repository(
         return repo
 
     cache_dir = kwargs.pop("cache_dir")
-    return GenomicResourceCachedRepo(repo, f"file://{cache_dir}")
+    return _build_cached_repository(repo, cache_dir)
 
 
 def build_genomic_resource_group_repository(
