@@ -392,18 +392,12 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             for scr_id in score_ids
         }
         with impl.score.open() as score:
-            # One statement of the rule, read by this path and by the bulk
-            # one: a fragment score also reports how many records it saw.
-            records_are_counted = score.RECORDS_ARE_COUNTED
             for _left, _right, rec in score.fetch_region_values(
                     chrom, start, end, score_ids):
                 for score_index, score_id in enumerate(score_ids):
-                    statistic = result[score_id]
-                    statistic.add_value(
+                    result[score_id].add_value(
                         rec[score_index],  # type: ignore
                     )
-                    if records_are_counted:
-                        statistic.add_count()
         return result
 
     @staticmethod
@@ -554,9 +548,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         the pre-built ``result`` -- empty histograms or seeded ``MinMaxValue``
         -- and the matching accumulator.  The opened score travels with each
         batch because it is what states this resource kind's record semantics
-        (``RECORD_ORDERING``, ``RECORD_WEIGHT_IS_SPAN``,
-        ``RECORDS_ARE_COUNTED``) -- read here and by the per-record path from
-        that one place.  Batches are keyed by SCORE ID: the
+        (``RECORD_ORDERING``, ``RECORD_WEIGHT_IS_SPAN``) -- read here and by
+        the per-record path from that one place.  Batches are keyed by SCORE
+        ID: the
         score resolves each id to its payload column itself (gain#398), so
         nothing here handles column indices.
         """
@@ -691,9 +685,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
           (:data:`_BULK_SCAN_RESOURCE_TYPES`): a position, allele or fragment
           score.  Its record semantics no longer have to be assumed -- the
           score class states them (``RECORD_ORDERING``,
-          ``RECORD_WEIGHT_IS_SPAN``, ``RECORDS_ARE_COUNTED``) and both scan
-          paths read them from there -- so what this test now excludes is only
-          ``np_score``, of which no production GRR has one;
+          ``RECORD_WEIGHT_IS_SPAN``) and both scan paths read them from there
+          -- so what this test now excludes is only ``np_score``, of which no
+          production GRR has one;
         * every score a ``float``: ``int()`` / ``str()`` parsing is not the
           float parse the bulk path does;
         * and the backend serves the bulk read at all -- asked of the score,
@@ -794,18 +788,12 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         with the nans dropped first -- an empty remainder contributes nothing --
         folded into the running ``MinMaxValue`` exactly as ``add_value`` seeds
         and combines them.
-
-        A kind whose records are counted (``RECORDS_ARE_COUNTED`` -- a fragment
-        score) also accrues one count per KEPT record, nan values included,
-        because that is what the per-record path counts and the number reaches
-        the serialized statistic.
         """
         pos_begin, pos_end, value_cells = arrays
         keep, _weights, prev_right = \
             GenomicScoreImplementation._clip_keep_guard(
                 pos_begin, pos_end, region, prev_right, score)
 
-        kept = int(keep.sum())
         for score_id, min_max in result.items():
             values = value_cells[score_id][keep]
             finite = values[~np.isnan(values)]
@@ -816,8 +804,6 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                     else min(min_max.min, low)
                 min_max.max = high if np.isnan(min_max.max) \
                     else max(min_max.max, high)
-            if score.RECORDS_ARE_COUNTED:
-                min_max.add_count(kept)
         return prev_right
 
     @staticmethod
@@ -931,12 +917,16 @@ class FragmentScoreImplementation(GenomicScoreImplementation):
     """Assists in the management of a fragment score resource.
 
     Carries no statistics behaviour of its own.  It used to override the
-    per-record histogram add (pinning a fragment's weight to 1) and the
-    per-record min/max add (adding a record count) -- an independent second
-    statement of rules the bulk scan had to restate for itself, and could
-    only restate by assuming position-score semantics.  Both rules are now
-    declared once on ``FragmentScore`` (``RECORD_WEIGHT_IS_SPAN``,
-    ``RECORDS_ARE_COUNTED``) and read by both scan paths (gain#421).
+    per-record histogram add, pinning a fragment's weight to 1 -- an
+    independent second statement of a rule the bulk scan had to restate for
+    itself, and could only restate by assuming position-score semantics.  It
+    is now declared once on ``FragmentScore`` (``RECORD_WEIGHT_IS_SPAN``) and
+    read by both scan paths (gain#421).
+
+    Its sibling override added a record count to the min/max statistic; that
+    count had no consumer anywhere in the stack and no deployed GRR ever
+    carried it, so gain#421 removed it outright rather than teaching a second
+    path to reproduce it.
     """
     # pylint: disable=useless-parent-delegation
 

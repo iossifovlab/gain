@@ -28,11 +28,10 @@ def test_min_max_value_add_value() -> None:
 def test_min_max_value_merge_with_min_max_statistics() -> None:
     """Test merging min max value statistic with another statistic"""
     min_max_value = MinMaxValue("test_score", 5, 10)
-    other_min_max_value = MinMaxValue("test_score", 7, 15, 2)
+    other_min_max_value = MinMaxValue("test_score", 7, 15)
     min_max_value.merge(other_min_max_value)
     assert min_max_value.min == 5
     assert min_max_value.max == 15
-    assert min_max_value.count == 2
 
 
 def test_min_max_value_merge_with_different_scores() -> None:
@@ -43,29 +42,12 @@ def test_min_max_value_merge_with_different_scores() -> None:
     assert "different scores" in str(error_msg.value)
 
 
-def test_min_max_value_add_count() -> None:
-    """Test min max value statistic count"""
-    min_max_value = MinMaxValue("test_score", 5, 10)
-
-    assert min_max_value.count == 0
-    min_max_value.add_count(9)
-    assert min_max_value.count == 9
-    min_max_value.add_count(11)
-    assert min_max_value.count == 20
-
-
 def test_min_max_value_serialize() -> None:
     """Test min max value serialize"""
     min_max_value = MinMaxValue("test_score", 5, 10)
 
     min_max_serialized = min_max_value.serialize()
     assert min_max_serialized == "max: 10\nmin: 5\nscore_id: test_score\n"
-
-    min_max_value.add_count(7)
-    min_max_serialized = min_max_value.serialize()
-    assert min_max_serialized == (
-        "count: 7\nmax: 10\nmin: 5\nscore_id: test_score\n"
-    )
 
 
 def test_min_max_value_deserialize() -> None:
@@ -78,6 +60,9 @@ def test_min_max_value_deserialize() -> None:
     assert min_max_value.min == 5
     assert min_max_value.max == 10
 
+
+def test_min_max_value_deserialize_ignores_a_legacy_count() -> None:
+    """A fragment score's record count (gain#421) is no longer read back."""
     min_max_value = MinMaxValue.deserialize(
         "count: 7\nmax: 10\nmin: 5\nscore_id: test_score\n",
     )
@@ -85,7 +70,7 @@ def test_min_max_value_deserialize() -> None:
     assert min_max_value.score_id == "test_score"
     assert min_max_value.min == 5
     assert min_max_value.max == 10
-    assert min_max_value.count == 7
+    assert not hasattr(min_max_value, "count")
 
 
 def test_min_max_value_statistic_mixin() -> None:

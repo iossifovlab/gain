@@ -254,8 +254,11 @@ def test_fragment_score_implementation_do_min_max(
         fragments_resource, ["freq"], "2", 0, 300,
     )
 
+    # A fragment score used to accrue a record count here as well; gain#421
+    # removed it, having found no consumer for it anywhere in the stack.
     assert isinstance(statistics["freq"], MinMaxValue)
-    assert statistics["freq"].count == 3
+    assert statistics["freq"].min == 0.00001
+    assert statistics["freq"].max == 0.3
 
 
 def test_cli_manage_fragment_score_histograms(

@@ -143,17 +143,31 @@ statements of one rule is exactly the drift this ADR exists to guard against,
 one layer up from the drift it was written about.
 
 So gain#421 did not widen the gate by writing a second set of accumulators. It
-moved each kind's record semantics onto the score class as three facts, and made
+moved each kind's record semantics onto the score class as two facts, and made
 **both** scan paths read them there:
 
 | fact | `PositionScore` | `AlleleScore` | `FragmentScore` |
 | --- | --- | --- | --- |
 | `RECORD_ORDERING` | `DISJOINT` — two records touching is a data error | `SHARED` | `SHARED` |
 | `RECORD_WEIGHT_IS_SPAN` | `True` — one count per covered base pair | `False` | `False` |
-| `RECORDS_ARE_COUNTED` | `False` | `False` | `True` — min/max also reports how many records it saw |
+
+A third fact was drafted and then dropped. `FragmentScoreImplementation` also
+overrode the per-record min/max add to accrue a **record count**, which the bulk
+path returned as 0 — so the first draft declared `RECORDS_ARE_COUNTED` to make
+the two agree. Tracing the count to its origin
+(`2adeb08fb`, Feb 2025, "Count is used with cnv collection implementations")
+found it has **no consumer anywhere in the stack**: nothing reads
+`MinMaxValue.count`, `MinMaxValueStatisticMixin.get_min_max_file` has no
+callers, `MinMaxValue.serialize` is never invoked outside tests, and all four
+deployed GRRs (`grr`, `grr_encode`, `grr_seqpipe`, `grr_sfari`, 272 resources)
+contain **zero** `min_max_*.yaml` files. It was a producer feeding a serializer
+that is never called, writing a file that is never created. Rather than teach a
+second path to reproduce it, gain#421 removed the count outright —
+from `MinMaxValue` as well as from both scan paths. `MinMaxValue.deserialize`
+ignores a stray `count:` key rather than rejecting it.
 
 The bulk path reads the flags per batch (it has no record to hand a per-record
-hook); the per-record path reads the same flags per record; and
+hook); the per-record path reads the same flag per record; and
 `GenomicScore._record_weight`, the weight the annotators' `aggregate_region`
 applies, derives from `RECORD_WEIGHT_IS_SPAN` rather than restating it. The
 defaults on `GenomicScore` are the "one record, one count" rule, so a kind that
@@ -194,10 +208,9 @@ which asserted the opposite of the shipped code) and missing tests, which is the
 same failure mode one layer up.
 
 The gap worth naming: `_SCAN_BATCH_SIZE` is 100_000 and every fixture holds a
-handful of records, so every new test ran in exactly **one batch** — while
-`RECORDS_ARE_COUNTED` accrues its count once per batch and the overlap guard
-carries `prev_right` across batches. A boundary bug was invisible by
-construction. `test_scan_bulk_allele_fragment.py` now forces batch sizes of
+handful of records, so every new test ran in exactly **one batch** — while every
+histogram bar is accrued once per batch and the overlap guard carries
+`prev_right` across batches. A boundary bug was invisible by construction. `test_scan_bulk_allele_fragment.py` now forces batch sizes of
 1/2/3/100 over five-record fixtures, clipped and unclipped, counts the batches
 actually consumed (`batch_size` is a hint a backend may ignore), and pins the
 degenerate shapes an average-looking fixture never reaches: an all-NA column,

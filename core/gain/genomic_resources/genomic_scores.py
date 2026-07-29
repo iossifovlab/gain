@@ -225,10 +225,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     # BOTH statistics scan paths -- the per-record one and the vectorized bulk
     # one.  They used to be stated twice: once implicitly in the per-record
     # accumulators (a ``FragmentScoreImplementation`` override that pinned the
-    # weight to 1 and added a record count) and once in the bulk clip/guard
-    # helper, which simply assumed position-score semantics and was gated to
-    # position scores because of it.  Two statements of one rule is how the
-    # paths drift, so there is now one (gain#421).
+    # weight to 1) and once in the bulk clip/guard helper, which simply
+    # assumed position-score semantics and was gated to position scores
+    # because of it.  Two statements of one rule is how the paths drift, so
+    # there is now one (gain#421).
     #
     # The defaults are the "one record, one count" rule that everything except
     # a position score follows.  ``RECORD_WEIGHT_IS_SPAN`` is also where
@@ -236,7 +236,6 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     # aggregation applies -- reads the rule from, so the two cannot disagree.
     RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.SHARED
     RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
-    RECORDS_ARE_COUNTED: ClassVar[bool] = False
 
     # What each fetched line is wrapped in.  Installed by :meth:`open`, from
     # the table's ``yields_records`` claim, and declared here with NO default
@@ -923,9 +922,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         ``GenomicScoreImplementation._bulk_scan_eligible``).  What it does
         NOT require is a particular record shape -- the accumulators used to
         assume a position score's span weight and one value per position, and
-        since gain#421 they read the kind's own
-        ``RECORD_ORDERING``/``RECORD_WEIGHT_IS_SPAN``/``RECORDS_ARE_COUNTED``
-        instead, which is what let an allele and a fragment score in.
+        since gain#421 they read the kind's own ``RECORD_ORDERING`` and
+        ``RECORD_WEIGHT_IS_SPAN`` instead, which is what let an allele and a
+        fragment score in.
 
         Answerable on an UNOPENED score: the table and the score definitions
         are both built in ``__init__``, so nothing here touches the file.
@@ -1323,7 +1322,6 @@ class PositionScore(GenomicScore):
     # once per base pair of the queried region it covers.
     RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.DISJOINT
     RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = True
-    RECORDS_ARE_COUNTED: ClassVar[bool] = False
 
     # No ``_record_weight`` override: the base derives the per-record weight
     # from ``RECORD_WEIGHT_IS_SPAN`` above, so the span rule is stated once
@@ -1540,7 +1538,6 @@ class AlleleScore(GenomicScore):
     # a different choice, it would disagree with the per-record read.
     RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.SHARED
     RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
-    RECORDS_ARE_COUNTED: ClassVar[bool] = False
 
     class Mode(enum.Enum):
         """Allele score mode."""
@@ -1770,12 +1767,9 @@ class FragmentScore(GenomicScore):
     :data:`FRAGMENT_SCORE_TYPES`.
     """
 
-    # Fragments overlap freely, each weighs 1 however long it is, and the
-    # min/max statistic of a fragment score also reports how many records it
-    # saw -- a count that reaches the serialized statistic.
+    # Fragments overlap freely and each weighs 1 however long it is.
     RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.SHARED
     RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
-    RECORDS_ARE_COUNTED: ClassVar[bool] = True
 
     # As AlleleScore, except that strings join rather than list -- a fragment
     # score's string attributes are rendered into one cell.  This table is
