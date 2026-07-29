@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import os
+import posixpath
 import sys
 import threading
 from collections.abc import Callable, Generator, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import IO, Any, cast
+from urllib.parse import urlparse
 
 import apsw
 import pysam
@@ -375,6 +377,51 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
                 search_term, resource_type):
             yield self._to_cache_resource(remote_resource)
 
+    def _check_cache_dir_is_the_id_under_the_cache_url(
+        self, proto_id: str, cache_dir_path: str,
+    ) -> None:
+        """Refuse a cache path that is not ``<cache_url>/<proto_id>``.
+
+        The positive half of the id guard. ``is_safe_repo_id`` enumerates
+        the shapes known to move the cache -- a blocklist, and every
+        blocklist is one url-parser change behind. This states the invariant
+        the blocklist exists to protect instead: whatever the id, the
+        directory this repository caches into is the single directory named
+        by that id, directly under the configured cache url. An id that
+        climbs out (``..``) fails the parent half; one that a url parser
+        rewrites on the way in (``a\\nb`` arriving as ``ab``, ``a?b``
+        arriving as ``a``) fails the name half, which is the same
+        wrong-bytes collision two repositories sharing a cache directory
+        would cause.
+
+        Only the path is compared. To reach a different host or bucket the
+        join would have to have discarded ``cache_url`` outright -- which
+        the parent comparison already catches, because what is left is not
+        under it.
+
+        A falsy id is exempt in the same way it is exempt from
+        ``is_safe_repo_id``: it names no directory, so it caches into the
+        cache root itself, as it always has. That is still inside the
+        configured cache directory, and two of them collide on the
+        duplicate-id guard rather than on this one.
+        """
+        # ``or "/"``: a cache url that is a bare bucket (``s3://bucket``)
+        # parses to an empty path, while the child protocol built under it
+        # parses to ``/<proto_id>`` -- the root, spelled out.
+        cache_root = posixpath.normpath(urlparse(self.cache_url).path or "/")
+        cache_dir = posixpath.normpath(cache_dir_path)
+        if not proto_id:
+            if cache_dir == cache_root:
+                return
+        elif (posixpath.dirname(cache_dir) == cache_root
+                and posixpath.basename(cache_dir) == proto_id):
+            return
+        raise ValueError(
+            f"the cache directory for repository id {proto_id!r} in "
+            f"{self.repo_id} resolves to {cache_dir!r}, which is not "
+            f"{proto_id!r} under the configured cache directory "
+            f"{self.cache_url!r}; refusing to cache there")
+
     def _get_or_create_cache_proto(
             self, proto: ReadOnlyRepositoryProtocol) -> CachingProtocol:
         """Return the caching protocol wrapping ``proto``.
@@ -409,18 +456,28 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
         can no longer reach this either -- an unsafe ``id`` fails validation,
         and a synthesised id is a safe segment by construction -- but a
         programmatically assembled group can, exactly as with a duplicate id.
+
+        That id check is a blocklist, and the join below goes through a url
+        parser that quietly rewrites some ids on the way in.
+        ``_check_cache_dir_is_the_id_under_the_cache_url`` states the
+        invariant positively instead, and is applied to the url this method
+        builds and to the protocol that comes back from building it.
         """
         proto_id = proto.proto_id
         # A falsy proto id is left alone -- it caches into the cache root, as
         # it always has, and two of them collide on the duplicate-id guard
         # below. Only a path-unsafe id is refused here.
         if proto_id and not is_safe_repo_id(proto_id):
+            # ``!r``, not ``<...>``: an id refused for carrying a control
+            # character prints as nothing at all otherwise.
             raise ValueError(
-                f"repository id <{proto_id}> in {self.repo_id} cannot be "
+                f"repository id {proto_id!r} in {self.repo_id} cannot be "
                 f"used as a cache directory name; a repository id must be a "
                 f"single path segment -- no path separator, no absolute "
-                f"path, and not '.' or '..' -- give the repository its own "
-                f"'id' in the GRR definition")
+                f"path, no control character, and not '.' or '..'. Rename "
+                f"this repository where it is constructed: a definition "
+                f"carrying such an id is refused when it is loaded, so a "
+                f"repository that got here was assembled without one")
         # get / construct / assign must be atomic: two threads racing the
         # first call for one ``proto_id`` would each build a protocol, and
         # the one that lost the assignment is an orphan -- unreachable from
@@ -440,6 +497,11 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
                 return existing
 
             cached_proto_url = os.path.join(self.cache_url, proto_id)
+            # Before building: constructing a read-write protocol MAKES its
+            # root directory, so a check that ran only on the object handed
+            # back would refuse a directory it had already created.
+            self._check_cache_dir_is_the_id_under_the_cache_url(
+                proto_id, urlparse(cached_proto_url).path)
             logger.debug(
                 "going to create cached protocol with url: %s",
                 cached_proto_url)
@@ -448,6 +510,12 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
                 f"{proto_id}.cached",
                 cached_proto_url,
                 **self.additional_kwargs)
+            # And again on the protocol that was actually built. The call
+            # above re-derives what the protocol does with the url; this one
+            # asks the object the caching writes go through, so the guard
+            # cannot drift away from the thing it is guarding.
+            self._check_cache_dir_is_the_id_under_the_cache_url(
+                proto_id, cache_proto.root_path)
             if not isinstance(cache_proto, FsspecReadWriteProtocol):
                 # ValueError, not TypeError: this reports a bad cache_url in
                 # the GRR definition, not a caller passing the wrong type.

@@ -68,10 +68,14 @@ class _RepoDefinitionBase(BaseModel):
         ``GenomicResourceCachedRepo._get_or_create_cache_proto``), so an id
         carrying a path separator, an absolute-path prefix, or ``.``/``..``
         moves cached data out of the configured ``cache_dir`` -- an absolute
-        id discards it entirely. The id is rejected here, when the
-        definition is loaded, rather than sanitised: rewriting it would
-        make the cache layout unpredictable and hide the mistake from the
-        operator, exactly as with a duplicate id (#460).
+        id discards it entirely. A control character does the same thing
+        less visibly: the cache path is parsed out of a url, and a url
+        parser deletes tab, CR and LF, so ``"..\\n"`` arrives as ``..``.
+
+        The id is rejected here, when the definition is loaded, rather than
+        sanitised: rewriting it would make the cache layout unpredictable
+        and hide the mistake from the operator, exactly as with a duplicate
+        id (#460).
 
         Lives on the base model so it covers every definition type: any of
         them can be a group child, and a top-level repository is cached by
@@ -81,10 +85,13 @@ class _RepoDefinitionBase(BaseModel):
         # -- ``_resolve_child_repo_id`` synthesises one for it -- and is not a
         # traversal. Naming an unnamed repository is a separate question.
         if value and not is_safe_repo_id(value):
+            # ``!r``, not ``<...>``: an id refused for carrying a control
+            # character prints as nothing at all otherwise.
             raise ValueError(
-                f"invalid repository id <{value}>: a repository id names a "
+                f"invalid repository id {value!r}: a repository id names a "
                 f"cache directory, so it must be a single path segment -- "
-                f"no path separator, no absolute path, and not '.' or '..'")
+                f"no path separator, no absolute path, no control "
+                f"character, and not '.' or '..'")
         return value
 
 

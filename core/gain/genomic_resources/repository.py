@@ -119,6 +119,19 @@ def is_gr_id_token(token: str) -> bool:
 # segment under either reading.
 _PATH_SEPARATORS = ("/", "\\")
 
+# ``urllib.parse.urlsplit`` DELETES ASCII tab, CR and LF from anywhere in a
+# url -- and the id is joined onto a url that is then re-parsed to derive the
+# cache path. An id carrying one of them therefore reads as a single segment
+# here while resolving to a DIFFERENT one: ``"..\\n"`` becomes ``..`` (one
+# level above the cache directory) and ``"a\\nb"`` becomes ``ab``, silently
+# sharing the cache directory of a genuinely different id. A NUL is not a
+# url problem but a filesystem one -- it reaches the ``mkdir`` call and dies
+# there with a message about nothing the operator wrote. The whole C0/C1
+# range goes rather than the four characters that bite today: none of them
+# belongs in a directory name, and a list tuned to one url parser's current
+# quirks is one parser change away from a hole.
+_CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
 
 def is_safe_repo_id(repo_id: str) -> bool:
     """Check if ``repo_id`` is usable as a single filesystem path segment.
@@ -130,12 +143,24 @@ def is_safe_repo_id(repo_id: str) -> bool:
     absolute id makes ``os.path.join`` discard the cache url altogether. Such
     an id is a configuration error and is rejected, never rewritten (#460).
 
-    Safe means exactly one non-empty path segment: no separator of either
-    platform, no drive or UNC prefix, and not ``.`` or ``..``. An empty id
-    is not a segment either, but it is not a traversal: a falsy id already
-    means "unnamed" everywhere it is read (``_resolve_child_repo_id``
-    synthesises one, ``find_resource`` treats it as "no filter"), so its
-    callers decide what to do with it rather than this predicate.
+    Safe means exactly one non-empty path segment that still names that
+    same segment after a round trip through a url. Each check earns its
+    keep separately: the separator check rules out ``sub/dir``,
+    ``../../escaped`` and an absolute ``/etc/grrcache`` -- and, because a
+    UNC prefix (``\\\\server\\share``, ``//server/share``, ``\\\\?\\C:\\x``)
+    always carries separators, those too; :func:`ntpath.splitdrive` adds
+    the one absolute-ish prefix that has no separator in it, ``C:cache``,
+    which ``os.path.join`` on Windows resolves against that drive's current
+    directory; the control-character check covers the id that changes shape
+    when it is parsed as part of a url (see ``_CONTROL_CHARACTER_RE``); and
+    ``.`` and ``..`` are spelled out because they are ordinary segments to
+    every one of the checks above.
+
+    An empty id is not a segment either, but it is not a traversal: a falsy
+    id already means "unnamed" everywhere it is read
+    (``_resolve_child_repo_id`` synthesises one, ``find_resource`` treats it
+    as "no filter"), so its callers decide what to do with it rather than
+    this predicate.
 
     Deliberately NOT built on :func:`is_gr_id_token`. That helper enforces a
     character class (``[a-zA-Z0-9._-]``), which is both too weak and too
@@ -146,6 +171,8 @@ def is_safe_repo_id(repo_id: str) -> bool:
     check answers only the path question.
     """
     if not repo_id or repo_id in {".", ".."}:
+        return False
+    if _CONTROL_CHARACTER_RE.search(repo_id):
         return False
     if any(separator in repo_id for separator in _PATH_SEPARATORS):
         return False

@@ -274,6 +274,39 @@ def test_unsafe_child_id_is_rejected(unsafe_id: str) -> None:
     ]})
 
 
+@pytest.mark.parametrize("unsafe_id", [
+    "..\n",
+    "\n..",
+    "..\t",
+    "..\r",
+    "a\nb",
+    "\x00",
+    "a\x00b",
+    "a\x1fb",
+    "a\x7fb",
+], ids=[
+    "parent-newline", "newline-parent", "parent-tab", "parent-cr",
+    "embedded-newline", "nul", "embedded-nul", "unit-separator", "delete",
+])
+def test_child_id_carrying_a_control_character_is_rejected(
+    unsafe_id: str,
+) -> None:
+    """A control character survives the segment check but not the url.
+
+    The id is joined onto a url and re-parsed to derive the cache path, and
+    ``urllib.parse.urlsplit`` DELETES tab, CR and LF from anywhere in a url.
+    So ``"..\\n"`` reads as a single segment here yet resolves to ``..`` --
+    one directory level above the configured ``cache_dir`` -- and ``"a\\nb"``
+    resolves to the same cache directory as the *different* id ``"ab"``,
+    which is the silent wrong-file collision the duplicate-id guard exists
+    to prevent. A NUL never reaches a filesystem call at all. The whole
+    class is rejected (#460).
+    """
+    _invalid({"type": "group", "children": [
+        {"id": unsafe_id, "type": "http", "url": "https://a.example.com"},
+    ]})
+
+
 @pytest.mark.parametrize("unsafe_id", ["../../escaped", "/etc/grrcache"])
 def test_unsafe_top_level_id_is_rejected(unsafe_id: str) -> None:
     """A top-level repository names a cache directory by its own id too."""
