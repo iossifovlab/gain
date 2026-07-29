@@ -18,7 +18,6 @@ from collections.abc import Callable, Generator
 from contextlib import AbstractContextManager
 from dataclasses import asdict
 from threading import Lock
-from types import TracebackType
 from typing import (
     IO,
     Any,
@@ -711,33 +710,33 @@ class FsspecReadWriteProtocol(
         (gain#467).
         """
         if self.scheme != "file":
-            raise NotImplementedError
+            raise NotImplementedError(self._non_local_lock_message())
         validate_resource_file_name(resource.resource_id, filename)
         resource_url = self.get_resource_url(resource)
         path = os.path.join(resource_url, ".grr", f"{filename}.lockfile")
         return path.removeprefix(f"{self.scheme}://")
 
+    def _non_local_lock_message(self) -> str:
+        return (
+            f"resource file locking is only supported on a local "
+            f"filesystem; {self.get_url()} uses the unsupported scheme "
+            f"<{self.scheme}>")
+
     def obtain_resource_file_lock(
         self, resource: GenomicResource, filename: str,
         timeout: float = -1,
     ) -> AbstractContextManager:
-        """Lock a resource's file."""
+        """Lock a resource's file.
 
-        class NoLock:
-            """Lock representation."""
-
-            def __enter__(self) -> None:
-                pass
-
-            def __exit__(
-                    self,
-                    exc_type: type[BaseException] | None,
-                    exc_value: BaseException | None,
-                    exc_tb: TracebackType | None) -> bool:
-                return exc_type is None
-
+        The lock is a lockfile, which only provides mutual exclusion on a
+        local filesystem. Off ``file`` this used to return a no-op context
+        manager -- every caller "acquired" it instantly, so the caching
+        protocol serialised nothing and concurrent readers saw partially
+        written files. Refuse rather than hand out a lock that does not
+        lock; a GRR cache must be local. See #473.
+        """
         if self.scheme != "file":
-            return NoLock()
+            raise NotImplementedError(self._non_local_lock_message())
 
         lockfile = self._get_resource_file_lockfile_path(resource, filename)
         return FileLock(lockfile, timeout=timeout)
