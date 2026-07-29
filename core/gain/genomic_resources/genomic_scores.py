@@ -53,6 +53,9 @@ from gain.genomic_resources.repository_factory import (
 from gain.genomic_resources.resource_implementation import (
     get_base_resource_schema,
 )
+from gain.genomic_resources.resource_types import (
+    FRAGMENT_SCORE_TYPES,
+)
 from gain.genomic_resources.score_def import (
     SCORE_TYPE_PARSERS,
     GenomicScoreDef,
@@ -1691,8 +1694,8 @@ class FragmentScore(GenomicScore):
     """A genomic score over fragments -- intervals carrying attributes.
 
     Nothing here is copy-number specific; a CNV collection is one
-    application of it.  The resource type string stayed ``cnv_collection``
-    when the Python names moved (gain#470); gain#471 widens it.
+    application of it.  Accepts either resource type in
+    :data:`FRAGMENT_SCORE_TYPES`.
     """
 
     # As AlleleScore, except that strings join rather than list -- a fragment
@@ -1711,10 +1714,12 @@ class FragmentScore(GenomicScore):
     }
 
     def __init__(self, resource: GenomicResource):
-        if resource.get_type() != "cnv_collection":
+        if resource.get_type() not in FRAGMENT_SCORE_TYPES:
+            accepted = " or ".join(
+                f"'{score_type}'" for score_type in FRAGMENT_SCORE_TYPES)
             raise ValueError(
                 "The resource provided to FragmentScore should be of "
-                f"'cnv_collection' type, not a '{resource.get_type()}'")
+                f"{accepted} type, not a '{resource.get_type()}'")
         super().__init__(resource)
 
     @staticmethod
@@ -1864,7 +1869,7 @@ def build_score_from_resource(
         return build_position_score_from_resource(resource)
     if resource_type in {"allele_score", "np_score"}:
         return build_allele_score_from_resource(resource)
-    if resource_type == "cnv_collection":
+    if resource_type in FRAGMENT_SCORE_TYPES:
         return build_fragment_score_from_resource(resource)
 
     raise ValueError(

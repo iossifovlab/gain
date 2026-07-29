@@ -564,43 +564,60 @@ This example rewrites specific contig names using an explicit mapping table (for
           "MT": chrM
 
 
-cnv_collection_annotator
-^^^^^^^^^^^^^^
+fragment_score_annotator
+^^^^^^^^^^^^^^^^^^^^^^^^
 
-``cnv_collection annotator`` reports copy-number variants (CNVs) that overlap each input locus.
-A CNV collection resource stores CNV intervals (and optional associated fields such as CNV type, frequency, or dataset labels), 
-and during annotation GAIn performs an interval overlap query at the annotatable's genomic coordinates to retrieve matching CNV events.
+``fragment_score_annotator`` reports genomic *fragments* -- intervals carrying attributes --
+that overlap each input locus. A fragment score resource stores those intervals together with
+optional associated fields (for example type, frequency, or dataset labels), and during
+annotation GAIn performs an interval overlap query at the annotatable's genomic coordinates to
+retrieve matching fragments.
 
-A ``cnv_collection_annotator`` can be used with a minimal configuration. If you omit the ``attributes`` section, GAIn uses the resource's default annotation, 
-which reports the count of overlapping CNV events in the collection for each input annotatable (i.e., how many CNVs in the database overlap that locus).
+Copy-number variants are the most common thing to store this way, which is why this annotator
+and its resource type were once called ``cnv_collection``. Nothing about either is specific to
+copy number.
+
+.. note::
+
+    **The older names still work and are not deprecated.** ``cnv_collection`` and
+    ``cnv_collection_annotator`` remain accepted as annotator names, ``type: cnv_collection``
+    remains accepted as a resource type, and ``cnv_filter:`` remains accepted as the filter
+    parameter. Existing pipelines and resources need no change. Prefer the ``fragment_score``
+    spellings in new configuration.
+
+    Do not configure both ``fragment_filter:`` and ``cnv_filter:`` on one annotator -- they are
+    two spellings of one parameter, and GAIn refuses the pipeline rather than pick one.
+
+A ``fragment_score_annotator`` can be used with a minimal configuration. If you omit the ``attributes`` section, GAIn uses the resource's default annotation,
+which reports the count of overlapping fragments in the resource for each input annotatable (i.e., how many fragments in the database overlap that locus).
 
 .. code:: yaml
 
-    - cnv_collection_annotator:
+    - fragment_score_annotator:
         resource_id: <resource id>
 
 
 When you do specify attributes, the syntax is slightly different from score annotators:
 you request fields using the ``attribute.<id>`` form, where ``<id>`` refers to an exposed attribute
-in the CNV collection resource (for example, class, frequency, dataset label). In addition, you can use
-``cnv_filter:`` and request only results gated by specific values of an attribute.
+in the fragment score resource (for example, class, frequency, dataset label). In addition, you can use
+``fragment_filter:`` and request only results gated by specific values of an attribute.
 
 .. code:: yaml
 
-    - cnv_collection_annotator:
+    - fragment_score_annotator:
         resource_id: <resource id>
-        cnv_filter: <attribute1 id> == deletion
+        fragment_filter: <attribute1 id> == deletion
         attributes:
         - attribute.<attribute1 id>
         - attribute.<attribute2 id>
 
-Score attributes (all attributes other than ``count``) can overlap multiple CNV records per
+Score attributes (all attributes other than ``count``) can overlap multiple fragments per
 annotatable. Each score attribute carries a resource-defined aggregator default and supports
 override via ``aggregator``:
 
 .. code:: yaml
 
-    - cnv_collection_annotator:
+    - fragment_score_annotator:
         resource_id: <resource id>
         attributes:
         - source: attribute.<score attribute id>
@@ -1633,10 +1650,10 @@ This produces ``annotation_6.txt`` with the lifted-over annotatable plus the hg1
     chr7,117587806,G,A,"VCFAllele(7,117227860,G,A)",0.554
 
 
-6. CNV collection annotation
+6. Fragment score annotation (CNVs)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-A `cnv_collection_annotator` reports copy-number variant (CNV) events whose intervals overlap each 
+A `fragment_score_annotator` reports copy-number variant (CNV) events whose intervals overlap each 
 input locus. If you do not specify any attributes, the annotator reports the number of overlapping 
 CNV events observed in the collection as ``count``.
 
@@ -1644,7 +1661,7 @@ Create a file called ``annotation_pipeline_cnv_1.yaml`` with the following conte
 
 .. code:: yaml
 
-    - cnv_collection_annotator:
+    - fragment_score_annotator:
         resource_id: hg38/cnv_collections/DGV
 
 
@@ -1675,7 +1692,7 @@ Create a file called annotation_pipeline_cnv_2.yaml:
 
 .. code:: yaml
 
-    - cnv_collection_annotator:
+    - fragment_score_annotator:
         resource_id: hg38/cnv_collections/DGV
         attributes:
           - attribute.deletion_duplication

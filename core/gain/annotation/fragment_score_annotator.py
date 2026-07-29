@@ -17,6 +17,11 @@ from gain.annotation.annotation_pipeline import (
 from gain.annotation.annotator_base import AnnotatorBase
 from gain.genomic_resources.genomic_scores import Fragment, FragmentScore
 
+#: Preferred spelling of the fragment-filter parameter.
+FRAGMENT_FILTER_PARAMETER = "fragment_filter"
+#: Legacy spelling, kept permanently -- deployed GRR pipelines write it.
+LEGACY_FILTER_PARAMETER = "cnv_filter"
+
 
 def build_fragment_score_annotator(pipeline: AnnotationPipeline,
                                    info: AnnotatorInfo) -> Annotator:
@@ -26,10 +31,12 @@ def build_fragment_score_annotator(pipeline: AnnotationPipeline,
 class FragmentScoreAnnotator(AnnotatorBase):
     """Annotator over a fragment score.
 
-    The annotator name accepted in pipeline configuration is still
-    ``cnv_collection`` / ``cnv_collection_annotator``, and the filter
-    parameter is still ``cnv_filter``; only the Python names moved
-    (gain#470).  gain#471 widens the accepted configuration vocabulary.
+    Configured as ``fragment_score`` / ``fragment_score_annotator``, with
+    ``fragment_filter:`` selecting which fragments count.  The older
+    ``cnv_collection`` / ``cnv_collection_annotator`` / ``cnv_filter``
+    spellings are equally accepted and are NOT deprecated -- deployed GRR
+    pipelines are written that way and migrating them is gain#469.  See
+    ``docs/adr/0003-fragment-score-vocabulary.md``.
     """
 
     FRAGMENT_FILTER_GRAMMAR = textwrap.dedent("""
@@ -81,10 +88,30 @@ class FragmentScoreAnnotator(AnnotatorBase):
 
         self.filter_parser = Lark(self.FRAGMENT_FILTER_GRAMMAR)
 
-        # The configuration key stays `cnv_filter` (gain#470 renamed the
-        # Python surface only); gain#471 adds `fragment_filter` beside it.
+        # Two spellings, both permanent -- `fragment_filter` is the one to
+        # write, `cnv_filter` is what deployed GRR pipelines already say.
+        # Read BOTH unconditionally: `info.parameters` refuses a parameter
+        # nobody read, so a `get` skipped after an early match would turn
+        # the unmatched spelling into an "unused parameter" error instead
+        # of the duplicate-configuration error below.
+        fragment_filter_str = info.parameters.get(FRAGMENT_FILTER_PARAMETER)
+        cnv_filter_str = info.parameters.get(LEGACY_FILTER_PARAMETER)
+        if fragment_filter_str is not None and cnv_filter_str is not None:
+            raise AnnotationConfigurationError(
+                f"{info.type} configures both "
+                f"'{FRAGMENT_FILTER_PARAMETER}' and "
+                f"'{LEGACY_FILTER_PARAMETER}'. They are two spellings of one "
+                f"parameter, so choosing between them would apply a filter "
+                f"the configuration did not ask for; keep "
+                f"'{FRAGMENT_FILTER_PARAMETER}' and delete the other")
+
         self.fragment_filter = None
-        filter_str = info.parameters.get("cnv_filter")
+        used_parameter = (
+            LEGACY_FILTER_PARAMETER if fragment_filter_str is None
+            else FRAGMENT_FILTER_PARAMETER)
+        filter_str = (
+            cnv_filter_str if fragment_filter_str is None
+            else fragment_filter_str)
         if filter_str is not None:
             assert isinstance(filter_str, str)
 
@@ -94,8 +121,11 @@ class FragmentScoreAnnotator(AnnotatorBase):
                 self.fragment_filter = self._build_fragment_filter_func(
                     self.filter_parser.parse(filter_str))
             except Exception as e:
+                # Names the spelling the user actually wrote -- reporting a
+                # key absent from their config sends them looking in the
+                # wrong place (cf. gain#477).
                 raise AnnotationConfigurationError(
-                    f"Error parsing cnv_filter: {e}") from e
+                    f"Error parsing {used_parameter}: {e}") from e
 
         super().__init__(pipeline, info)
 
@@ -117,11 +147,12 @@ class FragmentScoreAnnotator(AnnotatorBase):
             "count": AttributeSpec(
                 source="count",
                 value_type="int",
-                # Deliberately NOT renamed with the Python surface: this
-                # string is annotation output a user reads, so editing it
-                # is a behaviour change (gain#470 changes none).  It moves
-                # when the config vocabulary does, in gain#471.
-                description="The number of CNVs overlapping with the "
+                # Held back from gain#470 because it is annotation output a
+                # user reads, so editing it is a behaviour change; it moves
+                # here, with the vocabulary.  This is a DESCRIPTION, not an
+                # attribute name -- the attribute is still `count`, so no
+                # pipeline that requests it breaks.
+                description="The number of fragments overlapping with the "
                 "annotatable.",
             ),
         }

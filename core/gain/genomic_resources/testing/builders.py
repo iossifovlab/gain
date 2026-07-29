@@ -51,6 +51,9 @@ from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceProtocolRepo,
 )
+from gain.genomic_resources.resource_types import (
+    require_fragment_score_type,
+)
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     convert_to_tab_separated,
@@ -143,6 +146,9 @@ class _TableScoreBuilder(MetaMixin):
     # Suppresses the ``header_mode:`` key while keeping everything else the
     # ``"none"`` mode realizes -- see :meth:`with_missing_header_mode`.
     omit_header_mode: bool = False
+    # Overrides ``SCORE_TYPE``; see
+    # :meth:`FragmentScoreBuilder.with_resource_type`.
+    resource_type: str | None = None
 
     # Subclass-provided knobs.
     SCORE_TYPE: ClassVar[str] = ""
@@ -473,7 +479,7 @@ class _TableScoreBuilder(MetaMixin):
     ) -> str:
         header = _parse_header(data)
         lines = [
-            f"type: {self.SCORE_TYPE}",
+            f"type: {self.resource_type or self.SCORE_TYPE}",
             "table:",
             f"    filename: {filename}",
         ]
@@ -588,7 +594,7 @@ class AlleleScoreBuilder(_TableScoreBuilder):
 
 @dataclasses.dataclass(frozen=True)
 class FragmentScoreBuilder(_TableScoreBuilder):
-    """Immutable builder for a single ``cnv_collection`` resource.
+    """Immutable builder for a single fragment score resource.
 
     Shares the tabular-score machinery with the position/np/allele
     builders, differing only in the type value.  A fragment is a region
@@ -603,6 +609,15 @@ class FragmentScoreBuilder(_TableScoreBuilder):
         1      10         19       0.1
         1      20         200      0.2
     """
+
+    def with_resource_type(self, resource_type: str) -> Self:
+        """Render ``fragment_score`` or ``cnv_collection`` as the ``type:``.
+
+        Defaults to the legacy spelling, which every deployed GRR declares.
+        Only a fragment score has two (gain#471), hence not on the base.
+        """
+        return dataclasses.replace(
+            self, resource_type=require_fragment_score_type(resource_type))
 
 
 _BIGWIG_FILENAME = "data.bw"

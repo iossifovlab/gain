@@ -47,6 +47,9 @@ from gain.genomic_resources.repository import (
 from gain.genomic_resources.resource_implementation import (
     InfoImplementationMixin,
 )
+from gain.genomic_resources.resource_types import (
+    FRAGMENT_SCORE_TYPES,
+)
 from gain.genomic_resources.score_implementation import (
     ScoreImplementationBase,
 )
@@ -934,6 +937,6 @@ def build_score_implementation_from_resource(
     resource: GenomicResource,
 ) -> GenomicScoreImplementation | FragmentScoreImplementation:
     """Builds score implementation based on resource type"""
-    if resource.get_type() == "cnv_collection":
+    if resource.get_type() in FRAGMENT_SCORE_TYPES:
         return FragmentScoreImplementation(resource)
     return GenomicScoreImplementation(resource)

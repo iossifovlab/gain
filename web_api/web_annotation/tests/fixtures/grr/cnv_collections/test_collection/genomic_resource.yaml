@@ -1,3 +1,12 @@
+# DELIBERATELY on the legacy `cnv_collection` spelling -- do NOT modernise
+# this to `fragment_score`.
+#
+# Every deployed GRR declares this type (migrating them is gain#469), so a
+# fixture that still says it keeps the whole editor/resources API stack
+# continuously proving that a legacy resource works -- through the real
+# request path, not only in the tests written to check the aliases.
+# `test_fragment_score_vocabulary_api` relies on this resource being the
+# legacy spelling to prove the resource picker does not go blank.
 type: cnv_collection
 table:
     filename: data.txt

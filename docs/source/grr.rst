@@ -1052,23 +1052,32 @@ a valid ``genomic_resource.yaml`` for an allele score resource:
     ... (scores, default_annotation, and meta sections follow) ...
 
 
-CNV collections
+Fragment scores
 ^^^^^^^^^^^^^^^
 
-``genomic_resource.yaml`` files for CNV collection resources are the same as for
-position score resources, except that the resource type is set to ``cnv_collection``.
+``genomic_resource.yaml`` files for fragment score resources are the same as for
+position score resources, except that the resource type is set to ``fragment_score``.
 
-CNV collections are coordinate-based, like position scores: they are queried by chromosome and interval and do not model allele changes.
-Annotation consists of reporting overlapping CNVs and the selected associated fields (for example, CNV class and frequency).
+.. note::
 
-The example below shows a valid ``genomic_resource.yaml`` for a CNV collection resource (``my_CNVcollection.txt``),
+    This resource type was previously called ``cnv_collection``, and
+    ``type: cnv_collection`` is still accepted and **not deprecated** -- deployed
+    resources declare it and need no change. Prefer ``fragment_score`` for new
+    resources.
+
+Fragment scores are coordinate-based, like position scores: they are queried by chromosome and interval and do not model allele changes.
+A fragment is simply an interval carrying attributes; copy-number variants are the most common
+thing to store as fragments, which is where the older name came from.
+Annotation consists of reporting overlapping fragments and the selected associated fields (for example, event class and frequency).
+
+The example below shows a valid ``genomic_resource.yaml`` for a fragment score resource holding CNVs (``my_CNVcollection.txt``),
 which uses ``chrom``, ``pos_begin`` and ``pos_end`` as column names for chromosome, beginning
 position and end position, respectively. It also has a column called ``deletion_duplication``
 which describes the event type recorded.
 
 .. code-block:: yaml
 
-    type: cnv_collection
+    type: fragment_score
     table:
       filename: my_CNVcollection.txt
 

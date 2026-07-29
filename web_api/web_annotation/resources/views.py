@@ -3,6 +3,7 @@ from itertools import islice
 from typing import ClassVar
 
 from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.resource_types import equivalent_resource_types
 from rest_framework import status
 from rest_framework.views import Request, Response
 
@@ -15,6 +16,9 @@ class ResourcesAPIView(AnnotationBaseView):
         "gene_set_collection", "genome",
         "gene_models", "allele_score",
         "liftover_chain",
+        # Both accepted spellings of a fragment score -- deployed GRRs
+        # declare the legacy one, new resources the other (gain#471).
+        "fragment_score",
         "cnv_collection",
     }
 
@@ -39,8 +43,9 @@ class Resources(ResourcesAPIView):
 
         if resource_type:
             assert isinstance(resource_type, str)
+            accepted = equivalent_resource_types(resource_type)
             resources = filter(
-                lambda resource: resource.get_type() == resource_type,
+                lambda resource: resource.get_type() in accepted,
                 resources,
             )
 
@@ -99,6 +104,13 @@ class SearchResources(ResourcesAPIView):
         except ValueError:
             return Response(status=status.HTTP_400_BAD_REQUEST)
 
+        # `resource_type` is passed straight down: `search_resources`
+        # expands equivalent spellings itself, in SQL.  An earlier revision
+        # dropped the predicate here and post-filtered instead, which
+        # quietly changed the data source -- with no search term left, the
+        # query short-circuits to `get_all_resources()` and never opens the
+        # FTS index, so paging and index-skip warnings differed between
+        # fragment and non-fragment filters.
         resources = list(filter(
             lambda r: r.get_type() in self.SUPPORTED_RESOURCE_TYPES,
             self._grr.search_resources(

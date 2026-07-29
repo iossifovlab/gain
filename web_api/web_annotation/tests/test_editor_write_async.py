@@ -106,8 +106,10 @@ async def test_async_annotator_attributes_cnv_collection() -> None:
         "name": "count",
         "source": "count",
         "type": "int",
+        # Wording follows the vocabulary (gain#471); the attribute NAME is
+        # still `count`, so no pipeline requesting it is affected.
         "description": (
-            "The number of CNVs overlapping with the annotatable."
+            "The number of fragments overlapping with the annotatable."
         ),
         "default": True,
         "internal": False,
