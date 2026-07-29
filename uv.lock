@@ -1273,7 +1273,7 @@ dev = [
     { name = "pyarrow-stubs" },
     { name = "pylint" },
     { name = "pylint-junit" },
-    { name = "pytest" },
+    { name = "pytest", specifier = ">=9" },
     { name = "pytest-cov" },
     { name = "pytest-doctestplus", specifier = ">=1.2" },
     { name = "pytest-mock" },

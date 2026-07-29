@@ -11,7 +11,9 @@ channels:
 dependencies:
   - dask-kubernetes=2025.7
   - coverage
-  - pytest
+  # >=9 for faulthandler_exit_on_timeout, which core/pytest.ini relies on
+  # to turn a hung test into a failure instead of a silent stall (#494).
+  - pytest>=9
   - pytest-cov
   - pytest-xdist
   - pytest-mock
@@ -35,7 +37,7 @@ dependencies:
   - mypy=1.15.0
   - pylint
   - pylint-django
-  - pytest
+  - pytest>=9
   - pytest-asyncio
   - pytest-cov
   - pytest-django

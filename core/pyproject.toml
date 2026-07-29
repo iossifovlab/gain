@@ -121,7 +121,11 @@ dev = [
     "pyarrow-stubs",
     "pylint",
     "pylint-junit",
-    "pytest",
+    # >=9 for faulthandler_exit_on_timeout, which pytest.ini relies on to
+    # turn a hung test into a failure instead of a silent stall (#494).
+    # Older pytest ignores the key, warning only via a PytestConfigWarning
+    # that is easy to miss in CI output.
+    "pytest>=9",
     "pytest-cov",
     "pytest-doctestplus>=1.2",
     "pytest-mock",
