@@ -1301,9 +1301,10 @@ def colliding_proto_id_repository(
 ) -> GenomicResourceCachedRepo:
     """Cached repo whose two group children share one (empty) proto id.
 
-    Not contrived: ``repository_factory._build_group_repository`` defaults a
-    child's id to ``""``, so any group definition whose children omit ``id``
-    lands here. Caching protocols are keyed by ``proto_id`` and their cache
+    Assembled from protocols directly, bypassing the factory: a definition
+    can no longer produce this shape, since ``GroupRepoDefinition`` refuses
+    duplicate child ids and synthesises a distinct id for a child that omits
+    one (#445). Caching protocols are keyed by ``proto_id`` and their cache
     directory is derived from it, so both children would share one caching
     protocol and one cache directory.
     """

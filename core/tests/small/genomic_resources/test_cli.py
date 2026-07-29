@@ -1,10 +1,16 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import argparse
 import os
 import pathlib
 
 import pytest
 import pytest_mock
-from gain.genomic_resources.cli import _find_resources, cli_manage
+from gain.genomic_resources.cli import (
+    _create_grr_repo,
+    _find_resources,
+    cli_manage,
+)
+from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
@@ -289,3 +295,78 @@ def test_repo_init_refuses_dry_run_and_force(
     # ... and the repository was left uninitialised
     assert not (path / GR_CONTENTS_FILE_NAME).exists()
     assert not (path / GR_CONTENTS_FILE_NAME[:-3]).exists()
+
+
+# ---------------------------------------------------------------------------
+# gain#445: the user GRR definition nested under the CLI's synthetic group
+# ---------------------------------------------------------------------------
+
+def test_id_less_user_definition_gets_a_stable_id(
+    tmp_path: pathlib.Path,
+) -> None:
+    definition_path = tmp_path / "grr.yaml"
+    definition_path.write_text(
+        "type: http\nurl: https://grr.example.com\n")
+
+    repo = _create_grr_repo(
+        argparse.Namespace(grr=str(definition_path)), str(tmp_path / "local"))
+
+    assert isinstance(repo, GenomicResourceGroupRepo)
+    assert [child.repo_id for child in repo.children] == [
+        "local", "default_grr"]
+
+
+def test_user_definition_keeps_its_own_id(
+    tmp_path: pathlib.Path,
+) -> None:
+    definition_path = tmp_path / "grr.yaml"
+    definition_path.write_text(
+        "id: my-grr\ntype: http\nurl: https://grr.example.com\n")
+
+    repo = _create_grr_repo(
+        argparse.Namespace(grr=str(definition_path)), str(tmp_path / "local"))
+
+    assert isinstance(repo, GenomicResourceGroupRepo)
+    assert [child.repo_id for child in repo.children] == ["local", "my-grr"]
+
+
+def test_user_definition_named_local_still_builds(
+    tmp_path: pathlib.Path,
+) -> None:
+    # ``id: "local"`` is what the GRR definitions shipped in this repo use --
+    # ``web_api/scripts/grr-definition-dir.yaml`` and
+    # ``spliceai_annotator/tests/integration_grr_definition.yaml`` -- so it
+    # must not collide with the id the CLI gives its own child (#445).
+    definition_path = tmp_path / "grr.yaml"
+    definition_path.write_text(
+        'id: "local"\ntype: http\nurl: https://grr.example.com\n')
+
+    repo = _create_grr_repo(
+        argparse.Namespace(grr=str(definition_path)), str(tmp_path / "local"))
+
+    assert isinstance(repo, GenomicResourceGroupRepo)
+    child_ids = [child.repo_id for child in repo.children]
+    assert child_ids[1] == "local"
+    assert len(set(child_ids)) == len(repo.children) == 2
+
+
+@pytest.mark.parametrize("content", ["", "- a\n- b\n", "just a string\n"])
+def test_a_malformed_definition_file_is_reported_as_a_bad_definition(
+    tmp_path: pathlib.Path,
+    content: str,
+) -> None:
+    """A definition file that is not a mapping must not crash the CLI.
+
+    The id normalisation reads ``id`` off the loaded definition, which is
+    whatever ``yaml.safe_load`` returned -- ``None`` for an empty file, a
+    list, a bare string. Calling ``.get`` on that raises ``AttributeError``
+    and buries the real problem; the definition must reach the factory so
+    the user is told their definition is invalid.
+    """
+    definition_path = tmp_path / "grr.yaml"
+    definition_path.write_text(content)
+
+    with pytest.raises(ValueError, match="invalid GRR definition"):
+        _create_grr_repo(
+            argparse.Namespace(grr=str(definition_path)),
+            str(tmp_path / "local"))

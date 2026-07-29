@@ -1321,12 +1321,38 @@ def _create_grr_repo(
         extra_definition = load_definition_file(extra_definition_path)
     else:
         extra_definition = get_default_grr_definition()
+    local_id = "local"
+    # ``load_definition_file`` is a bare ``yaml.safe_load``, so a malformed
+    # definition file is whatever YAML made of it -- ``None`` for an empty
+    # file, a list, a bare string. Only a mapping has an ``id`` to read or
+    # rewrite; anything else is nested verbatim so that the factory's own
+    # validation reports it as an invalid definition, rather than this
+    # normalisation turning it into an AttributeError that hides the cause.
+    if isinstance(extra_definition, dict):
+        if not extra_definition.get("id"):
+            # A top-level GRR definition may omit ``id``; nested here as a
+            # group child it would then get a synthesised, url-derived id
+            # (see ``repository_factory``). Name it instead, so the child id
+            # -- and, with it, the cache directory of a cached repository --
+            # stays the same predictable value no matter what the user's
+            # definition points at (#445).
+            extra_definition = {**extra_definition, "id": "default_grr"}
+        if extra_definition["id"] == local_id:
+            # A user definition may legitimately be named ``local`` -- the
+            # ones shipped in this repo are -- and it is nested here as a
+            # sibling of the CLI's own child, where child ids must be
+            # unique. The synthetic group is the CLI's own invention,
+            # invisible to the user, so the CLI renames its own child rather
+            # than refusing to run (#445). The fallback cannot collide in
+            # turn: it is only used when the user definition is called
+            # ``local``.
+            local_id = "cli_local"
     grr_definition = {
         "id": "cli_grr",
         "type": "group",
         "children": [
             {
-                "id": "local",
+                "id": local_id,
                 "type": "dir",
                 "directory": repo_url,
             },
