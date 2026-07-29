@@ -25,6 +25,7 @@ from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
     build_fsspec_protocol,
 )
+from gain.genomic_resources.genomic_scores import build_score_from_resource
 from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
@@ -40,6 +41,11 @@ from gain.genomic_resources.testing import (
     convert_to_tab_separated,
     s3_test_server_endpoint,
     setup_directories,
+)
+from gain.genomic_resources.testing.builders import (
+    a_grr,
+    a_position_score,
+    a_vcf_info_score,
 )
 from pytest_mock import MockerFixture
 
@@ -1600,3 +1606,120 @@ def test_first_enumeration_of_a_cached_repo_does_not_deadlock(
 
         assert not errors
         assert len(listings[0]) == 2
+
+
+_CSI_VCF_DATA = """
+##fileformat=VCFv4.2
+##INFO=<ID=value,Number=A,Type=Float,Description="value">
+##contig=<ID=chr1>
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   10  .  A   T   .    .      value=0.1
+"""
+
+
+def _build_cache_repo(
+    source_dir: pathlib.Path, cache_dir: pathlib.Path,
+) -> GenomicResourceCachedRepo:
+    """Wrap an already-realized filesystem GRR in a cache-backed repo.
+
+    The remote protocol is deliberately given a SHORT id rather than
+    ``build_filesystem_test_repository``'s absolute-path one: the cache url
+    is built with ``os.path.join(cache_url, proto_id)``, which an absolute
+    proto id swallows whole -- the "cache" would then land on top of the
+    remote and nothing about caching would be observable.
+    """
+    proto = cast(
+        FsspecReadWriteProtocol,
+        build_fsspec_protocol("remote_repo", str(source_dir)))
+    return GenomicResourceCachedRepo(
+        GenomicResourceProtocolRepo(proto), f"file://{cache_dir}")
+
+
+def test_cache_resources_fetches_a_csi_index_and_the_cached_score_opens(
+    tmp_path: pathlib.Path,
+) -> None:
+    """gain#430: the cache prefetch must fetch the index that exists."""
+    source_dir = tmp_path / "grr_source"
+    (
+        a_grr()
+        .with_resource(
+            "csi_score",
+            a_position_score()
+            .with_tabix(csi=True)
+            .with_zero_based()
+            .with_score("value", "float")
+            .with_data("""
+                chrom  pos_begin  pos_end  value
+                chr1   10         20       0.1
+            """),
+        )
+        .build_repo(source_dir)
+    )
+    cache_repo = _build_cache_repo(source_dir, tmp_path / "cache")
+
+    cache_resources(cache_repo, ["csi_score"], workers=1, progress=False)
+
+    assert cache_repo.get_resource_cached_files("csi_score") == {
+        "data.txt.gz", "data.txt.gz.csi"}
+    score = build_score_from_resource(cache_repo.get_resource("csi_score"))
+    with score.open():
+        assert list(score.fetch_region("chr1", 11, 20, ["value"])) == [
+            (11, 20, [0.1])]
+
+
+def test_cache_resources_fetches_a_csi_index_of_a_vcf_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    """gain#430: the same resolution drives the cached VCF open path."""
+    source_dir = tmp_path / "grr_source"
+    (
+        a_grr()
+        .with_resource(
+            "csi_vcf_score",
+            a_vcf_info_score().with_csi_index().with_data(_CSI_VCF_DATA),
+        )
+        .build_repo(source_dir)
+    )
+    cache_repo = _build_cache_repo(source_dir, tmp_path / "cache")
+
+    cache_resources(cache_repo, ["csi_vcf_score"], workers=1, progress=False)
+
+    # A VCF score also pulls its header companion files into the cache, so
+    # this is a containment check rather than an equality one.
+    assert {"data.vcf.gz", "data.vcf.gz.csi"} <= \
+        cache_repo.get_resource_cached_files("csi_vcf_score")
+    score = build_score_from_resource(
+        cache_repo.get_resource("csi_vcf_score"))
+    with score.open():
+        assert score.get_all_chromosomes() == ["chr1"]
+        assert list(score.fetch_region("chr1", 10, 10, ["value"])) == [
+            (10, "A", "T", [pytest.approx(0.1)])]
+
+
+def test_cached_open_vcf_file_fetches_the_csi_index_on_a_cold_cache(
+    tmp_path: pathlib.Path,
+) -> None:
+    """gain#430: ``open_vcf_file`` resolves its own index.
+
+    Deliberately opens the VCF directly, with nothing else touched first: a
+    preceding tabix open -- what the chromosome-listing path does -- would
+    have already pulled the ``.csi`` into the cache and masked a wrong index
+    name here.
+    """
+    source_dir = tmp_path / "grr_source"
+    (
+        a_grr()
+        .with_resource(
+            "csi_vcf_score",
+            a_vcf_info_score().with_csi_index().with_data(_CSI_VCF_DATA),
+        )
+        .build_repo(source_dir)
+    )
+    cache_repo = _build_cache_repo(source_dir, tmp_path / "cache")
+
+    resource = cache_repo.get_resource("csi_vcf_score")
+    with resource.open_vcf_file("data.vcf.gz") as vcf:
+        assert [record.pos for record in vcf.fetch("chr1", 9, 10)] == [10]
+
+    assert "data.vcf.gz.csi" in \
+        cache_repo.get_resource_cached_files("csi_vcf_score")

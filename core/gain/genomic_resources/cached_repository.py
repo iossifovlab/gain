@@ -24,6 +24,7 @@ from gain.genomic_resources.repository import (
     GenomicResourceRepo,
     Manifest,
     ReadOnlyRepositoryProtocol,
+    resolve_tabix_index_filename_for_read,
 )
 
 from .fsspec_protocol import build_fsspec_protocol
@@ -227,7 +228,10 @@ class CachingProtocol(ReadOnlyRepositoryProtocol):
             index_filename: str | None = None) -> pysam.TabixFile:
         self.refresh_cached_resource_file(resource, filename)
         if index_filename is None:
-            index_filename = f"{filename}.tbi"
+            # The index may be a ``.tbi`` or a ``.csi``; refresh the one the
+            # manifest actually records, not an assumed name (gain#430).
+            index_filename = resolve_tabix_index_filename_for_read(
+                resource, filename)
         self.refresh_cached_resource_file(resource, index_filename)
 
         return self.local_protocol.open_tabix_file(
@@ -238,7 +242,8 @@ class CachingProtocol(ReadOnlyRepositoryProtocol):
             index_filename: str | None = None) -> pysam.VariantFile:
         self.refresh_cached_resource_file(resource, filename)
         if index_filename is None:
-            index_filename = f"{filename}.tbi"
+            index_filename = resolve_tabix_index_filename_for_read(
+                resource, filename)
         self.refresh_cached_resource_file(resource, index_filename)
 
         return self.local_protocol.open_vcf_file(

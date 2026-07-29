@@ -26,6 +26,11 @@ from gain.genomic_resources.testing import (
     setup_directories,
     setup_tabix,
 )
+from gain.genomic_resources.testing.builders import (
+    PositionScoreBuilder,
+    a_grr,
+    a_position_score,
+)
 from gain.task_graph.graph import TaskDesc, TaskGraph
 
 
@@ -611,3 +616,42 @@ def test_contents_db_rebuilt_when_contents_change(
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
     assert db_path.read_bytes() != first_bytes
+
+
+def test_stats_csi_indexed_position_score_matches_its_tbi_twin(
+    tmp_path: pathlib.Path,
+) -> None:
+    """gain#430: a .csi-indexed tabix score statisticises like a .tbi one."""
+    data = """
+        chrom  pos_begin  pos_end  value
+        chr1   10         15       0.2
+        chr1   17         19       0.4
+    """
+
+    def a_score(*, csi: bool) -> PositionScoreBuilder:
+        return (
+            a_position_score()
+            .with_tabix(csi=csi)
+            .with_zero_based()
+            .with_score("value", "float")
+            .with_histogram({
+                "type": "number", "number_of_bins": 4,
+                "view_range": {"min": 0.0, "max": 1.0}})
+            .with_data(data)
+        )
+
+    (
+        a_grr()
+        .with_resource("csi_score", a_score(csi=True))
+        .with_resource("tbi_score", a_score(csi=False))
+        .build_repo(tmp_path)
+    )
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    csi_histogram = tmp_path / "csi_score/statistics/histogram_value.json"
+    tbi_histogram = tmp_path / "tbi_score/statistics/histogram_value.json"
+    assert csi_histogram.exists()
+    assert csi_histogram.read_text() == tbi_histogram.read_text()
+    assert NumberHistogram.deserialize(
+        csi_histogram.read_text()).bars.sum() > 0

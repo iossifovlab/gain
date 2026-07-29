@@ -573,6 +573,22 @@ class GenomicResource:
             self._manifest = self.proto.get_manifest(self)
         return self._manifest
 
+    def get_loaded_manifest(self) -> Manifest | None:
+        """Return the resource manifest without ever building one.
+
+        :meth:`get_manifest` falls back to *building* the manifest on a
+        read-write protocol -- an md5 scan of every byte of the resource
+        that also writes ``.grr/*.state`` files, and that fails outright on
+        a read-only GRR mount.  A pure read path that merely wants to
+        consult the manifest uses this instead and copes with ``None``.
+        """
+        if self._manifest is None:
+            try:
+                self._manifest = self.proto.load_manifest(self)
+            except FileNotFoundError:
+                return None
+        return self._manifest
+
     def get_file_url(self, filename: str) -> str:
         return self.proto.get_resource_file_url(self, filename)
 
@@ -616,6 +632,81 @@ class GenomicResource:
     def open_bigwig_file(self, filename: str) -> Any:
         """Open a bigwig file and return it."""
         return self.proto.open_bigwig_file(self, filename)
+
+
+# The tabix index flavours htslib writes next to a bgzipped table, in
+# preference order.  ``.csi`` is what a contig beyond tabix's ~512 Mbp limit
+# requires; ``.tbi`` is the default everywhere else.  When a resource carries
+# both, ``.tbi`` wins -- the same order ``gain.utils.fs_utils`` uses for
+# plain filesystem paths.
+TABIX_INDEX_SUFFIXES = (".tbi", ".csi")
+
+
+def resolve_tabix_index_filename(
+    manifest: Manifest, filename: str,
+) -> str | None:
+    """Return the tabix index of ``filename`` as recorded in ``manifest``.
+
+    Resolution is manifest-driven on purpose: the manifest is already loaded
+    and is protocol-agnostic, whereas probing with ``file_exists`` costs a
+    network round-trip per candidate on the http and s3 protocols.
+
+    Returns ``None`` when the manifest records neither index -- the caller
+    decides whether that is a warning (the file set of an implementation) or
+    an error (an open that needs an index).  See gain#430.
+    """
+    for suffix in TABIX_INDEX_SUFFIXES:
+        index_filename = f"{filename}{suffix}"
+        if index_filename in manifest:
+            return index_filename
+    return None
+
+
+def resolve_tabix_index_filename_for_read(
+    resource: GenomicResource, filename: str,
+) -> str:
+    """Return the index to read ``filename`` with, never building a manifest.
+
+    Consults the manifest only when it is already loaded or can be loaded
+    from the resource: an open must stay a pure read, and
+    :meth:`GenomicResource.get_manifest` would *build* -- md5-scanning the
+    whole resource and writing state files -- for a resource that carries no
+    ``.MANIFEST`` (gain#430).
+
+    With no manifest at hand -- the hand-authored GRR directory shape that
+    ``collect_all_resources`` tolerates -- falls back to probing the
+    resource for each candidate index.  The probe is deliberately confined
+    to this branch: a manifest-backed resource must never pay the
+    per-candidate network round-trip the probe costs on the http and s3
+    protocols.
+
+    With a manifest that records no index at all, or when no probe
+    succeeds, falls back to the historical ``.tbi`` guess so that whatever
+    pysam raises still names a concrete path.
+    """
+    manifest = resource.get_loaded_manifest()
+    if manifest is not None:
+        resolved = resolve_tabix_index_filename(manifest, filename)
+    else:
+        resolved = _probe_tabix_index_filename(resource, filename)
+    return resolved if resolved is not None else f"{filename}.tbi"
+
+
+def _probe_tabix_index_filename(
+    resource: GenomicResource, filename: str,
+) -> str | None:
+    """Return the first candidate index that exists in ``resource``."""
+    for suffix in TABIX_INDEX_SUFFIXES:
+        index_filename = f"{filename}{suffix}"
+        try:
+            if resource.file_exists(index_filename):
+                return index_filename
+        except OSError:
+            logger.debug(
+                "unable to probe %s in resource %s",
+                index_filename, resource.resource_id, exc_info=True)
+            return None
+    return None
 
 
 class Mode(enum.Enum):

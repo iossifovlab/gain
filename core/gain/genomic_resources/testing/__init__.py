@@ -95,7 +95,11 @@ def setup_tabix(
     setup_directories(out_path, content)
 
     tabix_filename = str(out_path.parent / f"{out_path.name}.gz")
-    index_filename = f"{tabix_filename}.tbi"
+    # ``csi=True`` is forwarded to ``pysam.tabix_index``, which then writes a
+    # ``.csi`` index instead of the default ``.tbi``; report the name that is
+    # actually produced.
+    suffix = ".csi" if kwargs.get("csi") else ".tbi"
+    index_filename = f"{tabix_filename}{suffix}"
     force = cast(bool, kwargs.pop("force", False))
     # pylint: disable=no-member
     pysam.tabix_compress(str(out_path), tabix_filename, force=force)

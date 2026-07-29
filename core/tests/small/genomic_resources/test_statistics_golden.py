@@ -38,6 +38,9 @@ import pathlib
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
+from gain.genomic_resources.implementations.genomic_scores_impl import (
+    build_score_implementation_from_resource,
+)
 from gain.genomic_resources.testing.builders import (
     GRRBuilder,
     a_bigwig_score,
@@ -235,3 +238,36 @@ def test_statistics_min_max_golden(built_statistics: pathlib.Path) -> None:
     # cannot fail unless that one fails first.  Treat it as documentation, not
     # as a second, independent check.
     _assert_golden(MIN_MAX_GOLDEN, _collect_min_max(built_statistics))
+
+
+# --- gain#430: the .tbi statistics hash must not drift -------------------
+#
+# Roughly 16k production GRR resources are .tbi-indexed tabix tables, and a
+# resource is restatisticised the moment its statistics hash changes.  Making
+# the index name manifest-resolved rather than assumed must therefore leave
+# the hash of a .tbi resource byte-identical.  The two md5s inside it are the
+# local htslib's bgzip/tabix output and so are environment-dependent; they are
+# substituted by placeholders here and everything else is pinned verbatim.
+HASH_GOLDEN = FIXTURES / "statistics_hash_tabix_golden.json"
+_DATA_MD5 = "<md5 of data.txt.gz>"
+_INDEX_MD5 = "<md5 of data.txt.gz.tbi>"
+
+
+def test_tabix_score_statistics_hash_golden(tmp_path: pathlib.Path) -> None:
+    repo = _golden_grr_builder().build_repo(tmp_path)
+    resource = repo.get_resource("tabix_score")
+    manifest = resource.get_manifest()
+    data_md5 = manifest["data.txt.gz"].md5
+    index_md5 = manifest["data.txt.gz.tbi"].md5
+    assert data_md5 is not None
+    assert index_md5 is not None
+
+    statistics_hash = build_score_implementation_from_resource(
+        resource).calc_statistics_hash().decode()
+
+    _assert_golden(
+        HASH_GOLDEN,
+        statistics_hash
+        .replace(data_md5, _DATA_MD5)
+        .replace(index_md5, _INDEX_MD5),
+    )
