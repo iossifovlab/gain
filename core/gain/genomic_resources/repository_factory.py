@@ -82,7 +82,7 @@ class _RepoDefinitionBase(BaseModel):
         its own id too.
         """
         # A falsy id is left alone: an empty ``id`` already means "unnamed"
-        # -- ``_resolve_child_repo_id`` synthesises one for it -- and is not a
+        # -- ``_resolve_repo_id`` synthesises one for it -- and is not a
         # traversal. Naming an unnamed repository is a separate question.
         if value and not is_safe_repo_id(value):
             # ``!r``, not ``<...>``: an id refused for carrying a control
@@ -229,8 +229,8 @@ class EmbeddedRepoDefinition(_RepoDefinitionBase):
 class GroupRepoDefinition(_RepoDefinitionBase):
     """Definition for a group of genomic resource repositories.
 
-    Repository ids must be distinct across the whole definition tree, not
-    merely among siblings: an id selects a repository
+    Child repository ids must be distinct across the whole subtree below a
+    group, not merely among siblings: an id selects a repository
     (``find_resource``/``get_resource`` take a ``repository_id``) and, for a
     cached repository, names that repository's cache directory. Two
     repositories sharing an id -- at the same level or at different ones --
@@ -242,6 +242,14 @@ class GroupRepoDefinition(_RepoDefinitionBase):
     segment. One that is not (a separator, an absolute path, ``.`` or
     ``..``) would move cached data out of the configured ``cache_dir``, and
     is rejected by the base definition model rather than rewritten (#460).
+
+    The uniqueness check covers *children*, not the definition root: the
+    walk starts at ``self.children``, so the root's own id (explicit or
+    synthesised) is not compared against any descendant's and a root may
+    share an id with one. Benign today -- a group root's id is never handed
+    to a protocol as a ``proto_id``, so it names no cache directory, and a
+    ``repository_id`` naming the root selects nothing at all (a group
+    matches the filter against its children's ids, never its own).
 
     Spelling ``id`` on a child is optional. A child that omits it gets a
     deterministic id synthesised from its own identity -- its ``url`` or
@@ -349,7 +357,8 @@ def _redact_url_userinfo(value: str) -> str:
     return parsed._replace(netloc=redacted_netloc).geturl()
 
 
-# A synthesised child repository id is `<slug>_<digest>`: the slug keeps the
+# A synthesised repository id -- of a child or of the definition root -- is
+# `<slug>_<digest>`: the slug keeps the
 # id readable (it shows up in log messages and, for a cached repository, as a
 # cache directory name), the digest keeps it unique -- two identities that
 # sanitise to the same slug still differ. Only the tail of the identity is
@@ -382,18 +391,29 @@ def _format_definition_path(path: tuple[int, ...]) -> str:
 
 def _synthesise_repo_id(
         identity: str | None, repo_type: str, path: tuple[int, ...]) -> str:
-    """Build a deterministic, non-empty id for a child that omits ``id``.
+    """Build a deterministic, non-empty id for a repository that omits ``id``.
 
-    Derived from the child's own identity (its url or directory) so that the
-    id is stable across runs and across processes -- the digest is a SHA-256
-    prefix, not Python's salted ``hash()``. A child with no identity of its
-    own (``embedded``/``memory``, or a nested ``group``) falls back to its
-    *path* from the definition root, not its index among its siblings: two
-    children at index 0 of two different groups are different repositories
-    and must not resolve to one id. Because the path is the full index chain,
-    distinct positions always yield distinct ids.
+    Derived from the repository's own identity (its url or directory) so that
+    the id is stable across runs and across processes -- the digest is a
+    SHA-256 prefix, not Python's salted ``hash()``. A repository with no
+    identity of its own (``embedded``/``memory``, or a ``group``) falls back
+    to its *path* from the definition root, not its index among its siblings:
+    two children at index 0 of two different groups are different
+    repositories and must not resolve to one id. Because the path is the full
+    index chain, distinct positions always yield distinct ids.
+
+    The definition *root* has an empty path -- there is no index chain to
+    fall back on -- so it is named after its type alone: ``group_repo`` and
+    ``embedded_repo`` are the shapes that reach it in practice, but the
+    branch is not restricted to them (a degenerate root spelling ``url: ""``
+    or ``directory: ""`` has no identity either, so it too is named
+    ``<type>_repo`` -- ``http_repo``, ``dir_repo`` -- before failing further
+    down the builder). Every child has a non-empty path, so no child id
+    changes because of this branch.
     """
     if not identity:
+        if not path:
+            return f"{repo_type}_repo"
         return f"{repo_type}_{'_'.join(str(index) for index in path)}"
     slug = _NON_ID_CHARS_RE.sub("_", identity)[-_SYNTHESISED_ID_SLUG_MAX:]
     slug = slug.strip("_")
@@ -401,17 +421,33 @@ def _synthesise_repo_id(
     return f"{slug}_{digest[:_SYNTHESISED_ID_DIGEST_LEN]}"
 
 
-def _resolve_child_repo_id(
-        child_id: str | None, repo_type: str,
+def _resolve_repo_id(
+        repo_id: str | None, repo_type: str,
         url: Any, directory: Any, path: tuple[int, ...]) -> str:
-    """Return the id a group child is built with -- never the empty string.
+    """Return the id a repository is built with -- never the empty string.
 
-    The single source of truth for child-id resolution: used both by
-    ``GroupRepoDefinition``'s uniqueness check and by the group builder, so
-    the ids validation reasons about are the ids the repositories get.
+    The single source of truth for repository-id resolution, called from
+    ``GroupRepoDefinition``'s uniqueness check, from the group builder and
+    from the top-level builder. What that buys is exactly one guarantee: no
+    repository, root or child, is ever built with ``None`` or ``""`` for an
+    id.
+
+    It does NOT make every built id unique. ``check_child_ids_are_unique``
+    walks ``self.children`` only, so the ids the *children* resolve to are
+    the ids validation reasons about, and the root's resolved id is never
+    compared against them -- a root and a descendant may share an id, and
+    the descendant wins a ``repository_id`` lookup.
+
+    That is presently benign, which is why extending the walk is left to a
+    follow-up rather than done here: a group root's id never becomes a
+    ``proto_id``, so it cannot reach the cache-path join that #461 is about,
+    and a leaf root has no children to collide with in the first place.
+
+    ``path`` is the repository's position in the definition tree: the empty
+    tuple for the root, the chain of ``children`` indices for a child.
     """
-    if child_id:
-        return child_id
+    if repo_id:
+        return repo_id
     return _synthesise_repo_id(
         _repo_definition_identity(url, directory), repo_type, path)
 
@@ -428,7 +464,7 @@ def _walk_resolved_child_ids(
     """
     for index, child in enumerate(children):
         path = (*prefix, index)
-        yield path, _resolve_child_repo_id(
+        yield path, _resolve_repo_id(
             child.id, child.type,
             getattr(child, "url", None),
             getattr(child, "directory", None),
@@ -581,7 +617,7 @@ def _build_group_repository(
         # check walked the definition with, or the ids that were validated
         # are not the ids the repositories get built with.
         child_path = (*path, index)
-        child_id: str = _resolve_child_repo_id(
+        child_id: str = _resolve_repo_id(
             child.pop("id", None), child["type"],
             child.get("url"), child.get("directory"), child_path)
         proto_type = child.pop("type")
@@ -656,7 +692,14 @@ def build_genomic_resource_repository(
     definition_copy = copy.deepcopy(definition)
 
     repo_type = definition_copy.pop("type")
-    repo_id = definition_copy.pop("id", None)
+    # The root of a definition gets its id resolved exactly like a child
+    # does: a repository built with ``None`` (or ``""``) for an id names no
+    # cache directory of its own -- ``os.path.join(cache_url, proto_id)``
+    # raises on ``None`` and silently caches into the cache root on ``""``.
+    # See #461.
+    repo_id = _resolve_repo_id(
+        definition_copy.pop("id", None), repo_type,
+        definition_copy.get("url"), definition_copy.get("directory"), ())
 
     if repo_type == "group":
         # ``validate_python`` above rejects a group whose ``children`` is

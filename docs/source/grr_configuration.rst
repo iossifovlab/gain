@@ -66,14 +66,15 @@ Configuration file structure
 ----------------------------
 
 A GRR configuration file is a YAML mapping describing a single repository. Every
-repository has a required ``type`` and an ``id``, plus additional fields that
-depend on the type. A repository can be a *real* repository (a local directory
-or a remote URL) or a ``group`` that combines several child repositories.
+repository has a required ``type`` and an optional ``id``, plus additional
+fields that depend on the type. A repository can be a *real* repository (a
+local directory or a remote URL) or a ``group`` that combines several child
+repositories.
 
 Common fields
 ^^^^^^^^^^^^^
 
-    | **id** (string): Identifier for the repository. Used in log messages and to refer to the repository.
+    | **id** (string, optional): Identifier for the repository. Used in log messages, to refer to the repository, and — when ``cache_dir`` is set — as the name of the repository's directory inside the cache. A repository that omits it gets a deterministic id derived from its ``url`` or ``directory`` (or from its type, for an ``embedded`` or ``group`` repository); naming it explicitly is recommended, because the synthesised name is what a populated cache directory is called.
     | **type** (string, required): One of ``group``, ``directory``, ``url``, ``http``, ``s3``, or ``embedded`` (see below).
     | **cache_dir** (string, optional): Directory used to cache downloaded resources locally. May be added to any repository type, including a ``group`` (see `Resource caching`_).
 

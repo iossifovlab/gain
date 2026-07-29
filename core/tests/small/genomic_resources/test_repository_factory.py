@@ -31,6 +31,10 @@ from gain.genomic_resources.testing import (
     convert_to_tab_separated,
     setup_directories,
 )
+from gain.genomic_resources.testing.builders import (
+    a_grr,
+    a_position_score,
+)
 
 
 def test_build_an_empty_repository() -> None:
@@ -295,11 +299,13 @@ def test_synthesised_child_ids_are_stable_across_processes() -> None:
     """Ids must not depend on Python's per-process hash randomisation.
 
     The in-process test above cannot catch a switch from ``hashlib.sha256``
-    to the builtin salted ``hash()``: ``core/pytest.ini`` pins
-    ``PYTHONHASHSEED=0``, so even the pinned literals would keep matching
-    under a salted scheme. Only building the same definition in two
-    interpreters started with *different* seeds proves the ids are stable
-    for a cache directory that outlives the process that created it.
+    to the builtin salted ``hash()``: CI runs the suite under
+    ``PYTHONHASHSEED=0`` (an ``ENV`` in ``core/Dockerfile`` -- not
+    ``core/pytest.ini``, which sets only ``addopts`` and ``markers``), so
+    there the pinned literals would keep matching under a salted scheme.
+    Only building the same definition in two interpreters started with
+    *different* seeds proves the ids are stable for a cache directory that
+    outlives the process that created it.
     """
     script = (
         "import json;"
@@ -348,7 +354,7 @@ def test_a_path_valued_directory_resolves_to_the_same_id_both_ways(
 ) -> None:
     """The validator and the builder must agree on a child's id.
 
-    ``_resolve_child_repo_id`` is one function, but the uniqueness check
+    ``_resolve_repo_id`` is one function, but the uniqueness check
     feeds it attributes off the validated pydantic model while the builder
     feeds it values popped from the raw definition dict. They agree only
     while the field type does not coerce -- ``_PathOrStr`` is a smart union
@@ -458,7 +464,16 @@ def test_duplicate_child_id_error_does_not_echo_a_password() -> None:
 
 
 def test_synthesised_child_id_does_not_echo_a_url_password() -> None:
-    secret = "s3cr3t-url-445"  # noqa: S105
+    """A credential in a child's url must not survive into its id.
+
+    The secret is deliberately *slug-stable* -- it is all alphanumerics, so
+    ``_NON_ID_CHARS_RE`` rewrites none of it and it would appear in the id
+    verbatim if the userinfo were not redacted before synthesis. A secret
+    spelled with ``-`` or ``.`` would be rewritten to ``_`` on the way into
+    the slug, and this assertion would hold whether or not redaction
+    happened.
+    """
+    secret = "s3cr3tURL445"  # noqa: S105
     repo = build_genomic_resource_repository(
         {"type": "group", "children": [
             {"type": "http", "url": f"https://alice:{secret}@a.example.com"},
@@ -485,6 +500,351 @@ def test_id_less_group_children_are_individually_addressable() -> None:
 
     assert first.get_file_content("data.txt") == "AAAA-from-a"
     assert second.get_file_content("data.txt") == "BBBB-from-b"
+
+
+# ---------------------------------------------------------------------------
+# Top-level repository id synthesis (#461)
+# ---------------------------------------------------------------------------
+
+
+def _realize_source_grr(source_dir: pathlib.Path) -> str:
+    """Realize a one-resource filesystem GRR and return its directory."""
+    (
+        a_grr()
+        .with_resource(
+            "one",
+            a_position_score()
+            .with_score("score", "float")
+            .with_data("""
+                chrom  pos_begin  pos_end  score
+                chr1   10         12       0.1
+            """),
+        )
+        .build_repo(source_dir)
+    )
+    return str(source_dir)
+
+
+def test_id_less_leaf_repository_with_cache_dir_enumerates_resources(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A definition without a top-level ``id`` must still be usable.
+
+    An id-less ``~/.grr_definition.yaml`` is a supported shape, and the
+    factory used to pass the missing id straight through to the protocol --
+    where the cache url join (``os.path.join(cache_url, proto_id)``) blew up
+    with a ``TypeError`` on the first access.
+    """
+    repo = build_genomic_resource_repository({
+        "type": "dir",
+        "directory": _realize_source_grr(tmp_path / "grr"),
+        "cache_dir": str(tmp_path / "cache"),
+    })
+
+    assert [res.get_full_id() for res in repo.get_all_resources()] == ["one"]
+
+
+def test_id_less_leaf_repository_with_cache_dir_gets_a_usable_repo_id(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The synthesised root id must be a real name, not ``None`` or ``""``.
+
+    The id names the repository in log messages, in a ``repository_id``
+    filter and -- for a cached repository -- on disk, so it has to be
+    non-empty in every ``.``-separated segment.
+    """
+    repo = build_genomic_resource_repository({
+        "type": "dir",
+        "directory": _realize_source_grr(tmp_path / "grr"),
+        "cache_dir": str(tmp_path / "cache"),
+    })
+
+    assert repo.repo_id
+    assert "None" not in repo.repo_id
+    assert all(segment for segment in repo.repo_id.split(".")), repo.repo_id
+
+
+def test_id_less_leaf_repository_caches_into_a_per_repository_subdirectory(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Cached files land under ``<cache_dir>/<repo id>/``, never in its root.
+
+    ``os.path.join(cache_url, proto_id)`` collapses to the cache root when
+    the id is empty, so an id-less repository would spill its resources
+    directly into a cache directory that may be shared with other
+    repositories.
+    """
+    cache_dir = tmp_path / "cache"
+    repo = build_genomic_resource_repository({
+        "type": "dir",
+        "directory": _realize_source_grr(tmp_path / "grr"),
+        "cache_dir": str(cache_dir),
+    })
+
+    assert repo.get_resource("one").get_file_content("data.txt")
+
+    cached_roots = sorted(path.name for path in cache_dir.iterdir())
+    assert len(cached_roots) == 1, cached_roots
+    assert (cache_dir / cached_roots[0] / "one" / "data.txt").is_file()
+    assert not (cache_dir / "one").exists()
+
+
+@pytest.mark.parametrize("repo_type", ["file", "directory"])
+def test_id_less_leaf_root_of_every_filesystem_type_is_usable(
+    repo_type: str,
+    tmp_path: pathlib.Path,
+) -> None:
+    """``file`` and ``directory`` are aliases of ``dir`` -- same AC.
+
+    The id resolution happens before the type is dispatched on, so an alias
+    must not be a hole in the fix: each one has to enumerate its resources
+    and cache them under a per-repository directory just like ``dir`` does.
+
+    ``s3`` is the one leaf type this section cannot cover: its branch builds
+    a read-write fsspec protocol, which calls ``create_bucket`` at
+    construction time, so it needs the MinIO fixture behind
+    ``--enable-s3-testing`` (``docker compose up -d``) rather than anything a
+    small test has. ``url`` covers the remote-identity shape instead -- see
+    ``test_id_less_url_root_gets_the_same_id_as_the_same_url_as_http``.
+    """
+    cache_dir = tmp_path / "cache"
+    repo = build_genomic_resource_repository({
+        "type": repo_type,
+        "directory": _realize_source_grr(tmp_path / "grr"),
+        "cache_dir": str(cache_dir),
+    })
+
+    assert repo.repo_id
+    assert "None" not in repo.repo_id
+    assert [res.get_full_id() for res in repo.get_all_resources()] == ["one"]
+    assert repo.get_resource("one").get_file_content("data.txt")
+
+    cached_roots = sorted(path.name for path in cache_dir.iterdir())
+    assert len(cached_roots) == 1, cached_roots
+    assert (cache_dir / cached_roots[0] / "one" / "data.txt").is_file()
+    assert not (cache_dir / "one").exists()
+
+
+def test_empty_top_level_id_behaves_like_an_absent_one(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``id: ""`` is as good as no ``id`` -- both get the synthesised one.
+
+    An empty id is falsy everywhere it is used (the ``repository_id`` filter
+    ignores it, the cache path join collapses on it), so it must not be a
+    second, subtly different way of spelling "no id".
+    """
+    source_dir = _realize_source_grr(tmp_path / "grr")
+    absent_cache = tmp_path / "cache_absent"
+    empty_cache = tmp_path / "cache_empty"
+
+    absent = build_genomic_resource_repository({
+        "type": "dir", "directory": source_dir,
+        "cache_dir": str(absent_cache)})
+    empty = build_genomic_resource_repository({
+        "id": "", "type": "dir", "directory": source_dir,
+        "cache_dir": str(empty_cache)})
+
+    assert empty.repo_id == absent.repo_id
+
+    for repo in (absent, empty):
+        assert repo.get_resource("one").get_file_content("data.txt")
+
+    cached_roots = sorted(path.name for path in empty_cache.iterdir())
+    assert cached_roots == sorted(path.name for path in absent_cache.iterdir())
+    assert len(cached_roots) == 1, cached_roots
+    assert (empty_cache / cached_roots[0] / "one" / "data.txt").is_file()
+
+
+def test_id_less_leaf_repository_without_cache_dir_is_addressable_by_its_id(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A ``repository_id`` filter must be able to name an id-less repository.
+
+    Without a synthesised id there is nothing to pass as ``repository_id``:
+    the repository has ``None`` for an id, and ``None`` is the "no filter"
+    value rather than a name.
+    """
+    repo = build_genomic_resource_repository({
+        "type": "dir",
+        "directory": _realize_source_grr(tmp_path / "grr"),
+    })
+
+    repo_id = repo.repo_id
+    assert repo_id
+
+    assert repo.find_resource("one", repository_id=repo_id) is not None
+    assert repo.get_resource(
+        "one", repository_id=repo_id).get_full_id() == "one"
+    assert repo.find_resource("one", repository_id="some_other_repo") is None
+
+
+# The definition the root-determinism test builds, kept module-level so the
+# subprocess script and the pinned expectation cannot drift apart.
+_ROOT_DETERMINISM_DEFINITION = {
+    "type": "http", "url": "https://one.example.com"}
+
+# A pinned literal, not a recomputation of the implementation's own formula:
+# asserting the exact string is what makes this test able to notice a change
+# of scheme. The root is synthesised from the same identity a child with this
+# url would be, hence the same ``<slug>_<sha256(identity)[:8]>``.
+_ROOT_DETERMINISM_EXPECTED_ID = "https_one_example_com_933c1326"
+
+
+def test_synthesised_root_id_is_stable_across_processes() -> None:
+    """The root id must not depend on Python's per-process hash randomisation.
+
+    A cache directory named after the synthesised id outlives the process
+    that created it, so a salted ``hash()`` would silently move the whole
+    cache on every run. CI runs the suite under ``PYTHONHASHSEED=0`` (an
+    ``ENV`` in ``core/Dockerfile`` -- not ``core/pytest.ini``, which sets
+    only ``addopts`` and ``markers``), so only building the same definition
+    in two interpreters started with *different* seeds can prove this.
+    """
+    script = (
+        "import json;"
+        "from gain.genomic_resources.repository_factory import "
+        "build_genomic_resource_repository as b;"
+        f"r=b({_ROOT_DETERMINISM_DEFINITION!r});"
+        "print(json.dumps(r.repo_id))"
+    )
+
+    def root_id_under_seed(seed: str) -> str:
+        env = {**os.environ, "PYTHONHASHSEED": seed}
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            check=True, capture_output=True, text=True, env=env)
+        return cast(str, json.loads(completed.stdout))
+
+    assert root_id_under_seed("0") == _ROOT_DETERMINISM_EXPECTED_ID
+    assert root_id_under_seed("1") == _ROOT_DETERMINISM_EXPECTED_ID
+
+
+def test_id_less_url_root_gets_the_same_id_as_the_same_url_as_http() -> None:
+    """The ``url`` type resolves its root id like every other leaf type.
+
+    ``url`` and ``http`` are separate branches of the builder but one
+    identity: the id is synthesised from the ``url`` alone, so declaring the
+    same repository either way must name it the same -- and, with a
+    ``cache_dir``, point it at the same cache directory. Only the fallback
+    for a repository with *no* identity of its own looks at the type.
+    """
+    as_url = build_genomic_resource_repository(
+        {"type": "url", "url": "https://one.example.com"})
+    as_http = build_genomic_resource_repository(
+        {"type": "http", "url": "https://one.example.com"})
+
+    assert as_url.repo_id == _ROOT_DETERMINISM_EXPECTED_ID
+    assert as_url.repo_id == as_http.repo_id
+
+
+def test_synthesised_root_id_does_not_echo_a_url_password() -> None:
+    """The root id is derived from its url, which may carry a credential.
+
+    The id is logged and, for a cached repository, becomes a directory name
+    on disk -- neither is a place for a password.
+
+    The secret is deliberately *slug-stable* -- it is all alphanumerics, so
+    ``_NON_ID_CHARS_RE`` rewrites none of it and it would appear in the id
+    verbatim if the userinfo were not redacted before synthesis. A secret
+    spelled with ``-`` or ``.`` would be rewritten to ``_`` on the way into
+    the slug, and this assertion would hold whether or not redaction
+    happened.
+    """
+    secret = "s3cr3tURL461"  # noqa: S105
+    repo = build_genomic_resource_repository(
+        {"type": "http", "url": f"https://alice:{secret}@a.example.com"})
+
+    assert repo.repo_id
+    assert secret not in repo.repo_id
+
+
+def test_id_less_top_level_embedded_repository_gets_a_clean_id() -> None:
+    """A repository with no identity of its own is named after its type.
+
+    An ``embedded`` root has neither a url nor a directory to synthesise
+    from, and -- being the root -- no path through ``children`` either, so
+    the fallback is the type alone. It must not trail the separator of an
+    empty path (``embedded_``).
+    """
+    repo = build_genomic_resource_repository(
+        {"type": "embedded", "content": {}})
+
+    assert repo.repo_id == "embedded_repo"
+
+
+def test_id_less_top_level_group_keeps_the_group_repo_id(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Resolving the root's id must not rename an id-less top-level group.
+
+    ``GenomicResourceGroupRepo`` supplied this name itself, from its own
+    ``None`` fallback; the factory now resolves it before the repository is
+    built. The observable id -- and the cache directory named after it, which
+    an operator's populated cache lives in -- must be byte-identical.
+    """
+    repo = build_genomic_resource_repository(
+        {"type": "group", "cache_dir": str(tmp_path / "cache"),
+         "children": [
+             {"id": "a", "type": "embedded", "content": {
+                 "one": {GR_CONF_FILE_NAME: "type: position_score",
+                         "data.txt": "AAAA-from-a"}}},
+         ]})
+
+    assert repo.repo_id == "group_repo.caching_repo"
+    assert repo.get_resource("one").get_file_content("data.txt") == \
+        "AAAA-from-a"
+
+
+def test_synthesised_group_root_id_is_not_selectable_as_a_repository_id(
+) -> None:
+    """A group root's own id does not select it -- pinning, not regressing.
+
+    ``GenomicResourceGroupRepo.find_resource`` matches ``repository_id``
+    against its *children's* ids and forwards it down; it never compares the
+    filter against its own ``repo_id``. So naming the root selects nothing,
+    and the filter falls through every child unmatched -- ``None``.
+
+    This is pre-existing group semantics, unchanged by the root-id synthesis
+    of #461: before it, a group root already carried ``group_repo`` (supplied
+    by ``GenomicResourceGroupRepo``'s own ``None`` fallback) and that name was
+    already unselectable. The test exists so the change is not read as
+    delivering a selectability it never had. Selecting a *child* by its id
+    works, and is what the addressability tests above cover.
+    """
+    repo = build_genomic_resource_repository(
+        {"type": "group", "children": [
+            {"id": "a", "type": "embedded", "content": {
+                "one": {GR_CONF_FILE_NAME: "type: position_score",
+                        "data.txt": "AAAA-from-a"}}},
+        ]})
+
+    assert repo.repo_id == "group_repo"
+
+    assert repo.find_resource("one", repository_id=repo.repo_id) is None
+    assert repo.find_resource("one", repository_id="a") is not None
+    assert repo.find_resource("one") is not None
+
+
+def test_explicit_top_level_id_is_used_verbatim(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An explicit ``id`` is never synthesised over -- nor is its cache path.
+
+    A repository that already names itself keeps that name and keeps caching
+    into ``<cache_dir>/<id>/``, so an existing populated cache is not
+    orphaned by the id-synthesis this section is about.
+    """
+    repo = build_genomic_resource_repository({
+        "id": "mine",
+        "type": "dir",
+        "directory": _realize_source_grr(tmp_path / "grr"),
+        "cache_dir": str(tmp_path / "cache"),
+    })
+
+    assert repo.repo_id == "mine.caching_repo"
+    assert repo.get_resource("one").get_file_content("data.txt")
+    assert (tmp_path / "cache" / "mine" / "one" / "data.txt").is_file()
 
 
 def test_read_only_filesystem_repo(

@@ -158,7 +158,7 @@ def is_safe_repo_id(repo_id: str) -> bool:
 
     An empty id is not a segment either, but it is not a traversal: a falsy
     id already means "unnamed" everywhere it is read
-    (``_resolve_child_repo_id`` synthesises one, ``find_resource`` treats it
+    (``_resolve_repo_id`` synthesises one, ``find_resource`` treats it
     as "no filter"), so its callers decide what to do with it rather than
     this predicate.
 
