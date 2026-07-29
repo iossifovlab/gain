@@ -235,7 +235,7 @@ In ``region`` mode, the ``aggregator`` attribute parameter controls how multiple
 
 The optional ``allele_filter`` parameter restricts which allele lines are considered before aggregation. Lines that do not satisfy the expression are skipped entirely, as if they were absent from the resource.
 
-The filter expression supports the operators ``>``, ``<``, ``==``, ``and``, and ``or``. Operands are either score column names (resolved per line) or numeric literals (integers, decimals, and negative values are all supported). Score column names that begin with a digit (for example, ``1000G``) are also valid.
+The filter expression supports the operators ``>``, ``<``, ``==``, ``in``, ``and``, and ``or``. Operands are either score column names (resolved per line), numeric literals (integers, decimals, and negative values are all supported), or double-quoted string literals. Score column names that begin with a digit (for example, ``1000G``) are also valid.
 
 .. code:: yaml
 
@@ -250,6 +250,20 @@ The filter expression supports the operators ``>``, ``<``, ``==``, ``and``, and 
         allele_filter: AF > 0 and AF < 0.01
         attributes:
         - source: <source_score_attribute>
+
+The ``in`` operator is a containment test: ``<left> in <right>`` keeps a line when the left operand is contained in the right one. For string-valued score columns this is a substring test, so ``"pathogenic" in CLNSIG`` keeps every line whose ``CLNSIG`` value contains ``pathogenic``. Either operand may be a score column or a string literal, so ``CLNSIG in "pathogenic"`` is also valid and tests the containment the other way around.
+
+.. code:: yaml
+
+    - allele_score_annotator:
+        resource_id: <allele score resource ID>
+        allele_filter: '"pathogenic" in CLNSIG'
+        attributes:
+        - source: <source_score_attribute>
+
+Note the YAML quoting in that example: the expression is wrapped in single quotes so that the double quotes around the string literal reach the filter parser.
+
+A string literal must be a single word — letters, digits, ``_`` and the symbols ``!@#$%^&*()+`` are accepted, while spaces, ``.``, ``,``, ``-`` and ``/`` are not. A value such as ``Pathogenic/Likely_pathogenic`` therefore cannot be written as a literal; match a substring of it instead.
 
 **allele attribute**
 
