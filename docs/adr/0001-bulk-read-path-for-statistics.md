@@ -2,7 +2,8 @@
 
 - **Status:** accepted
 - **Date:** 2026-07-24
-- **Issues:** [gain#385](https://github.com/iossifovlab/gain/issues/385) (the scan), [gain#387](https://github.com/iossifovlab/gain/pull/387) (shipped), [gain#398](https://github.com/iossifovlab/gain/issues/398) (the table capability), [gain#405](https://github.com/iossifovlab/gain/issues/405) / [gain#409](https://github.com/iossifovlab/gain/issues/409) (the parse contract), [gain#420](https://github.com/iossifovlab/gain/issues/420) (this record)
+- **Amended:** 2026-07-29 by [gain#421](https://github.com/iossifovlab/gain/issues/421), which widened the resource-type condition. The decision stands; what changed is *which* kinds it admits and *why* the others are out. See [Amendment — gain#421](#amendment--gain421-the-gate-reads-per-kind-facts-instead-of-assuming-them). The original scoping is left in place below, because why the path was first restricted is the part of this record worth keeping.
+- **Issues:** [gain#385](https://github.com/iossifovlab/gain/issues/385) (the scan), [gain#387](https://github.com/iossifovlab/gain/pull/387) (shipped), [gain#398](https://github.com/iossifovlab/gain/issues/398) (the table capability), [gain#405](https://github.com/iossifovlab/gain/issues/405) / [gain#409](https://github.com/iossifovlab/gain/issues/409) (the parse contract), [gain#420](https://github.com/iossifovlab/gain/issues/420) (this record), [gain#421](https://github.com/iossifovlab/gain/issues/421) (the amendment)
 
 ## Context
 
@@ -30,7 +31,11 @@ A second, specialized read path exists alongside the per-record one.
 It is used **only by the statistics scan**, and only when every one of four
 conditions holds:
 
-1. the resource is a **`position_score`**;
+1. the resource is a kind the bulk path is exercised against — a
+   **`position_score`**, an **`allele_score`**, or a **fragment score** in either
+   of its two permanent spellings (`fragment_score`, `cnv_collection`). *As
+   originally decided this read "a `position_score`"; gain#421 widened it — see
+   the Amendment.*
 2. every requested score has value type **`float`**;
 3. the backend is **tabix or bigWig** — i.e. it declares `supports_value_arrays`;
 4. the scan region is **bounded** — a concrete contig with concrete start and end.
@@ -57,10 +62,13 @@ Two predicates guard it, and the split between them is deliberate:
   facade** can do — the backend serves the array read *and* every named score is a
   float this facade can parse. It is answerable on an unopened score.
 - `GenomicScoreImplementation._bulk_scan_eligible(...)` adds what is the
-  **consumer's** condition and no one else's: that the resource is a
-  `position_score`. The bulk accumulators assume position-score semantics; that
-  requirement belongs to the statistics scan, not to the read facade, and is
-  asked separately.
+  **consumer's** condition and no one else's: that the resource is a kind this
+  scan is exercised against. That requirement belongs to the statistics scan,
+  not to the read facade, and is asked separately. *Originally it asked for a
+  `position_score`, because the bulk accumulators assumed position-score
+  semantics. Since gain#421 they assume nothing — each kind states its own
+  record semantics and both scan paths read them — so what this predicate still
+  excludes is a deliberate list, not a structural limit. See the Amendment.*
 
 ### Measured result
 
@@ -85,13 +93,24 @@ parse.
 
 Each exclusion has its own reason, and they are not the same reason.
 
+*Two of the five below have since been lifted — the record of why they were
+made is kept, with the change noted inline and explained in the
+[Amendment](#amendment--gain421-the-gate-reads-per-kind-facts-instead-of-assuming-them).*
+
 **`allele_score` / `np_score` — accumulator semantics.** The bulk accumulators
 assume one value per position with a span weight. These types carry several
 weight-1 records per position, which is a different accumulation, not a slower
 spelling of the same one. (`np_score` is a deprecated alias of `allele_score`.)
+— *Superseded by gain#421 for `allele_score`: the accumulators no longer
+assume. `np_score` remains excluded, for a different reason; see the
+Amendment.*
 
 **`cnv_collection` — accumulator semantics, differently.** Weight 1 rather than a
-span weight.
+span weight. — *Superseded by gain#421. `cnv_collection` is the legacy — and
+permanently accepted — spelling of `fragment_score`
+([0003-fragment-score-vocabulary.md](0003-fragment-score-vocabulary.md)); both
+spellings are now admitted, and its weight-1 rule is stated by the kind rather
+than assumed away.*
 
 **VCF — payload shape, not semantics.** The VCF backend subclasses the tabix one
 and therefore *inherits a working implementation it cannot honour*: its record
@@ -108,6 +127,83 @@ not; a `str` or `bool` score is not a number to accumulate at all.
 its overlapping-position guard, and concrete bounds because that is what the
 backend read takes. A whole-table scan keeps the per-record path.
 
+## Amendment — gain#421: the gate reads per-kind facts instead of assuming them
+
+*Added 2026-07-29. Everything above is the original record and is left as
+written; this section says what is true now and what changed.*
+
+### The problem was not the gate, it was where the rules were written
+
+The restriction to `position_score` was honest when it was made: the bulk clip,
+weight and overlap helper really did assume position-score semantics. But those
+same rules were already stated a second time, in the per-record path — an
+implementation override that pinned a fragment's weight to 1 and added a record
+count, and an overlap check inside `PositionScore.fetch_region_values`. Two
+statements of one rule is exactly the drift this ADR exists to guard against,
+one layer up from the drift it was written about.
+
+So gain#421 did not widen the gate by writing a second set of accumulators. It
+moved each kind's record semantics onto the score class as three facts, and made
+**both** scan paths read them there:
+
+| fact | `PositionScore` | `AlleleScore` | `FragmentScore` |
+| --- | --- | --- | --- |
+| `RECORD_ORDERING` | `DISJOINT` — two records touching is a data error | `SHARED` | `SHARED` |
+| `RECORD_WEIGHT_IS_SPAN` | `True` — one count per covered base pair | `False` | `False` |
+| `RECORDS_ARE_COUNTED` | `False` | `False` | `True` — min/max also reports how many records it saw |
+
+The bulk path reads the flags per batch (it has no record to hand a per-record
+hook); the per-record path reads the same flags per record; and
+`GenomicScore._record_weight`, the weight the annotators' `aggregate_region`
+applies, derives from `RECORD_WEIGHT_IS_SPAN` rather than restating it. The
+defaults on `GenomicScore` are the "one record, one count" rule, so a kind that
+declares nothing gets the conservative answer.
+
+### The condition is now a list of exercised kinds
+
+`_bulk_scan_eligible` admits `position_score`, `allele_score`, and a fragment
+score in **both** its permanent spellings — `fragment_score` and
+`cnv_collection` ([0003-fragment-score-vocabulary.md](0003-fragment-score-vocabulary.md)).
+The set is built through
+`equivalent_resource_types` rather than written out, because a literal naming
+only one fragment spelling would send the other silently back to the per-record
+path: no error, no failing test, just the slow path forever.
+
+### What is still excluded, and why — the reasons have changed
+
+- **`np_score` — scope, not semantics.** It is a deprecated alias of
+  `allele_score` and builds an `AlleleScore`, so it would read with exactly the
+  semantics now admitted. It is left out because **no production GRR has one**,
+  so the bulk path is not exercised against it and is not opened to it
+  untested. This replaces the original "accumulator semantics" reason, which was
+  true when written and is not true now.
+- **VCF-backed scores — payload shape.** Unchanged, and this is now what keeps a
+  VCF-backed *allele* score on the per-record path, since its kind is otherwise
+  eligible. The reason is the table's, not the kind's: a VCF record's payload is
+  a `(variant, allele index)` pair, so `VCFGenomicPositionTable` declares no
+  column-array support.
+- **Non-float scores — parse semantics.** Unchanged; opening it is gain#406.
+- **Unbounded scans — the overlap guard and the read's bounds.** Unchanged.
+
+### What it cost, and what pins it
+
+The review of this change found **no correctness defect** — bulk and per-record
+agreed across eighteen fixture/region comparisons, and seven deliberate
+mutations all failed loudly. What it found was documentation drift (this ADR,
+which asserted the opposite of the shipped code) and missing tests, which is the
+same failure mode one layer up.
+
+The gap worth naming: `_SCAN_BATCH_SIZE` is 100_000 and every fixture holds a
+handful of records, so every new test ran in exactly **one batch** — while
+`RECORDS_ARE_COUNTED` accrues its count once per batch and the overlap guard
+carries `prev_right` across batches. A boundary bug was invisible by
+construction. `test_scan_bulk_allele_fragment.py` now forces batch sizes of
+1/2/3/100 over five-record fixtures, clipped and unclipped, counts the batches
+actually consumed (`batch_size` is a hint a backend may ignore), and pins the
+degenerate shapes an average-looking fixture never reaches: an all-NA column,
+an empty region, a single record, values outside `view_range`, and a multi-base
+allele record on both the histogram and the min/max path.
+
 ## How the two paths are kept from drifting
 
 This is the part most worth writing down. Two implementations of one computation
@@ -123,10 +219,17 @@ which path computed it. The same resource scanned with `--region-size 0`
 
 This is gated by dedicated bulk-vs-per-record tests
 (`test_histogram_scan_bulk.py`, `test_min_max_scan_bulk.py`,
-`test_score_line_bulk_values.py`, `test_tabix_region_arrays.py`) covering
-multi-score, `zero_based`, configured NA, sub-region clip, bigWig, and
-batch-boundary overlap — plus the golden statistics tests
-(`test_statistics_golden.py`).
+`test_score_line_bulk_values.py`, `test_tabix_region_arrays.py`, and — since
+gain#421 — `test_scan_bulk_allele_fragment.py`) covering multi-score,
+`zero_based`, configured NA, sub-region clip, bigWig, batch-boundary overlap,
+shared-position allele sites, fragment record counts and forced batch
+boundaries — plus the golden statistics tests (`test_statistics_golden.py`).
+
+One known gap in that last line: `test_statistics_golden.py` builds only
+position-score fixtures, so nothing golden-pins the serialized statistics of an
+allele or fragment score. It predates gain#421 and is not made worse by it, but
+it is the one mechanism above that does not yet cover the kinds the gate now
+admits.
 
 ### 2. Value parsing is one contract, with equivalence enforced
 
@@ -167,7 +270,11 @@ conduct disagree **in either direction**.
   will fail it if it claims wrongly, but the *decision* is the backend author's.
 - Extending the path to a new score type is not a matter of relaxing the gate. It
   requires accumulators that match that type's semantics — which is exactly the
-  work gain#421 does for `allele_score`.
+  work gain#421 does for `allele_score`. *It did it by making the accumulators
+  read the kind's semantics rather than by writing a second set of them; see the
+  Amendment. The sentence still holds for whatever comes next: a kind that
+  cannot state its record rules in those terms is not admitted by editing the
+  gate.*
 - Statistics output is unchanged. This decision bought throughput and nothing else;
   any observable difference in results is a bug, by construction.
 
