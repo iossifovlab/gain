@@ -23,13 +23,20 @@ from gain.genomic_resources.genomic_context_base import (
     GenomicContext,
     SimpleGenomicContext,
 )
-from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.repository import (
+    GenomicResourceProtocolRepo,
+    GenomicResourceRepo,
+)
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
 from gain.genomic_resources.testing import (
     convert_to_tab_separated,
     setup_directories,
+)
+from gain.genomic_resources.testing.builders import (
+    a_grr,
+    a_position_score,
 )
 from gain.testing.t4c8_import import t4c8_genome
 
@@ -162,6 +169,41 @@ def test_pipeline_with_wildcards(test_grr: GenomicResourceRepo) -> None:
     result = pipeline.annotate(Position("foo", 1))
     assert len(pipeline.annotators) == 2
     assert result == {"s1": 0.1, "s2": 0.2}
+
+
+@pytest.fixture
+def labeled_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
+    """Two position scores, distinguished only by their labels."""
+    return (
+        a_grr()
+        .with_resource(
+            "phastcons100-way",
+            a_position_score()
+            .with_score("s1", "float")
+            .with_score_line(chrom="foo", pos_begin=1, s1=0.1)
+            .with_labels(phenotype="autism spectrum"),
+        )
+        .with_resource(
+            "mpc",
+            a_position_score()
+            .with_score("s2", "float")
+            .with_score_line(chrom="foo", pos_begin=1, s2=0.2)
+            .with_labels(phenotype="schizophrenia"),
+        )
+        .build_repo(tmp_path)
+    )
+
+
+def test_pipeline_with_label_in_wildcard(
+    labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    pipeline_config = """
+        - position_score: '*["tism" in phenotype]'
+    """
+    pipeline = load_pipeline_from_yaml(pipeline_config, labeled_grr)
+    result = pipeline.annotate(Position("foo", 1))
+    assert len(pipeline.annotators) == 1
+    assert result == {"s1": 0.1}
 
 
 def test_pipeline_repeated_attributes_forbidden(

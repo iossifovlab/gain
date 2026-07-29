@@ -6,19 +6,27 @@ import textwrap
 import pytest
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
+    AnnotationConfigurationError,
     AnnotatorInfo,
     AttributeConfig,
 )
 from gain.annotation.annotation_pipeline import (
     AnnotationPreamble,
 )
-from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.repository import (
+    GenomicResourceProtocolRepo,
+    GenomicResourceRepo,
+)
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
 from gain.genomic_resources.testing import (
     convert_to_tab_separated,
     setup_directories,
+)
+from gain.genomic_resources.testing.builders import (
+    a_grr,
+    a_position_score,
 )
 
 
@@ -231,6 +239,207 @@ def test_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
     return build_genomic_resource_repository(file_name=str(
         root_path / "grr_group.yaml",
     ))
+
+
+@pytest.fixture
+def labeled_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
+    """A GRR of position scores carrying phenotype/source labels.
+
+    Includes a resource whose id contains a dash and one carrying no
+    labels at all, so a label query can be shown to select neither by
+    accident.
+    """
+    return (
+        a_grr()
+        .with_resource(
+            "phastcons100-way",
+            a_position_score().with_labels(
+                phenotype="autism spectrum", source="UCSC"),
+        )
+        .with_resource(
+            "phastcons20_way",
+            a_position_score().with_labels(
+                phenotype="autism", source="NCBI"),
+        )
+        .with_resource(
+            "mpc",
+            a_position_score().with_labels(
+                phenotype="schizophrenia", source="UCSC"),
+        )
+        .with_resource(
+            "unlabeled",
+            a_position_score(),
+        )
+        .build_repo(tmp_path)
+    )
+
+
+@pytest.fixture
+def nonstring_labeled_grr(
+    tmp_path: pathlib.Path,
+) -> GenomicResourceProtocolRepo:
+    """A GRR whose labels are not strings.
+
+    ``meta.labels`` is a free-form YAML mapping, so a value is whatever
+    YAML made of it -- ``perturbed: False`` is a bool and ``year: 2019``
+    an int.  The production ``grr_encode`` carries tens of thousands of
+    such resources.
+    """
+    return (
+        a_grr()
+        .with_resource(
+            "perturbed-score",
+            a_position_score().with_labels(perturbed=False, year=2019),
+        )
+        .with_resource(
+            "clean-score",
+            a_position_score().with_labels(perturbed=True, year=2024),
+        )
+        .build_repo(tmp_path)
+    )
+
+
+def test_wildcard_label_in_against_a_bool_label(
+    nonstring_labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score: "*[\\"Fal\\" in perturbed]"
+    """, grr=nonstring_labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "perturbed-score",
+    ]
+
+
+def test_wildcard_label_in_against_an_int_label(
+    nonstring_labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score: "*[\\"19\\" in year]"
+    """, grr=nonstring_labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "perturbed-score",
+    ]
+
+
+def test_wildcard_label_equals_against_an_int_label(
+    nonstring_labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score: "*[year=\\"2024\\"]"
+    """, grr=nonstring_labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "clean-score",
+    ]
+
+
+def test_wildcard_label_query_against_a_mapping_label(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A label whose value is a nested mapping is matched, not crashed on."""
+    grr = (
+        a_grr()
+        .with_resource(
+            "nested",
+            a_position_score().with_labels(provenance={"source": "UCSC"}),
+        )
+        .build_repo(tmp_path)
+    )
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score: "*[\\"UCSC\\" in provenance]"
+    """, grr=grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "nested",
+    ]
+
+
+def test_wildcard_label_in_standalone(
+    labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score: "*[\\"tism\\" in phenotype]"
+    """, grr=labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "phastcons100-way", "phastcons20_way",
+    ]
+
+
+def test_wildcard_label_in_combined_with_and(
+    labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score: "*[source=\\"UCSC\\" and \\"tism\\" in phenotype]"
+    """, grr=labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "phastcons100-way",
+    ]
+
+
+def test_wildcard_label_in_as_first_operand_of_and(
+    labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score: "*[\\"tism\\" in phenotype and source=\\"NCBI\\"]"
+    """, grr=labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "phastcons20_way",
+    ]
+
+
+def test_wildcard_label_in_matches_nothing(
+    labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    with pytest.raises(
+        AnnotationConfigurationError, match="No resources match",
+    ):
+        AnnotationConfigParser.parse_str("""
+            - position_score: "*[\\"cancer\\" in phenotype]"
+        """, grr=labeled_grr)
+
+
+def test_wildcard_label_in_single_quotes(
+    labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score: "*['schizo' in phenotype]"
+    """, grr=labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "mpc",
+    ]
+
+
+def test_wildcard_two_in_conditions_on_the_same_label(
+    labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score:
+            "*[\\"spectrum\\" in phenotype and \\"autism\\" in phenotype]"
+    """, grr=labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "phastcons100-way",
+    ]
+
+
+def test_wildcard_equals_and_in_on_the_same_label(
+    labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score:
+            "*[phenotype=\\"autism\\" and \\"tism\\" in phenotype]"
+    """, grr=labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "phastcons20_way",
+    ]
+
+
+def test_wildcard_with_dash_in_resource_id(
+    labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    _, pipeline_config = AnnotationConfigParser.parse_str("""
+        - position_score: "phastcons*-way"
+    """, grr=labeled_grr)
+    assert [info.parameters["resource_id"] for info in pipeline_config] == [
+        "phastcons100-way",
+    ]
 
 
 def test_simple_annotator_simple() -> None:

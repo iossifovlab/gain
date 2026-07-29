@@ -28,6 +28,7 @@ from gain.genomic_resources.testing import (
     setup_directories,
 )
 from gain.genomic_resources.testing.builders import _build_single_resource
+from gain.genomic_resources.testing.resource_meta import MetaMixin
 from gain.genomic_resources.testing.score_specs import (
     ResourceValidationError,
 )
@@ -51,7 +52,7 @@ _DEFAULT_DATA_FRAME_DATA = """
 
 
 @dataclasses.dataclass(frozen=True)
-class DataFrameBuilder:
+class DataFrameBuilder(MetaMixin):
     """Immutable builder for a single ``data_frame`` resource.
 
     A ``data_frame`` config declares no columns at all -- only ``file``,
@@ -246,6 +247,7 @@ def _build_data_frame_content(
         config += yaml.safe_dump(
             {"parameters": builder.parameters},
             default_flow_style=False, sort_keys=False)
+    config += builder.render_meta()
 
     return {
         GR_CONF_FILE_NAME: config,

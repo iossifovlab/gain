@@ -334,9 +334,9 @@ class AnnotationConfigParser:
 
         ?resource_id: (resource_name | wildcard)
 
-        wildcard: /[\\w\\d\\/_*]+/
+        wildcard: /[\\w\\d\\/_\\-*]+/
 
-        filter: "[" (equals | and_)+ "]"
+        filter: "[" (equals | in | and_)+ "]"
 
         and_: operation "and" operation
 
@@ -358,16 +358,57 @@ class AnnotationConfigParser:
     @staticmethod
     def match_labels_query(
         query: dict[str, Callable[[str], bool]],
-        resource_labels: dict[str, str],
+        resource_labels: dict[str, Any],
     ) -> bool:
-        """Check if the labels query for a wildcard matches."""
+        """Check if the labels query for a wildcard matches.
+
+        ``meta.labels`` is a free-form YAML mapping, so a label value is
+        whatever YAML made of it -- ``perturbed: False`` is a bool and
+        ``year: 2019`` an int, both of which the production GRRs carry in
+        bulk.  The query language only ever spells values as text, so every
+        label value is compared in its rendered form; without that both
+        ``in`` and ``=`` raise a bare ``TypeError`` out of the predicate.
+        """
         for k, v in query.items():
             if k not in resource_labels:
                 return False
 
-            if not v(resource_labels[k]):
+            if not v(str(resource_labels[k])):
                 return False
         return True
+
+    @staticmethod
+    def _add_label_predicate(
+        labels_query: dict[str, Any],
+        key: str,
+        predicate: Callable[[str], bool],
+    ) -> None:
+        """Conjoin a predicate with the ones already collected for ``key``.
+
+        Several conditions of an `and` query may constrain the same label
+        (``"a" in pheno and "b" in pheno``); all of them must hold.
+        """
+        existing = labels_query.get(key)
+        if existing is None:
+            labels_query[key] = predicate
+            return
+
+        def combined(label: str) -> bool:
+            return bool(existing(label)) and predicate(label)
+
+        labels_query[key] = combined
+
+    @staticmethod
+    def _equals_predicate(value: str) -> Callable[[str], bool]:
+        def predicate(label: str) -> bool:
+            return label == value or fnmatch.fnmatch(label, value)
+        return predicate
+
+    @staticmethod
+    def _contains_predicate(value: str) -> Callable[[str], bool]:
+        def predicate(label: str) -> bool:
+            return value in label
+        return predicate
 
     @staticmethod
     def build_labels_query(
@@ -383,13 +424,20 @@ class AnnotationConfigParser:
                 key = child.children[0].value
                 value = child.children[1].value
 
-                labels_query[key] = \
-                    lambda x, v=value: x == v or fnmatch.fnmatch(x, v)
+                AnnotationConfigParser._add_label_predicate(
+                    labels_query, key,
+                    AnnotationConfigParser._equals_predicate(value),
+                )
             elif child.data.value == "in":
-                key = child.children[0].value
-                value = child.children[1].value
+                # the `in` rule spells the value BEFORE the label name
+                # (`"value" in name`), the opposite of `equals`
+                value = child.children[0].value
+                key = child.children[1].value
 
-                labels_query[key] = lambda x, v=value: v in x
+                AnnotationConfigParser._add_label_predicate(
+                    labels_query, key,
+                    AnnotationConfigParser._contains_predicate(value),
+                )
             elif child.data.value == "and_":
                 AnnotationConfigParser.build_labels_query(
                     child, labels_query)

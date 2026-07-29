@@ -24,6 +24,9 @@ from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
 )
 from gain.genomic_resources.repository import GenomicResourceProtocolRepo
+from gain.genomic_resources.repository_factory import (
+    build_resource_implementation,
+)
 from gain.genomic_resources.testing.builders import (
     ResourceValidationError,
     a_bigwig_score,
@@ -2374,3 +2377,239 @@ def test_a_data_frame_composes_into_a_grr_with_other_resource_types(
 
     assert repo.get_resource("tables/genes").get_type() == "data_frame"
     assert repo.get_resource("scores/pos").get_type() == "position_score"
+
+
+def test_position_score_meta_reads_back_through_the_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        a_position_score()
+        .with_meta(summary="a summary", description="a description")
+        .with_labels(ref="ref_a", domain="domain_a")
+        .build_resource(tmp_path)
+    )
+
+    assert resource.get_summary() == "a summary"
+    assert resource.get_description() == "a description"
+    assert resource.get_labels() == {"ref": "ref_a", "domain": "domain_a"}
+
+
+def test_reference_genome_meta_reads_back_through_the_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        a_reference_genome()
+        .with_meta(summary="GRCh38", description="a test genome")
+        .with_labels(reference_genome="hg38")
+        .build_resource(tmp_path)
+    )
+
+    assert resource.get_summary() == "GRCh38"
+    assert resource.get_description() == "a test genome"
+    assert resource.get_labels() == {"reference_genome": "hg38"}
+    assert build_reference_genome_from_resource(resource).open().chromosomes \
+        == ["1"]
+
+
+def test_omitting_meta_emits_no_meta_block(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = (
+        a_grr()
+        .with_resource("scores/pos", a_position_score())
+        .with_resource("genome", a_reference_genome())
+        .with_resource("gene_scores/gs", a_gene_score())
+        .with_resource("scores/bw", a_bigwig_score())
+        .with_resource("scores/vcf", a_vcf_info_score())
+        .with_resource("tables/df", a_data_frame())
+        .build_repo(tmp_path)
+    )
+
+    for resource_id in (
+        "scores/pos", "genome", "gene_scores/gs",
+        "scores/bw", "scores/vcf", "tables/df",
+    ):
+        resource = repo.get_resource(resource_id)
+        raw = resource.get_file_content("genomic_resource.yaml")
+        assert "meta" not in raw, resource_id
+        assert resource.get_labels() == {}, resource_id
+        assert resource.get_description() == "", resource_id
+
+
+def test_gene_score_meta_reads_back_through_the_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        a_gene_score()
+        .with_score("LGD_rank", "float")
+        .with_data("""
+            gene  LGD_rank
+            G1    1.0
+        """)
+        .with_meta(description="LGD ranks")
+        .with_labels(domain="gene")
+        .build_resource(tmp_path)
+    )
+
+    assert resource.get_description() == "LGD ranks"
+    assert resource.get_labels() == {"domain": "gene"}
+    assert build_gene_score_from_resource(resource).get_gene_value(
+        "LGD_rank", "G1") == 1.0
+
+
+def test_bigwig_score_meta_reads_back_through_the_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        a_bigwig_score()
+        .with_meta(summary="a bigWig")
+        .with_labels(reference_genome="hg38")
+        .build_resource(tmp_path)
+    )
+
+    assert resource.get_summary() == "a bigWig"
+    assert resource.get_labels() == {"reference_genome": "hg38"}
+    assert PositionScore(resource).open().fetch_scores(
+        "chr1", 5) == pytest.approx([0.1])
+
+
+def test_vcf_info_score_meta_reads_back_through_the_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        a_vcf_info_score()
+        .with_meta(summary="a VCF-info score")
+        .with_labels(domain="variant")
+        .build_resource(tmp_path)
+    )
+
+    assert resource.get_summary() == "a VCF-info score"
+    assert resource.get_labels() == {"domain": "variant"}
+    assert AlleleScore(resource).open().fetch_scores(
+        "chr1", 10, "A", "T") == pytest.approx({"score": 0.1})
+
+
+def test_data_frame_meta_reads_back_through_the_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        a_data_frame()
+        .with_meta(summary="a table")
+        .with_labels(domain="gene")
+        .build_resource(tmp_path)
+    )
+
+    assert resource.get_summary() == "a table"
+    assert resource.get_labels() == {"domain": "gene"}
+    assert not load_data_frame_from_resource(resource).empty
+
+
+def test_with_labels_defensively_copies_a_nested_mapping(
+    tmp_path: pathlib.Path,
+) -> None:
+    nested = {"grr": "sfari"}
+    builder = a_position_score().with_labels(sources=nested)
+    nested["grr"] = "mutated after the with_labels call"
+
+    resource = builder.build_resource(tmp_path)
+
+    assert resource.get_labels() == {"sources": {"grr": "sfari"}}
+
+
+def test_meta_builders_are_immutable_no_cross_variation_leak(
+    tmp_path: pathlib.Path,
+) -> None:
+    base = a_position_score()
+    described = base.with_meta(summary="a summary").with_labels(domain="d")
+
+    assert base.meta_summary is None
+    assert base.meta_labels is None
+    assert base.build_resource(tmp_path / "bare").get_summary() == ""
+    assert described.build_resource(
+        tmp_path / "described").get_summary() == "a summary"
+
+
+def test_with_meta_accumulates_across_calls(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        a_position_score()
+        .with_meta(summary="a summary")
+        .with_meta(description="a description")
+        .build_resource(tmp_path)
+    )
+
+    assert resource.get_summary() == "a summary"
+    assert resource.get_description() == "a description"
+
+
+def test_with_meta_without_any_field_raises() -> None:
+    with pytest.raises(
+            ResourceValidationError, match="at least one of summary"):
+        a_position_score().with_meta()
+
+
+def test_meta_with_colons_and_newlines_renders_valid_yaml(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        a_position_score()
+        .with_meta(
+            summary="phastCons: 100 vertebrates",
+            description="line one\nline two: with a colon\n")
+        .with_labels(reference_genome="hg38: primary")
+        .build_resource(tmp_path)
+    )
+
+    assert resource.get_summary() == "phastCons: 100 vertebrates"
+    assert resource.get_description() == "line one\nline two: with a colon\n"
+    assert resource.get_labels() == {"reference_genome": "hg38: primary"}
+
+
+def test_meta_carrying_resource_passes_config_validation(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        a_position_score()
+        .with_meta(summary="a summary", description="a description")
+        .with_labels(reference_genome="hg38")
+        .build_resource(tmp_path)
+    )
+
+    implementation = build_resource_implementation(resource)
+
+    header, row = implementation.collect_index_info()
+    indexed = dict(zip(header, row, strict=True))
+    assert indexed["description"] == "a description"
+    assert indexed["summary"] == "a summary"
+    assert indexed["reference_genome"] == "hg38"
+
+
+def test_tabix_table_score_carries_meta(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        a_position_score()
+        .with_tabix()
+        .with_meta(summary="a tabix score")
+        .build_resource(tmp_path)
+    )
+
+    assert resource.get_summary() == "a tabix score"
+    assert PositionScore(resource).open().fetch_scores(
+        "1", 10) == pytest.approx([0.1])
+
+
+def test_plain_reference_genome_carries_meta(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        a_reference_genome()
+        .as_plain()
+        .with_meta(summary="a plain genome")
+        .build_resource(tmp_path)
+    )
+
+    assert resource.get_summary() == "a plain genome"
+    assert build_reference_genome_from_resource(
+        resource).open().get_sequence("1", 1, 4) == "ACGT"

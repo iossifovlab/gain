@@ -61,6 +61,7 @@ from gain.genomic_resources.testing import (
     setup_tabix,
     setup_vcf,
 )
+from gain.genomic_resources.testing.resource_meta import MetaMixin
 from gain.genomic_resources.testing.score_specs import (
     ResourceValidationError,
     ScoreSpec,
@@ -110,7 +111,7 @@ _HEADER_MODES = ("file", "none", "list")
 
 
 @dataclasses.dataclass(frozen=True)
-class _TableScoreBuilder:
+class _TableScoreBuilder(MetaMixin):
     """Immutable base for the tabular position/np/allele score builders.
 
     The three table-score resource types share nearly everything: score
@@ -497,8 +498,8 @@ class _TableScoreBuilder:
             config += self._render_column_indexes(header)
         else:
             config += self.TABLE_EXTRA_CONFIG
-        config += "scores:\n"
-        return config + render_score_specs_yaml(scores)
+        config += "scores:\n" + render_score_specs_yaml(scores)
+        return config + self.render_meta()
 
     def _render_column_indexes(self, header: list[str]) -> str:
         """Render the base columns as explicit ``column_index:`` mappings."""
@@ -628,7 +629,7 @@ def _normalize_bedgraph(data: str) -> str:
 
 
 @dataclasses.dataclass(frozen=True)
-class BigWigScoreBuilder:
+class BigWigScoreBuilder(MetaMixin):
     """Immutable builder for a bigWig-backed ``position_score``.
 
     Authored as bedGraph rows (``chrom start end value``), whose intervals
@@ -789,7 +790,7 @@ class BigWigScoreBuilder:
                 f"    {hist_line}\n"
                 for hist_line in hist_yaml.rstrip("\n").split("\n")
             )
-        return config
+        return config + self.render_meta()
 
 
 _VCF_FILENAME = "data.vcf.gz"
@@ -804,7 +805,7 @@ chr1   11  .  A   T   .    .      score=0.2
 
 
 @dataclasses.dataclass(frozen=True)
-class VcfInfoScoreBuilder:
+class VcfInfoScoreBuilder(MetaMixin):
     """Immutable builder for a VCF-backed ``allele_score`` resource.
 
     The score definitions are derived by the resource from the VCF's
@@ -871,6 +872,7 @@ class VcfInfoScoreBuilder:
             "table:\n"
             f"    filename: {_VCF_FILENAME}\n"
             f"{zero_based_line}"
+            f"{self.render_meta()}"
         )
 
 
@@ -879,7 +881,7 @@ _DEFAULT_GENE_COLUMN = "gene"
 
 
 @dataclasses.dataclass(frozen=True)
-class GeneScoreBuilder:
+class GeneScoreBuilder(MetaMixin):
     """Immutable builder for a single ``gene_score`` resource.
 
     Built on the shared score-declaration base (:class:`ScoreSpec`): scores
@@ -1267,6 +1269,7 @@ def _build_gene_score_content(
     if builder.gene_column != _DEFAULT_GENE_COLUMN:
         config += f"gene_column: {builder.gene_column}\n"
     config += "scores:\n" + render_score_specs_yaml(scores)
+    config += builder.render_meta()
     tsv = convert_to_tab_separated(data)
     table_content: str | bytes = (
         gzip.compress(tsv.encode()) if builder.gzipped else tsv)
@@ -1283,7 +1286,7 @@ _MINIMAL_GENOME_SEQUENCE = "ACGTACGTACGTACGTACGTACGT"
 
 
 @dataclasses.dataclass(frozen=True)
-class ReferenceGenomeBuilder:
+class ReferenceGenomeBuilder(MetaMixin):
     """Immutable builder for a single ``genome`` resource.
 
     Two authoring modes:
@@ -1368,6 +1371,7 @@ class ReferenceGenomeBuilder:
                 resource_dir / f"{_GENOME_BASENAME}.fa.gz", content)
         else:
             setup_genome(resource_dir / f"{_GENOME_BASENAME}.fa", content)
+        self.append_meta_into(resource_dir)
 
     def build_resource(
         self, tmp_path: pathlib.Path,
