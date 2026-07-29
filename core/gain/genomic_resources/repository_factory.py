@@ -47,25 +47,43 @@ _PathOrStr = str | pathlib.Path
 # localhost/dev GRRs legitimately use it).
 _LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
-# A GRR cache is always a local directory: the caching protocol serialises
-# concurrent downloads with a lockfile, which only provides mutual exclusion
-# on a local filesystem. A ``cache_dir`` that carries a URL scheme used to be
-# interpolated into ``file://{cache_dir}``, silently producing a local
-# directory literally named ``s3:``. See #473.
-_URL_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://")
 
+def _check_cache_dir_is_a_local_path(cache_dir: _PathOrStr) -> None:
+    """Reject a ``cache_dir`` that carries a URL scheme.
 
-def _build_cached_repository(
-    repo: GenomicResourceRepo, cache_dir: _PathOrStr,
-) -> GenomicResourceCachedRepo:
-    """Wrap ``repo`` in a cached repository rooted at a local ``cache_dir``."""
-    cache_dir = str(cache_dir)
-    if _URL_SCHEME_RE.match(cache_dir):
-        raise ValueError(
-            f"the GRR cache_dir must be a local filesystem path, not a URL: "
-            f"<{_redact_url_userinfo(cache_dir)}>; a GRR cache on a remote "
-            f"filesystem is not supported")
-    return GenomicResourceCachedRepo(repo, f"file://{cache_dir}")
+    A GRR cache is always a local directory: the caching protocol serialises
+    concurrent downloads with a lockfile, which only provides mutual
+    exclusion on a local filesystem. A ``cache_dir`` used to be interpolated
+    into ``file://{cache_dir}`` unchecked, so ``s3://bucket/x`` silently
+    produced a local directory literally named ``s3:`` instead of the remote
+    cache its author asked for. See #473.
+
+    The scheme is detected with ``urlparse`` -- the way
+    ``GenomicResourceCachedRepo.__init__`` detects it, so the two checks
+    agree -- and NOT by looking for a literal ``://``: a URL scheme needs
+    only a ``:``, so ``s3:/bucket/x`` (a plausible typo for
+    ``s3://bucket/x``) and ``s3:bucket/x`` are URLs too, and a ``://``
+    check accepted both.
+
+    ANY non-empty scheme is refused, ``file`` included: ``cache_dir`` is
+    documented as a local path, not a URL, and accepting ``file://`` is what
+    invited the ``file://s3://`` confusion in the first place. Every local
+    path parses with an empty scheme -- ``/tmp/c:d/cache``, ``~/grr_cache``,
+    ``rel/path`` and ``//srv/share`` included.
+    """
+    value = str(cache_dir)
+    try:
+        scheme = urlparse(value).scheme
+    except ValueError:
+        # A value urlparse refuses outright (an unterminated IPv6 bracket)
+        # carries no scheme; leave it for the path layer to fail on.
+        return
+    if not scheme:
+        return
+    raise ValueError(
+        f"the GRR cache_dir must be a local filesystem path, not a URL: "
+        f"<{_redact_url_userinfo(value)}>; a GRR cache on a remote "
+        f"filesystem is not supported")
 
 
 class _RepoDefinitionBase(BaseModel):
@@ -112,6 +130,27 @@ class _RepoDefinitionBase(BaseModel):
                 f"cache directory, so it must be a single path segment -- "
                 f"no path separator, no absolute path, no control "
                 f"character, and not '.' or '..'")
+        return value
+
+    @field_validator("cache_dir", check_fields=False)
+    @classmethod
+    def check_cache_dir_is_a_local_path(
+        cls, value: _PathOrStr | None,
+    ) -> _PathOrStr | None:
+        """Reject a ``cache_dir`` that is a URL rather than a local path.
+
+        Rejected here, when the definition is loaded, for the same reason
+        ``id`` is (#460): validating it in the build path instead means the
+        source repository has already been constructed by the time the bad
+        value is noticed, so a refused definition still leaves a directory
+        on disk. See ``_check_cache_dir_is_a_local_path`` and #473.
+
+        ``check_fields=False`` because ``cache_dir`` is declared on each of
+        the six concrete definition models rather than on this base; the
+        validator applies to every one of them that has the field.
+        """
+        if value is not None:
+            _check_cache_dir_is_a_local_path(value)
         return value
 
 
@@ -552,11 +591,29 @@ def get_default_grr_definition() -> dict[str, Any]:
     return copy.deepcopy(DEFAULT_DEFINITION)
 
 
+def _build_cached_repository(
+    repo: GenomicResourceRepo, cache_dir: _PathOrStr,
+) -> GenomicResourceCachedRepo:
+    """Wrap ``repo`` in a cached repository rooted at a local ``cache_dir``."""
+    _check_cache_dir_is_a_local_path(cache_dir)
+    return GenomicResourceCachedRepo(repo, f"file://{cache_dir}")
+
+
 def _build_real_repository(
         proto_type: str = "",
         repo_id: str = "",
         **kwargs: Any) -> GenomicResourceRepo:
     # pylint: disable=too-many-branches
+    # Validate ``cache_dir`` BEFORE building anything: a ``directory``
+    # repository creates its root on disk when its protocol is built, so
+    # checking the cache only on the way out would let a refused definition
+    # still leave a directory behind. A definition loaded through
+    # ``build_genomic_resource_repository`` has already been refused by
+    # ``_RepoDefinitionBase.check_cache_dir_is_a_local_path``; this covers
+    # the callers that build a repository from kwargs directly. See #473.
+    if "cache_dir" in kwargs:
+        _check_cache_dir_is_a_local_path(kwargs["cache_dir"])
+
     if proto_type == "group":
         repo = _build_group_repository(
             repo_id=repo_id, **kwargs)
@@ -630,6 +687,11 @@ def _build_group_repository(
         children: list[dict],
         path: tuple[int, ...] = (),
         **kwargs: Any) -> GenomicResourceRepo:
+
+    # Before any child repository is constructed -- see the note in
+    # ``_build_real_repository`` (#473).
+    if "cache_dir" in kwargs:
+        _check_cache_dir_is_a_local_path(kwargs["cache_dir"])
 
     result: list[GenomicResourceRepo] = []
     for index, child in enumerate(children):

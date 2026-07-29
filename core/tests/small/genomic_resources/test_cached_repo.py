@@ -72,6 +72,12 @@ def test_create_definition_with_cache(tmp_path: pathlib.Path) -> None:
     "http://example.com/grr-cache",
     "memory://grr-cache",
     "file:///grr-cache",
+    # A URL scheme needs only a ``:``: these two are URLs as well, and a
+    # ``://`` check let them through -- ``s3:/bucket/...`` is a plausible
+    # typo for ``s3://bucket/...``, and both used to end up as
+    # ``file://s3:/bucket/...``, i.e. a local directory named ``s3:``.
+    "s3:/bucket/grr-cache",
+    "s3:bucket/grr-cache",
 ])
 def test_definition_with_a_url_cache_dir_is_rejected(
     tmp_path: pathlib.Path,
@@ -97,6 +103,67 @@ def test_definition_with_a_url_cache_dir_is_rejected(
     message = str(excinfo.value)
     assert "cache_dir" in message
     assert "local filesystem" in message
+    # Nothing at all is created, and in particular not the local directory
+    # named after the scheme that this check exists to prevent.
+    assert not (tmp_path / "s3:").exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("cache_dir", [
+    "/data/grr-cache",
+    # A ``:`` inside a path segment is not a scheme...
+    "/data/c:d/grr-cache",
+    # ...nor is a leading ``~`` or a relative path a URL...
+    "~/grr_cache",
+    "rel/path",
+    # ...and ``//host/share`` parses with an empty scheme too.
+    "//srv/share",
+])
+def test_definition_with_a_local_cache_dir_is_accepted(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cache_dir: str,
+) -> None:
+    """#473: only a URL scheme is refused -- local paths keep working.
+
+    Building the repository creates no cache directory (the cache-side
+    protocols are built lazily), so these are safe to name verbatim.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    repo = build_genomic_resource_repository({
+        "cache_dir": cache_dir,
+        "id": "bla",
+        "type": "embedded",
+        "content": {"one": {"genomic_resource.yaml": ""}},
+    })
+
+    assert isinstance(repo, GenomicResourceCachedRepo)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_directory_definition_with_a_url_cache_dir_creates_nothing(
+    tmp_path: pathlib.Path,
+) -> None:
+    """#473: a bad ``cache_dir`` is refused before any side effect.
+
+    ``cache_dir`` used to be validated on the way out of the build, after
+    the source repository had been constructed -- so a ``directory``
+    repository with a refused ``cache_dir`` still created its root
+    directory on disk before raising.
+    """
+    source_dir = tmp_path / "source"
+
+    with pytest.raises(ValueError) as excinfo:
+        build_genomic_resource_repository({
+            "cache_dir": "s3://test-bucket/grr-cache",
+            "id": "bla",
+            "type": "directory",
+            "directory": str(source_dir),
+        })
+
+    assert "cache_dir" in str(excinfo.value)
+    assert not source_dir.exists()
     assert list(tmp_path.iterdir()) == []
 
 
@@ -142,6 +209,27 @@ def test_cached_repo_rejects_a_non_local_cache_url() -> None:
     assert "s3" in message
     assert "s3://test-bucket/grr-cache" in message
     assert "local filesystem" in message
+
+
+def test_cached_repo_rejection_does_not_leak_cache_url_credentials() -> None:
+    """#473: the rejection message must not carry a secret.
+
+    A cache url can embed ``user:pass@`` userinfo, and this message lands in
+    logs; both sibling messages (the caching protocol's and the repository
+    factory's) already redact.
+    """
+    remote_repo = build_inmemory_test_repository(
+        {"one": {GR_CONF_FILE_NAME: ""}})
+
+    with pytest.raises(ValueError) as excinfo:
+        GenomicResourceCachedRepo(
+            remote_repo, "s3://AKIAEXAMPLE:sup3rs3cret@bucket/cache")
+
+    message = str(excinfo.value)
+    assert "sup3rs3cret" not in message
+    assert "AKIAEXAMPLE" not in message
+    assert "local filesystem" in message
+    assert "s3://bucket/cache" in message
 
 
 def test_cached_repo_accepts_a_bare_local_path_as_cache_url(

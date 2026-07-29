@@ -64,9 +64,12 @@ class CachingProtocol(ReadOnlyRepositoryProtocol):
             # written files. Refuse the configuration here, before any
             # caching work begins, rather than at the first acquisition.
             # See #473.
+            # ``get_url()`` is already userinfo-free -- see
+            # ``FsspecReadOnlyProtocol.__init__`` -- so no credential can
+            # reach this message or the logs it lands in.
             raise ValueError(
-                f"a GRR cache must be on a local filesystem; "
-                f"{local_protocol.get_url()} uses the unsupported scheme "
+                f"a GRR cache must be on a local filesystem; cache url "
+                f"<{local_protocol.get_url()}> uses the unsupported scheme "
                 f"<{local_protocol.scheme}>")
         self.remote_protocol = remote_protocol
         self.local_protocol = local_protocol
@@ -312,9 +315,16 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
             # repository, so without this the unsupported scheme is only
             # noticed at the first resource access. A GRR cache must be
             # local -- see CachingProtocol.__init__ and #473.
+            #
+            # The url is redacted with the same helper the cache-hit log
+            # lines use: a cache url can embed ``user:pass@`` userinfo, and
+            # interpolating it raw would put the secret in the exception
+            # text and therefore in the logs. Both sibling messages -- the
+            # one above and the repository factory's -- already redact.
             raise ValueError(
                 f"a GRR cache must be on a local filesystem; cache url "
-                f"{cache_url} uses the unsupported scheme <{cache_scheme}>")
+                f"<{_strip_url_userinfo(cache_url)}> uses the unsupported "
+                f"scheme <{cache_scheme}>")
 
         logger.debug(
             "creating cached GRR with cache url: %s", cache_url)
