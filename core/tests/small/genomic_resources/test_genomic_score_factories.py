@@ -4,9 +4,8 @@
 The point of the typed factories is a return type mypy can narrow, and mypy
 does not run over ``core/tests``.  What these tests can pin is the runtime
 half of that contract: the concrete class actually returned, the rejection of
-a mismatched resource type, the fragment score's shared-instance
-caching, and
-the ``_from_resource_id`` repository resolution.
+a mismatched resource type, the fragment score's shared-instance caching,
+and the ``_from_resource_id`` repository resolution.
 """
 import pathlib
 from collections.abc import Callable, Generator

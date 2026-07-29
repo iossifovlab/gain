@@ -289,9 +289,10 @@ class _TableScoreBuilder(MetaMixin):
         Emitted under ``aggregator:`` -- the resource-level default a pipeline
         uses when an attribute does not name one of its own.  A score has one
         aggregator; which reduction it names is fixed by the resource type
-        (over a region of positions, over the alleles at one, over overlapping
-        CNVs), so there is nothing to choose between here.  With ``score_id``
-        omitted it attaches to the most-recently-declared score.  The value is
+        (over a region of positions, over the alleles at one, over
+        overlapping fragments), so there is nothing to choose between here.
+        With ``score_id`` omitted it attaches to the most-recently-declared
+        score.  The value is
         rendered verbatim, so an invalid one can be authored on purpose to
         watch the resource schema reject it.
         """

@@ -117,6 +117,10 @@ class FragmentScoreAnnotator(AnnotatorBase):
             "count": AttributeSpec(
                 source="count",
                 value_type="int",
+                # Deliberately NOT renamed with the Python surface: this
+                # string is annotation output a user reads, so editing it
+                # is a behaviour change (gain#470 changes none).  It moves
+                # when the config vocabulary does, in gain#471.
                 description="The number of CNVs overlapping with the "
                 "annotatable.",
             ),

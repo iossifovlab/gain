@@ -175,8 +175,8 @@ class GenomicScoreDef(ScoreDef):
     # kind of score it belongs to.  Only ever ONE was read: a position score
     # is only read by the position annotator, an allele or np score only by
     # the allele annotator, a cnv_collection only by the fragment score
-    # annotator.  So
-    # the second field was dead on every def, and the config surface offered
+    # annotator.  So the second field was dead on every def, and the config
+    # surface offered
     # a key that did nothing (``position_aggregator`` on an allele score was
     # accepted by the schema and consulted by nothing).
     aggregator: str | None

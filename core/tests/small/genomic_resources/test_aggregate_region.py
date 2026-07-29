@@ -204,9 +204,8 @@ def test_a_fragment_counts_once_however_long_it_is(
     """A fragment is one observation, not one per base pair it spans.
 
     Deriving the weight from the record's span in the base class would give
-    the 100 bp fragment a hundred times the say of the 1 bp one, and
-    disagree with the fragment score annotator for every fragment
-    longer than a base.
+    the 100 bp fragment a hundred times the say of the 1 bp one, and disagree
+    with the fragment score annotator for every fragment longer than a base.
     """
     res = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """

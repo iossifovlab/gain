@@ -431,11 +431,11 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
         if allele_filter_str is not None:
             assert isinstance(allele_filter_str, str)
 
-            normalized_filter = allele_filter_str.replace(
+            cnv_filter_str = allele_filter_str.replace(
                 "\n", " ").replace("\t", " ").strip()
             try:
                 self.allele_filter = self._build_allele_filter_func(
-                    self.filter_parser.parse(normalized_filter),
+                    self.filter_parser.parse(cnv_filter_str),
                     self.allele_score)
             except Exception as e:
                 raise AnnotationConfigurationError(

@@ -187,7 +187,7 @@ documentation site.
 
 GAIn uses Python entry points for extensibility.
 
-**Defined in `core/setup.py`:**
+**Defined in `core/pyproject.toml`:**
 
 1. **`gain.genomic_resources.plugins`** — genomic
    context providers (DefaultRepository, CLI,

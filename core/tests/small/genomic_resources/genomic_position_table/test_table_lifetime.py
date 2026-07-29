@@ -767,9 +767,8 @@ def test_a_closed_inmemory_table_retains_no_records(
     of the file -- and that is not merely untidy, because closed scores are
     deliberately kept alive: ``_INMEMORY_FRAGMENT_SCORE_CACHE`` holds
     ``FragmentScore`` scores process-wide while an annotation pipeline's
-    teardown closes them, so a cached-and-closed score pinned every
-    record of its file for the
-    life of the process.
+    teardown closes them, so a cached-and-closed score pinned every record
+    of its file for the life of the process.
 
     Parametrised over two file sizes two orders of magnitude apart, and
     asserting the same number for both, because the claim is about the
@@ -807,11 +806,10 @@ def test_an_inmemory_scan_in_flight_when_close_lands_raises(
     Consuming a scan lazily outside the block that opened the table is easy to
     write by accident -- ``gen = score.fetch_region(...)`` inside a ``with``,
     ``list(gen)`` after it -- and the in-memory backend is the one deliberately
-    shared past a close: ``_INMEMORY_FRAGMENT_SCORE_CACHE`` hands the
-    same score to every holder in the process, so one pipeline's
-    teardown can close it while another scan is mid-flight.  For an
-    annotation read a silently truncated scan is wrong data rather than
-    an error (gain#350).
+    shared past a close: ``_INMEMORY_FRAGMENT_SCORE_CACHE`` hands the same
+    score to every holder in the process, so one pipeline's teardown can
+    close it while another scan is mid-flight.  For an annotation read a
+    silently truncated scan is wrong data rather than an error (gain#350).
     """
     builder = (
         a_position_score()

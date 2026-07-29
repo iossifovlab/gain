@@ -459,8 +459,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         the ``scores:`` block, a VCF header, a bigWig -- because a default
         applied in only one of them is the same bug in a new place: a
         VCF-derived def would arrive with ``aggregator=None``, and the
-        fragment score annotator drops an attribute whose aggregator is
-        None *silently*.
+        fragment score annotator drops an attribute whose aggregator is None
+        *silently*.
         """
         for score_def in score_defs.values():
             if score_def.value_type is None:
@@ -694,10 +694,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
           away.  Routed last, that caller could catch the score
           published-but-unrouted -- and since #239 left the routing with no
           default at all, that caller reads an AttributeError.  Scores are
-          shared across threads (the process-wide in-memory
-          fragment-score cache; gain-web-api's thread pool), so the
-          window is reachable; this
-          ordering keeps the ROUTING out of it.  Pinned by
+          shared across threads (the process-wide in-memory fragment-score
+          cache; gain-web-api's thread pool), so the window is reachable;
+          this ordering keeps the ROUTING out of it.  Pinned by
           test_the_score_is_routed_before_it_reports_itself_open.
 
         It does not make open() as a whole safe to race, and does not claim to:
@@ -1073,15 +1072,16 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         The rule is a property of the resource TYPE, and ``WeightedValues``
         already states it: "a position-score record counts once per base
         pair of the queried region it covers, an allele line counts once, a
-        fragment counts once however long it is".  One record, one count, is the
-        answer for everything except a position score, which overrides.
+        fragment counts once however long it is".  One record, one count,
+        is the answer for everything except a position score, which
+        overrides.
 
         This exists so :meth:`aggregate_region` can live on the base class
         and still agree with the annotators, which apply exactly this rule.
         Deriving a weight from ``pos_begin``/``pos_end`` in the base instead
         would give a fragment its length as a weight and silently disagree
-        with the fragment score annotator for every fragment longer than
-        one base pair.
+        with the fragment score annotator for every fragment longer than one
+        base pair.
         """
         return 1
 
@@ -1191,8 +1191,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         and explicitly not thread-safe (see :class:`Aggregator`).  Reuse is
         an annotator optimisation resting on being single-threaded; a score
         is shared process-wide (the fragment-score cache, the web api's
-        thread pool),
-        so this cannot assume the same.
+        thread pool), so this cannot assume the same.
 
         ``Aggregator.build`` raises a bare ``KeyError('mediann')`` for an
         unknown name, saying nothing about which score asked for it.
@@ -1696,9 +1695,9 @@ class FragmentScore(GenomicScore):
     when the Python names moved (gain#470); gain#471 widens it.
     """
 
-    # As AlleleScore, except that strings join rather than list -- a
-    # fragment score's string attributes are rendered into one cell.  This table
-    # is the whole of what ``_CNVScoreDef`` existed for: it was a subclass of
+    # As AlleleScore, except that strings join rather than list -- a fragment
+    # score's string attributes are rendered into one cell.  This table is
+    # the whole of what ``_CNVScoreDef`` existed for: it was a subclass of
     # ``GenomicScoreDef`` whose only member was a ``__post_init__`` carrying
     # these defaults, and ``_parse_scoredef_config`` was overridden here
     # solely to construct it.  With the defaults owned by the score class,
