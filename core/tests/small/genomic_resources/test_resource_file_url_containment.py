@@ -730,13 +730,8 @@ def test_fts_search_survives_a_dropped_poisoned_id(
     with gzip.open(root_path / GR_CONTENTS_FILE_NAME, "wt") as outfile:
         json.dump(contents, outfile)
 
-    # An explicit id, unlike the read-only builds above: this is a SECOND
-    # protocol over a root that already has one, and the derived default id
-    # is a function of the root -- it would land on the read-write protocol
-    # built above through the ``(proto_id, url)`` instance memo, and the
-    # remote read path this test exercises would never run.
     proto = build_filesystem_test_protocol(
-        root_path, proto_id="remote", repair=False, read_only=True)
+        root_path, repair=False, read_only=True)
 
     assert [res.resource_id for res in proto.search_resources("basic")] == [
         "good_one",

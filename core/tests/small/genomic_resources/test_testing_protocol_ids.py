@@ -144,3 +144,55 @@ def test_a_read_only_protocol_cannot_be_asked_to_repair(
         build_filesystem_test_protocol(tmp_path, read_only=True)
 
     assert "repair=False" in str(excinfo.value)
+
+
+def test_a_read_only_build_is_not_shadowed_by_a_read_write_one(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A read-only build over a used root must still be read-only.
+
+    The containment tests are security tests whose subject is a read-only
+    remote; handing them the read-write protocol another build left in the
+    ``(proto_id, url)`` memo would quietly retire what they check.
+    """
+    setup_directories(tmp_path, {"one": {GR_CONF_FILE_NAME: ""}})
+    read_write = build_filesystem_test_protocol(tmp_path)
+
+    read_only = build_filesystem_test_protocol(
+        tmp_path, repair=False, read_only=True)
+
+    assert read_only.mode() == Mode.READONLY
+    assert read_only is not read_write
+
+
+def test_a_read_write_build_is_not_shadowed_by_a_read_only_one(
+    tmp_path: pathlib.Path,
+) -> None:
+    """And the other order: the default build still repairs and writes."""
+    setup_directories(tmp_path, {"one": {GR_CONF_FILE_NAME: ""}})
+    read_only = build_filesystem_test_protocol(
+        tmp_path, repair=False, read_only=True)
+
+    read_write = build_filesystem_test_protocol(tmp_path)
+
+    assert read_write.mode() == Mode.READWRITE
+    assert read_write is not read_only
+
+
+def test_an_explicit_id_reused_in_the_other_mode_is_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The escape hatch cannot silently hand back the wrong mode.
+
+    An explicit id names one memoized instance whatever ``read_only`` says,
+    so a mismatch has to be reported where it is asked for rather than as an
+    absent write method somewhere downstream.
+    """
+    setup_directories(tmp_path, {"one": {GR_CONF_FILE_NAME: ""}})
+    build_filesystem_test_protocol(tmp_path, proto_id="remote")
+
+    with pytest.raises(ValueError) as excinfo:
+        build_filesystem_test_protocol(
+            tmp_path, proto_id="remote", repair=False, read_only=True)
+
+    assert "remote" in str(excinfo.value)
