@@ -23,6 +23,8 @@ import pytest
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
+    GR_CONTENTS_FILE_NAME,
+    GR_INDEX_FILE_NAME,
     GenomicResource,
     ResourceFileState,
 )
@@ -120,6 +122,23 @@ def test_deleting_a_symlinked_leaf_removes_the_link_not_the_target(
     assert (outside / "secret.txt").read_text() == "TOP SECRET OUTSIDE THE GRR"
 
 
+def test_manifest_keeps_a_symlinked_leaf_and_drops_a_symlinked_directory(
+    fs_proto: FsspecReadWriteProtocol,
+) -> None:
+    """The file scan's two halves, asserted directly.
+
+    Rules 1 and 2 meet here: the leaf link is an ordinary manifest entry
+    (a DVC-materialized file must stay manifested), while the directory
+    link contributes nothing.
+    """
+    res = fs_proto.get_resource("one")
+
+    names = set(fs_proto.build_manifest(res).names())
+
+    assert "sneak.txt" in names
+    assert not any(name.startswith("up") for name in names)
+
+
 def test_symlinked_resource_directory_is_skipped_with_a_warning(
     tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -200,6 +219,88 @@ def test_lockfile_through_a_symlinked_state_dir_is_refused(
         pass
 
     assert list(outside.glob("escape*")) == []
+
+
+def test_state_file_is_not_written_through_a_symlinked_leaf(
+    tmp_path: pathlib.Path, outside: pathlib.Path,
+) -> None:
+    """``.grr/<file>.state`` is a write sink like any other.
+
+    Reached by every ``grr_manage`` repair, and ``.grr`` is never
+    manifested, so manifest diffing does not police it either.
+    """
+    root_path = tmp_path / "grr"
+    setup_directories(root_path, {
+        "one": {GR_CONF_FILE_NAME: "", "data.txt": "alabala"},
+    })
+    proto = build_filesystem_test_protocol(root_path)
+    res = proto.get_resource("one")
+    planted = outside / "planted.txt"
+    state_link = root_path / "one" / ".grr" / "data.txt.state"
+    state_link.unlink(missing_ok=True)
+    os.symlink(planted, state_link)
+
+    with pytest.raises(ValueError):
+        proto.save_resource_file_state(
+            res, ResourceFileState("data.txt", 7, 1.0, "deadbeef"))
+
+    assert not planted.exists()
+
+
+def test_lockfile_is_not_written_through_a_symlinked_leaf(
+    tmp_path: pathlib.Path, outside: pathlib.Path,
+) -> None:
+    """``filelock`` truncates on acquire, so the link must be refused here.
+
+    ``filelock`` happens to pass ``O_NOFOLLOW`` on this platform, but that
+    is a third-party guarantee and surfaces as a bare ``OSError``.
+    """
+    root_path = tmp_path / "grr"
+    setup_directories(root_path, {
+        "one": {GR_CONF_FILE_NAME: "", "data.txt": "alabala"},
+    })
+    proto = build_filesystem_test_protocol(root_path)
+    res = proto.get_resource("one")
+    planted = outside / "planted.lock"
+    os.symlink(planted, root_path / "one" / ".grr" / "data.txt.lockfile")
+
+    with (
+        pytest.raises(ValueError),
+        proto.obtain_resource_file_lock(res, "data.txt"),
+    ):
+        pass
+
+    assert not planted.exists()
+
+
+@pytest.mark.parametrize(("root_file", "publishes_it"), [
+    (GR_CONTENTS_FILE_NAME, "build_content_file"),
+    (GR_CONTENTS_FILE_NAME[:-3], "build_content_file"),
+    (GR_INDEX_FILE_NAME, "build_index_info"),
+])
+def test_repository_root_files_are_not_written_through_a_symlink(
+    tmp_path: pathlib.Path, outside: pathlib.Path,
+    root_file: str, publishes_it: str,
+) -> None:
+    """``.CONTENTS``/``index.html`` join the repository url themselves.
+
+    They are not resource files, so they inherit nothing from the
+    resource-file join -- but they are written from repository content
+    all the same.
+    """
+    root_path = tmp_path / "grr"
+    setup_directories(root_path, {"one": {GR_CONF_FILE_NAME: ""}})
+    proto = build_filesystem_test_protocol(root_path)
+    planted = outside / "planted.out"
+    # Building the protocol already published a real ``.CONTENTS``; swap
+    # it for the link a poisoned clone would carry.
+    (root_path / root_file).unlink(missing_ok=True)
+    os.symlink(planted, root_path / root_file)
+
+    with pytest.raises(ValueError):
+        getattr(proto, publishes_it)()
+
+    assert not planted.exists()
 
 
 def test_repository_root_reached_through_a_symlink_still_works(

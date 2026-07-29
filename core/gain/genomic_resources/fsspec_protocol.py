@@ -448,37 +448,43 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         """
         if self.scheme != "file":
             return
-        relative_path = os.path.join(
-            resource.get_genomic_resource_id_version(), filename)
+        relative_path = self._repository_relative_path(resource, filename)
         reason = symlinked_directory_reason(self.root_path, relative_path)
         if reason is not None:
             raise ValueError(
                 f"resource file name <{filename}> {reason}; "
                 f"resource <{resource.resource_id}>")
 
-    def _validate_symlink_write_target(
+    def _repository_relative_path(
         self, resource: GenomicResource, filename: str,
-    ) -> None:
-        """Raise if a write would follow a symlinked leaf out of the resource.
+    ) -> str:
+        """Return ``filename``'s path relative to the repository root."""
+        return os.path.join(
+            resource.get_genomic_resource_id_version(), filename)
+
+    def _validate_symlink_write_target(self, relative_path: str) -> None:
+        """Raise if a write would follow a symlinked leaf.
 
         Reading a link out is deliberate (the shared DVC cache); writing
-        through one is a different act -- it mutates a file the resource
+        through one is a different act -- it mutates a file the repository
         does not own. Refused wherever it points, including back inside
         the resource: nothing GAIn writes is legitimately a symlink, and
         the DVC-materialized files that ARE links are ones GAIn only ever
         reads (gain#483).
+
+        Takes a path relative to the REPOSITORY root, not a resource file
+        name, because the write sinks that need it are not all resource
+        files: ``.grr/<name>.state`` and ``.grr/<name>.lockfile`` sit
+        beside the resource, and ``.CONTENTS``/``index.html`` sit at the
+        repository root. Every one of them was reachable through a link
+        while this took a resource plus a name.
         """
         if self.scheme != "file":
             return
-        path = os.path.join(
-            self.root_path,
-            resource.get_genomic_resource_id_version(),
-            filename)
-        if os.path.islink(path):
+        if os.path.islink(os.path.join(self.root_path, relative_path)):
             raise ValueError(
-                f"resource file name <{filename}> is a symlink and must "
-                f"not be written through; "
-                f"resource <{resource.resource_id}>")
+                f"<{relative_path}> is a symlink and must not be written "
+                f"through; repository <{self.url}>")
 
     def _is_symlinked_directory(self, path: str, name: str) -> bool:
         """Return whether ``name`` in ``path`` is a link to a directory.
@@ -638,7 +644,8 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
                 raise OSError(
                     f"Read-Only protocol {self.get_id()} trying to open "
                     f"{filepath} for writing")
-            self._validate_symlink_write_target(resource, filename)
+            self._validate_symlink_write_target(
+                self._repository_relative_path(resource, filename))
 
             # Create the containing directory if it doesn't exists.
             parent = os.path.dirname(filepath)
@@ -826,9 +833,12 @@ class FsspecReadWriteProtocol(
         if self.scheme != "file":
             raise NotImplementedError(self._non_local_lock_message())
         validate_resource_file_name(resource.resource_id, filename)
+        resource_url = self.get_resource_url(resource)
         self._validate_symlink_containment(
             resource, f".grr/{filename}.lockfile")
-        resource_url = self.get_resource_url(resource)
+        self._validate_symlink_write_target(
+            self._repository_relative_path(
+                resource, f".grr/{filename}.lockfile"))
         path = os.path.join(resource_url, ".grr", f"{filename}.lockfile")
         return path.removeprefix(f"{self.scheme}://")
 
@@ -1201,9 +1211,9 @@ class FsspecReadWriteProtocol(
         just as surely as a traversing name does (gain#483).
         """
         validate_resource_file_name(resource.resource_id, filename)
+        resource_url = self.get_resource_url(resource)
         self._validate_symlink_containment(
             resource, f".grr/{filename}.state")
-        resource_url = self.get_resource_url(resource)
         return os.path.join(resource_url, ".grr", f"{filename}.state")
 
     def get_resource_file_timestamp(
@@ -1223,7 +1233,16 @@ class FsspecReadWriteProtocol(
 
     def save_resource_file_state(
             self, resource: GenomicResource, state: ResourceFileState) -> None:
-        """Save resource file state into internal GRR state."""
+        """Save resource file state into internal GRR state.
+
+        The state file is a write sink like any other, and the ONE that a
+        poisoned repository reaches most easily: ``.grr`` is never
+        manifested, so manifest diffing does not police it, and every
+        ``grr_manage`` repair writes here (gain#483).
+        """
+        self._validate_symlink_write_target(
+            self._repository_relative_path(
+                resource, f".grr/{state.filename}.state"))
         path = self._get_resource_file_state_path(resource, state.filename)
         if not self.filesystem.exists(os.path.dirname(path)):
             self.filesystem.makedirs(
@@ -1501,6 +1520,18 @@ class FsspecReadWriteProtocol(
                 return None
         return res.get_manifest()
 
+    def _repository_root_url_for_write(self, name: str) -> str:
+        """Return a repository-root file url, refusing a linked leaf.
+
+        ``.CONTENTS``, ``about.html`` and ``index.html`` join the
+        repository url themselves, so they inherit nothing from the
+        resource-file join -- yet they are written from repository
+        content, and a poisoned clone can carry any of them as a link
+        (gain#483).
+        """
+        self._validate_symlink_write_target(name)
+        return os.path.join(self.url, name)
+
     def build_content_file(
         self, failed: frozenset[str] = frozenset(),
     ) -> list[dict[str, Any]]:
@@ -1525,8 +1556,10 @@ class FsspecReadWriteProtocol(
             })
         content = sorted(content, key=operator.itemgetter("id"))
 
-        content_filepath = os.path.join(
-            self.url, GR_CONTENTS_FILE_NAME)
+        content_filepath = self._repository_root_url_for_write(
+            GR_CONTENTS_FILE_NAME)
+        plain_content_filepath = self._repository_root_url_for_write(
+            GR_CONTENTS_FILE_NAME[:-3])
 
         # gzip header OS byte (offset 9) is normalised to 0xff
         # ("unknown") so the file is byte-deterministic across
@@ -1547,7 +1580,7 @@ class FsspecReadWriteProtocol(
             outfile.write(gz)
 
         with self.filesystem.open(
-                content_filepath[:-3],
+                plain_content_filepath,
                 "wt", encoding="utf8") as outfile:
             json.dump(content, outfile, indent=2, sort_keys=True)
 
@@ -1606,7 +1639,8 @@ class FsspecReadWriteProtocol(
                 raise ValueError from e
 
             with self.filesystem.open(
-                os.path.join(self.url, "about.html"), "wt", encoding="utf8",
+                self._repository_root_url_for_write("about.html"),
+                "wt", encoding="utf8",
             ) as outfile:
                 if about_template is not None:
                     outfile.write(get_template(about_template).render(
@@ -1621,7 +1655,8 @@ class FsspecReadWriteProtocol(
                 gz_bytes: bytes = cast(bytes, gz_file.read())
             sqlite3_hash = hashlib.md5(gz_bytes).hexdigest()  # noqa: S324
 
-        content_filepath = os.path.join(self.url, GR_INDEX_FILE_NAME)
+        content_filepath = self._repository_root_url_for_write(
+            GR_INDEX_FILE_NAME)
         with self.filesystem.open(
                 content_filepath, "wt", encoding="utf8") as outfile:
             outfile.write(get_template(repository_template).render(

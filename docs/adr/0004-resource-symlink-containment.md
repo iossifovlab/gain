@@ -55,9 +55,16 @@ Rule 1 lives at the same join 0003 used, `get_resource_file_url`, so every
 read sink inherits it, plus the two internal joins that build a location
 themselves and so inherit nothing — `_get_resource_file_state_path` and
 `_get_resource_file_lockfile_path`, where a symlinked `.grr` redirects the
-write just as surely as a traversing name did. Rule 3 sits in
-`open_raw_file`'s write branch. The scans get the check inline, next to the
-dot-directory skip they already had.
+write just as surely as a traversing name did. The scans get the check
+inline, next to the dot-directory skip they already had.
+
+**Rule 3 is stated over a repository-relative path, not over a resource
+file name**, because the writes that need it are not all resource files.
+`.grr/<name>.state` and `.grr/<name>.lockfile` sit beside the resource;
+`.CONTENTS.json`, `.CONTENTS.json.gz`, `about.html` and `index.html` sit at
+the repository root and join the repository url themselves. A guard phrased
+as "resource plus file name" cannot express any of them, and left every one
+reachable through a link — see the cost section below.
 
 ### Why symlinks are allowed at all
 
@@ -150,6 +157,33 @@ filesystem: an `lstat` per path component. That is a real change in kind, on
 a hot-ish path, accepted because the walk is short and the alternative is
 leaving the choke point 0003 established with only half of containment on
 it.
+
+### What the first implementation got wrong
+
+The first version of this fix phrased the write guard as "a resource plus a
+file name" and wired it into `open_raw_file` alone. Code review found three
+live bypasses of its own rule, each confirmed by execution:
+
+- `save_resource_file_state` wrote through a symlinked
+  `.grr/<file>.state` leaf. A dangling link there made `build_manifest` —
+  i.e. every `grr_manage repair` — **create** the outside file. `.grr` is
+  never manifested, so manifest diffing does not police it either. This was
+  the worst of the three and the docstring claiming "both halves are
+  repeated" was simply wrong: the halves it meant were name and directory,
+  not leaf-write.
+- `.CONTENTS.json{,.gz}`, `about.html` and `index.html` inherited nothing at
+  all, and were overwritten through a planted link at the repository root.
+  Their content is partly attacker-influenced, since resource ids and
+  configs are interpolated into both. The sibling sqlite writes turned out
+  to be safe only *by accident* — `os.remove` unlinks the link before
+  writing — which nothing documented.
+- The `.grr/<file>.lockfile` leaf was saved only by `filelock` passing
+  `O_NOFOLLOW`, a third-party, platform-dependent guarantee that surfaced as
+  a bare `OSError: [Errno 40]` rather than this project's `ValueError`.
+
+Generalizing the guard to a repository-relative path fixed all three at
+once. The lesson worth keeping: a containment rule phrased in the vocabulary
+of *one* caller silently exempts every sink that does not speak it.
 
 **TOCTOU is not addressed.** The check is `lstat`-then-open, so a component
 could in principle be swapped in between. The threat model here is poisoned
