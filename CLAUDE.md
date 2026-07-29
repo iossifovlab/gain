@@ -138,6 +138,25 @@ The Jenkinsfile has `Build docs` (every branch) and
 `Deploy docs` (master only, ansible to iossifovlab.com).
 Pre-move history lives in `iossifovlab/gpf_documentation`.
 
+#### Do NOT edit `docs/source/changes.rst` in a feature PR
+
+**Release notes are written after a release, not before it.**
+A bugfix or feature branch must leave
+`docs/source/changes.rst` untouched — do not add an entry
+under `unreleased`, and do not create that section. The
+release notes for a version are composed once, when that
+version is cut.
+
+This is the rule even though `git log` shows plenty of
+past commits that did edit it alongside their code — those
+predate the convention and are not the precedent to copy.
+Every unreleased-section edit on a feature branch is also a
+guaranteed rebase conflict with every other branch in
+flight, since they all append to the same list.
+
+Describe the user-visible change in the PR body instead;
+that is what the release notes get composed from.
+
 ### Test Infrastructure (Docker)
 
 Some tests require external services. Start them with:

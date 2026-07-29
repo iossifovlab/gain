@@ -3,6 +3,7 @@
 import json
 import pathlib
 import textwrap
+from collections.abc import Iterable
 from typing import cast
 
 import pysam
@@ -12,9 +13,11 @@ from gain.genomic_resources.genomic_scores import (
     build_score_from_resource,
 )
 from gain.genomic_resources.histogram import (
+    CategoricalHistogram,
     CategoricalHistogramConfig,
     Histogram,
     HistogramConfig,
+    NullHistogram,
     NullHistogramConfig,
     NumberHistogram,
     NumberHistogramConfig,
@@ -759,6 +762,65 @@ def test_noregion_statistics_build_matches_the_regioned_build(
 
     assert _built_histogram(noregion, "value").serialize() == \
         _built_histogram(regioned, "value").serialize()
+
+
+def _a_categorical_region_histogram(
+    values: Iterable[str],
+) -> CategoricalHistogram:
+    """A region's categorical histogram over ``values``, one count each."""
+    histogram = CategoricalHistogram(
+        CategoricalHistogramConfig.default_config())
+    for value in values:
+        histogram.add_value(value)
+    return histogram
+
+
+def test_merge_histograms_nullifies_only_the_overflowing_score() -> None:
+    """A score that only overflows on merge must not take the rest down.
+
+    Regression for iossifovlab/gain#465.  A categorical score whose distinct
+    values stay within ``UNIQUE_VALUES_LIMIT`` in every single region but
+    exceed it in their union raises ``HistogramError`` out of
+    ``CategoricalHistogram.merge``.  The merge step used to catch that per
+    score -- the per-region accumulation path still does -- and the handling
+    was lost in a refactor, so one un-histogrammable score failed the whole
+    merge task and discarded every other score's histogram (454 of them for
+    ``hg38/scores/dbNSFP4.9a``).
+    """
+    # 60 + 61 distinct values overlapping in 20 -> 101 in the union, one over
+    # the limit; neither region alone exceeds it.
+    region1 = {
+        "many": _a_categorical_region_histogram(
+            f"value{i}" for i in range(60)),
+        "few": _a_categorical_region_histogram(["a", "b"]),
+    }
+    region2 = {
+        "many": _a_categorical_region_histogram(
+            f"value{i}" for i in range(40, 101)),
+        "few": _a_categorical_region_histogram(["b", "c"]),
+    }
+
+    # The fold is over the per-region dicts alone; the ``resource`` argument
+    # exists only because every statistics task is passed the resource, and
+    # the merge never reads it.  Passing None says so, and turns a future
+    # use of the argument into a loud failure here rather than a silent pass
+    # against a resource that has nothing to do with these histograms.
+    merged = GenomicScoreImplementation._merge_histograms(
+        cast(GenomicResource, None), region1, region2)
+
+    many = merged["many"]
+    assert isinstance(many, NullHistogram), (
+        f"the overflowing score was merged into {many!r}; it must be "
+        f"nullified, as the per-region path nullifies its own overflow"
+    )
+    assert "unique values" in many.reason
+
+    few = merged["few"]
+    assert isinstance(few, CategoricalHistogram), (
+        f"the other score was delivered as {few!r}; one un-histogrammable "
+        f"score must not cost the rest of the resource its histograms"
+    )
+    assert few.raw_values == {"a": 1, "b": 2, "c": 1}
 
 
 def test_collect_index_info_header_includes_score_fields() -> None:

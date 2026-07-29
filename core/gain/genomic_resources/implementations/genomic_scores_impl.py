@@ -789,11 +789,29 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         resource: GenomicResource,  # noqa: ARG004
         *calculated_histograms: dict[str, Any],
     ) -> dict[str, Histogram]:
+        """Fold each region's histograms into one histogram per score.
+
+        A score that cannot be histogrammed is nullified on its own, exactly
+        as the per-region accumulation path nullifies its own overflow: the
+        merge of a resource's scores is per score, so one un-histogrammable
+        score must not cost the rest of the resource its histograms
+        (gain#465).  A categorical score can stay within
+        ``UNIQUE_VALUES_LIMIT`` in every single region and exceed it only in
+        their union, so the merge is the first place its failure appears.
+        """
         result: dict[str, Histogram] = {}
 
         for histogram_region in calculated_histograms:
             for score_id, hist in histogram_region.items():
                 if result.get(score_id) is None:
+                    # The accumulator aliases the first region's histogram
+                    # and later regions are merged into it in place, so that
+                    # region's dict ends up holding the merged -- or, when
+                    # the merge raises, the partially merged -- object.
+                    # Safe as written: the per-region dicts are dependency
+                    # task results, handed to this merge once and never read
+                    # again, and under a distributed executor they arrive
+                    # deserialized, so nothing observes the mutation.
                     result[score_id] = hist
                     continue
                 if isinstance(result[score_id], NullHistogram):
@@ -803,7 +821,15 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                         f"Empty histogram for {score_id} in a region: "
                         f"{hist.reason}"))
                 else:
-                    result[score_id].merge(hist)
+                    try:
+                        result[score_id].merge(hist)
+                    except HistogramError as err:
+                        logger.warning(
+                            "Histogram for %s nullified while merging "
+                            "regions: %s", score_id, err)
+                        result[score_id] = NullHistogram(
+                            NullHistogramConfig(str(err)),
+                        )
 
         return result
 

@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from dask.distributed import Client
+from gain.genomic_resources.histogram import HistogramError
 from gain.task_graph import dask_executor
 from gain.task_graph.cache import CacheRecordType, FileTaskCache
 from gain.task_graph.dask_executor import (
@@ -869,3 +870,52 @@ def test_releasing_futures_after_a_gather_failure_survives_a_raising_release(
 
     bad.release.assert_called_once()
     good.release.assert_called_once()
+
+
+def raise_histogram_error() -> None:
+    raise HistogramError(
+        "Can not merge categorical histograms; too many unique values 127")
+
+
+def test_a_histogram_error_ends_the_run_instead_of_hanging(
+    dask_client: Client,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A task raising ``HistogramError`` must end the run, not hang it.
+
+    Regression for iossifovlab/gain#465. ``HistogramError`` used to derive
+    from ``BaseException``, so it slipped past the ``except Exception`` in
+    ``_exec_internal`` that turns a task's failure into its *result*, and
+    escaped into the dask worker as a genuine future failure. Every layer
+    between worker and caller then filters on ``Exception``: tornado's
+    coroutine runner never throws it back into the suspended coroutine,
+    ``distributed``'s ``sync()`` is left parked at its ``yield`` with the
+    completion event never set, and the results worker's gather-failure
+    fallback blocks in ``Future.result()`` forever -- ``grr_manage
+    repo-repair`` logged the error and then never exited.
+
+    With the error re-based on ``Exception`` it is delivered as the task's
+    result like any other task error, which is also what the CLI's run
+    helpers branch on to report a failed run.
+    """
+    graph = TaskGraph()
+    graph.create_task("HistogramTask", raise_histogram_error, args=[], deps=[])
+
+    executor = DaskExecutor(dask_client, task_log_dir=str(tmp_path / "logs"))
+
+    results = _run_in_thread_with_timeout(executor, graph, timeout=20.0)
+
+    assert len(results) == 1, (
+        f"the histogram task was delivered {len(results)} times; it must be "
+        f"delivered exactly once, as an error"
+    )
+    _task, result = results[0]
+    assert isinstance(result, HistogramError), (
+        f"the histogram failure was delivered as {result!r}; it must be "
+        f"delivered as the task's result"
+    )
+    assert isinstance(result, Exception), (
+        "the delivered error is not an Exception; task_graph_run's error "
+        "accounting tests isinstance(result, Exception), so a non-Exception "
+        "failure is reported as a successful run"
+    )
