@@ -2,6 +2,22 @@ Release Notes
 =============
 
 * unreleased
+    * **Security fix:** a ``meta.labels`` key is no longer spliced into the
+      SQL that builds the repository's search index unchecked. Every key
+      becomes a column of that index, so a crafted key — e.g.
+      ``a); DROP TABLE contents_metadata; --`` — used to be executed as SQL
+      while the index was built. Keys are now vetted before they reach the
+      statement (#464).
+    * **Behavior change:** a resource whose ``meta.labels`` carries a key
+      that cannot name an index field no longer takes down the index of the
+      whole repository. The resource is skipped and reported by id, naming
+      the offending key and the rule it breaks, and the rest of the
+      repository is indexed as usual. A key must match
+      ``[A-Za-z_][A-Za-z0-9_]*``, must be neither an SQL keyword (``order``)
+      nor a name FTS5 reserves (``rank``, ``rowid``, ``contents``), and must
+      not repeat another field of the index — including the fixed
+      ``full_id``, ``id``, ``type``, ``description`` and ``summary``, which
+      it used to silently overwrite (#464).
     * **Behavior change:** the children of a ``group`` repository must now
       have distinct ids. A group definition whose children share an ``id``
       — spelled out, or arrived at by listing the same ``url`` /

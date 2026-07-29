@@ -425,9 +425,11 @@ Limitations
 
 Label search inherits the constraints of the underlying FTS5 index. The following are worth knowing before relying on it.
 
-**Label keys must be valid SQLite identifiers.** Each key is used directly as a column name of the ``contents`` table. A key containing a hyphen or a space (``cell-type``, ``cell type``) makes the index unbuildable — and because the table is created once from the union of all labels in the repository, a single such key breaks the index for the *entire* repository, not just for the offending resource. Use underscores (``cell_type``).
+**Label keys must be valid SQLite identifiers.** Each key is used directly as a column name of the ``contents`` table, so a key must match ``[A-Za-z_][A-Za-z0-9_]*``, must not be an SQL keyword, and must not be a name FTS5 reserves (``rank``, ``rowid``, ``contents``). A key containing a hyphen or a space (``cell-type``, ``cell type``), or one spelled ``order``, cannot name a field; use underscores (``cell_type``).
 
-**Avoid label keys that collide with the fixed fields.** A label named ``description``, ``summary``, ``type``, ``id``, or ``full_id`` overwrites the corresponding built-in value for that resource in the index, which then becomes unsearchable.
+**Label keys must not collide with another field.** A label named ``description``, ``summary``, ``type``, ``id`` or ``full_id`` — or with the name of a field the resource's own type contributes, such as ``score_ids`` — would replace that field's value for the resource, which then could no longer be found by it. Names are compared case-insensitively, as SQLite compares identifiers.
+
+A resource that breaks either rule is **skipped**: ``grr_manage repo-repair`` reports it by resource id, naming the offending key, indexes the rest of the repository normally, and exits non-zero. Only the offending resource is missing from the index — fix its ``meta.labels`` and repair again.
 
 **Search terms are FTS5 expressions, not literal strings.** Characters that are
 meaningful to the query parser — most commonly ``-`` and ``:`` — must be quoted, or the search fails with an error rather than returning no results:

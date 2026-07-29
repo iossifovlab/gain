@@ -53,6 +53,7 @@ from gain.genomic_resources.repository_factory import (
 from gain.genomic_resources.resource_implementation import (
     GenomicResourceImplementation,
     ResourceStatistics,
+    validate_index_columns,
 )
 from gain.task_graph.cli_tools import TaskGraphCli
 from gain.task_graph.graph import Task, TaskGraph, chain_tasks
@@ -694,7 +695,13 @@ def _create_contents_db(
             continue
         try:
             impl = build_resource_implementation(res)
-            index_infos.append(impl.collect_index_info())
+            header, row = impl.collect_index_info()
+            # collect_index_info() already vets the label keys it adds; this
+            # repeats the check over the whole header so that no column name
+            # -- including one an implementation adds on its own -- reaches
+            # the interpolated SQL below unvetted (gain#464).
+            validate_index_columns(res.resource_id, header)
+            index_infos.append((header, row))
         except Exception as err:  # noqa: BLE001
             _report_resource_failure(
                 err, "skipping FTS index for", res.resource_id)
@@ -716,9 +723,21 @@ def _create_contents_db(
         )
 
         if columns:
+            # Every name here came out of validate_index_columns above, so it
+            # is a bare non-keyword SQL identifier and cannot carry anything
+            # else into these two statements (gain#464).  SQL identifiers
+            # cannot be bound as parameters, so interpolation is the only way
+            # to name a column -- vetting the names is what makes it safe.
             cols_str = ", ".join(columns)
             conn.execute(
                 f"CREATE VIRTUAL TABLE contents USING fts5({cols_str})",
+            )
+            insert_sql = (
+                # S608 fires on any SQL built by interpolation and cannot
+                # see the vetting the comment above describes; the values
+                # are bound, and only vetted identifiers are spliced.
+                f"INSERT INTO contents ({cols_str}) "  # noqa: S608
+                f"VALUES ({', '.join(['?'] * len(columns))})"
             )
             for header, row in index_infos:
                 header_idx = {col: i for i, col in enumerate(header)}
@@ -726,11 +745,7 @@ def _create_contents_db(
                     row[header_idx[col]] if col in header_idx else ""
                     for col in columns
                 )
-                conn.execute(
-                    f"INSERT INTO contents ({', '.join(columns)}) "  # noqa: S608
-                    f"VALUES ({', '.join(['?'] * len(columns))})",
-                    full_row,
-                )
+                conn.execute(insert_sql, full_row)
 
     # mtime=0 strips the current-time stamp from the gzip header
     # so re-running this on an unchanged repo produces identical
