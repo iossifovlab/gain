@@ -2,6 +2,29 @@ Release Notes
 =============
 
 * unreleased
+    * **Fixed:** a GRR definition that omits the top-level ``id`` and sets
+      a ``cache_dir`` crashed with a ``TypeError`` on the first resource
+      access — the missing id reached the cache path join as ``None``. The
+      id-less ``~/.grr_definition.yaml`` is a supported shape and now
+      works: the top-level repository gets an id synthesised the same way a
+      group child's is (#461).
+    * **Behavior change:** the top-level repository of a definition that
+      omits ``id`` no longer has ``None`` for a ``repo_id``; it gets a
+      deterministic id derived from its ``url`` or ``directory`` (or from
+      its type, for an ``embedded`` or ``group`` definition, which have
+      neither), so a top-level leaf repository can now be named in the
+      ``repository_id`` argument of ``find_resource``/``get_resource``, and
+      every repository reads as a name in log messages. A top-level
+      ``group`` is unchanged in this respect: as before, it matches a
+      ``repository_id`` against its children's ids and never against its
+      own (#461).
+    * **Upgrade note:** a top-level definition that spelled ``id: ""`` and
+      set a ``cache_dir`` used to cache directly into the *root* of the
+      cache directory; it now caches into
+      ``<cache_dir>/<synthesised id>/`` like every other repository. The
+      previously cached files are left behind, unused, and the content is
+      re-downloaded once — not a corruption. Delete them to reclaim the
+      space; spelling a real ``id`` pins the directory (#461).
     * **Security fix:** a ``meta.labels`` key is no longer spliced into the
       SQL that builds the repository's search index unchecked. Every key
       becomes a column of that index, so a crafted key — e.g.
