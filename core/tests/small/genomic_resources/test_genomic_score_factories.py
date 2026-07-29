@@ -44,7 +44,7 @@ from gain.genomic_resources.testing.builders import (
 # lets one of them drift (a dropped space, a misspelled word) unnoticed.
 _WRONG_TYPE_MESSAGE = (
     r"The resource provided to \w+ should be of "
-    r"'\w+' type, not a '\w+'"
+    r"'\w+'(?: or '\w+')* type, not a '\w+'"
 )
 
 # A `build_*_from_resource` factory: resource in, concrete score out.

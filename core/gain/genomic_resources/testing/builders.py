@@ -143,6 +143,10 @@ class _TableScoreBuilder(MetaMixin):
     # Suppresses the ``header_mode:`` key while keeping everything else the
     # ``"none"`` mode realizes -- see :meth:`with_missing_header_mode`.
     omit_header_mode: bool = False
+    # Overrides ``SCORE_TYPE`` in the rendered config.  Exists for the one
+    # resource type that has two accepted spellings -- see
+    # :meth:`FragmentScoreBuilder.with_resource_type`.
+    resource_type: str | None = None
 
     # Subclass-provided knobs.
     SCORE_TYPE: ClassVar[str] = ""
@@ -473,7 +477,7 @@ class _TableScoreBuilder(MetaMixin):
     ) -> str:
         header = _parse_header(data)
         lines = [
-            f"type: {self.SCORE_TYPE}",
+            f"type: {self.resource_type or self.SCORE_TYPE}",
             "table:",
             f"    filename: {filename}",
         ]
@@ -588,13 +592,18 @@ class AlleleScoreBuilder(_TableScoreBuilder):
 
 @dataclasses.dataclass(frozen=True)
 class FragmentScoreBuilder(_TableScoreBuilder):
-    """Immutable builder for a single ``cnv_collection`` resource.
+    """Immutable builder for a single fragment score resource.
 
     Shares the tabular-score machinery with the position/np/allele
     builders, differing only in the type value.  A fragment is a region
     rather than a point, so the default data carries the optional
     ``pos_end`` column.  Reads back through ``FragmentScore``, which
     weights every record 1 however long it is.
+
+    Defaults to the legacy ``cnv_collection`` type because that is what
+    every deployed GRR declares, so it is the shape a test gets unless it
+    asks otherwise; :meth:`with_resource_type` selects the newer
+    ``fragment_score`` spelling (gain#471).
     """
 
     SCORE_TYPE: ClassVar[str] = "cnv_collection"
@@ -603,6 +612,22 @@ class FragmentScoreBuilder(_TableScoreBuilder):
         1      10         19       0.1
         1      20         200      0.2
     """
+
+    def with_resource_type(self, resource_type: str) -> Self:
+        """Render a different ``type:`` value.
+
+        A fragment score is the one resource type with two accepted
+        spellings: the legacy ``cnv_collection`` that every deployed GRR
+        declares, and ``fragment_score`` (gain#471).  Both resolve to the
+        same implementation, so a test that cares which one it wrote has
+        to be able to say so.
+
+        Deliberately not on the base builder: the other score types have a
+        single spelling each, and a knob that let a test declare
+        ``type: position_score`` on an allele-score builder would express
+        a resource that cannot exist.
+        """
+        return dataclasses.replace(self, resource_type=resource_type)
 
 
 _BIGWIG_FILENAME = "data.bw"

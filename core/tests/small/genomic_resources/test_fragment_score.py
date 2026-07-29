@@ -154,7 +154,7 @@ def test_fragment_score_wrong_resource_types(
     with pytest.raises(
             ValueError,
             match="The resource provided to FragmentScore should be of "
-            "'cnv_collection' type, not a 'aaaa'"):
+            "'fragment_score' or 'cnv_collection' type, not a 'aaaa'"):
         FragmentScore(fragments_resource)
 
 

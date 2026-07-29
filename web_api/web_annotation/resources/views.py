@@ -2,6 +2,7 @@ from collections.abc import Iterable
 from itertools import islice
 from typing import ClassVar
 
+from gain.genomic_resources.genomic_scores import equivalent_resource_types
 from gain.genomic_resources.repository import GenomicResource
 from rest_framework import status
 from rest_framework.views import Request, Response
@@ -15,6 +16,9 @@ class ResourcesAPIView(AnnotationBaseView):
         "gene_set_collection", "genome",
         "gene_models", "allele_score",
         "liftover_chain",
+        # Both accepted spellings of a fragment score -- deployed GRRs
+        # declare the legacy one, new resources the other (gain#471).
+        "fragment_score",
         "cnv_collection",
     }
 
@@ -39,8 +43,9 @@ class Resources(ResourcesAPIView):
 
         if resource_type:
             assert isinstance(resource_type, str)
+            accepted = equivalent_resource_types(resource_type)
             resources = filter(
-                lambda resource: resource.get_type() == resource_type,
+                lambda resource: resource.get_type() in accepted,
                 resources,
             )
 
@@ -99,11 +104,24 @@ class SearchResources(ResourcesAPIView):
         except ValueError:
             return Response(status=status.HTTP_400_BAD_REQUEST)
 
+        # `search_resources` pushes a SINGLE type into the FTS query, which
+        # cannot express "either spelling".  When a type with more than one
+        # spelling is asked for, drop it from the query and filter here
+        # instead -- otherwise searching for `fragment_score` returns none
+        # of the resources that declare `cnv_collection`.
+        accepted_types = (
+            equivalent_resource_types(resource_type) if resource_type
+            else None)
+        pushed_down_type = (
+            resource_type if accepted_types is None or len(accepted_types) == 1
+            else None)
+
         resources = list(filter(
-            lambda r: r.get_type() in self.SUPPORTED_RESOURCE_TYPES,
+            lambda r: r.get_type() in self.SUPPORTED_RESOURCE_TYPES
+            and (accepted_types is None or r.get_type() in accepted_types),
             self._grr.search_resources(
                 search_term=search,
-                resource_type=resource_type,
+                resource_type=pushed_down_type,
             ),
         ))
 

@@ -78,6 +78,10 @@ allele_score = "gain.genomic_resources.implementations.genomic_scores_impl:Genom
 liftover_chain = "gain.genomic_resources.implementations.liftover_chain_impl:LiftoverChainImplementation"
 genome = "gain.genomic_resources.implementations.reference_genome_impl:ReferenceGenomeImplementation"
 gene_models = "gain.genomic_resources.implementations.gene_models_impl:GeneModelsImpl"
+fragment_score = "gain.genomic_resources.implementations.genomic_scores_impl:FragmentScoreImplementation"
+# Legacy spelling. Every deployed GRR declares it; migrating them is
+# gain#469, gated on client rollout. Not deprecated -- see
+# docs/adr/0003-fragment-score-vocabulary.md.
 cnv_collection = "gain.genomic_resources.implementations.genomic_scores_impl:FragmentScoreImplementation"
 annotation_pipeline = "gain.genomic_resources.implementations.annotation_pipeline_impl:AnnotationPipelineImplementation"
 gene_score = "gain.gene_scores.implementations.gene_scores_impl:GeneScoreImplementation"
@@ -101,6 +105,9 @@ bcf_liftover_annotator = "gain.annotation.liftover_annotator:build_liftover_anno
 normalize_allele_annotator = "gain.annotation.normalize_allele_annotator:build_normalize_allele_annotator"
 gene_score_annotator = "gain.annotation.gene_score_annotator:build_gene_score_annotator"
 simple_effect_annotator = "gain.annotation.simple_effect_annotator:build_simple_effect_annotator"
+fragment_score = "gain.annotation.fragment_score_annotator:build_fragment_score_annotator"
+fragment_score_annotator = "gain.annotation.fragment_score_annotator:build_fragment_score_annotator"
+# Legacy spellings, kept permanently -- deployed GRR pipelines name them.
 cnv_collection = "gain.annotation.fragment_score_annotator:build_fragment_score_annotator"
 cnv_collection_annotator = "gain.annotation.fragment_score_annotator:build_fragment_score_annotator"
 chrom_mapping = "gain.annotation.chrom_mapping_annotator:build_chrom_mapping_annotator"

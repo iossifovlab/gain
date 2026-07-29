@@ -18,6 +18,7 @@ from gain.genomic_resources.aggregators import (
     AggregatorDefinition,
     AggregatorSource,
 )
+from gain.genomic_resources.genomic_scores import FRAGMENT_SCORE_TYPES
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
@@ -454,14 +455,21 @@ class AnnotationConfigParser:
         """Collect resources matching a given query."""
         labels_query: dict[str, Callable[[str], bool]] = {}
 
+        # Maps an annotator name a user may type to the resource types it
+        # consumes.  A SET, not one type: a fragment score has two accepted
+        # spellings and either annotator name must find either of them --
+        # a pipeline on the new name will point at GRRs still declaring the
+        # old type until gain#469 migrates them.
         annotator_resources_map = {
-            "position_score": "position_score",
-            "position_score_annotator": "position_score",
-            "allele_score": "allele_score",
-            "allele_score_annotator": "allele_score",
-            "cnv_collection": "cnv_collection",
-            "cnv_collection_annotator": "cnv_collection",
-            "gene_score_annotator": "gene_score",
+            "position_score": {"position_score"},
+            "position_score_annotator": {"position_score"},
+            "allele_score": {"allele_score"},
+            "allele_score_annotator": {"allele_score"},
+            "fragment_score": FRAGMENT_SCORE_TYPES,
+            "fragment_score_annotator": FRAGMENT_SCORE_TYPES,
+            "cnv_collection": FRAGMENT_SCORE_TYPES,
+            "cnv_collection_annotator": FRAGMENT_SCORE_TYPES,
+            "gene_score_annotator": {"gene_score"},
         }
 
         config_parser = Lark(AnnotationConfigParser.ANNOTATION_CONFIG_GRAMMAR)
@@ -479,8 +487,8 @@ class AnnotationConfigParser:
 
         def match(resource: GenomicResource) -> bool:
             return (
-                resource.get_type() == annotator_resources_map.get(
-                    annotator_type, "")
+                resource.get_type() in annotator_resources_map.get(
+                    annotator_type, frozenset())
                 and fnmatch.fnmatch(resource.get_id(), parsed_id)
                 and AnnotationConfigParser.match_labels_query(
                    labels_query, resource.get_labels()))

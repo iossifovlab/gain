@@ -25,7 +25,11 @@ def test_annotator_types(
         "normalize_allele_annotator",
         "gene_score_annotator",
         "simple_effect_annotator",
-        "cnv_collection_annotator",
+        # The editor offers ONE spelling per annotator -- listing both
+        # would show the user two menu entries for one annotator.  The
+        # legacy name is still accepted when a saved pipeline names it;
+        # it is just not advertised (gain#471).
+        "fragment_score_annotator",
     }
 
 

@@ -8,8 +8,10 @@ rename is only safe because the config surface did not move with it, and a
 later change that "finishes the job" by renaming a ``type:`` value or an
 entry-point key would break deployed resources this repository cannot grep.
 
-The config vocabulary is widened in gain#471; until then these are the only
-spellings accepted.
+gain#471 added the ``fragment_score`` spellings BESIDE these; the new half is
+pinned in ``test_fragment_score_vocabulary``.  Nothing here was replaced --
+these remain accepted permanently, and this module is what stops a later
+"finish the rename" pass from dropping them.
 """
 import importlib
 import importlib.util

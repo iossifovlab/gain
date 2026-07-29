@@ -889,7 +889,7 @@ Next, create a ``genomic_resource.yaml`` file in the same directory with this co
 
 .. code-block:: yaml
 
-    type: cnv_collection
+    type: fragment_score
     table:
       filename: my_miniCNVcollection.txt
 
@@ -1006,7 +1006,7 @@ Prepare a ``genomic_resource.yaml`` with the following content to make the resou
 
 .. code-block:: yaml
 
-    type: cnv_collection
+    type: fragment_score
     table:
       filename: Iossifov_Lab_SSC_AGRE_2021.tsv
 

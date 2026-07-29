@@ -1687,12 +1687,45 @@ class Fragment:
         return self.pos_end - self.pos_begin
 
 
+#: The resource ``type:`` values that name a fragment score.
+#:
+#: Two spellings, both permanent.  ``fragment_score`` is what a new
+#: resource should declare; ``cnv_collection`` is what every deployed GRR
+#: declares today and is therefore not deprecated -- see
+#: ``docs/adr/0003-fragment-score-vocabulary.md``.  Migrating the deployed
+#: data is gain#469 and is gated on client rollout, so the legacy spelling
+#: outlives this module's memory of why.
+#:
+#: A tuple rather than a set: it is used for membership, but also rendered
+#: into user-facing messages, and a set would order them arbitrarily.
+#: Preferred spelling first, so a message reads as a recommendation.
+FRAGMENT_SCORE_TYPES = ("fragment_score", "cnv_collection")
+
+
+def equivalent_resource_types(resource_type: str) -> tuple[str, ...]:
+    """Return every ``type:`` value denoting the same kind of resource.
+
+    Only a fragment score has more than one spelling; every other type
+    maps to itself, so a caller can filter by the result unconditionally
+    without special-casing.
+
+    Exists because filtering resources by an exact type string went wrong
+    the moment a second spelling appeared: asking for ``fragment_score``
+    matched none of the deployed resources, which all declare
+    ``cnv_collection``.  An empty result is indistinguishable from "this
+    repository has none of those", so the failure is silent.
+    """
+    if resource_type in FRAGMENT_SCORE_TYPES:
+        return FRAGMENT_SCORE_TYPES
+    return (resource_type,)
+
+
 class FragmentScore(GenomicScore):
     """A genomic score over fragments -- intervals carrying attributes.
 
     Nothing here is copy-number specific; a CNV collection is one
-    application of it.  The resource type string stayed ``cnv_collection``
-    when the Python names moved (gain#470); gain#471 widens it.
+    application of it.  Accepts either resource type in
+    :data:`FRAGMENT_SCORE_TYPES`.
     """
 
     # As AlleleScore, except that strings join rather than list -- a fragment
@@ -1711,10 +1744,12 @@ class FragmentScore(GenomicScore):
     }
 
     def __init__(self, resource: GenomicResource):
-        if resource.get_type() != "cnv_collection":
+        if resource.get_type() not in FRAGMENT_SCORE_TYPES:
+            accepted = " or ".join(
+                f"'{score_type}'" for score_type in FRAGMENT_SCORE_TYPES)
             raise ValueError(
                 "The resource provided to FragmentScore should be of "
-                f"'cnv_collection' type, not a '{resource.get_type()}'")
+                f"{accepted} type, not a '{resource.get_type()}'")
         super().__init__(resource)
 
     @staticmethod
@@ -1864,7 +1899,7 @@ def build_score_from_resource(
         return build_position_score_from_resource(resource)
     if resource_type in {"allele_score", "np_score"}:
         return build_allele_score_from_resource(resource)
-    if resource_type == "cnv_collection":
+    if resource_type in FRAGMENT_SCORE_TYPES:
         return build_fragment_score_from_resource(resource)
 
     raise ValueError(

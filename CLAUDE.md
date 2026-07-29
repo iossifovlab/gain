@@ -214,12 +214,14 @@ GAIn uses Python entry points for extensibility.
 2. **`gain.genomic_resources.implementations`** —
    position/allele/NP scores, liftover chain, genome,
    gene models, fragment score (config type
-   `cnv_collection`), annotation pipeline, gene score,
+   `fragment_score`, legacy `cnv_collection` also
+   accepted), annotation pipeline, gene score,
    gene set collection
 3. **`gain.annotation.annotators`** — all built-in
    annotator types (score, effect, gene set, liftover,
    normalize allele, fragment score (config name
-   `cnv_collection`), chrom mapping, gene score, simple
+   `fragment_score`, legacy `cnv_collection` also
+   accepted), chrom mapping, gene score, simple
    effect, debug)
 
 Annotator plugins in this repo register additional

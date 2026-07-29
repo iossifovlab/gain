@@ -58,7 +58,7 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
             "allele_score_annotator",
             "gene_score_annotator",
             "gene_set_annotator",
-            "cnv_collection_annotator",
+            "fragment_score_annotator",
             "effect_annotator",
             "simple_effect_annotator",
             "liftover_annotator",
@@ -151,18 +151,27 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                     "optional": False,
                 },
             }
-        if annotator_type == "cnv_collection_annotator":
+        # Both spellings resolve to the same template, so a pipeline saved
+        # with the legacy name still opens in the editor -- but what the
+        # template EMITS is the new vocabulary, so anything saved from here
+        # is written the new way.
+        if annotator_type in (
+                "fragment_score_annotator", "cnv_collection_annotator"):
             return {
-                "annotator_type": "cnv_collection",
+                "annotator_type": "fragment_score",
                 "documentation_url": (
-                    f"{self.BASE_DOC_URL}#cnv-collection-annotator"
+                    f"{self.BASE_DOC_URL}#fragment-score-annotator"
                 ),
                 "resource_id": {
                     "field_type": "resource",
-                    "resource_type": "cnv_collection",
+                    # Resolved against BOTH accepted resource types by the
+                    # resources endpoint -- deployed GRRs still declare
+                    # `cnv_collection`, and filtering on this string alone
+                    # would offer the user an empty picker.
+                    "resource_type": "fragment_score",
                     "optional": False,
                 },
-                "cnv_filter": {
+                "fragment_filter": {
                     "field_type": "string",
                     "optional": True,
                 },
@@ -673,7 +682,10 @@ class ResourceAnnotators(EditorView):
 
         resource_default_annotators_mapping = {
             "allele_score": "allele_score_annotator",
-            "cnv_collection": "cnv_collection_annotator",
+            "fragment_score": "fragment_score_annotator",
+            # Deployed GRRs still declare this type; both map to the one
+            # annotator, whose template emits the new vocabulary.
+            "cnv_collection": "fragment_score_annotator",
             "gene_models": "effect_annotator",
             "gene_score": "gene_score_annotator",
             "gene_set_collection": "gene_set_annotator",

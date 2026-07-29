@@ -20,6 +20,7 @@ from gain.genomic_resources.genomic_position_table.table_inmemory import (
     InmemoryGenomicPositionTable,
 )
 from gain.genomic_resources.genomic_scores import (
+    FRAGMENT_SCORE_TYPES,
     GenomicScore,
     build_score_from_resource,
 )
@@ -934,6 +935,6 @@ def build_score_implementation_from_resource(
     resource: GenomicResource,
 ) -> GenomicScoreImplementation | FragmentScoreImplementation:
     """Builds score implementation based on resource type"""
-    if resource.get_type() == "cnv_collection":
+    if resource.get_type() in FRAGMENT_SCORE_TYPES:
         return FragmentScoreImplementation(resource)
     return GenomicScoreImplementation(resource)
