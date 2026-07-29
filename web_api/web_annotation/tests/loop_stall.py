@@ -25,13 +25,15 @@ noise -- no choice of a single shared constant can separate them. Enlarging
 the injected latency to 2.0 s is what pulls the bands apart; the bound then
 has somewhere to sit.
 
-Measured gaps, all from #433/#454 on the same machine and commit:
+Measured gaps, all from #433/#454:
 
-===========================================  =========
-healthy, idle local machine                  ~0.02-0.03 s
-healthy, loaded CI agent (worst observed)     0.659 s
-broken, build resolved ON the loop thread     2.07 s
-===========================================  =========
+========================================  ============
+run                                       worst gap
+========================================  ============
+healthy, idle local machine               ~0.02-0.03 s
+healthy, loaded CI agent (worst on file)  0.659 s
+broken, build resolved ON the loop        2.07 s
+========================================  ============
 
 ``test_loop_stall_bands.py`` asserts these orderings and margins hold, so a
 future edit that collapses the bands fails a test instead of quietly making
@@ -74,6 +76,15 @@ WORST_OBSERVED_HEALTHY_GAP_SECONDS = 0.659
 # parked for one full build (#433). Used to check the bound keeps headroom.
 BROKEN_ON_LOOP_GAP_SECONDS = 2.07
 
+# What a *deliberately sabotaged* run must reach, for the self-tests that
+# prove a stall proof can actually fail. A sabotaged loop parks for a whole
+# build (measured 2.04-2.05s), so requiring 80% of the injected latency is
+# comfortably met while staying clear of the full value -- demanding the whole
+# 2.0s would be its own coin flip, since timer granularity and a marginally
+# short sleep land just under it. Stays above STALL_THRESHOLD_SECONDS, so a
+# sabotaged run provably breaches the bound the real proofs assert against.
+SABOTAGED_STALL_FLOOR_SECONDS = 0.8 * SLOW_BUILD_SECONDS
+
 
 def loop_parked(samples: list[float], bound: float) -> bool:
     """Whether any sample reached the parked-loop magnitude.
@@ -83,9 +94,14 @@ def loop_parked(samples: list[float], bound: float) -> bool:
     single outsized sample, so this is a max, never an average: averaging a
     2 s park across 200 healthy ticks would hide it completely.
 
-    At/above ``bound`` counts as parked (zero tolerance): host noise sits an
-    order of magnitude below the bound, so one sample reaching it is a real
-    leak rather than an unlucky schedule.
+    At/above ``bound`` counts as parked -- zero tolerance, no "allow k bad
+    samples" slack. That is safe because the bound sits above every healthy
+    value ever recorded here: lag samples run ~0.0002-0.001 s and heartbeat
+    gaps ~0.02 s on an idle host, with the worst loaded-CI gap on record at
+    ``WORST_OBSERVED_HEALTHY_GAP_SECONDS``. The margin over that worst case is
+    the narrowest part of the whole scheme (~1.5x, versus ~1000x for lag on an
+    idle host), which is why raising ``SLOW_BUILD_SECONDS`` -- not
+    ``STALL_THRESHOLD_SECONDS`` -- is the correct response to a recurrence.
     """
     return max(samples, default=0.0) >= bound
 

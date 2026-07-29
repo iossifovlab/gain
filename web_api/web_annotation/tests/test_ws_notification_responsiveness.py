@@ -139,12 +139,16 @@ async def test_event_loop_not_parked_during_slow_build(
     await communicator.disconnect(timeout=5)
 
     assert all(s == 200 for s in statuses), statuses
-    assert len(lags) >= 5, lags
+    # The park check comes first so that a regression reports the park it
+    # actually caused; the sample-count guard below would otherwise fire first
+    # (a parked loop also samples fewer times) and misreport the cause.
+    assert lags, "lag monitor never sampled -- no evidence either way"
     assert not loop_parked(lags, STALL_THRESHOLD_SECONDS), (
         f"event-loop lag peaked at {max(lags):.3f}s "
         f"(>= {STALL_THRESHOLD_SECONDS}s) -- an async view parked the loop "
         f"during the slow build"
     )
+    assert len(lags) >= 5, lags
 
 
 @pytest.mark.asyncio

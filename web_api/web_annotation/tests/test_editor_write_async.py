@@ -505,10 +505,12 @@ async def test_concurrent_slow_aggregator_posts_do_not_park_event_loop(
     the build were resolved ON the loop thread (the bug this issue fixes), the
     heartbeat would stall for the whole slow-build window.
 
-    Discriminating: the assertion ``max_gap < slow_build`` only holds if the
-    loop kept turning *during* the build. With four concurrent cold builds each
-    sleeping 0.4s, a loop parked on ``future.result()`` would show a single gap
-    >= 0.4s; the off-loop await keeps every inter-tick gap well under that.
+    Discriminating: the assertion ``worst_gap < STALL_THRESHOLD_SECONDS`` only
+    holds if the loop kept turning *during* the build. The four concurrent
+    POSTs dedupe onto ONE shared build future, so a loop parked on
+    ``future.result()`` would show a single gap of ~``SLOW_BUILD_SECONDS``
+    (measured 2.05s) -- not four times it. The off-loop await keeps every
+    inter-tick gap near the heartbeat interval instead.
     """
     # Force a cold cache so each request actually waits on a build.
     AnnotatorAggregators.lru_cache.unload_pipeline("pipeline/test_pipeline")
@@ -539,10 +541,17 @@ async def test_concurrent_slow_aggregator_posts_do_not_park_event_loop(
 
     assert all(s == 200 for s in statuses), statuses
 
-    assert len(heartbeats) >= 5
+    # The stall check comes first so that a regression reports the stall it
+    # actually caused; the tick-count guard below would otherwise fire first
+    # (a parked loop also ticks fewer times) and misreport the cause.
+    assert len(heartbeats) >= 2, (
+        f"heartbeat coroutine barely ran ({len(heartbeats)} ticks) -- "
+        f"no gap to measure"
+    )
     worst_gap = max_gap(heartbeats)
     assert worst_gap < STALL_THRESHOLD_SECONDS, (
         f"event loop stalled for {worst_gap:.3f}s "
         f"(>= threshold {STALL_THRESHOLD_SECONDS:.3f}s, injected build "
         f"latency {slow_build:.3f}s) -- build ran ON the loop"
     )
+    assert len(heartbeats) >= 5, len(heartbeats)

@@ -250,10 +250,17 @@ async def test_concurrent_slow_status_builds_do_not_park_event_loop(
     # A loop parked on future.result() would show a single long gap of about
     # one build's duration -- not N x it, because put_pipeline dedupes the
     # concurrent readers onto a shared build future.
-    assert len(heartbeats) >= 5
+    # The stall check comes first so that a regression reports the stall it
+    # actually caused; the tick-count guard below would otherwise fire first
+    # (a parked loop also ticks fewer times) and misreport the cause.
+    assert len(heartbeats) >= 2, (
+        f"heartbeat coroutine barely ran ({len(heartbeats)} ticks) -- "
+        f"no gap to measure"
+    )
     worst_gap = max_gap(heartbeats)
     assert worst_gap < STALL_THRESHOLD_SECONDS, (
         f"event loop stalled for {worst_gap:.3f}s "
         f"(>= threshold {STALL_THRESHOLD_SECONDS:.3f}s, injected build "
         f"latency {slow_build:.3f}s) -- build ran ON the loop"
     )
+    assert len(heartbeats) >= 5, len(heartbeats)

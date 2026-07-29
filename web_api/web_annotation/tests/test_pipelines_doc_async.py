@@ -17,6 +17,7 @@ from web_annotation.pipeline_cache import LRUPipelineCache
 from web_annotation.pipelines.views import PipelineDoc
 from web_annotation.tests.loop_stall import (
     HEARTBEAT_INTERVAL_SECONDS,
+    SABOTAGED_STALL_FLOOR_SECONDS,
     SLOW_BUILD_SECONDS,
     STALL_THRESHOLD_SECONDS,
     max_gap,
@@ -249,15 +250,24 @@ async def test_concurrent_slow_doc_builds_do_not_park_event_loop(
     assert all(s == 200 for s in statuses), statuses
 
     # The event loop kept ticking throughout the slow builds: the heartbeat
-    # fired many times and never went silent for longer than the slow-build
-    # window. A loop parked on future.result() would show a single long gap.
-    assert len(heartbeats) >= 5
+    # fired many times and never went silent for longer than the threshold.
+    # A loop parked on future.result() would show a single long gap of about
+    # one build's duration -- not N x it, because put_pipeline dedupes the
+    # concurrent readers onto a shared build future.
+    # The stall check comes first so that a regression reports the stall it
+    # actually caused; the tick-count guard below would otherwise fire first
+    # (a parked loop also ticks fewer times) and misreport the cause.
+    assert len(heartbeats) >= 2, (
+        f"heartbeat coroutine barely ran ({len(heartbeats)} ticks) -- "
+        f"no gap to measure"
+    )
     worst_gap = max_gap(heartbeats)
     assert worst_gap < STALL_THRESHOLD_SECONDS, (
         f"event loop stalled for {worst_gap:.3f}s "
         f"(>= threshold {STALL_THRESHOLD_SECONDS:.3f}s, injected build "
         f"latency {slow_build:.3f}s) -- build ran ON the loop"
     )
+    assert len(heartbeats) >= 5, len(heartbeats)
 
 
 @pytest.mark.asyncio
@@ -274,7 +284,8 @@ async def test_slow_doc_build_heartbeat_proof_is_discriminating(
     sabotage the cache's ``aget_pipeline`` to block the loop thread on the
     shared build future's ``result()`` -- exactly what the sync ``get_pipeline``
     would do on the loop. The heartbeat must then show a single gap reaching
-    ``STALL_THRESHOLD_SECONDS``, i.e. the real test's
+    ``SABOTAGED_STALL_FLOOR_SECONDS`` -- which is above
+    ``STALL_THRESHOLD_SECONDS``, so the real test's
     ``worst_gap < STALL_THRESHOLD_SECONDS`` assertion would FAIL under this
     sabotage.
     """
@@ -315,14 +326,14 @@ async def test_slow_doc_build_heartbeat_proof_is_discriminating(
 
     # The sabotaged on-loop resolve parks the loop for a whole build window, so
     # the real test's assertion (worst_gap < STALL_THRESHOLD_SECONDS) would
-    # FAIL here. Assert against the THRESHOLD, not the injected latency: the
-    # threshold is what the real test actually checks, and requiring the gap to
-    # reach the full injected latency would itself be a coin flip -- timer
-    # granularity and a marginally short sleep routinely land just under it
-    # (#454).
+    # FAIL here -- SABOTAGED_STALL_FLOOR_SECONDS sits above that bound, so
+    # reaching it proves the breach. Deliberately NOT the full injected
+    # latency: requiring the gap to reach every last millisecond of the sleep
+    # would itself be a coin flip (#454).
     worst_gap = max_gap(heartbeats)
-    assert worst_gap >= STALL_THRESHOLD_SECONDS, (
-        f"expected an on-loop stall >= {STALL_THRESHOLD_SECONDS:.3f}s "
+    assert worst_gap >= SABOTAGED_STALL_FLOOR_SECONDS, (
+        f"expected an on-loop stall >= {SABOTAGED_STALL_FLOOR_SECONDS:.3f}s "
         f"(injected build latency {slow_build:.3f}s), "
-        f"got max gap {worst_gap:.3f}s"
+        f"got max gap {worst_gap:.3f}s -- the sabotage may have stopped "
+        f"biting, which would make the proof above vacuous"
     )
