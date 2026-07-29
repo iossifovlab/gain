@@ -185,5 +185,5 @@ Nothing here addresses that, and this ADR should not be read as claiming
 otherwise. Closing it means resolving each name against the resource root
 before opening it (or refusing to follow links at all), which is a different
 mechanism at a different layer — one that has to be reasoned about
-per-backend, since only `file` has symlinks at all. It is to be tracked as
-its own issue.
+per-backend, since only `file` has symlinks at all. It is tracked as
+gain#483.
