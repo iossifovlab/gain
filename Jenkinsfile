@@ -151,10 +151,16 @@ String ciScope(String branch) {
     // A silent collision here would reproduce the exact failure this
     // scoping exists to prevent, so pin the token to the *raw* name with
     // a hash suffix. String.hashCode() is specified by the Java language
-    // spec (stable across JVMs and restarts) and needs no script-security
-    // approval, unlike MessageDigest.
-    String suffix = Integer.toHexString(raw.hashCode())
-    return scope ? "${scope}-${suffix}" : suffix
+    // spec, so it is stable across JVMs and controller restarts.
+    //
+    // Rendered with an operator and an instance toString() rather than
+    // Integer.toHexString()/Math.abs()/String.format(): the Groovy
+    // sandbox rejects *static* calls until an administrator approves the
+    // signature, and @NonCPS does not exempt a method from script
+    // security. Masking off the sign bit keeps the token free of a
+    // leading '-', which Compose project names forbid.
+    String suffix = (raw.hashCode() & 0x7fffffff).toString()
+    return scope ? "${scope}-${suffix}" : "h${suffix}"
 }
 
 pipeline {
