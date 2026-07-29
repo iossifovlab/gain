@@ -31,10 +31,12 @@ from gain.genomic_resources.testing.builders import (
 )
 
 
-def _hist_conf() -> NumberHistogramConfig:
+def _hist_conf(
+    view_min: float = 0, view_max: float = 1,
+) -> NumberHistogramConfig:
     return NumberHistogramConfig.from_dict({
         "type": "number",
-        "view_range": {"min": 0, "max": 1},
+        "view_range": {"min": view_min, "max": view_max},
         "number_of_bins": 10,
         "x_log_scale": False,
         "y_log_scale": False,
@@ -392,7 +394,7 @@ def test_dispatch_keeps_an_ineligible_score_off_the_bulk_path(
     calls = _spy_on_bulk(monkeypatch)
     G._do_histogram_task(resource, confs, "1", 1, 20)
     G._do_min_max_task(resource, ["score"], "1", 1, 20)
-    assert calls == []
+    assert not calls, calls
 
 
 def test_dispatch_keeps_an_unbounded_region_off_the_bulk_path(
@@ -405,7 +407,7 @@ def test_dispatch_keeps_an_unbounded_region_off_the_bulk_path(
     calls = _spy_on_bulk(monkeypatch)
     G._do_histogram_task(resource, confs, "chr1", None, None)
     G._do_min_max_task(resource, ["s"], "chr1", None, None)
-    assert calls == []
+    assert not calls, calls
 
 
 @pytest.mark.parametrize(
@@ -429,3 +431,288 @@ def test_the_weight_rule_is_stated_once_per_kind(
     # position score and 1 for the other two kinds.
     assert score_class.RECORD_WEIGHT_IS_SPAN is weight_is_span
     assert score_class._record_weight(10, 19) == expected_weight
+
+
+# --- batch boundaries -------------------------------------------------------
+#
+# ``_SCAN_BATCH_SIZE`` is 100_000 in production, so no fixture in this suite
+# reaches a batch boundary by accident -- every scan above runs in exactly one
+# batch.  That is precisely where the accumulators are at risk: the record
+# count is accrued once per BATCH per score (``min_max.add_count(kept)``) and
+# the overlap guard carries ``prev_right`` ACROSS batches, so a double count,
+# a dropped record or a lost carry is invisible until a region spans two.
+# The tests below force the boundary instead of waiting for a fixture large
+# enough to hit one.
+
+_BATCH_SIZES = [1, 2, 3, 100]
+
+
+def _count_bulk_batches(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Count the column-array batches the bulk scans actually consume.
+
+    Without this the batch-size tests would be batch-size tests only by
+    intention: ``batch_size`` is documented as a HINT that a backend may
+    ignore (``BigWigTable`` does), so a scan that quietly delivered every
+    record in one batch would satisfy every assertion below while testing
+    nothing about boundaries at all.
+    """
+    counter = [0]
+    original = GenomicScore.fetch_region_value_arrays
+
+    def counting(self: GenomicScore, *args: Any, **kwargs: Any) -> Any:
+        for batch in original(self, *args, **kwargs):
+            counter[0] += 1
+            yield batch
+
+    monkeypatch.setattr(
+        GenomicScore, "fetch_region_value_arrays", counting)
+    return counter
+
+
+def _five_fragments_tabix(tmp_path: pathlib.Path) -> GenomicResource:
+    """Five overlapping fragments, of spans 91, 11, 176, 2 and 11."""
+    return (
+        a_fragment_score()
+        .with_score("s", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  s
+            chr1   10         100      0.1
+            chr1   20         30       0.9
+            chr1   25         200      0.5
+            chr1   40         41       0.3
+            chr1   50         60       0.7
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+def _five_alleles_tabix(tmp_path: pathlib.Path) -> GenomicResource:
+    """Five allele records, three at one position and one of them NA."""
+    return (
+        an_allele_score()
+        .with_score("s", "float")
+        .with_data(
+            """
+            chrom  pos_begin  reference  alternative  s
+            chr1   10         A          G            0.1
+            chr1   10         A          C            NA
+            chr1   10         A          T            0.9
+            chr1   14         C          T            0.3
+            chr1   20         G          A            0.5
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+def _assert_bulk_agrees_at_batch_size(
+    resource: GenomicResource,
+    monkeypatch: pytest.MonkeyPatch,
+    batch_size: int,
+    region: tuple[int, int],
+    kept: int,
+) -> tuple[dict, dict]:
+    """Scan ``region`` both ways at ``batch_size`` and assert they agree."""
+    start, end = region
+    confs: dict = {"s": _hist_conf()}
+    ref_hist = G._do_histogram(resource, confs, "chr1", start, end)
+    ref_min_max = G._do_min_max(resource, ["s"], "chr1", start, end)
+
+    monkeypatch.setattr(G, "_SCAN_BATCH_SIZE", batch_size)
+    batches = _count_bulk_batches(monkeypatch)
+    bulk_hist = G._do_histogram_bulk(resource, confs, "chr1", start, end)
+    bulk_min_max = G._do_min_max_bulk(resource, ["s"], "chr1", start, end)
+
+    _assert_hists_equal(bulk_hist, ref_hist)
+    _assert_min_max_equal(bulk_min_max, ref_min_max)
+    # Two scans ran, so two batches is the one-batch-each floor; anything
+    # above it means a scan really was split.
+    if batch_size < kept:
+        assert batches[0] > 2, (batch_size, kept, batches[0])
+    else:
+        assert batches[0] == 2, (batch_size, kept, batches[0])
+    return bulk_hist, bulk_min_max
+
+
+@pytest.mark.parametrize("batch_size", _BATCH_SIZES)
+@pytest.mark.parametrize(
+    ("region", "kept"), [((1, 300), 5), ((35, 65), 4)],
+    ids=["unclipped", "clipped"])
+def test_bulk_fragment_scan_agrees_across_batch_boundaries(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    batch_size: int,
+    region: tuple[int, int],
+    kept: int,
+) -> None:
+    # A fragment score is the kind whose records are COUNTED, so it is the
+    # one where a per-batch accumulator can double count or lose a record.
+    # The clipped region additionally drops one fragment (20..30 ends before
+    # 35), so the count is not merely "all the rows the backend read".
+    bulk_hist, bulk_min_max = _assert_bulk_agrees_at_batch_size(
+        _five_fragments_tabix(tmp_path), monkeypatch, batch_size,
+        region, kept)
+    assert bulk_min_max["s"].count == kept
+    assert bulk_hist["s"].bars.sum() == kept
+
+
+@pytest.mark.parametrize("batch_size", _BATCH_SIZES)
+@pytest.mark.parametrize(
+    ("region", "kept", "binned"), [((1, 30), 5, 4), ((12, 30), 2, 2)],
+    ids=["unclipped", "clipped"])
+def test_bulk_allele_scan_agrees_across_batch_boundaries(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    batch_size: int,
+    region: tuple[int, int],
+    kept: int,
+    binned: int,
+) -> None:
+    # Three of the five records share position 10 and one of THOSE is NA, so
+    # a batch boundary can fall inside a shared-position site and inside the
+    # nan handling at once.  An allele score is not counted, so its min/max
+    # count must stay 0 however the region is batched.
+    bulk_hist, bulk_min_max = _assert_bulk_agrees_at_batch_size(
+        _five_alleles_tabix(tmp_path), monkeypatch, batch_size, region, kept)
+    assert bulk_min_max["s"].count == 0
+    # ``kept`` records are read; the NA one is not binned, so the unclipped
+    # region bins four of its five.  The clipped region starts past the NA.
+    assert bulk_hist["s"].bars.sum() == binned
+
+
+# --- degenerate regions and columns -----------------------------------------
+
+
+def test_an_all_na_fragment_column_is_still_counted(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The record count sits OUTSIDE the ``if finite.size:`` block that folds
+    # min/max, and this is the only shape that tells the two apart: every
+    # value is nan, so a count folded in alongside the min/max would come out
+    # 0 while the resource really does hold three fragments.
+    resource = (
+        a_fragment_score()
+        .with_score("s", "float")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  s
+            chr1   10         100      NA
+            chr1   20         30       NA
+            chr1   25         200      NA
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    confs: dict = {"s": _hist_conf()}
+    ref_hist = G._do_histogram(resource, confs, "chr1", 1, 300)
+    ref_min_max = G._do_min_max(resource, ["s"], "chr1", 1, 300)
+    bulk_hist = G._do_histogram_bulk(resource, confs, "chr1", 1, 300)
+    bulk_min_max = G._do_min_max_bulk(resource, ["s"], "chr1", 1, 300)
+
+    _assert_hists_equal(bulk_hist, ref_hist)
+    _assert_min_max_equal(bulk_min_max, ref_min_max)
+    assert bulk_min_max["s"].count == 3
+    assert np.isnan(bulk_min_max["s"].min)
+    assert np.isnan(bulk_min_max["s"].max)
+    assert bulk_hist["s"].bars.sum() == 0
+
+
+@pytest.mark.parametrize(
+    "make_resource", [_allele_tabix, _fragment_tabix],
+    ids=["allele", "fragment"])
+def test_a_region_past_the_end_of_the_table_scans_to_nothing(
+    tmp_path: pathlib.Path,
+    make_resource: Callable[[pathlib.Path], GenomicResource],
+) -> None:
+    # No batch is produced at all, so every accumulator is asked for its
+    # answer without ever having been fed one.  A count seeded anywhere but
+    # at zero, or a min/max seeded at a real number, would show up here.
+    resource = make_resource(tmp_path)
+    confs: dict = {"s": _hist_conf()}
+    ref_hist = G._do_histogram(resource, confs, "chr1", 5000, 6000)
+    ref_min_max = G._do_min_max(resource, ["s"], "chr1", 5000, 6000)
+    bulk_hist = G._do_histogram_bulk(resource, confs, "chr1", 5000, 6000)
+    bulk_min_max = G._do_min_max_bulk(resource, ["s"], "chr1", 5000, 6000)
+
+    _assert_hists_equal(bulk_hist, ref_hist)
+    _assert_min_max_equal(bulk_min_max, ref_min_max)
+    assert bulk_hist["s"].bars.sum() == 0
+    assert bulk_min_max["s"].count == 0
+    assert np.isnan(bulk_min_max["s"].min)
+
+
+@pytest.mark.parametrize(
+    "make_resource", [_allele_tabix, _fragment_tabix],
+    ids=["allele", "fragment"])
+def test_a_region_holding_a_single_record(
+    tmp_path: pathlib.Path,
+    make_resource: Callable[[pathlib.Path], GenomicResource],
+) -> None:
+    # The one-record batch is the degenerate case of every vectorized step:
+    # the within-batch overlap check compares ``kleft[1:]`` against
+    # ``kright[:-1]`` -- both empty here -- and the reductions run over a
+    # single element.
+    resource = make_resource(tmp_path)
+    # 14 is the allele fixture's lone non-shared record.  101..150 is chosen
+    # so the fragment fixture leaves exactly one: the 10..100 fragment is
+    # fetched (tabix reads from 100) and then dropped by the ``pos_end >=
+    # start`` clip, and only 25..200 survives -- which also means the single
+    # record is one the clip had to think about.
+    start, end = (14, 14) if make_resource is _allele_tabix else (101, 150)
+    confs: dict = {"s": _hist_conf()}
+    ref_hist = G._do_histogram(resource, confs, "chr1", start, end)
+    ref_min_max = G._do_min_max(resource, ["s"], "chr1", start, end)
+    bulk_hist = G._do_histogram_bulk(resource, confs, "chr1", start, end)
+    bulk_min_max = G._do_min_max_bulk(resource, ["s"], "chr1", start, end)
+
+    _assert_hists_equal(bulk_hist, ref_hist)
+    _assert_min_max_equal(bulk_min_max, ref_min_max)
+    assert bulk_hist["s"].bars.sum() == 1
+
+
+@pytest.mark.parametrize(
+    ("make_resource", "below", "above"),
+    [(_allele_tabix, 2, 1), (_fragment_tabix, 1, 1)],
+    ids=["allele", "fragment"])
+def test_values_outside_the_view_range_reach_the_out_of_range_bins(
+    tmp_path: pathlib.Path,
+    make_resource: Callable[[pathlib.Path], GenomicResource],
+    below: int,
+    above: int,
+) -> None:
+    # Every other test here uses a view range wide enough to hold the whole
+    # fixture, so ``out_of_range_bins`` is compared as [0, 0] and the
+    # comparison says nothing.  A narrow range makes it carry real counts on
+    # both sides.
+    resource = make_resource(tmp_path)
+    confs: dict = {"s": _hist_conf(0.25, 0.55)}
+    ref_hist = G._do_histogram(resource, confs, "chr1", 1, 300)
+    bulk_hist = G._do_histogram_bulk(resource, confs, "chr1", 1, 300)
+
+    _assert_hists_equal(bulk_hist, ref_hist)
+    assert bulk_hist["s"].out_of_range_bins == [below, above]
+
+
+def test_multi_base_allele_record_min_max_counts_and_clips(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The ten-base allele record is exercised on the histogram path above;
+    # min/max is the other consumer of the same clip and weight code, and it
+    # additionally answers the count.  An allele score is never counted, so
+    # a fragment-style ``add_count`` leaking across kinds would show as a
+    # non-zero count here.
+    resource = _allele_multibase_tabix(tmp_path)
+    ref = G._do_min_max(resource, ["s"], "chr1", 1, 40)
+    bulk = G._do_min_max_bulk(resource, ["s"], "chr1", 1, 40)
+    _assert_min_max_equal(bulk, ref)
+    assert (bulk["s"].min, bulk["s"].max) == (0.1, 0.9)
+    assert bulk["s"].count == 0
+
+    # 15..25 keeps only the ten-base record, clipped to five bases.
+    clipped_ref = G._do_min_max(resource, ["s"], "chr1", 15, 25)
+    clipped_bulk = G._do_min_max_bulk(resource, ["s"], "chr1", 15, 25)
+    _assert_min_max_equal(clipped_bulk, clipped_ref)
+    assert (clipped_bulk["s"].min, clipped_bulk["s"].max) == (0.1, 0.1)
+    assert clipped_bulk["s"].count == 0
