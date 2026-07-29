@@ -499,11 +499,11 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             assert isinstance(tree.children[1], Tree)
             left_func = cls._build_allele_filter_func(tree.children[0], score)
             right_func = cls._build_allele_filter_func(tree.children[1], score)
-            return lambda record: left_func(record) and right_func(record)
+            return lambda rec: left_func(rec) and right_func(rec)
         if tree.data == "or":
             left_func = cls._build_allele_filter_func(tree.children[0], score)
             right_func = cls._build_allele_filter_func(tree.children[1], score)
-            return lambda record: left_func(record) or right_func(record)
+            return lambda rec: left_func(rec) or right_func(rec)
 
         left = tree.children[0]
         assert isinstance(left, Tree)
@@ -563,17 +563,13 @@ Non-``VCFAllele`` annotatables always use region aggregation.
                 return right_value
 
         if operator == "equals":
-            return lambda record: \
-                left_accessor(record) == right_accessor(record)
+            return lambda rec: left_accessor(rec) == right_accessor(rec)
         if operator == "greater_than":
-            return lambda record: \
-                left_accessor(record) > right_accessor(record)
+            return lambda rec: left_accessor(rec) > right_accessor(rec)
         if operator == "less_than":
-            return lambda record: \
-                left_accessor(record) < right_accessor(record)
+            return lambda rec: left_accessor(rec) < right_accessor(rec)
         if operator == "in":
-            return lambda record: \
-                left_accessor(record) in right_accessor(record)
+            return lambda rec: left_accessor(rec) in right_accessor(rec)
 
         raise ValueError(f"Unsupported operator {operator.data}")
 
