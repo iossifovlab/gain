@@ -32,6 +32,7 @@ from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceProtocolRepo,
+    Mode,
 )
 
 logger = logging.getLogger(__name__)
@@ -341,7 +342,7 @@ def setup_empty_gene_models(out_path: pathlib.Path) -> GeneModels:
 _UNSAFE_ID_CHARACTER_RE = re.compile(r"[^A-Za-z0-9._-]")
 
 
-def _derive_test_proto_id(root: str) -> str:
+def _derive_test_proto_id(root: str, *, read_only: bool = False) -> str:
     """Derive a cache-compatible protocol id from a protocol's root.
 
     The id a testing protocol gets by default must satisfy three constraints
@@ -360,11 +361,16 @@ def _derive_test_proto_id(root: str) -> str:
 
     The leading name is decoration -- it is what makes a cache directory
     readable while debugging; the digest is what carries the uniqueness.
+
+    A read-only protocol gets its own ``-ro`` id over the same root, because
+    the memo is keyed on the id alone: sharing one id between the two modes
+    would let whichever build came first decide the mode of every later one.
     """
     digest = hashlib.sha256(root.encode("utf-8")).hexdigest()[:8]
     name = _UNSAFE_ID_CHARACTER_RE.sub(
         "_", pathlib.PurePosixPath(root).name)
-    return f"{name}-{digest}"
+    suffix = "-ro" if read_only else ""
+    return f"{name}-{digest}{suffix}"
 
 
 def build_inmemory_test_protocol(
@@ -448,20 +454,31 @@ def build_filesystem_test_protocol(
     hand-written ``.CONTENTS`` asks for. It cannot repair what it cannot
     write, so ``repair`` must be turned off along with it.
 
-    The derived id is a function of the root, and protocols are memoized on
-    ``(proto_id, url)``: a second build over a root that already has a
-    protocol returns that same instance, ``read_only`` included. Pass an
-    explicit ``proto_id`` when a test wants a genuinely separate protocol
-    over one root.
+    The derived id is a function of the root and of the mode, and protocols
+    are memoized on ``(proto_id, url)``: a second build over a root that
+    already has a protocol of that mode returns that same instance, while a
+    build in the other mode gets an id -- and so an instance -- of its own.
+    Pass an explicit ``proto_id`` when a test wants a genuinely separate
+    protocol over one root; an explicit id names one memoized instance, so
+    reusing it in the other mode is refused rather than silently answered
+    with the mode built first.
     """
     if read_only and repair:
         raise ValueError(
             "a read-only test protocol cannot repair its repository; "
             "pass repair=False along with read_only=True")
+    resolved_id = proto_id or _derive_test_proto_id(
+        str(root_path), read_only=read_only)
     proto = build_fsspec_protocol(
-        proto_id or _derive_test_proto_id(str(root_path)),
+        resolved_id,
         str(root_path),
         read_only=read_only)
+    expected_mode = Mode.READONLY if read_only else Mode.READWRITE
+    if proto.mode() != expected_mode:
+        raise ValueError(
+            f"test protocol {resolved_id!r} over {root_path} already exists "
+            f"as {proto.mode().name}; building it as "
+            f"{expected_mode.name} needs an id of its own")
     if repair:
         rw_proto = cast(FsspecReadWriteProtocol, proto)
         for res in rw_proto.get_all_resources():
