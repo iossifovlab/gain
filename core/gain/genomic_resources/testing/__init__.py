@@ -3,14 +3,16 @@ from __future__ import annotations
 
 import contextlib
 import gzip
+import hashlib
 import os
 import pathlib
+import re
 import shutil
 import tempfile
 import textwrap
 import uuid
 from collections.abc import Generator
-from typing import Any, cast
+from typing import Any, Literal, cast, overload
 from urllib.parse import urlparse
 
 import pyBigWig
@@ -21,6 +23,7 @@ from gain import logging
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadOnlyProtocol,
     FsspecReadWriteProtocol,
+    FsspecRepositoryProtocol,
     build_fsspec_protocol,
     build_inmemory_protocol,
 )
@@ -331,11 +334,45 @@ def setup_empty_gene_models(out_path: pathlib.Path) -> GeneModels:
     return setup_gene_models(out_path, content, fileformat="refflat")
 
 
+#: Everything a repository id may not carry if it is to name a directory:
+#: see ``is_safe_repo_id``. Substituting rather than dropping keeps two
+#: roots that differ only in a stripped character from colliding -- and the
+#: digest appended below would separate them anyway.
+_UNSAFE_ID_CHARACTER_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _derive_test_proto_id(root: str) -> str:
+    """Derive a cache-compatible protocol id from a protocol's root.
+
+    The id a testing protocol gets by default must satisfy three constraints
+    at once, and the ``<name>-<digest>`` shape is what satisfies all three:
+
+    - it is a single path segment, so ``GenomicResourceCachedRepo`` accepts
+      it as a cache directory name (#460) -- the sanitized name cannot
+      introduce a separator and the appended digest keeps the whole from
+      ever being ``.`` or ``..``;
+    - it is unique per distinct root, so two protocols built under
+      identically-named temp directories do not trip the group repository's
+      duplicate-child-id guard (#445);
+    - it is deterministic, so ``FsspecReadOnlyProtocol.__new__``'s
+      ``(proto_id, url)`` memo keeps returning one instance per root. A
+      random or counter-based id would silently change that identity.
+
+    The leading name is decoration -- it is what makes a cache directory
+    readable while debugging; the digest is what carries the uniqueness.
+    """
+    digest = hashlib.sha256(root.encode("utf-8")).hexdigest()[:8]
+    name = _UNSAFE_ID_CHARACTER_RE.sub(
+        "_", pathlib.PurePosixPath(root).name)
+    return f"{name}-{digest}"
+
+
 def build_inmemory_test_protocol(
         content: dict[str, Any]) -> FsspecReadWriteProtocol:
     """Build and return an embedded fsspec protocol for testing."""
     with tempfile.TemporaryDirectory("embedded_test_protocol") as root_path:
-        return build_inmemory_protocol(root_path, root_path, content)
+        return build_inmemory_protocol(
+            _derive_test_proto_id(root_path), root_path, content)
 
 
 def build_inmemory_test_repository(
@@ -373,31 +410,63 @@ def build_inmemory_test_resource(
     return proto.get_resource("")
 
 
+@overload
+def build_filesystem_test_protocol(
+    root_path: pathlib.Path, *,
+    repair: bool = ...,
+    proto_id: str | None = ...,
+    read_only: Literal[False] = ...,
+) -> FsspecReadWriteProtocol: ...
+
+
+@overload
+def build_filesystem_test_protocol(
+    root_path: pathlib.Path, *,
+    repair: bool = ...,
+    proto_id: str | None = ...,
+    read_only: Literal[True],
+) -> FsspecReadOnlyProtocol: ...
+
+
 def build_filesystem_test_protocol(
     root_path: pathlib.Path, *,
     repair: bool = True,
     proto_id: str | None = None,
-) -> FsspecReadWriteProtocol:
+    read_only: bool = False,
+) -> FsspecRepositoryProtocol:
     """Build and return an filesystem fsspec protocol for testing.
 
     The root_path is expected to point to a directory structure with all the
     resources.
 
-    The protocol is named by its own ``root_path`` unless ``proto_id`` says
-    otherwise. That default is an absolute ``/tmp/...`` path, which is fine
-    for a protocol used on its own but is refused by
-    ``GenomicResourceCachedRepo``: it derives the cache directory from the
-    protocol id, and an absolute id discards the cache url instead of
-    landing under it (#460, #486). Pass a single path segment -- ``"remote"``
-    -- when the protocol is going to be wrapped in a cache.
+    Unless ``proto_id`` says otherwise the protocol is named by
+    :func:`_derive_test_proto_id`, so it can be wrapped in a
+    ``GenomicResourceCachedRepo`` without ceremony.
+
+    A ``read_only`` protocol is the shape a repository served from a remote
+    is read through -- it is what a test wanting to hand the protocol
+    hand-written ``.CONTENTS`` asks for. It cannot repair what it cannot
+    write, so ``repair`` must be turned off along with it.
+
+    The derived id is a function of the root, and protocols are memoized on
+    ``(proto_id, url)``: a second build over a root that already has a
+    protocol returns that same instance, ``read_only`` included. Pass an
+    explicit ``proto_id`` when a test wants a genuinely separate protocol
+    over one root.
     """
-    proto = cast(
-        FsspecReadWriteProtocol,
-        build_fsspec_protocol(proto_id or str(root_path), str(root_path)))
+    if read_only and repair:
+        raise ValueError(
+            "a read-only test protocol cannot repair its repository; "
+            "pass repair=False along with read_only=True")
+    proto = build_fsspec_protocol(
+        proto_id or _derive_test_proto_id(str(root_path)),
+        str(root_path),
+        read_only=read_only)
     if repair:
-        for res in proto.get_all_resources():
-            proto.save_manifest(res, proto.build_manifest(res))
-        proto.build_content_file()
+        rw_proto = cast(FsspecReadWriteProtocol, proto)
+        for res in rw_proto.get_all_resources():
+            rw_proto.save_manifest(res, rw_proto.build_manifest(res))
+        rw_proto.build_content_file()
     return proto
 
 
@@ -409,9 +478,6 @@ def build_filesystem_test_repository(
 
     The root_path is expected to point to a directory structure with all the
     resources.
-
-    See ``build_filesystem_test_protocol`` for ``proto_id`` -- a repository
-    that is going to be wrapped in a ``GenomicResourceCachedRepo`` needs one.
     """
     proto = build_filesystem_test_protocol(root_path, proto_id=proto_id)
     return GenomicResourceProtocolRepo(proto)
@@ -456,7 +522,8 @@ def build_http_test_protocol(
     server_address = f"http://{host}/{http_path.name}"
 
     try:
-        yield build_fsspec_protocol(str(root_path), server_address)
+        yield build_fsspec_protocol(
+            _derive_test_proto_id(str(root_path)), server_address)
     except GeneratorExit:
         print("Generator exit")
     finally:
@@ -480,7 +547,8 @@ def s3_test_protocol() -> FsspecReadWriteProtocol:
     return cast(
         FsspecReadWriteProtocol,
         build_fsspec_protocol(
-            str(bucket_url), bucket_url, endpoint_url=endpoint_url))
+            _derive_test_proto_id(bucket_url), bucket_url,
+            endpoint_url=endpoint_url))
 
 
 def build_s3_test_filesystem(
@@ -525,7 +593,8 @@ def build_s3_test_protocol(
     proto = cast(
         FsspecReadWriteProtocol,
         build_fsspec_protocol(
-            str(bucket_url), bucket_url, endpoint_url=endpoint_url))
+            _derive_test_proto_id(bucket_url), bucket_url,
+            endpoint_url=endpoint_url))
     copy_proto_genomic_resources(
         proto,
         build_filesystem_test_protocol(root_path))
