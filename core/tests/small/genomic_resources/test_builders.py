@@ -17,7 +17,7 @@ from gain.genomic_resources.genomic_position_table.utils import (
 )
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
-    CnvCollection,
+    FragmentScore,
     PositionScore,
 )
 from gain.genomic_resources.reference_genome import (
@@ -30,7 +30,7 @@ from gain.genomic_resources.repository_factory import (
 from gain.genomic_resources.testing.builders import (
     ResourceValidationError,
     a_bigwig_score,
-    a_cnv_collection,
+    a_fragment_score,
     a_gene_score,
     a_grr,
     a_np_score,
@@ -1692,21 +1692,21 @@ def test_bigwig_emits_no_fetch_size_unless_asked(
     assert "fetch_size" not in res.get_config()["table"]
 
 
-def test_bare_cnv_collection_is_readable_minimal(
+def test_bare_fragment_score_is_readable_minimal(
     tmp_path: pathlib.Path,
 ) -> None:
-    res = a_cnv_collection().build_resource(tmp_path)
+    res = a_fragment_score().build_resource(tmp_path)
 
     assert res.get_type() == "cnv_collection"
-    cnvs = CnvCollection(res).open().fetch_cnvs("1", 10, 200)
-    assert len(cnvs) == 2
+    fragments = FragmentScore(res).open().fetch_fragments("1", 10, 200)
+    assert len(fragments) == 2
 
 
-def test_cnv_collection_reads_back_its_regions(
+def test_fragment_score_reads_back_its_regions(
     tmp_path: pathlib.Path,
 ) -> None:
     res = (
-        a_cnv_collection()
+        a_fragment_score()
         .with_score("frequency", "float", desc="population frequency")
         .with_data("""
             chrom  pos_begin  pos_end  frequency
@@ -1715,10 +1715,11 @@ def test_cnv_collection_reads_back_its_regions(
         """)
         .build_resource(tmp_path)
     )
-    cnvs = CnvCollection(res).open().fetch_cnvs("chr1", 10, 200)
+    fragments = FragmentScore(res).open().fetch_fragments("chr1", 10, 200)
 
-    assert [(c.pos_begin, c.pos_end) for c in cnvs] == [(10, 19), (20, 200)]
-    assert [c.attributes["frequency"] for c in cnvs] == [0.1, 0.2]
+    assert [(f.pos_begin, f.pos_end) for f in fragments] \
+        == [(10, 19), (20, 200)]
+    assert [f.attributes["frequency"] for f in fragments] == [0.1, 0.2]
 
 
 def test_vcf_info_score_reads_back(tmp_path: pathlib.Path) -> None:

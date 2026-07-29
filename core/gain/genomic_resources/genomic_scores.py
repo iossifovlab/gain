@@ -450,7 +450,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         The default depends on how the score is reduced, which is fixed by
         the resource type -- ``mean`` over a region of positions, ``max``
         over the alleles at one, ``join(,)`` rather than ``list`` for a
-        CNV collection's strings -- so it belongs to the score CLASS, not to
+        fragment score's strings -- so it belongs to the score CLASS, not to
         the definition.  Resolving it here rather than in
         ``GenomicScoreDef.__post_init__`` is what lets one field replace the
         ``pos_aggregator``/``allele_aggregator`` pair.
@@ -458,8 +458,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         Applied at the convergence point of all three construction routes --
         the ``scores:`` block, a VCF header, a bigWig -- because a default
         applied in only one of them is the same bug in a new place: a
-        VCF-derived def would arrive with ``aggregator=None``, and the CNV
-        annotator drops an attribute whose aggregator is None *silently*.
+        VCF-derived def would arrive with ``aggregator=None``, and the
+        fragment score annotator drops an attribute whose aggregator is
+        None *silently*.
         """
         for score_def in score_defs.values():
             if score_def.value_type is None:
@@ -693,8 +694,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
           away.  Routed last, that caller could catch the score
           published-but-unrouted -- and since #239 left the routing with no
           default at all, that caller reads an AttributeError.  Scores are
-          shared across threads (the process-wide in-memory CNV cache;
-          gain-web-api's thread pool), so the window is reachable; this
+          shared across threads (the process-wide in-memory
+          fragment-score cache; gain-web-api's thread pool), so the
+          window is reachable; this
           ordering keeps the ROUTING out of it.  Pinned by
           test_the_score_is_routed_before_it_reports_itself_open.
 
@@ -1071,14 +1073,15 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         The rule is a property of the resource TYPE, and ``WeightedValues``
         already states it: "a position-score record counts once per base
         pair of the queried region it covers, an allele line counts once, a
-        CNV counts once however long it is".  One record, one count, is the
+        fragment counts once however long it is".  One record, one count, is the
         answer for everything except a position score, which overrides.
 
         This exists so :meth:`aggregate_region` can live on the base class
         and still agree with the annotators, which apply exactly this rule.
         Deriving a weight from ``pos_begin``/``pos_end`` in the base instead
-        would give a CNV its length as a weight and silently disagree with
-        the CNV annotator for every CNV longer than one base pair.
+        would give a fragment its length as a weight and silently disagree
+        with the fragment score annotator for every fragment longer than
+        one base pair.
         """
         return 1
 
@@ -1187,7 +1190,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         Fresh per call, not reused: an aggregator is a mutable accumulator
         and explicitly not thread-safe (see :class:`Aggregator`).  Reuse is
         an annotator optimisation resting on being single-threaded; a score
-        is shared process-wide (the CNV cache, the web api's thread pool),
+        is shared process-wide (the fragment-score cache, the web api's
+        thread pool),
         so this cannot assume the same.
 
         ``Aggregator.build`` raises a bare ``KeyError('mediann')`` for an
@@ -1671,8 +1675,8 @@ class AlleleScore(GenomicScore):
 
 
 @dataclass
-class CNV:
-    """Copy number object from a cnv_collection."""
+class Fragment:
+    """One interval of a fragment score: a span plus its attributes."""
 
     chrom: str
     pos_begin: int
@@ -1684,11 +1688,16 @@ class CNV:
         return self.pos_end - self.pos_begin
 
 
-class CnvCollection(GenomicScore):
-    """A collection of CNVs."""
+class FragmentScore(GenomicScore):
+    """A genomic score over fragments -- intervals carrying attributes.
 
-    # As AlleleScore, except that strings join rather than list -- a CNV
-    # collection's string attributes are rendered into one cell.  This table
+    Nothing here is copy-number specific; a CNV collection is one
+    application of it.  The resource type string stayed ``cnv_collection``
+    when the Python names moved (gain#470); gain#471 widens it.
+    """
+
+    # As AlleleScore, except that strings join rather than list -- a
+    # fragment score's string attributes are rendered into one cell.  This table
     # is the whole of what ``_CNVScoreDef`` existed for: it was a subclass of
     # ``GenomicScoreDef`` whose only member was a ``__post_init__`` carrying
     # these defaults, and ``_parse_scoredef_config`` was overridden here
@@ -1705,7 +1714,7 @@ class CnvCollection(GenomicScore):
     def __init__(self, resource: GenomicResource):
         if resource.get_type() != "cnv_collection":
             raise ValueError(
-                "The resource provided to CnvCollection should be of "
+                "The resource provided to FragmentScore should be of "
                 f"'cnv_collection' type, not a '{resource.get_type()}'")
         super().__init__(resource)
 
@@ -1729,21 +1738,21 @@ class CnvCollection(GenomicScore):
                 chrom, pos_begin, pos_end, scores):
             yield start, stop, values
 
-    def fetch_cnvs(
+    def fetch_fragments(
         self, chrom: str,
         start: int, stop: int,
         scores: list[str] | None = None,
-    ) -> list[CNV]:
-        """Return list of CNVs that overlap with the provided region."""
+    ) -> list[Fragment]:
+        """Return the fragments that overlap the provided region."""
         if not self.is_open():
             raise ValueError(f"The resource <{self.resource_id}> is not open")
-        cnvs: list = []
+        fragments: list = []
         if chrom not in self.table.get_chromosomes():
-            return cnvs
+            return fragments
 
         records = list(self.fetch_records(chrom, start, stop))
         if not records:
-            return cnvs
+            return fragments
 
         requested_scores = scores or self.get_all_scores()
         # Resolve names to definitions once for this fetch.
@@ -1756,9 +1765,9 @@ class CnvCollection(GenomicScore):
                 requested_scores,
                 self.get_values_from_record(record, score_defs),
                 strict=True))
-            cnvs.append(CNV(record[CHROM], record[POS_BEGIN],
-                            record[POS_END], attributes))
-        return cnvs
+            fragments.append(Fragment(record[CHROM], record[POS_BEGIN],
+                                      record[POS_END], attributes))
+        return fragments
 
 
 def build_position_score_from_resource(
@@ -1799,16 +1808,16 @@ def build_allele_score_from_resource_id(
     return build_allele_score_from_resource(grr.get_resource(resource_id))
 
 
-_INMEMORY_CNV_CACHE: dict[tuple[str, str], CnvCollection] = {}
-_INMEMORY_CNV_CACHE_LOCK = Lock()
+_INMEMORY_FRAGMENT_SCORE_CACHE: dict[tuple[str, str], FragmentScore] = {}
+_INMEMORY_FRAGMENT_SCORE_CACHE_LOCK = Lock()
 
 
-def build_cnv_collection_from_resource(
+def build_fragment_score_from_resource(
     resource: GenomicResource,
-) -> CnvCollection:
-    """Build a CNV collection from a `cnv_collection` resource.
+) -> FragmentScore:
+    """Build a fragment score from a `cnv_collection` resource.
 
-    CNV collections are cached in memory and shared process-wide, keyed by
+    Fragment scores are cached in memory and shared process-wide, keyed by
     versioned resource id and repository URL. Callers must not assume they
     own the returned object's lifecycle -- in particular, closing it closes
     it for every other holder (see gain#350).
@@ -1820,19 +1829,19 @@ def build_cnv_collection_from_resource(
     """
     cache_id = (resource.get_full_id(), resource.get_repo_url())
 
-    with _INMEMORY_CNV_CACHE_LOCK:
-        if cache_id not in _INMEMORY_CNV_CACHE:
-            _INMEMORY_CNV_CACHE[cache_id] = CnvCollection(resource)
-        return _INMEMORY_CNV_CACHE[cache_id]
+    with _INMEMORY_FRAGMENT_SCORE_CACHE_LOCK:
+        if cache_id not in _INMEMORY_FRAGMENT_SCORE_CACHE:
+            _INMEMORY_FRAGMENT_SCORE_CACHE[cache_id] = FragmentScore(resource)
+        return _INMEMORY_FRAGMENT_SCORE_CACHE[cache_id]
 
 
-def build_cnv_collection_from_resource_id(
+def build_fragment_score_from_resource_id(
     resource_id: str, grr: GenomicResourceRepo | None = None,
-) -> CnvCollection:
-    """Build a CNV collection from a `cnv_collection` resource id."""
+) -> FragmentScore:
+    """Build a fragment score from a `cnv_collection` resource id."""
     if grr is None:
         grr = build_genomic_resource_repository()
-    return build_cnv_collection_from_resource(grr.get_resource(resource_id))
+    return build_fragment_score_from_resource(grr.get_resource(resource_id))
 
 
 def build_score_from_resource(
@@ -1846,9 +1855,9 @@ def build_score_from_resource(
 
     Beware the asymmetry inherited from the typed factories: a
     `cnv_collection` resource yields a process-wide CACHED, shared
-    `CnvCollection`, while `position_score` and `allele_score` yield a fresh
+    `FragmentScore`, while `position_score` and `allele_score` yield a fresh
     instance every call. A caller that closes what it got back therefore
-    closes it for every other holder of the cached collection (see
+    closes it for every other holder of the cached fragment score (see
     gain#350).
     """
     resource_type = resource.get_type()
@@ -1857,7 +1866,7 @@ def build_score_from_resource(
     if resource_type in {"allele_score", "np_score"}:
         return build_allele_score_from_resource(resource)
     if resource_type == "cnv_collection":
-        return build_cnv_collection_from_resource(resource)
+        return build_fragment_score_from_resource(resource)
 
     raise ValueError(
         f"Resource {resource.get_id()} is not of score type; "

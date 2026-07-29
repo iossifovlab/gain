@@ -10,7 +10,7 @@ import pytest_mock
 
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.genomic_scores import (
-    CnvCollection,
+    FragmentScore,
 )
 from gain.genomic_resources.histogram import (
     HistogramConfig,
@@ -18,7 +18,7 @@ from gain.genomic_resources.histogram import (
     build_histogram_config,
 )
 from gain.genomic_resources.implementations.genomic_scores_impl import (
-    CnvCollectionImplementation,
+    FragmentScoreImplementation,
 )
 from gain.genomic_resources.repository import (
     GenomicResource,
@@ -96,12 +96,12 @@ def test_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
 
 
 @pytest.fixture
-def cnvs(test_grr: GenomicResourceRepo) -> CnvCollection:
-    return CnvCollection(test_grr.get_resource("score_one"))
+def fragments(test_grr: GenomicResourceRepo) -> FragmentScore:
+    return FragmentScore(test_grr.get_resource("score_one"))
 
 
 @pytest.fixture
-def cnvs_resource(test_grr: GenomicResourceRepo) -> GenomicResource:
+def fragments_resource(test_grr: GenomicResourceRepo) -> GenomicResource:
     return test_grr.get_resource("score_one")
 
 
@@ -127,85 +127,87 @@ def cnvs_resource(test_grr: GenomicResourceRepo) -> GenomicResource:
         {"freq": 0.3, "collection": "SSC", "status": "affected"},
     ]),
 ])
-def test_cnv_collection_resource(
-    cnvs: CnvCollection,
+def test_fragment_score_resource(
+    fragments: FragmentScore,
     chrom: str,
     beg: int,
     end: int,
     count: int,
     attributes: list[dict[str, Any]],
 ) -> None:
-    with cnvs.open() as cnv_collection:
-        aaa = cnv_collection.fetch_cnvs(
+    with fragments.open() as score:
+        aaa = score.fetch_fragments(
             chrom, beg, end)
         assert len(aaa) == count
         assert [a.attributes for a in aaa] == attributes
 
 
-def test_cnv_collection_wrong_resource_types(
-    cnvs_resource: GenomicResource,
+def test_fragment_score_wrong_resource_types(
+    fragments_resource: GenomicResource,
     mocker: pytest_mock.MockFixture,
 ) -> None:
     mocker.patch.object(
-        cnvs_resource,
+        fragments_resource,
         "get_type",
         return_value="aaaa")
 
     with pytest.raises(
             ValueError,
-            match="The resource provided to CnvCollection should be of "
+            match="The resource provided to FragmentScore should be of "
             "'cnv_collection' type, not a 'aaaa'"):
-        CnvCollection(cnvs_resource)
+        FragmentScore(fragments_resource)
 
 
-def test_cnv_collection_no_open(cnvs: CnvCollection) -> None:
+def test_fragment_score_no_open(fragments: FragmentScore) -> None:
     with pytest.raises(
         ValueError,
         match="The resource <score_one> is not open",
     ):
-        cnvs.fetch_cnvs("1", 5, 15)
+        fragments.fetch_fragments("1", 5, 15)
 
 
-def test_cnv_collection_bad_chrom(cnvs: CnvCollection) -> None:
-    cnv_collection = cnvs.open()
-    res = cnv_collection.fetch_cnvs("3", 5, 15)
+def test_fragment_score_bad_chrom(fragments: FragmentScore) -> None:
+    score = fragments.open()
+    res = score.fetch_fragments("3", 5, 15)
 
     assert len(res) == 0
 
 
 @pytest.fixture
-def cnvs_impl(cnvs_resource: GenomicResource) -> CnvCollectionImplementation:
+def fragments_impl(
+    fragments_resource: GenomicResource,
+) -> FragmentScoreImplementation:
 
-    return CnvCollectionImplementation(cnvs_resource)
+    return FragmentScoreImplementation(fragments_resource)
 
 
-def test_cnv_collection_implementation(
-    cnvs_impl: CnvCollectionImplementation,
+def test_fragment_score_implementation(
+    fragments_impl: FragmentScoreImplementation,
 ) -> None:
-    assert cnvs_impl is not None
+    assert fragments_impl is not None
     task_graph = TaskGraph()
-    tasks = cnvs_impl.create_statistics_build_tasks()
+    tasks = fragments_impl.create_statistics_build_tasks()
     assert len(tasks) == 4
     task_graph.add_tasks(tasks)
 
     executor = SequentialExecutor()
     task_graph_run(task_graph, executor)
 
-    res_hash = cnvs_impl.calc_info_hash()
+    res_hash = fragments_impl.calc_info_hash()
     assert res_hash == b"infohash"
 
-    res_hash = cnvs_impl.calc_statistics_hash()
+    res_hash = fragments_impl.calc_statistics_hash()
     assert b"affected_status" in res_hash
 
-    info = cnvs_impl.get_info()
+    info = fragments_impl.get_info()
     assert "some populaton frequency" in info
 
-    info = cnvs_impl.get_statistics_info()
+    info = fragments_impl.get_statistics_info()
     assert "Filename" in info
 
 
-def test_cnv_collection_implementation_histogram(
-    cnvs_resource: GenomicResource,
+def test_fragment_score_implementation_histogram(
+    fragments_resource: GenomicResource,
 ) -> None:
     hist_conf = build_histogram_config({
         "histogram": {
@@ -218,8 +220,8 @@ def test_cnv_collection_implementation_histogram(
 
     hist_confs = {"freq": hist_conf}
 
-    histograms = CnvCollectionImplementation._do_histogram(
-        cnvs_resource, hist_confs, "2", 0, 300,
+    histograms = FragmentScoreImplementation._do_histogram(
+        fragments_resource, hist_confs, "2", 0, 300,
     )
 
     assert isinstance(histograms["freq"], NumberHistogram)
@@ -233,8 +235,8 @@ def test_cnv_collection_implementation_histogram(
         == [0, 0.15, 0.3]
 
 
-def test_cnv_collection_implementation_do_min_max(
-    cnvs_resource: GenomicResource,
+def test_fragment_score_implementation_do_min_max(
+    fragments_resource: GenomicResource,
 ) -> None:
     hist_conf = build_histogram_config({
         "histogram": {
@@ -245,15 +247,15 @@ def test_cnv_collection_implementation_do_min_max(
     })
     assert isinstance(hist_conf, HistogramConfig)
 
-    statistics = CnvCollectionImplementation._do_min_max(
-        cnvs_resource, ["freq"], "2", 0, 300,
+    statistics = FragmentScoreImplementation._do_min_max(
+        fragments_resource, ["freq"], "2", 0, 300,
     )
 
     assert isinstance(statistics["freq"], MinMaxValue)
     assert statistics["freq"].count == 3
 
 
-def test_cli_manage_cnv_collection_histograms(
+def test_cli_manage_fragment_score_histograms(
     tmp_path: pathlib.Path,
     test_grr: GenomicResourceRepo,
 ) -> None:

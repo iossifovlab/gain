@@ -18,7 +18,7 @@ class WeightedValues:
     The contract between a score and an aggregator.  A score knows how
     many times each of its records counts -- a position-score record
     counts once per base pair of the queried region it covers, an allele
-    line counts once, a CNV counts once however long it is -- and says so
+    line counts once, a fragment counts once however long it is -- and says so
     with a weight, rather than by handing over one copy of the value per
     occurrence.  The aggregator applies the weight in closed form.
 

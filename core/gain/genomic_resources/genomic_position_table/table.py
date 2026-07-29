@@ -233,8 +233,9 @@ class GenomicPositionTable(abc.ABC):
         Stated once, here, because the alternative is deciding it per field --
         and per field the answer always looks like "this one is small".  It is
         not about tidiness: closed tables are deliberately kept alive.
-        ``_INMEMORY_CNV_CACHE`` holds ``CnvCollection`` scores process-wide
-        while an annotation pipeline's teardown closes them, so whatever a
+        ``_INMEMORY_FRAGMENT_SCORE_CACHE`` holds ``FragmentScore``
+        scores process-wide while an annotation pipeline's teardown
+        closes them, so whatever a
         closed table retains is retained for the life of the process -- and
         retained for nothing, since ``open()`` rebuilds all of it from the file
         rather than reusing it (gain#350).

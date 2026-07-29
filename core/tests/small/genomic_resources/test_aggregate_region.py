@@ -14,7 +14,7 @@ import pathlib
 import pytest
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
-    CnvCollection,
+    FragmentScore,
     PositionScore,
 )
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME
@@ -198,14 +198,15 @@ def test_an_allele_score_counts_each_line_once(
         assert score.aggregate_region("1", 10, 10, ["freq"]) == [0.8]
 
 
-def test_a_cnv_counts_once_however_long_it_is(
+def test_a_fragment_counts_once_however_long_it_is(
     tmp_path: pathlib.Path,
 ) -> None:
-    """A CNV is one observation, not one per base pair it spans.
+    """A fragment is one observation, not one per base pair it spans.
 
     Deriving the weight from the record's span in the base class would give
-    the 100 bp CNV a hundred times the say of the 1 bp one, and disagree
-    with the CNV annotator for every CNV longer than a base.
+    the 100 bp fragment a hundred times the say of the 1 bp one, and
+    disagree with the fragment score annotator for every fragment
+    longer than a base.
     """
     res = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
@@ -223,7 +224,7 @@ def test_a_cnv_counts_once_however_long_it_is(
             1      200        200      0.8
         """,
     })
-    score = CnvCollection(res).open()
+    score = FragmentScore(res).open()
     with score:
         assert score.aggregate_region("1", 1, 500, [("freq", "mean")]) == [
             pytest.approx(0.5)]

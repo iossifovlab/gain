@@ -6,7 +6,7 @@ import pytest
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
-    CnvCollection,
+    FragmentScore,
     PositionScore,
     build_position_score_from_resource,
     build_score_from_resource,
@@ -364,8 +364,8 @@ def test_allele_score_fetch_region_overlapping_positions(
     assert len(result) == 2
 
 
-def test_cnv_collection_invalid_resource_type() -> None:
-    """Test CnvCollection with invalid resource type."""
+def test_fragment_score_invalid_resource_type() -> None:
+    """Test FragmentScore with invalid resource type."""
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
             type: position_score
@@ -383,11 +383,11 @@ def test_cnv_collection_invalid_resource_type() -> None:
     })
 
     with pytest.raises(ValueError, match="should be of"):
-        CnvCollection(res)
+        FragmentScore(res)
 
 
-def test_cnv_collection_fetch_cnvs() -> None:
-    """Test CnvCollection.fetch_cnvs method."""
+def test_fragment_score_fetch_fragments() -> None:
+    """Test FragmentScore.fetch_fragments method."""
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
             type: cnv_collection
@@ -409,26 +409,26 @@ def test_cnv_collection_fetch_cnvs() -> None:
         """,
     })
 
-    cnv_collection = CnvCollection(res)
-    cnv_collection.open()
+    fragment_score = FragmentScore(res)
+    fragment_score.open()
 
-    cnvs = cnv_collection.fetch_cnvs("1", 150, 350)
-    assert len(cnvs) == 2
-    assert cnvs[0].chrom == "1"
-    assert cnvs[0].pos_begin == 100
-    assert cnvs[0].pos_end == 200
-    assert cnvs[0].attributes["cnv_type"] == "DEL"
-    assert cnvs[0].attributes["frequency"] == 0.01
+    fragments = fragment_score.fetch_fragments("1", 150, 350)
+    assert len(fragments) == 2
+    assert fragments[0].chrom == "1"
+    assert fragments[0].pos_begin == 100
+    assert fragments[0].pos_end == 200
+    assert fragments[0].attributes["cnv_type"] == "DEL"
+    assert fragments[0].attributes["frequency"] == 0.01
 
-    cnvs = cnv_collection.fetch_cnvs("1", 1000, 2000)
-    assert len(cnvs) == 0
+    fragments = fragment_score.fetch_fragments("1", 1000, 2000)
+    assert len(fragments) == 0
 
-    cnvs = cnv_collection.fetch_cnvs("chr99", 1, 100)
-    assert len(cnvs) == 0
+    fragments = fragment_score.fetch_fragments("chr99", 1, 100)
+    assert len(fragments) == 0
 
 
-def test_cnv_collection_not_open() -> None:
-    """Test CnvCollection.fetch_cnvs when not opened."""
+def test_fragment_score_not_open() -> None:
+    """Test FragmentScore.fetch_fragments when not opened."""
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
             type: cnv_collection
@@ -445,10 +445,10 @@ def test_cnv_collection_not_open() -> None:
         """,
     })
 
-    cnv_collection = CnvCollection(res)
+    fragment_score = FragmentScore(res)
 
     with pytest.raises(ValueError, match="is not open"):
-        cnv_collection.fetch_cnvs("1", 100, 200)
+        fragment_score.fetch_fragments("1", 100, 200)
 
 
 def test_build_score_from_resource_invalid_type() -> None:
@@ -596,7 +596,7 @@ def test_allele_score_invalid_mode_config() -> None:
         AlleleScore(res)
 
 
-def test_build_score_from_resource_cnv_collection() -> None:
+def test_build_score_from_resource_fragment_score() -> None:
     """Test build_score_from_resource with cnv_collection type."""
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
@@ -615,12 +615,12 @@ def test_build_score_from_resource_cnv_collection() -> None:
     })
 
     score = build_score_from_resource(res)
-    assert isinstance(score, CnvCollection)
+    assert isinstance(score, FragmentScore)
 
 
-def test_cnv_collection_get_schema() -> None:
-    """Test CnvCollection.get_schema() method."""
-    schema = CnvCollection.get_schema()
+def test_fragment_score_get_schema() -> None:
+    """Test FragmentScore.get_schema() method."""
+    schema = FragmentScore.get_schema()
     assert "scores" in schema
     assert "aggregator" in schema["scores"]["schema"]["schema"]
 

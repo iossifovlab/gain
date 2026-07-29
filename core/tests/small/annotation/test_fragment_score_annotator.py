@@ -17,7 +17,7 @@ from gain.genomic_resources.testing import (
 @pytest.fixture(scope="module")
 def grr() -> GenomicResourceRepo:
     return build_inmemory_test_repository({
-        "cnvs": {
+        "fragments": {
             "genomic_resource.yaml": textwrap.dedent("""
                 type: cnv_collection
                 table:
@@ -54,7 +54,7 @@ def grr() -> GenomicResourceRepo:
 @pytest.fixture(scope="module")
 def larger_grr() -> GenomicResourceRepo:
     return build_inmemory_test_repository({
-        "cnvs": {
+        "fragments": {
             "genomic_resource.yaml": textwrap.dedent("""
                 type: cnv_collection
                 table:
@@ -95,101 +95,101 @@ chr1   24         35       2          AGRE        affected         900
     })
 
 
-@pytest.mark.parametrize("annotatable, cnv_count", [
+@pytest.mark.parametrize("annotatable, fragment_count", [
     (Position("1", 15), 1),
     (Region("1", 15, 60), 2),
     (Region("1", 30, 40), 0),
 ])
 def test_basic(
         annotatable: Annotatable,
-        cnv_count: int, grr: GenomicResourceRepo) -> None:
+        fragment_count: int, grr: GenomicResourceRepo) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
-            - cnv_collection: cnvs
+            - cnv_collection: fragments
             """),
         grr)
 
     atts = pipeline.annotate(annotatable)
-    assert atts["count"] == cnv_count
+    assert atts["count"] == fragment_count
 
 
-@pytest.mark.parametrize("annotatable, cnv_count", [
+@pytest.mark.parametrize("annotatable, fragment_count", [
     (Position("1", 15), 1),
     (Region("1", 15, 60), 1),
     (Region("1", 30, 40), 0),
 ])
-def test_cnv_filter(
-        annotatable: Annotatable, cnv_count: int,
+def test_fragment_filter(
+        annotatable: Annotatable, fragment_count: int,
         grr: GenomicResourceRepo) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
             - cnv_collection:
-                resource_id: cnvs
+                resource_id: fragments
                 cnv_filter: frequency < 0.05 or collection == "SSC"
             """),
         grr)
 
     atts = pipeline.annotate(annotatable)
-    assert atts["count"] == cnv_count
+    assert atts["count"] == fragment_count
 
 
-@pytest.mark.parametrize("annotatable, cnv_count", [
+@pytest.mark.parametrize("annotatable, fragment_count", [
     (Position("1", 15), 1),
     (Region("1", 15, 60), 1),
     (Region("1", 30, 40), 0),
 ])
-def test_cnv_filter_in(
-        annotatable: Annotatable, cnv_count: int,
+def test_fragment_filter_in(
+        annotatable: Annotatable, fragment_count: int,
         grr: GenomicResourceRepo) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
             - cnv_collection:
-                resource_id: cnvs
+                resource_id: fragments
                 cnv_filter: '"SSC" in collection'
             """),
         grr)
 
     atts = pipeline.annotate(annotatable)
-    assert atts["count"] == cnv_count
+    assert atts["count"] == fragment_count
 
 
-@pytest.mark.parametrize("annotatable, cnv_count", [
+@pytest.mark.parametrize("annotatable, fragment_count", [
     (Position("1", 15), 1),
     (Region("1", 15, 60), 1),
     (Region("1", 30, 40), 0),
 ])
-def test_cnv_filter_on_newline(
-        annotatable: Annotatable, cnv_count: int,
+def test_fragment_filter_on_newline(
+        annotatable: Annotatable, fragment_count: int,
         grr: GenomicResourceRepo) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
             - cnv_collection:
-                resource_id: cnvs
+                resource_id: fragments
                 cnv_filter: >
                     frequency < 0.05 or collection == "SSC"
             """),
         grr)
 
     atts = pipeline.annotate(annotatable)
-    assert atts["count"] == cnv_count
+    assert atts["count"] == fragment_count
 
 
 @pytest.mark.parametrize(
-    "annotatable, cnv_count, status, status2, collection", [
+    "annotatable, fragment_count, status, status2, collection", [
         (Position("1", 15), 1, "affected", "affected", "SSC"),
         (Region("1", 15, 60), 2,
          "affected,affected", "affected", "SSC,AGRE"),
         (Region("1", 30, 40), 0, None, None, None),
     ])
-def test_cnv_filter_and_attribute(
-    annotatable: Annotatable, cnv_count: int,
+def test_fragment_filter_and_attribute(
+    annotatable: Annotatable, fragment_count: int,
     status: str, status2: str, collection: str,
     grr: GenomicResourceRepo,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
             - cnv_collection:
-                resource_id: cnvs
+                resource_id: fragments
                 cnv_filter: frequency < 0.05 or collection == "AGRE"
                 attributes:
                 - count
@@ -207,7 +207,7 @@ def test_cnv_filter_and_attribute(
     assert "status2" in atts
     assert "collection" in atts
 
-    assert atts["count"] == cnv_count
+    assert atts["count"] == fragment_count
     assert atts["status"] == status
     assert atts["status2"] == status2
     assert atts["collection"] == collection
@@ -224,13 +224,13 @@ def test_cnv_filter_and_attribute(
     assert "aggregator: join(,)" in collection_info.documentation
 
 
-def test_cnv_aggregators(
+def test_fragment_aggregators(
     larger_grr: GenomicResourceRepo,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
             - cnv_collection:
-                resource_id: cnvs
+                resource_id: fragments
                 attributes:
                 - count
                 - name: size_max
