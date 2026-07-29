@@ -154,33 +154,43 @@ class GenomicPositionTable(abc.ABC):
                 fch: ch for ch, fch in self.chrom_map.items()}
 
     def get_column_key(self, col: str) -> int | None:
-        """Find the index of a column in the table."""
-        if col in self.definition:
-            if "index" in self.definition[col]:
-                self.definition[col]["column_index"] = \
-                    self.definition[col]["index"]
+        """Find the index of a column in the table.
+
+        Reads the definition; never writes to it.  The resolved index used to
+        be memoised back as ``definition[col]["column_index"]`` (and the
+        deprecated ``index``/``name`` spellings canonicalised there the same
+        way), but a table's definition is configuration that outlives this
+        call and is read by more than this table:
+        ``GenomicScoreImplementation.calc_statistics_hash`` serialises it.
+        Writing to it made a resource's statistics hash depend on whether its
+        score had been opened in the current process -- and ``repo-repair``
+        computes that hash on both sides of the rebuild it is deciding, in a
+        process that has opened the score and in one that has not.  Every
+        fragment score in the deployed GRR was rebuilt on every run because of
+        it (#502).
+        """
+        col_def = self.definition.get(col)
+        if col_def is not None:
+            if "index" in col_def:
                 logger.debug(
                     "%s: Using 'index' to configure columns is outdated,"
                     " use 'column_index' instead.",
                     self.genomic_resource.get_full_id(),
                 )
-            if "name" in self.definition[col]:
-                self.definition[col]["column_name"] = \
-                    self.definition[col]["name"]
+                return cast(int, col_def["index"])
+            if "column_index" in col_def:
+                return cast(int, col_def["column_index"])
+            if "name" in col_def:
                 logger.debug(
                     "%s: Using 'name' to configure columns is outdated,"
                     " use 'column_name' instead.",
                     self.genomic_resource.get_full_id(),
                 )
-
-            if "column_index" in self.definition[col]:
-                return cast(int, self.definition[col]["column_index"])
-            if "column_name" in self.definition[col]:
                 assert self.header is not None
-                col_index = self.header.index(
-                    self.definition[col]["column_name"])
-                self.definition[col]["column_index"] = col_index
-                return col_index
+                return self.header.index(col_def["name"])
+            if "column_name" in col_def:
+                assert self.header is not None
+                return self.header.index(col_def["column_name"])
         if self.header is not None and col in self.header:
             return self.header.index(col)
         return None
