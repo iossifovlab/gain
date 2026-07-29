@@ -376,15 +376,24 @@ def build_inmemory_test_resource(
 def build_filesystem_test_protocol(
     root_path: pathlib.Path, *,
     repair: bool = True,
+    proto_id: str | None = None,
 ) -> FsspecReadWriteProtocol:
     """Build and return an filesystem fsspec protocol for testing.
 
     The root_path is expected to point to a directory structure with all the
     resources.
+
+    The protocol is named by its own ``root_path`` unless ``proto_id`` says
+    otherwise. That default is an absolute ``/tmp/...`` path, which is fine
+    for a protocol used on its own but is refused by
+    ``GenomicResourceCachedRepo``: it derives the cache directory from the
+    protocol id, and an absolute id discards the cache url instead of
+    landing under it (#460, #486). Pass a single path segment -- ``"remote"``
+    -- when the protocol is going to be wrapped in a cache.
     """
     proto = cast(
         FsspecReadWriteProtocol,
-        build_fsspec_protocol(str(root_path), str(root_path)))
+        build_fsspec_protocol(proto_id or str(root_path), str(root_path)))
     if repair:
         for res in proto.get_all_resources():
             proto.save_manifest(res, proto.build_manifest(res))
@@ -393,13 +402,18 @@ def build_filesystem_test_protocol(
 
 
 def build_filesystem_test_repository(
-        root_path: pathlib.Path) -> GenomicResourceProtocolRepo:
+    root_path: pathlib.Path, *,
+    proto_id: str | None = None,
+) -> GenomicResourceProtocolRepo:
     """Build and return an filesystem fsspec repository for testing.
 
     The root_path is expected to point to a directory structure with all the
     resources.
+
+    See ``build_filesystem_test_protocol`` for ``proto_id`` -- a repository
+    that is going to be wrapped in a ``GenomicResourceCachedRepo`` needs one.
     """
-    proto = build_filesystem_test_protocol(root_path)
+    proto = build_filesystem_test_protocol(root_path, proto_id=proto_id)
     return GenomicResourceProtocolRepo(proto)
 
 
