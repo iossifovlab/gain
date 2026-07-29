@@ -1755,6 +1755,13 @@ class FragmentScore(GenomicScore):
     :data:`FRAGMENT_SCORE_TYPES`.
     """
 
+    # Fragments overlap freely, each weighs 1 however long it is, and the
+    # min/max statistic of a fragment score also reports how many records it
+    # saw -- a count that reaches the serialized statistic.
+    RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.SHARED
+    RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
+    RECORDS_ARE_COUNTED: ClassVar[bool] = True
+
     # As AlleleScore, except that strings join rather than list -- a fragment
     # score's string attributes are rendered into one cell.  This table is
     # the whole of what ``_CNVScoreDef`` existed for: it was a subclass of
@@ -1763,13 +1770,6 @@ class FragmentScore(GenomicScore):
     # solely to construct it.  With the defaults owned by the score class,
     # both were exact copies of the base and are gone -- which also retires
     # the near-copy that ``_parse_column_address`` warns about.
-    # Fragments overlap freely, each weighs 1 however long it is, and the
-    # min/max statistic of a fragment score also reports how many records it
-    # saw -- a count that reaches the serialized statistic.
-    RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.SHARED
-    RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
-    RECORDS_ARE_COUNTED: ClassVar[bool] = True
-
     DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {
         "float": "max",
         "int": "max",
