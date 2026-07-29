@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from threading import Lock
 from typing import TYPE_CHECKING, Any
 
@@ -16,6 +17,19 @@ logger = logging.getLogger(__name__)
 
 _INMEMORY_CACHE: dict[tuple[str, str], GeneModels] = {}
 _INMEMORY_CACHE_LOCK = Lock()
+
+
+def _root_relative(path: str) -> str:
+    """Return ``path`` as a name relative to the filesystem root.
+
+    This API takes local paths that may point anywhere -- and its three
+    paths (the models, the gene mapping and the chromosome mapping) need
+    not share a directory, so the ``dirname``/``basename`` split its
+    reference-genome and gene-set siblings use does not fit. Rooting the
+    synthetic resource at ``/`` instead keeps every name relative to the
+    resource, which is what resource file names must be (gain#467).
+    """
+    return os.path.abspath(path).lstrip("/")
 
 
 def build_gene_models_from_file(
@@ -39,18 +53,18 @@ def build_gene_models_from_file(
 
         config: dict[str, Any] = {
             "type": "gene_models",
-            "filename": file_name,
+            "filename": _root_relative(file_name),
         }
         if file_format:
             config["format"] = file_format
         if gene_mapping_file_name:
-            config["gene_mapping"] = gene_mapping_file_name
+            config["gene_mapping"] = _root_relative(gene_mapping_file_name)
         if chrom_mapping_file_name is not None:
             config["chrom_mapping"] = {
-                "filename": chrom_mapping_file_name,
+                "filename": _root_relative(chrom_mapping_file_name),
             }
 
-        res = build_local_resource(".", config)
+        res = build_local_resource("/", config)
 
         gene_models = GeneModels(res)
         _INMEMORY_CACHE[cache_id] = gene_models

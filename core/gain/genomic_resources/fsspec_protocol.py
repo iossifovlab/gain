@@ -56,6 +56,9 @@ from gain.genomic_resources.repository import (
     is_gr_id_token,
     parse_gr_id_version_token,
     resolve_tabix_index_filename_for_read,
+    uncontained_resource_id_reason,
+    validate_resource_file_name,
+    validate_resource_id,
 )
 from gain.templates import get_template
 from gain.utils.helpers import convert_size
@@ -383,6 +386,12 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         # ``_fetch_url`` (the base class uses ``self.url``, which is stripped of
         # userinfo for display) so URL-embedded basic-auth still reaches
         # aiohttp/htslib. Identical to the base for userinfo-free urls.
+        #
+        # A join of its own, so it repeats the id containment check the base
+        # class does -- this override is the one that serves the REMOTE
+        # repositories, whose ids come out of an untrusted ``.CONTENTS``
+        # (gain#467).
+        validate_resource_id(resource.resource_id)
         return os.path.join(
             self._fetch_url,
             resource.get_genomic_resource_id_version())
@@ -462,6 +471,21 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
                 contents = self.load_contents()
 
                 for entry in contents:
+                    # ``.CONTENTS`` is remote, untrusted GRR content and
+                    # its ``id`` is joined onto the repository url, so a
+                    # traversing id reads -- and, through the caching
+                    # repository, WRITES -- outside the root. Dropped with
+                    # a warning rather than raised on: one poisoned entry
+                    # must not cost the repository its healthy resources
+                    # (gain#467).
+                    reason = uncontained_resource_id_reason(entry["id"])
+                    if reason is not None:
+                        logger.warning(
+                            "repo %s: dropping resource <%s> from %s -- "
+                            "its id %s",
+                            self.proto_id, entry["id"],
+                            GR_CONTENTS_FILE_NAME, reason)
+                        continue
                     version = tuple(map(int, entry["version"].split(".")))
                     manifest = Manifest.from_manifest_entries(
                         entry["manifest"])
@@ -680,9 +704,15 @@ class FsspecReadWriteProtocol(
     def _get_resource_file_lockfile_path(
         self, resource: GenomicResource, filename: str,
     ) -> str:
-        """Return path of the resource file's lockfile."""
+        """Return path of the resource file's lockfile.
+
+        Another join of its own, so it repeats the containment check --
+        ``filelock`` creates and truncates the lockfile on acquire
+        (gain#467).
+        """
         if self.scheme != "file":
             raise NotImplementedError
+        validate_resource_file_name(resource.resource_id, filename)
         resource_url = self.get_resource_url(resource)
         path = os.path.join(resource_url, ".grr", f"{filename}.lockfile")
         return path.removeprefix(f"{self.scheme}://")
@@ -1024,7 +1054,13 @@ class FsspecReadWriteProtocol(
 
     def _get_resource_file_state_path(
             self, resource: GenomicResource, filename: str) -> str:
-        """Return filename of the resource file state path."""
+        """Return filename of the resource file state path.
+
+        This joins the resource url itself and so does NOT go through
+        ``get_resource_file_url``; the containment check is repeated here on
+        purpose -- see gain#467.
+        """
+        validate_resource_file_name(resource.resource_id, filename)
         resource_url = self.get_resource_url(resource)
         return os.path.join(resource_url, ".grr", f"{filename}.state")
 
