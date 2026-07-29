@@ -227,8 +227,7 @@ def _failing_histogram_repo(
     # A str-typed score with no explicit histogram config falls back to the
     # default categorical config (enforce_type=False). Feeding it >100 distinct
     # integer values raises HistogramError at runtime (add_value's
-    # UNIQUE_VALUES_LIMIT guard). HistogramError is a BaseException, so a plain
-    # ``except ValueError``/``except Exception`` cannot catch it.
+    # UNIQUE_VALUES_LIMIT guard).
     rows = "".join(f"G{i} {i}\n" for i in range(150))
     return (
         a_grr()
@@ -272,8 +271,8 @@ def test_build_histograms_runtime_failure_writes_no_png(
 def test_build_histograms_histogram_error_does_not_escape(
     tmp_path: pathlib.Path,
 ) -> None:
-    # HistogramError is a BaseException; it must be caught rather than escape
-    # _build_histograms and fail the task-graph task.
+    # A HistogramError must be caught rather than escape _build_histograms
+    # and fail the task-graph task.
     res = _failing_histogram_repo(tmp_path).get_resource("FailScore")
 
     histograms = GeneScoreImplementation._build_histograms(res)

@@ -90,6 +90,17 @@ def test_categorical_histogram_merge() -> None:
     assert hist1.display_values["value4"] == 1
 
 
+def test_histogram_error_is_an_exception() -> None:
+    """``HistogramError`` must derive from ``Exception`` (gain#465).
+
+    As a ``BaseException`` it slipped past the task-graph executor's
+    ``except Exception``, which is what converts a task's failure into the
+    task's result; it escaped into the dask worker instead and the caller
+    blocked in ``Future.result()`` forever.
+    """
+    assert issubclass(HistogramError, Exception)
+
+
 def test_categorical_histogram_merge_raises() -> None:
     config = CategoricalHistogramConfig.default_config()
 

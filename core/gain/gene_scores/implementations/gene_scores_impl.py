@@ -80,9 +80,7 @@ class GeneScoreImplementation(ScoreImplementationBase):
             )
             # A runtime histogram-build failure is recorded as a serialized
             # NullHistogram carrying the reason, matching the genomic score
-            # implementation. HistogramError is a BaseException, so it is
-            # caught explicitly here; a plain ``except ValueError`` or
-            # ``except Exception`` would let it escape and fail the task.
+            # implementation.
             try:
                 histogram = GeneScoreImplementation._calc_histogram(
                     gene_score, score_id)

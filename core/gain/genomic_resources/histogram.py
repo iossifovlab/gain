@@ -24,7 +24,7 @@ from gain.genomic_resources.statistics.min_max import MinMaxValue
 logger = logging.getLogger(__name__)
 
 
-class HistogramError(BaseException):
+class HistogramError(Exception):
     """
     Class used for histogram specific errors.
 
