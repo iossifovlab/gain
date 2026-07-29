@@ -425,11 +425,15 @@ Limitations
 
 Label search inherits the constraints of the underlying FTS5 index. The following are worth knowing before relying on it.
 
-**Label keys must be valid SQLite identifiers.** Each key is used directly as a column name of the ``contents`` table, so a key must match ``[A-Za-z_][A-Za-z0-9_]*``, must not be an SQL keyword, and must not be a name FTS5 reserves (``rank``, ``rowid``, ``contents``). A key containing a hyphen or a space (``cell-type``, ``cell type``), or one spelled ``order``, cannot name a field; use underscores (``cell_type``).
+**Label keys must be valid SQLite identifiers.** Each key is used directly as a column name of the ``contents`` table, so a key must be a string that matches ``[A-Za-z_][A-Za-z0-9_]*``, must not be an SQL keyword, and must not be a name FTS5 reserves (``rank``, ``rowid``, ``contents``). A key containing a hyphen or a space (``cell-type``, ``cell type``), or one spelled ``order``, cannot name a field; use underscores (``cell_type``). Beware YAML's unquoted scalars — ``2024: release`` and ``true: yes`` are an integer and a boolean key, not strings, and are refused as well.
 
-**Label keys must not collide with another field.** A label named ``description``, ``summary``, ``type``, ``id`` or ``full_id`` — or with the name of a field the resource's own type contributes, such as ``score_ids`` — would replace that field's value for the resource, which then could no longer be found by it. Names are compared case-insensitively, as SQLite compares identifiers.
+**Label keys must not collide with another field.** A label named ``description``, ``summary``, ``type``, ``id`` or ``full_id`` — or with the name of a field the resource's own type contributes, such as ``score_ids`` — would replace that field's value for the resource, which then could no longer be found by it.
 
-A resource that breaks either rule is **skipped**: ``grr_manage repo-repair`` reports it by resource id, naming the offending key, indexes the rest of the repository normally, and exits non-zero. Only the offending resource is missing from the index — fix its ``meta.labels`` and repair again.
+**Two resources must not spell one key two ways.** The index has one set of columns for the whole repository — the union of the fields of all its resources — and SQLite compares column names case-insensitively. So ``assay`` in one resource and ``Assay`` in another are one column asked for under two spellings, and cannot both be in the index, even though each resource is perfectly fine on its own. The same holds for the total: a repository whose resources have more than 1994 distinct field names between them is past what an FTS5 table can hold.
+
+A resource that breaks any of these rules is **skipped**: ``grr_manage repo-repair`` reports it by resource id — naming the offending key, and, for a clash of spellings, the resource that already holds the name — indexes the rest of the repository normally, and exits non-zero. Only the skipped resources are missing from the index; fix their ``meta.labels`` and repair again. Resources join the index in resource id order, so of two resources spelling a key differently it is always the one that is later by id that is skipped.
+
+If *every* resource is skipped, the index is left with nothing in it: searches then return no results and log a warning, rather than failing.
 
 **Search terms are FTS5 expressions, not literal strings.** Characters that are
 meaningful to the query parser — most commonly ``-`` and ``:`` — must be quoted, or the search fails with an error rather than returning no results:
