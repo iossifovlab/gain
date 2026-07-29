@@ -56,6 +56,7 @@ import re
 from collections.abc import Generator, Iterator
 from dataclasses import asdict, dataclass
 from typing import IO, Any, cast
+from urllib.parse import unquote
 
 import apsw
 import pysam
@@ -91,6 +92,11 @@ GR_ENCODING = "utf-8"
 
 _GR_ID_TOKEN_RE = re.compile(r"[a-zA-Z0-9._-]+")
 
+#: Separators a resource file name is split on before it is scanned
+#: for ``..`` segments. A backslash is a path separator on Windows
+#: and in several fsspec backends, so it counts as one here.
+_RESOURCE_NAME_SEPARATOR = re.compile(r"[/\\]")
+
 
 def is_generated_info_page(name: str) -> bool:
     """Return True if ``name`` is a page ``resource-info`` generates.
@@ -102,6 +108,45 @@ def is_generated_info_page(name: str) -> bool:
     any html file a resource legitimately carries as data (#373).
     """
     return name in GR_GENERATED_INFO_PAGES
+
+
+def uncontained_resource_file_name_reason(filename: str) -> str | None:
+    """Return why ``filename`` is not resource-contained, or ``None``.
+
+    Resource file names arrive from GRR *content* -- the resource's
+    ``genomic_resource.yaml`` and its ``.MANIFEST`` -- which is fetched from
+    remote repositories and is therefore untrusted. A name is contained when
+    it is relative and names no ``..`` segment; nested names such as
+    ``statistics/histogram_score.json`` are ordinary and stay allowed.
+
+    The joined location is a URL, not an os path, so the name is checked
+    both as written and percent-decoded: an http(s) server decodes the path
+    before resolving it, which makes ``%2e%2e`` a traversal there. A single
+    decoding pass is the right depth -- ``%252e%252e`` decodes to the
+    literal text ``%2e%2e``, which no server resolves any further.
+
+    A ``..`` that would stay inside the resource (``sub/../other.txt``) is
+    rejected as well: the joined url is handed to fsspec unnormalised, and
+    an object store treats ``..`` as a literal key segment instead of
+    resolving it, so such a name would address two different objects
+    depending on the protocol. See gain#467.
+    """
+    for candidate in (filename, unquote(filename)):
+        if candidate.startswith("/"):
+            return "is absolute"
+        if any(segment == ".."
+               for segment in _RESOURCE_NAME_SEPARATOR.split(candidate)):
+            return "escapes the resource directory"
+    return None
+
+
+def validate_resource_file_name(resource_id: str, filename: str) -> None:
+    """Raise ``ValueError`` unless ``filename`` stays inside the resource."""
+    reason = uncontained_resource_file_name_reason(filename)
+    if reason is not None:
+        raise ValueError(
+            f"resource file name <{filename}> {reason}; "
+            f"resource <{resource_id}>")
 
 
 def is_gr_id_token(token: str) -> bool:
@@ -332,6 +377,16 @@ class ManifestEntry:
     name: str
     size: int
     md5: str | None
+
+    def __post_init__(self) -> None:
+        # Defence in depth (gain#467): a manifest is parsed verbatim from
+        # remote GRR content, so a poisoned entry name is rejected here --
+        # as close to the untrusted input as it gets -- on top of the
+        # load-bearing check in ``get_resource_file_url``.
+        reason = uncontained_resource_file_name_reason(self.name)
+        if reason is not None:
+            raise ValueError(
+                f"manifest entry name <{self.name}> {reason}")
 
 
 @dataclass(order=True)
@@ -980,6 +1035,7 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
     def get_resource_file_url(
             self, resource: GenomicResource, filename: str) -> str:
         """Return url of a file in the resource."""
+        validate_resource_file_name(resource.resource_id, filename)
         return os.path.join(
             self.get_resource_url(resource), filename)
 

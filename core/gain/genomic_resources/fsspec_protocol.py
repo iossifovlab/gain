@@ -56,6 +56,7 @@ from gain.genomic_resources.repository import (
     is_gr_id_token,
     parse_gr_id_version_token,
     resolve_tabix_index_filename_for_read,
+    validate_resource_file_name,
 )
 from gain.templates import get_template
 from gain.utils.helpers import convert_size
@@ -680,9 +681,15 @@ class FsspecReadWriteProtocol(
     def _get_resource_file_lockfile_path(
         self, resource: GenomicResource, filename: str,
     ) -> str:
-        """Return path of the resource file's lockfile."""
+        """Return path of the resource file's lockfile.
+
+        Another join of its own, so it repeats the containment check --
+        ``filelock`` creates and truncates the lockfile on acquire
+        (gain#467).
+        """
         if self.scheme != "file":
             raise NotImplementedError
+        validate_resource_file_name(resource.resource_id, filename)
         resource_url = self.get_resource_url(resource)
         path = os.path.join(resource_url, ".grr", f"{filename}.lockfile")
         return path.removeprefix(f"{self.scheme}://")
@@ -1024,7 +1031,13 @@ class FsspecReadWriteProtocol(
 
     def _get_resource_file_state_path(
             self, resource: GenomicResource, filename: str) -> str:
-        """Return filename of the resource file state path."""
+        """Return filename of the resource file state path.
+
+        This joins the resource url itself and so does NOT go through
+        ``get_resource_file_url``; the containment check is repeated here on
+        purpose -- see gain#467.
+        """
+        validate_resource_file_name(resource.resource_id, filename)
         resource_url = self.get_resource_url(resource)
         return os.path.join(resource_url, ".grr", f"{filename}.state")
 
