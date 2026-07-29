@@ -1,7 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-import os
 import time
-from collections.abc import Generator
 from typing import Any
 
 import pytest
@@ -14,7 +12,6 @@ from gain.genomic_resources.testing import (
     FsspecReadWriteProtocol,
     build_filesystem_test_protocol,
     build_inmemory_test_protocol,
-    build_s3_test_protocol,
     setup_directories,
     setup_genome_bgz,
     setup_tabix,
@@ -42,6 +39,27 @@ def test_caching_repo_simple(
     assert len(list(caching_proto.get_all_resources())) == 5
 
 
+def test_caching_protocol_rejects_non_local_cache(
+        content_fixture: dict[str, Any]) -> None:
+    """A cache on anything but the local filesystem is unsupported.
+
+    The per-file lock the caching protocol relies on is a lockfile, and a
+    lockfile only means anything on a local filesystem; a remote cache used
+    to be handed a silent no-op lock instead. Reject the configuration when
+    the protocol is built, before any caching work begins. See #473.
+    """
+    remote_proto = build_inmemory_test_protocol(content_fixture)
+    cache_proto = build_inmemory_test_protocol({})
+
+    with pytest.raises(ValueError) as excinfo:
+        CachingProtocol(remote_proto, cache_proto)
+
+    message = str(excinfo.value)
+    assert "memory" in message
+    assert cache_proto.get_url() in message
+    assert "local filesystem" in message
+
+
 @pytest.fixture
 def remote_proto_fixture(
     content_fixture: dict[str, Any],
@@ -66,15 +84,10 @@ def remote_proto_fixture(
 @pytest.fixture
 def bgz_genome_caching_proto(
     tmp_path_factory: pytest.TempPathFactory,
-    grr_scheme: str,
-    mocker: pytest_mock.MockerFixture,
-) -> Generator[CachingProtocol, None, None]:
-
-    mocker.patch.dict(os.environ, {
-        "AWS_SECRET_ACCESS_KEY": "minioadmin",
-        "AWS_ACCESS_KEY_ID": "minioadmin",
-    })
-
+) -> CachingProtocol:
+    # Not parametrized over the GRR schemes: the cache side of a caching
+    # protocol must be on the local filesystem (#473). The remote side here
+    # is a filesystem protocol, so no remote-scheme coverage is lost.
     remote_root = tmp_path_factory.mktemp("bgz_genome_remote")
     setup_genome_bgz(
         remote_root / "bgz_genome" / "chr.fa.gz",
@@ -89,51 +102,22 @@ def bgz_genome_caching_proto(
         """)
     remote_proto = build_filesystem_test_protocol(remote_root)
 
-    if grr_scheme == "file":
-        cache_root = tmp_path_factory.mktemp("bgz_genome_file_cache")
-        yield CachingProtocol(
-            remote_proto, build_filesystem_test_protocol(cache_root))
-
-    elif grr_scheme == "s3":
-        with build_s3_test_protocol(
-                tmp_path_factory.mktemp("bgz_genome_s3_cache")) as cache_proto:
-            yield CachingProtocol(remote_proto, cache_proto)
-
-    else:
-        raise ValueError(f"Unsupported caching scheme: {grr_scheme}")
+    cache_root = tmp_path_factory.mktemp("bgz_genome_file_cache")
+    return CachingProtocol(
+        remote_proto, build_filesystem_test_protocol(cache_root))
 
 
 @pytest.fixture
 def caching_proto(
     tmp_path_factory: pytest.TempPathFactory,
     remote_proto_fixture: FsspecReadWriteProtocol,
-    grr_scheme: str,
-    mocker: pytest_mock.MockerFixture,
-) -> Generator[CachingProtocol, None, None]:
-
-    mocker.patch.dict(os.environ, {
-        "AWS_SECRET_ACCESS_KEY": "minioadmin",
-        "AWS_ACCESS_KEY_ID": "minioadmin",
-    })
-
-    remote_proto = remote_proto_fixture
-    caching_scheme = grr_scheme
-
-    if caching_scheme == "file":
-        root_path = tmp_path_factory.mktemp("file_caching_proto_path")
-        caching_proto = build_filesystem_test_protocol(root_path)
-        yield CachingProtocol(remote_proto, caching_proto)
-
-    elif caching_scheme == "s3":
-        root_path = tmp_path_factory.mktemp("s3_caching_proto_path")
-        with build_s3_test_protocol(root_path) as caching_proto:
-            yield CachingProtocol(remote_proto, caching_proto)
-
-    else:
-        raise ValueError(f"Unsupported caching scheme: {caching_scheme}")
+) -> CachingProtocol:
+    # Local cache only -- see ``bgz_genome_caching_proto`` and #473.
+    root_path = tmp_path_factory.mktemp("file_caching_proto_path")
+    return CachingProtocol(
+        remote_proto_fixture, build_filesystem_test_protocol(root_path))
 
 
-@pytest.mark.grr_full
 def test_get_resource_three(
         caching_proto: CachingProtocol) -> None:
     proto = caching_proto
@@ -143,7 +127,6 @@ def test_get_resource_three(
     assert res.version == (2, 0)
 
 
-@pytest.mark.grr_full
 def test_get_resource_two(
         caching_proto: CachingProtocol) -> None:
     res = caching_proto.get_resource("sub/two")
@@ -152,7 +135,6 @@ def test_get_resource_two(
     assert res.version == (1, 0)
 
 
-@pytest.mark.grr_full
 def test_get_resource_copies_nothing_three(
         caching_proto: CachingProtocol) -> None:
     res = caching_proto.get_resource("three")
@@ -163,7 +145,6 @@ def test_get_resource_copies_nothing_three(
     assert not local_proto.file_exists(res, "sub2/b.txt")
 
 
-@pytest.mark.grr_full
 def test_get_resource_copies_nothing_two(
         caching_proto: CachingProtocol) -> None:
     res = caching_proto.get_resource("sub/two")
@@ -173,7 +154,6 @@ def test_get_resource_copies_nothing_two(
     assert not local_proto.file_exists(res, "genes.gtf")
 
 
-@pytest.mark.grr_full
 def test_open_raw_file_copies_the_file_three_a(
         caching_proto: CachingProtocol) -> None:
 
@@ -188,7 +168,6 @@ def test_open_raw_file_copies_the_file_three_a(
     assert not local_proto.file_exists(res, "sub2/b.txt")
 
 
-@pytest.mark.grr_full
 def test_open_raw_file_copies_the_file_three_b(
         caching_proto: CachingProtocol) -> None:
     res = caching_proto.get_resource("three")
@@ -202,7 +181,6 @@ def test_open_raw_file_copies_the_file_three_b(
     assert not local_proto.file_exists(res, "sub1/a.txt")
 
 
-@pytest.mark.grr_full
 def test_open_tabix_file_simple(
         caching_proto: CachingProtocol) -> None:
     res = caching_proto.get_resource("one")
@@ -210,7 +188,6 @@ def test_open_tabix_file_simple(
         assert tabix.contigs == ["1", "2", "3"]
 
 
-@pytest.mark.grr_full
 def test_open_tabix_file_caches_both_files(
         caching_proto: CachingProtocol) -> None:
     """Test that opening tabix file caches both data and index."""
@@ -228,7 +205,6 @@ def test_open_tabix_file_caches_both_files(
     assert local_proto.file_exists(res, "test.txt.gz.tbi")
 
 
-@pytest.mark.grr_full
 def test_open_fasta_file_caches_all_three(
         bgz_genome_caching_proto: CachingProtocol) -> None:
     """Opening a bgzipped genome caches the data, .fai and .gzi files."""
@@ -249,7 +225,6 @@ def test_open_fasta_file_caches_all_three(
     assert local_proto.file_exists(res, "chr.fa.gz.gzi")
 
 
-@pytest.mark.grr_full
 def test_reference_genome_over_cached_protocol(
         bgz_genome_caching_proto: CachingProtocol) -> None:
     """A bgzipped genome reads correctly through the caching protocol."""
@@ -260,7 +235,6 @@ def test_reference_genome_over_cached_protocol(
         assert genome.get_sequence("gosho", 11, 20) == "TTGGCCAANN"
 
 
-@pytest.mark.grr_full
 def test_load_manifest(
     caching_proto: CachingProtocol,
 ) -> None:
@@ -275,7 +249,6 @@ def test_load_manifest(
     assert local_proto.file_exists(res, "genomic_resource.yaml")
 
 
-@pytest.mark.grr_full
 def test_get_all_resources_caches_list(
         caching_proto: CachingProtocol) -> None:
     """Test that get_all_resources caches the resource list."""
@@ -291,7 +264,6 @@ def test_get_all_resources_caches_list(
     assert resources2 == list(caching_proto._all_resources.values())
 
 
-@pytest.mark.grr_full
 def test_refresh_cached_resource(
         caching_proto: CachingProtocol) -> None:
     """Test refreshing all files in a resource."""
@@ -310,7 +282,6 @@ def test_refresh_cached_resource(
     assert local_proto.file_exists(res, "sub2/b.txt")
 
 
-@pytest.mark.grr_full
 def test_refresh_cached_resource_file_returns_tuple(
         caching_proto: CachingProtocol) -> None:
     """Test that refresh_cached_resource_file returns resource_id, filename."""
@@ -321,7 +292,6 @@ def test_refresh_cached_resource_file_returns_tuple(
     assert result == (res.resource_id, "sub1/a.txt")
 
 
-@pytest.mark.grr_full
 def test_lockfiles_are_ignored(
         caching_proto: CachingProtocol) -> None:
     """Test that .lockfile files are ignored during refresh."""
@@ -337,7 +307,6 @@ def test_lockfiles_are_ignored(
     assert not local_proto.file_exists(res, "test.txt.gz.lockfile")
 
 
-@pytest.mark.grr_full
 def test_classify_cached_resource_file_lockfile_ignored(
         caching_proto: CachingProtocol) -> None:
     """.lockfile classifies as no-download without touching the remote."""
@@ -349,7 +318,6 @@ def test_classify_cached_resource_file_lockfile_ignored(
     assert verdict.size == 0
 
 
-@pytest.mark.grr_full
 def test_classify_cached_resource_file_uncached(
         caching_proto: CachingProtocol) -> None:
     """An uncached file classifies as needing download, no lock taken."""
@@ -364,7 +332,6 @@ def test_classify_cached_resource_file_uncached(
     assert not local_proto.file_exists(res, "sub1/a.txt")
 
 
-@pytest.mark.grr_full
 def test_download_cached_resource_file_copies_and_returns_tuple(
         caching_proto: CachingProtocol) -> None:
     """download_cached_resource_file unconditionally caches the file."""
@@ -378,7 +345,6 @@ def test_download_cached_resource_file_copies_and_returns_tuple(
     assert local_proto.file_exists(res, "sub1/a.txt")
 
 
-@pytest.mark.grr_full
 def test_classify_then_download_after_caching_is_fresh(
         caching_proto: CachingProtocol) -> None:
     """After a download, the same file classifies as fresh (no re-download)."""
@@ -390,7 +356,6 @@ def test_classify_then_download_after_caching_is_fresh(
     assert verdict.needs_download is False
 
 
-@pytest.mark.grr_full
 def test_public_url_override(
         content_fixture: dict[str, Any],
         tmp_path_factory: pytest.TempPathFactory) -> None:
@@ -407,7 +372,6 @@ def test_public_url_override(
     assert caching_proto.get_url() == remote_proto.get_url()
 
 
-@pytest.mark.grr_full
 def test_get_resource_url_after_caching(
         caching_proto: CachingProtocol) -> None:
     """Test getting resource URL points to cached location."""
@@ -417,7 +381,6 @@ def test_get_resource_url_after_caching(
     assert resource_url is not None
 
 
-@pytest.mark.grr_full
 def test_get_resource_file_url_triggers_caching(
         caching_proto: CachingProtocol) -> None:
     """Test getting file URL triggers caching."""
@@ -435,7 +398,6 @@ def test_get_resource_file_url_triggers_caching(
     assert local_proto.file_exists(res, "sub1/a.txt")
 
 
-@pytest.mark.grr_full
 def test_protocol_invalidate_clears_cache(
         caching_proto: CachingProtocol) -> None:
     """Test invalidate() clears cached resources list."""
@@ -448,7 +410,6 @@ def test_protocol_invalidate_clears_cache(
     assert caching_proto._all_resources is None
 
 
-@pytest.mark.grr_full
 def test_protocol_get_id(
         caching_proto: CachingProtocol) -> None:
     """Test protocol ID is set correctly."""

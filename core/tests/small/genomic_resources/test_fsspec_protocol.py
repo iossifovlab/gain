@@ -1487,3 +1487,34 @@ def test_open_tabix_file_of_a_read_only_resource_directory(
             assert len(list(tabix.fetch("chr1", 10, 20))) == 1
     finally:
         (root / "s").chmod(0o755)
+
+
+def test_obtain_resource_file_lock_rejects_non_local_protocol() -> None:
+    """#473: a lockfile only means something on a local filesystem.
+
+    The lock used to degrade to a no-op context manager off ``file``, so
+    every caller "acquired" it instantly and the mutual exclusion the
+    caching protocol depends on did not exist. Refuse instead.
+    """
+    proto = build_inmemory_test_protocol({"one": {GR_CONF_FILE_NAME: ""}})
+    res = proto.get_resource("one")
+
+    with pytest.raises(NotImplementedError) as excinfo:
+        proto.obtain_resource_file_lock(res, GR_CONF_FILE_NAME)
+
+    assert "memory" in str(excinfo.value)
+
+
+def test_obtain_resource_file_lock_on_a_local_protocol_locks(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The ``file`` scheme still gets a real, mutually exclusive lock."""
+    setup_directories(tmp_path, {"one": {GR_CONF_FILE_NAME: ""}})
+    proto = build_filesystem_test_protocol(tmp_path)
+    res = proto.get_resource("one")
+
+    with proto.obtain_resource_file_lock(res, GR_CONF_FILE_NAME):
+        second = proto.obtain_resource_file_lock(
+            res, GR_CONF_FILE_NAME, timeout=0.1)
+        with pytest.raises(TimeoutError), second:
+            pass

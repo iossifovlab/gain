@@ -37,9 +37,8 @@ from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
 from gain.genomic_resources.testing import (
-    build_s3_test_bucket,
+    build_inmemory_test_repository,
     convert_to_tab_separated,
-    s3_test_server_endpoint,
     setup_directories,
 )
 from gain.genomic_resources.testing.builders import (
@@ -68,16 +67,199 @@ def test_create_definition_with_cache(tmp_path: pathlib.Path) -> None:
     assert res.resource_id == "one"
 
 
+@pytest.mark.parametrize("bad_cache_dir", [
+    "s3://test-bucket/grr-cache",
+    "http://example.com/grr-cache",
+    "memory://grr-cache",
+    "file:///grr-cache",
+    # A URL scheme needs only a ``:``: these two are URLs as well, and a
+    # ``://`` check let them through -- ``s3:/bucket/...`` is a plausible
+    # typo for ``s3://bucket/...``, and both used to end up as
+    # ``file://s3:/bucket/...``, i.e. a local directory named ``s3:``.
+    "s3:/bucket/grr-cache",
+    "s3:bucket/grr-cache",
+])
+def test_definition_with_a_url_cache_dir_is_rejected(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bad_cache_dir: str,
+) -> None:
+    """#473: ``cache_dir`` names a local directory, never a URL.
+
+    A URL used to be interpolated into ``file://{cache_dir}``, which
+    silently made a local directory literally named ``s3:`` instead of the
+    remote cache the author asked for.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ValueError) as excinfo:
+        build_genomic_resource_repository({
+            "cache_dir": bad_cache_dir,
+            "id": "bla",
+            "type": "embedded",
+            "content": {"one": {"genomic_resource.yaml": ""}},
+        })
+
+    message = str(excinfo.value)
+    assert "cache_dir" in message
+    assert "local filesystem" in message
+    # Nothing at all is created, and in particular not the local directory
+    # named after the scheme that this check exists to prevent.
+    assert not (tmp_path / "s3:").exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("cache_dir", [
+    "/data/grr-cache",
+    # A ``:`` inside a path segment is not a scheme...
+    "/data/c:d/grr-cache",
+    # ...nor is a leading ``~`` or a relative path a URL...
+    "~/grr_cache",
+    "rel/path",
+    # ...and ``//host/share`` parses with an empty scheme too.
+    "//srv/share",
+])
+def test_definition_with_a_local_cache_dir_is_accepted(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cache_dir: str,
+) -> None:
+    """#473: only a URL scheme is refused -- local paths keep working.
+
+    Building the repository creates no cache directory (the cache-side
+    protocols are built lazily), so these are safe to name verbatim.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    repo = build_genomic_resource_repository({
+        "cache_dir": cache_dir,
+        "id": "bla",
+        "type": "embedded",
+        "content": {"one": {"genomic_resource.yaml": ""}},
+    })
+
+    assert isinstance(repo, GenomicResourceCachedRepo)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_directory_definition_with_a_url_cache_dir_creates_nothing(
+    tmp_path: pathlib.Path,
+) -> None:
+    """#473: a bad ``cache_dir`` is refused before any side effect.
+
+    ``cache_dir`` used to be validated on the way out of the build, after
+    the source repository had been constructed -- so a ``directory``
+    repository with a refused ``cache_dir`` still created its root
+    directory on disk before raising.
+    """
+    source_dir = tmp_path / "source"
+
+    with pytest.raises(ValueError) as excinfo:
+        build_genomic_resource_repository({
+            "cache_dir": "s3://test-bucket/grr-cache",
+            "id": "bla",
+            "type": "directory",
+            "directory": str(source_dir),
+        })
+
+    assert "cache_dir" in str(excinfo.value)
+    assert not source_dir.exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_group_definition_with_a_url_cache_dir_is_rejected(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#473: the same rule applies to a group's ``cache_dir``."""
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ValueError) as excinfo:
+        build_genomic_resource_repository({
+            "cache_dir": "s3://test-bucket/grr-cache",
+            "id": "group",
+            "type": "group",
+            "children": [{
+                "id": "bla",
+                "type": "embedded",
+                "content": {"one": {"genomic_resource.yaml": ""}},
+            }],
+        })
+
+    message = str(excinfo.value)
+    assert "cache_dir" in message
+    assert "local filesystem" in message
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_cached_repo_rejects_a_non_local_cache_url() -> None:
+    """#473: reject a remote cache when the repository is built.
+
+    The cache-side protocols are created lazily, one per child repository,
+    so without this check a remote cache url is only noticed at the first
+    resource access -- long after the configuration could be corrected.
+    """
+    remote_repo = build_inmemory_test_repository(
+        {"one": {GR_CONF_FILE_NAME: ""}})
+
+    with pytest.raises(ValueError) as excinfo:
+        GenomicResourceCachedRepo(remote_repo, "s3://test-bucket/grr-cache")
+
+    message = str(excinfo.value)
+    assert "s3" in message
+    assert "s3://test-bucket/grr-cache" in message
+    assert "local filesystem" in message
+
+
+def test_cached_repo_rejection_does_not_leak_cache_url_credentials() -> None:
+    """#473: the rejection message must not carry a secret.
+
+    A cache url can embed ``user:pass@`` userinfo, and this message lands in
+    logs; both sibling messages (the caching protocol's and the repository
+    factory's) already redact.
+    """
+    remote_repo = build_inmemory_test_repository(
+        {"one": {GR_CONF_FILE_NAME: ""}})
+
+    with pytest.raises(ValueError) as excinfo:
+        GenomicResourceCachedRepo(
+            remote_repo, "s3://AKIAEXAMPLE:sup3rs3cret@bucket/cache")
+
+    message = str(excinfo.value)
+    assert "sup3rs3cret" not in message
+    assert "AKIAEXAMPLE" not in message
+    assert "local filesystem" in message
+    assert "s3://bucket/cache" in message
+
+
+def test_cached_repo_accepts_a_bare_local_path_as_cache_url(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A cache url without a scheme is a local directory and stays valid."""
+    # A SHORT remote proto id: resolving the resource below builds the
+    # cache-side protocol, and an absolute repository id is refused there
+    # (#460). Same reason as in ``cache_repository``.
+    remote_repo = GenomicResourceProtocolRepo(
+        build_inmemory_protocol(
+            "remote_repo", str(tmp_path / "remote"),
+            {"one": {GR_CONF_FILE_NAME: ""}}))
+
+    repo = GenomicResourceCachedRepo(remote_repo, str(tmp_path / "cache"))
+
+    assert repo.get_resource("one").resource_id == "one"
+
+
 CacheRepositoryBuilder = Callable[
     [dict[str, Any]], AbstractContextManager[GenomicResourceCachedRepo]]
 
 
-# @pytest.fixture(params=["file", "s3"])
 @pytest.fixture
 def cache_repository(
     tmp_path: pathlib.Path,
-    grr_scheme: str,
 ) -> CacheRepositoryBuilder:
+    # Not parametrized over the GRR schemes: a GRR cache must be on the
+    # local filesystem (#473). The remote side is an in-memory repository,
+    # so no remote-scheme coverage is lost here.
 
     @contextlib.contextmanager
     def builder(
@@ -92,36 +274,16 @@ def cache_repository(
         # below -- every shared helper that mints a protocol names it after
         # its own absolute temp path, and changing that is a repo-wide edit
         # of its own, so cache-backed fixtures work around it one at a time.
-        #
-        # This is also what made the ``[s3]`` parametrization of this
-        # fixture live for the first time: with an absolute proto id
-        # ``os.path.join`` discarded the s3 cache url, so ``[s3]`` quietly
-        # re-ran the ``[file]`` case on a local directory. What the live
-        # coverage exposed is gain#473.
         remote_repo = GenomicResourceProtocolRepo(
             build_inmemory_protocol(
                 "remote_repo", str(tmp_path / "remote"), content))
-        scheme = grr_scheme
-        if scheme == "s3":
-            endpoint_url = s3_test_server_endpoint()
-            bucket_url = build_s3_test_bucket()
-            cache_repo = GenomicResourceCachedRepo(
-                remote_repo,
-                f"{bucket_url}/cache_repo_testing.caching",
-                endpoint_url=endpoint_url)
-            yield cache_repo
-        elif scheme == "file":
-            cache_repo = GenomicResourceCachedRepo(
-                remote_repo,
-                f"file://{tmp_path}/cache_repo_testing.caching")
-            yield cache_repo
-        else:
-            raise ValueError(f"unexpected scheme <{scheme}>")
+        yield GenomicResourceCachedRepo(
+            remote_repo,
+            f"file://{tmp_path}/cache_repo_testing.caching")
 
     return builder
 
 
-@pytest.mark.grr_full
 def test_get_cached_resource(
         cache_repository: CacheRepositoryBuilder) -> None:
 
@@ -132,7 +294,6 @@ def test_get_cached_resource(
         assert res.resource_id == "one"
 
 
-@pytest.mark.grr_full
 def test_cached_repo_get_all_resources(
         cache_repository: CacheRepositoryBuilder) -> None:
 
@@ -159,7 +320,6 @@ def test_cached_repo_get_all_resources(
         assert resource is not None
 
 
-@pytest.mark.grr_full
 def test_cached_resource_after_access(
         cache_repository: CacheRepositoryBuilder) -> None:
 
@@ -199,7 +359,6 @@ def test_cached_resource_after_access(
             os.path.join(base_url, "sub/two(1.0)", "genes.txt"))
 
 
-@pytest.mark.grr_full
 def test_cache_all(
         cache_repository: CacheRepositoryBuilder) -> None:
 
@@ -238,7 +397,6 @@ def test_cache_all(
             os.path.join(base_url, "sub/two(1.0)", "genes.gtf"))
 
 
-@pytest.mark.grr_full
 def test_cached_repository_resource_update_delete(
         cache_repository: CacheRepositoryBuilder) -> None:
 
@@ -274,7 +432,6 @@ def test_cached_repository_resource_update_delete(
         assert not gr2.file_exists("alabala.txt")
 
 
-@pytest.mark.grr_full
 def test_cached_repository_file_level_cache(
         cache_repository: CacheRepositoryBuilder) -> None:
 
@@ -311,25 +468,12 @@ def test_cached_repository_file_level_cache(
             os.path.join(base_url, "one", "alabala.txt"))
 
 
-@pytest.mark.grr_full
 def test_filesystem_lock_implementation(
     cache_repository: CacheRepositoryBuilder,
-    grr_scheme: str,
-    request: pytest.FixtureRequest,
 ) -> None:
-    # KNOWN BROKEN on an S3 cache -- gain#473. ``obtain_resource_file_lock``
-    # returns a no-op ``NoLock`` for every scheme but ``file``, so both
-    # acquisitions below succeed and nothing times out. Deterministic, hence
-    # strict: the day the lock exists, this must stop being an xfail.
-    #
-    # The coverage is NEW, not newly broken: until #460 the fixture's remote
-    # carried an absolute proto id, which made ``os.path.join`` swallow the
-    # s3 cache url whole -- so ``[s3]`` cached to a LOCAL directory and
-    # silently re-ran the ``[file]`` case.
-    if grr_scheme == "s3":
-        request.applymarker(pytest.mark.xfail(
-            strict=True,
-            reason="gain#473: no file lock on a non-file cache scheme"))
+    # The ``[s3]`` case that used to xfail here is gone: a cache must now be
+    # on the local filesystem (#473), so there is no scheme left for which
+    # the lock is a no-op.
     with cache_repository({
             "one": {
                 GR_CONF_FILE_NAME: "config",
@@ -349,7 +493,6 @@ def test_filesystem_lock_implementation(
                 pass
 
 
-@pytest.mark.grr_full
 def test_filesystem_caching_lock_implementation(
     mocker: MockerFixture,
     cache_repository: CacheRepositoryBuilder,
@@ -371,7 +514,6 @@ def test_filesystem_caching_lock_implementation(
             obtain_lock_spy.assert_called_once()
 
 
-@pytest.mark.grr_full
 def test_cached_repository_locks_file_when_caching(
         cache_repository: CacheRepositoryBuilder) -> None:
     with cache_repository({
@@ -420,7 +562,6 @@ def test_cached_repository_locks_file_when_caching(
         y.join()
 
 
-@pytest.mark.grr_full
 def test_get_resource_cached_files(
         cache_repository: CacheRepositoryBuilder) -> None:
     with cache_repository({
@@ -462,7 +603,6 @@ def test_get_resource_cached_files(
         }
 
 
-@pytest.mark.grr_full
 def test_cached_repo_list_cli(
         cache_repository: CacheRepositoryBuilder,
         capsys: pytest.CaptureFixture) -> None:
@@ -489,7 +629,6 @@ def test_cached_repo_list_cli(
             "basic                0        1/ 3 14.0 B       test_grr one\n"
 
 
-@pytest.mark.grr_full
 def test_cached_repo_nested_list_cli(
         cache_repository: CacheRepositoryBuilder,
         capsys: pytest.CaptureFixture) -> None:
@@ -531,7 +670,6 @@ def test_cached_repo_nested_list_cli(
         )
 
 
-@pytest.mark.grr_full
 def test_cached_repo_invalidate(
         cache_repository: CacheRepositoryBuilder) -> None:
     """Test that invalidate() clears cached resources."""
@@ -555,7 +693,6 @@ def test_cached_repo_invalidate(
         assert cache_repo._all_resources is None
 
 
-@pytest.mark.grr_full
 def test_cache_resource_wrapper(
         cache_repository: CacheRepositoryBuilder) -> None:
     """Test CacheResource wraps remote resource correctly."""
@@ -575,7 +712,6 @@ def test_cache_resource_wrapper(
         assert cache_res.get_manifest() == remote_res.get_manifest()
 
 
-@pytest.mark.grr_full
 def test_caching_protocol_public_url(
         cache_repository: CacheRepositoryBuilder) -> None:
     """Test CachingProtocol uses correct public URL."""
@@ -591,7 +727,6 @@ def test_caching_protocol_public_url(
             cache_proto.remote_protocol.get_url()
 
 
-@pytest.mark.grr_full
 def test_caching_protocol_invalidate(
         cache_repository: CacheRepositoryBuilder) -> None:
     """Test CachingProtocol invalidate() clears both protocols."""
@@ -612,7 +747,6 @@ def test_caching_protocol_invalidate(
         assert cache_proto._all_resources is None
 
 
-@pytest.mark.grr_full
 def test_find_resource_with_version_constraint(
         cache_repository: CacheRepositoryBuilder) -> None:
     """Test find_resource with version constraints."""
@@ -637,7 +771,6 @@ def test_find_resource_with_version_constraint(
         assert res.version == (1, 0)
 
 
-@pytest.mark.grr_full
 def test_find_resource_nonexistent(
         cache_repository: CacheRepositoryBuilder) -> None:
     """Test find_resource returns None for nonexistent resources."""
@@ -648,7 +781,6 @@ def test_find_resource_nonexistent(
         assert res is None
 
 
-@pytest.mark.grr_full
 def test_cached_repo_get_resource_url(
         cache_repository: CacheRepositoryBuilder) -> None:
     """Test getting resource and file URLs through cache."""
@@ -671,7 +803,6 @@ def test_cached_repo_get_resource_url(
         assert "data.txt" in file_url
 
 
-@pytest.mark.grr_full
 def test_caching_protocol_readonly(
         cache_repository: CacheRepositoryBuilder) -> None:
     """Test that CachingProtocol is read-only."""
@@ -689,7 +820,6 @@ def test_caching_protocol_readonly(
             cache_proto.open_raw_file(resource, "data.txt", mode="wt")
 
 
-@pytest.mark.grr_full
 def test_cache_resources_with_specific_ids(
     cache_repository: CacheRepositoryBuilder,
 ) -> None:
@@ -714,7 +844,6 @@ def test_cache_resources_with_specific_ids(
         assert cache_repo.get_resource_cached_files("two") == set()
 
 
-@pytest.mark.grr_full
 def test_empty_resource_caching(
         cache_repository: CacheRepositoryBuilder) -> None:
     """Test caching of empty resources (no data files)."""
@@ -729,7 +858,6 @@ def test_empty_resource_caching(
         assert cached_files == set()
 
 
-@pytest.mark.grr_full
 def test_caching_protocol_file_exists(
         cache_repository: CacheRepositoryBuilder) -> None:
     """Test file_exists through caching protocol."""
@@ -749,29 +877,12 @@ def test_caching_protocol_file_exists(
         assert not cache_proto.file_exists(resource, "nonexistent.txt")
 
 
-@pytest.mark.grr_full
 def test_concurrent_resource_access(
-        cache_repository: CacheRepositoryBuilder,
-        grr_scheme: str,
-        request: pytest.FixtureRequest) -> None:
+        cache_repository: CacheRepositoryBuilder) -> None:
     """Test concurrent access to same resource from multiple threads."""
-    # KNOWN BROKEN on an S3 cache -- gain#473, the same missing lock as in
-    # ``test_filesystem_lock_implementation``. Five threads race the same
-    # download onto one S3 key and a loser reads the half-written object
-    # -- it logs a truncated copy of data.txt, 0 bytes where 12 were
-    # expected, and then returns either an OSError from S3 or content that
-    # is not the file's.
-    #
-    # NOT strict, unlike the lock test above: this one is a race, and the
-    # threads occasionally miss each other. Measured on this branch, 6 of 7
-    # runs under the CI configuration (-n 5 --enable-s3-testing) fail and
-    # the seventh passed; run alone and unparallelised it passes every
-    # time. A strict xfail would turn a known bug into an intermittently
-    # red build.
-    if grr_scheme == "s3":
-        request.applymarker(pytest.mark.xfail(
-            strict=False,
-            reason="gain#473: no file lock on a non-file cache scheme"))
+    # The ``[s3]`` case that used to xfail here is gone with #473: the cache
+    # is always local now, so the per-file lock this races against is always
+    # a real ``FileLock``.
     with cache_repository({
             "one": {
                 GR_CONF_FILE_NAME: "",
@@ -803,7 +914,6 @@ def test_concurrent_resource_access(
         assert all(r == "test content" for r in results)
 
 
-@pytest.mark.grr_full
 def test_cache_resources_continues_after_failure_and_raises(
         cache_repository: CacheRepositoryBuilder,
         mocker: MockerFixture) -> None:
@@ -838,7 +948,6 @@ def test_cache_resources_continues_after_failure_and_raises(
         assert cache_repo.get_resource_cached_files("good2") == {"data.txt"}
 
 
-@pytest.mark.grr_full
 def test_cache_resources_progress_reports_failures(
         cache_repository: CacheRepositoryBuilder,
         mocker: MockerFixture,
@@ -885,7 +994,6 @@ def test_cache_resources_progress_reports_failures(
     assert "failed=2" in progress_lines[-1]
 
 
-@pytest.mark.grr_full
 def test_cache_resources_terminal_failure_byte_bar_reaches_100(
         cache_repository: CacheRepositoryBuilder,
         mocker: MockerFixture,
@@ -928,7 +1036,6 @@ def test_cache_resources_terminal_failure_byte_bar_reaches_100(
     assert "failed=" in progress_lines[-1]
 
 
-@pytest.mark.grr_full
 def test_cache_resources_continues_after_classify_failure_and_raises(
         cache_repository: CacheRepositoryBuilder,
         mocker: MockerFixture) -> None:
@@ -965,7 +1072,6 @@ def test_cache_resources_continues_after_classify_failure_and_raises(
         assert cache_repo.get_resource_cached_files("good2") == {"data.txt"}
 
 
-@pytest.mark.grr_full
 def test_cache_resources_raises_when_all_classification_fails(
         cache_repository: CacheRepositoryBuilder,
         mocker: MockerFixture) -> None:
@@ -993,7 +1099,6 @@ def test_cache_resources_raises_when_all_classification_fails(
         assert cache_repo.get_resource_cached_files("bad") == set()
 
 
-@pytest.mark.grr_full
 def test_cache_resources_parallel_workers(
         cache_repository: CacheRepositoryBuilder) -> None:
     """Test cache_resources with parallel workers."""
@@ -1015,7 +1120,6 @@ def test_cache_resources_parallel_workers(
         assert "data3.txt" in cached
 
 
-@pytest.mark.grr_full
 @pytest.mark.parametrize(
     "resource_id_version,expected_version", [
         ("one(1.0)", (1, 0)),
@@ -1814,7 +1918,6 @@ def _slow_down_cache_proto_build(
         slow_build)
 
 
-@pytest.mark.grr_full
 def test_concurrent_get_resource_shares_one_caching_protocol(
     cache_repository: CacheRepositoryBuilder,
     mocker: MockerFixture,
@@ -1842,7 +1945,6 @@ def test_concurrent_get_resource_shares_one_caching_protocol(
         assert len({id(res) for res in resources}) == 1
 
 
-@pytest.mark.grr_full
 def test_concurrent_get_all_resources_builds_the_list_once(
     cache_repository: CacheRepositoryBuilder,
     mocker: MockerFixture,
@@ -1879,7 +1981,6 @@ def test_concurrent_get_all_resources_builds_the_list_once(
             assert len({id(listing[index]) for listing in listings}) == 1
 
 
-@pytest.mark.grr_full
 def test_first_enumeration_of_a_cached_repo_does_not_deadlock(
     cache_repository: CacheRepositoryBuilder,
     run_in_threads: RunInThreads,

@@ -76,7 +76,7 @@ Common fields
 
     | **id** (string, optional): Identifier for the repository. Used in log messages, to refer to the repository, and — when ``cache_dir`` is set — as the name of the repository's directory inside the cache. A repository that omits it gets a deterministic id derived from its ``url`` or ``directory`` (or from its type, for an ``embedded`` or ``group`` repository); naming it explicitly is recommended, because the synthesised name is what a populated cache directory is called.
     | **type** (string, required): One of ``group``, ``directory``, ``url``, ``http``, ``s3``, or ``embedded`` (see below).
-    | **cache_dir** (string, optional): Directory used to cache downloaded resources locally. May be added to any repository type, including a ``group`` (see `Resource caching`_).
+    | **cache_dir** (string, optional): Path to a **local filesystem** directory used to cache downloaded resources. May be added to any repository type, including a ``group`` (see `Resource caching`_). It must be a plain path, not a URL; a remote cache target is not supported.
 
 Repository types
 ^^^^^^^^^^^^^^^^
@@ -164,6 +164,13 @@ With caching enabled, the first use of a resource may take longer while GAIn
 downloads it into ``cache_dir``; after that, GAIn reuses the cached copy, which
 is typically much faster and avoids repeated network transfers. The tradeoff is
 disk usage, so choose a ``cache_dir`` location with enough capacity.
+
+The cache must be on a **local filesystem**. ``cache_dir`` is a plain directory
+path, never a URL: GAIn serialises concurrent downloads into the cache with a
+lockfile, which only provides mutual exclusion locally. A ``cache_dir`` that
+carries a URL scheme (``s3://bucket/cache``, ``http://host/cache``, ...) is
+rejected when the repository is built. Only the cache is constrained -- the
+repository being cached may be remote (``s3``, ``http``, ``url``).
 
 ``cache_dir`` can be attached to any repository, **including a** ``group``. When
 attached to a group, it caches every resource served by that group — a

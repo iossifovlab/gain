@@ -91,7 +91,7 @@ Common fields
      - Repository type. Allowed values are ``directory``, ``http``, ``url``, ``s3``, ``embedded``, and ``group``.
    * - ``cache_dir``
      - Optional string
-     - Directory used to cache downloaded resources locally. May be added to any repository type, including a ``group``.
+     - Path to a **local filesystem** directory used to cache downloaded resources. May be added to any repository type, including a ``group``. It must be a plain path, not a URL -- a remote cache target (``s3://...``, ``http://...``) is not supported and is rejected.
 
 
 Repository types
@@ -137,6 +137,14 @@ With caching enabled, the first use of a resource may take longer while GAIn dow
 ``cache_dir`` can be attached to any repository, including a ``group``. When attached to a ``group``, it caches resources served through that group, which provides a convenient way to use a single cache in front of several repositories.
 
 The tradeoff is disk usage: cached resources can occupy substantial space, so choose a ``cache_dir`` location with enough capacity (and keep in mind that the cache may grow over time as you use more resources).
+
+The cache itself must live on a **local filesystem**. ``cache_dir`` is a plain
+directory path, never a URL: GAIn serialises concurrent downloads into the
+cache with a lockfile, which only provides mutual exclusion locally. A
+``cache_dir`` that carries a URL scheme (for example ``s3://bucket/cache`` or
+``http://host/cache``) is rejected when the repository is built. The *source*
+repository may of course be remote -- ``s3``, ``http`` and ``url``
+repositories are all cacheable, into a local ``cache_dir``.
 
 For example, to cache resources from a single remote repository, add ``cache_dir`` directly to that repository entry. Replace ``<path_to_grr_cache>`` with the full path to the directory where cached resources should be stored.
 
