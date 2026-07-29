@@ -1543,11 +1543,15 @@ _FSSPEC_PROTOCOLS: dict[tuple[str, str], FsspecRepositoryProtocol] = {}
 
 
 def build_fsspec_protocol(
-    proto_id: str, root_url: str, **kwargs: str | None,
+    proto_id: str, root_url: str, **kwargs: str | bool | None,
 ) -> FsspecRepositoryProtocol:
-    """Create fsspec GRR protocol based on the root url."""
+    """Create fsspec GRR protocol based on the root url.
+
+    ``read_only`` is the one boolean among the keyword arguments -- hence the
+    widened value type; every other keyword is a url or a credential.
+    """
     # pylint: disable=import-outside-toplevel
-    public_url = kwargs.pop("public_url", None)
+    public_url = cast("str | None", kwargs.pop("public_url", None))
     read_only = kwargs.pop("read_only", False)
     filesystem = _build_filesystem(root_url, **kwargs)
 

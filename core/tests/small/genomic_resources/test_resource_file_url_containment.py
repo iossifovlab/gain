@@ -20,7 +20,6 @@ from gain.genomic_resources.cached_repository import (
 from gain.genomic_resources.cli import _create_contents_db, cli_manage
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
-    build_fsspec_protocol,
 )
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
@@ -254,11 +253,6 @@ def test_cached_repository_inherits_containment(
 
     It also takes a per-file lock in the cache before delegating, and that
     lockfile path is built by a separate join of its own.
-
-    The remote is named ``remote`` rather than by its own directory: a
-    cached repo derives its cache directory from the protocol id, so the
-    absolute id ``build_filesystem_test_repository`` hands out by default is
-    refused outright (#460) and this test never reached its subject (#486).
     """
     remote_root = tmp_path / "remote"
     setup_directories(remote_root, {
@@ -267,8 +261,7 @@ def test_cached_repository_inherits_containment(
             "data.txt": "alabala",
         },
     })
-    remote_repo = build_filesystem_test_repository(
-        remote_root, proto_id="remote")
+    remote_repo = build_filesystem_test_repository(remote_root)
     cached_repo = GenomicResourceCachedRepo(
         remote_repo, str(tmp_path / "cache"))
 
@@ -478,8 +471,8 @@ def test_remote_contents_traversing_id_is_not_served(
     """
     remote_root = _setup_poisoned_remote(
         tmp_path, "../../ESCAPED/evil", "pwned payload\n")
-    proto = build_fsspec_protocol(
-        "remote", str(remote_root), read_only=True)
+    proto = build_filesystem_test_protocol(
+        remote_root, repair=False, read_only=True)
     repo = GenomicResourceProtocolRepo(proto)
 
     assert repo.find_resource("../../ESCAPED/evil") is None
@@ -500,8 +493,8 @@ def test_remote_contents_traversing_id_does_not_hide_healthy_resources(
     with gzip.open(remote_root / GR_CONTENTS_FILE_NAME, "wt") as outfile:
         json.dump(entries, outfile)
 
-    proto = build_fsspec_protocol(
-        "remote", str(remote_root), read_only=True)
+    proto = build_filesystem_test_protocol(
+        remote_root, repair=False, read_only=True)
 
     assert sorted(res.resource_id for res in proto.get_all_resources()) == [
         "good_one", "good_two",
@@ -520,7 +513,8 @@ def test_cached_repository_writes_nothing_outside_the_cache(
     remote_root = _setup_poisoned_remote(
         tmp_path, "../../ESCAPED/evil", "pwned payload\n")
     remote_repo = GenomicResourceProtocolRepo(
-        build_fsspec_protocol("remote", str(remote_root), read_only=True))
+        build_filesystem_test_protocol(
+            remote_root, repair=False, read_only=True))
     cache_dir = tmp_path / "cache-area" / "sub" / "cache"
 
     cached_repo = GenomicResourceCachedRepo(remote_repo, str(cache_dir))
@@ -736,7 +730,13 @@ def test_fts_search_survives_a_dropped_poisoned_id(
     with gzip.open(root_path / GR_CONTENTS_FILE_NAME, "wt") as outfile:
         json.dump(contents, outfile)
 
-    proto = build_fsspec_protocol("remote", str(root_path), read_only=True)
+    # An explicit id, unlike the read-only builds above: this is a SECOND
+    # protocol over a root that already has one, and the derived default id
+    # is a function of the root -- it would land on the read-write protocol
+    # built above through the ``(proto_id, url)`` instance memo, and the
+    # remote read path this test exercises would never run.
+    proto = build_filesystem_test_protocol(
+        root_path, proto_id="remote", repair=False, read_only=True)
 
     assert [res.resource_id for res in proto.search_resources("basic")] == [
         "good_one",

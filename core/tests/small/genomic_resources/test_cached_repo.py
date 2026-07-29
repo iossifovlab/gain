@@ -24,7 +24,6 @@ from gain.genomic_resources.cli import (
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
     build_fsspec_protocol,
-    build_inmemory_protocol,
 )
 from gain.genomic_resources.genomic_scores import build_score_from_resource
 from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
@@ -37,6 +36,8 @@ from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
 from gain.genomic_resources.testing import (
+    build_filesystem_test_protocol,
+    build_filesystem_test_repository,
     build_inmemory_test_repository,
     convert_to_tab_separated,
     setup_directories,
@@ -236,13 +237,8 @@ def test_cached_repo_accepts_a_bare_local_path_as_cache_url(
     tmp_path: pathlib.Path,
 ) -> None:
     """A cache url without a scheme is a local directory and stays valid."""
-    # A SHORT remote proto id: resolving the resource below builds the
-    # cache-side protocol, and an absolute repository id is refused there
-    # (#460). Same reason as in ``cache_repository``.
-    remote_repo = GenomicResourceProtocolRepo(
-        build_inmemory_protocol(
-            "remote_repo", str(tmp_path / "remote"),
-            {"one": {GR_CONF_FILE_NAME: ""}}))
+    remote_repo = build_inmemory_test_repository(
+        {"one": {GR_CONF_FILE_NAME: ""}})
 
     repo = GenomicResourceCachedRepo(remote_repo, str(tmp_path / "cache"))
 
@@ -265,18 +261,7 @@ def cache_repository(
     def builder(
         content: dict[str, Any],
     ) -> Generator[GenomicResourceCachedRepo, None, None]:
-        # A SHORT remote proto id, not ``build_inmemory_test_repository``'s
-        # absolute temp-dir path: the cache url is built with
-        # ``os.path.join(cache_url, proto_id)``, which an absolute proto id
-        # swallows whole -- the "cache" would land outside the configured
-        # cache directory entirely, which is now refused (#460). Same
-        # workaround as ``indexed_cache_repository`` and ``_build_cache_repo``
-        # below -- every shared helper that mints a protocol names it after
-        # its own absolute temp path, and changing that is a repo-wide edit
-        # of its own, so cache-backed fixtures work around it one at a time.
-        remote_repo = GenomicResourceProtocolRepo(
-            build_inmemory_protocol(
-                "remote_repo", str(tmp_path / "remote"), content))
+        remote_repo = build_inmemory_test_repository(content)
         yield GenomicResourceCachedRepo(
             remote_repo,
             f"file://{tmp_path}/cache_repo_testing.caching")
@@ -1239,13 +1224,9 @@ def indexed_cache_repository(
     remote_path = tmp_path / "remote"
     _setup_search_remote(remote_path)
     cli_manage(["repo-manifest", "-R", str(remote_path)])
-    # A short proto id, not build_filesystem_test_protocol's absolute path:
-    # the cache url is built with os.path.join(cache_url, proto_id), which
-    # discards the cache prefix when proto_id is absolute -- the cache would
-    # land on top of the remote and nothing would be observable.
-    proto = cast(
-        FsspecReadWriteProtocol,
-        build_fsspec_protocol("remote_repo", str(remote_path)))
+    # ``repair=False``: ``repo-manifest`` above has already written the
+    # manifests and the contents file.
+    proto = build_filesystem_test_protocol(remote_path, repair=False)
     _create_contents_db(proto)
     return GenomicResourceCachedRepo(
         GenomicResourceProtocolRepo(proto),
@@ -2018,19 +1999,10 @@ chr1   10  .  A   T   .    .      value=0.1
 def _build_cache_repo(
     source_dir: pathlib.Path, cache_dir: pathlib.Path,
 ) -> GenomicResourceCachedRepo:
-    """Wrap an already-realized filesystem GRR in a cache-backed repo.
-
-    The remote protocol is deliberately given a SHORT id rather than
-    ``build_filesystem_test_repository``'s absolute-path one: the cache url
-    is built with ``os.path.join(cache_url, proto_id)``, which an absolute
-    proto id swallows whole -- the "cache" would then land on top of the
-    remote and nothing about caching would be observable.
-    """
-    proto = cast(
-        FsspecReadWriteProtocol,
-        build_fsspec_protocol("remote_repo", str(source_dir)))
+    """Wrap an already-realized filesystem GRR in a cache-backed repo."""
     return GenomicResourceCachedRepo(
-        GenomicResourceProtocolRepo(proto), f"file://{cache_dir}")
+        build_filesystem_test_repository(source_dir),
+        f"file://{cache_dir}")
 
 
 def test_cache_resources_fetches_a_csi_index_and_the_cached_score_opens(
