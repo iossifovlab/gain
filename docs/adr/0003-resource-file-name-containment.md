@@ -45,13 +45,36 @@ joining the resource url *themselves* and so would not have inherited
 anything: `_get_resource_file_state_path` (`.grr/<name>.state`) and
 `_get_resource_file_lockfile_path` (`.grr/<name>.lockfile`).
 
-A name is contained when it is relative and contains no `..` segment.
-Rejection raises `ValueError` naming both the resource and the name; it never
-skips, clamps or normalises the name into something safe.
+A name is contained when it is relative — by POSIX *and* Windows rules — and
+carries no `..`, `.` or empty segment. Rejection raises `ValueError` naming
+both the resource and the name; it never skips, clamps or normalises the name
+into something safe.
 
-`ManifestEntry.__post_init__` applies the same rule at manifest-parse time.
-That is defence in depth, not the load-bearing check — it just puts the
-diagnostic next to the poisoned input.
+The resource **id** is contained by the same construction, because it is the
+*other* operand of the very same join: `get_resource_url` joins
+`resource.get_genomic_resource_id_version()` onto the repository url, and on
+the remote path that id is read verbatim out of the repository's
+`.CONTENTS.json.gz`. Containing only the file name left every consequence
+listed above reachable through its sibling — a `.CONTENTS` carrying
+`id: ../../ESCAPED/evil` read outside the GRR root and, through the caching
+repository, wrote two levels *above* the cache root with the directory chain
+`mkdir`'d on the way. `validate_resource_id` is therefore called from
+`get_resource_url` — in the base class and in the `FsspecReadOnlyProtocol`
+override that joins the credential-bearing `_fetch_url` itself — and the
+`.CONTENTS` loader drops a poisoned entry with a warning rather than serving
+it.
+
+The **local** scan path was never exposed: `_scan_path_for_resources` skips
+any directory whose name starts with `.`, so `..` cannot enter an id that
+way. Note that the id validators the codebase already had do **not** supply
+this property — `is_gr_id_token("..")` and `parse_gr_id_version_token("..")`
+both accept, because the token charset includes `.`, and
+`parse_gr_id_version_token` even accepts `/etc/passwd`. They answer "is this
+well-formed", not "is this contained".
+
+`""` and `"."` are contained ids: both name the repository root, which is a
+resource in its own right — `proto_builder` addresses it as `""` and
+`build_local_resource` as `"."`.
 
 ### Why the rule is shaped this way
 
@@ -59,11 +82,19 @@ diagnostic next to the poisoned input.
   here: every resource's statistics live under `statistics/`. A rule that
   rejected any name containing a separator would break the repository.
 - **`..` is rejected even when it stays inside** (`sub/../other.txt`). The
-  joined url is handed to fsspec *unnormalised*, and an object store treats
-  `..` as a literal key segment instead of resolving it, so such a name
-  addresses one object on `file` and a different one on `s3`/`http`. There is
-  no legitimate use for it, and rejecting keeps the behaviour uniform across
-  schemes.
+  joined url is handed to fsspec *unnormalised*, and the three backends GAIn
+  speaks to then do three different things with it — measured, not assumed:
+  `yarl`/aiohttp **normalises** it away client-side before the request is
+  sent (`http://h/res/sub/../other.txt` → `http://h/res/other.txt`), minio
+  **rejects** the key outright (`XMinioInvalidResourceName`), and a local
+  `file` filesystem **resolves** it. One name, three outcomes. That is a
+  stronger reason to reject than the "object stores treat `..` literally"
+  claim this ADR made first time round, which was simply false.
+
+  The same measurement settles a question the issue left open: because yarl
+  collapses `..` *before* the request goes out, the http traversal in #467
+  was **live**, not hypothetical — the escaped path was requested directly
+  and the server never saw a `..` to refuse.
 - **The check is url-shaped, not `os.path`-shaped.** The name is tested both
   as written and percent-decoded, because an http(s) server decodes the path
   before resolving it — `%2e%2e` is a traversal there and a literal name on a
@@ -72,6 +103,23 @@ diagnostic next to the poisoned input.
 - **Backslash counts as a separator** when scanning for `..`, since it is one
   on Windows and in several fsspec backends. Only `..` segments are rejected,
   so a stray backslash inside an ordinary name still works.
+- **Absoluteness is tested the Windows way too**, for the same reason. A
+  POSIX-only `startswith("/")` accepted `C:/windows/system32/x`,
+  `C:\windows\x`, `\\srv\share\x`, `\windows\x` and even the
+  drive-relative `x:y` — every one of which discards the base under
+  `ntpath.join`, exactly as `/etc/passwd` does under `posixpath.join`. A rule
+  that treats a backslash as a separator while ignoring Windows absoluteness
+  is incoherent, so the check adds a leading `\`, `ntpath.isabs` and a
+  drive-letter prefix.
+- **Degenerate names are rejected**: empty, whitespace-only, `.`, and any
+  name carrying a `.` or empty segment (`./x`, `sub/./x`, `x/`, `a//b`).
+  `open_raw_file("")` yielded the resource *directory* itself. This stays
+  proportionate — nested, dotted and spaced names (`statistics/hist.json`,
+  `a.b/c-d/e_f.txt`, `odd name.txt`) are untouched.
+- **A resource id is held to the containment half only** — relative, no `..`.
+  It is joined once, at the repository root, so a `.` segment in it is a
+  no-op rather than a way to address something else, and `.` is an id the
+  codebase already issues.
 
 ## Consequences
 
@@ -90,3 +138,52 @@ A published resource that carries a traversing name in its config or manifest
 now fails loudly instead of silently reaching outside itself. Auditing
 existing published resources for such names was deliberately left out of
 scope.
+
+### Rejected: failing a poisoned `.MANIFEST` at parse time
+
+The first version of this fix also raised from `ManifestEntry.__post_init__`,
+billed as defence in depth. It was withdrawn, because a `.MANIFEST` is parsed
+while *enumerating* a repository: `collect_all_resources` reads every one of
+them before yielding anything, so a single poisoned entry killed the
+generator before the first resource came out. Measured on a repository with
+three healthy resources and one poisoned: `grr_manage list`, `repo-repair`
+**and** `resource-repair --resource good_one` all died with a raw traceback
+that named no resource — repairing an unrelated healthy resource had become
+impossible. That is precisely the failure gain#464 filed, where one bad
+`meta.labels` key cost the whole repository its FTS index.
+
+It was also redundant. With `__post_init__` neutralised and the choke point
+intact, the whole security suite still passed except the three tests that
+asserted `__post_init__` itself — including the worst attack in the issue,
+`copy_resource` from a resource whose `.MANIFEST` carries `../../evil.txt`.
+The choke point alone covers it.
+
+What survives is the *attribution* the raise was really buying:
+`report_uncontained_manifest_entries` logs a warning naming both the resource
+and the offending entry, from `build_genomic_resource` and `get_manifest` —
+the first points at which a parsed manifest is paired with the resource it
+belongs to, which a `ManifestEntry` never is. The repository stays
+enumerable and repairable; the poisoned name fails loudly when something
+tries to use it.
+
+One knock-on: the FTS index is a *separate* artefact published by the same
+GRR, so it can name a resource the `.CONTENTS` loader refused to build.
+Resolving such a hit through the resource dict raised `KeyError` and took
+search down for the whole repository — the same shape again — so
+`search_resources` now skips an unresolvable row with a warning.
+
+### Known gap, out of scope: symlinks
+
+Containment is enforced on the *name*, and a symlink moves the escape into
+the *resolution*. A resource containing `sneak.txt -> /outside/secret.txt`
+has a perfectly contained name and still reads out of the GRR root, on a
+local `file` protocol — confirmed by execution. It is reachable in principle
+rather than theoretical: the mirrors grr-sync maintains are git clones, and
+git carries symlinks.
+
+Nothing here addresses that, and this ADR should not be read as claiming
+otherwise. Closing it means resolving each name against the resource root
+before opening it (or refusing to follow links at all), which is a different
+mechanism at a different layer — one that has to be reasoned about
+per-backend, since only `file` has symlinks at all. It is to be tracked as
+its own issue.

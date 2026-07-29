@@ -92,10 +92,16 @@ GR_ENCODING = "utf-8"
 
 _GR_ID_TOKEN_RE = re.compile(r"[a-zA-Z0-9._-]+")
 
-#: Separators a resource file name is split on before it is scanned
-#: for ``..`` segments. A backslash is a path separator on Windows
-#: and in several fsspec backends, so it counts as one here.
+#: Separators a resource path is split on before its segments are
+#: scanned. A backslash is a path separator on Windows and in several
+#: fsspec backends, so it counts as one here.
 _RESOURCE_NAME_SEPARATOR = re.compile(r"[/\\]")
+
+#: A drive-letter prefix (``C:``). ``ntpath.isabs`` calls ``x:y``
+#: *relative*, but ``ntpath.join`` still discards the base for it, so the
+#: prefix is what has to be rejected -- not absoluteness as ntpath
+#: defines it.
+_WINDOWS_DRIVE = re.compile(r"[a-zA-Z]:")
 
 
 def is_generated_info_page(name: str) -> bool:
@@ -110,14 +116,36 @@ def is_generated_info_page(name: str) -> bool:
     return name in GR_GENERATED_INFO_PAGES
 
 
+def _escaping_path_reason(candidate: str, container: str) -> str | None:
+    """Return why one already-decoded path leaves ``container``, or ``None``.
+
+    The containment property proper, shared by a resource file name and a
+    resource id: the path must be relative and name no ``..`` segment.
+    Absoluteness is tested the Windows way as well as the POSIX way --
+    ``ntpath.join`` discards the base for a drive-letter path, a UNC share
+    and even the drive-RELATIVE ``x:y``, exactly as ``posixpath.join`` does
+    for ``/x``. Ignoring that while the ``..`` scan already treats a
+    backslash as a separator would be incoherent.
+    """
+    if candidate.startswith(("/", "\\")):
+        return "is absolute"
+    if ntpath.isabs(candidate) or _WINDOWS_DRIVE.match(candidate):
+        return "is absolute"
+    if any(segment == ".."
+           for segment in _RESOURCE_NAME_SEPARATOR.split(candidate)):
+        return f"escapes the {container}"
+    return None
+
+
 def uncontained_resource_file_name_reason(filename: str) -> str | None:
     """Return why ``filename`` is not resource-contained, or ``None``.
 
     Resource file names arrive from GRR *content* -- the resource's
     ``genomic_resource.yaml`` and its ``.MANIFEST`` -- which is fetched from
     remote repositories and is therefore untrusted. A name is contained when
-    it is relative and names no ``..`` segment; nested names such as
-    ``statistics/histogram_score.json`` are ordinary and stay allowed.
+    it is relative and names no ``..``, ``.`` or empty segment; nested names
+    such as ``statistics/histogram_score.json`` are ordinary and stay
+    allowed.
 
     The joined location is a URL, not an os path, so the name is checked
     both as written and percent-decoded: an http(s) server decodes the path
@@ -126,17 +154,29 @@ def uncontained_resource_file_name_reason(filename: str) -> str | None:
     literal text ``%2e%2e``, which no server resolves any further.
 
     A ``..`` that would stay inside the resource (``sub/../other.txt``) is
-    rejected as well: the joined url is handed to fsspec unnormalised, and
-    an object store treats ``..`` as a literal key segment instead of
-    resolving it, so such a name would address two different objects
-    depending on the protocol. See gain#467.
+    rejected as well, because the three backends GAIn speaks to disagree
+    about what it means: `yarl`/aiohttp normalises it away client-side
+    before the request is even sent, minio rejects the key outright
+    (``XMinioInvalidResourceName``), and a local filesystem resolves it.
+    One name, three outcomes -- so it is refused everywhere rather than left
+    to mean whatever the protocol of the day decides.
+
+    A degenerate name -- empty, blank, ``.``, or carrying an empty segment
+    -- is refused too: ``open_raw_file("")`` addressed the resource
+    DIRECTORY, and no resource file is legitimately spelled that way. See
+    gain#467.
     """
+    if not filename.strip():
+        return "is empty"
     for candidate in (filename, unquote(filename)):
-        if candidate.startswith("/"):
-            return "is absolute"
-        if any(segment == ".."
-               for segment in _RESOURCE_NAME_SEPARATOR.split(candidate)):
-            return "escapes the resource directory"
+        reason = _escaping_path_reason(candidate, "resource directory")
+        if reason is not None:
+            return reason
+        for segment in _RESOURCE_NAME_SEPARATOR.split(candidate):
+            if segment == ".":
+                return "carries a <.> segment"
+            if not segment.strip():
+                return "carries an empty segment"
     return None
 
 
@@ -147,6 +187,68 @@ def validate_resource_file_name(resource_id: str, filename: str) -> None:
         raise ValueError(
             f"resource file name <{filename}> {reason}; "
             f"resource <{resource_id}>")
+
+
+def uncontained_resource_id_reason(resource_id: str) -> str | None:
+    """Return why ``resource_id`` is not repository-contained, or ``None``.
+
+    A resource id is the *other* operand of the same join a file name goes
+    through: ``get_resource_url`` joins it onto the repository url. On the
+    remote path it is read verbatim out of the repository's
+    ``.CONTENTS.json.gz``, so it is exactly as untrusted as a manifest
+    entry name -- and containing only the file name left the escape wide
+    open through its sibling (gain#467).
+
+    ``""`` and ``"."`` are contained: both name the repository root, which
+    is a supported resource in its own right -- ``proto_builder`` addresses
+    it as ``""`` and ``build_local_resource`` as ``"."``. Only the escape
+    itself is refused here, not the degenerate spellings a file name is
+    also held to: an id is joined once, at the root, so a ``.`` segment in
+    it is a no-op rather than a way to address something else.
+    """
+    if resource_id in {"", "."}:
+        return None
+    for candidate in (resource_id, unquote(resource_id)):
+        reason = _escaping_path_reason(candidate, "repository")
+        if reason is not None:
+            return reason
+    return None
+
+
+def validate_resource_id(resource_id: str) -> None:
+    """Raise ``ValueError`` unless ``resource_id`` stays inside the repo."""
+    reason = uncontained_resource_id_reason(resource_id)
+    if reason is not None:
+        raise ValueError(
+            f"resource id <{resource_id}> {reason}")
+
+
+def report_uncontained_manifest_entries(
+    resource_id: str, manifest: Manifest,
+) -> None:
+    """Warn about -- and never raise on -- entries that escape the resource.
+
+    Rejecting a poisoned entry while *parsing* the manifest reads as
+    defence in depth, but a manifest is parsed while ENUMERATING a
+    repository: one bad entry then kills the generator before a single
+    resource is yielded, and ``list``, ``repo-repair`` and even
+    ``resource-repair`` on an unrelated healthy resource all die with it.
+    That is the gain#464 shape -- one poisoned resource costing the whole
+    repository -- and it is not worth paying, because the load-bearing
+    check sits at the join in :meth:`get_resource_file_url` and fails the
+    poisoned name loudly the moment anything tries to USE it.
+
+    So this only supplies the attribution the raise used to: a warning that
+    names the resource AND the entry, which the raise could not do because
+    a ``ManifestEntry`` does not know which resource it belongs to.
+    """
+    for entry in manifest:
+        reason = uncontained_resource_file_name_reason(entry.name)
+        if reason is not None:
+            logger.warning(
+                "resource <%s> has a manifest entry <%s> that %s; "
+                "any access to it will be refused",
+                resource_id, entry.name, reason)
 
 
 def is_gr_id_token(token: str) -> bool:
@@ -377,16 +479,6 @@ class ManifestEntry:
     name: str
     size: int
     md5: str | None
-
-    def __post_init__(self) -> None:
-        # Defence in depth (gain#467): a manifest is parsed verbatim from
-        # remote GRR content, so a poisoned entry name is rejected here --
-        # as close to the untrusted input as it gets -- on top of the
-        # load-bearing check in ``get_resource_file_url``.
-        reason = uncontained_resource_file_name_reason(self.name)
-        if reason is not None:
-            raise ValueError(
-                f"manifest entry name <{self.name}> {reason}")
 
 
 @dataclass(order=True)
@@ -988,7 +1080,20 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
             rows = cursor.execute(query, params)
             all_resources = self.get_all_resources_dict()
             for row in rows:
-                yield all_resources[row[0]]
+                resource = all_resources.get(row[0])
+                if resource is None:
+                    # The index is a separate artefact of the repository
+                    # and can name a resource the ``.CONTENTS`` loader did
+                    # not build -- a stale index, or one published by an
+                    # untrusted GRR alongside a poisoned id that was
+                    # dropped. Resolving it used to raise ``KeyError`` and
+                    # take the whole search down with it (gain#467).
+                    logger.warning(
+                        "repo %s: index names resource <%s>, which the "
+                        "repository contents do not; skipping it",
+                        self.proto_id, row[0])
+                    continue
+                yield resource
 
     def get_resource(
             self, resource_id: str,
@@ -1027,7 +1132,15 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
             return infile.read()
 
     def get_resource_url(self, resource: GenomicResource) -> str:
-        """Return url of the specified resources."""
+        """Return url of the specified resources.
+
+        The resource id is the other operand of this join and is no less
+        untrusted than a file name -- on the remote path it is read
+        verbatim out of the repository's ``.CONTENTS.json.gz`` -- so it is
+        contained here, at the join, exactly as ``get_resource_file_url``
+        contains the name (gain#467).
+        """
+        validate_resource_id(resource.resource_id)
         return os.path.join(
             self.url,
             resource.get_genomic_resource_id_version())
@@ -1112,7 +1225,9 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
 
     def get_manifest(self, resource: GenomicResource) -> Manifest:
         """Load and returns a resource manifest."""
-        return self.load_manifest(resource)
+        manifest = self.load_manifest(resource)
+        report_uncontained_manifest_entries(resource.resource_id, manifest)
+        return manifest
 
     def build_genomic_resource(
             self, resource_id: str, version: tuple[int, ...],
@@ -1134,6 +1249,13 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
         if not config:
             res = GenomicResource(resource_id, version, self)
             config = self.load_yaml(res, GR_CONF_FILE_NAME)
+
+        if manifest is not None:
+            # Both enumeration paths -- the local scan and the remote
+            # ``.CONTENTS`` -- hand the manifest in already parsed, and
+            # this is the first point at which it is paired with the
+            # resource it belongs to (gain#467).
+            report_uncontained_manifest_entries(resource_id, manifest)
 
         return GenomicResource(
             resource_id, version, self, config, manifest)
@@ -1436,6 +1558,12 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
             manifest = self.load_manifest(resource)
         except FileNotFoundError:
             manifest = self.build_manifest(resource)
+        else:
+            # A BUILT manifest is a scan of the resource directory
+            # and is contained by construction; only a LOADED one
+            # can carry a poisoned name (gain#467).
+            report_uncontained_manifest_entries(
+                resource.resource_id, manifest)
         return manifest
 
     @abc.abstractmethod
