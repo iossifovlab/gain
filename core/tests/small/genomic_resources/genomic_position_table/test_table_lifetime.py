@@ -323,9 +323,8 @@ _MAY_SURVIVE_CLOSE = {
     "alt_key": "core column key: resolved from the definition and header",
     "definition": (
         "the table's own definition -- configuration, handed in at "
-        "construction and never read from the file. get_column_key writes a "
-        "resolved column_index back into it, which is why it shows up as "
-        "changed at all. Bounded by the config."
+        "construction, never read from the file and never written to by the "
+        "table (#502). Bounded by the config."
     ),
     "_last_call": (
         "the previous query's (chrom, pos_begin, pos_end) -- three values "

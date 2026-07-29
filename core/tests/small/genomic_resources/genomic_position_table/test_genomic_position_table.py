@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613,too-many-lines
+import copy
 import gc
 import pathlib
 import textwrap
@@ -2672,6 +2673,51 @@ def test_new_score_configuration_fields() -> None:
     with build_genomic_position_table(res, res.config["table"]) as table:
         assert table.get_column_key("pos_begin") == 1
         assert table.get_column_key("pos_end") == 2
+
+
+@pytest.mark.parametrize("chrom_column,pos_begin_column", [
+    ("column_name: chromosome", "column_name: pos"),
+    ("name: chromosome", "name: pos"),
+    ("column_index: 0", "column_index: 1"),
+])
+def test_resolving_a_column_leaves_the_definition_alone(
+    chrom_column: str,
+    pos_begin_column: str,
+) -> None:
+    """A table's definition is configuration, and reading it does not edit it.
+
+    ``get_column_key`` used to memoise the index it resolved by writing a
+    ``column_index`` back into the definition (and to canonicalise the
+    deprecated ``index``/``name`` spellings the same way).  The definition is
+    not private: ``GenomicScoreImplementation.calc_statistics_hash``
+    serialises it, so those writes made the statistics hash of a resource
+    depend on whether its score had been opened in this process -- and
+    ``grr_manage repo-repair`` computes that hash on both sides of the
+    rebuild it is deciding (#502).
+    """
+    res = build_inmemory_test_resource({
+        "genomic_resource.yaml": f"""
+            table:
+                filename: data.mem
+                header_mode: list
+                header: ["chromosome", "pos", "score"]
+                chrom:
+                    {chrom_column}
+                pos_begin:
+                    {pos_begin_column}
+            """,
+        "data.mem": convert_to_tab_separated(
+            """
+            1     10        3.14
+            """)})
+    assert res.config is not None
+
+    definition = copy.deepcopy(res.config["table"])
+
+    with build_genomic_position_table(res, res.config["table"]) as table:
+        assert table.chrom_key == 0
+        assert table.pos_begin_key == 1
+        assert table.definition == definition
 
 
 def test_tabix_get_records_in_region_without_chrom(

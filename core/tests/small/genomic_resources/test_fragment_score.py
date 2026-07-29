@@ -10,6 +10,7 @@ import pytest_mock
 
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.genomic_scores import (
+    _INMEMORY_FRAGMENT_SCORE_CACHE,
     FragmentScore,
 )
 from gain.genomic_resources.histogram import (
@@ -26,9 +27,11 @@ from gain.genomic_resources.repository import (
 )
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
+    build_resource_implementation,
 )
 from gain.genomic_resources.statistics.min_max import MinMaxValue
 from gain.genomic_resources.testing import (
+    build_filesystem_test_repository,
     convert_to_tab_separated,
     setup_directories,
 )
@@ -276,3 +279,91 @@ def test_cli_manage_fragment_score_histograms(
         grr_path / "score_one/statistics/histogram_freq.json"
     ).read_text().replace(" ", "").replace("\n", "")
     assert hist_file.find('"bars":[6,0,0]') != -1
+
+
+@pytest.fixture
+def named_columns_grr(tmp_path: pathlib.Path) -> pathlib.Path:
+    """A fragment score whose core columns are addressed by NAME.
+
+    The addressing is the whole point of the fixture: ``get_column_key`` has
+    an index to resolve only when the config names a column, so a table that
+    leaves chrom/pos_begin/pos_end to their defaults never reaches the
+    resolution these tests are about.  Naming them is the shape of every
+    ``cnv_collection`` in the deployed GRR (#502).
+    """
+    setup_directories(tmp_path, {
+        "score_one": {
+            "genomic_resource.yaml": textwrap.dedent("""
+                type: cnv_collection
+                table:
+                    filename: data.txt
+                    chrom:
+                        column_name: chromosome
+                    pos_begin:
+                        column_name: pos_beg
+                    pos_end:
+                        column_name: pos_end
+                scores:
+                    - id: cnv_type
+                      column_name: cnv_type
+                      type: str
+                      desc: deletion or duplication
+                      histogram:
+                        type: categorical
+            """),
+            "data.txt": convert_to_tab_separated(textwrap.dedent("""
+                chromosome  pos_beg  pos_end  cnv_type
+                1           10       20       deletion
+                1           50       100      duplication
+                2           1        8        deletion
+            """)),
+        },
+    })
+    return tmp_path
+
+
+def test_the_statistics_hash_survives_opening_the_score(
+    named_columns_grr: pathlib.Path,
+) -> None:
+    """The statistics hash describes the resource, not this process's state.
+
+    ``repo-repair`` computes it on both sides of the rebuild it is deciding:
+    once up front, to ask whether the statistics are stale, and once in the
+    worker that has just rebuilt them, to record what they were built from.
+    An open score between the two makes those two answers differ forever,
+    which is a resource that is rebuilt on every run (#502).
+    """
+    repo = build_filesystem_test_repository(named_columns_grr)
+    impl = cast(
+        FragmentScoreImplementation,
+        build_resource_implementation(repo.get_resource("score_one")))
+
+    before_open = impl.calc_statistics_hash()
+    impl.score.open()
+
+    assert impl.calc_statistics_hash() == before_open
+
+
+def test_repo_repair_does_not_rebuild_the_statistics_it_just_built(
+    named_columns_grr: pathlib.Path,
+) -> None:
+    """The symptom itself: a second repair of an untouched GRR is a no-op."""
+    build_filesystem_test_repository(named_columns_grr)
+    cli_manage(["repo-repair", "-R", str(named_columns_grr), "-j", "1"])
+
+    # The second run is a new process: no score is open in it, because the
+    # process-wide cache that holds the ones the build opened is gone.  That
+    # cache is why a fragment score reproduces this and a position score
+    # does not -- it hands `_store_stats_hash` back the very score object
+    # the statistics tasks opened, definition and all.
+    _INMEMORY_FRAGMENT_SCORE_CACHE.clear()
+
+    try:
+        cli_manage([
+            "repo-repair", "--dry-run",
+            "-R", str(named_columns_grr), "-j", "1",
+        ])
+    except SystemExit as exit_call:
+        pytest.fail(
+            f"nothing changed between the two runs, yet the second reports "
+            f"{exit_call.code} resource(s) needing an update")
