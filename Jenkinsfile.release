@@ -109,7 +109,13 @@ pipeline {
         WHEELS_USER     = 'seqpipe'
         WHEELS_PATH     = '/data/wheels/gain'
         ANACONDA_USER   = 'iossifovlab'
-        CONDA_BUILDER   = "gain-conda-builder-ci:${env.BUILD_NUMBER}"
+        // `gain-conda-builder-release`, not `gain-conda-builder-ci`: the
+        // latter is the root Jenkinsfile's conda-builder image. This job
+        // deliberately does not disableConcurrentBuilds() and is fired
+        // from that same pipeline, so sharing the name meant two jobs on
+        // independent build counters building and `docker rmi`-ing one
+        // tag (#478).
+        CONDA_BUILDER   = "gain-conda-builder-release:${env.BUILD_NUMBER}"
         // Lift params.TAG_NAME into env.TAG_NAME so the existing
         // shell heredocs (lifted from the embedded Release stage)
         // can keep using ${TAG_NAME} unchanged.
