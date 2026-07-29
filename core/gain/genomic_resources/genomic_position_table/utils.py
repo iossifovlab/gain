@@ -74,17 +74,22 @@ def _warn_inert_bigwig_keys(
 ) -> None:
     """Report table keys a bigWig reads nothing from, and ignore them.
 
-    **Two levels, and the split is by how often the key actually appears.**
+    **Three levels, and the split is by how often the key actually appears.**
     A message that fires for nearly every resource is not a warning, it is
     noise with a severity label on it, and it trains a reader to ignore the
     level.  Measured across the 150 deployed bigWig resources:
 
-    * ``chrom``/``pos_begin``/``pos_end`` -- 142 of 150.  Endemic
-      boilerplate, copied from resource to resource.  INFO.
+    * ``chrom``/``pos_begin``/``pos_end``/``header`` -- 142 of 150.  Endemic
+      boilerplate, copied from resource to resource.  DEBUG.  At that
+      frequency even INFO is a per-open tax on every reader of the log for a
+      key that changes no value; the message exists to answer "why is this
+      key ignored?" when someone goes looking, not to announce itself.
+      Driving the key out of the GRRs is a cleanup pass, not something a log
+      level nags into happening.
     * the retired ``buffer_fetch_size``/``use_buffered_threshold`` -- 0 of
-      150.  INFO as well: they name a feature that no longer exists, so
-      their presence is a historical artifact rather than a misreading of
-      the format, and at zero deployments the level is moot anyway.
+      150.  INFO: they name a feature that no longer exists, so their
+      presence is a historical artifact rather than a misreading of the
+      format, and at zero deployments the level is moot anyway.
     * ``header_mode`` and ``zero_based`` -- 0 of 150, and both are
       meaningful keys on OTHER backends.  WARNING.  Setting either on a
       bigWig says the author thinks this file has a header, or that its
@@ -114,10 +119,10 @@ def _warn_inert_bigwig_keys(
     # wrong: they corrupt no value, and this is the MAJORITY shape in the
     # deployed GRRs -- 142 of the 150 bigWig resources carry it (every
     # FitCons2 per-cell-type track, plus Linsight).  That majority is why
-    # this reports at INFO rather than WARNING; see the docstring.
+    # this reports at DEBUG rather than WARNING; see the docstring.
     for inert_key in ("chrom", "pos_begin", "pos_end", "header"):
         if inert_key in table_definition:
-            logger.info(
+            logger.debug(
                 "'%s' is not supported for bigWig tables (a bigWig has "
                 "no columns and no header; its positions are decoded by "
                 "the backend), ignoring it in %s",

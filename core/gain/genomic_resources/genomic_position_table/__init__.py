@@ -265,13 +265,15 @@ has.  No GRR has to change on the day this ships.  Any OTHER index is now
 refused at open, by name; before, ``index: 2`` read the position and called
 it a score.
 
-That report is at INFO, not WARNING, and deliberately: all 150 deployed
-bigWig resources carry ``index: 3``, so a warning would fire for every one of
+That report is at DEBUG, not WARNING, and deliberately: all 150 deployed
+bigWig resources carry ``index: 3``, so anything louder fires for every one of
 them on every open, which is noise wearing a severity label.  The cost is
 that the message does not by itself drive the key out of the GRRs -- that is
 a deliberate cleanup pass now, not something a log level nags into happening.
 ``_warn_inert_bigwig_keys`` splits the same way and says why: endemic keys
-report at INFO, keys nobody sets (``zero_based``, ``header_mode``) stay at
+(``chrom``/``pos_begin``/``pos_end``/``header``) report at DEBUG, the retired
+buffering knobs nobody sets stay at INFO, and keys nobody sets that DO mean
+something on another backend (``zero_based``, ``header_mode``) stay at
 WARNING, because a message that fires for nearly every resource trains its
 reader to ignore the level.
 
