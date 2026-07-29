@@ -148,8 +148,13 @@ def test_cached_repo_accepts_a_bare_local_path_as_cache_url(
     tmp_path: pathlib.Path,
 ) -> None:
     """A cache url without a scheme is a local directory and stays valid."""
-    remote_repo = build_inmemory_test_repository(
-        {"one": {GR_CONF_FILE_NAME: ""}})
+    # A SHORT remote proto id: resolving the resource below builds the
+    # cache-side protocol, and an absolute repository id is refused there
+    # (#460). Same reason as in ``cache_repository``.
+    remote_repo = GenomicResourceProtocolRepo(
+        build_inmemory_protocol(
+            "remote_repo", str(tmp_path / "remote"),
+            {"one": {GR_CONF_FILE_NAME: ""}}))
 
     repo = GenomicResourceCachedRepo(remote_repo, str(tmp_path / "cache"))
 
