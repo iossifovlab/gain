@@ -431,15 +431,15 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
         if allele_filter_str is not None:
             assert isinstance(allele_filter_str, str)
 
-            cnv_filter_str = allele_filter_str.replace(
+            filter_str = allele_filter_str.replace(
                 "\n", " ").replace("\t", " ").strip()
             try:
                 self.allele_filter = self._build_allele_filter_func(
-                    self.filter_parser.parse(cnv_filter_str),
+                    self.filter_parser.parse(filter_str),
                     self.allele_score)
             except Exception as e:
                 raise AnnotationConfigurationError(
-                    f"Error parsing cnv_filter: {e}") from e
+                    f"Error parsing allele_filter: {e}") from e
 
         mode = info.parameters.get("mode", "allele")
         if mode not in {"allele", "region"}:
@@ -499,11 +499,11 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             assert isinstance(tree.children[1], Tree)
             left_func = cls._build_allele_filter_func(tree.children[0], score)
             right_func = cls._build_allele_filter_func(tree.children[1], score)
-            return lambda cnv: left_func(cnv) and right_func(cnv)
+            return lambda rec: left_func(rec) and right_func(rec)
         if tree.data == "or":
             left_func = cls._build_allele_filter_func(tree.children[0], score)
             right_func = cls._build_allele_filter_func(tree.children[1], score)
-            return lambda cnv: left_func(cnv) or right_func(cnv)
+            return lambda rec: left_func(rec) or right_func(rec)
 
         left = tree.children[0]
         assert isinstance(left, Tree)
@@ -563,13 +563,13 @@ Non-``VCFAllele`` annotatables always use region aggregation.
                 return right_value
 
         if operator == "equals":
-            return lambda cnv: left_accessor(cnv) == right_accessor(cnv)
+            return lambda rec: left_accessor(rec) == right_accessor(rec)
         if operator == "greater_than":
-            return lambda cnv: left_accessor(cnv) > right_accessor(cnv)
+            return lambda rec: left_accessor(rec) > right_accessor(rec)
         if operator == "less_than":
-            return lambda cnv: left_accessor(cnv) < right_accessor(cnv)
+            return lambda rec: left_accessor(rec) < right_accessor(rec)
         if operator == "in":
-            return lambda cnv: left_accessor(cnv) in right_accessor(cnv)
+            return lambda rec: left_accessor(rec) in right_accessor(rec)
 
         raise ValueError(f"Unsupported operator {operator.data}")
 

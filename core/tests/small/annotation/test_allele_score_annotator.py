@@ -4,6 +4,7 @@ import textwrap
 
 import pytest
 from gain.annotation.annotatable import Annotatable, Region, VCFAllele
+from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.annotation.score_annotator import AlleleScoreAnnotator
@@ -519,6 +520,57 @@ def test_allele_score_region_allele_filter(
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 10, 16))
     assert set(result["allele"]) == expected_alleles
+
+
+_UNPARSABLE_ALLELE_FILTER_CONFIG = textwrap.dedent("""
+    - allele_score:
+        resource_id: allele_score
+        allele_filter: "freq >> 0.03"
+        attributes:
+        - source: freq
+""")
+
+
+def test_unparsable_allele_filter_names_allele_filter(
+    allele_score_repository: GenomicResourceRepo,
+) -> None:
+    """The message names the parameter the user actually wrote.
+
+    This annotator accepts exactly one filter spelling, ``allele_filter``.
+    Reporting the failure under any other key sends a user who mistyped
+    their expression looking for something that appears nowhere in their
+    configuration.
+    """
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        load_pipeline_from_yaml(
+            _UNPARSABLE_ALLELE_FILTER_CONFIG, allele_score_repository)
+
+    message = str(excinfo.value)
+    assert "Error parsing allele_filter" in message
+    assert "cnv_filter" not in message
+
+
+def test_unparsable_allele_filter_keeps_the_parser_diagnostics(
+    allele_score_repository: GenomicResourceRepo,
+) -> None:
+    """Naming the parameter must not cost the user the parser's detail.
+
+    The underlying parse error is what says *where* in the expression the
+    problem is; the parameter name alone does not locate a typo.  It is
+    carried verbatim into the message and kept as the chained cause.
+
+    Separate from the naming test on purpose: the two fail for different
+    reasons and a fix for one can regress the other -- dropping ``from e``
+    leaves the name correct, and replacing the message with a generic one
+    leaves the cause intact.
+    """
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        load_pipeline_from_yaml(
+            _UNPARSABLE_ALLELE_FILTER_CONFIG, allele_score_repository)
+
+    cause = excinfo.value.__cause__
+    assert cause is not None
+    assert str(cause) in str(excinfo.value)
 
 
 def test_allele_score_filter_digit_prefixed_score_name(
