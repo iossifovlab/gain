@@ -15,6 +15,13 @@ from web_annotation.annotation_base_view import (
 from web_annotation.models import User
 from web_annotation.pipeline_cache import LRUPipelineCache
 from web_annotation.pipelines.views import PipelineDoc
+from web_annotation.tests.loop_stall import (
+    HEARTBEAT_INTERVAL_SECONDS,
+    SABOTAGED_STALL_FLOOR_SECONDS,
+    SLOW_BUILD_SECONDS,
+    STALL_THRESHOLD_SECONDS,
+    max_gap,
+)
 
 DOC_URL = "/api/pipelines/doc"
 
@@ -183,15 +190,19 @@ def test_doc_exception_mapping_helper_not_found() -> None:
 
 @pytest.fixture
 def slow_build(mocker: MockerFixture) -> float:
-    """Make pipeline builds take ~SLOW seconds on the loader thread.
+    """Make builds take ~``SLOW_BUILD_SECONDS`` on the loader thread.
 
     Uses the ``GPFWA_BUILD_DELAY_SECONDS`` hook baked into
     ``_load_pipeline_raw`` (#164) -- the same place a slow real GRR build would
     block, on the loader thread -- by monkeypatching the env-reader to return a
     fixed delay. This keeps the delay deterministic without depending on the
     process environment.
+
+    Returns the injected latency for diagnostics only. The assertion bound is
+    the independent ``STALL_THRESHOLD_SECONDS`` -- see ``loop_stall`` for why
+    the two must not be the same number (#454).
     """
-    slow_seconds = 0.4
+    slow_seconds = SLOW_BUILD_SECONDS
     mocker.patch(
         "web_annotation.pipeline_cache._load_test_build_delay",
         return_value=slow_seconds,
@@ -221,7 +232,7 @@ async def test_concurrent_slow_doc_builds_do_not_park_event_loop(
     async def heartbeat() -> None:
         while not stop.is_set():
             heartbeats.append(time.monotonic())
-            await asyncio.sleep(0.02)
+            await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
 
     async def fire_request() -> int:
         client = AsyncClient()
@@ -239,18 +250,24 @@ async def test_concurrent_slow_doc_builds_do_not_park_event_loop(
     assert all(s == 200 for s in statuses), statuses
 
     # The event loop kept ticking throughout the slow builds: the heartbeat
-    # fired many times and never went silent for longer than the slow-build
-    # window. A loop parked on future.result() would show a single long gap.
-    assert len(heartbeats) >= 5
-    gaps = [
-        heartbeats[i + 1] - heartbeats[i]
-        for i in range(len(heartbeats) - 1)
-    ]
-    max_gap = max(gaps)
-    assert max_gap < slow_build, (
-        f"event loop stalled for {max_gap:.3f}s "
-        f"(>= slow build {slow_build:.3f}s) -- build ran ON the loop"
+    # fired many times and never went silent for longer than the threshold.
+    # A loop parked on future.result() would show a single long gap of about
+    # one build's duration -- not N x it, because put_pipeline dedupes the
+    # concurrent readers onto a shared build future.
+    # The stall check comes first so that a regression reports the stall it
+    # actually caused; the tick-count guard below would otherwise fire first
+    # (a parked loop also ticks fewer times) and misreport the cause.
+    assert len(heartbeats) >= 2, (
+        f"heartbeat coroutine barely ran ({len(heartbeats)} ticks) -- "
+        f"no gap to measure"
     )
+    worst_gap = max_gap(heartbeats)
+    assert worst_gap < STALL_THRESHOLD_SECONDS, (
+        f"event loop stalled for {worst_gap:.3f}s "
+        f"(>= threshold {STALL_THRESHOLD_SECONDS:.3f}s, injected build "
+        f"latency {slow_build:.3f}s) -- build ran ON the loop"
+    )
+    assert len(heartbeats) >= 5, len(heartbeats)
 
 
 @pytest.mark.asyncio
@@ -266,9 +283,11 @@ async def test_slow_doc_build_heartbeat_proof_is_discriminating(
     off-loop and its ``async_to_sync`` channel callbacks stay legal), but
     sabotage the cache's ``aget_pipeline`` to block the loop thread on the
     shared build future's ``result()`` -- exactly what the sync ``get_pipeline``
-    would do on the loop. The heartbeat must then show a single gap >= the slow
-    build window, i.e. the real test's ``max_gap < slow_build`` assertion would
-    FAIL under this sabotage.
+    would do on the loop. The heartbeat must then show a single gap reaching
+    ``SABOTAGED_STALL_FLOOR_SECONDS`` -- which is above
+    ``STALL_THRESHOLD_SECONDS``, so the real test's
+    ``worst_gap < STALL_THRESHOLD_SECONDS`` assertion would FAIL under this
+    sabotage.
     """
     PipelineDoc.lru_cache.unload_pipeline("t4c8/t4c8_pipeline")
 
@@ -290,7 +309,7 @@ async def test_slow_doc_build_heartbeat_proof_is_discriminating(
     async def heartbeat() -> None:
         while not stop.is_set():
             heartbeats.append(time.monotonic())
-            await asyncio.sleep(0.02)
+            await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
 
     async def fire_request() -> int:
         client = AsyncClient()
@@ -305,15 +324,16 @@ async def test_slow_doc_build_heartbeat_proof_is_discriminating(
     stop.set()
     await hb_task
 
-    gaps = [
-        heartbeats[i + 1] - heartbeats[i]
-        for i in range(len(heartbeats) - 1)
-    ]
-    max_gap = max(gaps) if gaps else 0.0
-    # The sabotaged on-loop resolve parks the loop for the build window, so the
-    # discriminating assertion (max_gap < slow_build) used by the real test
-    # would FAIL here.
-    assert max_gap >= slow_build, (
-        f"expected an on-loop stall >= {slow_build:.3f}s, "
-        f"got max gap {max_gap:.3f}s"
+    # The sabotaged on-loop resolve parks the loop for a whole build window, so
+    # the real test's assertion (worst_gap < STALL_THRESHOLD_SECONDS) would
+    # FAIL here -- SABOTAGED_STALL_FLOOR_SECONDS sits above that bound, so
+    # reaching it proves the breach. Deliberately NOT the full injected
+    # latency: requiring the gap to reach every last millisecond of the sleep
+    # would itself be a coin flip (#454).
+    worst_gap = max_gap(heartbeats)
+    assert worst_gap >= SABOTAGED_STALL_FLOOR_SECONDS, (
+        f"expected an on-loop stall >= {SABOTAGED_STALL_FLOOR_SECONDS:.3f}s "
+        f"(injected build latency {slow_build:.3f}s), "
+        f"got max gap {worst_gap:.3f}s -- the sabotage may have stopped "
+        f"biting, which would make the proof above vacuous"
     )

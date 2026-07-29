@@ -18,6 +18,12 @@ from web_annotation.editor.views import (
     AsyncEditorView,
 )
 from web_annotation.pipeline_cache import LRUPipelineCache
+from web_annotation.tests.loop_stall import (
+    HEARTBEAT_INTERVAL_SECONDS,
+    SLOW_BUILD_SECONDS,
+    STALL_THRESHOLD_SECONDS,
+    max_gap,
+)
 
 if TYPE_CHECKING:
     from django.test.client import _MonkeyPatchedASGIResponse
@@ -461,15 +467,19 @@ async def test_async_yaml_missing_pipeline_maps_to_404() -> None:
 
 @pytest.fixture
 def slow_build(mocker: MockerFixture) -> float:
-    """Make pipeline builds take ~SLOW seconds on the loader thread.
+    """Make builds take ~``SLOW_BUILD_SECONDS`` on the loader thread.
 
     The injected delay sits at ``_load_pipeline_raw`` -- the same point a slow
     real GRR build would block, on the loader thread -- so the async path's
     off-loop await of that build is exercised faithfully. (#164 added the
     ``GPFWA_BUILD_DELAY_SECONDS`` env hook there too; monkeypatching here keeps
     the test self-contained and independent of process env.)
+
+    Returns the injected latency for diagnostics only. The assertion bound is
+    the independent ``STALL_THRESHOLD_SECONDS`` -- see ``loop_stall`` for why
+    the two must not be the same number (#454).
     """
-    slow_seconds = 0.4
+    slow_seconds = SLOW_BUILD_SECONDS
     real_load = LRUPipelineCache._load_pipeline_raw
 
     def slow_load(raw, grr, pipeline_id="unknown"):  # type: ignore
@@ -495,10 +505,12 @@ async def test_concurrent_slow_aggregator_posts_do_not_park_event_loop(
     the build were resolved ON the loop thread (the bug this issue fixes), the
     heartbeat would stall for the whole slow-build window.
 
-    Discriminating: the assertion ``max_gap < slow_build`` only holds if the
-    loop kept turning *during* the build. With four concurrent cold builds each
-    sleeping 0.4s, a loop parked on ``future.result()`` would show a single gap
-    >= 0.4s; the off-loop await keeps every inter-tick gap well under that.
+    Discriminating: the assertion ``worst_gap < STALL_THRESHOLD_SECONDS`` only
+    holds if the loop kept turning *during* the build. The four concurrent
+    POSTs dedupe onto ONE shared build future, so a loop parked on
+    ``future.result()`` would show a single gap of ~``SLOW_BUILD_SECONDS``
+    (measured 2.05s) -- not four times it. The off-loop await keeps every
+    inter-tick gap near the heartbeat interval instead.
     """
     # Force a cold cache so each request actually waits on a build.
     AnnotatorAggregators.lru_cache.unload_pipeline("pipeline/test_pipeline")
@@ -509,7 +521,7 @@ async def test_concurrent_slow_aggregator_posts_do_not_park_event_loop(
     async def heartbeat() -> None:
         while not stop.is_set():
             heartbeats.append(time.monotonic())
-            await asyncio.sleep(0.02)
+            await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
 
     async def fire_request() -> int:
         client = AsyncClient()
@@ -529,13 +541,17 @@ async def test_concurrent_slow_aggregator_posts_do_not_park_event_loop(
 
     assert all(s == 200 for s in statuses), statuses
 
-    assert len(heartbeats) >= 5
-    gaps = [
-        heartbeats[i + 1] - heartbeats[i]
-        for i in range(len(heartbeats) - 1)
-    ]
-    max_gap = max(gaps)
-    assert max_gap < slow_build, (
-        f"event loop stalled for {max_gap:.3f}s "
-        f"(>= slow build {slow_build:.3f}s) -- build ran ON the loop"
+    # The stall check comes first so that a regression reports the stall it
+    # actually caused; the tick-count guard below would otherwise fire first
+    # (a parked loop also ticks fewer times) and misreport the cause.
+    assert len(heartbeats) >= 2, (
+        f"heartbeat coroutine barely ran ({len(heartbeats)} ticks) -- "
+        f"no gap to measure"
     )
+    worst_gap = max_gap(heartbeats)
+    assert worst_gap < STALL_THRESHOLD_SECONDS, (
+        f"event loop stalled for {worst_gap:.3f}s "
+        f"(>= threshold {STALL_THRESHOLD_SECONDS:.3f}s, injected build "
+        f"latency {slow_build:.3f}s) -- build ran ON the loop"
+    )
+    assert len(heartbeats) >= 5, len(heartbeats)

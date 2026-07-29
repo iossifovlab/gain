@@ -12,43 +12,19 @@ from web_annotation.models import User
 from web_annotation.pipeline_cache import LRUPipelineCache
 from web_annotation.single_allele_annotation.views import SingleAnnotation
 from web_annotation.testing import CustomWebsocketCommunicator
+from web_annotation.tests.loop_stall import (
+    HEARTBEAT_INTERVAL_SECONDS,
+    SLOW_BUILD_SECONDS,
+    STALL_THRESHOLD_SECONDS,
+    loop_parked,
+)
 
 ANNOTATE_URL = "/api/single_allele/annotate"
 PIPELINE_ID = "t4c8/t4c8_pipeline"
 
-# The injected build parks the loader thread this long (off-loop). If a
-# regression ran the build wait ON the event loop instead, the loop would
-# freeze for ~this long. Kept well above host noise so a real park is
-# unmistakable.
-SLOW_BUILD_S = 2.0
-# Event-loop lag at/above this is a parked loop, never host noise: clean lag
-# is sub-millisecond and even a loaded CI runner keeps it in the low tens of
-# ms, an order of magnitude under this bound, while a leaked build wait parks
-# for ~SLOW_BUILD_S. A single lag sample this large is therefore a real leak.
-PARKED_LOOP_BOUND_S = 1.0
-LAG_SAMPLE_INTERVAL_S = 0.02
-
-
-def loop_parked(lags: list[float], bound: float) -> bool:
-    """Whether event-loop lag ever reached the parked-loop magnitude.
-
-    ``lags`` comes from ``_sample_loop_lag``, which measures CONTINUOUSLY --
-    each sleep both paces and measures, with no unmeasured gap -- so a genuine
-    on-loop park is captured in some sample no matter when it starts. (Sampling
-    only inside an emit->receipt window, as an earlier version did, missed a
-    park that landed in the gap between samples: the false-green that let a real
-    leak pass.)
-
-    Host noise keeps lag in the millisecond range; only a parked loop (a leaked
-    ~``SLOW_BUILD_S`` build wait) reaches ``bound``. So one sample at/above
-    ``bound`` is a real leak -- zero tolerance. The magnitude gap (ms noise vs a
-    ~2 s park) is what makes this both flake-proof and leak-sensitive.
-    """
-    return max(lags, default=0.0) >= bound
-
 
 async def _sample_loop_lag(
-    stop_event: asyncio.Event, interval: float = LAG_SAMPLE_INTERVAL_S,
+    stop_event: asyncio.Event, interval: float = HEARTBEAT_INTERVAL_SECONDS,
 ) -> list[float]:
     """Continuously measure event-loop lag until ``stop_event`` is set.
 
@@ -56,7 +32,14 @@ async def _sample_loop_lag(
     ``asyncio.sleep`` actually took; that excess is how long the loop was
     unavailable. Because the sleep both paces and measures, every moment is
     inside some measured window -- a loop park is always charged to a sample,
-    regardless of phase.
+    regardless of phase. (Sampling only inside an emit->receipt window, as an
+    earlier version did, missed a park that landed between samples: the
+    false-green that let a real leak pass.)
+
+    Unlike the raw heartbeat gaps the other stall proofs collect, these samples
+    are *lag* -- excess over ``interval``, so a healthy sample is near zero
+    rather than near ``interval``. Both feed ``loop_parked``; the difference is
+    immaterial against ``STALL_THRESHOLD_SECONDS``.
     """
     loop = asyncio.get_running_loop()
     lags: list[float] = []
@@ -69,12 +52,12 @@ async def _sample_loop_lag(
 
 @pytest.fixture
 def slow_build(mocker: MockerFixture) -> float:
-    """Make pipeline builds take ~SLOW_BUILD_S seconds on the loader thread.
+    """Make builds take ~``SLOW_BUILD_SECONDS`` on the loader thread.
 
     The sleep runs off-loop (inside the loader thread), so the event loop
     stays free while the build is in progress.
     """
-    slow_seconds = SLOW_BUILD_S
+    slow_seconds = SLOW_BUILD_SECONDS
     real_load = LRUPipelineCache._load_pipeline_raw
 
     def slow_load(raw, grr, pipeline_id="unknown"):  # type: ignore
@@ -115,9 +98,10 @@ async def test_event_loop_not_parked_during_slow_build(
 
     The build sleeps on a loader thread (off-loop), so the loop must stay free.
     A continuous lag monitor runs alongside; if an async view leaked the build
-    wait onto the loop it would freeze for ~SLOW_BUILD_S and some lag sample
-    would reach PARKED_LOOP_BOUND_S. We also confirm a WS notification is still
-    delivered end-to-end. (The four requests share one deduped build future --
+    wait onto the loop it would freeze for ~SLOW_BUILD_SECONDS and some lag
+    sample would reach STALL_THRESHOLD_SECONDS. We also confirm a WS
+    notification is still delivered end-to-end. (The four requests share one
+    deduped build future --
     they exercise the concurrent-reader path but produce a single build.)
     """
     SingleAnnotation.lru_cache.unload_pipeline(PIPELINE_ID)
@@ -155,12 +139,16 @@ async def test_event_loop_not_parked_during_slow_build(
     await communicator.disconnect(timeout=5)
 
     assert all(s == 200 for s in statuses), statuses
-    assert len(lags) >= 5, lags
-    assert not loop_parked(lags, PARKED_LOOP_BOUND_S), (
+    # The park check comes first so that a regression reports the park it
+    # actually caused; the sample-count guard below would otherwise fire first
+    # (a parked loop also samples fewer times) and misreport the cause.
+    assert lags, "lag monitor never sampled -- no evidence either way"
+    assert not loop_parked(lags, STALL_THRESHOLD_SECONDS), (
         f"event-loop lag peaked at {max(lags):.3f}s "
-        f"(>= {PARKED_LOOP_BOUND_S}s) -- an async view parked the loop during "
-        f"the slow build"
+        f"(>= {STALL_THRESHOLD_SECONDS}s) -- an async view parked the loop "
+        f"during the slow build"
     )
+    assert len(lags) >= 5, lags
 
 
 @pytest.mark.asyncio
@@ -171,7 +159,8 @@ async def test_loop_lag_monitor_detects_on_loop_block() -> None:
 
     Without this, a "not parked" pass could merely mean the monitor is blind.
     We park the loop synchronously; the monitor must measure ~the park and
-    breach PARKED_LOOP_BOUND_S -- exercising the exact detector, not a proxy.
+    breach STALL_THRESHOLD_SECONDS -- exercising the exact detector, not a
+    proxy.
     """
     stop = asyncio.Event()
     monitor = asyncio.ensure_future(_sample_loop_lag(stop))
@@ -189,9 +178,9 @@ async def test_loop_lag_monitor_detects_on_loop_block() -> None:
         f"lag monitor measured {worst:.3f}s for a {block}s loop park -- it is "
         f"NOT sensitive to on-loop blocking, so a null result is untrustworthy"
     )
-    assert worst >= PARKED_LOOP_BOUND_S, (
+    assert worst >= STALL_THRESHOLD_SECONDS, (
         f"a real loop park ({worst:.3f}s) must breach the parked-loop bound "
-        f"{PARKED_LOOP_BOUND_S}s"
+        f"{STALL_THRESHOLD_SECONDS}s"
     )
 
 
@@ -207,12 +196,12 @@ async def test_loop_lag_monitor_detects_on_loop_block() -> None:
         # Even a larger isolated host pause stays below the bound.
         ([0.0002] * 99 + [0.6], False, "larger isolated host pause"),
         # Just under the bound is still not a park.
-        ([0.0002] * 99 + [PARKED_LOOP_BOUND_S - 0.01], False, "just under"),
+        ([0.0002] * 99 + [STALL_THRESHOLD_SECONDS - 0.01], False, "just under"),
         # At the bound: a parked loop, zero tolerance even as a lone sample --
         # this is exactly the single deduped-build leak signature.
-        ([0.0002] * 99 + [PARKED_LOOP_BOUND_S], True, "at bound = parked"),
+        ([0.0002] * 99 + [STALL_THRESHOLD_SECONDS], True, "at bound = parked"),
         # A full leaked build wait.
-        ([0.0002] * 99 + [SLOW_BUILD_S], True, "full build-wait park"),
+        ([0.0002] * 99 + [SLOW_BUILD_SECONDS], True, "full build-wait park"),
     ],
 )
 def test_loop_parked_flags_park_not_host_noise(
@@ -226,4 +215,4 @@ def test_loop_parked_flags_park_not_host_noise(
     directly, with no timing or host load, so neither the wide-margin
     flake-tolerance nor the zero-tolerance park detection can silently regress.
     """
-    assert loop_parked(lags, PARKED_LOOP_BOUND_S) is expected_parked, reason
+    assert loop_parked(lags, STALL_THRESHOLD_SECONDS) is expected_parked, reason

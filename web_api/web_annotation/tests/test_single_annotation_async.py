@@ -15,6 +15,12 @@ from web_annotation.annotation_base_view import (
 from web_annotation.models import User
 from web_annotation.pipeline_cache import LRUPipelineCache
 from web_annotation.single_allele_annotation.views import SingleAnnotation
+from web_annotation.tests.loop_stall import (
+    HEARTBEAT_INTERVAL_SECONDS,
+    SLOW_BUILD_SECONDS,
+    STALL_THRESHOLD_SECONDS,
+    max_gap,
+)
 
 ANNOTATE_URL = "/api/single_allele/annotate"
 
@@ -200,33 +206,10 @@ def test_exception_mapping_helper_not_found() -> None:
 # Threaded non-blocking proof: a slow build must not park the event loop
 # ---------------------------------------------------------------------------
 
-# Latency injected into a single pipeline build, in seconds. This is the
-# *signal* size: if the build is resolved on the event-loop thread, the loop
-# parks for about this long. Deliberately much larger than the stall threshold
-# below -- see the rationale on STALL_THRESHOLD_SECONDS (#433).
-SLOW_BUILD_SECONDS = 2.0
-
-# Longest single event-loop park the test tolerates, in seconds.
-#
-# This value is deliberately NOT SLOW_BUILD_SECONDS. Measured gaps:
-#
-#   healthy, idle machine ............. ~0.02s   (one heartbeat period)
-#   healthy, loaded CI agent .......... up to ~0.53s (scheduler noise; the
-#                                       flake in #433 was a 0.533s gap)
-#   broken (build resolved on loop) ... ~SLOW_BUILD_SECONDS (measured 2.07s)
-#
-# 1.0s sits cleanly between the noise band and the signal: ~45x margin over a
-# healthy run, 2x headroom below the broken one.
-#
-# NOTE -- the broken case stalls for ONE build's duration, not N x the sleep,
-# even though N=4 requests are fired. LRUPipelineCache.put_pipeline dedupes
-# concurrent readers: the first caller installs the LoadingDetails future and
-# the rest take the same_config branch and await that *shared* future (the
-# documented contract in the BuildCancelled docstring, #140/#163). So raising
-# the threshold on the theory that the regression costs 4 x the sleep would be
-# wrong -- it would put the threshold above the signal and make this test
-# permanently green. Enlarging the injected sleep is what separates the bands.
-STALL_THRESHOLD_SECONDS = 1.0
+# The injected latency (SLOW_BUILD_SECONDS) and the stall bound
+# (STALL_THRESHOLD_SECONDS) are shared across all five stall proofs and live in
+# web_annotation.tests.loop_stall, together with the measurements that justify
+# them and the reason they must stay different numbers (#433, #454).
 
 
 @pytest.fixture
@@ -271,7 +254,7 @@ async def test_concurrent_slow_builds_do_not_park_event_loop(
     async def heartbeat() -> None:
         while not stop.is_set():
             heartbeats.append(time.monotonic())
-            await asyncio.sleep(0.02)
+            await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
 
     async def fire_request() -> int:
         client = AsyncClient()
@@ -304,17 +287,14 @@ async def test_concurrent_slow_builds_do_not_park_event_loop(
         f"heartbeat coroutine barely ran ({len(heartbeats)} ticks) -- "
         f"no gap to measure"
     )
-    gaps = [
-        heartbeats[i + 1] - heartbeats[i]
-        for i in range(len(heartbeats) - 1)
-    ]
-    max_gap = max(gaps)
-    assert max_gap < STALL_THRESHOLD_SECONDS, (
-        f"event loop stalled for {max_gap:.3f}s "
+    worst_gap = max_gap(heartbeats)
+    assert worst_gap < STALL_THRESHOLD_SECONDS, (
+        f"event loop stalled for {worst_gap:.3f}s "
         f"(>= threshold {STALL_THRESHOLD_SECONDS:.3f}s, injected build "
         f"latency {slow_build:.3f}s) -- build ran ON the loop"
     )
-    # A responsive loop ticking every 0.02s across a ~SLOW_BUILD_SECONDS build
+    # A responsive loop ticking every HEARTBEAT_INTERVAL_SECONDS across a
+    # ~SLOW_BUILD_SECONDS build
     # fires far more than 5 times; this only guards against the heartbeat
     # having been starved in some way the gap metric cannot see.
     assert len(heartbeats) >= 5, len(heartbeats)
