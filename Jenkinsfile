@@ -163,6 +163,62 @@ String ciScope(String branch) {
     return scope ? "${scope}-${suffix}" : "h${suffix}"
 }
 
+// Whether the branch this build is testing still exists on the remote.
+//
+// The two branch-scoped downstream jobs (gain-web-e2e,
+// gain-core-integration) are triggered from this pipeline's last stages
+// with `wait: false`, i.e. 9-25 minutes after the build began, and they
+// resolve BRANCH_NAME / COMMIT_SHA at their own start time. A branch
+// merged-and-deleted in the meantime therefore hands them a ref that no
+// longer exists. gain-web-e2e loads its pipeline *definition* from
+// ${BRANCH_NAME} — deliberately, so that a Jenkinsfile.e2e change is
+// testable on the branch introducing it (#272) — so a deleted branch
+// kills it inside CpsScmFlowDefinition.create, before any stage exists:
+// a ~1s FAILURE that ran nothing and cannot classify itself (#489).
+//
+// This guard does not close that race — the branch can still vanish
+// between this check and the downstream job leaving the queue — but it
+// covers the window that is already open when we trigger, which is the
+// larger of the two: the merge usually lands while this build is still
+// grinding through its long stages. Deliberately NOT applied to the
+// spliceai / VEP triggers: those are gated on `branch 'master'`, and
+// master is never the deleted branch.
+//
+// Fails OPEN. Only a positive "the remote does not have this ref"
+// suppresses the trigger; a network or git failure is reported and then
+// treated as present, so a broken lookup can never silently drop a
+// legitimate downstream run.
+//
+// Not @NonCPS (unlike ciScope above): it calls the `sh` step, and a
+// @NonCPS method may not invoke pipeline steps.
+boolean branchStillOnRemote() {
+    if (!env.BRANCH_NAME) {
+        return true
+    }
+    // Single-quoted, so Groovy interpolates nothing: BRANCH_NAME is
+    // already in the build environment and the shell reads it directly.
+    // No branch name is ever pasted into the script text, so branch
+    // names containing shell metacharacters cannot break the lookup.
+    // The repo is public, so ls-remote needs no credential.
+    String verdict = sh(
+        script: '''
+            if out=$(git ls-remote --heads \
+                     https://github.com/iossifovlab/gain.git \
+                     "refs/heads/$BRANCH_NAME" 2>/dev/null); then
+                if [ -n "$out" ]; then echo PRESENT; else echo GONE; fi
+            else
+                echo UNKNOWN
+            fi
+        ''',
+        returnStdout: true,
+    ).trim()
+    if (verdict == 'UNKNOWN') {
+        echo "Could not reach the remote to check whether " +
+             "${env.BRANCH_NAME} still exists — triggering anyway."
+    }
+    return verdict != 'GONE'
+}
+
 pipeline {
     // Run on any agent except `dory` — its docker daemon /
     // resource profile doesn't fit the root build's compose
@@ -1043,29 +1099,40 @@ pipeline {
                     // e2e runs separately, and an e2e regression doesn't
                     // FAILURE the parent.
                     steps {
-                        build(
-                            job: '/gain-web-e2e',
-                            parameters: [
-                                string(
-                                    name: 'BRANCH_NAME',
-                                    value: env.BRANCH_NAME,
-                                ),
-                                string(
-                                    name: 'COMMIT_SHA',
-                                    value: env.GIT_COMMIT ?: '',
-                                ),
-                                string(
-                                    name: 'UPSTREAM_PROJECT',
-                                    value: env.JOB_NAME,
-                                ),
-                                string(
-                                    name: 'UPSTREAM_BUILD',
-                                    value: env.BUILD_NUMBER,
-                                ),
-                            ],
-                            wait: false,
-                            propagate: false,
-                        )
+                        script {
+                            if (branchStillOnRemote()) {
+                                build(
+                                    job: '/gain-web-e2e',
+                                    parameters: [
+                                        string(
+                                            name: 'BRANCH_NAME',
+                                            value: env.BRANCH_NAME,
+                                        ),
+                                        string(
+                                            name: 'COMMIT_SHA',
+                                            value: env.GIT_COMMIT ?: '',
+                                        ),
+                                        string(
+                                            name: 'UPSTREAM_PROJECT',
+                                            value: env.JOB_NAME,
+                                        ),
+                                        string(
+                                            name: 'UPSTREAM_BUILD',
+                                            value: env.BUILD_NUMBER,
+                                        ),
+                                    ],
+                                    wait: false,
+                                    propagate: false,
+                                )
+                            } else {
+                                echo "Skipping gain-web-e2e: branch " +
+                                     "${env.BRANCH_NAME} no longer exists " +
+                                     "on the remote — merged and deleted " +
+                                     "while this build ran. Triggering it " +
+                                     "would only produce a ~1s red build " +
+                                     "that tested nothing (#489)."
+                            }
+                        }
                     }
                 }
         
@@ -1080,21 +1147,30 @@ pipeline {
                     // integration suite runs separately, and an integration
                     // regression doesn't FAILURE the parent.
                     steps {
-                        build(
-                            job: '/gain-core-integration',
-                            parameters: [
-                                string(
-                                    name: 'BRANCH_NAME',
-                                    value: env.BRANCH_NAME,
-                                ),
-                                string(
-                                    name: 'COMMIT_SHA',
-                                    value: env.GIT_COMMIT ?: '',
-                                ),
-                            ],
-                            wait: false,
-                            propagate: false,
-                        )
+                        script {
+                            if (branchStillOnRemote()) {
+                                build(
+                                    job: '/gain-core-integration',
+                                    parameters: [
+                                        string(
+                                            name: 'BRANCH_NAME',
+                                            value: env.BRANCH_NAME,
+                                        ),
+                                        string(
+                                            name: 'COMMIT_SHA',
+                                            value: env.GIT_COMMIT ?: '',
+                                        ),
+                                    ],
+                                    wait: false,
+                                    propagate: false,
+                                )
+                            } else {
+                                echo "Skipping gain-core-integration: " +
+                                     "branch ${env.BRANCH_NAME} no longer " +
+                                     "exists on the remote — merged and " +
+                                     "deleted while this build ran (#489)."
+                            }
+                        }
                     }
                 }
 

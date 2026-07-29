@@ -119,6 +119,43 @@ cp pre-commit .git/hooks/
 The pre-commit hook runs `ruff check` (ignoring FIX
 warnings) on staged `.py` files.
 
+### Merging a PR — do not delete the branch right away
+
+**Merge without `--delete-branch`.** The two branch-scoped
+downstream jobs (`gain-web-e2e`, `gain-core-integration`)
+are triggered from the root `Jenkinsfile`'s *last* stages
+with `wait: false`, and resolve the branch at their own
+start time — minutes later. `gain-web-e2e` additionally
+loads its pipeline *definition* from the branch (on
+purpose, so a `Jenkinsfile.e2e` change is testable on the
+branch that introduces it — #272), so a branch deleted at
+merge time kills it before any stage exists: a ~1s red
+build that ran nothing and cannot classify itself (#489).
+
+The root `Jenkinsfile` skips the trigger when it can see
+the branch is already gone, but it cannot cover a deletion
+that lands after the trigger fires, while the downstream
+job is still queued. Letting the branch outlive the merge
+by a few minutes is what actually closes the window.
+
+`delete_branch_on_merge` is deliberately **false** on
+`iossifovlab/gain` — leave it that way. Prune merged
+branches in a periodic sweep instead, reviewing the list
+before deleting:
+
+```bash
+git fetch --prune
+# Review first — this is the list that would be deleted.
+git branch -r --merged origin/master \
+    | sed 's|origin/||' \
+    | grep -vE '^\s*(master|HEAD)\b'
+# Then delete them.
+git branch -r --merged origin/master \
+    | sed 's|origin/||' \
+    | grep -vE '^\s*(master|HEAD)\b' \
+    | xargs -r -n1 git push origin --delete
+```
+
 ### Documentation (`docs/`)
 
 The Sphinx user docs (rendered at
