@@ -1070,7 +1070,7 @@ A fragment is simply an interval carrying attributes; copy-number variants are t
 thing to store as fragments, which is where the older name came from.
 Annotation consists of reporting overlapping fragments and the selected associated fields (for example, event class and frequency).
 
-The example below shows a valid ``genomic_resource.yaml`` for a CNV collection resource (``my_CNVcollection.txt``),
+The example below shows a valid ``genomic_resource.yaml`` for a fragment score resource holding CNVs (``my_CNVcollection.txt``),
 which uses ``chrom``, ``pos_begin`` and ``pos_end`` as column names for chromosome, beginning
 position and end position, respectively. It also has a column called ``deletion_duplication``
 which describes the event type recorded.

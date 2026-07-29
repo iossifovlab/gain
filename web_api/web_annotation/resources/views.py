@@ -2,8 +2,8 @@ from collections.abc import Iterable
 from itertools import islice
 from typing import ClassVar
 
-from gain.genomic_resources.genomic_scores import equivalent_resource_types
 from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.resource_types import equivalent_resource_types
 from rest_framework import status
 from rest_framework.views import Request, Response
 
@@ -104,24 +104,18 @@ class SearchResources(ResourcesAPIView):
         except ValueError:
             return Response(status=status.HTTP_400_BAD_REQUEST)
 
-        # `search_resources` pushes a SINGLE type into the FTS query, which
-        # cannot express "either spelling".  When a type with more than one
-        # spelling is asked for, drop it from the query and filter here
-        # instead -- otherwise searching for `fragment_score` returns none
-        # of the resources that declare `cnv_collection`.
-        accepted_types = (
-            equivalent_resource_types(resource_type) if resource_type
-            else None)
-        pushed_down_type = (
-            resource_type if accepted_types is None or len(accepted_types) == 1
-            else None)
-
+        # `resource_type` is passed straight down: `search_resources`
+        # expands equivalent spellings itself, in SQL.  An earlier revision
+        # dropped the predicate here and post-filtered instead, which
+        # quietly changed the data source -- with no search term left, the
+        # query short-circuits to `get_all_resources()` and never opens the
+        # FTS index, so paging and index-skip warnings differed between
+        # fragment and non-fragment filters.
         resources = list(filter(
-            lambda r: r.get_type() in self.SUPPORTED_RESOURCE_TYPES
-            and (accepted_types is None or r.get_type() in accepted_types),
+            lambda r: r.get_type() in self.SUPPORTED_RESOURCE_TYPES,
             self._grr.search_resources(
                 search_term=search,
-                resource_type=pushed_down_type,
+                resource_type=resource_type,
             ),
         ))
 

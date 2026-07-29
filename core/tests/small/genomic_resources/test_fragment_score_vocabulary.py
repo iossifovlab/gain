@@ -21,6 +21,8 @@ from gain.annotation.annotation_config import (
     AnnotationConfigurationError,
 )
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
+from gain.genomic_resources import get_resource_implementation_builder
+from gain.genomic_resources.cli import _create_contents_db, cli_manage
 from gain.genomic_resources.genomic_scores import (
     FragmentScore,
     build_score_from_resource,
@@ -29,7 +31,15 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
     FragmentScoreImplementation,
     build_score_implementation_from_resource,
 )
-from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.repository import (
+    GenomicResourceProtocolRepo,
+    GenomicResourceRepo,
+)
+from gain.genomic_resources.testing import (
+    build_filesystem_test_protocol,
+    convert_to_tab_separated,
+    setup_directories,
+)
 from gain.genomic_resources.testing.builders import a_fragment_score, a_grr
 
 FRAGMENT_SCORE_TYPE = "fragment_score"
@@ -209,3 +219,68 @@ def test_every_annotator_name_wildcard_matches_either_resource_type(
     grr = request.getfixturevalue(grr_fixture)
     assert AnnotationConfigParser.query_resources(
         annotator_name, "*", grr) == ["fragments"]
+
+
+@pytest.fixture
+def indexed_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
+    """A searchable GRR holding one LEGACY-typed fragment score.
+
+    Indexed, because ``search_resources`` answers from the FTS index rather
+    than by scanning -- and the index is where the type predicate is
+    applied, in SQL, which no Python-level alias expansion can reach.
+    """
+    setup_directories(
+        tmp_path,
+        {
+            "fragments/legacy": {
+                "genomic_resource.yaml": textwrap.dedent("""
+                    type: cnv_collection
+                    table:
+                        filename: data.txt
+                    scores:
+                        - id: frequency
+                          type: float
+                          name: frequency
+                """),
+                "data.txt": convert_to_tab_separated("""
+                    chrom  pos_begin  pos_end  frequency
+                    1      10         20       0.02
+                """),
+            },
+        },
+    )
+    cli_manage(["repo-manifest", "-R", str(tmp_path)])
+    proto = build_filesystem_test_protocol(tmp_path, repair=False)
+    _create_contents_db(proto)
+    return GenomicResourceProtocolRepo(proto)
+
+
+@pytest.mark.parametrize("requested_type", ["fragment_score", "cnv_collection"])
+def test_search_resources_finds_a_fragment_score_under_either_spelling(
+    indexed_grr: GenomicResourceProtocolRepo,
+    requested_type: str,
+) -> None:
+    """The type predicate is applied in SQL, so it must expand there.
+
+    This is the search path behind ``grr_manage list -t`` and the web API's
+    resource search.  An exact ``type = ?`` returns nothing when the
+    requested spelling differs from the stored one -- and an empty result
+    is indistinguishable from "this repository has none", so the failure
+    is silent in exactly the way a wrong answer is worse than an error.
+    """
+    resources = list(
+        indexed_grr.search_resources(resource_type=requested_type))
+
+    assert [r.get_id() for r in resources] == ["fragments/legacy"]
+
+
+def test_new_implementation_entry_point_key_resolves() -> None:
+    """Resolution, not just declaration.
+
+    The pyproject test above pins the source; this pins that the installed
+    registry actually hands back the implementation, which is what a real
+    ``grr_manage`` run depends on.  Mirrors the legacy counterpart in
+    ``test_fragment_score_config_surface``.
+    """
+    builder = get_resource_implementation_builder(FRAGMENT_SCORE_TYPE)
+    assert builder is FragmentScoreImplementation

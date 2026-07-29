@@ -20,7 +20,6 @@ from gain.genomic_resources.genomic_position_table.table_inmemory import (
     InmemoryGenomicPositionTable,
 )
 from gain.genomic_resources.genomic_scores import (
-    FRAGMENT_SCORE_TYPES,
     GenomicScore,
     build_score_from_resource,
 )
@@ -47,6 +46,9 @@ from gain.genomic_resources.repository import (
 )
 from gain.genomic_resources.resource_implementation import (
     InfoImplementationMixin,
+)
+from gain.genomic_resources.resource_types import (
+    FRAGMENT_SCORE_TYPES,
 )
 from gain.genomic_resources.score_implementation import (
     ScoreImplementationBase,

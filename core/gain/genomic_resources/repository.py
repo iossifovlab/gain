@@ -64,6 +64,7 @@ import yaml
 
 from gain import logging
 from gain.genomic_resources.dvc import DvcContentDrift, DvcContentDriftError
+from gain.genomic_resources.resource_types import equivalent_resource_types
 
 logger = logging.getLogger(__name__)
 
@@ -1072,8 +1073,15 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
                 conditions.append("contents MATCH ?")
                 params.append(search_term)
             if resource_type is not None:
-                conditions.append("type = ?")
-                params.append(resource_type)
+                # Expanded, not compared: a fragment score has two accepted
+                # `type:` spellings, and asking for one must find the other.
+                # This has to happen HERE rather than in a caller -- the
+                # predicate is applied in SQL, so no Python-side filtering
+                # downstream can recover a row this query never returned.
+                accepted = equivalent_resource_types(resource_type)
+                placeholders = ", ".join("?" * len(accepted))
+                conditions.append(f"type IN ({placeholders})")
+                params.extend(accepted)
             if conditions:
                 query += " WHERE "
                 query += " AND ".join(conditions)

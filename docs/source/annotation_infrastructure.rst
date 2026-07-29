@@ -1650,7 +1650,7 @@ This produces ``annotation_6.txt`` with the lifted-over annotatable plus the hg1
     chr7,117587806,G,A,"VCFAllele(7,117227860,G,A)",0.554
 
 
-6. CNV collection annotation
+6. Fragment score annotation (CNVs)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 A `fragment_score_annotator` reports copy-number variant (CNV) events whose intervals overlap each 

@@ -18,11 +18,11 @@ from gain.genomic_resources.aggregators import (
     AggregatorDefinition,
     AggregatorSource,
 )
-from gain.genomic_resources.genomic_scores import FRAGMENT_SCORE_TYPES
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
 )
+from gain.genomic_resources.resource_types import FRAGMENT_SCORE_TYPES
 
 if TYPE_CHECKING:
     from gain.annotation.annotation_pipeline import AttributeSpec

@@ -90,8 +90,22 @@ def test_the_editor_documentation_link_targets_a_real_anchor(
     every other test.
     """
     template = _config_template(client, "fragment_score_annotator")
-    assert template["documentation_url"].endswith(
-        "#fragment-score-annotator")
+    url = template["documentation_url"]
+
+    # `endswith` alone is not enough, and the first version of this test
+    # proved it: the base URL used to carry its own trailing '#', so every
+    # link was `...html##fragment-score-annotator`.  That ends with the
+    # right text and resolves to nothing -- a browser reads the fragment as
+    # `#fragment-score-annotator` only if there is exactly one '#'.
+    assert url.count("#") == 1, url
+
+    # The anchor docutils generates for a heading lowercases it and turns
+    # every run of non-alphanumerics into a single '-', so the RST heading
+    # `fragment_score_annotator` is reachable as `#fragment-score-annotator`.
+    # Spelled out rather than computed with `docutils.nodes.make_id`: that
+    # would import a docs-only dependency into the web_api test suite, which
+    # does not otherwise have it.
+    assert url.endswith("#fragment-score-annotator"), url
 
 
 RESOURCES_URL = "/api/resources"
@@ -121,3 +135,56 @@ def test_picker_filtered_by_the_new_type_finds_legacy_typed_resources(
     assert response.status_code == 200, response.content
 
     assert legacy in response.json()
+
+
+RESOURCE_ANNOTATORS_URL = "/api/editor/resource_annotators"
+
+
+@pytest.mark.django_db
+def test_resource_first_flow_works_for_a_legacy_typed_resource(
+    client: APIClient,
+) -> None:
+    """Picking a deployed fragment score must offer its annotator.
+
+    The editor's resource-first flow asks "which annotators accept this
+    resource?" by matching the annotator template's ``resource_type``
+    against the resource's own.  The template now says ``fragment_score``
+    while every deployed resource says ``cnv_collection``, so an equality
+    match returns an empty ``configs`` -- while ``default`` still names an
+    annotator.  The UI then looks the default up in the empty list, so this
+    is a crash in the wizard rather than a shorter menu.
+    """
+    response = client.get(
+        RESOURCE_ANNOTATORS_URL,
+        {"resource_id": "cnv_collections/test_collection"})
+    assert response.status_code == 200, response.content
+
+    data = response.json()
+    assert data["default"] == "fragment_score_annotator"
+    # The invariant the UI relies on: whatever `default` names must be a
+    # key of `configs`.
+    assert data["default"] in data["configs"], data
+    assert data["configs"]["fragment_score_annotator"]["resource_id"] == \
+        "cnv_collections/test_collection"
+
+
+@pytest.mark.django_db
+def test_resource_search_by_the_new_type_finds_legacy_typed_resources(
+    client: APIClient,
+) -> None:
+    """The picker's *search* path needs the same expansion as its list path.
+
+    Separate endpoint, separate code path -- and this one pushes the type
+    predicate down into the FTS index, where no Python-side filtering can
+    recover a row the query never returned.
+    """
+    legacy = "cnv_collections/test_collection"
+
+    by_legacy = client.get(
+        f"{RESOURCES_URL}/search", {"type": "cnv_collection"})
+    assert legacy in str(by_legacy.json()), by_legacy.json()
+
+    response = client.get(
+        f"{RESOURCES_URL}/search", {"type": "fragment_score"})
+    assert response.status_code == 200, response.content
+    assert legacy in str(response.json()), response.json()

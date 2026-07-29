@@ -53,6 +53,9 @@ from gain.genomic_resources.repository_factory import (
 from gain.genomic_resources.resource_implementation import (
     get_base_resource_schema,
 )
+from gain.genomic_resources.resource_types import (
+    FRAGMENT_SCORE_TYPES,
+)
 from gain.genomic_resources.score_def import (
     SCORE_TYPE_PARSERS,
     GenomicScoreDef,
@@ -1685,39 +1688,6 @@ class Fragment:
     @property
     def size(self) -> int:
         return self.pos_end - self.pos_begin
-
-
-#: The resource ``type:`` values that name a fragment score.
-#:
-#: Two spellings, both permanent.  ``fragment_score`` is what a new
-#: resource should declare; ``cnv_collection`` is what every deployed GRR
-#: declares today and is therefore not deprecated -- see
-#: ``docs/adr/0003-fragment-score-vocabulary.md``.  Migrating the deployed
-#: data is gain#469 and is gated on client rollout, so the legacy spelling
-#: outlives this module's memory of why.
-#:
-#: A tuple rather than a set: it is used for membership, but also rendered
-#: into user-facing messages, and a set would order them arbitrarily.
-#: Preferred spelling first, so a message reads as a recommendation.
-FRAGMENT_SCORE_TYPES = ("fragment_score", "cnv_collection")
-
-
-def equivalent_resource_types(resource_type: str) -> tuple[str, ...]:
-    """Return every ``type:`` value denoting the same kind of resource.
-
-    Only a fragment score has more than one spelling; every other type
-    maps to itself, so a caller can filter by the result unconditionally
-    without special-casing.
-
-    Exists because filtering resources by an exact type string went wrong
-    the moment a second spelling appeared: asking for ``fragment_score``
-    matched none of the deployed resources, which all declare
-    ``cnv_collection``.  An empty result is indistinguishable from "this
-    repository has none of those", so the failure is silent.
-    """
-    if resource_type in FRAGMENT_SCORE_TYPES:
-        return FRAGMENT_SCORE_TYPES
-    return (resource_type,)
 
 
 class FragmentScore(GenomicScore):

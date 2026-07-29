@@ -51,6 +51,7 @@ from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceProtocolRepo,
 )
+from gain.genomic_resources.resource_types import FRAGMENT_SCORE_TYPES
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     convert_to_tab_separated,
@@ -625,8 +626,15 @@ class FragmentScoreBuilder(_TableScoreBuilder):
         Deliberately not on the base builder: the other score types have a
         single spelling each, and a knob that let a test declare
         ``type: position_score`` on an allele-score builder would express
-        a resource that cannot exist.
+        a resource that cannot exist.  Validated for the same reason --
+        the point of the knob is to choose between two real spellings, not
+        to render an arbitrary string, and a typo would otherwise realize a
+        resource that simply fails to open several layers away.
         """
+        if resource_type not in FRAGMENT_SCORE_TYPES:
+            raise ValueError(
+                f"{resource_type!r} does not name a fragment score; "
+                f"expected one of {list(FRAGMENT_SCORE_TYPES)}")
         return dataclasses.replace(self, resource_type=resource_type)
 
 

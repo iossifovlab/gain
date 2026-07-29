@@ -20,6 +20,7 @@ from gain.genomic_resources.aggregators import (
     AGGREGATOR_CLASS_DICT,
     NUMERIC_ONLY_AGGREGATORS,
 )
+from gain.genomic_resources.resource_types import equivalent_resource_types
 from rest_framework.views import Request, Response, status
 
 from web_annotation.annotation_base_view import (
@@ -65,7 +66,13 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
             "normalize_allele_annotator",
         ]
 
-    BASE_DOC_URL = "https://iossifovlab.com/gaindocs/annotation_infrastructure.html#"
+    # No trailing '#': every use below appends its own '#<anchor>'.  This
+    # carried one, so every documentation link was emitted as `...html##a`,
+    # whose fragment matches no element and silently lands at the top of
+    # the page.  Pre-existing for all nine annotators; fixed here because
+    # gain#471 requires the fragment score's Help link to actually resolve,
+    # and leaving the other eight broken would be arbitrary.
+    BASE_DOC_URL = "https://iossifovlab.com/gaindocs/annotation_infrastructure.html"
 
     def _get_annotator_config_template(
         self, annotator_type: str,
@@ -661,7 +668,16 @@ class ResourceAnnotators(EditorView):
                     field_type = field.get("field_type")
                     if field_type is not None and field_type == "resource":
                         resource_type = field.get("resource_type")
-                        if resource_type == resource.get_type():
+                        # Expanded, not compared: the fragment score
+                        # template names `fragment_score` while every
+                        # deployed resource declares `cnv_collection`, and
+                        # an equality match here empties `configs` while
+                        # `default` still names an annotator -- which the
+                        # UI then looks up in the empty list.
+                        if resource_type is not None and (
+                            resource.get_type()
+                            in equivalent_resource_types(resource_type)
+                        ):
                             matched = True
                             config[field_name] = resource_id
                             break
