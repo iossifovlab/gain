@@ -49,7 +49,14 @@ pipeline {
         // integration_tests/vep_full_annotator/annotation.yaml in lockstep
         // with this value.
         VEP_CACHE_DIR = "${env.HOME}/vep_cache"
-        IMAGE_TAG = "gain-vep-annotator-ci:${env.BUILD_NUMBER}"
+        // `gain-vep-integration-ci`, not `gain-vep-annotator-ci`: the
+        // latter is what the root Jenkinsfile's runProject() builds for
+        // the vep_annotator sub-project, and the root pipeline *triggers*
+        // this job — so the two run concurrently and both `docker rmi`
+        // the name in cleanup, on independent build counters (#478).
+        // Matches the naming its sibling integration jobs already use
+        // (gain-core-integration-ci, gain-spliceai-integration-ci).
+        IMAGE_TAG = "gain-vep-integration-ci:${env.BUILD_NUMBER}"
     }
 
     stages {

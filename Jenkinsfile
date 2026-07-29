@@ -22,7 +22,7 @@ def runProject(Map args) {
     String dockerRunExtra = args.dockerRunExtra ?: ''          // extra flags for `docker run` (network, -v, -e, ...)
     String distName       = name.replace('_', '-')
     String distPkg        = args.distPkg ?: "gain-${distName}" // PyPI-style name, e.g. "gain-demo-annotator"
-    String imageTag       = "gain-${distName}-ci:${env.BUILD_NUMBER}"
+    String imageTag       = "gain-${distName}-ci:${env.CI_TAG}"
 
     sh label: "Build ${name} image", script: """
         docker build -f ${name}/Dockerfile -t ${imageTag} .
@@ -116,11 +116,70 @@ def publishReports(String name) {
     }
 }
 
+// Branch-derived component of this build's Docker / Compose namespace.
+//
+// BUILD_NUMBER is unique within a *job*, not across the Docker daemon
+// that every job on an agent shares. This is a multibranch pipeline, so
+// every branch job and every PR job (PR-<n>-head, PR-<n>-merge) carries
+// its own counter starting at 1 — scoping by build number alone means
+// two branches building concurrently share every image tag and compose
+// project name, and tear each other's down (#478).
+//
+// The token has to satisfy the intersection of two rule sets:
+//   - Docker: repository names are lowercase; tags allow [A-Za-z0-9_.-],
+//     must not lead with '.' or '-', and cap at 128 characters.
+//   - Compose: project names must match [a-z0-9][a-z0-9_-]* — note this
+//     EXCLUDES '.', which a Docker tag would happily accept, and
+//     requires an alphanumeric first character.
+// Folding to [a-z0-9_-] with an alphanumeric lead satisfies both, so a
+// single token can name images and compose projects alike. Truncation
+// keeps the longest realistic branch name well inside the tag limit.
+@NonCPS
+String ciScope(String branch) {
+    String raw = branch ?: 'nobranch'
+    String scope = raw.toLowerCase()
+    scope = scope.replaceAll('[^a-z0-9_-]+', '-')  // '/' and '.' both fold
+    scope = scope.replaceAll('^[_-]+', '')         // compose: alphanumeric lead
+    if (scope.length() > 32) {
+        scope = scope.substring(0, 32)
+    }
+    scope = scope.replaceAll('[_-]+$', '')         // no trailing separator
+    // Folding and truncation are both lossy: `fix/460-x` and `fix-460-x`
+    // collapse to one string, and two branches sharing a 32-character
+    // prefix truncate to one — and our branch names run long enough for
+    // that to be reachable (`fix/461-top-level-repo-id-synthesis` is 35).
+    // A silent collision here would reproduce the exact failure this
+    // scoping exists to prevent, so pin the token to the *raw* name with
+    // a hash suffix. String.hashCode() is specified by the Java language
+    // spec, so it is stable across JVMs and controller restarts.
+    //
+    // Rendered with an operator and an instance toString() rather than
+    // Integer.toHexString()/Math.abs()/String.format(): the Groovy
+    // sandbox rejects *static* calls until an administrator approves the
+    // signature, and @NonCPS does not exempt a method from script
+    // security. Masking off the sign bit keeps the token free of a
+    // leading '-', which Compose project names forbid.
+    String suffix = (raw.hashCode() & 0x7fffffff).toString()
+    return scope ? "${scope}-${suffix}" : "h${suffix}"
+}
+
 pipeline {
     // Run on any agent except `dory` — its docker daemon /
     // resource profile doesn't fit the root build's compose
     // stacks. Other agents are interchangeable.
     agent { label '!dory' }
+
+    environment {
+        // The one token every shared Docker image tag and compose
+        // project name in this file is scoped by. Unique per (branch,
+        // build): the branch component isolates concurrent branches,
+        // the build number still distinguishes reruns of the same
+        // branch. Anything here scoped by BUILD_NUMBER alone
+        // reintroduces #478 — including, critically, the rmi loop in
+        // post.cleanup, which is why this is pipeline-level env rather
+        // than a Groovy local (post blocks need it too).
+        CI_TAG = "${ciScope(env.BRANCH_NAME)}-${env.BUILD_NUMBER}"
+    }
 
     options {
         timeout(time: 1, unit: 'HOURS')
@@ -250,18 +309,18 @@ pipeline {
                     steps {
                         sh '''
                             docker build -f conda-builder/Dockerfile \
-                                -t gain-conda-builder-ci:${BUILD_NUMBER} conda-builder
+                                -t gain-conda-builder-ci:${CI_TAG} conda-builder
                         '''
                     }
                 }
-        
+
                 stage('Sub-projects') {
                     when { not { environment name: 'DOCS_ONLY', value: 'true' } }
                     parallel {
                         stage('core') {
                             environment {
-                                COMPOSE_PROJECT = "gain-ci-${env.BUILD_NUMBER}"
-                                COMPOSE_NETWORK = "gain-ci-${env.BUILD_NUMBER}_default"
+                                COMPOSE_PROJECT = "gain-ci-${env.CI_TAG}"
+                                COMPOSE_NETWORK = "gain-ci-${env.CI_TAG}_default"
                             }
                             steps {
                                 script {
@@ -392,14 +451,14 @@ pipeline {
                                     // reports.
                                     sh label: 'Build spliceai_annotator image', script: """
                                         docker build -f spliceai_annotator/Dockerfile \\
-                                            -t gain-spliceai-annotator-ci:${env.BUILD_NUMBER} .
+                                            -t gain-spliceai-annotator-ci:${env.CI_TAG} .
                                     """
                                     sh label: 'Run spliceai_annotator CI (onnx backend)', script: """
                                         mkdir -p reports/spliceai_annotator_onnx
                                         docker run --rm \\
                                             -v \$PWD/reports/spliceai_annotator_onnx:/reports \\
                                             -e SPLICEAI_BACKEND=onnx \\
-                                            gain-spliceai-annotator-ci:${env.BUILD_NUMBER} \\
+                                            gain-spliceai-annotator-ci:${env.CI_TAG} \\
                                             sh -c '
                                                 set +e
                                                 pytest -n 5 -m "not integration" \\
@@ -417,8 +476,8 @@ pipeline {
 
                         stage('web_api') {
                             environment {
-                                COMPOSE_PROJECT = "gain-ci-web-api-${env.BUILD_NUMBER}"
-                                COMPOSE_NETWORK = "gain-ci-web-api-${env.BUILD_NUMBER}_default"
+                                COMPOSE_PROJECT = "gain-ci-web-api-${env.CI_TAG}"
+                                COMPOSE_NETWORK = "gain-ci-web-api-${env.CI_TAG}_default"
                             }
                             steps {
                                 script {
@@ -427,24 +486,19 @@ pipeline {
                                         // activation emails so the user-flow tests can
                                         // assert against them via --mailhog.
                                         //
-                                        // Defensive teardown before up: COMPOSE_PROJECT
-                                        // includes only BUILD_NUMBER, so build #N of
-                                        // any branch shares the namespace with every
-                                        // other branch's build #N. If a prior #N run
-                                        // (other branch, manual test, abandoned build)
-                                        // left a mail container behind without its
-                                        // network, compose `up -d --wait` will reuse
-                                        // the container (reported as "Running" with
-                                        // no "Created"/"Starting") and skip network
-                                        // creation — and `runProject`'s
-                                        // `docker run --network <project>_default`
-                                        // then fails with "network not found".
-                                        // `|| true` because absent state is the
-                                        // happy path.
+                                        // No defensive teardown before `up`. That
+                                        // guarded against a *namesake* build having
+                                        // abandoned a mail container without its
+                                        // network, which `up -d --wait` would then
+                                        // reuse while skipping network creation —
+                                        // leaving runProject's `docker run --network
+                                        // <project>_default` to fail with "network
+                                        // not found". COMPOSE_PROJECT is now scoped
+                                        // per (branch, build), so this namespace has
+                                        // no namesake to inherit from; a pre-`up`
+                                        // `down -v` would only risk destroying a live
+                                        // stack it does not own (#478).
                                         sh '''
-                                            docker compose -f docker-compose.yaml \
-                                                -p "$COMPOSE_PROJECT" \
-                                                down -v --remove-orphans || true
                                             docker compose -f docker-compose.yaml \
                                                 -p "$COMPOSE_PROJECT" \
                                                 up -d --wait mail
@@ -480,7 +534,7 @@ pipeline {
                             steps {
                                 script {
                                     String imageTag =
-                                        "gain-web-ui-ci:${env.BUILD_NUMBER}"
+                                        "gain-web-ui-ci:${env.CI_TAG}"
                                     sh label: 'Build web_ui image', script: """
                                         docker build -f web_ui/Dockerfile \
                                             -t ${imageTag} .
@@ -583,12 +637,12 @@ pipeline {
                     steps {
                         sh '''
                             docker build -f core/Dockerfile \
-                                -t gain-core-ci:${BUILD_NUMBER} .
+                                -t gain-core-ci:${CI_TAG} .
                             mkdir -p dist/core
                             docker run --rm \
                                 -v $PWD/dist/core:/dist \
                                 -v $PWD/.git:/workspace/.git:ro \
-                                gain-core-ci:${BUILD_NUMBER} \
+                                gain-core-ci:${CI_TAG} \
                                 sh -c 'uv build --package gain-core --out-dir /dist && chmod -R a+rw /dist'
                         '''
                     }
@@ -613,7 +667,7 @@ pipeline {
                     steps {
                         sh '''
                             docker build -f conda-builder/Dockerfile \
-                                -t gain-conda-builder-ci:${BUILD_NUMBER} conda-builder
+                                -t gain-conda-builder-ci:${CI_TAG} conda-builder
                             # Derive the hatch-vcs PEP 440 version from the
                             # gain-core wheel built by 'Core wheel (docs-only)'
                             # so the conda version matches it (same recipe as
@@ -635,7 +689,7 @@ pipeline {
                                 -v $PWD:/workspace \
                                 -w /workspace \
                                 -e VCS_VERSION="$VCS_VERSION" \
-                                gain-conda-builder-ci:${BUILD_NUMBER} \
+                                gain-conda-builder-ci:${CI_TAG} \
                                 rattler-build build \
                                     --recipe core/conda-recipe/recipe.yaml \
                                     --output-dir conda/core
@@ -668,13 +722,13 @@ pipeline {
                     steps {
                         sh '''
                             docker build -f core/Dockerfile \
-                                -t gain-core-ci:${BUILD_NUMBER} .
+                                -t gain-core-ci:${CI_TAG} .
                             mkdir -p dist/docs
                             docker run --rm \
                                 -v $PWD:/workspace \
                                 -v $PWD/.git:/workspace/.git:ro \
                                 -w /workspace \
-                                gain-core-ci:${BUILD_NUMBER} \
+                                gain-core-ci:${CI_TAG} \
                                 sh -c '
                                     set -eu
                                     # The `docs` group is defined on the
@@ -718,7 +772,7 @@ pipeline {
                                     -v $SSH_KEY:/deploy.key:ro \
                                     -e SSH_USER \
                                     -w /workspace \
-                                    gain-core-ci:${BUILD_NUMBER} \
+                                    gain-core-ci:${CI_TAG} \
                                     sh -c '
                                         set -eu
                                         apt-get update
@@ -768,7 +822,7 @@ pipeline {
                                     -v $PWD:/workspace \
                                     -w /workspace \
                                     -e VCS_VERSION="$VCS_VERSION" \
-                                    gain-conda-builder-ci:${BUILD_NUMBER} \
+                                    gain-conda-builder-ci:${CI_TAG} \
                                     rattler-build build \
                                         --recipe $proj/conda-recipe/recipe.yaml \
                                         --output-dir conda/$proj
@@ -795,6 +849,16 @@ pipeline {
                     //   :${BUILD_NUMBER}  — Jenkins build identity
                     //   :${GIT_SHORT}     — immutable git-anchored handle
                     //   :latest           — moving pointer for prod
+                    //
+                    // Those three are a *published* contract — the
+                    // release pipeline selects the upstream master build
+                    // by :${BUILD_NUMBER} — so they are deliberately NOT
+                    // branch-scoped. They are applied on the push path
+                    // below, which only master reaches. Locally the
+                    // images are built and cross-referenced under
+                    // :${CI_TAG}, which is unique per (branch, build)
+                    // so concurrent branches cannot retag each other's
+                    // images out from under them (#478).
                     environment {
                         REGISTRY      = 'registry.seqpipe.org'
                         BACKEND_REPO  = "${env.REGISTRY}/gain-web-api"
@@ -823,29 +887,30 @@ pipeline {
                             docker pull node:22.14.0-alpine
                             docker pull httpd:2.4-alpine
 
-                            # Build backend; tag with build number first
-                            # so the frontend's --build-arg can reference
-                            # it. PYTHON_IMAGE is passed explicitly so the
-                            # Dockerfile is consistent across master (this
-                            # path, floating tag) and tag builds (Phase 10
+                            # Build backend under $CI_TAG so the
+                            # frontend's --build-arg below resolves to
+                            # *this* build's backend. Naming it
+                            # :$BUILD_NUMBER here instead would let a
+                            # concurrent branch retag that name between
+                            # the two builds and splice its backend into
+                            # our frontend image (#478). PYTHON_IMAGE is
+                            # passed explicitly so the Dockerfile is
+                            # consistent across master (this path,
+                            # floating tag) and tag builds (Phase 10
                             # release stage, digest-pinned).
                             docker build \
                                 -f web_api/Dockerfile.production \
                                 --build-arg PYTHON_IMAGE=python:3.12-slim \
-                                -t "$BACKEND_REPO:$BUILD_NUMBER" .
-                            docker tag "$BACKEND_REPO:$BUILD_NUMBER" \
-                                       "$BACKEND_REPO:$GIT_SHORT"
-        
+                                -t "$BACKEND_REPO:$CI_TAG" .
+
                             # Build frontend; multi-stages collectstatic
                             # from the backend image we just built.
                             docker build \
                                 -f web_ui/Dockerfile.production \
                                 --build-arg NODE_IMAGE=node:22.14.0-alpine \
                                 --build-arg HTTPD_IMAGE=httpd:2.4-alpine \
-                                --build-arg BACKEND_IMAGE="$BACKEND_REPO:$BUILD_NUMBER" \
-                                -t "$FRONTEND_REPO:$BUILD_NUMBER" .
-                            docker tag "$FRONTEND_REPO:$BUILD_NUMBER" \
-                                       "$FRONTEND_REPO:$GIT_SHORT"
+                                --build-arg BACKEND_IMAGE="$BACKEND_REPO:$CI_TAG" \
+                                -t "$FRONTEND_REPO:$CI_TAG" .
         
                             # Resolve and record the base-image digests
                             # this build used, so the Phase 10 release
@@ -928,8 +993,16 @@ pipeline {
                                         -u "$REGISTRY_USER" \
                                         --password-stdin "$REGISTRY"
                                     trap 'docker logout "$REGISTRY" || true; rm -rf "$DOCKER_CONFIG"' EXIT
-                                    # tb-w8d: tag :latest INSIDE the loop,
-                                    # immediately before pushing it. Build
+                                    # The published tags are derived from
+                                    # the build-local :$CI_TAG image here,
+                                    # on the master-only push path, so the
+                                    # published contract stays exactly
+                                    # :$BUILD_NUMBER / :$GIT_SHORT /
+                                    # :latest while the build itself stays
+                                    # branch-scoped (#478).
+                                    #
+                                    # tb-w8d: tag INSIDE the loop,
+                                    # immediately before each push. Build
                                     # #137 failed with "tag does not exist:
                                     # …gain-web-api:latest" ~30s after a
                                     # bulk docker tag at the top of this
@@ -938,11 +1011,15 @@ pipeline {
                                     # 8787 is already in use' in the log)
                                     # had untagged :latest in between.
                                     # Re-tagging right before push closes
-                                    # the race window.
+                                    # the race window — these three names
+                                    # are unscoped by design, so they stay
+                                    # exposed to it.
                                     for repo in "$BACKEND_REPO" "$FRONTEND_REPO"; do
+                                        docker tag "$repo:$CI_TAG" "$repo:$BUILD_NUMBER"
                                         docker push "$repo:$BUILD_NUMBER"
+                                        docker tag "$repo:$CI_TAG" "$repo:$GIT_SHORT"
                                         docker push "$repo:$GIT_SHORT"
-                                        docker tag "$repo:$BUILD_NUMBER" "$repo:latest"
+                                        docker tag "$repo:$CI_TAG" "$repo:latest"
                                         docker push "$repo:latest"
                                     done
                                 '''
@@ -1187,21 +1264,37 @@ pipeline {
         }
         cleanup {
             sh '''
+                # Remove exactly the names this build created — all of
+                # them $CI_TAG-scoped. An rmi of an unscoped
+                # <name>:$BUILD_NUMBER here would untag a concurrent
+                # branch's image and reintroduce #478 wholesale: this
+                # loop was the original bug's delivery mechanism.
                 for img in gain-core-ci gain-demo-annotator-ci gain-vep-annotator-ci gain-spliceai-annotator-ci gain-web-api-ci gain-web-ui-ci gain-conda-builder-ci; do
-                    docker rmi "$img:${BUILD_NUMBER}" 2>/dev/null || true
+                    docker rmi "$img:${CI_TAG}" 2>/dev/null || true
                 done
-                # Phase 9: registry-prefixed prod images. `:latest`
-                # only exists on master but the rmi is harmless on
-                # branches. Tag-build release tags (:${TAG_NAME},
-                # :stable) are owned by gain-release and cleaned up
-                # there, not here.
-                GIT_SHORT="${GIT_COMMIT:0:8}"
+                # Phase 9: registry-prefixed prod images. The build-local
+                # :$CI_TAG image is ours on every branch.
                 for repo in registry.seqpipe.org/gain-web-api \
                             registry.seqpipe.org/gain-web-ui; do
-                    for tag in "$BUILD_NUMBER" "$GIT_SHORT" latest; do
-                        docker rmi "$repo:$tag" 2>/dev/null || true
-                    done
+                    docker rmi "$repo:${CI_TAG}" 2>/dev/null || true
                 done
+                # The published :$BUILD_NUMBER / :$GIT_SHORT / :latest
+                # names are only ever created on the master push path, so
+                # only master removes them. Doing this unconditionally
+                # (as before) meant a branch build untagged whichever
+                # master build happened to be pushing right then — the
+                # documented tb-w8d ":latest tag does not exist" failure.
+                # Tag-build release tags (:${TAG_NAME}, :stable) are owned
+                # by gain-release and cleaned up there, not here.
+                if [ "${BRANCH_NAME:-}" = master ]; then
+                    GIT_SHORT="${GIT_COMMIT:0:8}"
+                    for repo in registry.seqpipe.org/gain-web-api \
+                                registry.seqpipe.org/gain-web-ui; do
+                        for tag in "$BUILD_NUMBER" "$GIT_SHORT" latest; do
+                            docker rmi "$repo:$tag" 2>/dev/null || true
+                        done
+                    done
+                fi
             '''
         }
     }
