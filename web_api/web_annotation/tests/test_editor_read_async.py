@@ -18,6 +18,12 @@ from web_annotation.editor.views import (
     PipelineStatus,
 )
 from web_annotation.pipeline_cache import LRUPipelineCache
+from web_annotation.tests.loop_stall import (
+    HEARTBEAT_INTERVAL_SECONDS,
+    SLOW_BUILD_SECONDS,
+    STALL_THRESHOLD_SECONDS,
+    max_gap,
+)
 
 STATUS_URL = "/api/editor/pipeline_status"
 ATTRIBUTES_URL = "/api/editor/pipeline_attributes"
@@ -176,13 +182,18 @@ async def test_async_attributes_missing_pipeline_maps_to_404() -> None:
 
 @pytest.fixture
 def slow_build(mocker: MockerFixture) -> float:
-    """Make pipeline builds take ~SLOW seconds on the loader thread.
+    """Make builds take ~``SLOW_BUILD_SECONDS`` on the loader thread.
 
-    No ``GPFWA_BUILD_DELAY_SECONDS`` hook on this branch (#164 not yet merged),
-    so the delay is injected by monkeypatching ``_load_pipeline_raw`` -- the
-    same point a slow real GRR build would block, on the loader thread.
+    The delay is injected by monkeypatching ``_load_pipeline_raw`` -- the same
+    point a slow real GRR build would block, on the loader thread. (#164 added
+    a ``GPFWA_BUILD_DELAY_SECONDS`` env hook at that same point; patching here
+    keeps the test independent of the process environment.)
+
+    Returns the injected latency for diagnostics only. The assertion bound is
+    the independent ``STALL_THRESHOLD_SECONDS`` -- see ``loop_stall`` for why
+    the two must not be the same number (#454).
     """
-    slow_seconds = 0.4
+    slow_seconds = SLOW_BUILD_SECONDS
     real_load = LRUPipelineCache._load_pipeline_raw
 
     def slow_load(raw, grr, pipeline_id="unknown"):  # type: ignore
@@ -217,7 +228,7 @@ async def test_concurrent_slow_status_builds_do_not_park_event_loop(
     async def heartbeat() -> None:
         while not stop.is_set():
             heartbeats.append(time.monotonic())
-            await asyncio.sleep(0.02)
+            await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
 
     async def fire_request() -> int:
         client = AsyncClient()
@@ -235,15 +246,14 @@ async def test_concurrent_slow_status_builds_do_not_park_event_loop(
     assert all(s == 200 for s in statuses), statuses
 
     # The event loop kept ticking throughout the slow builds: the heartbeat
-    # fired many times and never went silent for longer than the slow-build
-    # window. A loop parked on future.result() would show a single long gap.
+    # fired many times and never went silent for longer than the threshold.
+    # A loop parked on future.result() would show a single long gap of about
+    # one build's duration -- not N x it, because put_pipeline dedupes the
+    # concurrent readers onto a shared build future.
     assert len(heartbeats) >= 5
-    gaps = [
-        heartbeats[i + 1] - heartbeats[i]
-        for i in range(len(heartbeats) - 1)
-    ]
-    max_gap = max(gaps)
-    assert max_gap < slow_build, (
-        f"event loop stalled for {max_gap:.3f}s "
-        f"(>= slow build {slow_build:.3f}s) -- build ran ON the loop"
+    worst_gap = max_gap(heartbeats)
+    assert worst_gap < STALL_THRESHOLD_SECONDS, (
+        f"event loop stalled for {worst_gap:.3f}s "
+        f"(>= threshold {STALL_THRESHOLD_SECONDS:.3f}s, injected build "
+        f"latency {slow_build:.3f}s) -- build ran ON the loop"
     )
