@@ -187,19 +187,21 @@ documentation site.
 
 GAIn uses Python entry points for extensibility.
 
-**Defined in `core/setup.py`:**
+**Defined in `core/pyproject.toml`:**
 
 1. **`gain.genomic_resources.plugins`** — genomic
    context providers (DefaultRepository, CLI,
    CLIAnnotation)
 2. **`gain.genomic_resources.implementations`** —
    position/allele/NP scores, liftover chain, genome,
-   gene models, CNV collection, annotation pipeline,
-   gene score, gene set collection
+   gene models, fragment score (config type
+   `cnv_collection`), annotation pipeline, gene score,
+   gene set collection
 3. **`gain.annotation.annotators`** — all built-in
    annotator types (score, effect, gene set, liftover,
-   normalize allele, CNV collection, chrom mapping,
-   gene score, simple effect, debug)
+   normalize allele, fragment score (config name
+   `cnv_collection`), chrom mapping, gene score, simple
+   effect, debug)
 
 Annotator plugins in this repo register additional
 annotators via their own entry points.
@@ -218,8 +220,8 @@ annotators via their own entry points.
   - `genomic_position_table/` — tabular data backends
     (tabix, BigWig, VCF, in-memory)
   - `implementations/` — resource type implementations
-    (scores, genome, gene models, liftover, CNV,
-    annotation pipeline)
+    (scores, genome, gene models, liftover, fragment
+    score, annotation pipeline)
   - `statistics/` — resource statistics (min/max)
 - **`effect_annotation/`** — variant effect prediction
   (effect types, effect gene/transcript annotation)
@@ -278,7 +280,7 @@ res = (
 ```
 
 Factories: `a_position_score`, `a_np_score`,
-`an_allele_score`, `a_cnv_collection`, `a_bigwig_score`,
+`an_allele_score`, `a_fragment_score`, `a_bigwig_score`,
 `a_vcf_info_score`, `a_gene_score`, `a_reference_genome`,
 `a_grr`. Compose a
 multi-resource repo with

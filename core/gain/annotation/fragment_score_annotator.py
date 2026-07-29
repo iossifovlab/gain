@@ -15,18 +15,24 @@ from gain.annotation.annotation_pipeline import (
     AttributeSpec,
 )
 from gain.annotation.annotator_base import AnnotatorBase
-from gain.genomic_resources.genomic_scores import CNV, CnvCollection
+from gain.genomic_resources.genomic_scores import Fragment, FragmentScore
 
 
-def build_cnv_collection_annotator(pipeline: AnnotationPipeline,
+def build_fragment_score_annotator(pipeline: AnnotationPipeline,
                                    info: AnnotatorInfo) -> Annotator:
-    return CnvCollectionAnnotator(pipeline, info)
+    return FragmentScoreAnnotator(pipeline, info)
 
 
-class CnvCollectionAnnotator(AnnotatorBase):
-    """CNV collection annotator class."""
+class FragmentScoreAnnotator(AnnotatorBase):
+    """Annotator over a fragment score.
 
-    CNV_FILTER_GRAMMAR = textwrap.dedent("""
+    The annotator name accepted in pipeline configuration is still
+    ``cnv_collection`` / ``cnv_collection_annotator``, and the filter
+    parameter is still ``cnv_filter``; only the Python names moved
+    (gain#470).  gain#471 widens the accepted configuration vocabulary.
+    """
+
+    FRAGMENT_FILTER_GRAMMAR = textwrap.dedent("""
         ?start: filter | and_ | or
 
         and_: filter "and" filter
@@ -59,32 +65,34 @@ class CnvCollectionAnnotator(AnnotatorBase):
     """)
 
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
-        cnv_collection_resrouce_id = info.parameters.get("resource_id")
-        if cnv_collection_resrouce_id is None:
+        resource_id = info.parameters.get("resource_id")
+        if resource_id is None:
             raise ValueError(f"Can't create {info.type}: "
                              "no resrouce_id parameter.")
-        resource = pipeline.repository.get_resource(cnv_collection_resrouce_id)
+        resource = pipeline.repository.get_resource(resource_id)
         # Deliberately constructed directly rather than through
-        # `build_cnv_collection_from_resource`: that factory returns a
+        # `build_fragment_score_from_resource`: that factory returns a
         # process-wide shared instance, and `self.close()` below closes the
-        # collection -- which would tear it down for every other holder.
-        # `CnvCollection.__init__` validates the resource type, so nothing is
+        # score -- which would tear it down for every other holder.
+        # `FragmentScore.__init__` validates the resource type, so nothing is
         # lost by bypassing the factory here.
-        self.cnv_collection = CnvCollection(resource)
+        self.fragment_score = FragmentScore(resource)
         info.resources.append(resource)
 
-        self.filter_parser = Lark(self.CNV_FILTER_GRAMMAR)
+        self.filter_parser = Lark(self.FRAGMENT_FILTER_GRAMMAR)
 
-        self.cnv_filter = None
-        cnv_filter_str = info.parameters.get("cnv_filter")
-        if cnv_filter_str is not None:
-            assert isinstance(cnv_filter_str, str)
+        # The configuration key stays `cnv_filter` (gain#470 renamed the
+        # Python surface only); gain#471 adds `fragment_filter` beside it.
+        self.fragment_filter = None
+        filter_str = info.parameters.get("cnv_filter")
+        if filter_str is not None:
+            assert isinstance(filter_str, str)
 
-            cnv_filter_str = cnv_filter_str.replace(
+            filter_str = filter_str.replace(
                 "\n", " ").replace("\t", " ").strip()
             try:
-                self.cnv_filter = self._build_cnv_filter_func(
-                    self.filter_parser.parse(cnv_filter_str))
+                self.fragment_filter = self._build_fragment_filter_func(
+                    self.filter_parser.parse(filter_str))
             except Exception as e:
                 raise AnnotationConfigurationError(
                     f"Error parsing cnv_filter: {e}") from e
@@ -93,7 +101,7 @@ class CnvCollectionAnnotator(AnnotatorBase):
 
         for attr in self._attributes:
             spec = self.attribute_specs[attr.source]
-            score_def = self.cnv_collection\
+            score_def = self.fragment_score\
                 .get_score_definition(attr.source)
             if score_def is not None:
                 attr._documentation = f"""
@@ -109,12 +117,16 @@ class CnvCollectionAnnotator(AnnotatorBase):
             "count": AttributeSpec(
                 source="count",
                 value_type="int",
+                # Deliberately NOT renamed with the Python surface: this
+                # string is annotation output a user reads, so editing it
+                # is a behaviour change (gain#470 changes none).  It moves
+                # when the config vocabulary does, in gain#471.
                 description="The number of CNVs overlapping with the "
                 "annotatable.",
             ),
         }
         for score_id, score_def in \
-                self.cnv_collection.score_definitions.items():
+                self.fragment_score.score_definitions.items():
             attributes[score_id] = AttributeSpec(
                 source=score_id,
                 value_type=score_def.value_type,
@@ -126,25 +138,25 @@ class CnvCollectionAnnotator(AnnotatorBase):
     def get_attribute_defaults(
         self, spec: AttributeSpec,
     ) -> dict[str, Any]:
-        score_def = self.cnv_collection.get_score_definition(spec.source)
+        score_def = self.fragment_score.get_score_definition(spec.source)
         if score_def is not None:
             return {"aggregator": score_def.aggregator}
         return {}
 
     @classmethod
-    def _build_cnv_filter_func(
+    def _build_fragment_filter_func(
         cls, tree: Tree,
-    ) -> Callable[[CNV], bool]:
+    ) -> Callable[[Fragment], bool]:
         if tree.data == "and_":
             assert isinstance(tree.children[0], Tree)
             assert isinstance(tree.children[1], Tree)
-            left_func = cls._build_cnv_filter_func(tree.children[0])
-            right_func = cls._build_cnv_filter_func(tree.children[1])
-            return lambda cnv: left_func(cnv) and right_func(cnv)
+            left_func = cls._build_fragment_filter_func(tree.children[0])
+            right_func = cls._build_fragment_filter_func(tree.children[1])
+            return lambda frag: left_func(frag) and right_func(frag)
         if tree.data == "or":
-            left_func = cls._build_cnv_filter_func(tree.children[0])
-            right_func = cls._build_cnv_filter_func(tree.children[1])
-            return lambda cnv: left_func(cnv) or right_func(cnv)
+            left_func = cls._build_fragment_filter_func(tree.children[0])
+            right_func = cls._build_fragment_filter_func(tree.children[1])
+            return lambda frag: left_func(frag) or right_func(frag)
 
         left = tree.children[0]
         assert isinstance(left, Tree)
@@ -157,8 +169,8 @@ class CnvCollectionAnnotator(AnnotatorBase):
             assert isinstance(left.children[0].children[0], Token)
             left_value = left.children[0].children[0].value
 
-            def left_accessor(_cnv: CNV) -> Any:
-                return _cnv.attributes.get(left_value)
+            def left_accessor(_fragment: Fragment) -> Any:
+                return _fragment.attributes.get(left_value)
         else:
             assert isinstance(left.children[0], Tree)
             assert isinstance(left.children[0].data, Token)
@@ -169,7 +181,8 @@ class CnvCollectionAnnotator(AnnotatorBase):
                 left_value = float(left_value)
 
             def left_accessor(
-                    _cnv: CNV) -> Any:  # pylint: disable=unused-argument
+                    _fragment: Fragment,
+            ) -> Any:  # pylint: disable=unused-argument
                 return left_value
         assert isinstance(tree.children[1], Tree)
         assert isinstance(tree.children[1].children[0], Tree)
@@ -186,8 +199,8 @@ class CnvCollectionAnnotator(AnnotatorBase):
             assert isinstance(right.children[0].children[0], Token)
             right_value = right.children[0].children[0].value
 
-            def right_accessor(_cnv: CNV) -> Any:
-                return _cnv.attributes.get(right_value)
+            def right_accessor(_fragment: Fragment) -> Any:
+                return _fragment.attributes.get(right_value)
         else:
             assert isinstance(right.children[0], Tree)
             assert isinstance(right.children[0].data, Token)
@@ -198,38 +211,42 @@ class CnvCollectionAnnotator(AnnotatorBase):
                 right_value = float(right_value)
 
             def right_accessor(
-                    _cnv: CNV) -> Any:  # pylint: disable=unused-argument
+                    _fragment: Fragment,
+            ) -> Any:  # pylint: disable=unused-argument
                 return right_value
 
         if operator == "equals":
-            return lambda cnv: left_accessor(cnv) == right_accessor(cnv)
+            return lambda frag: left_accessor(frag) == right_accessor(frag)
         if operator == "greater_than":
-            return lambda cnv: left_accessor(cnv) > right_accessor(cnv)
+            return lambda frag: left_accessor(frag) > right_accessor(frag)
         if operator == "less_than":
-            return lambda cnv: left_accessor(cnv) < right_accessor(cnv)
+            return lambda frag: left_accessor(frag) < right_accessor(frag)
         if operator == "in":
-            return lambda cnv: left_accessor(cnv) in right_accessor(cnv)
+            return lambda frag: left_accessor(frag) in right_accessor(frag)
 
         raise ValueError(f"Unsupported operator {operator.data}")
 
     def open(self) -> Annotator:
-        self.cnv_collection.open()
+        self.fragment_score.open()
         super().open()
         return self
 
     def close(self) -> None:
-        self.cnv_collection.close()
+        self.fragment_score.close()
         super().close()
 
     def _do_annotate(
         self, annotatable: Annotatable,
         context: dict[str, Any],  # noqa: ARG002
     ) -> dict[str, Any]:
-        cnvs = self.cnv_collection.fetch_cnvs(
+        fragments = self.fragment_score.fetch_fragments(
             annotatable.chrom, annotatable.pos, annotatable.pos_end)
 
-        if self.cnv_filter:
-            cnvs = [cnv for cnv in cnvs if self.cnv_filter(cnv)]
+        if self.fragment_filter:
+            fragments = [
+                fragment for fragment in fragments
+                if self.fragment_filter(fragment)
+            ]
 
         raw: dict[str, list] = {
             attr.source: []
@@ -237,15 +254,15 @@ class CnvCollectionAnnotator(AnnotatorBase):
             if attr.aggregator is not None
         }
 
-        for cnv in cnvs:
+        for fragment in fragments:
             for source in raw:
-                raw[source].append(cnv.attributes[source])
+                raw[source].append(fragment.attributes[source])
 
         result: dict[str, Any] = {}
         for attr in self._attributes:
             if attr.source in raw:
                 result[attr.source] = raw[attr.source]
             else:
-                result[attr.source] = len(cnvs)
+                result[attr.source] = len(fragments)
 
         return result

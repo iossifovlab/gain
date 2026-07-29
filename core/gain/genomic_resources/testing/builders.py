@@ -289,9 +289,10 @@ class _TableScoreBuilder(MetaMixin):
         Emitted under ``aggregator:`` -- the resource-level default a pipeline
         uses when an attribute does not name one of its own.  A score has one
         aggregator; which reduction it names is fixed by the resource type
-        (over a region of positions, over the alleles at one, over overlapping
-        CNVs), so there is nothing to choose between here.  With ``score_id``
-        omitted it attaches to the most-recently-declared score.  The value is
+        (over a region of positions, over the alleles at one, over
+        overlapping fragments), so there is nothing to choose between here.
+        With ``score_id`` omitted it attaches to the most-recently-declared
+        score.  The value is
         rendered verbatim, so an invalid one can be authored on purpose to
         watch the resource schema reject it.
         """
@@ -586,14 +587,14 @@ class AlleleScoreBuilder(_TableScoreBuilder):
 
 
 @dataclasses.dataclass(frozen=True)
-class CnvCollectionBuilder(_TableScoreBuilder):
+class FragmentScoreBuilder(_TableScoreBuilder):
     """Immutable builder for a single ``cnv_collection`` resource.
 
     Shares the tabular-score machinery with the position/np/allele
-    builders, differing only in the type value.  A CNV is a region rather
-    than a point, so the default data carries the optional ``pos_end``
-    column.  Reads back through ``CnvCollection``, which weights every
-    record 1 however long it is.
+    builders, differing only in the type value.  A fragment is a region
+    rather than a point, so the default data carries the optional
+    ``pos_end`` column.  Reads back through ``FragmentScore``, which
+    weights every record 1 however long it is.
     """
 
     SCORE_TYPE: ClassVar[str] = "cnv_collection"
@@ -1431,9 +1432,9 @@ def an_allele_score() -> AlleleScoreBuilder:
     return AlleleScoreBuilder()
 
 
-def a_cnv_collection() -> CnvCollectionBuilder:
-    """Return an immutable cnv-collection builder."""
-    return CnvCollectionBuilder()
+def a_fragment_score() -> FragmentScoreBuilder:
+    """Return an immutable fragment-score builder."""
+    return FragmentScoreBuilder()
 
 
 def a_bigwig_score() -> BigWigScoreBuilder:

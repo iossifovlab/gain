@@ -4,8 +4,8 @@
 The point of the typed factories is a return type mypy can narrow, and mypy
 does not run over ``core/tests``.  What these tests can pin is the runtime
 half of that contract: the concrete class actually returned, the rejection of
-a mismatched resource type, the CNV collection's shared-instance caching, and
-the ``_from_resource_id`` repository resolution.
+a mismatched resource type, the fragment score's shared-instance caching,
+and the ``_from_resource_id`` repository resolution.
 """
 import pathlib
 from collections.abc import Callable, Generator
@@ -13,15 +13,15 @@ from collections.abc import Callable, Generator
 import pytest
 import pytest_mock
 from gain.genomic_resources.genomic_scores import (
-    _INMEMORY_CNV_CACHE,
+    _INMEMORY_FRAGMENT_SCORE_CACHE,
     AlleleScore,
-    CnvCollection,
+    FragmentScore,
     GenomicScore,
     PositionScore,
     build_allele_score_from_resource,
     build_allele_score_from_resource_id,
-    build_cnv_collection_from_resource,
-    build_cnv_collection_from_resource_id,
+    build_fragment_score_from_resource,
+    build_fragment_score_from_resource_id,
     build_position_score_from_resource,
     build_position_score_from_resource_id,
     build_score_from_resource,
@@ -31,7 +31,7 @@ from gain.genomic_resources.repository import (
     GenomicResourceRepo,
 )
 from gain.genomic_resources.testing.builders import (
-    a_cnv_collection,
+    a_fragment_score,
     a_gene_score,
     a_grr,
     a_np_score,
@@ -54,16 +54,16 @@ FromResourceId = Callable[..., GenomicScore]
 
 
 @pytest.fixture(autouse=True)
-def _clean_cnv_cache() -> Generator[None, None, None]:
-    """Isolate every test from the process-wide CNV collection cache.
+def _clean_fragment_score_cache() -> Generator[None, None, None]:
+    """Isolate every test from the process-wide fragment-score cache.
 
     The cache is a module global that outlives the test that filled it;
     without this a stale entry from one test can satisfy another test's
     lookup, and a test asserting on caching can pass for the wrong reason.
     """
-    _INMEMORY_CNV_CACHE.clear()
+    _INMEMORY_FRAGMENT_SCORE_CACHE.clear()
     yield
-    _INMEMORY_CNV_CACHE.clear()
+    _INMEMORY_FRAGMENT_SCORE_CACHE.clear()
 
 
 @pytest.fixture
@@ -74,7 +74,7 @@ def grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
         .with_resource("scores/pos", a_position_score())
         .with_resource("scores/allele", an_allele_score())
         .with_resource("scores/np", a_np_score())
-        .with_resource("scores/cnv", a_cnv_collection())
+        .with_resource("scores/fragment", a_fragment_score())
         .build_repo(tmp_path)
     )
 
@@ -83,7 +83,7 @@ def grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
     (build_position_score_from_resource, "scores/pos", PositionScore),
     (build_allele_score_from_resource, "scores/allele", AlleleScore),
     (build_allele_score_from_resource, "scores/np", AlleleScore),
-    (build_cnv_collection_from_resource, "scores/cnv", CnvCollection),
+    (build_fragment_score_from_resource, "scores/fragment", FragmentScore),
 ])
 def test_from_resource_returns_the_concrete_type(
     grr: GenomicResourceRepo,
@@ -99,7 +99,7 @@ def test_from_resource_returns_the_concrete_type(
     (build_position_score_from_resource_id, "scores/pos", PositionScore),
     (build_allele_score_from_resource_id, "scores/allele", AlleleScore),
     (build_allele_score_from_resource_id, "scores/np", AlleleScore),
-    (build_cnv_collection_from_resource_id, "scores/cnv", CnvCollection),
+    (build_fragment_score_from_resource_id, "scores/fragment", FragmentScore),
 ])
 def test_from_resource_id_returns_the_concrete_type(
     grr: GenomicResourceRepo,
@@ -113,11 +113,11 @@ def test_from_resource_id_returns_the_concrete_type(
 
 @pytest.mark.parametrize("factory,resource_id", [
     (build_position_score_from_resource, "scores/allele"),
-    (build_position_score_from_resource, "scores/cnv"),
+    (build_position_score_from_resource, "scores/fragment"),
     (build_allele_score_from_resource, "scores/pos"),
-    (build_allele_score_from_resource, "scores/cnv"),
-    (build_cnv_collection_from_resource, "scores/pos"),
-    (build_cnv_collection_from_resource, "scores/allele"),
+    (build_allele_score_from_resource, "scores/fragment"),
+    (build_fragment_score_from_resource, "scores/pos"),
+    (build_fragment_score_from_resource, "scores/allele"),
 ])
 def test_from_resource_rejects_a_mismatched_resource_type(
     grr: GenomicResourceRepo,
@@ -129,9 +129,9 @@ def test_from_resource_rejects_a_mismatched_resource_type(
 
 
 @pytest.mark.parametrize("factory,resource_id", [
-    (build_position_score_from_resource_id, "scores/cnv"),
+    (build_position_score_from_resource_id, "scores/fragment"),
     (build_allele_score_from_resource_id, "scores/pos"),
-    (build_cnv_collection_from_resource_id, "scores/allele"),
+    (build_fragment_score_from_resource_id, "scores/allele"),
 ])
 def test_from_resource_id_rejects_a_mismatched_resource_type(
     grr: GenomicResourceRepo,
@@ -142,7 +142,7 @@ def test_from_resource_id_rejects_a_mismatched_resource_type(
         factory(resource_id, grr)
 
 
-def test_cnv_collection_is_cached_and_shared(
+def test_fragment_score_is_cached_and_shared(
     grr: GenomicResourceRepo,
 ) -> None:
     """Repeated builds hand back the SAME object, not an equal one.
@@ -150,52 +150,55 @@ def test_cnv_collection_is_cached_and_shared(
     Pins the deliberate asymmetry: cnv_collection is cached process-wide,
     position/allele scores are not.
     """
-    resource = grr.get_resource("scores/cnv")
+    resource = grr.get_resource("scores/fragment")
 
-    first = build_cnv_collection_from_resource(resource)
-    second = build_cnv_collection_from_resource(resource)
+    first = build_fragment_score_from_resource(resource)
+    second = build_fragment_score_from_resource(resource)
     assert first is second
 
     # ... and the generic dispatcher hands back that same cached instance.
     assert build_score_from_resource(resource) is first
-    assert build_cnv_collection_from_resource_id("scores/cnv", grr) is first
+    assert build_fragment_score_from_resource_id(
+        "scores/fragment", grr) is first
 
 
-def test_cnv_collection_cache_does_not_collide_across_versions(
+def test_fragment_score_cache_does_not_collide_across_versions(
     tmp_path: pathlib.Path,
 ) -> None:
-    """Two versions of one resource id are two distinct collections.
+    """Two versions of one resource id are two distinct scores.
 
     ``get_id()`` is version-less, so keying the cache on it alone makes
-    ``cnvs(2.0)`` collide with ``cnvs(1.0)`` and silently hand back the
-    older version's data.
+    ``fragments(2.0)`` collide with ``fragments(1.0)`` and silently hand
+    back the older version's data.
     """
     repo = (
         a_grr()
-        .with_resource("cnvs(1.0)", a_cnv_collection().with_data("""
+        .with_resource("fragments(1.0)", a_fragment_score().with_data("""
             chrom  pos_begin  pos_end  score
             1      100        200      0.1
         """))
-        .with_resource("cnvs(2.0)", a_cnv_collection().with_data("""
+        .with_resource("fragments(2.0)", a_fragment_score().with_data("""
             chrom  pos_begin  pos_end  score
             1      300        400      0.2
         """))
         .build_repo(tmp_path)
     )
 
-    old = build_cnv_collection_from_resource(repo.get_resource("cnvs(1.0)"))
-    new = build_cnv_collection_from_resource(repo.get_resource("cnvs(2.0)"))
+    old = build_fragment_score_from_resource(
+        repo.get_resource("fragments(1.0)"))
+    new = build_fragment_score_from_resource(
+        repo.get_resource("fragments(2.0)"))
 
     assert old is not new
-    assert old.resource.get_full_id() == "cnvs(1.0)"
-    assert new.resource.get_full_id() == "cnvs(2.0)"
+    assert old.resource.get_full_id() == "fragments(1.0)"
+    assert new.resource.get_full_id() == "fragments(2.0)"
 
     with old.open() as old_open, new.open() as new_open:
         assert [(c.chrom, c.pos_begin, c.pos_end)
-                for c in old_open.fetch_cnvs("1", 1, 1000)] == \
+                for c in old_open.fetch_fragments("1", 1, 1000)] == \
             [("1", 100, 200)]
         assert [(c.chrom, c.pos_begin, c.pos_end)
-                for c in new_open.fetch_cnvs("1", 1, 1000)] == \
+                for c in new_open.fetch_fragments("1", 1, 1000)] == \
             [("1", 300, 400)]
 
 
@@ -214,7 +217,7 @@ def test_position_and_allele_scores_are_not_cached(
 @pytest.mark.parametrize("factory,resource_id", [
     (build_position_score_from_resource_id, "scores/pos"),
     (build_allele_score_from_resource_id, "scores/allele"),
-    (build_cnv_collection_from_resource_id, "scores/cnv"),
+    (build_fragment_score_from_resource_id, "scores/fragment"),
 ])
 def test_from_resource_id_falls_back_to_the_default_repository(
     grr: GenomicResourceRepo,

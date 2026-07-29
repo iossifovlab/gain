@@ -7,7 +7,7 @@ aggregating a region costs one aggregator call per *record*, not one per
 base pair, and the weight comes from the score layer's already-clipped
 bounds rather than being re-derived here.
 
-An allele line and a CNV each count exactly once, however long they are.
+An allele line and a fragment each count exactly once, however long they are.
 That is pinned here too, because it is what the weighted seam must *not*
 change.
 """
@@ -22,7 +22,7 @@ from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import (
-    a_cnv_collection,
+    a_fragment_score,
     a_grr,
     a_position_score,
     an_allele_score,
@@ -57,8 +57,8 @@ def fixture_repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
             """),
         )
         .with_resource(
-            "cnvs",
-            a_cnv_collection()
+            "fragments",
+            a_fragment_score()
             .with_score("frequency", "float",
                         desc="some population frequency")
             .with_data("""
@@ -145,13 +145,13 @@ def test_an_allele_line_counts_once_however_wide_the_region(
     assert result["freq"] == 0.3
 
 
-def test_a_cnv_counts_once_however_long_it_is(
+def test_a_fragment_counts_once_however_long_it_is(
     fixture_repo: GenomicResourceRepo,
 ) -> None:
     calls: list[tuple[Any, int]] = []
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - cnv_collection:
-            resource_id: cnvs
+            resource_id: fragments
             attributes:
             - source: frequency
               name: frequency

@@ -137,7 +137,7 @@ def _parse_column_address(
     validator explicitly permits ``0 <= column_index`` -- so any resource
     whose score sits in the first column could not be opened at all.
 
-    This lives at module level, not on a class, because ``CnvCollection``
+    This lives at module level, not on a class, because ``FragmentScore``
     overrides ``_parse_scoredef_config`` with its own near-copy; parsed in one
     place, the two cannot drift, and the bug above cannot be fixed in one of
     them only.  (Pinned by test_column_index_zero_is_a_real_address.)
@@ -166,16 +166,17 @@ class GenomicScoreDef(ScoreDef):
 
     # pylint: disable=too-many-instance-attributes
     # How a caller that reads SEVERAL values for one annotatable reduces them
-    # to one -- a region of positions, the alleles at a position, the CNVs
-    # overlapping a span.  A valid aggregator type, or ``None`` until
+    # to one -- a region of positions, the alleles at a position, the
+    # fragments overlapping a span.  A valid aggregator type, or ``None`` until
     # ``GenomicScore._build_scoredefs`` fills the resource type's default.
     #
     # There were two of these, ``pos_aggregator`` and ``allele_aggregator``,
     # and every def carried both because the definition cannot know which
     # kind of score it belongs to.  Only ever ONE was read: a position score
     # is only read by the position annotator, an allele or np score only by
-    # the allele annotator, a cnv_collection only by the CNV annotator.  So
-    # the second field was dead on every def, and the config surface offered
+    # the allele annotator, a cnv_collection only by the fragment score
+    # annotator.  So the second field was dead on every def, and the config
+    # surface offered
     # a key that did nothing (``position_aggregator`` on an allele score was
     # accepted by the schema and consulted by nothing).
     aggregator: str | None

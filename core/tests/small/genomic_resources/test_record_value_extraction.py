@@ -275,11 +275,12 @@ def test_the_score_is_routed_before_it_reports_itself_open(tmp_path) -> None:
     # to be the ``__init__`` default, ``_extract_value`` has no default at
     # all, so that reader gets an AttributeError.
     #
-    # Scores are shared (the in-memory CNV cache hands the same instance to
-    # every caller in the process; gain-web-api serves from a thread pool), so
-    # this window is reachable.  Rather than race a thread against it, stand in
-    # the window itself: intercept the publishing write and look at what a
-    # concurrent reader would see at exactly that moment.
+    # Scores are shared (the in-memory fragment-score cache hands the
+    # same instance to every caller in the process; gain-web-api serves
+    # from a thread pool), so this window is reachable.  Rather than
+    # race a thread against it, stand in the window itself: intercept
+    # the publishing write and look at what a concurrent reader would
+    # see at exactly that moment.
     seen_at_publication: list[Any] = []
 
     class _ObservingPositionScore(PositionScore):

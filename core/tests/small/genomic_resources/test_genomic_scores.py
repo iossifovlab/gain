@@ -26,7 +26,7 @@ from gain.genomic_resources.genomic_position_table.table_vcf import (
 )
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
-    CnvCollection,
+    FragmentScore,
     GenomicScore,
     PositionScore,
     build_allele_score_from_resource,
@@ -1693,10 +1693,10 @@ def test_genomic_score_histogram_without_type_fails_validation() -> None:
         build_score_from_resource(res)
 
 
-def test_cnv_collection_inherits_histogram_type_constraint() -> None:
-    # CnvCollection deep-copies GenomicScore's schema, so the histogram type
+def test_fragment_score_inherits_histogram_type_constraint() -> None:
+    # FragmentScore deep-copies GenomicScore's schema, so the histogram type
     # constraint must apply without a separate schema edit.
-    hist_schema = CnvCollection.get_schema()[
+    hist_schema = FragmentScore.get_schema()[
         "scores"]["schema"]["schema"]["histogram"]["schema"]["type"]
 
     assert hist_schema["allowed"] == ["number", "categorical", "null"]

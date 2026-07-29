@@ -5,9 +5,9 @@ of a single declared score column (:class:`ScoreSpec`), the pure functions
 that add to and amend a tuple of them, and the renderer that turns them into
 the ``scores:`` block of a ``genomic_resource.yaml``.
 
-Every score builder -- position/np/allele/cnv, bigWig, VCF-info, gene --
-declares its scores through this one representation; they differ only in the
-base (non-score) columns their data tables require.  It lives in its own
+Every score builder -- position/np/allele/fragment, bigWig, VCF-info, gene
+-- declares its scores through this one representation; they differ only in
+the base (non-score) columns their data tables require.  It lives in its own
 module so the builder DSL can keep growing without either half of it turning
 into an unreadable slab.
 

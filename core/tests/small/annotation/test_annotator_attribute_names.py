@@ -148,9 +148,9 @@ def gene_set_grr(
 
 
 @pytest.fixture(scope="module")
-def cnv_grr() -> GenomicResourceRepo:
+def fragment_grr() -> GenomicResourceRepo:
     return build_inmemory_test_repository({
-        "cnvs": {
+        "fragments": {
             "genomic_resource.yaml": textwrap.dedent("""
                 type: cnv_collection
                 table:
@@ -486,23 +486,25 @@ def test_gene_set_renamed_attribute(gene_set_grr: GenomicResourceRepo) -> None:
 # cnv_collection_annotator
 # ---------------------------------------------------------------------------
 
-def test_cnv_collection_default_name(cnv_grr: GenomicResourceRepo) -> None:
+def test_fragment_score_default_name(fragment_grr: GenomicResourceRepo) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
-        - cnv_collection: cnvs
-    """), cnv_grr)
+        - cnv_collection: fragments
+    """), fragment_grr)
     with pipeline.open() as p:
         result = p.annotate(Position("chr1", 10))
     assert result["count"] == 1
 
 
-def test_cnv_collection_renamed_attribute(cnv_grr: GenomicResourceRepo) -> None:
+def test_fragment_score_renamed_attribute(
+    fragment_grr: GenomicResourceRepo,
+) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - cnv_collection:
-            resource_id: cnvs
+            resource_id: fragments
             attributes:
             - source: count
               name: my_count
-    """), cnv_grr)
+    """), fragment_grr)
     with pipeline.open() as p:
         result = p.annotate(Position("chr1", 10))
     assert result["my_count"] == 1

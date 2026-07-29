@@ -865,7 +865,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         }, indent=2).encode()
 
 
-class CnvCollectionImplementation(GenomicScoreImplementation):
+class FragmentScoreImplementation(GenomicScoreImplementation):
     """Assists in the management of resource of type cnv_collection."""
     # pylint: disable=useless-parent-delegation
 
@@ -906,8 +906,8 @@ class CnvCollectionImplementation(GenomicScoreImplementation):
 
 def build_score_implementation_from_resource(
     resource: GenomicResource,
-) -> GenomicScoreImplementation | CnvCollectionImplementation:
+) -> GenomicScoreImplementation | FragmentScoreImplementation:
     """Builds score implementation based on resource type"""
     if resource.get_type() == "cnv_collection":
-        return CnvCollectionImplementation(resource)
+        return FragmentScoreImplementation(resource)
     return GenomicScoreImplementation(resource)
