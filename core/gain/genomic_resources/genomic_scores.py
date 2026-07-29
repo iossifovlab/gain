@@ -231,8 +231,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     # paths drift, so there is now one (gain#421).
     #
     # The defaults are the "one record, one count" rule that everything except
-    # a position score follows -- the same rule :meth:`_record_weight` states
-    # for aggregation.
+    # a position score follows.  ``RECORD_WEIGHT_IS_SPAN`` is also where
+    # :meth:`_record_weight` -- the per-record weight the annotators'
+    # aggregation applies -- reads the rule from, so the two cannot disagree.
     RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.SHARED
     RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
     RECORDS_ARE_COUNTED: ClassVar[bool] = False
@@ -1110,25 +1111,35 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         This method is used for calculation of score statistics.
         """
 
-    @staticmethod
-    def _record_weight(left: int, right: int) -> int:  # noqa: ARG004
+    @classmethod
+    def _record_weight(cls, left: int, right: int) -> int:
         """How many times one record's value counts when aggregating.
 
         The rule is a property of the resource TYPE, and ``WeightedValues``
         already states it: "a position-score record counts once per base
         pair of the queried region it covers, an allele line counts once, a
         fragment counts once however long it is".  One record, one count,
-        is the answer for everything except a position score, which
-        overrides.
+        is the answer for everything except a position score.
 
-        This exists so :meth:`aggregate_region` can live on the base class
-        and still agree with the annotators, which apply exactly this rule.
-        Deriving a weight from ``pos_begin``/``pos_end`` in the base instead
-        would give a fragment its length as a weight and silently disagree
-        with the fragment score annotator for every fragment longer than one
-        base pair.
+        **It is not stated here.**  This reads
+        :attr:`RECORD_WEIGHT_IS_SPAN`, the kind's single statement of the
+        weight rule, and turns it into the per-record number
+        :meth:`aggregate_region` needs.  The statistics scan cannot call
+        this -- the bulk path weighs a whole batch of records at once, with
+        no record to hand it -- so it reads the flag directly.  Two
+        readings, one rule: a kind that overrode this hook without the flag
+        (or the reverse) would weigh its records one way when annotating and
+        another when computing statistics, silently.  Pinned by
+        test_the_weight_rule_is_stated_once_per_kind.
+
+        This hook exists at all so :meth:`aggregate_region` can live on the
+        base class and still agree with the annotators, which apply exactly
+        this rule.  Deriving a weight from ``pos_begin``/``pos_end``
+        unconditionally would give a fragment its length as a weight and
+        silently disagree with the fragment score annotator for every
+        fragment longer than one base pair.
         """
-        return 1
+        return right - left + 1 if cls.RECORD_WEIGHT_IS_SPAN else 1
 
     def aggregate_region(
         self,
@@ -1309,13 +1320,12 @@ class PositionScore(GenomicScore):
     RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = True
     RECORDS_ARE_COUNTED: ClassVar[bool] = False
 
-    @staticmethod
-    def _record_weight(left: int, right: int) -> int:
-        """A position-score record counts once per base pair it covers."""
-        return right - left + 1
+    # No ``_record_weight`` override: the base derives the per-record weight
+    # from ``RECORD_WEIGHT_IS_SPAN`` above, so the span rule is stated once
+    # and both the aggregation hook and the statistics scan read it there.
 
     # A region of positions reduces by ``mean``: each position's value counts
-    # once per base pair it covers (see _record_weight).
+    # once per base pair it covers (see RECORD_WEIGHT_IS_SPAN).
     DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {
         "float": "mean",
         "int": "mean",

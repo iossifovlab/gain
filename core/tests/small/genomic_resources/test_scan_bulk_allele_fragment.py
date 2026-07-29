@@ -1,8 +1,17 @@
 # pylint: disable=C0114,C0116,W0212,W0621
 import pathlib
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 import pytest
+from gain.genomic_resources.genomic_scores import (
+    AlleleScore,
+    FragmentScore,
+    GenomicScore,
+    PositionScore,
+    build_score_from_resource,
+)
 from gain.genomic_resources.histogram import (
     CategoricalHistogramConfig,
     NullHistogramConfig,
@@ -266,12 +275,37 @@ def test_categorical_histogram_keeps_the_per_record_path(
     assert not G._can_bulk_histogram(resource, confs)
 
 
+def _allele_three_scores_tabix(tmp_path: pathlib.Path) -> GenomicResource:
+    """An allele score carrying a float, a string and a second float."""
+    return (
+        an_allele_score()
+        .with_score("s", "float")
+        .with_score("other", "str")
+        .with_score("third", "float")
+        .with_data(
+            """
+            chrom  pos_begin  reference  alternative  s    other  third
+            chr1   10         A          G            0.1  aaa    0.4
+            chr1   14         C          T            0.3  bbb    0.6
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
 def test_a_categorical_score_disqualifies_the_whole_resource(
     tmp_path: pathlib.Path,
 ) -> None:
     # One categorical score is enough: the histogram build is dispatched per
     # resource, not per score, and a null config is merely skipped.
-    resource = _allele_tabix(tmp_path)
+    #
+    # All three ids exist on the resource ON PURPOSE.  ``_can_bulk_histogram``
+    # short-circuits on the categorical config before it ever opens the score,
+    # so ids that name nothing would make this pass without the resource
+    # having any say -- and it would keep passing if the short-circuit moved.
+    resource = _allele_three_scores_tabix(tmp_path)
+    score = build_score_from_resource(resource)
+    assert set(score.get_all_scores()) == {"s", "other", "third"}
     confs: dict = {
         "s": _hist_conf(),
         "other": CategoricalHistogramConfig.default_config(),
@@ -280,19 +314,118 @@ def test_a_categorical_score_disqualifies_the_whole_resource(
     assert not G._can_bulk_histogram(resource, confs)
 
 
-def test_dispatch_uses_bulk_for_allele_and_fragment(
+def test_the_float_scores_alone_would_have_been_eligible(
     tmp_path: pathlib.Path,
 ) -> None:
-    # The task-level entry points, not just the bulk functions directly.
-    for resource in (
-        _allele_tabix(tmp_path / "allele"),
-        _fragment_tabix(tmp_path / "fragment"),
-    ):
-        confs: dict = {"s": _hist_conf()}
-        assert G._can_bulk_histogram(resource, confs)
-        _assert_hists_equal(
-            G._do_histogram_task(resource, confs, "chr1", 1, 300),
-            G._do_histogram(resource, confs, "chr1", 1, 300))
-        _assert_min_max_equal(
-            G._do_min_max_task(resource, ["s"], "chr1", 1, 300),
-            G._do_min_max(resource, ["s"], "chr1", 1, 300))
+    # The other half of the test above: without the categorical config the
+    # SAME resource and the same two number scores do reach the bulk path, so
+    # what disqualifies it is the categorical score and nothing else.
+    resource = _allele_three_scores_tabix(tmp_path)
+    confs: dict = {"s": _hist_conf(), "third": _hist_conf()}
+    assert G._can_bulk_histogram(resource, confs)
+
+
+def _spy_on_bulk(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record, in order, every call that ENTERS a bulk scan function.
+
+    Comparing a task's output against the per-record path cannot tell the
+    two paths apart -- they are required to agree to the bit, so a task that
+    quietly fell back to ``_do_histogram`` would produce identical numbers
+    and the comparison would pass.  Silent fallback is precisely the failure
+    mode this gate exists to prevent, so the dispatch tests watch the call
+    instead of only the result.
+    """
+    calls: list[str] = []
+
+    def wrap(name: str) -> None:
+        original = getattr(G, name)
+
+        def spy(*args: Any, **kwargs: Any) -> Any:
+            calls.append(name)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(G, name, staticmethod(spy))
+
+    wrap("_do_histogram_bulk")
+    wrap("_do_min_max_bulk")
+    return calls
+
+
+@pytest.mark.parametrize(
+    "make_resource", [_allele_tabix, _fragment_tabix],
+    ids=["allele", "fragment"])
+def test_dispatch_uses_bulk_for_allele_and_fragment(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    make_resource: Callable[[pathlib.Path], GenomicResource],
+) -> None:
+    # The task-level entry points, not just the bulk functions directly:
+    # both must be eligible, both must actually RUN the bulk function, and
+    # both must reproduce the per-record numbers exactly.
+    resource = make_resource(tmp_path)
+    confs: dict = {"s": _hist_conf()}
+    ref_hist = G._do_histogram(resource, confs, "chr1", 1, 300)
+    ref_min_max = G._do_min_max(resource, ["s"], "chr1", 1, 300)
+
+    calls = _spy_on_bulk(monkeypatch)
+    assert G._can_bulk_histogram(resource, confs)
+    assert G._bulk_scan_eligible(resource, ["s"])
+    _assert_hists_equal(
+        G._do_histogram_task(resource, confs, "chr1", 1, 300), ref_hist)
+    _assert_min_max_equal(
+        G._do_min_max_task(resource, ["s"], "chr1", 1, 300), ref_min_max)
+    assert calls == ["_do_histogram_bulk", "_do_min_max_bulk"]
+
+
+def test_dispatch_keeps_an_ineligible_score_off_the_bulk_path(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The spy's own control: an np_score is deliberately excluded, so neither
+    # task may enter a bulk function.  Without this, an empty call log in the
+    # test above could mean "the spy never fires" rather than "the bulk path
+    # ran".
+    resource = (
+        a_np_score().with_score("score", "float").with_tabix()
+        .build_resource(tmp_path)
+    )
+    confs: dict = {"score": _hist_conf()}
+    calls = _spy_on_bulk(monkeypatch)
+    G._do_histogram_task(resource, confs, "1", 1, 20)
+    G._do_min_max_task(resource, ["score"], "1", 1, 20)
+    assert calls == []
+
+
+def test_dispatch_keeps_an_unbounded_region_off_the_bulk_path(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An eligible KIND is still not enough: the bulk read needs concrete
+    # bounds, so a whole-contig scan keeps the per-record path.
+    resource = _fragment_tabix(tmp_path)
+    confs: dict = {"s": _hist_conf()}
+    calls = _spy_on_bulk(monkeypatch)
+    G._do_histogram_task(resource, confs, "chr1", None, None)
+    G._do_min_max_task(resource, ["s"], "chr1", None, None)
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("score_class", "weight_is_span", "expected_weight"),
+    [
+        (PositionScore, True, 10),
+        (AlleleScore, False, 1),
+        (FragmentScore, False, 1),
+    ],
+)
+def test_the_weight_rule_is_stated_once_per_kind(
+    score_class: type[GenomicScore],
+    weight_is_span: bool,
+    expected_weight: int,
+) -> None:
+    # ``RECORD_WEIGHT_IS_SPAN`` (read by the bulk scan, which cannot call a
+    # per-record hook) and ``_record_weight`` (read by ``aggregate_region``)
+    # are two readings of ONE rule.  They must not be able to disagree, so
+    # the hook derives from the flag -- and this pins the derivation in
+    # numbers rather than in code: a ten-base record weighs its span for a
+    # position score and 1 for the other two kinds.
+    assert score_class.RECORD_WEIGHT_IS_SPAN is weight_is_span
+    assert score_class._record_weight(10, 19) == expected_weight
