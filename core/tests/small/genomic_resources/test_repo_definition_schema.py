@@ -237,6 +237,62 @@ def test_id_less_children_at_index_zero_of_two_groups_are_valid() -> None:
 
 
 # ---------------------------------------------------------------------------
+# A repository id must be a single safe path segment (#460)
+# ---------------------------------------------------------------------------
+
+def test_the_rejection_names_the_offending_child_id() -> None:
+    """The error has to say which id is wrong -- a group can have many."""
+    err = _invalid({"type": "group", "children": [
+        {"id": "ok", "type": "http", "url": "https://a.example.com"},
+        {"id": "../../escaped", "type": "http",
+         "url": "https://b.example.com"},
+    ]})
+    assert "../../escaped" in str(err)
+
+
+@pytest.mark.parametrize("unsafe_id", [
+    "../../escaped",
+    "sub/dir",
+    "windows\\dir",
+    "/etc/grrcache",
+    "C:cache",
+    "..",
+    ".",
+], ids=[
+    "traversal", "posix-separator", "windows-separator", "absolute",
+    "drive-prefix", "parent-dir", "current-dir",
+])
+def test_unsafe_child_id_is_rejected(unsafe_id: str) -> None:
+    """An id that is not a single path segment names a cache directory.
+
+    ``..`` and ``.`` are the cases a character-class check lets through:
+    both fully match the ``[a-zA-Z0-9._-]`` class of ``is_gr_id_token``,
+    and a single-segment ``..`` still escapes one directory level.
+    """
+    _invalid({"type": "group", "children": [
+        {"id": unsafe_id, "type": "http", "url": "https://a.example.com"},
+    ]})
+
+
+@pytest.mark.parametrize("unsafe_id", ["../../escaped", "/etc/grrcache"])
+def test_unsafe_top_level_id_is_rejected(unsafe_id: str) -> None:
+    """A top-level repository names a cache directory by its own id too."""
+    _invalid({"id": unsafe_id, "type": "http", "url": "https://a.example.com",
+              "cache_dir": "/var/cache/grr"})
+
+
+@pytest.mark.parametrize("safe_id", [
+    "grr.iossifovlab.com", "my_repo-1", "main-GRR", "a", "..dotted",
+    "my grr",
+])
+def test_ordinary_single_segment_ids_stay_valid(safe_id: str) -> None:
+    """The check is about path shape only -- it is not an id-format policy."""
+    _valid({"type": "group", "children": [
+        {"id": safe_id, "type": "http", "url": "https://a.example.com"},
+    ]})
+
+
+# ---------------------------------------------------------------------------
 # Unknown type
 # ---------------------------------------------------------------------------
 

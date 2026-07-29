@@ -50,6 +50,7 @@ import abc
 import copy
 import enum
 import hashlib
+import ntpath
 import os
 import re
 from collections.abc import Generator, Iterator
@@ -111,6 +112,47 @@ def is_gr_id_token(token: str) -> bool:
     token is a Genomic REsource Id Token.
     """
     return bool(_GR_ID_TOKEN_RE.fullmatch(token))
+
+
+# Both separators, not just ``os.sep``: a definition is portable text and
+# may be written on either platform, and the id it carries must be a single
+# segment under either reading.
+_PATH_SEPARATORS = ("/", "\\")
+
+
+def is_safe_repo_id(repo_id: str) -> bool:
+    """Check if ``repo_id`` is usable as a single filesystem path segment.
+
+    A repository id names a directory: a cached repository derives each
+    repository's cache directory by joining the id onto the cache url. An id
+    that is not a single path segment therefore decides where the process
+    writes -- ``..`` climbs out of the configured cache directory, and an
+    absolute id makes ``os.path.join`` discard the cache url altogether. Such
+    an id is a configuration error and is rejected, never rewritten (#460).
+
+    Safe means exactly one non-empty path segment: no separator of either
+    platform, no drive or UNC prefix, and not ``.`` or ``..``. An empty id
+    is not a segment either, but it is not a traversal: a falsy id already
+    means "unnamed" everywhere it is read (``_resolve_child_repo_id``
+    synthesises one, ``find_resource`` treats it as "no filter"), so its
+    callers decide what to do with it rather than this predicate.
+
+    Deliberately NOT built on :func:`is_gr_id_token`. That helper enforces a
+    character class (``[a-zA-Z0-9._-]``), which is both too weak and too
+    strong here: ``is_gr_id_token("..")`` is True -- ``..`` matches the class
+    in full, and a single-segment ``..`` still escapes one directory level --
+    while ids that are perfectly safe as directory names (a space, say) would
+    start failing for a reason that has nothing to do with path safety. This
+    check answers only the path question.
+    """
+    if not repo_id or repo_id in {".", ".."}:
+        return False
+    if any(separator in repo_id for separator in _PATH_SEPARATORS):
+        return False
+    # A drive prefix is an absolute-ish path prefix without a separator:
+    # ``os.path.join`` on Windows resolves ``C:cache`` against the drive's
+    # current directory, discarding the cache url just as an absolute id does.
+    return not ntpath.splitdrive(repo_id)[0]
 
 
 _GR_ID_WITH_VERSION_TOKEN_RE = re.compile(

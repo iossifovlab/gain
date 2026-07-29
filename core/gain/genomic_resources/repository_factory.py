@@ -20,6 +20,7 @@ from pydantic import (
     TypeAdapter,
     ValidationError,
     field_serializer,
+    field_validator,
     model_validator,
 )
 
@@ -32,6 +33,7 @@ from .repository import (
     GenomicResource,
     GenomicResourceProtocolRepo,
     GenomicResourceRepo,
+    is_safe_repo_id,
 )
 from .resource_implementation import GenomicResourceImplementation
 
@@ -56,6 +58,34 @@ class _RepoDefinitionBase(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     id: str | None = None
     public_url: str | None = None
+
+    @field_validator("id")
+    @classmethod
+    def check_id_is_a_safe_path_segment(cls, value: str | None) -> str | None:
+        """Reject an id that is not a single safe filesystem path segment.
+
+        A repository id names that repository's cache directory (see
+        ``GenomicResourceCachedRepo._get_or_create_cache_proto``), so an id
+        carrying a path separator, an absolute-path prefix, or ``.``/``..``
+        moves cached data out of the configured ``cache_dir`` -- an absolute
+        id discards it entirely. The id is rejected here, when the
+        definition is loaded, rather than sanitised: rewriting it would
+        make the cache layout unpredictable and hide the mistake from the
+        operator, exactly as with a duplicate id (#460).
+
+        Lives on the base model so it covers every definition type: any of
+        them can be a group child, and a top-level repository is cached by
+        its own id too.
+        """
+        # A falsy id is left alone: an empty ``id`` already means "unnamed"
+        # -- ``_resolve_child_repo_id`` synthesises one for it -- and is not a
+        # traversal. Naming an unnamed repository is a separate question.
+        if value and not is_safe_repo_id(value):
+            raise ValueError(
+                f"invalid repository id <{value}>: a repository id names a "
+                f"cache directory, so it must be a single path segment -- "
+                f"no path separator, no absolute path, and not '.' or '..'")
+        return value
 
 
 class HttpRepoDefinition(_RepoDefinitionBase):
@@ -199,6 +229,12 @@ class GroupRepoDefinition(_RepoDefinitionBase):
     repositories sharing an id -- at the same level or at different ones --
     leave the second unreachable. Duplicates are a configuration error,
     rejected here when the definition is validated.
+
+    An id is also a directory name -- a cached repository derives each
+    repository's cache directory from it -- so it must be a single path
+    segment. One that is not (a separator, an absolute path, ``.`` or
+    ``..``) would move cached data out of the configured ``cache_dir``, and
+    is rejected by the base definition model rather than rewritten (#460).
 
     Spelling ``id`` on a child is optional. A child that omits it gets a
     deterministic id synthesised from its own identity -- its ``url`` or

@@ -24,6 +24,7 @@ from gain.genomic_resources.repository import (
     GenomicResourceRepo,
     Manifest,
     ReadOnlyRepositoryProtocol,
+    is_safe_repo_id,
     resolve_tabix_index_filename_for_read,
 )
 
@@ -397,8 +398,29 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
         sharing one id. A group assembled programmatically from protocols --
         as tests and embedding code do -- bypasses validation entirely, so
         the guard stays here too.
+
+        The same reasoning gives the id a second requirement: the cache
+        directory is ``cache_url`` joined with the ``proto_id``, so an id
+        that is not a single path segment moves the cache somewhere else
+        entirely -- ``..`` climbs out of the configured ``cache_dir`` and an
+        absolute id makes the join discard ``cache_url`` altogether, writing
+        wherever the id points. That is a configuration error, refused here
+        rather than sanitised into some other directory (#460). A definition
+        can no longer reach this either -- an unsafe ``id`` fails validation,
+        and a synthesised id is a safe segment by construction -- but a
+        programmatically assembled group can, exactly as with a duplicate id.
         """
         proto_id = proto.proto_id
+        # A falsy proto id is left alone -- it caches into the cache root, as
+        # it always has, and two of them collide on the duplicate-id guard
+        # below. Only a path-unsafe id is refused here.
+        if proto_id and not is_safe_repo_id(proto_id):
+            raise ValueError(
+                f"repository id <{proto_id}> in {self.repo_id} cannot be "
+                f"used as a cache directory name; a repository id must be a "
+                f"single path segment -- no path separator, no absolute "
+                f"path, and not '.' or '..' -- give the repository its own "
+                f"'id' in the GRR definition")
         # get / construct / assign must be atomic: two threads racing the
         # first call for one ``proto_id`` would each build a protocol, and
         # the one that lost the assignment is an orphan -- unreachable from
