@@ -2,6 +2,37 @@ Release Notes
 =============
 
 * unreleased
+    * **Security fix:** a ``meta.labels`` key is no longer spliced into the
+      SQL that builds the repository's search index unchecked. Every key
+      becomes a column of that index, so a crafted key — e.g.
+      ``a); DROP TABLE contents_metadata; --`` — used to be executed as SQL
+      while the index was built. Keys are now vetted before they reach the
+      statement (#464).
+    * **Behavior change:** a resource whose ``meta.labels`` carries a key
+      that cannot name an index field no longer takes down the index of the
+      whole repository. The resource is skipped and reported by id, naming
+      the offending key and the rule it breaks, and the rest of the
+      repository is indexed as usual. A key must match
+      ``[A-Za-z_][A-Za-z0-9_]*``, must be neither an SQL keyword (``order``)
+      nor a name FTS5 reserves (``rank``, ``rowid``, ``contents``), must be
+      a string (unquoted YAML keys like ``2024:`` or ``true:`` are not), and
+      must not repeat another field of the index — including the fixed
+      ``full_id``, ``id``, ``type``, ``description`` and ``summary``, which
+      it used to silently overwrite (#464).
+    * **Behavior change:** the same holds for a key that only clashes with
+      *another resource's*. The index has one set of columns for the whole
+      repository, and SQLite compares column names case-insensitively, so
+      ``assay`` in one resource and ``Assay`` in another used to make the
+      whole repository's index unbuildable — with a traceback naming no
+      resource, and the published index already deleted. The later resource
+      by id is now skipped and reported, naming the resource that holds the
+      spelling, and the rest of the repository is indexed. A repository with
+      more than 1994 distinct field names — the FTS5 ceiling — is handled
+      the same way (#464).
+    * **Behavior change:** searching a repository whose index came out empty
+      — every resource skipped, or a repository with no resources — returns
+      no results and logs a warning, instead of raising SQLite's
+      ``no such table: contents`` (#464).
     * **Behavior change:** the children of a ``group`` repository must now
       have distinct ids. A group definition whose children share an ``id``
       — spelled out, or arrived at by listing the same ``url`` /

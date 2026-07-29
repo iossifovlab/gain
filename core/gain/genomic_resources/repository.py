@@ -834,6 +834,21 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
         conn = self.open_repository_sqlite3_metadata_db()
         with conn:
             cursor = conn.cursor()
+            if not cursor.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'contents'",
+            ).fetchone():
+                # The index has no contents table when it was built with no
+                # resource in it -- an empty repository, or one whose every
+                # resource the index build had to skip (gain#464).  Nothing
+                # can match, but that is worth saying: a search coming back
+                # empty here is about the index, not about the search.
+                logger.warning(
+                    "repository <%s> has no search index contents; "
+                    "no resource could be indexed -- repair the repository "
+                    "and check the report for the resources it skipped",
+                    self.get_id())
+                return
             query = "SELECT full_id FROM contents "
             conditions = []
             params: list[Any] = []

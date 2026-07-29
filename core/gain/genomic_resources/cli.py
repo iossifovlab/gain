@@ -4,6 +4,7 @@ import copy
 import dataclasses
 import fnmatch
 import gzip
+import operator
 import os
 import pathlib
 import sys
@@ -52,7 +53,10 @@ from gain.genomic_resources.repository_factory import (
 )
 from gain.genomic_resources.resource_implementation import (
     GenomicResourceImplementation,
+    IndexColumn,
     ResourceStatistics,
+    merge_index_columns,
+    validate_index_columns,
 )
 from gain.task_graph.cli_tools import TaskGraphCli
 from gain.task_graph.graph import Task, TaskGraph, chain_tasks
@@ -685,7 +689,7 @@ def _create_contents_db(
     if os.path.exists(gzip_sqlite_filepath):
         os.remove(gzip_sqlite_filepath)
 
-    index_infos: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+    collected: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
     failed: set[str] = set()
     for res in proto.get_all_resources():
         if res.resource_id in already_failed:
@@ -694,17 +698,41 @@ def _create_contents_db(
             continue
         try:
             impl = build_resource_implementation(res)
-            index_infos.append(impl.collect_index_info())
+            header, row = impl.collect_index_info()
+            # collect_index_info() already vets the label keys it adds; this
+            # repeats the check over the whole header so that no column name
+            # -- including one an implementation adds on its own -- reaches
+            # the interpolated SQL below unvetted (gain#464).
+            validate_index_columns(res.resource_id, header)
+            collected.append((res.resource_id, header, row))
         except Exception as err:  # noqa: BLE001
             _report_resource_failure(
                 err, "skipping FTS index for", res.resource_id)
             failed.add(res.resource_id)
 
-    all_columns: dict[str, None] = {}
-    for header, _ in index_infos:
-        for col in header:
-            all_columns[col] = None
-    columns = list(all_columns.keys())
+    # The index table's columns are the union of the headers, and a header
+    # that is sound on its own can still be unusable next to another
+    # resource's -- SQLite compares column names case-insensitively, so
+    # `assay` in one resource and `Assay` in another cannot both be
+    # columns.  Vetting each header alone cannot see that by construction,
+    # so the union is assembled resource by resource here, and a resource
+    # that cannot join it is skipped and reported by id like any other
+    # (gain#464).  Sorting by resource id makes which of the two colliding
+    # resources is rejected independent of the order the repository
+    # happens to list them in.
+    claimed: dict[str, IndexColumn] = {}
+    index_infos: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+    for resource_id, header, row in sorted(
+            collected, key=operator.itemgetter(0)):
+        try:
+            claimed = merge_index_columns(resource_id, header, claimed)
+        except Exception as err:  # noqa: BLE001
+            _report_resource_failure(
+                err, "skipping FTS index for", resource_id)
+            failed.add(resource_id)
+            continue
+        index_infos.append((header, row))
+    columns = [spelling for spelling, _ in claimed.values()]
 
     with apsw.Connection(sqlite_filepath) as conn:
         conn.execute(
@@ -716,9 +744,21 @@ def _create_contents_db(
         )
 
         if columns:
+            # Every name here came out of validate_index_columns above, so it
+            # is a bare non-keyword SQL identifier and cannot carry anything
+            # else into these two statements (gain#464).  SQL identifiers
+            # cannot be bound as parameters, so interpolation is the only way
+            # to name a column -- vetting the names is what makes it safe.
             cols_str = ", ".join(columns)
             conn.execute(
                 f"CREATE VIRTUAL TABLE contents USING fts5({cols_str})",
+            )
+            insert_sql = (
+                # S608 fires on any SQL built by interpolation and cannot
+                # see the vetting the comment above describes; the values
+                # are bound, and only vetted identifiers are spliced.
+                f"INSERT INTO contents ({cols_str}) "  # noqa: S608
+                f"VALUES ({', '.join(['?'] * len(columns))})"
             )
             for header, row in index_infos:
                 header_idx = {col: i for i, col in enumerate(header)}
@@ -726,11 +766,7 @@ def _create_contents_db(
                     row[header_idx[col]] if col in header_idx else ""
                     for col in columns
                 )
-                conn.execute(
-                    f"INSERT INTO contents ({', '.join(columns)}) "  # noqa: S608
-                    f"VALUES ({', '.join(['?'] * len(columns))})",
-                    full_row,
-                )
+                conn.execute(insert_sql, full_row)
 
     # mtime=0 strips the current-time stamp from the gzip header
     # so re-running this on an unchanged repo produces identical
