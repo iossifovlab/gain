@@ -149,8 +149,8 @@ def validate_bigwig_scoredefs(
       resolve the name against.
 
     ``index: 3`` is the one exception, accepted with a deprecation
-    notice at INFO -- all 150 deployed bigWig resources carry it, so a
-    warning would fire for every one on every open:
+    notice at DEBUG -- all 150 deployed bigWig resources carry it, so
+    anything louder fires for every one of them on every open:
     see :data:`DEPRECATED_VALUE_INDEX`.
 
     A score that declares no ``type:`` at all is let through.  That is not a
@@ -186,7 +186,7 @@ def validate_bigwig_scoredefs(
                 f"{score_def.col_index}; a bigWig record's payload is its "
                 f"value, so there is no column {score_def.col_index} to "
                 f"read. Remove the column addressing")
-        logger.info(
+        logger.debug(
             "%s: 'index: %s' is deprecated and does nothing -- a bigWig "
             "record's payload is its value, not a %s-column row. Delete the "
             "key from the resource config (score %r)",

@@ -14,6 +14,7 @@ bigWig table is read by nothing at all, so it is warned about and ignored.
 """
 from __future__ import annotations
 
+import logging
 import pathlib
 import textwrap
 from typing import Any
@@ -329,25 +330,34 @@ def test_the_deprecated_value_index_opens_and_reports_once(
     to carry; the payload is now the value, so the key resolves to nothing and
     is accepted as a no-op.
 
-    Reported at INFO, not WARNING: all 150 deployed bigWig resources carry
-    the key, so a warning would fire for every one of them on every open --
-    noise with a severity label on it.  The trade is that the message no
-    longer drives the cleanup on its own; deleting the key from the GRRs is
-    a deliberate pass, not something a log level will nag into happening.
+    Reported at DEBUG, not WARNING and not INFO: all 150 deployed bigWig
+    resources carry the key, so anything louder fires for every one of them
+    on every open -- noise with a severity label on it.  The trade is that
+    the message no longer drives the cleanup on its own; deleting the key
+    from the GRRs is a deliberate pass, not something a log level will nag
+    into happening.
     """
     score = _a_bigwig_resource(tmp_path, _indexed(3, key=key))
-    with caplog.at_level("INFO"), score.open():
+    with caplog.at_level("DEBUG"), score.open():
         record = next(iter(score.fetch_records("chr1", 5, 5)))
         assert score.get_score_from_record(record, "bw") == \
             pytest.approx(0.11)
 
     reported = [
         rec.getMessage() for rec in caplog.records
-        if rec.levelname == "INFO" and "deprecated" in rec.getMessage()
+        if rec.levelname == "DEBUG" and "deprecated" in rec.getMessage()
     ]
     assert len(reported) == 1, reported
     assert score.resource_id in reported[0]
     assert "bw" in reported[0]
+
+    # The point of the level, not just an incidental property of it: at
+    # INFO -- the level a routine operator run actually shows -- opening a
+    # resource carrying the endemic key says nothing at all.
+    assert [
+        rec.getMessage() for rec in caplog.records
+        if rec.levelno >= logging.INFO
+    ] == []
 
 
 def test_a_broken_bigwig_resource_can_still_be_described(
@@ -488,18 +498,27 @@ def test_a_linsight_shaped_bigwig_table_reports_opens_and_reads(
     purpose.  The message names each ignored key so the config can be cleaned
     up; the read is unaffected.
 
-    At INFO, because 142 of the 150 deployed bigWig resources carry exactly
-    this shape.  ``_warn_inert_bigwig_keys`` keeps ``zero_based`` and
-    ``header_mode`` at WARNING for the opposite reason: nobody sets those, so
-    one appearing is a real misreading of the format rather than boilerplate.
+    At DEBUG, because 142 of the 150 deployed bigWig resources carry exactly
+    this shape -- so this is what a routine GRR-wide open would say about
+    almost every bigWig it touched, and it must therefore say nothing at the
+    levels such a run displays.  ``_warn_inert_bigwig_keys`` keeps
+    ``zero_based`` and ``header_mode`` at WARNING for the opposite reason:
+    nobody sets those, so one appearing is a real misreading of the format
+    rather than boilerplate.
     """
-    with caplog.at_level("INFO"):
+    with caplog.at_level("DEBUG"):
         score = _a_bigwig_resource(tmp_path, _LINSIGHT_SHAPED)
-    warned = " ".join(
+    reported = " ".join(
         rec.getMessage() for rec in caplog.records
-        if rec.levelname == "INFO")
+        if rec.levelname == "DEBUG")
     for key in ("chrom", "pos_begin", "pos_end"):
-        assert key in warned, (key, warned)
+        assert key in reported, (key, reported)
+
+    # The majority shape is silent at the levels an operator run shows.
+    assert [
+        rec.getMessage() for rec in caplog.records
+        if rec.levelno >= logging.INFO
+    ] == []
 
     with score.open():
         record = next(iter(score.fetch_records("chr1", 5, 5)))
