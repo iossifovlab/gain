@@ -51,7 +51,9 @@ from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceProtocolRepo,
 )
-from gain.genomic_resources.resource_types import FRAGMENT_SCORE_TYPES
+from gain.genomic_resources.resource_types import (
+    require_fragment_score_type,
+)
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     convert_to_tab_separated,
@@ -144,8 +146,7 @@ class _TableScoreBuilder(MetaMixin):
     # Suppresses the ``header_mode:`` key while keeping everything else the
     # ``"none"`` mode realizes -- see :meth:`with_missing_header_mode`.
     omit_header_mode: bool = False
-    # Overrides ``SCORE_TYPE`` in the rendered config.  Exists for the one
-    # resource type that has two accepted spellings -- see
+    # Overrides ``SCORE_TYPE``; see
     # :meth:`FragmentScoreBuilder.with_resource_type`.
     resource_type: str | None = None
 
@@ -600,11 +601,6 @@ class FragmentScoreBuilder(_TableScoreBuilder):
     rather than a point, so the default data carries the optional
     ``pos_end`` column.  Reads back through ``FragmentScore``, which
     weights every record 1 however long it is.
-
-    Defaults to the legacy ``cnv_collection`` type because that is what
-    every deployed GRR declares, so it is the shape a test gets unless it
-    asks otherwise; :meth:`with_resource_type` selects the newer
-    ``fragment_score`` spelling (gain#471).
     """
 
     SCORE_TYPE: ClassVar[str] = "cnv_collection"
@@ -615,27 +611,13 @@ class FragmentScoreBuilder(_TableScoreBuilder):
     """
 
     def with_resource_type(self, resource_type: str) -> Self:
-        """Render a different ``type:`` value.
+        """Render ``fragment_score`` or ``cnv_collection`` as the ``type:``.
 
-        A fragment score is the one resource type with two accepted
-        spellings: the legacy ``cnv_collection`` that every deployed GRR
-        declares, and ``fragment_score`` (gain#471).  Both resolve to the
-        same implementation, so a test that cares which one it wrote has
-        to be able to say so.
-
-        Deliberately not on the base builder: the other score types have a
-        single spelling each, and a knob that let a test declare
-        ``type: position_score`` on an allele-score builder would express
-        a resource that cannot exist.  Validated for the same reason --
-        the point of the knob is to choose between two real spellings, not
-        to render an arbitrary string, and a typo would otherwise realize a
-        resource that simply fails to open several layers away.
+        Defaults to the legacy spelling, which every deployed GRR declares.
+        Only a fragment score has two (gain#471), hence not on the base.
         """
-        if resource_type not in FRAGMENT_SCORE_TYPES:
-            raise ValueError(
-                f"{resource_type!r} does not name a fragment score; "
-                f"expected one of {list(FRAGMENT_SCORE_TYPES)}")
-        return dataclasses.replace(self, resource_type=resource_type)
+        return dataclasses.replace(
+            self, resource_type=require_fragment_score_type(resource_type))
 
 
 _BIGWIG_FILENAME = "data.bw"

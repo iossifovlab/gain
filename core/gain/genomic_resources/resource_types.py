@@ -43,3 +43,18 @@ def equivalent_resource_types(resource_type: str) -> tuple[str, ...]:
     if resource_type in FRAGMENT_SCORE_TYPES:
         return FRAGMENT_SCORE_TYPES
     return (resource_type,)
+
+
+def require_fragment_score_type(resource_type: str) -> str:
+    """Return ``resource_type``, or raise if it names no fragment score.
+
+    Lives here rather than at its one call site (the test-data builder's
+    ``with_resource_type``) because ``builders.py`` sits four lines under
+    pylint's 1500-line module ceiling, and because the rule it enforces is
+    this module's to state.
+    """
+    if resource_type not in FRAGMENT_SCORE_TYPES:
+        raise ValueError(
+            f"{resource_type!r} does not name a fragment score; "
+            f"expected one of {list(FRAGMENT_SCORE_TYPES)}")
+    return resource_type
