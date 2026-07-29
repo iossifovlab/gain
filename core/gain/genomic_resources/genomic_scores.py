@@ -89,6 +89,32 @@ logger = logging.getLogger(__name__)
 DEFAULT_VALUE_ARRAYS_BATCH_SIZE = 100_000
 
 
+class RecordOrdering(enum.Enum):
+    """How a resource kind's records may be laid out along a contig.
+
+    ``DISJOINT`` -- at most one record per position, so two records that
+    touch are a data error.  That is what a position score promises, and
+    what ``PositionScore.fetch_region_values`` raises on.
+
+    ``SHARED`` -- several records may legitimately sit at one position.
+    That is what an allele score IS (one record per ref/alt pair at a site)
+    and what a fragment score is (overlapping intervals), so there is
+    nothing to reject.
+
+    There is deliberately NO third value for "records that run backwards".
+    The per-record allele fetch does raise on ``pos < prev_right``, but only
+    tabix- and bigWig-backed tables ever reach the vectorized scan, and
+    tabix refuses to index a file whose positions decrease
+    (``[E::hts_idx_push] Unsorted positions on sequence``).  Such a resource
+    therefore cannot be built, the branch could never run, and no test could
+    pin it -- so the bulk guard enforces only the shared-position rule
+    (gain#421).
+    """
+
+    DISJOINT = "disjoint"
+    SHARED = "shared"
+
+
 class GenomicScore(ScoreResource[GenomicScoreDef]):
     """Base class for genomic score resources.
 
@@ -194,6 +220,22 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         - GenomicResource: Base resource abstraction
         - GenomicPositionTable: Table format abstraction
     """
+
+    # How this resource kind's records read, stated ONCE here and consumed by
+    # BOTH statistics scan paths -- the per-record one and the vectorized bulk
+    # one.  They used to be stated twice: once implicitly in the per-record
+    # accumulators (a ``FragmentScoreImplementation`` override that pinned the
+    # weight to 1 and added a record count) and once in the bulk clip/guard
+    # helper, which simply assumed position-score semantics and was gated to
+    # position scores because of it.  Two statements of one rule is how the
+    # paths drift, so there is now one (gain#421).
+    #
+    # The defaults are the "one record, one count" rule that everything except
+    # a position score follows -- the same rule :meth:`_record_weight` states
+    # for aggregation.
+    RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.SHARED
+    RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
+    RECORDS_ARE_COUNTED: ClassVar[bool] = False
 
     # What each fetched line is wrapped in.  Installed by :meth:`open`, from
     # the table's ``yields_records`` claim, and declared here with NO default
@@ -1261,6 +1303,12 @@ class PositionScore(GenomicScore):
             in a genomic region, for a caller that aggregates it
     """
 
+    # One value per position (an overlap is a data error) and a record counts
+    # once per base pair of the queried region it covers.
+    RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.DISJOINT
+    RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = True
+    RECORDS_ARE_COUNTED: ClassVar[bool] = False
+
     @staticmethod
     def _record_weight(left: int, right: int) -> int:
         """A position-score record counts once per base pair it covers."""
@@ -1469,6 +1517,15 @@ class AlleleScore(GenomicScore):
         "str": "list",
         "bool": None,
     }
+
+    # Several records share a position -- one per ref/alt pair -- and each
+    # weighs 1.  Structurally so: :meth:`fetch_region_values` yields
+    # ``(pos, pos, values)``, collapsing the record to a point however wide an
+    # optional ``pos_end`` column reaches, so a span weight would not merely be
+    # a different choice, it would disagree with the per-record read.
+    RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.SHARED
+    RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
+    RECORDS_ARE_COUNTED: ClassVar[bool] = False
 
     class Mode(enum.Enum):
         """Allele score mode."""
@@ -1706,6 +1763,13 @@ class FragmentScore(GenomicScore):
     # solely to construct it.  With the defaults owned by the score class,
     # both were exact copies of the base and are gone -- which also retires
     # the near-copy that ``_parse_column_address`` warns about.
+    # Fragments overlap freely, each weighs 1 however long it is, and the
+    # min/max statistic of a fragment score also reports how many records it
+    # saw -- a count that reaches the serialized statistic.
+    RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.SHARED
+    RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
+    RECORDS_ARE_COUNTED: ClassVar[bool] = True
+
     DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {
         "float": "max",
         "int": "max",

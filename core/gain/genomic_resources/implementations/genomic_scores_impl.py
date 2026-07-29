@@ -21,6 +21,7 @@ from gain.genomic_resources.genomic_position_table.table_inmemory import (
 )
 from gain.genomic_resources.genomic_scores import (
     GenomicScore,
+    RecordOrdering,
     build_score_from_resource,
 )
 from gain.genomic_resources.histogram import (
@@ -49,6 +50,7 @@ from gain.genomic_resources.resource_implementation import (
 )
 from gain.genomic_resources.resource_types import (
     FRAGMENT_SCORE_TYPES,
+    equivalent_resource_types,
 )
 from gain.genomic_resources.score_implementation import (
     ScoreImplementationBase,
@@ -67,6 +69,20 @@ logger = logging.getLogger(__name__)
 # histogram pass, a MinMaxValue for the min/max pass.  A TypeVar keeps
 # ``_bulk_region_scan`` generic without losing either caller's dict type.
 _AccT = TypeVar("_AccT")
+
+# The resource kinds whose statistics the vectorized scan may serve, in every
+# spelling of each.  Expanded through ``equivalent_resource_types`` rather than
+# written out: a fragment score has TWO permanent type strings
+# (``fragment_score`` and ``cnv_collection``, gain#471), and a literal set
+# naming only one of them would send the other silently back to the per-record
+# path -- no error, no failing test, just the slow path forever.  ``np_score``
+# is deliberately absent: no production GRR has one, so the bulk path is not
+# exercised against it (gain#421).
+_BULK_SCAN_RESOURCE_TYPES = frozenset(
+    spelling
+    for resource_type in ("position_score", "allele_score", "fragment_score")
+    for spelling in equivalent_resource_types(resource_type)
+)
 
 
 class GenomicScoreImplementation(ScoreImplementationBase):
@@ -532,7 +548,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         accumulate: Callable[
             [tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]],
              dict[str, _AccT],
-             tuple[str, int | None, int | None], int | None],
+             tuple[str, int | None, int | None], int | None,
+             GenomicScore],
             int | None],
     ) -> dict[str, _AccT]:
         """Drive a bulk region scan, folding each batch into ``result``.
@@ -542,7 +559,11 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         column-array batches through ``accumulate`` (which mutates ``result``
         and carries the overlap guard's ``prev_right``).  The caller supplies
         the pre-built ``result`` -- empty histograms or seeded ``MinMaxValue``
-        -- and the matching accumulator.  Batches are keyed by SCORE ID: the
+        -- and the matching accumulator.  The opened score travels with every batch
+        because it is what states this resource kind's record semantics
+        (``RECORD_ORDERING``, ``RECORD_WEIGHT_IS_SPAN``,
+        ``RECORDS_ARE_COUNTED``) -- read here and by the per-record path from
+        that one place.  Batches are keyed by SCORE ID: the
         score resolves each id to its payload column itself (gain#398), so
         nothing here handles column indices.
         """
@@ -554,7 +575,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 batch_size=GenomicScoreImplementation._SCAN_BATCH_SIZE)
             for arrays in batches:
                 prev_right = accumulate(
-                    arrays, result, (chrom, start, end), prev_right)
+                    arrays, result, (chrom, start, end), prev_right, score)
         return result
 
     @staticmethod
@@ -563,22 +584,23 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         result: dict[str, Histogram],
         region: tuple[str, int | None, int | None],
         prev_right: int | None,
+        score: GenomicScore,
     ) -> int | None:
         """Fold one batch of column arrays into the per-score histograms.
 
         ``arrays`` is one ``(pos_begin, pos_end, {score_id: cells})`` batch as
         produced by :meth:`_region_value_arrays`.  Clips each record to
-        ``[start, end]`` exactly as ``_fetch_region_lines`` does (drop records
-        ending before ``start``;
-        ``weight = min(end, pos_end) - max(start, pos_begin) + 1``), enforces
-        the same overlapping-position guard across the batch boundary, and
-        adds each float score's values vectorized.  Returns the last clipped
-        right edge so the next batch can continue the overlap check.
+        ``[start, end]`` exactly as ``_fetch_region_lines`` does (dropping
+        records ending before ``start``), weights it as ``score``'s kind
+        weights it, enforces whatever overlap rule that kind states across the
+        batch boundary, and adds each float score's values vectorized.
+        Returns the last clipped right edge so the next batch can continue the
+        overlap check.
         """
         pos_begin, pos_end, value_cells = arrays
         keep, weights, prev_right = \
             GenomicScoreImplementation._clip_keep_guard(
-                pos_begin, pos_end, region, prev_right)
+                pos_begin, pos_end, region, prev_right, score)
 
         for score_id, hist in result.items():
             values = value_cells[score_id]
@@ -593,16 +615,27 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         pos_end: np.ndarray,
         region: tuple[str, int | None, int | None],
         prev_right: int | None,
+        score: GenomicScore,
     ) -> tuple[np.ndarray, np.ndarray, int | None]:
-        """Clip a batch to the region and enforce the overlap guard.
+        """Clip a batch to the region, per ``score``'s record semantics.
 
         Returns ``(keep, weights, prev_right)``: the mask of records surviving
         the ``pos_end >= start`` skip (as ``_fetch_region_lines`` drops records
-        ending before the query), their span weights
-        ``min(end, pos_end) - max(start, pos_begin) + 1``, and the carry for the
-        next batch's overlap check.  Raises ``ValueError`` on an overlapping
-        position exactly as ``fetch_region_values`` does, across the batch
-        boundary via ``prev_right``.
+        ending before the query, for EVERY resource kind), their weights, and
+        the carry for the next batch's overlap check.
+
+        Both the weight and the guard are read off the score class, which
+        states them once for this path and for the per-record one:
+
+        * ``RECORD_WEIGHT_IS_SPAN`` -- a position-score record counts once per
+          base pair of the queried region it covers
+          (``min(end, pos_end) - max(start, pos_begin) + 1``); an allele record
+          and a fragment count 1, however wide they are.
+        * ``RECORD_ORDERING`` -- ``DISJOINT`` raises ``ValueError`` on two
+          records that touch, exactly as ``PositionScore.fetch_region_values``
+          does, and across the batch boundary via ``prev_right``; ``SHARED``
+          has nothing to reject, because several records at one position are
+          what an allele or fragment score is made of.
         """
         chrom, start, end = region
         count = pos_begin.shape[0]
@@ -613,7 +646,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
         kleft = left[keep]
         kright = right[keep]
-        if kleft.size:
+        if score.RECORD_ORDERING is RecordOrdering.DISJOINT and kleft.size:
             overlaps_within = kleft.size > 1 and bool(
                 np.any(kleft[1:] <= kright[:-1]))
             overlaps_carry = prev_right is not None \
@@ -622,7 +655,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 raise ValueError(
                     f"multiple values for positions on {chrom}")
             prev_right = int(kright[-1])
-        weights = (kright - kleft + 1).astype(np.int64)
+        weights = (kright - kleft + 1).astype(np.int64) \
+            if score.RECORD_WEIGHT_IS_SPAN \
+            else np.ones(kleft.size, dtype=np.int64)
         return keep, weights, prev_right
 
     @staticmethod
@@ -681,7 +716,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         are both built in ``GenomicScore.__init__``, so nothing here needs a
         file handle.
         """
-        if resource.get_type() != "position_score":
+        if resource.get_type() not in _BULK_SCAN_RESOURCE_TYPES:
             return False
         score = build_score_implementation_from_resource(resource).score
         return score.supports_region_value_arrays(score_ids)
@@ -761,6 +796,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         result: dict[str, MinMaxValue],
         region: tuple[str, int | None, int | None],
         prev_right: int | None,
+        score: GenomicScore,
     ) -> int | None:
         """Fold one batch of column arrays into the per-score min/max.
 
@@ -773,7 +809,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         pos_begin, pos_end, value_cells = arrays
         keep, _weights, prev_right = \
             GenomicScoreImplementation._clip_keep_guard(
-                pos_begin, pos_end, region, prev_right)
+                pos_begin, pos_end, region, prev_right, score)
 
         for score_id, min_max in result.items():
             values = value_cells[score_id][keep]
