@@ -181,7 +181,7 @@ def _open_scan_close(build: object, tmp_path: pathlib.Path) -> weakref.ref:
     with score.open():
         # exercise the fetch path: some retention is only established once a
         # backend has parsed and buffered something
-        list(score.fetch_region(chrom, pos_begin, pos_end, None))
+        list(score.fetch_region_values(chrom, pos_begin, pos_end, None))
     ref = weakref.ref(score.table)
     del score
     return ref
@@ -496,7 +496,7 @@ def _read_region(
     ``(VariantRecord, allele index)`` pair -- and two reads of the same file
     hand back two different such objects, which compare unequal (or, for the
     proxies, not at all).  What the payload MEANS is instead compared through
-    ``fetch_region``, which is the read the score layer actually performs:
+    ``fetch_region_values``, the read the score layer actually performs:
     it resolves each score value out of the payload, so identical values are
     identical payload reads.
     """
@@ -506,7 +506,7 @@ def _read_region(
         for record in score.table.get_records_in_region(
             chrom, pos_begin, pos_end)
     ]
-    values = list(score.fetch_region(chrom, pos_begin, pos_end, None))
+    values = list(score.fetch_region_values(chrom, pos_begin, pos_end, None))
     return records, values
 
 
@@ -803,8 +803,9 @@ def test_an_inmemory_scan_in_flight_when_close_lands_raises(
     indistinguishable from a complete one at the call site.
 
     Consuming a scan lazily outside the block that opened the table is easy to
-    write by accident -- ``gen = score.fetch_region(...)`` inside a ``with``,
-    ``list(gen)`` after it -- and the in-memory backend is the one deliberately
+    write by accident -- ``gen = score.fetch_region_values(...)`` inside a
+    ``with``, ``list(gen)`` after it -- and the in-memory backend is the one
+    deliberately
     shared past a close: ``_INMEMORY_FRAGMENT_SCORE_CACHE`` hands the same
     score to every holder in the process, so one pipeline's teardown can
     close it while another scan is mid-flight.  For an annotation read a
@@ -888,7 +889,7 @@ def test_a_bigwig_fetch_in_flight_when_close_lands_raises(
     """A fetch straddling close() must fail loudly, not come back short.
 
     Consuming a fetch lazily outside the block that opened the table is easy
-    to write by accident -- ``gen = score.fetch_region(...)`` inside a
+    to write by accident -- ``gen = score.fetch_region_values(...)`` inside a
     ``with``, ``list(gen)`` after it.  Whatever the fetch does then, it must
     not be *silently* short: a truncated score list is indistinguishable from
     a complete one at the call site, and for an annotation read that is wrong

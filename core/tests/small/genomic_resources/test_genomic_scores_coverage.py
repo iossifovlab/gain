@@ -5,9 +5,11 @@ import logging
 import pytest
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.genomic_position_table.record import (
+    ALT,
     CHROM,
     POS_BEGIN,
     POS_END,
+    REF,
 )
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
@@ -307,7 +309,7 @@ def test_allele_score_mode_from_name_invalid() -> None:
 
 
 def test_allele_score_fetch_region_spanning_record() -> None:
-    """Test fetch_region with spanning records (pos_begin != pos_end)."""
+    """Test the region read with spanning records (pos_begin != pos_end)."""
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
             type: allele_score
@@ -331,14 +333,17 @@ def test_allele_score_fetch_region_spanning_record() -> None:
     score = AlleleScore(res)
     score.open()
 
-    result = list(score.fetch_region("1", 10, 20, ["freq"]))
-    assert result == [(10, "A", "G", [0.02])]
+    assert list(score.fetch_region_values("1", 10, 20, ["freq"])) \
+        == [(10, 10, [0.02])]
+    # The nucleotides come off the record, not the values stream.
+    assert [(r[POS_BEGIN], r[REF], r[ALT])
+            for r in score.fetch_records("1", 10, 20)] == [(10, "A", "G")]
 
 
 def test_allele_score_fetch_region_overlapping_positions(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Test fetch_region with overlapping positions (same pos, same alleles)."""
+    """Test the region read with overlapping positions and alleles."""
     caplog.set_level(logging.DEBUG)
 
     res: GenomicResource = build_inmemory_test_resource({
@@ -365,7 +370,9 @@ def test_allele_score_fetch_region_overlapping_positions(
     score = AlleleScore(res)
     score.open()
 
-    result = list(score.fetch_region("1", 10, 11, ["freq"]))
+    # Two records share position 10 with different ref/alt, so both are
+    # yielded rather than one being collapsed away.
+    result = list(score.fetch_region_values("1", 10, 11, ["freq"]))
     assert len(result) == 2
 
 
@@ -665,7 +672,7 @@ def test_position_score_fetch_region_all() -> None:
     result = [
         rec
         for chrom in score.get_all_chromosomes()
-        for rec in score.fetch_region(chrom, None, None)
+        for rec in score.fetch_region_values(chrom, None, None)
     ]
     assert len(result) == 4
 
@@ -706,6 +713,6 @@ def test_allele_score_fetch_region_all() -> None:
     result = [
         rec
         for chrom in score.get_all_chromosomes()
-        for rec in score.fetch_region(chrom, None, None)
+        for rec in score.fetch_region_values(chrom, None, None)
     ]
     assert len(result) == 9

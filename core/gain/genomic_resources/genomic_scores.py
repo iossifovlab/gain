@@ -209,8 +209,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
     Abstract Methods:
         Subclasses must implement:
-        - _fetch_region_values(): Core method for retrieving score values
-          in a genomic region, used for statistics computation
+        - fetch_region_values(): the region read every kind provides, and the
+          one the statistics scan and ``aggregate_region`` are built on
 
     See Also:
         - PositionScore: For position-based genomic scores
@@ -1231,7 +1231,7 @@ class PositionScore(GenomicScore):
         ...     # Fetch scores at a specific position
         ...     values = score.fetch_position_scores("chr1", 12345)
         ...     # Fetch scores across a region
-        ...     for pos_begin, pos_end, scores in score.fetch_region(
+        ...     for pos_begin, pos_end, scores in score.fetch_region_values(
         ...         "chr1", 10000, 20000
         ...     ):
         ...         print(f"{pos_begin}-{pos_end}: {scores}")
@@ -1250,7 +1250,7 @@ class PositionScore(GenomicScore):
 
     Key Methods:
         fetch_position_scores: Get score values at a specific position
-        fetch_region: Iterate over score values in a genomic region
+        fetch_region_values: Iterate over score values in a genomic region
         fetch_region_weighted_values: Iterate over ``(values, weight)`` pairs
             in a genomic region, for a caller that aggregates it
     """
@@ -1316,16 +1316,6 @@ class PositionScore(GenomicScore):
                     f"{chrom}:{left}-{right}")
             returned_region = (lchrom, left, right, val)
             yield (left, right, val)
-
-    def fetch_region(
-        self, chrom: str,
-        pos_begin: int | None,
-        pos_end: int | None,
-        scores: list[str] | None = None,
-    ) -> Generator[
-            tuple[int, int, list[ScoreValue] | None], None, None]:
-        """Return position score values in a region."""
-        yield from self.fetch_region_values(chrom, pos_begin, pos_end, scores)
 
     def fetch_region_weighted_values(
         self,
@@ -1426,11 +1416,14 @@ class AlleleScore(GenomicScore):
         ...     values = score.fetch_allele_scores(
         ...         "chr1", 12345, "A", "T"
         ...     )
-        ...     # Iterate over variants in a region
-        ...     for pos, ref, alt, scores in score.fetch_region(
-        ...         "chr1", 10000, 20000
-        ...     ):
-        ...         print(f"{pos} {ref}>{alt}: {scores}")
+        ...     # Iterate over the alleles in a region.  The nucleotides
+        ...     # come off the record; the values come off the score.
+        ...     for record in score.fetch_records("chr1", 10000, 20000):
+        ...         values = score.get_score_values_from_record(
+        ...             record, score_defs
+        ...         )
+        ...         print(f"{record[POS_BEGIN]} "
+        ...               f"{record[REF]}>{record[ALT]}: {values}")
 
     Aggregating those values over the region is the *annotator's* job, not the
     resource's -- see ``gain.annotation.score_annotator``.
@@ -1445,7 +1438,7 @@ class AlleleScore(GenomicScore):
 
     Key Methods:
         fetch_allele_scores: Get score values for a specific variant
-        fetch_region: Iterate over variant scores in a genomic region
+        fetch_region_values: Iterate over allele scores in a genomic region
         substitutions_mode: Check if operating in SUBSTITUTIONS mode
         alleles_mode: Check if operating in ALLELES mode
 
@@ -1587,59 +1580,49 @@ class AlleleScore(GenomicScore):
         scores: list[str] | None = None,
     ) -> Generator[
             tuple[int, int, list[ScoreValue] | None], None, None]:
-        """Return score values in a region."""
-        for pos, _, _, values in self.fetch_region(
+        """Return score values in a region, one entry per allele record.
+
+        Several records legitimately share a position -- one per ref/alt pair
+        -- so each is yielded separately, and the span is the point
+        ``(pos, pos)``: an allele's value stands for its ref/alt pair, not for
+        the bases an optional ``pos_end`` column may cover.  A caller that
+        needs the nucleotides themselves reads ``record[REF]`` /
+        ``record[ALT]`` off :meth:`fetch_records`.
+
+        Repeats at one position pass; a record whose position precedes the
+        previous one is a data error and raises.  That is the rule
+        :attr:`RECORD_ORDERING` states for this kind, and the rule the
+        vectorized statistics scan enforces on a whole batch at once.
+        """
+        # The position last yielded and the ref/alt pairs already seen AT it.
+        # A repeat of one is worth a note but not a refusal: it is the shape
+        # of a duplicated row, not of a table read out of order.
+        prev_chrom: str | None = None
+        prev_pos: int | None = None
+        seen_alleles: set[tuple[str | None, str | None]] = set()
+
+        for lchrom, _left, _right, val, record in self._fetch_region_records(
                 chrom, pos_begin, pos_end, scores):
-            yield pos, pos, values
-
-    def fetch_region(
-        self,
-        chrom: str,
-        pos_begin: int | None,
-        pos_end: int | None,
-        scores: list[str] | None = None,
-    ) -> Generator[
-            tuple[int, str | None, str | None, list[ScoreValue] | None],
-            None, None]:
-        """Return position score values in a region."""
-        region_records = self._fetch_region_records(
-            chrom, pos_begin, pos_end, scores,
-        )
-        first = next(region_records, None)
-        if first is None:
-            return
-        lchrom, _left, _right, val, record = first
-        pos = record[POS_BEGIN]
-
-        returned_region: tuple[
-            str, int | None, int | None, list[ScoreValue] | None,
-            set[tuple[str | None, str | None]],
-        ] = (lchrom, pos, pos, val, {(record[REF], record[ALT])})
-        yield (pos, record[REF], record[ALT], val)
-
-        for lchrom, _left, _right, val, record in region_records:
             pos = record[POS_BEGIN]
-            returned_nucleotides = (record[REF], record[ALT])
-            if (pos, pos) == (returned_region[1], returned_region[2]):
-                if returned_nucleotides in returned_region[4]:
+            alleles = (record[REF], record[ALT])
+
+            if pos == prev_pos:
+                if alleles in seen_alleles:
                     logger.debug(
                         "multiple values for positions %s:%s "
                         "and nucleotides %s",
-                        chrom, pos, returned_nucleotides)
-
-                returned_region[4].add((record[REF], record[ALT]))
-                yield (pos, record[REF], record[ALT], val)
+                        chrom, pos, alleles)
+                seen_alleles.add(alleles)
+                yield pos, pos, val
                 continue
-            prev_chrom = returned_region[0]
+
             if lchrom != prev_chrom:
-                returned_region = (lchrom, None, None, None, set())
-            prev_right = returned_region[2]
-            if prev_right is not None and pos < prev_right:
+                prev_pos = None
+            if prev_pos is not None and pos < prev_pos:
                 raise ValueError(
-                    f"multiple values for positions [{pos}, {prev_right}]")
-            returned_region = (
-                lchrom, pos, pos, val, {(record[REF], record[ALT])})
-            yield (pos, record[REF], record[ALT], val)
+                    f"multiple values for positions [{pos}, {prev_pos}]")
+            prev_chrom, prev_pos, seen_alleles = lchrom, pos, {alleles}
+            yield pos, pos, val
 
     def fetch_allele_record(
         self, chrom: str, pos: int, ref: str, alt: str,

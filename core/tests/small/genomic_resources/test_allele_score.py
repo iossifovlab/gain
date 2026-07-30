@@ -3,6 +3,11 @@
 import textwrap
 
 import pytest
+from gain.genomic_resources.genomic_position_table.record import (
+    ALT,
+    POS_BEGIN,
+    REF,
+)
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
 )
@@ -283,5 +288,8 @@ def test_allele_score_fetch_region_spanning_record_at_pos_begin() -> None:
     score = AlleleScore(res)
     score.open()
 
-    result = list(score.fetch_region("1", 10, 12, ["freq"]))
-    assert result == [(10, "A", "G", [0.02])]
+    assert list(score.fetch_region_values("1", 10, 12, ["freq"])) \
+        == [(10, 10, [0.02])]
+    # The nucleotides come off the record, not the values stream.
+    assert [(r[POS_BEGIN], r[REF], r[ALT])
+            for r in score.fetch_records("1", 10, 12)] == [(10, "A", "G")]

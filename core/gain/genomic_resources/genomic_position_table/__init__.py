@@ -348,11 +348,23 @@ itself.  ``get_region_value_arrays`` had already settled on ``chrom: str``,
 so the two region reads now agree.
 
 **The whole-table mode is not gone, only moved.**  It is live -- ``grr_manage
---region-size 0`` computes statistics in a single pass with no contig, via
-``_do_noregion_histograms`` -- and it is now dispatched once, in
-``GenomicScore.fetch_records``, which is where the nullable contig actually
-originates.  The score layer's ``fetch_region_values`` / ``fetch_region``
-keep accepting ``chrom=None`` and are unchanged.
+--region-size 0`` computes statistics in a single pass -- but it is expressed
+by ITERATING contigs, in ``_do_noregion_histograms``, rather than by handing a
+null contig down.  No member of the region-read family takes ``chrom=None``:
+``GenomicScore.fetch_records`` and ``fetch_region_values`` both require a
+contig, and a caller that wants every record of a table asks the table
+(``get_all_records()``).
+
+**``GenomicScore.fetch_region`` is gone; use ``fetch_region_values``.**  There
+were two of them and they meant opposite things: on ``PositionScore``
+``fetch_region`` was a pure alias of ``fetch_region_values``, while on
+``AlleleScore`` it was the real read and ``fetch_region_values`` the adapter
+over it -- yielding ``(pos, ref, alt, values)`` where every other kind yields
+``(begin, end, values)``.  ``fetch_region_values`` is now the single region
+read, uniform across all three kinds.  Its REF/ALT were what the allele
+variant added, and nothing consumed them: a caller that needs the nucleotides
+reads ``record[REF]`` / ``record[ALT]`` off ``fetch_records``, which is what
+``AlleleScoreAnnotator`` and ``fetch_allele_record`` already did.
 
 """
 from .line import LineBuffer
