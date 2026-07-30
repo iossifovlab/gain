@@ -399,10 +399,16 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         return self.public_url
 
     def invalidate(self) -> None:
-        if self._all_resources is not None:
-            for resource in self._all_resources.values():
-                resource.proto = None  # type: ignore
-        self._all_resources = None
+        # Under the memo lock, and over the whole body: returning the memo
+        # from inside the lock is only half the guarantee, because an
+        # unsynchronised ``invalidate`` can still clear the attribute -- and
+        # unbind the ``proto`` of every resource in it -- in the middle of a
+        # populating read (#458).
+        with self._all_resources_lock:
+            if self._all_resources is not None:
+                for resource in self._all_resources.values():
+                    resource.proto = None  # type: ignore
+            self._all_resources = None
 
     def close(self) -> None:
         """Close the genomic resource."""
@@ -504,8 +510,11 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
                         key=lambda r: r.get_full_id(),
                     )
                 }
-
-        return self._all_resources
+            # Returned from inside the lock: reading ``self._all_resources``
+            # once the lock has been released is a second, unsynchronised
+            # read of the attribute, and an ``invalidate`` landing between
+            # the two hands the caller ``None`` (#458).
+            return self._all_resources
 
     def file_exists(
             self, resource: GenomicResource, filename: str) -> bool:
@@ -1049,7 +1058,9 @@ class FsspecReadWriteProtocol(
                         key=lambda r: r.get_full_id(),
                     )
                 }
-        return self._all_resources
+            # Returned from inside the lock, for the reason the read-only
+            # override gives (#458).
+            return self._all_resources
 
     def _get_resource_file_state_path(
             self, resource: GenomicResource, filename: str) -> str:
