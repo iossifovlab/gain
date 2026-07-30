@@ -836,48 +836,22 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     ) -> Iterator[Record]:
         """Fetch the records of a region.
 
-        **Renamed from ``fetch_lines``, which no longer exists.**  That method
-        wrapped every record in a per-line score-line object; this one hands
-        the record itself over.  A caller reads the positional fields from the
-        record's slots (``record[CHROM]``, ``record[POS_BEGIN]``, ...) and a
-        score through :meth:`get_score_value_from_record` /
-        :meth:`get_score_values_from_record` on this score.  There is
-        deliberately no shim -- one would hand a caller back the exact
-        per-line allocation this removal exists to avoid, which is the trade
-        #239 examined and rejected for the line adapters.
+        A caller reads a record's positional fields from its slots
+        (``record[CHROM]``, ``record[POS_BEGIN]``, ...) and a score value
+        through :meth:`get_score_value_from_record` or
+        :meth:`get_score_values_from_record` on this score.
 
-        This adds nothing to what the table yields.  It exists so a caller
-        need not reach past the score to its table, and it is kept public
-        because the record-consuming half of this API
-        (:meth:`get_score_value_from_record`,
-        :meth:`get_score_values_from_record`) is public and has an
-        out-of-package consumer -- ``AlleleScoreAnnotator``
-        filters records with a ``Callable[[Record], bool]`` and reads their
-        REF/ALT slots.  A public consumer of records with no public producer
-        would be incoherent.
+        Adds nothing to what the table yields.  It exists so a caller need
+        not reach past the score to its table, and is public because the
+        record-consuming half of this API is.
 
-        **Not a generator, deliberately.**  It used to be one, wrapping the
-        table's records in ``yield from`` inside a ``try/except`` that logged
-        and re-raised.  Delegating through a generator frame costs ~59 ns per
-        record (measured on a trivial generator: 135.7 -> 194.3 ns/item),
-        which is 5-6% of this path's per-record cost and a third of what the
-        identity value read won.  Returning the table's generator instead of
-        delegating to it pays that once per call rather than once per record.
-
-        The ``try/except`` went with it.  It logged and re-raised, so the
-        error was reported twice; its one real contribution was naming the
-        resource when ``BigWigTable`` refused an unknown contig with a bare
-        ``raise KeyError``.  That exception now names the contig, the
-        resource and the file's contigs itself, which is where the
-        information belonged.
-
-        **A contig is required**, here and everywhere in the region-read
-        family.  This method briefly accepted ``None`` for "the whole table",
-        absorbing a mode the tables had just given up; nothing needs it now.
-        ``grr_manage --region-size 0`` was the only caller, and it iterates
-        contigs instead (see ``_do_noregion_histograms``).  A caller that
-        genuinely wants every record of a table asks the table:
+        ``chrom`` is required, here and throughout the region-read family.
+        A caller that wants every record of a table asks the table:
         ``score.table.get_all_records()``.
+
+        Not a generator function: it returns the table's generator rather
+        than delegating to it, so a bad argument raises from the call and
+        not from the first ``next()``.
         """
         return self.table.get_records_in_region(chrom, pos_begin, pos_end)
 
@@ -1175,11 +1149,11 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         itself.  ``list`` returns ``[]``; ``max`` returns ``None``; and so
         does ``count``, which chooses to report nothing rather than 0 for an
         empty region (see ``CountAggregator.get_final``).  This method does
-        not second-guess any of them.  That is deliberately unlike
-        :meth:`fetch_scores`, which
-        returns ``None`` for a position with no data -- aggregating nothing
-        is a well-defined question, reading a value where there is none is
-        not.
+        not second-guess any of them.  That is deliberately unlike the
+        per-position reads (``fetch_position_scores``,
+        ``fetch_allele_scores``), which return ``None`` where there is no
+        data -- aggregating nothing is a well-defined question, reading a
+        value where there is none is not.
 
         Values reach the aggregator exactly as the record carried them,
         ``None`` included, because that is what the annotators do (each
@@ -1293,7 +1267,7 @@ class PositionScore(GenomicScore):
         >>> score = build_score_from_resource(resource)
         >>> with score.open() as score:
         ...     # Fetch scores at a specific position
-        ...     values = score.fetch_scores("chr1", 12345)
+        ...     values = score.fetch_position_scores("chr1", 12345)
         ...     # Fetch scores across a region
         ...     for pos_begin, pos_end, scores in score.fetch_region(
         ...         "chr1", 10000, 20000
@@ -1313,7 +1287,7 @@ class PositionScore(GenomicScore):
         score_definitions: Dictionary mapping score IDs to their definitions
 
     Key Methods:
-        fetch_scores: Get score values at a specific position
+        fetch_position_scores: Get score values at a specific position
         fetch_region: Iterate over score values in a genomic region
         fetch_region_weighted_values: Iterate over ``(values, weight)`` pairs
             in a genomic region, for a caller that aggregates it
@@ -1416,7 +1390,7 @@ class PositionScore(GenomicScore):
                 continue
             yield (values, weight)
 
-    def fetch_scores(
+    def fetch_position_scores(
         self, chrom: str, position: int,
         scores: list[str] | None = None,
     ) -> list[ScoreValue] | None:
@@ -1487,7 +1461,7 @@ class AlleleScore(GenomicScore):
         >>> score = build_score_from_resource(resource)
         >>> with score.open() as score:
         ...     # Fetch scores for a specific variant
-        ...     values = score.fetch_scores(
+        ...     values = score.fetch_allele_scores(
         ...         "chr1", 12345, "A", "T"
         ...     )
         ...     # Iterate over variants in a region
@@ -1508,7 +1482,7 @@ class AlleleScore(GenomicScore):
         mode: Operating mode (SUBSTITUTIONS or ALLELES)
 
     Key Methods:
-        fetch_scores: Get score values for a specific variant
+        fetch_allele_scores: Get score values for a specific variant
         fetch_region: Iterate over variant scores in a genomic region
         substitutions_mode: Check if operating in SUBSTITUTIONS mode
         alleles_mode: Check if operating in ALLELES mode
@@ -1720,7 +1694,7 @@ class AlleleScore(GenomicScore):
                 return record
         return None
 
-    def fetch_scores(
+    def fetch_allele_scores(
         self, chrom: str, position: int,
         reference: str, alternative: str,
         scores: list[str] | None = None,
@@ -1816,7 +1790,7 @@ class FragmentScore(GenomicScore):
                 chrom, pos_begin, pos_end, scores):
             yield start, stop, values
 
-    def fetch_fragments(
+    def fetch_fragment_scores(
         self, chrom: str,
         start: int, stop: int,
         scores: list[str] | None = None,

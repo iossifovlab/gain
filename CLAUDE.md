@@ -228,6 +228,47 @@ These are internal records and sit deliberately
 outside `docs/source/`, which is the published GAIn
 documentation site.
 
+### Docstrings describe the present, not the past
+
+**A class or method docstring says what the code does
+now. It does not narrate how it got that way.** No
+"renamed from X", no "this used to be a generator", no
+"the try/except went with it", no benchmark numbers from
+the change that produced the current shape, no "#239
+examined and rejected this". That history is real and
+worth keeping — it just belongs somewhere a reader is
+not forced through it to learn what a method returns.
+
+Where each thing goes:
+
+| Content | Home |
+| --- | --- |
+| What it does, what it requires, what it returns, how to call it | the docstring |
+| Why the code has this shape; a rejected alternative | an ADR (`docs/adr/`) |
+| A name that changed or vanished on a package's public surface | that package's `__init__.py` ledger |
+| What changed in this commit and why | the commit message |
+| The measurement that justified a change | the ADR, or the PR body |
+
+The test: read the docstring as someone who has never
+seen the old code. Every sentence that still earns its
+place is about the code in front of them. A sentence
+that only makes sense if you knew the previous version
+is history — cut it, and put it in the commit message.
+
+This is a rule for *new and edited* docstrings. Many
+existing ones predate it and still carry their history;
+rewriting them wholesale is not the job of an unrelated
+PR, but a docstring you are already editing should come
+out the far side following the rule.
+
+Why: the history accretes. A method whose docstring
+grows a paragraph per change ends up costing more to
+read than the implementation, and its oldest paragraphs
+quietly stop being true — the reader cannot tell which
+sentences describe the code and which describe a version
+that no longer exists. `git log -p` and `git blame`
+never go stale and cost nothing to carry.
+
 ### Package Structure
 
 - **`core/`** — GAIn (Genomic Annotation
