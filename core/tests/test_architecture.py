@@ -101,6 +101,50 @@ def test_the_table_layer_imports_nothing_from_the_score_layer(
     )
 
 
+def test_the_statistics_layer_resolves_contig_length_through_the_table(
+) -> None:
+    """No caller outside the table package reaches for the tabix length probe.
+
+    ``get_chromosome_length_tabix`` is a tabix implementation detail.  The
+    statistics layer used to call it directly, behind an ``isinstance`` ladder
+    over concrete backend classes that also read the backend's pysam handle and
+    its ``unmap_chromosome`` -- so the layer knew which backends existed and how
+    each stored a length, a new backend could not be added without editing the
+    ladder, and the ladder's ``else`` turned that omission into an
+    ``AssertionError``.  Contig length is now asked of the table itself, through
+    ``find_chromosome_length`` (gain#509).
+
+    ``annotate_utils`` is the one legitimate caller left: it probes a pysam
+    handle it opened itself, with no table involved.
+
+    Written as an import scan rather than a call scan so it also catches the
+    import being re-added ahead of its first use -- which is what silently
+    re-points the mocks in the statistics tests at a symbol nothing calls.
+    """
+    probe = "get_chromosome_length_tabix"
+    table_pkg = pathlib.Path(GAIN_SRC) / "genomic_resources" \
+        / "genomic_position_table"
+    allowed = {
+        # defines it
+        pathlib.Path(GAIN_SRC) / "utils" / "regions.py",
+        # probes a handle it opened itself, not a table's
+        pathlib.Path(GAIN_SRC) / "annotation" / "annotate_utils.py",
+    }
+    offenders = [
+        str(py.relative_to(GAIN_SRC))
+        for py in pathlib.Path(GAIN_SRC).rglob("*.py")
+        if py not in allowed
+        and table_pkg not in py.parents
+        and probe in py.read_text(encoding="utf8")
+    ]
+    assert offenders == [], (
+        f"{probe} is reached for outside the table package by: {offenders}. "
+        f"Ask the table for a contig's length instead -- "
+        f"find_chromosome_length reports either a length or a ContigExtent "
+        f"saying why there is not one, for every backend"
+    )
+
+
 def test_no_gain_module_uses_stdlib_logging_directly() -> None:
     """Every gain module logs through `from gain import logging`.
 

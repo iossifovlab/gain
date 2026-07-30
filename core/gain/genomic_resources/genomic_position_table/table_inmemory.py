@@ -12,7 +12,7 @@ from .record import (
     build_tabular_parser,
     sort_key,
 )
-from .table import GenomicPositionTable
+from .table import ContigExtent, GenomicPositionTable
 
 
 class InmemoryGenomicPositionTable(GenomicPositionTable):
@@ -24,7 +24,7 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
     the chromosome map needs the header/file contigs, which are only known
     then.
 
-    Empty/unknown-contig policy (consistent across the three read methods).
+    Empty/unknown-contig policy (consistent across the four read methods).
     A contig can be in ``get_chromosomes()`` yet have no records -- e.g. a
     ``chrom_mapping`` file that maps a reference contig onto a file contig
     with no data rows.  Such a contig is *known* but *empty*:
@@ -34,16 +34,26 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
     * :meth:`get_records_in_region` raises ``ValueError`` when the contig is
       not in ``get_chromosomes()``, and yields nothing for a known-but-empty
       one;
-    * :meth:`get_chromosome_length` raises ``ValueError`` when the contig is
-      unknown *or* known-but-empty (there is no maximum end position to
-      report).
+    * :meth:`find_chromosome_length` raises ``ValueError`` when the contig is
+      unknown, and returns ``ContigExtent.EMPTY`` for a known-but-empty one.
+      Because this backend holds the whole file, having no records PROVES the
+      contig has none, which is a fact a caller can act on rather than an
+      error -- so the two cases this method used to conflate are now apart
+      (gain#509);
+    * ``get_chromosome_length``, inherited from the base class, is the raising
+      view of that hook: it still raises ``ValueError`` for the unknown *and*
+      the known-but-empty contig, with the same message as before, so a caller
+      of it sees no change.
 
     A CLOSED table is not a case of that policy and is refused ahead of it:
     ``close()`` empties ``records_by_chr`` and releases the contig list, so
     every contig would otherwise look known-but-empty and no diagnostic naming
-    the table's contigs could be built at all.  Both
-    :meth:`get_chromosome_length` and :meth:`_load_file_chromosomes` therefore
-    check ``str_stream`` first and say
+    the table's contigs could be built at all.  That mattered for the message
+    before and matters more now, because the known-but-empty answer is no
+    longer an exception: a closed table falling through would report every
+    contig as proven-empty, and a caller would skip the whole genome without
+    being told.  Both :meth:`find_chromosome_length` and
+    :meth:`_load_file_chromosomes` therefore check ``str_stream`` first and say
     the table is not open, as the other three backends do (gain#358; the
     contract is stated on :meth:`GenomicPositionTable.close`).
     """
@@ -220,31 +230,35 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
                 continue
             yield record
 
-    def get_chromosome_length(
+    def find_chromosome_length(
         self, chrom: str,
         step: int = 0,  # noqa: ARG002
-    ) -> int:
-        # The closed table FIRST, as the tabix backend does it: close() empties
-        # records_by_chr, so on a closed table every contig -- a populated one
-        # included -- falls into the no-records branch below, whose message
-        # interpolates get_chromosomes(), which a closed table refuses.  The
-        # intended diagnostic was therefore never built: what reached the caller
-        # came out of the middle of building it, on its way to a "has no
-        # records" claim that was false (gain#358).
+    ) -> int | ContigExtent:
+        # The closed table FIRST, for the reason gain#358 gives on the raising
+        # wrapper -- close() empties records_by_chr, so every contig, populated
+        # ones included, reaches the no-records branch below.  The stakes are
+        # higher here than for a wrong message: that branch's answer is
+        # ContigExtent.EMPTY, which is not an error, so a closed table would
+        # report the whole genome as holding no records and a caller would skip
+        # all of it and call the scan a success.
         if self.str_stream is None:
             raise ValueError(
                 f"in-memory table not open: "
                 f"{self.genomic_resource.resource_id}: "
                 f"{self.definition}")
-        # Unknown or known-but-empty contigs have no maximum end position to
-        # report -- raise a clear ValueError rather than KeyError/max() on [].
-        # Reachable only on an OPEN table, so get_chromosomes() answers and the
-        # message can name the contigs the table does have.
         records = self.records_by_chr.get(chrom)
         if not records:
-            raise ValueError(
-                f"contig {chrom} has no records in the table's contigs: "
-                f"{self.get_chromosomes()}")
+            # An unknown contig and a known-but-empty one both arrive here with
+            # nothing to take a maximum over, and they are DIFFERENT answers:
+            # only a contig this table lists is PROVEN empty.  Probe the dict
+            # first and fall back to the contig list only on the miss, as
+            # get_records_in_region does, so the populated case stays a single
+            # O(1) lookup rather than an O(n_contigs) scan.
+            if chrom not in self.get_chromosomes():
+                raise ValueError(
+                    f"contig {chrom} not present in the table's contigs: "
+                    f"{self.get_chromosomes()}")
+            return ContigExtent.EMPTY
         return cast(
             int,
             max(record[POS_END] for record in records),

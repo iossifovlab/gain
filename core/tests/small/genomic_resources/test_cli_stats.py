@@ -504,9 +504,11 @@ def test_reference_genome_usage(
     )
 
     genomic_table_length_mock = mocker.Mock(return_value=30)
+    # Patched where the probe lives: the implementation layer reads contig
+    # length off the table now and no longer imports the tabix probe (gain#509).
     mocker.patch(
-        "gain.genomic_resources.implementations."
-        "genomic_scores_impl.get_chromosome_length_tabix",
+        "gain.genomic_resources.genomic_position_table."
+        "table_tabix.get_chromosome_length_tabix",
         new=genomic_table_length_mock,
     )
 

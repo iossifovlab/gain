@@ -21,7 +21,7 @@ from .record import (
     TabularParser,
     build_tabular_parser,
 )
-from .table import GenomicPositionTable
+from .table import ContigExtent, GenomicPositionTable
 
 PysamFile = pysam.TabixFile | pysam.VariantFile
 logger = logging.getLogger(__name__)
@@ -203,8 +203,13 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         assert isinstance(self.pysam_file, pysam.TabixFile)
         return self.pysam_file.contigs
 
-    def get_chromosome_length(
-            self, chrom: str, step: int = 100_000_000) -> int:
+    def find_chromosome_length(
+            self, chrom: str,
+            step: int = 100_000_000) -> int | ContigExtent:
+        # The closed table FIRST, as the raising wrapper does it: without this
+        # the probe runs against a released handle and the caller gets a
+        # message-less AttributeError off None instead of being told which
+        # resource was read after closing (gain#358).
         if self.pysam_file is None:
             raise ValueError(
                 f"tabix table not open: "
@@ -216,13 +221,20 @@ class TabixGenomicPositionTable(GenomicPositionTable):
                 f"{self.get_chromosomes()}")
         fchrom = self.unmap_chromosome(chrom)
         if fchrom is None:
-            raise ValueError(
-                f"error in mapping chromsome {chrom} to the file contigs: "
-                f"{self.get_file_chromosomes()}",
-            )
+            # UNDETERMINED rather than a raise: the contig IS listed (checked
+            # just above), so the caller asked a fair question -- it is the
+            # chrom_mapping that cannot answer it.  From this method's only
+            # in-tree caller the case is close to unreachable, since the mapping
+            # is what produces the contig list in the first place; treating it
+            # as undetermined means a contig that turns out to hold records is
+            # read rather than dropped, which is slow at worst, never wrong.
+            return ContigExtent.UNDETERMINED
         length = get_chromosome_length_tabix(self.pysam_file, fchrom, step)
         if length is None:
-            raise ValueError(f"Could not find contig '{fchrom}'")
+            # UNDETERMINED, never EMPTY: a tabix index only carries contigs
+            # that HAVE records, so this backend is never in a position to
+            # prove one holds none.  The records are still there to be read.
+            return ContigExtent.UNDETERMINED
         return length
 
     def get_all_records(self) -> Generator[Record, None, None]:

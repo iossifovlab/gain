@@ -114,6 +114,43 @@ def test_get_chromosome_length_missing(bigwig_table: BigWigTable) -> None:
         bigwig_table.get_chromosome_length("chrX")
 
 
+def test_find_chromosome_length_is_always_exact(
+        bigwig_table: BigWigTable) -> None:
+    """This backend reads sizes out of the header, so it never lacks a length.
+
+    Neither ``ContigExtent`` member is reachable here: a contig the header
+    lists has an exact size, and one it does not list is not a contig of this
+    table at all.  Pinned as a number rather than merely "not an enum member"
+    so that a backend which started guessing lengths would fail here.
+    """
+    with bigwig_table:
+        assert bigwig_table.find_chromosome_length("chr1") == 1000
+        assert bigwig_table.find_chromosome_length("chr2") == 2000
+        assert bigwig_table.find_chromosome_length("chr3") == 3000
+
+
+def test_find_chromosome_length_missing_contig_raises(
+        bigwig_table: BigWigTable) -> None:
+    with bigwig_table, pytest.raises(
+            ValueError,
+            match="contig chrX not present in the table's contigs"):
+        bigwig_table.find_chromosome_length("chrX")
+
+
+def test_find_chromosome_length_closed_table_raises(
+        bigwig_table: BigWigTable) -> None:
+    """A closed table refuses, and says so in its own words.
+
+    It used to carry a bare ``assert`` here, which ``python -O`` strips --
+    leaving a closed table to fall through into a branch whose message reads
+    ``get_chromosomes()``, itself a refused read (gain#358).
+    """
+    with bigwig_table:
+        pass
+    with pytest.raises(ValueError, match="bigwig table not open"):
+        bigwig_table.find_chromosome_length("chr1")
+
+
 def test_get_all_records(bigwig_table: BigWigTable) -> None:
     with bigwig_table:
         vs = list(bigwig_table.get_all_records())

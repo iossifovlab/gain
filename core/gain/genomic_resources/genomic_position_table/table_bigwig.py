@@ -7,6 +7,7 @@ import numpy as np
 
 from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_position_table.table import (
+    ContigExtent,
     GenomicPositionTable,
 )
 from gain.genomic_resources.repository import GenomicResource
@@ -208,7 +209,7 @@ class BigWigTable(GenomicPositionTable):
         self.parser = None
         # The file's whole contig dictionary -- ~600 entries on hg38.  open()
         # reads it back off the handle unconditionally, and every reader of it
-        # is already behind a not-open guard -- `get_chromosome_length` and
+        # is already behind a not-open guard -- `find_chromosome_length` and
         # `_load_file_chromosomes` raise ValueError off `_bw_file` (gain#358),
         # the fetch paths assert on `_bw_file` or on the `parser` this method
         # also drops -- so a closed table holds a copy nothing can reach
@@ -316,7 +317,7 @@ class BigWigTable(GenomicPositionTable):
             # This was a bare ``raise KeyError``: no argument, no message, so
             # the only thing naming the resource was a log line one layer up
             # in ``GenomicScore.fetch_records``.  Same defect, same fix, as
-            # ``get_chromosome_length`` and ``_load_file_chromosomes``
+            # ``find_chromosome_length`` and ``_load_file_chromosomes``
             # (gain#358).  The TYPE stays ``KeyError`` -- callers catch it.
             raise KeyError(
                 f"bigwig table of resource "
@@ -400,10 +401,19 @@ class BigWigTable(GenomicPositionTable):
         for chrom in self.get_chromosomes():
             yield from self.get_records_in_region(chrom)
 
-    def get_chromosome_length(
+    def find_chromosome_length(
         self, chrom: str,
         step: int = 100_000_000,  # noqa: ARG002
-    ) -> int:
+    ) -> int | ContigExtent:
+        # NEITHER ContigExtent member is reachable from this backend, and that
+        # is a property of the format rather than an omission: a bigWig header
+        # carries an exact size for every contig it lists, so a listed contig
+        # always has a length and an unlisted one is refused below as the bad
+        # question it is.  There is nothing to prove empty and nothing to leave
+        # undetermined -- which is why the return type is still the tri-state
+        # one (the base class's hook) while every path here returns an int or
+        # raises.
+        #
         # A closed table FIRST, in the words the other three backends use --
         # this carried a bare ``assert`` where the tabix backend raises, so a
         # closed table's caller got a message-less AssertionError from the

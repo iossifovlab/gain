@@ -3,7 +3,8 @@ import copy
 import gc
 import pathlib
 import textwrap
-from typing import Self, cast
+from collections.abc import Generator
+from typing import Any, Self, cast
 
 import gain.genomic_resources.genomic_position_table as gpt
 import pysam
@@ -23,6 +24,7 @@ from gain.genomic_resources.genomic_position_table.record import (
     POS_END,
     RECORD_SLOTS,
     REF,
+    Record,
     sort_key,
 )
 from gain.genomic_resources.genomic_position_table.table import (
@@ -349,8 +351,14 @@ def test_the_package_exports_only_what_still_exists() -> None:
     # ``Line``/``BigWigLine`` are deliberately absent (#239 deleted the line
     # adapters; see the package docstring).  ``LineBuffer`` stays: it survived
     # the migration and now holds records.
+    #
+    # ``ContigExtent`` is an ADDITION, and a deliberate one (gain#509): it is
+    # the return type of ``find_chromosome_length``, so an out-of-tree caller
+    # cannot interpret that method's answer without being able to import the
+    # enum and compare against its members.
     assert gpt.__all__ == [
         "BigWigTable",
+        "ContigExtent",
         "LineBuffer",
         "TabixGenomicPositionTable",
         "VCFGenomicPositionTable",
@@ -1758,6 +1766,169 @@ def test_contig_length() -> None:
 def test_contig_length_tabix_table(
         tabix_table: TabixGenomicPositionTable) -> None:
     assert tabix_table.get_chromosome_length("1") >= 13
+
+
+def test_find_chromosome_length_tabix_reports_a_length(
+        tabix_table: TabixGenomicPositionTable) -> None:
+    """The tri-state hook answers with a number when the probe finds one."""
+    assert tabix_table.find_chromosome_length("1") >= 13
+
+
+def test_find_chromosome_length_tabix_failed_probe_is_undetermined(
+    tabix_table: TabixGenomicPositionTable,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """A probe that finds no length must not claim the contig is empty.
+
+    This backend reads an index that only carries contigs which HAVE records,
+    so it is never in a position to prove one empty.  When the probe comes back
+    with nothing the length is merely UNDETERMINED -- the records are still
+    there to be read, and a caller must scan the contig rather than skip it.
+    """
+    mocker.patch.object(
+        table_tabix, "get_chromosome_length_tabix", return_value=None)
+    assert tabix_table.find_chromosome_length("1") \
+        is gpt.ContigExtent.UNDETERMINED
+
+
+def test_find_chromosome_length_tabix_closed_table_raises(
+        tabix_table: TabixGenomicPositionTable) -> None:
+    """A closed table refuses, rather than answering UNDETERMINED.
+
+    Both are "no number", but only one is the caller's fault.  Answering
+    UNDETERMINED here would turn a table nobody opened into a whole-genome
+    unbounded scan -- every contig re-read from the top, silently -- where a
+    refusal names the bug.
+    """
+    tabix_table.close()
+    with pytest.raises(ValueError, match="tabix table not open"):
+        tabix_table.find_chromosome_length("1")
+
+
+class _OnlyFindsLengths(GenomicPositionTable):
+    """A backend that implements ONLY the tri-state length hook.
+
+    Stands in for the next backend someone adds.  What it pins is that such a
+    backend gets a working ``get_chromosome_length`` for free, and gets it
+    consistent with its own hook -- rather than having to hand-write the
+    raising variant, or having a caller reach around both with an
+    ``isinstance`` ladder over concrete classes (gain#509).
+    """
+
+    yields_records = True
+
+    def __init__(self, answer: int | gpt.ContigExtent) -> None:
+        super().__init__(cast(Any, None), {"header_mode": "none"})
+        self._answer = answer
+        self.chrom_order = ["chr1"]
+
+    def find_chromosome_length(
+        self, chrom: str,
+        step: int = 100_000_000,
+    ) -> int | gpt.ContigExtent:
+        return self._answer
+
+    def open(self) -> Self:
+        return self
+
+    def close(self) -> None:
+        return
+
+    def get_all_records(self) -> Generator[Record, None, None]:
+        yield from ()
+
+    def get_records_in_region(
+        self, chrom: str,
+        pos_begin: int | None = None,
+        pos_end: int | None = None,
+    ) -> Generator[Record, None, None]:
+        yield from ()
+
+    def _load_file_chromosomes(self) -> list[str]:
+        return ["chr1"]
+
+
+def test_get_chromosome_length_is_built_on_the_hook() -> None:
+    """A number from the hook is the number the raising wrapper reports."""
+    assert _OnlyFindsLengths(4242).get_chromosome_length("chr1") == 4242
+
+
+@pytest.mark.parametrize("extent", list(gpt.ContigExtent))
+def test_get_chromosome_length_raises_for_every_extent(
+        extent: gpt.ContigExtent) -> None:
+    """Every "no number" answer becomes a ``ValueError`` in the wrapper.
+
+    Parametrised over the enum rather than over its members named one by one,
+    so that adding a third reason to ``ContigExtent`` without deciding what the
+    raising wrapper does with it fails here instead of silently returning an
+    enum member from a method annotated ``-> int``.
+    """
+    table = _OnlyFindsLengths(extent)
+    # The wrapper's job is to refuse; the message still has to say which contig
+    # it refused about, since that is what a caller acts on.
+    with pytest.raises(ValueError, match="chr1"):
+        table.get_chromosome_length("chr1")
+
+
+def test_get_chromosome_length_says_which_reason_it_refused_for() -> None:
+    """The wrapper's two refusals must stay distinguishable in the message.
+
+    They are different facts about the resource and an operator acts on them
+    differently: a proven-empty contig is usually a ``chrom_mapping`` naming
+    something the file does not carry, while an undetermined length is a probe
+    that could not answer for a contig that may well hold records.  Collapsing
+    them into one shared "no length" message would leave the operator unable to
+    tell which happened -- and would otherwise pass every other test here,
+    which is why this pins the distinction directly rather than trusting the
+    comment that argues for it.
+    """
+    with pytest.raises(ValueError, match="has no records") as empty:
+        _OnlyFindsLengths(gpt.ContigExtent.EMPTY).get_chromosome_length("chr1")
+
+    with pytest.raises(
+            ValueError, match="could not determine the length") as undetermined:
+        _OnlyFindsLengths(
+            gpt.ContigExtent.UNDETERMINED).get_chromosome_length("chr1")
+
+    # ...and the two are actually different strings, not merely two patterns
+    # that happen to match one shared message.
+    assert str(empty.value) != str(undetermined.value)
+
+
+def test_find_chromosome_length_vcf_reports_a_length_and_undetermined(
+    vcf_res: GenomicResource,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """The VCF backend inherits the tabix hook, over a different handle.
+
+    Worth pinning separately from tabix rather than assumed from the
+    inheritance: this is the one backend that hands the length probe a
+    ``pysam.VariantFile`` instead of a ``pysam.TabixFile``, and the probe
+    fetches through it.  Like tabix it indexes only contigs that have records,
+    so ``UNDETERMINED`` is the only member it can return.
+    """
+    assert vcf_res.config is not None
+    with build_genomic_position_table(
+            vcf_res, vcf_res.config["tabix_table"]) as tab:
+        assert isinstance(tab, VCFGenomicPositionTable)
+        assert tab.find_chromosome_length("chr1") >= 30
+
+        mocker.patch.object(
+            table_tabix, "get_chromosome_length_tabix", return_value=None)
+        assert tab.find_chromosome_length("chr1") \
+            is gpt.ContigExtent.UNDETERMINED
+
+
+def test_find_chromosome_length_tabix_unknown_contig_raises(
+        tabix_table: TabixGenomicPositionTable) -> None:
+    """A contig the table does not list is a bad question, not UNDETERMINED.
+
+    Without the presence check the probe would simply fail to find anything and
+    the contig would come back UNDETERMINED -- turning a name this table has
+    never heard of into an unbounded scan of it.
+    """
+    with pytest.raises(ValueError, match="nosuch"):
+        tabix_table.find_chromosome_length("nosuch")
 
 
 def test_vcf_autodetect_format(

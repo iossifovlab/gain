@@ -8,16 +8,8 @@ import numpy as np
 
 from gain import logging
 from gain.genomic_resources.genomic_position_table import (
+    ContigExtent,
     TabixGenomicPositionTable,
-)
-from gain.genomic_resources.genomic_position_table.record import (
-    POS_END,
-)
-from gain.genomic_resources.genomic_position_table.table_bigwig import (
-    BigWigTable,
-)
-from gain.genomic_resources.genomic_position_table.table_inmemory import (
-    InmemoryGenomicPositionTable,
 )
 from gain.genomic_resources.genomic_scores import (
     GenomicScore,
@@ -60,7 +52,6 @@ from gain.genomic_resources.statistics.min_max import MinMaxValue
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph
 from gain.utils.regions import (
     Region,
-    get_chromosome_length_tabix,
     split_into_regions,
 )
 
@@ -333,50 +324,45 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             # get opposite treatment below: a contig PROVEN to hold no records
             # is skipped, a contig whose length merely could not be DETERMINED
             # is scanned whole.
-            chrom_length: int | None = None
+            chrom_length: int | ContigExtent
             if ref_genome is not None and chrom in ref_genome.chromosomes:
                 chrom_length = ref_genome.get_chrom_length(chrom)
             else:
-                if isinstance(self.score.table, InmemoryGenomicPositionTable):
-                    # The in-memory backend yields record tuples; read the end
-                    # position from its named slot rather than an adapter attr.
-                    # This backend holds the whole file, so no maximum end
-                    # position PROVES the contig has no records (e.g. a
-                    # chrom_mapping onto a file contig with no data rows).
-                    # There is nothing to scan and nothing to validate, and an
-                    # unbounded region here would cost a table open per empty
-                    # contig -- hundreds of them for a mapping that covers
-                    # hg38's alts.
-                    chrom_length = \
-                        max((record[POS_END]
-                             for record in
-                             self.score.table.get_records_in_region(chrom)),
-                            default=None)
-                    if chrom_length is None:
-                        logger.info(
-                            "contig %s holds no records; not scanned", chrom)
-                        continue
-                elif isinstance(self.score.table, BigWigTable):
-                    chrom_length = \
-                        self.score.table.get_chromosome_length(chrom)
-                else:
-                    assert isinstance(self.score.table,
-                                      TabixGenomicPositionTable)
-                    assert self.score.table.pysam_file is not None
-                    fchrom = self.score.table.unmap_chromosome(chrom)
-                    if fchrom is not None:
-                        chrom_length = get_chromosome_length_tabix(
-                            self.score.table.pysam_file, fchrom)
-            if chrom_length is None:
-                # Reached only when the length could not be determined for a
-                # contig that may well hold records -- skipping it would leave
-                # them out of the statistics AND out of the ordering checks the
-                # scan performs on the way, while the resource still reported
-                # its statistics as freshly built.  A length is what SPLITTING
-                # needs, not what READING needs, so scan the contig whole.  An
-                # unbounded region keeps the per-record path (see
-                # :meth:`_do_histogram_task`): slower than a split contig,
-                # never wrong.
+                # Asked of the table itself, which is the only thing that knows
+                # how its format answers.  This used to be an isinstance ladder
+                # over the concrete backends, reaching past the abstraction into
+                # a pysam handle and the tabix probe to re-derive per backend
+                # what each already implements -- so a new backend could not be
+                # added without editing it, and the else-branch turned that
+                # omission into an assertion failure (gain#509).
+                #
+                # The step is left at the table's own default.  The ladder used
+                # to seed the tabix probe at ITS default (half the table's),
+                # which sounds like a behaviour change and measurably is not:
+                # the probe brackets the length on the geometric ladder
+                # {step * 2^k}, and 50M and 100M generate the same ladder, so
+                # both seeds find the same bracket and the same bound.
+                chrom_length = self.score.table.find_chromosome_length(chrom)
+                if chrom_length is ContigExtent.EMPTY:
+                    # PROVEN to hold no records -- only a backend holding the
+                    # whole file can say this (e.g. a chrom_mapping onto a file
+                    # contig with no data rows).  There is nothing to scan and
+                    # nothing to validate, and an unbounded region here would
+                    # cost a table open per empty contig -- hundreds of them for
+                    # a mapping that covers hg38's alts.  INFO, not WARNING:
+                    # there is nothing for an operator to fix.
+                    logger.info(
+                        "contig %s holds no records; not scanned", chrom)
+                    continue
+            if chrom_length is ContigExtent.UNDETERMINED:
+                # The length could not be determined for a contig that may well
+                # hold records -- skipping it would leave them out of the
+                # statistics AND out of the ordering checks the scan performs on
+                # the way, while the resource still reported its statistics as
+                # freshly built.  A length is what SPLITTING needs, not what
+                # READING needs, so scan the contig whole.  An unbounded region
+                # keeps the per-record path (see :meth:`_do_histogram_task`):
+                # slower than a split contig, never wrong.
                 logger.warning(
                     "unable to find chromosome length for %s; "
                     "scanning it as a single unbounded region", chrom)

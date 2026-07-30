@@ -289,8 +289,13 @@ def test_get_chrom_regions_scans_a_contig_of_unknown_length_whole(
 
     # The tabix probe is the one branch that can fail to determine a length
     # for a contig that demonstrably HAS records.
+    #
+    # Patched where the PROBE lives, not where the caller used to import it:
+    # the implementation layer reaches the length through the table's own
+    # find_chromosome_length now, and no longer knows that a tabix probe is
+    # what answers it (gain#509).
     mocker.patch(
-        "gain.genomic_resources.implementations.genomic_scores_impl"
+        "gain.genomic_resources.genomic_position_table.table_tabix"
         ".get_chromosome_length_tabix",
         return_value=None)
 
@@ -300,6 +305,108 @@ def test_get_chrom_regions_scans_a_contig_of_unknown_length_whole(
     assert [(r.chrom, r.start, r.stop) for r in regions] \
         == [("chr1", None, None)]
     assert "scanning it as a single unbounded region" in caplog.text
+
+
+def test_get_chrom_regions_tabix_output_is_unchanged_by_the_table_lookup(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Reading the length off the table splits a tabix contig identically.
+
+    The expected list was measured against the pre-refactor caller, which seeded
+    the tabix length probe at the probe's own default while the table's method
+    seeds it at twice that.  That sounds like it should move the answer and does
+    not: the probe brackets a contig's length on the geometric ladder
+    ``{step * 2^k}``, and the two seeds generate the SAME ladder, so both find
+    the same bracket and the binary search that follows returns the same bound.
+    A seed not related by a power of two (7M, say) does land elsewhere -- within
+    the probe's own 500_000 precision -- which is why this is pinned rather than
+    argued (gain#509).
+    """
+    res = (
+        a_position_score()
+        .with_score("score", "float")
+        .with_data("""
+            chrom  pos_begin  score
+            chr1   10         0.1
+            chr1   2500       0.2
+            chr2   40         0.3
+        """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    impl = build_score_implementation_from_resource(res)
+    impl.score.open()
+
+    regions = impl._get_chrom_regions(1000)
+
+    assert [(r.chrom, r.start, r.stop) for r in regions] == [
+        ("chr1", 1, 1000),
+        ("chr1", 1001, 2000),
+        ("chr1", 2001, 3000),
+        ("chr1", 3001, 4000),
+        ("chr2", 1, 48),
+    ]
+
+
+def test_get_chrom_regions_inmemory_splits_on_the_tables_own_length() -> None:
+    """Where the in-memory off-by-one does and does not reach the regions.
+
+    The table reports ``max(pos_end) + 1``, where the caller used to recompute
+    an exact ``max(pos_end)``, and that one base reaches the region list in TWO
+    separate ways -- measured against the pre-refactor caller, not reasoned
+    about:
+
+    * **A contig shorter than the region size** gets its single region one base
+      wider.  ``split_into_regions`` clamps ``region_size`` down to the contig
+      length, so the region's stop IS the length.  This is the common case, not
+      an edge one: with the CLI's default region size most in-memory resources
+      are shorter than it.
+    * **A contig whose span is an exact multiple of the region size** gains a
+      trailing region that holds no records, because ``calc_bin_index`` maps
+      ``k * size`` to bin ``k - 1`` but ``k * size + 1`` to bin ``k``.
+
+    Every other contig splits exactly as before.  All three shapes are asserted
+    so the boundaries are pinned from both sides.
+
+    Both differences are scan bounds rather than data: a one-base-wider region
+    and an extra empty region read the same records, so the statistics built
+    from them are unchanged.  What does change is the region list, and with it
+    the task ids of a statistics build.
+    """
+    def regions_for(last_pos: int, region_size: int) -> list[tuple]:
+        res = build_inmemory_test_resource({
+            GR_CONF_FILE_NAME: """
+                type: position_score
+                table:
+                    filename: data.mem
+                scores:
+                    - id: value
+                      name: value
+                      type: float
+            """,
+            "data.mem": convert_to_tab_separated(
+                f"""
+                chrom pos_begin value
+                1     {last_pos}  0.1
+                """,
+            ),
+        })
+        impl = build_score_implementation_from_resource(res)
+        impl.score.open()
+        return [(r.chrom, r.start, r.stop)
+                for r in impl._get_chrom_regions(region_size)]
+
+    # Shorter than the region size: one region, one base wider than it was
+    # (the caller's exact 999 gave a [1, 999]).
+    assert regions_for(999, 1000) == [("1", 1, 1000)]
+    # An exact multiple: the reported length of 1001 opens a second, empty
+    # region where the caller's exact 1000 gave one.
+    assert regions_for(1000, 1000) == [("1", 1, 1000), ("1", 1001, 2000)]
+    # Longer than the region size and not a multiple of it: untouched, and the
+    # boundaries are the multiples of the region size either way.
+    assert regions_for(1001, 1000) == [("1", 1, 1000), ("1", 1001, 2000)]
+    assert regions_for(2500, 1000) == [
+        ("1", 1, 1000), ("1", 1001, 2000), ("1", 2001, 3000)]
 
 
 def test_add_statistics_build_tasks_creates_min_max_tasks() -> None:
@@ -408,7 +515,17 @@ def test_add_min_max_tasks_builds_graph() -> None:
         region_size=10,
     )
 
-    assert len(calc_tasks) == 4
+    # Six, not four: one extra region, and so one extra min/max and one extra
+    # histogram task.  The single record ends at position 10, and the in-memory
+    # table reports its contig length as 11 -- ``max(pos_end) + 1``, which is
+    # what satisfies the base-class contract that a reported length EXCEEDS the
+    # true one.  The caller used to recompute ``max(pos_end)`` inline instead,
+    # an exact 10, which splits into a single [1, 10] region; 11 splits into
+    # [1, 10] plus a trailing [11, 20] that holds no records.  That extra region
+    # is a no-op scan -- it contributes to neither statistic -- and reading the
+    # length off the table instead of re-deriving it is the whole point of
+    # gain#509, so the expected count moves rather than the length.
+    assert len(calc_tasks) == 6
     calculate_task = calc_tasks[-1]
     assert calculate_task.func is \
         GenomicScoreImplementation._merge_and_save_histograms
@@ -439,7 +556,10 @@ def test_add_histogram_tasks_skip_null_histograms_and_link_minmax() -> None:
         region_size=10,
     )
 
-    assert len(calc_tasks) == 4
+    # Six for the same reason as the previous test: the in-memory table's
+    # contig length exceeds the last record's end by one, adding a trailing
+    # region that holds nothing.
+    assert len(calc_tasks) == 6
     calculate_task = calc_tasks[-1]
     assert calculate_task.func is \
         GenomicScoreImplementation._merge_and_save_histograms
@@ -717,8 +837,10 @@ def test_statistics_with_vcf_allele_score_30_000_000(
     executor: TaskGraphExecutor,
 ) -> None:
 
+    # Patched where the probe lives: the implementation layer reads contig
+    # length off the table now and no longer imports the tabix probe (gain#509).
     mocker.patch(
-        "gain.genomic_resources.implementations.genomic_scores_impl."
+        "gain.genomic_resources.genomic_position_table.table_tabix."
         "get_chromosome_length_tabix",
         return_value=30_000_001,
     )
