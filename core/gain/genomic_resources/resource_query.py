@@ -17,6 +17,7 @@ repositories and the CLIs cannot disagree about what ``*`` means.
 from __future__ import annotations
 
 import fnmatch
+import functools
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -31,12 +32,22 @@ class ResourceQueryParseError(ValueError):
     """Raised when a resource query cannot be parsed."""
 
 
+# ``.`` and the version parentheses are part of the charsets because real
+# resource ids carry them -- ``hg38/scores/CADD_v1.7``,
+# ``hg19/variant_frequencies/gnomAD_v2.1.1/exomes``, ``sub/two(1.0)``. They
+# are roughly a sixth of the ids in the public GRRs, and without them a user
+# cannot paste a line of `grr_manage list` output back in as a query. The
+# same characters are allowed in a label value, so a version label
+# (``[version="1.0"]``) is expressible too.
+#
+# ``]`` is deliberately absent from every charset: it is what closes the
+# label filter.
 RESOURCE_QUERY_GRAMMAR = """
     ?start: resource_id [filter]
 
     ?resource_id: (resource_name | wildcard)
 
-    wildcard: /[\\w\\d\\/_\\-*]+/
+    wildcard: /[\\w\\d\\/_\\-*.()]+/
 
     filter: "[" (equals | in | and_)+ "]"
 
@@ -46,18 +57,27 @@ RESOURCE_QUERY_GRAMMAR = """
 
     in: ("\\""value"\\"" " in " name) | ("'"value"'" " in " name)
 
-    resource_name: /[\\w\\d\\/_\\-!@#$%^<>+]+/
+    resource_name: /[\\w\\d\\/_\\-!@#$%^<>+.()]+/
 
-    ?name: /[\\w\\d\\/_\\-!@#$%^<>+*]+/
+    ?name: /[\\w\\d\\/_\\-!@#$%^<>+*.()]+/
 
-    ?value: /[\\w\\d\\/ _\\-!@#$%^<>+*]+/
+    ?value: /[\\w\\d\\/ _\\-!@#$%^<>+*.()]+/
 
     ?operation: equals | in | and_
 
     %ignore " "
 """
 
-_PARSER = Lark(RESOURCE_QUERY_GRAMMAR)
+
+@functools.cache
+def _get_parser() -> Lark:
+    """Build the grammar once, on first use.
+
+    Cached rather than built at import: this module is imported by
+    ``repository``, so every gain entry point pays the ~15ms Earley grammar
+    construction otherwise, including the ones that never parse a query.
+    """
+    return Lark(RESOURCE_QUERY_GRAMMAR)
 
 
 def _equals_predicate(value: str) -> Callable[[str], bool]:
@@ -121,9 +141,15 @@ def _build_label_predicates(
     return predicates
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class ResourceQuery:
-    """A parsed resource query: an id glob plus label predicates."""
+    """A parsed resource query: an id glob plus label predicates.
+
+    ``eq=False``: the label predicates are closures, so a generated
+    ``__eq__`` would compare function identity (two parses of the same
+    query would differ) and a generated ``__hash__`` would raise on the
+    predicate mapping. Identity comparison is the honest contract.
+    """
 
     resource_id_pattern: str
     label_predicates: Mapping[str, Callable[[str], bool]]
@@ -135,10 +161,13 @@ class ResourceQuery:
         Raises ``ResourceQueryParseError`` if the query is not well-formed.
         """
         try:
-            tree = _PARSER.parse(query)
+            tree = _get_parser().parse(query)
         except LarkError as err:
+            # Lark's own message carries the position and what it expected;
+            # dropping it would leave the user with only their own input
+            # echoed back.
             raise ResourceQueryParseError(
-                f"Unparsable resource query: '{query}'",
+                f"Unparsable resource query '{query}': {err}",
             ) from err
 
         assert len(tree.children) == 2

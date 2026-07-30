@@ -1120,12 +1120,32 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
         A ``resource_query`` on its own never opens the index. That is what
         makes it work on a repository with no ``.CONTENTS.sqlite3.gz`` at
         all, where opening the metadata db raises.
-        """
-        parsed_query = (
-            ResourceQuery.parse(resource_query)
-            if resource_query is not None else None
-        )
 
+        An empty ``resource_query`` is an unset one: it is what a shell
+        substitutes for a variable that was never set, and the useful
+        reading of ``-q "$SELECTOR"`` with no selector is the one that
+        behaves like omitting the flag.
+
+        Raises ``ResourceQueryParseError`` for a malformed
+        ``resource_query`` -- eagerly, when called, rather than on the
+        first iteration, so a caller can still report it against the
+        argument that caused it.
+        """
+        # Parsed here rather than in the generator below: this method would
+        # otherwise be a generator function, whose body does not run until
+        # it is first iterated.
+        parsed_query = (
+            ResourceQuery.parse(resource_query) if resource_query else None
+        )
+        return self._search_resources(
+            search_term, resource_type, parsed_query)
+
+    def _search_resources(
+            self,
+            search_term: str | None,
+            resource_type: str | None,
+            parsed_query: ResourceQuery | None,
+    ) -> Generator[GenomicResource, None, None]:
         if search_term is None and resource_type is None:
             for res in self.get_all_resources():
                 if parsed_query is None or parsed_query.match(res):
@@ -2029,7 +2049,10 @@ class GenomicResourceProtocolRepo(GenomicResourceRepo):
         resource_type: str | None = None,
         resource_query: str | None = None,
     ) -> Generator[GenomicResource, None, None]:
-        yield from self.proto.search_resources(
+        # `return`, not `yield from`: the protocol validates the query when
+        # the call is made, and a generator function here would defer that
+        # to the first iteration.
+        return self.proto.search_resources(
             search_term, resource_type, resource_query)
 
     def get_all_resources(self) -> Generator[GenomicResource, None, None]:

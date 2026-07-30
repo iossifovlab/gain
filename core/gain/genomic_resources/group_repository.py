@@ -3,6 +3,7 @@
 from collections.abc import Generator
 
 from .repository import GenomicResource, GenomicResourceRepo
+from .resource_query import ResourceQuery
 
 
 class GenomicResourceGroupRepo(GenomicResourceRepo):
@@ -55,6 +56,22 @@ class GenomicResourceGroupRepo(GenomicResourceRepo):
         search_term: str | None = None,
         resource_type: str | None = None,
         resource_query: str | None = None,
+    ) -> Generator[GenomicResource, None, None]:
+        if resource_query:
+            # Parsed and discarded: a malformed query must fail when the
+            # call is made rather than when the first child is reached,
+            # and a group with no children would otherwise never parse it
+            # at all. The children parse it again for themselves; the
+            # grammar is built once and cached.
+            ResourceQuery.parse(resource_query)
+        return self._search_resources(
+            search_term, resource_type, resource_query)
+
+    def _search_resources(
+        self,
+        search_term: str | None,
+        resource_type: str | None,
+        resource_query: str | None,
     ) -> Generator[GenomicResource, None, None]:
         for child_repo in self.children:
             yield from child_repo.search_resources(

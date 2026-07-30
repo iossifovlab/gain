@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 """Architecture tests for gain package using pytestarch."""
+import ast
 import os
 import pathlib
 
@@ -207,13 +208,53 @@ def test_the_grr_does_not_import_the_annotation_layer(
     for py in grr_pkg.rglob("*.py"):
         if py in allowed:
             continue
-        for line in py.read_text(encoding="utf8").splitlines():
-            stripped = line.strip()
-            if stripped.startswith(("from gain.annotation",
-                                    "import gain.annotation")):
-                offenders.append(f"{py.relative_to(GAIN_SRC)}: {stripped}")
+        offenders.extend(
+            f"{py.relative_to(GAIN_SRC)}: {imported}"
+            for imported in sorted(_imported_modules(py))
+            if imported == "gain.annotation"
+            or imported.startswith("gain.annotation.")
+        )
     assert offenders == [], (
         f"the GRR imports the annotation layer: {offenders}. "
         f"genomic_resources sits below annotation -- move the shared code "
         f"down into genomic_resources instead, as resource_query does"
     )
+
+
+def _imported_modules(py: pathlib.Path) -> set[str]:
+    """Absolute dotted names ``py`` imports, however it spells them.
+
+    Resolved from the AST rather than matched against the source text, so
+    that ``from gain import annotation``, a relative ``from ..annotation
+    import x`` and an ``importlib.import_module("gain.annotation.x")`` are
+    all seen -- a text scan for ``from gain.annotation`` catches none of
+    the three, and matches a line inside a docstring that imports nothing.
+    """
+    tree = ast.parse(py.read_text(encoding="utf8"))
+    # The package that contains this module, as a dotted path: `gain` plus
+    # the directories between GAIN_SRC and the file.
+    package = ["gain", *py.relative_to(GAIN_SRC).parts[:-1]]
+
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                # `from . import x` stays in the containing package;
+                # each extra dot climbs one above it.
+                base = package[:len(package) - (node.level - 1)]
+            else:
+                base = []
+            prefix = [*base, node.module] if node.module else base
+            module = ".".join(prefix)
+            if module:
+                imported.add(module)
+            imported.update(
+                f"{module}.{alias.name}" if module else alias.name
+                for alias in node.names
+            )
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            # `importlib.import_module("gain.annotation.x")` and friends.
+            imported.add(node.value)
+    return imported

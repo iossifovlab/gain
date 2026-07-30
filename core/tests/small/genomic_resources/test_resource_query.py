@@ -38,6 +38,59 @@ def test_an_unparsable_query_is_rejected() -> None:
         ResourceQuery.parse('hg38/scores/*[unclosed="x"')
 
 
+@pytest.mark.parametrize(
+    "resource_id",
+    [
+        "hg38/scores/CADD_v1.7",
+        "hg19/variant_frequencies/gnomAD_v2.1.1/exomes",
+        "gene_properties/gene_sets/MSigDB_curated/7.5",
+        "hg38/cnv_collections/gnomAD.v4.1_Exome_CNV",
+        "sub/two(1.0)",
+    ],
+)
+def test_a_real_resource_id_is_a_valid_query(resource_id: str) -> None:
+    """Ids carrying a dot or a version suffix must be expressible.
+
+    Roughly a sixth of the ids in the public GRRs carry one; a query
+    language that cannot name them is a language a user cannot paste a
+    listing line into.
+    """
+    assert ResourceQuery.parse(resource_id).match_id(resource_id)
+
+
+def test_a_dotted_id_is_globbable() -> None:
+    query = ResourceQuery.parse("hg38/scores/CADD_v1.*")
+
+    assert query.match_id("hg38/scores/CADD_v1.7")
+    assert not query.match_id("hg38/scores/CADD_v2.0")
+
+
+def test_a_dotted_label_value_is_queryable() -> None:
+    query = ResourceQuery.parse('*[version="1.0"]')
+
+    assert query.match_labels({"version": "1.0"})
+    assert not query.match_labels({"version": "2.0"})
+
+
+def test_an_empty_query_is_rejected_rather_than_matching_everything() -> None:
+    with pytest.raises(ResourceQueryParseError):
+        ResourceQuery.parse("")
+
+
+def test_a_query_is_compared_and_hashed_by_identity() -> None:
+    """The predicates are closures, so value equality cannot be meaningful.
+
+    A generated ``__eq__`` would compare closure identity anyway, and the
+    matching ``__hash__`` would raise on the predicate mapping. Identity is
+    what the class actually offers, and it hashes.
+    """
+    query = ResourceQuery.parse('*[a="1"]')
+
+    assert query == query
+    assert query != ResourceQuery.parse('*[a="1"]')
+    assert hash(query) == hash(query)
+
+
 def test_equals_is_an_fnmatch_over_the_label_value() -> None:
     query = ResourceQuery.parse('*[phenotype="aut*"]')
 
