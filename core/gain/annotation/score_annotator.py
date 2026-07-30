@@ -162,15 +162,11 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
     ) -> str:
         """Collect score aggregator documentation.
 
-        This carried its own copy of the per-value-type default tables, as a
-        fallback for a definition whose aggregator was unset.  Both copies
-        are gone: the score class owns the table
+        No fallback for an unset aggregator, and no local copy of the
+        per-value-type defaults: the score class owns that table
         (``GenomicScore.DEFAULT_AGGREGATORS``) and ``_build_scoredefs``
-        applies it, so a definition's ``aggregator`` is always resolved by
-        the time anything reads it.  The fallback was unreachable anyway --
-        ``__post_init__`` filled the fields for every score with a value
-        type -- so it was a second statement of the defaults that no test
-        could catch drifting.
+        applies it, so a definition's ``aggregator`` is already resolved by
+        the time anything reads it.
         """
         if attribute_conf_agg is None:
             score_def = self.score.get_score_definition(attr.source)
@@ -488,11 +484,10 @@ Non-``VCFAllele`` annotatables always use region aggregation.
     ) -> Callable[[Record], bool]:
         """Compile a Lark parse tree into a record predicate.
 
-        The predicate used to take a score line and call ``get_score`` on it.
-        With the score lines gone a value is read off a RECORD, through the
-        score that owns the definitions -- so the score is threaded in here
-        and closed over by each variable accessor, and the predicate itself
-        stays a one-argument callable the fetch loop can apply per record.
+        A value is read off a RECORD, through the score that owns the
+        definitions -- so the score is threaded in here and closed over by
+        each variable accessor, leaving the predicate a one-argument callable
+        the fetch loop applies per record.
         """
         if tree.data == "and_":
             assert isinstance(tree.children[0], Tree)

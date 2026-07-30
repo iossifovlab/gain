@@ -106,8 +106,7 @@ class RecordOrdering(enum.Enum):
     tabix refuses to index a file whose positions decrease
     (``[E::hts_idx_push] Unsorted positions on sequence``).  Such a resource
     therefore cannot be built, the branch could never run, and no test could
-    pin it -- so the bulk guard enforces only the shared-position rule
-    (gain#421).
+    pin it -- so the bulk guard enforces only the shared-position rule.
     """
 
     DISJOINT = "disjoint"
@@ -231,13 +230,11 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.SHARED
     RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
 
-    # What each fetched line is wrapped in.  Installed by :meth:`open`, from
-    # the table's ``yields_records`` claim, and declared here with NO default
-    # on purpose: there is no longer a score line that suits an unrouted score.
-    # Every backend yields records (#239 deleted the adapters), but a record's
-    # payload still means two different things -- a raw row or a VCF
-    # (variant, allele index) pair -- so there is no class that reads both, and
-    # a default would have to be wrong for one of them.  Unset until open()
+    # How a value is read off a record.  Installed by :meth:`open`, from the
+    # table's ``yields_records`` claim, and declared here with NO default on
+    # purpose: a record's payload means two different things -- a raw row or a
+    # VCF (variant, allele index) pair -- so no single extractor reads both,
+    # and a default would have to be wrong for one of them.  Unset until open()
     # routes, an unopened score raises AttributeError rather than silently
     # reading a VCF record as a row; open() installs it *before* publishing
     # table_loaded, so no caller can observe the gap (see open()).
@@ -248,8 +245,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     # per CLASS because the reduction is a property of the resource type -- a
     # position score is aggregated over a region of positions, an allele score
     # over the alleles at one -- and a ``GenomicScoreDef`` cannot know which
-    # kind it belongs to.  That is why there used to be two fields on the
-    # definition and only ever one of them read.
+    # kind it belongs to.
     #
     # Applied by :meth:`_apply_default_aggregator` to every score whose config
     # does not state an ``aggregator:``, which today is every deployed score:
@@ -351,26 +347,14 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                     "add_prefix": {"type": "string"},
                     "del_prefix": {"type": "string", "excludes": "add_prefix"},
                 }},
-                # bigWig fetch tuning.  The two ``*_fetch_size`` keys are
-                # budgets in RECORDS per range query -- the bigWig backend
-                # adapts its base-pair window toward them (see
-                # ``table_bigwig``).  The backend has always read all three off
-                # the table definition; before #259 the schema rejected them as
-                # unknown fields, so configuring one failed validation outright.
-                # ``fetch_size`` is a budget in RECORDS per range query -- the
-                # bigWig backend adapts its base-pair window toward it.  It was
-                # called ``direct_fetch_size`` while a second, buffered fetch
-                # strategy existed; that strategy is gone, so the name is too.
-                # The rename is deliberately NOT aliased: the capability still
-                # exists, so a config naming it the old way means something
-                # specific, and failing validation lets the operator rename it
-                # rather than silently getting the default.
+                # bigWig fetch tuning.  ``fetch_size`` is a budget in
+                # RECORDS per range query -- the bigWig backend adapts its
+                # base-pair window toward it (see ``table_bigwig``).
                 "fetch_size": {"type": "integer", "min": 1},
-                # The buffered strategy's two knobs, kept in the schema and
-                # ignored.  Unlike the rename above, these configure a feature
-                # that no longer EXISTS, so there is nothing for an operator to
-                # rename to -- refusing the resource would take it offline to
-                # tell it that.  ``build_genomic_position_table`` warns.
+                # Accepted and ignored: they configure no capability.  They
+                # stay in the schema because refusing the resource would take
+                # it offline merely to report a dead key, and there is nothing
+                # to rename them to.  ``build_genomic_position_table`` warns.
                 "buffer_fetch_size": {"type": "integer", "min": 1},
                 "use_buffered_threshold": {"type": "integer", "min": 0},
             }},
@@ -466,17 +450,14 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     ) -> dict[str, GenomicScoreDef]:
         """Fill in what a definition cannot decide for itself.
 
-        **The value type.**  ``type:`` is optional, and an unstated one has
-        always been READ as a float -- that is what the value parser
-        defaults to.  The declared type used to be left at ``None``, so such
-        a score parsed as a float while reporting no type, and everything
-        keyed on the type quietly opted out.  Most damagingly
+        **The value type.**  ``type:`` is optional, and an unstated one is
+        recorded as ``float`` -- what the value parser defaults to anyway.
+        Recording it matters rather than leaving it ``None``:
         ``GenomicScoreDef.__post_init__`` returns early on a ``None`` type,
-        so ``na_values`` was never normalized: it stayed the raw string the
-        config gave, which turns the NA check into a SUBSTRING test, and a
-        score configured ``na_values: "-1"`` silently read a real value of 1
-        as a null.  That is the exact defect ``normalize_na_values`` exists
-        to prevent, reachable by omitting one key.
+        which would skip ``na_values`` normalization and leave the raw config
+        string in place.  That turns the NA check into a SUBSTRING test, so a
+        score configured ``na_values: "-1"`` would read a real value of 1 as
+        a null -- the exact defect ``normalize_na_values`` prevents.
 
         It is resolved HERE rather than at parse time because for a VCF
         score an unstated type means "the type the file's header declares",
@@ -610,10 +591,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         path pays nothing for it.
 
         A table that yields no records is a programming error, not a data
-        error: since #239 there is no adapter score line to fall back to, so a
-        backend leaving the flag False has nothing that can read it and we
-        refuse rather than guess.  (Nothing in the tree reaches it: it guards a
-        backend added later without its migration.)
+        error: there is no fallback reader, so a backend leaving the flag
+        False has nothing that can read it and we refuse rather than guess.
+        (Nothing in the tree reaches it: it guards a backend added later
+        without its migration.)
         """
         if is_vcf:
             return extract_vcf_value
@@ -661,11 +642,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         if is_vcf:
             # A VCF score has no column to resolve: it is addressed by INFO
             # KEY, which is ``col_name``, and :func:`extract_vcf_value` reads
-            # that attribute directly.  This branch used to copy the same
-            # string into ``score_index`` as well, which is what made that
-            # field ``int | str`` and forced an ``isinstance`` assert at the
-            # other end; the copy said nothing the original did not.  So all
-            # that is left here is the invariant the copy used to assert.
+            # that attribute directly.  All this enforces is that the key is
+            # actually there.
             for score_def in self.score_definitions.values():
                 if score_def.col_name is None:
                     raise ValueError(
@@ -723,7 +701,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         * a refusal costs no handle.  Routing after ``table.open()`` would
           leave a caller that is not using the ``with`` form holding an opened
-          pysam handle it can no longer reach: ``table_loaded`` would still be
+          pysam handle it cannot reach: ``table_loaded`` would still be
           False, so ``close()`` would not have been reached.  Raising first
           means there is nothing to leak.  The bigWig config validation sits
           here for exactly that reason.
@@ -731,8 +709,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
           everyone else: from that write on, another caller's open() takes the
           is_open() early return above and reads ``_extract_value`` straight
           away.  Routed last, that caller could catch the score
-          published-but-unrouted -- and since #239 left the routing with no
-          default at all, that caller reads an AttributeError.  Scores are
+          published-but-unrouted, and since the routing has no default at
+          all, that caller reads an AttributeError.  Scores are
           shared across threads (the process-wide in-memory fragment-score
           cache; gain-web-api's thread pool), so the window is reachable;
           this ordering keeps the ROUTING out of it.  Pinned by
@@ -794,16 +772,12 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     def _record_to_begin_end(record: Record) -> tuple[str, int, int]:
         """Read a record's three positional slots, checking their order.
 
-        Three slot reads, no method call and no per-line object -- the score
-        line this used to go through cost five property dispatches per record,
-        each of which called ``typing.cast``.
+        Three slot reads, no method call and no per-record object.
 
         The message names the record by its DECODED slots rather than
         interpolating it.  A record's last slot is the backend's payload, so
-        ``f"{record}"`` would print a whole ``pysam.VariantRecord`` (its repr
-        is the entire VCF line) or a ``TupleProxy``; the retired score line
-        had a ``__repr__`` written to avoid exactly that, and this reproduces
-        what it said.
+        ``f"{record}"`` would print a whole ``pysam.VariantRecord`` -- whose
+        repr is the entire VCF line -- or a ``TupleProxy``.
         """
         chrom = record[CHROM]
         pos_begin = record[POS_BEGIN]
@@ -944,8 +918,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         adaptive fetch window -- ignores it.
 
         Each score id gets an array of its own -- the parse builds one per
-        id, so two ids sharing a payload column no longer alias, as they did
-        while this method returned the backend's raw cells.
+        id, so two ids sharing a payload column do not alias.
 
         The guards below run when this method is CALLED, not on the first
         ``next()`` -- which is why the streaming half lives in
@@ -975,11 +948,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 f"{chrom} is not among the available chromosomes.")
 
         # score id -> payload column index, resolved once for the whole scan.
-        # No cast: ``score_index`` IS an int.  It used to be ``int | str``,
-        # the str being a VCF INFO name, and this had to assert -- by cast --
-        # that the VCF backend never reaches here.  A VCF score is now
-        # addressed by ``col_name`` and has no ``score_index`` at all, so the
-        # claim is carried by the type instead of by a comment.
+        # No cast needed: ``score_index`` is an ``int``.  A VCF score is
+        # addressed by ``col_name`` and has none, which is how the type
+        # already says the VCF backend does not reach here.
         columns = {
             score_id: self.score_definitions[score_id].score_index
             for score_id in scores
@@ -1031,9 +1002,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             None, None]:
         """Return score values in a region, with the record they came from.
 
-        The last element used to be a score line; it is the record itself now.
-        Two of the three callers discard it and the third reads only
-        positional slots off it, so nothing was lost with the object.
+        The last element is the record itself.  Two of the three callers
+        discard it and the third reads only positional slots off it.
         """
         if not self.is_open():
             raise ValueError(f"genomic score <{self.resource_id}> is not open")
@@ -1725,13 +1695,8 @@ class FragmentScore(GenomicScore):
     RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
 
     # As AlleleScore, except that strings join rather than list -- a fragment
-    # score's string attributes are rendered into one cell.  This table is
-    # the whole of what ``_CNVScoreDef`` existed for: it was a subclass of
-    # ``GenomicScoreDef`` whose only member was a ``__post_init__`` carrying
-    # these defaults, and ``_parse_scoredef_config`` was overridden here
-    # solely to construct it.  With the defaults owned by the score class,
-    # both were exact copies of the base and are gone -- which also retires
-    # the near-copy that ``_parse_column_address`` warns about.
+    # score's string attributes are rendered into one cell.  Owned by the
+    # score class, so no score-definition subclass is needed to carry them.
     DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {
         "float": "max",
         "int": "max",

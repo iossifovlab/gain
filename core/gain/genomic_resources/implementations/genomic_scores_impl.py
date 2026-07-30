@@ -120,12 +120,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         """Compute a resource's statistics in one task, contig by contig.
 
         The ``--region-size 0`` path: one task, no splitting *within* a
-        contig.  It used to be one scan of the whole table, expressed by
-        handing ``chrom=None`` down to the score -- and ``_get_chrom_regions``
-        manufactured a ``Region(None, None, None)`` to say so, with a
-        ``# type: ignore`` and a comment conceding it was "a bit hacky".  The
-        region-read family now requires a contig, so the iteration is stated
-        here instead of smuggled through as a null.
+        contig.  The region-read family requires a contig, so the iteration
+        over contigs is stated here rather than smuggled down as a null.
 
         Each contig is scanned by the very functions the per-region tasks use
         and folded together by the very functions that fold those tasks'
