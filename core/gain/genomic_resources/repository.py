@@ -732,13 +732,13 @@ class GenomicResource:
             return False
         return self.resource_id == other.resource_id and \
             self.version == other.version and \
-            self.config == other.config and \
-            self._manifest == other._manifest
+            self.config == other.config
 
     def __hash__(self) -> int:
-        return hash(self.resource_id
-                    + ".".join(map(str, self.version))
-                    + self.proto.get_url())
+        # A strict subset of what ``__eq__`` compares, which is what
+        # makes ``a == b`` imply ``hash(a) == hash(b)``.  ``config`` is
+        # a dict and unhashable; leaving it out only coarsens the hash.
+        return hash((self.resource_id, self.version))
 
     def invalidate(self) -> None:
         """Clean up cached attributes like manifest, etc."""

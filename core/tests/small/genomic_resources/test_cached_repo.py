@@ -1292,9 +1292,9 @@ def test_search_resources_yields_the_memoized_resource(
 ) -> None:
     """A search hit is the same object get_all_resources() hands out.
 
-    ``GenomicResource.__eq__`` ignores ``proto`` and ``__hash__`` uses
-    ``proto.get_url()``, which the caching protocol forwards to the remote --
-    so a cache-backed resource and its remote twin compare equal. Identity is
+    Neither ``GenomicResource.__eq__`` nor ``__hash__`` consults ``proto`` --
+    where a resource was reached is not part of what it is -- so a cache-backed
+    resource and its remote twin compare equal and hash alike.  Identity is
     what actually distinguishes them.
     """
     by_id = {
