@@ -175,3 +175,14 @@ own.
   building the read-only protocol silently. That distinction needed
   `read_only` to default to absent rather than `False`, since the two were
   otherwise indistinguishable.
+
+  Review of that change turned up a second, wider inversion underneath it:
+  `read_only` reaches the builder as a **string** from two directions —
+  `grr_manage --extra-args read_only=false` parses into `dict[str, str]`, and
+  a repository is built from the *raw* definition dict rather than the
+  validated model, so a quoted `read_only: "false"` in yaml arrives as
+  `"false"` even though `FileRepoDefinition` coerced it to `False` on the way
+  in. Both were read by a bare truthiness test, so every spelling of *false*
+  selected a **read-only** repository, on the local schemes too. `read_only`
+  is now resolved to a boolean where it is read, and a value that spells no
+  boolean at all is refused rather than guessed at.
