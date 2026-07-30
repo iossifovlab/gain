@@ -147,8 +147,12 @@ def test_public_url_is_credential_free() -> None:
 
 
 def test_public_url_explicit_is_credential_free() -> None:
+    # Its own protocol id: protocols are memoized on ``(proto_id, url)`` for
+    # the life of the process, and an explicit ``public_url`` is a different
+    # configuration of one -- sharing ``"authed"`` with the test above only
+    # worked while a rebuild silently repointed the incumbent (#514).
     proto = build_fsspec_protocol(
-        "authed", "https://grr.example.com",
+        "authed-public-url", "https://grr.example.com",
         user="alice", password=_SECRET,
         public_url="https://public.example.com")
     assert _SECRET not in proto.get_public_url()

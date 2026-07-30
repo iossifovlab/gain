@@ -67,8 +67,9 @@ of one decision will drift.
 | [0003](0003-fragment-score-vocabulary.md) | The fragment score speaks two configuration vocabularies, permanently | accepted |
 | [0003](0003-resource-file-name-containment.md) | Resource file names are contained by construction | accepted |
 | [0004](0004-core-test-hang-diagnostic.md) | A hung `core` test is diagnosed by faulthandler, not pytest-timeout | accepted |
+| [0005](0005-fsspec-protocol-memo-rebuild.md) | Rebuilding a memoized fsspec protocol refreshes it, and may not reconfigure it | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > Per the convention above numbers are never reused, so both keep the number
-> they were written with; cite them by slug, not by number. `0004` is the next
+> they were written with; cite them by slug, not by number. `0006` is the next
 > free number.

@@ -173,6 +173,34 @@ def _strip_url_userinfo(text: str) -> str:
     return _URL_USERINFO_RE.sub(lambda match: match.group("scheme"), text)
 
 
+def _display_url(url: str) -> str:
+    """Return the credential-free ``scheme://netloc/path`` form of a url.
+
+    One definition of a protocol's display identity, used both to derive
+    ``self.url`` and to decide whether a rebuild asking for the default
+    ``public_url`` is asking for the incumbent's (#514).
+    """
+    parsed = urlparse(url)
+    scheme = parsed.scheme or "file"
+    return f"{scheme}://{_strip_netloc_userinfo(parsed.netloc)}{parsed.path}"
+
+
+def _fetch_url_form(url: str) -> str:
+    """Return the credential-BEARING ``scheme://netloc/path`` form of a url.
+
+    ``_display_url``'s counterpart: identical to it for a userinfo-free url,
+    and the form every remote read must derive from when the url does carry
+    ``user:pass@`` (see ``FsspecReadOnlyProtocol._fetch_url``). It is also the
+    form the protocol memo is keyed on, so a caller that passes a bare
+    ``/abs/path`` and one that passes its ``file:///abs/path`` spelling name
+    one protocol -- and a pickle, which carries the ``file://`` form, lands
+    back on the instance it came from (#514).
+    """
+    parsed = urlparse(url)
+    scheme = parsed.scheme or "file"
+    return f"{scheme}://{parsed.netloc}{parsed.path}"
+
+
 def _rebuild_error_without_userinfo(exc: BaseException) -> BaseException:
     """Rebuild ``exc`` with the url userinfo stripped from its message.
 
@@ -277,8 +305,161 @@ def build_inmemory_protocol(
     return proto
 
 
+#: Every keyword ``_build_filesystem`` reads, and so the whole of what a
+#: keyword can configure about a protocol. **Keep in step with it** -- a
+#: keyword it learns to read and this set does not is one a rebuild can go on
+#: changing silently. Pinned by
+#: ``test_fsspec_protocol_rebuild.py``'s drift guard.
+_FILESYSTEM_KWARGS = frozenset({
+    "base_url", "user", "password", "endpoint_url",
+})
+
+
+def _canonical_public_url(public_url: str) -> str:
+    """Return a public url in the one spelling two builds can be compared in.
+
+    Only for comparison -- the value a protocol reports through
+    ``get_public_url`` stays exactly as its caller wrote it.
+    """
+    return _display_url(public_url).rstrip("/")
+
+
+def _protocol_config_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Return the keywords that configure a protocol, ready to compare.
+
+    Only the filesystem keywords: everything else a caller passes rides along
+    without the protocol ever reading it -- the repository factory hands the
+    builder its ``cache_dir``, which configures the cache wrapped *around* the
+    protocol -- and so cannot make two builds over one id and url disagree.
+
+    A keyword whose value is ``None`` is dropped rather than kept, because
+    ``_build_filesystem`` reads them all with ``.get``: an omitted keyword and
+    an explicit ``None`` build the identical filesystem, and the repository
+    factory reaches one url both ways -- a ``url``-type definition passes
+    neither credential keyword, an ``http``-type one passes both as ``None``.
+    """
+    return {
+        key: value
+        for key, value in kwargs.items()
+        if key in _FILESYSTEM_KWARGS and value is not None
+    }
+
+
+def _refuse_a_reconfiguring_rebuild(
+    cls: type[FsspecReadOnlyProtocol],
+    existing: FsspecRepositoryProtocol,
+    proto_id: str,
+    url: str,
+    kwargs: dict[str, Any],
+) -> None:
+    """Refuse a rebuild that asks for a differently configured protocol.
+
+    ``__new__`` memoizes one instance per ``(proto_id, canonical url)`` and
+    never evicts, so that pair names a single protocol for the whole process.
+    A second build over it that asks for something *else* cannot be honoured
+    and used to be answered silently and wrongly instead (#514): the memo hit
+    was returned as-is, and everything ``__init__`` rebinds on the way out --
+    the public url, the credential kwargs -- was applied to the instance every
+    existing holder was already using.
+
+    Mode is the sharpest case, because ``FsspecReadWriteProtocol`` subclasses
+    the read-only protocol. A read-only build over a read-write key satisfied
+    ``isinstance`` and got a *writable* protocol with the read-write
+    ``__init__`` re-run on it, while a read-write build over a read-only key
+    got an instance Python did not call ``__init__`` on at all -- stale
+    filesystem, stale kwargs, and no write methods to fail on until much
+    later.
+
+    Reported here, where the wrong thing is asked for, rather than as an absent
+    write method or an unexpected url somewhere downstream. Two genuinely
+    different protocols over one url are still available -- under two ids.
+    """
+    requested = (
+        Mode.READWRITE
+        if issubclass(cls, ReadWriteRepositoryProtocol)
+        else Mode.READONLY
+    )
+    if existing.mode() != requested:
+        raise ValueError(
+            f"protocol {proto_id!r} over {_strip_url_userinfo(url)} is "
+            f"already built as {existing.mode().name}; it cannot also serve "
+            f"a {requested.name} build -- give the {requested.name} protocol "
+            f"an id of its own")
+
+    if not hasattr(existing, "kwargs"):
+        # Published but not yet configured: another thread is inside this
+        # instance's ``__init__`` (``__new__`` memoizes before it runs -- see
+        # ADR 0005). There is nothing to compare a rebuild against yet, and
+        # reading the attributes anyway would turn a race that merely runs
+        # ``__init__`` twice, as it did before #514, into an ``AttributeError``
+        # raised out of ``__new__``. ``kwargs`` is the last thing ``__init__``
+        # binds before it invalidates, so it standing in for "configured"
+        # covers ``public_url`` too. The mode check above needs no state, so it
+        # still applies.
+        return
+
+    requested_public_url = kwargs.get("public_url")
+    if requested_public_url is None:
+        requested_public_url = _display_url(url)
+    # Compared in one spelling, not as authored. An incumbent's ``public_url``
+    # is whatever its caller passed, while a rebuild that passes none defaults
+    # to the url's display form -- so a trailing slash, or a bare path against
+    # its ``file://`` form, would otherwise read as a request to republish the
+    # repository somewhere else.
+    if _canonical_public_url(requested_public_url) != \
+            _canonical_public_url(existing.public_url):
+        raise ValueError(
+            f"protocol {proto_id!r} over {_strip_url_userinfo(url)} is "
+            f"already built with the public url "
+            f"{_strip_url_userinfo(existing.public_url)}; rebuilding it "
+            f"cannot repoint it at "
+            f"{_strip_url_userinfo(requested_public_url)} -- give the "
+            f"protocol published under that url an id of its own")
+
+    requested_kwargs = _protocol_config_kwargs(kwargs)
+    existing_kwargs = _protocol_config_kwargs(existing.kwargs)
+    if requested_kwargs != existing_kwargs:
+        disagreeing = sorted(
+            (set(requested_kwargs) ^ set(existing_kwargs)) | {
+                key
+                for key in set(requested_kwargs) & set(existing_kwargs)
+                if requested_kwargs[key] != existing_kwargs[key]
+            })
+        # The disagreeing KEYS, never their values: these keywords are how
+        # http basic-auth credentials reach a protocol, and an exception
+        # message is logged, echoed and reported.
+        raise ValueError(
+            f"protocol {proto_id!r} over {_strip_url_userinfo(url)} is "
+            f"already built with a different {', '.join(disagreeing)}; "
+            f"rebuilding it cannot reconfigure the protocol its holders are "
+            f"using -- give the differently configured protocol an id of "
+            f"its own")
+
+
 class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
-    """Provides fsspec genomic resources repository protocol."""
+    """Provides fsspec genomic resources repository protocol.
+
+    ``(proto_id, url)`` names ONE protocol instance for the life of the
+    process: ``__new__`` memoizes it in ``_FSSPEC_PROTOCOLS``, keyed on the
+    url's canonical ``scheme://netloc/path`` form so its spelling cannot split
+    one repository in two, and never evicts. A second build over that pair
+    therefore reaches the object every earlier caller is already holding, and
+    Python re-runs ``__init__`` on it.
+
+    That makes a rebuild a *refresh* -- it drops the resource memo, which is
+    how a caller that has just changed a repository reads it back. It is not a
+    reconfiguration: a rebuild asking for a different mode, public url or
+    credentials is refused rather than applied to the incumbent. See
+    ``docs/adr/0005-fsspec-protocol-memo-rebuild.md`` (#514).
+    """
+
+    #: The repository's resources, memoized on first read, and the lock that
+    #: guards it. Bound once per instance in ``__new__`` rather than in
+    #: ``__init__``, because ``__init__`` re-runs on every memoized instance a
+    #: rebuild hands back and must not replace the lock its readers are
+    #: already holding (#514).
+    _all_resources: dict[str, GenomicResource] | None
+    _all_resources_lock: Lock
 
     def __getnewargs_ex__(self) -> tuple[tuple, dict]:
         # pylint: disable=invalid-getnewargs-ex-returned
@@ -308,14 +489,28 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         # credential in the key does not leak it. The DEBUG line below, which IS
         # a leak vector, is passed a userinfo-stripped url. For a userinfo-free
         # url the stripped url == url, so behavior is unchanged.
-        key = (proto_id, url)
-        if key in _FSSPEC_PROTOCOLS:
+        #
+        # Canonicalised, so the spelling of the url cannot split one repository
+        # across two entries: several builders pass a bare ``/abs/path`` while
+        # ``__getnewargs_ex__`` pickles the ``file://`` form, and the two used
+        # to be different keys -- which is how a pickle round trip minted a
+        # second protocol over one directory (#514).
+        key = (proto_id, _fetch_url_form(url))
+        existing = _FSSPEC_PROTOCOLS.get(key)
+        if existing is not None:
+            _refuse_a_reconfiguring_rebuild(
+                cls, existing, proto_id, url, kwargs)
             logger.debug(
                 "protocol with id %s and url %s already exists, "
                 "returning the existing instance",
                 proto_id, _strip_url_userinfo(url))
-            return _FSSPEC_PROTOCOLS[key]
+            return existing
         instance = super().__new__(cls)
+        # Before the instance is published, and never again: the memo lock is
+        # the one piece of state a rebuild must not touch, so it is bound
+        # where construction happens exactly once (#514).
+        instance._all_resources_lock = Lock()
+        instance._all_resources = None
         _FSSPEC_PROTOCOLS[key] = instance
         return instance
 
@@ -340,14 +535,15 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         self.netloc = _strip_netloc_userinfo(fetch_netloc)
         self.root_path = parsed.path
 
-        self.url = f"{self.scheme}://{self.netloc}{self.root_path}"
+        self.url = _display_url(url)
         # ``self._fetch_url`` is the credential-BEARING url used only to talk to
         # the remote filesystem. For URL-embedded userinfo, aiohttp/htslib read
         # the basic-auth credentials straight from this url string (they are not
         # in ``kwargs``), so every fetched file url must derive from it — see
         # ``get_resource_url``/``load_contents``/``md5_contents``. When the url
-        # has no userinfo this is byte-identical to ``self.url``.
-        self._fetch_url = f"{self.scheme}://{fetch_netloc}{self.root_path}"
+        # has no userinfo this is byte-identical to ``self.url``. It is also
+        # what the memo is keyed on, so it and the key cannot drift.
+        self._fetch_url = _fetch_url_form(url)
 
         if public_url is None:
             self.public_url = self.url
@@ -360,8 +556,26 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         # dask worker (see __getnewargs_ex__/__setstate__); they are never
         # logged and are masked in the definition model's repr.
         self.kwargs: dict[str, Any] = kwargs
-        self._all_resources_lock = Lock()
-        self._all_resources: dict[str, GenomicResource] | None = None
+        # This body re-runs on the LIVE instance whenever a memoized protocol
+        # is rebuilt (see ``__new__``), so a rebuild is a refresh of the
+        # resource memo -- ``grr_manage`` re-reading a repository it has just
+        # changed depends on that. Take the incumbent's own lock to do it,
+        # which is what ``invalidate`` is; rebinding a fresh ``Lock`` here and
+        # clearing the memo beside it left a reader inside the guard with no
+        # mutual exclusion at all (#514).
+        #
+        # The other assignments above are rebound on the live instance too, and
+        # are safe for narrower reasons: the url fields are derived from the
+        # memo key, so they cannot differ; ``public_url`` and the filesystem
+        # keywords are what ``__new__`` refuses a rebuild over; ``filesystem``
+        # is a freshly built but equivalent object, because every construction
+        # in the tree routes through ``build_fsspec_protocol``, which derives
+        # it from the key and those keywords. ``kwargs`` as a whole is NOT
+        # equal -- a keyword the protocol never reads (the factory's
+        # ``cache_dir``) may differ, and the second caller's value wins.
+        # Nothing reads those, and rebinding a reference is atomic, so a
+        # concurrent reader cannot catch any of it half-done.
+        self.invalidate()
 
     def __getstate__(self) -> dict[str, Any]:
         state = self.__dict__.copy()
@@ -375,8 +589,11 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         self.__dict__.update(state)
         self.filesystem = _build_filesystem(
             self._fetch_url, **self.kwargs)
-        self._all_resources = None
-        self._all_resources_lock = Lock()
+        # Unpickling reaches ``__new__`` through ``__getnewargs_ex__``, so in a
+        # process that already has this protocol it lands on the live instance
+        # -- the same rebuild that ``__init__`` performs, and the same reason
+        # not to rebind the lock a reader is holding here either (#514).
+        self.invalidate()
 
     def get_url(self) -> str:
         return self.url
@@ -1575,6 +1792,9 @@ def _build_filesystem(
     url: str, **kwargs: Any,
 ) -> fsspec.AbstractFileSystem:
     # pylint: disable=import-outside-toplevel
+    # A keyword read here is a keyword that configures a protocol, so adding
+    # one means adding it to ``_FILESYSTEM_KWARGS`` too -- otherwise a rebuild
+    # may silently change it under the protocol's holders (#514).
     parsed_url = urlparse(url)
     if parsed_url.scheme in {"file", ""}:
         from fsspec.implementations.local import LocalFileSystem
