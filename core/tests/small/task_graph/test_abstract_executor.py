@@ -93,6 +93,40 @@ def test_calling_execute_twice(executor: TaskGraphExecutor) -> None:
     executor.execute(graph)
 
 
+def test_abandoning_a_run_leaves_the_executor_reusable(
+    executor: TaskGraphExecutor,
+) -> None:
+    """Closing the result iterator early must release the executor (gain#480).
+
+    ``task_graph_run_with_results`` raises out of its ``for`` loop on the
+    first failing task unless ``--keep-going``, which closes this iterator
+    part way. ``execute`` used to clear its "currently executing" flag only
+    after the loop ran to completion, so ``GeneratorExit`` skipped it and the
+    executor stayed busy forever: the next graph tripped the assertion above
+    instead of running, turning "a task failed" into "this executor is dead"
+    for anyone who reuses one across graphs.
+
+    Executor-agnostic on purpose. The leak was found through the dask
+    executor, where abandonment also strands two worker threads, but the
+    flag lives in the shared base and every executor abandons the same way.
+    """
+    def a_graph(prefix: str) -> TaskGraph:
+        graph = TaskGraph()
+        for i in range(10):
+            graph.create_task(f"{prefix}{i}", add_to_list, args=[i, []],
+                              deps=[])
+        return graph
+
+    tasks_iter = executor.execute(a_graph("Abandoned"))
+    next(tasks_iter)
+    tasks_iter.close()
+
+    results = list(executor.execute(a_graph("Reused")))
+    assert len(results) == 10, (
+        "the executor could not run a second graph after an abandoned run"
+    )
+
+
 def test_executing_with_cache(
     executor: TaskGraphExecutor, tmp_path: pathlib.Path,
 ) -> None:

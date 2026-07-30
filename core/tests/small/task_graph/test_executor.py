@@ -36,7 +36,12 @@ class _CloseRaisingExecutor(TaskGraphExecutor):
         self.closed = False
 
     def execute(self, graph: TaskGraph) -> Any:
-        return iter(())
+        # A generator, not `iter(())`: closing the result generator is how a
+        # run is told to tear down, so an executor that hands back a plain
+        # iterator has no close() for `task_graph_run_with_results` to call
+        # (gain#480). Nothing here routes through that, but a test executor
+        # should not be a counterexample to the interface it implements.
+        yield from ()
 
     def get_completed_tasks(self, graph: TaskGraph) -> Any:
         return iter(())

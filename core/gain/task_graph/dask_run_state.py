@@ -82,6 +82,13 @@ class RunState:
     results worker's hands. So "exactly one result per task" is not left to
     the collections to imply -- :meth:`_deliver` is the only way into
     ``gathered`` and it enforces the invariant outright (gain#381).
+
+    One transition leaves the diagram deliberately: :meth:`abandon_outstanding`
+    drops tasks without yielding them. It runs only in the run loop's
+    teardown, once both workers have stopped and the run has been given up
+    on, and it exists so the futures those tasks hold are released rather
+    than left pinning their keys on a client that outlives the run
+    (gain#480). Nothing evaluates :meth:`has_outstanding` afterwards.
     """
 
     def __init__(self) -> None:
@@ -219,6 +226,42 @@ class RunState:
                     "discarding them...", len(self._queued))
                 self._queued.clear()
             self._condition.notify_all()
+
+    def abandon_outstanding(self) -> list[Future]:
+        """Take every future the run still owns, emptying what holds them.
+
+        The run loop's teardown calls this once both workers have stopped.
+        Whatever is still in ``running``, ``completed`` or the in-flight
+        gather state then belongs to a run that ended without collecting it
+        -- a consumer abandoned the generator -- and nobody else will ever
+        come for it. The caller releases them, because ``Future.release()``
+        is a dask call and must not run under this lock.
+
+        Releasing matters for more than tidiness. The executor submits with
+        an explicit ``key=`` derived from the task id, so an unreleased
+        future keeps that key pinned on a client that outlives the run, and
+        a later run of the same graph is deduplicated against it and handed
+        the abandoned run's results instead of executing (gain#480).
+
+        Emptying the collections is also what makes the release safe against
+        a dask callback thread that fires afterwards: :meth:`task_finished`
+        pops from ``running``, finds nothing and returns, so a future cannot
+        be handed to a results worker that has already stopped.
+
+        Deliberately not part of :meth:`shutdown`, which runs *before* the
+        workers stop and must leave completed work for the results worker to
+        collect -- see :meth:`claim_for_gather`.
+        """
+        with self._condition:
+            futures = list(self._running)
+            futures.extend(future for future, _ in self._completed)
+            for batch in self._gathering.values():
+                futures.extend(batch.futures)
+            self._running.clear()
+            self._completed.clear()
+            self._gathering.clear()
+            self._condition.notify_all()
+            return futures
 
     # -- submit worker ----------------------------------------------------
 

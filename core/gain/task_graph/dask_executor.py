@@ -1,6 +1,6 @@
 import threading
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from copy import copy
 from typing import Any
 
@@ -217,12 +217,15 @@ class DaskExecutor(TaskGraphExecutorBase):
     def _release_futures(futures: Sequence[Future]) -> None:
         """Release each future, surviving a ``release()`` that raises.
 
-        Used only on the gather-failure path, where the loop runs on the very
-        dead-client condition that caused the failure. ``distributed``'s
-        ``release()`` is effectively non-throwing, so this is robustness --
-        but were one to raise, an unguarded loop would kill the results worker
-        and re-strand any batch that completes after this one, the hang
-        gain#372 exists to prevent. Each release stands alone.
+        Used on the two paths where releasing is itself recovery: the
+        gather-failure path, whose loop runs on the very dead-client
+        condition that caused the failure, and the run teardown, which must
+        finish even for a run abandoned because the cluster is gone.
+        ``distributed``'s ``release()`` is effectively non-throwing, so this
+        is robustness -- but were one to raise, an unguarded loop would kill
+        the results worker and re-strand any batch that completes after this
+        one (the hang gain#372 exists to prevent), or leave the rest of an
+        abandoned run's keys pinned (gain#480). Each release stands alone.
         """
         for future in futures:
             try:
@@ -241,9 +244,7 @@ class DaskExecutor(TaskGraphExecutorBase):
 
     def _execute(
         self, graph: TaskGraph,
-    ) -> Iterator[tuple[Task, Any]]:
-        self._executing = True
-
+    ) -> Generator[tuple[Task, Any], None, None]:
         state = RunState()
 
         submit_worker = threading.Thread(
@@ -263,8 +264,14 @@ class DaskExecutor(TaskGraphExecutorBase):
         # consumer that stops early -- `task_graph_run_with_results` raises
         # out of its `for` loop on the first error unless --keep-going --
         # throws GeneratorExit in at the yield below. Without the finally
-        # that skips the shutdown, both joins and the flag, leaking two
-        # threads and leaving the executor permanently "executing".
+        # that skips the shutdown, both joins and the release, leaking two
+        # threads and leaving this run's keys pinned on the client.
+        #
+        # Someone has to CLOSE this generator for any of that to run, which
+        # is not automatic: neither closing the generator that iterates this
+        # one nor raising out of it does so. `TaskGraphExecutorBase.execute`
+        # and `task_graph_run_with_results` each close what they read for
+        # exactly that reason (gain#480).
         try:
             # The run is over when the graph has nothing left to hand out
             # and the state has nothing outstanding. One query, one lock,
@@ -305,7 +312,15 @@ class DaskExecutor(TaskGraphExecutorBase):
 
             results_worker.join()
             submit_worker.join()
-            self._executing = False
+
+            # Both workers have stopped, so anything still held is work this
+            # run gave up on: the consumer abandoned the generator and the
+            # results will never be collected. Release it, or the keys stay
+            # pinned on a client that outlives the run and the next run of
+            # the same graph is deduplicated against them and handed these
+            # results without executing (gain#480). Empty on every normal
+            # path, where the loop only exits once nothing is outstanding.
+            self._release_futures(state.abandon_outstanding())
 
     def close(self) -> None:
         """Close the Dask executor."""

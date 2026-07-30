@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Generator, Iterator
+from collections.abc import Generator
 from types import TracebackType
 from typing import Any
 
@@ -15,10 +15,12 @@ class TaskGraphExecutor:
     """Class that executes a task graph."""
 
     @abstractmethod
-    def execute(self, graph: TaskGraph) -> Iterator[tuple[Task, Any]]:
+    def execute(
+        self, graph: TaskGraph,
+    ) -> Generator[tuple[Task, Any], None, None]:
         """Start executing the graph.
 
-        Return an iterator that yields the task in the graph
+        Return a generator that yields the task in the graph
         after they are executed.
 
         This is not necessarily in DFS or BFS order.
@@ -26,6 +28,14 @@ class TaskGraphExecutor:
 
         The only guarantee is that when a task is returned its execution
         is already finished.
+
+        A generator, not merely an iterator, because abandoning a run is a
+        supported way to end it -- ``task_graph_run_with_results`` does it on
+        the first failing task unless ``--keep-going`` -- and closing the
+        generator is how the run is told to tear itself down. An
+        implementation that holds resources for the run's lifetime must
+        release them from that path too, or an abandoned run leaks them for
+        the life of the process (gain#480).
         """
 
     @abstractmethod
