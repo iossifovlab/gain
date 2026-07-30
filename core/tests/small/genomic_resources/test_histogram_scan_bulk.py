@@ -4,6 +4,9 @@ import pathlib
 import numpy as np
 import pytest
 from gain.genomic_resources.histogram import (
+    CategoricalHistogram,
+    CategoricalHistogramConfig,
+    NullHistogram,
     NumberHistogram,
     NumberHistogramConfig,
 )
@@ -229,23 +232,311 @@ def test_dispatch_falls_back_for_whole_table_scan(
     _assert_hists_equal(via_task, ref)
 
 
-def test_int_score_is_not_bulk_eligible(tmp_path: pathlib.Path) -> None:
-    resource = (
+def _int_hist_conf() -> NumberHistogramConfig:
+    return NumberHistogramConfig.from_dict({
+        "type": "number", "view_range": {"min": 0, "max": 10},
+        "number_of_bins": 10, "x_log_scale": False, "y_log_scale": False})
+
+
+def _int_position_tabix(tmp_path: pathlib.Path) -> GenomicResource:
+    """An int score whose column carries every edge the two parses differ on.
+
+    ``3.5``, ``1e3`` and ``0x10`` are what ``float()`` accepts and ``int()``
+    does not, ``1_000`` and ``١٢٣`` are what both accept, and ``.`` is the
+    configured non-value -- so a column parse that quietly used float
+    semantics would bin three values the per-record path drops.
+    """
+    return (
         a_position_score()
         .with_score("s", "int")
         .with_data(
             """
             chrom  pos_begin  pos_end  s
-            chr1   1          2        3
-            chr1   3          4        7
+            chr1   1          3        3
+            chr1   4          4        7
+            chr1   5          10       3.5
+            chr1   11         11       .
+            chr1   12         13       1e3
+            chr1   14         14       0x10
+            chr1   15         18       1_000
+            chr1   19         20       ١٢٣
             """)
         .with_tabix()
         .build_resource(tmp_path)
     )
-    confs: dict = {"s": NumberHistogramConfig.from_dict({
-        "type": "number", "view_range": {"min": 0, "max": 10},
-        "number_of_bins": 10, "x_log_scale": False, "y_log_scale": False})}
+
+
+def test_int_score_is_bulk_eligible(tmp_path: pathlib.Path) -> None:
+    resource = _int_position_tabix(tmp_path)
+    confs: dict = {"s": _int_hist_conf()}
+    assert GenomicScoreImplementation._can_bulk_histogram(resource, confs)
+
+
+def test_bulk_histogram_matches_per_record_int_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _int_position_tabix(tmp_path)
+    confs: dict = {"s": _int_hist_conf()}
+
+    ref = GenomicScoreImplementation._do_histogram(
+        resource, confs, "chr1", 1, 20)
+    bulk = GenomicScoreImplementation._do_histogram_bulk(
+        resource, confs, "chr1", 1, 20)
+
+    _assert_hists_equal(bulk, ref)
+    # sanity: the tokens int() refuses really were dropped, and the ones it
+    # accepts really were binned -- three records in view, spanning 3+1+4 bp.
+    assert ref["s"].bars.sum() == 3 + 1
+    assert ref["s"].out_of_range_bins == [0, 4 + 2]
+
+
+def test_bulk_histogram_matches_per_record_int_score_via_the_task(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _int_position_tabix(tmp_path)
+    confs: dict = {"s": _int_hist_conf()}
+
+    via_task = GenomicScoreImplementation._do_histogram_task(
+        resource, confs, "chr1", 1, 20)
+    ref = GenomicScoreImplementation._do_histogram(
+        resource, confs, "chr1", 1, 20)
+
+    _assert_hists_equal(via_task, ref)
+
+
+def _assert_categorical_equal(
+    bulk: dict, ref: dict,
+) -> None:
+    assert set(bulk) == set(ref)
+    for score_id in ref:
+        got, want = bulk[score_id], ref[score_id]
+        assert type(got) is type(want), (score_id, got, want)
+        if isinstance(want, NullHistogram):
+            assert got.reason == want.reason, score_id
+            continue
+        assert got.raw_values == want.raw_values, score_id
+        assert list(got.raw_values) == list(want.raw_values), score_id
+
+
+def _str_position_tabix(tmp_path: pathlib.Path) -> GenomicResource:
+    """A str score over multi-base records, so the weights actually differ.
+
+    A position score weighs a record by the base pairs of the region it
+    covers, and a categorical count that ignored the weight would still agree
+    with the per-record path on which values it saw -- only on how many.
+    """
+    return (
+        a_position_score()
+        .with_score("s", "str")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  s
+            chr1   1          3        aaa
+            chr1   4          4        bbb
+            chr1   5          10       aaa
+            chr1   11         11       ccc
+            chr1   12         20       bbb
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+def test_str_score_with_a_categorical_histogram_is_bulk_eligible(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _str_position_tabix(tmp_path)
+    confs: dict = {"s": CategoricalHistogramConfig.default_config()}
+    assert GenomicScoreImplementation._can_bulk_histogram(resource, confs)
+
+
+def test_bulk_categorical_matches_per_record_str_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _str_position_tabix(tmp_path)
+    confs: dict = {"s": CategoricalHistogramConfig.default_config()}
+
+    ref = GenomicScoreImplementation._do_histogram(
+        resource, confs, "chr1", 1, 20)
+    bulk = GenomicScoreImplementation._do_histogram_bulk(
+        resource, confs, "chr1", 1, 20)
+
+    _assert_categorical_equal(bulk, ref)
+    # sanity: counted by span, not by record -- "aaa" covers 3 + 6 bases.
+    assert ref["s"].raw_values == {"aaa": 9, "bbb": 10, "ccc": 1}
+
+
+def test_bulk_categorical_matches_per_record_str_score_clipped(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The region clip weighs a partially covered record by its overlap."""
+    resource = _str_position_tabix(tmp_path)
+    confs: dict = {"s": CategoricalHistogramConfig.default_config()}
+
+    ref = GenomicScoreImplementation._do_histogram(
+        resource, confs, "chr1", 2, 13)
+    bulk = GenomicScoreImplementation._do_histogram_bulk(
+        resource, confs, "chr1", 2, 13)
+
+    _assert_categorical_equal(bulk, ref)
+    assert ref["s"].raw_values == {"aaa": 2 + 6, "bbb": 1 + 2, "ccc": 1}
+
+
+def test_bulk_categorical_matches_per_record_via_the_task(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _str_position_tabix(tmp_path)
+    confs: dict = {"s": CategoricalHistogramConfig.default_config()}
+
+    via_task = GenomicScoreImplementation._do_histogram_task(
+        resource, confs, "chr1", 1, 20)
+    ref = GenomicScoreImplementation._do_histogram(
+        resource, confs, "chr1", 1, 20)
+
+    _assert_categorical_equal(via_task, ref)
+
+
+def test_an_int_score_with_a_categorical_histogram_keeps_the_per_record_path(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A categorical histogram is a bulk path for ``str`` scores only.
+
+    The bulk read yields an int score's column as ``float64`` -- its non-value
+    has to be a nan -- and a categorical histogram refuses a float outright.
+    Routing one here would nullify a histogram the per-record path builds
+    happily, so the dispatch keeps it where it works.
+    """
+    resource = _int_position_tabix(tmp_path)
+    confs: dict = {"s": CategoricalHistogramConfig.default_config()}
+
     assert not GenomicScoreImplementation._can_bulk_histogram(resource, confs)
+
+    # ...and the per-record path it stays on does build the histogram.
+    ref = GenomicScoreImplementation._do_histogram(
+        resource, confs, "chr1", 1, 20)
+    assert ref["s"].raw_values == {3: 3, 7: 1, 1000: 4, 123: 2}
+
+
+def test_a_str_score_with_a_number_histogram_keeps_the_per_record_path(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A misconfigured score must still nullify, not crash the scan.
+
+    A number histogram over a str score is a config error, and the per-record
+    path answers it the way it answers every other one: the histogram refuses
+    the value, that score is nullified and the resource keeps its remaining
+    statistics.  A batch of str cells is not a value ``NumberHistogram`` can
+    refuse -- it is a coercion failure inside ``add_batch`` -- so the pairing
+    rule keeps this off the bulk path rather than letting it raise there.
+    """
+    resource = _str_position_tabix(tmp_path)
+    confs: dict = {"s": _hist_conf()}
+
+    assert not GenomicScoreImplementation._can_bulk_histogram(resource, confs)
+
+    ref = GenomicScoreImplementation._do_histogram_task(
+        resource, confs, "chr1", 1, 20)
+    assert isinstance(ref["s"], NullHistogram)
+
+
+def _many_valued_str_tabix(
+    tmp_path: pathlib.Path, distinct: int,
+) -> GenomicResource:
+    rows = "\n".join(
+        f"chr1  {pos}  {pos}  v{pos}" for pos in range(1, distinct + 1))
+    return (
+        a_position_score()
+        .with_score("s", "str")
+        .with_data(f"chrom  pos_begin  pos_end  s\n{rows}")
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+def test_bulk_categorical_nullifies_exactly_as_per_record_does(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Too many distinct values nullifies the score, with the same reason.
+
+    The reason string is not incidental: it is what the saved statistics
+    carry in place of the histogram, so a batched count that reported its own
+    overshoot would change a resource's recorded statistics.
+    """
+    distinct = CategoricalHistogram.UNIQUE_VALUES_LIMIT + 30
+    resource = _many_valued_str_tabix(tmp_path, distinct)
+    confs: dict = {"s": CategoricalHistogramConfig.default_config()}
+
+    ref = GenomicScoreImplementation._do_histogram(
+        resource, confs, "chr1", 1, distinct)
+    bulk = GenomicScoreImplementation._do_histogram_bulk(
+        resource, confs, "chr1", 1, distinct)
+
+    assert isinstance(ref["s"], NullHistogram)
+    _assert_categorical_equal(bulk, ref)
+
+
+def test_a_nullified_score_is_skipped_by_every_later_batch(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nullifying mid-scan must not leave a NullHistogram taking batches.
+
+    The per-record path gets this for free -- ``NullHistogram.add_value`` is a
+    no-op -- but a ``NullHistogram`` has no ``add_batch`` at all, so the bulk
+    path needs a skip, and only a scan of MORE THAN ONE batch can reach it.
+    ``_SCAN_BATCH_SIZE`` is 100_000 and every fixture here holds a handful of
+    records, so without forcing the batch size this case cannot occur in the
+    suite and would first appear in production, on a resource past 100k rows.
+    """
+    distinct = CategoricalHistogram.UNIQUE_VALUES_LIMIT + 30
+    resource = _many_valued_str_tabix(tmp_path, distinct)
+    confs: dict = {"s": CategoricalHistogramConfig.default_config()}
+    monkeypatch.setattr(
+        GenomicScoreImplementation, "_SCAN_BATCH_SIZE", 10)
+
+    ref = GenomicScoreImplementation._do_histogram(
+        resource, confs, "chr1", 1, distinct)
+    bulk = GenomicScoreImplementation._do_histogram_bulk(
+        resource, confs, "chr1", 1, distinct)
+
+    assert isinstance(bulk["s"], NullHistogram)
+    _assert_categorical_equal(bulk, ref)
+
+
+def test_a_nullified_score_does_not_cost_the_others_theirs(
+    tmp_path: pathlib.Path,
+) -> None:
+    """One score's overflow leaves the rest of the resource's statistics.
+
+    The per-record path replaces the failed histogram and carries on; the
+    bulk path has to do the same, or a single unhistogrammable column would
+    take a whole resource's statistics down with it.
+    """
+    limit = CategoricalHistogram.UNIQUE_VALUES_LIMIT
+    rows = "\n".join(
+        f"chr1  {pos}  {pos}  v{pos}  0.5" for pos in range(1, limit + 30))
+    resource = (
+        a_position_score()
+        .with_score("s", "str")
+        .with_score("f", "float")
+        .with_data(f"chrom  pos_begin  pos_end  s  f\n{rows}")
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    confs: dict = {
+        "s": CategoricalHistogramConfig.default_config(),
+        "f": _hist_conf(),
+    }
+
+    ref = GenomicScoreImplementation._do_histogram(
+        resource, confs, "chr1", 1, limit + 30)
+    bulk = GenomicScoreImplementation._do_histogram_bulk(
+        resource, confs, "chr1", 1, limit + 30)
+
+    assert isinstance(bulk["s"], NullHistogram)
+    assert isinstance(bulk["f"], NumberHistogram)
+    _assert_hists_equal({"f": bulk["f"]}, {"f": ref["f"]})
+    assert bulk["f"].bars.sum() == limit + 29
 
 
 def test_bulk_matches_per_record_float_underscore_token(

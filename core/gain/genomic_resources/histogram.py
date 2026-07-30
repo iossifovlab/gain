@@ -681,6 +681,61 @@ class CategoricalHistogram(Statistic):
                 f"for categorical histogram.",
             )
 
+    def add_batch(
+        self, values: np.ndarray, weights: np.ndarray,
+    ) -> None:
+        """Add a batch of ``(value, weight)`` pairs, vectorized.
+
+        Equivalent to calling :meth:`add_value` over each pair in order: the
+        same ``None`` skip, the same per-value counts, the same ``TypeError``
+        naming the first value that is neither ``str`` nor ``int``, and the
+        same ``HistogramError`` when the batch takes the histogram past
+        ``UNIQUE_VALUES_LIMIT``.  This is the hot path for the statistics
+        scan, where a per-value Python call dominates the cost.
+
+        The limit's message reports ``UNIQUE_VALUES_LIMIT + 1`` because that
+        is the count :meth:`add_value` always raises at: it tests after every
+        single add, so the first add that exceeds the limit is the one that
+        raises, and the histogram holds exactly one value too many.  Which
+        values the counter holds when it raises is not otherwise observable --
+        a histogram that raises is replaced by a ``NullHistogram`` carrying
+        the message.
+
+        A batch containing BOTH a value of an unusable type and enough new
+        values to trip the limit reports the type failure, wherever the two
+        sit relative to each other; the per-record path reports whichever
+        comes first.  The distinction is unreachable through the scan, which
+        batches a ``str`` score's column -- every cell of which is a ``str``
+        or the ``None`` this skips.
+        """
+        cells = np.asarray(values, dtype=object).tolist()
+        if weights.size and bool(np.all(weights == 1)):
+            # The C-level count, for the kinds that weigh every record 1.
+            batch = Counter(cells)
+            batch.pop(None, None)
+        else:
+            batch = Counter()
+            for cell, weight in zip(cells, weights.tolist(), strict=True):
+                if cell is None:
+                    continue
+                batch[cell] += weight
+
+        for cell in batch:
+            if not isinstance(cell, str | int):
+                raise TypeError(
+                    "Only string or int values can be added categorical "
+                    f"histogram; bad <{cell}>",
+                )
+
+        self._counter.update(batch)
+        if not self.enforce_type and \
+                len(self._counter) > CategoricalHistogram.UNIQUE_VALUES_LIMIT:
+            raise HistogramError(
+                f"Too many unique values "
+                f"{CategoricalHistogram.UNIQUE_VALUES_LIMIT + 1} "
+                f"for categorical histogram.",
+            )
+
     def merge(self, other: Statistic) -> None:
         """Merge with other histogram."""
         assert isinstance(other, CategoricalHistogram)

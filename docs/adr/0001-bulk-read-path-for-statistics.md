@@ -3,7 +3,8 @@
 - **Status:** accepted
 - **Date:** 2026-07-24
 - **Amended:** 2026-07-29 by [gain#421](https://github.com/iossifovlab/gain/issues/421), which widened the resource-type condition. The decision stands; what changed is *which* kinds it admits and *why* the others are out. See [Amendment — gain#421](#amendment--gain421-the-gate-reads-per-kind-facts-instead-of-assuming-them). The original scoping is left in place below, because why the path was first restricted is the part of this record worth keeping.
-- **Issues:** [gain#385](https://github.com/iossifovlab/gain/issues/385) (the scan), [gain#387](https://github.com/iossifovlab/gain/pull/387) (shipped), [gain#398](https://github.com/iossifovlab/gain/issues/398) (the table capability), [gain#405](https://github.com/iossifovlab/gain/issues/405) / [gain#409](https://github.com/iossifovlab/gain/issues/409) (the parse contract), [gain#420](https://github.com/iossifovlab/gain/issues/420) (this record), [gain#421](https://github.com/iossifovlab/gain/issues/421) (the amendment)
+- **Amended:** 2026-07-30 by [gain#406](https://github.com/iossifovlab/gain/issues/406), which widened the value-type condition from `float` to `float`, `int` and `str`. See [Amendment — gain#406](#amendment--gain406-the-value-type-condition-becomes-a-pairing).
+- **Issues:** [gain#385](https://github.com/iossifovlab/gain/issues/385) (the scan), [gain#387](https://github.com/iossifovlab/gain/pull/387) (shipped), [gain#398](https://github.com/iossifovlab/gain/issues/398) (the table capability), [gain#405](https://github.com/iossifovlab/gain/issues/405) / [gain#409](https://github.com/iossifovlab/gain/issues/409) (the parse contract), [gain#420](https://github.com/iossifovlab/gain/issues/420) (this record), [gain#421](https://github.com/iossifovlab/gain/issues/421) / [gain#406](https://github.com/iossifovlab/gain/issues/406) (the amendments)
 
 ## Context
 
@@ -36,7 +37,9 @@ conditions holds:
    of its two permanent spellings (`fragment_score`, `cnv_collection`). *As
    originally decided this read "a `position_score`"; gain#421 widened it — see
    the Amendment.*
-2. every requested score has value type **`float`**;
+2. every requested score has value type **`float`**. *As originally decided;
+   gain#406 widened it to `float`, `int` and `str`, paired with the histogram
+   each can feed — see the [gain#406 Amendment](#amendment--gain406-the-value-type-condition-becomes-a-pairing).*
 3. the backend is **tabix or bigWig** — i.e. it declares `supports_value_arrays`;
 4. the scan region is **bounded** — a concrete contig with concrete start and end.
 
@@ -52,7 +55,9 @@ The path is built from three pieces:
   **optional**: the base class refuses with `TypeError`, and a backend that serves
   it both overrides the method and sets `supports_value_arrays = True`.
 - `GenomicScore.fetch_region_value_arrays(...)` — the score-level facade, which
-  adds the parse and hands back one `float64` array per score id.
+  adds the parse and hands back one array per score id — `float64` as
+  originally decided, and since gain#406 the shape the score's value type
+  parses to.
 - `GenomicScoreImplementation._bulk_region_scan` — the shared driver behind both
   the histogram and the min/max passes.
 
@@ -121,7 +126,10 @@ column index. So `VCFGenomicPositionTable` sets `supports_value_arrays` back to
 
 **Non-float scores — parse semantics.** The facade parses to `float64`. An `int`
 score needs `int()` semantics, and `int("3.5")` raises where `float("3.5")` does
-not; a `str` or `bool` score is not a number to accumulate at all.
+not; a `str` or `bool` score is not a number to accumulate at all. — *Superseded
+by gain#406 for `int` and `str`: the parse dispatches on the value type and the
+gate pairs each score type with the histogram that can accumulate it. `bool`
+remains excluded — no consumer asks for a column of them.*
 
 **Unbounded scans — the overlap guard.** The bulk path needs a concrete contig for
 its overlapping-position guard, and concrete bounds because that is what the
@@ -197,6 +205,7 @@ path: no error, no failing test, just the slow path forever.
   a `(variant, allele index)` pair, so `VCFGenomicPositionTable` declares no
   column-array support.
 - **Non-float scores — parse semantics.** Unchanged; opening it is gain#406.
+  — *Done; see that amendment below.*
 - **Unbounded scans — the overlap guard and the read's bounds.** Unchanged.
 
 ### What it cost, and what pins it
@@ -216,6 +225,104 @@ actually consumed (`batch_size` is a hint a backend may ignore), and pins the
 degenerate shapes an average-looking fixture never reaches: an all-NA column,
 an empty region, a single record, values outside `view_range`, and a multi-base
 allele record on both the histogram and the min/max path.
+
+## Amendment — gain#406: the value-type condition becomes a pairing
+
+*Added 2026-07-30. Everything above is the original record and the gain#421
+amendment, left as written; this section says what is true now.*
+
+### The condition was never really about the value type
+
+The original gate asked for `float` because the facade's column parse *was* a
+float parse — one `astype(np.float64)` with no dispatch. What the scan actually
+needs is narrower and more precise: **an array in the shape the histogram at
+the other end can accumulate.** Stated as a value type, that rule was both too
+strict (an int score's number histogram is float64 arithmetic either way) and,
+had it simply been relaxed, too loose (a str score's column cannot go into a
+`NumberHistogram`, and a *number* column cannot go into a categorical one).
+
+So gain#406 replaces the single type test with a **pairing**, checked in
+`_can_bulk_histogram`:
+
+| histogram | value types | array the read yields |
+| --- | --- | --- |
+| `NumberHistogram` | `float`, `int` | `float64`, `nan` for no value |
+| `CategoricalHistogram` | `str` | `object` of `str`, `None` for no value |
+| `NullHistogram` | any | nothing is read |
+
+`GenomicScoreDef.parse_array` dispatches on `value_type` to produce those two
+shapes, and `supports_region_value_arrays` admits the three types it defines a
+parse for. `bool` is still out: nothing asks for a column of them.
+
+### Why the mismatched pairings are excluded, and it is not symmetry for its own sake
+
+Both mismatches are configurations the per-record path already handles — by
+**failing one value at a time**. `NumberHistogram.add_value("aaa")` raises
+`TypeError`, `_do_histogram` catches it, that score is nullified and the rest
+of the resource keeps its statistics. A batch is different in kind: a column of
+`str` handed to `NumberHistogram.add_batch` is not a value it can refuse, it is
+a coercion failure inside the accumulation. Routing either mismatch to the bulk
+path would turn a nullified score into a raised scan — so the pairing keeps
+them where they already work.
+
+The categorical-over-`int` case is the one that looks like it should be
+allowed, and is the more instructive: `CategoricalHistogram.add_value` counts
+ints happily, so the per-record path builds that histogram. But the bulk read
+yields an int column as `float64` — its non-value has to be a nan — and
+`3.0` is not the key `3`. Admitting it would nullify a histogram that
+currently works. It stays on the per-record path.
+
+### What `add_batch` had to reproduce
+
+`CategoricalHistogram` gained one, and its equivalence is the same contract
+`NumberHistogram.add_batch` is held to — including the failures:
+
+- the `HistogramError` message reports `UNIQUE_VALUES_LIMIT + 1`, because
+  `add_value` tests after every single add and therefore always raises holding
+  exactly one value too many. That string is not cosmetic: it is what the
+  `NullHistogram` carries into the saved statistics, so a batch reporting its
+  own overshoot would change a resource's recorded output.
+- insertion order is preserved, because it decides which values a display
+  truncation keeps.
+- a batch refused for its *type* raises before it accumulates anything. A
+  batch that trips the *limit* accumulates first and then raises, so its
+  counter holds the whole batch where the scalar loop's holds exactly one
+  value too many. Neither is observable through the scan — both paths replace
+  the object with a `NullHistogram` — but `add_batch` is public, so it says so
+  rather than claiming a symmetry it does not have.
+
+### The int column's one honest divergence
+
+`parse_array` yields an int score as `float64`, so values are exact to 2**53
+and correctly rounded above it, where the per-record path keeps an
+arbitrary-precision Python `int`. A number histogram widens to float for its
+bin arithmetic either way, so the only place this is observable is a `min_max`
+extremum past 2**53. `_accumulate_min_max` converts an int score's extremes
+back to `int` so the serialized statistic keeps the spelling the per-record
+path writes (`min: 3`, not `min: 3.0`).
+
+### Measured result
+
+Bit-identical output, pinned by the same bulk-vs-per-record comparisons the
+float path has. On a synthetic 200k/400k-row tabix position score
+(`_do_histogram` vs `_do_histogram_bulk`, whole region):
+
+| score + histogram | speedup |
+| --- | --- |
+| `float` + number (control) | 2.9x / 3.0x |
+| `int` + number | 2.9x / 2.9x |
+| `str` + categorical | 1.7x / 1.8x |
+
+The control reproduces the ~3.0x this ADR recorded for tabix, which is what
+makes the other two rows comparable. `int` lands where `float` does — it is
+the same accumulation once parsed. `str` gains less, and the reason is worth
+recording: **there is no vectorized `str()`.** A text column is already the
+objects the scalar parse would return, so `_parse_text_array` is a one-pass
+Python copy rather than a numpy coercion, and `Counter` over a batch is only
+modestly cheaper than `add_value` per record. What `str` still buys is the
+`Record` per row, which is where this ADR's original profile put ~62% of the
+cost — so 1.7x is the record-object saving alone, with none of the parse
+saving the numeric types get.
 
 ## How the two paths are kept from drifting
 
@@ -251,7 +358,11 @@ So "one implementation" here means *enforced equivalence*: both forms hang off t
 definition that owns the two inputs a parse needs (`value_parser` and `na_values`),
 as `GenomicScoreDef.parse_value` and `GenomicScoreDef.parse_array`, so neither can
 be changed against a config the other did not see. Their agreement is pinned by a
-differential fuzz test, `test_parse_array_agrees_with_parse_value_fuzz`.
+differential fuzz test, `test_parse_array_agrees_with_parse_value_fuzz` — and,
+since gain#406, by `..._per_type`, which runs the same equivalence over an int
+and a str token corpus built from the tokens the two types disagree on
+(`"3.5"`, `"1e3"`, `"0x10"`, the int64 boundary, and the empty cell a str
+score counts where a numeric one drops it).
 
 This mechanism exists because its absence caused a real, shipped-to-nobody bug:
 `pd.to_numeric` silently diverged from `float()` in rounding, producing wrong

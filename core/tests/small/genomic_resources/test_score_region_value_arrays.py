@@ -197,24 +197,29 @@ def test_capability_query_accounts_for_the_scores_value_type(
 ) -> None:
     """The query answers "will this call succeed", not just "which backend".
 
-    Since the facade parses, it is float-only -- an int score would need
-    ``int()`` semantics.  A predicate that answered about the backend alone
-    would say True for a call that then refuses, which is not a capability
-    query, it is a trap.
+    Since the facade parses, it serves the value types the definition defines
+    a column parse for and no others.  A predicate that answered about the
+    backend alone would say True for a call that then refuses, which is not a
+    capability query, it is a trap.
     """
-    int_score = PositionScore(
-        a_position_score()
-        .with_score("s", "int")
-        .with_data(
-            """
-            chrom  pos_begin  pos_end  s
-            chr1   1          2        3
-            """)
-        .with_tabix()
-        .build_resource(tmp_path / "int"))
-    float_score = PositionScore(_multiscore_tabix(tmp_path / "float"))
+    def _typed(value_type: str, cell: str) -> PositionScore:
+        return PositionScore(
+            a_position_score()
+            .with_score("s", value_type)
+            .with_data(
+                f"""
+                chrom  pos_begin  pos_end  s
+                chr1   1          2        {cell}
+                """)
+            .with_tabix()
+            .build_resource(tmp_path / value_type))
+
+    float_score = PositionScore(_multiscore_tabix(tmp_path / "multi"))
 
     # Same backend -- tabix, which does serve the bulk read -- so the value
-    # type is the only thing separating these two answers.
-    assert int_score.supports_region_value_arrays(["s"]) is False
+    # type is the only thing separating these answers.
     assert float_score.supports_region_value_arrays(["s1", "s2"]) is True
+    assert _typed("int", "3").supports_region_value_arrays(["s"]) is True
+    assert _typed("str", "aaa").supports_region_value_arrays(["s"]) is True
+    # ...and a type with no column parse is still refused.
+    assert _typed("bool", "True").supports_region_value_arrays(["s"]) is False

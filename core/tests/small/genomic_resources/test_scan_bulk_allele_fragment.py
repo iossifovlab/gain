@@ -291,16 +291,17 @@ def _allele_three_scores_tabix(tmp_path: pathlib.Path) -> GenomicResource:
     )
 
 
-def test_a_categorical_score_disqualifies_the_whole_resource(
+def test_a_str_score_and_a_float_score_scan_together(
     tmp_path: pathlib.Path,
 ) -> None:
-    # One categorical score is enough: the histogram build is dispatched per
-    # resource, not per score, and a null config is merely skipped.
+    # The histogram build is dispatched per resource, not per score, so a
+    # resource mixing a number histogram, a categorical one over a str score
+    # and a null config has to be admitted as a whole -- and the batch it
+    # scans then carries two array shapes at once, float64 and object.
     #
-    # All three ids exist on the resource ON PURPOSE.  ``_can_bulk_histogram``
-    # short-circuits on the categorical config before it ever opens the score,
-    # so ids that name nothing would make this pass without the resource
-    # having any say -- and it would keep passing if the short-circuit moved.
+    # All three ids exist on the resource ON PURPOSE: the eligibility check
+    # resolves each id against the resource's score definitions, so ids that
+    # named nothing would make this pass without the resource having any say.
     resource = _allele_three_scores_tabix(tmp_path)
     score = build_score_from_resource(resource)
     assert set(score.get_all_scores()) == {"s", "other", "third"}
@@ -309,7 +310,39 @@ def test_a_categorical_score_disqualifies_the_whole_resource(
         "other": CategoricalHistogramConfig.default_config(),
         "third": NullHistogramConfig("no reason"),
     }
-    assert not G._can_bulk_histogram(resource, confs)
+    assert G._can_bulk_histogram(resource, confs)
+
+    ref = G._do_histogram(resource, confs, "chr1", 1, 20)
+    bulk = G._do_histogram_bulk(resource, confs, "chr1", 1, 20)
+
+    assert set(bulk) == set(ref) == {"s", "other"}
+    assert np.array_equal(bulk["s"].bars, ref["s"].bars)
+    assert bulk["other"].raw_values == ref["other"].raw_values
+    # sanity: an allele record weighs 1 however wide it is, so the two
+    # alleles here are one count each.
+    assert bulk["other"].raw_values == {"aaa": 1, "bbb": 1}
+
+
+def test_a_histogram_paired_with_the_wrong_score_type_disqualifies_it(
+    tmp_path: pathlib.Path,
+) -> None:
+    # What admits a resource is each histogram sitting on a score whose
+    # column comes out in the shape that histogram accumulates -- a number
+    # histogram over a numeric score, a categorical one over a str score.
+    # Same resource, same three ids, one config swapped onto the wrong score
+    # each time.
+    resource = _allele_three_scores_tabix(tmp_path)
+    number = _hist_conf()
+    categorical = CategoricalHistogramConfig.default_config()
+
+    assert G._can_bulk_histogram(resource, {
+        "s": number, "other": categorical, "third": number})
+    # A categorical histogram over the float score...
+    assert not G._can_bulk_histogram(resource, {
+        "s": categorical, "other": categorical, "third": number})
+    # ...and a number histogram over the str score.
+    assert not G._can_bulk_histogram(resource, {
+        "s": number, "other": number, "third": number})
 
 
 def test_the_float_scores_alone_would_have_been_eligible(

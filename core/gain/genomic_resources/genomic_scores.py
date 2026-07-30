@@ -55,6 +55,7 @@ from gain.genomic_resources.resource_types import (
     FRAGMENT_SCORE_TYPES,
 )
 from gain.genomic_resources.score_def import (
+    BULK_PARSEABLE_VALUE_TYPES,
     SCORE_TYPE_PARSERS,
     GenomicScoreDef,
     ScoreValue,
@@ -856,8 +857,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         the kind this method serves", not "is every argument valid".
 
         The value-type half is not a consumer's condition leaking in: the
-        facade parses, so it is float-only (an ``int`` score needs ``int()``
-        semantics -- ``int("3.5")`` raises where ``float("3.5")`` does not).
+        facade parses, so it serves the value types
+        :meth:`GenomicScoreDef.parse_array` defines a column parse for
+        (:data:`BULK_PARSEABLE_VALUE_TYPES`) and no others.
         What a *consumer* additionally needs stays with the consumer: the
         statistics scan also requires a bounded region and a resource kind it
         is exercised against, and it keeps asking that itself (see
@@ -873,7 +875,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             return False
         for score_id in scores:
             score_def = self.score_definitions.get(score_id)
-            if score_def is None or score_def.value_type != "float":
+            if score_def is None \
+                    or score_def.value_type not in BULK_PARSEABLE_VALUE_TYPES:
                 return False
         return True
 
@@ -892,20 +895,23 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         The bulk counterpart of :meth:`fetch_records`, for a caller that scans a
         whole region and wants columns rather than rows -- statistics, above
         all.  Each batch is ``(pos_begin, pos_end, {score_id: values})``: the
-        one-based position arrays, plus one ``float64`` array of **parsed**
-        values per requested score.
+        one-based position arrays, plus one array of **parsed** values per
+        requested score.
 
         **Values are parsed, by the same contract the per-record read uses.**
         Each column goes through :meth:`GenomicScoreDef.parse_array`, whose
         agreement with the per-value :meth:`GenomicScoreDef.parse_value` is
         pinned by test_parse_array_agrees_with_parse_value_fuzz.  So NA
-        sentinels and unparseable cells arrive as ``nan`` -- the array
-        contract's "no value", the per-record contract's ``None`` -- and every
-        backend yields ``float64``, whatever it stores underneath.
+        sentinels and unparseable cells arrive as that score's non-value,
+        whatever the backend stores underneath: a ``float`` or ``int`` score
+        yields ``float64`` with ``nan`` for no value, a ``str`` score an
+        ``object`` array with ``None``.  **The array's dtype follows the
+        score's declared type, not the backend's** -- a caller reading several
+        scores in one batch can be handed both shapes.
 
-        That parse is why this is float-only, and why
-        :meth:`supports_region_value_arrays` asks about the scores and not
-        only about the backend.
+        That parse is why a value type the definition cannot parse as a column
+        is refused, and why :meth:`supports_region_value_arrays` asks about
+        the scores and not only about the backend.
 
         **It does NOT clip.**  A record overlapping the region's start is
         yielded whole, exactly as :meth:`fetch_records` yields it; trimming to
@@ -935,7 +941,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 f"its {type(self.table).__name__} backend leaves "
                 f"supports_value_arrays False"
                 if not self.table.supports_value_arrays
-                else "not every requested score is a float score")
+                else "not every requested score has a value type the column "
+                     f"parse serves {sorted(BULK_PARSEABLE_VALUE_TYPES)}")
             raise TypeError(
                 f"genomic score <{self.resource_id}> does not serve "
                 f"fetch_region_value_arrays for {sorted(scores)}: {reason}. "

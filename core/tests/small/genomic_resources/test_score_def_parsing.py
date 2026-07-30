@@ -28,10 +28,12 @@ from gain.genomic_resources.testing import (
 from gain.genomic_resources.testing.builders import a_position_score
 
 
-def _float_def(
-    tmp_path: pathlib.Path, na_values: str | None = None,
+def _typed_def(
+    tmp_path: pathlib.Path,
+    value_type: str,
+    na_values: str | None = None,
 ) -> GenomicScoreDef:
-    builder = a_position_score().with_score("s", "float")
+    builder = a_position_score().with_score("s", value_type)
     if na_values is not None:
         builder = builder.with_na_values(na_values)
     resource = builder.with_data(
@@ -40,6 +42,12 @@ def _float_def(
         chr1   1          1        0.5
         """).build_resource(tmp_path)
     return PositionScore(resource).score_definitions["s"]
+
+
+def _float_def(
+    tmp_path: pathlib.Path, na_values: str | None = None,
+) -> GenomicScoreDef:
+    return _typed_def(tmp_path, "float", na_values)
 
 
 def test_score_def_parses_a_raw_cell(tmp_path: pathlib.Path) -> None:
@@ -109,6 +117,177 @@ def test_parse_array_agrees_with_parse_value_fuzz(
                 na_values, width,
                 [c for c, g, w in zip(cells, got, want, strict=True)
                  if not (g == w or (np.isnan(g) and np.isnan(w)))])
+
+
+# The int corpus. Everything float() accepts but int() does not is a NON-value
+# here ("3.5", "1e3", "0x10"), which is exactly what made the type gate exist;
+# the rest are the int-specific edges -- PEP-515 underscores and Unicode digits
+# (both of which int() accepts), a leading "+", and the int64 boundary, past
+# which numpy's whole-array astype raises OverflowError and the parse falls to
+# its per-cell loop.
+_INT_TOKENS = [
+    "3", "-7", "0", "-0", "007", "+5", "1_000", "١٢٣", " 7 ", "42\n",
+    "3.5", "1e3", "0x10", "1,5", "oops", "", " ", ".", "NA", "nan",
+    # The int64 boundary and beyond: a Python int of any width parses, and the
+    # array contract widens it to float64 -- so these are values, not failures.
+    "9223372036854775807", "9223372036854775808", "-9223372036854775809",
+    "99999999999999999999999",
+    # 2**53 and 2**53 + 1: the largest exactly representable float64 integer
+    # and the first that is not.
+    "9007199254740992", "9007199254740993",
+    "-1", "-1.0",
+]
+
+# The str corpus. A str score's default na_values is EMPTY, so "" and "nan" are
+# values here and not sentinels -- which is the whole difference from the
+# numeric corpora, and what a shared NA test would get wrong.
+_STR_TOKENS = [
+    "aaa", "bbb", "", " ", "0", "3.5", "nan", "NA", ".", "-1", "-1.0",
+    "a b", "\tx", "x\n", "١٢٣", "Other",
+]
+
+_TOKENS_BY_TYPE = {
+    "float": _TOKENS,
+    "int": _INT_TOKENS,
+    "str": _STR_TOKENS,
+}
+
+
+@pytest.mark.parametrize("value_type", ["float", "int", "str"])
+def test_parse_array_agrees_with_parse_value_fuzz_per_type(
+    tmp_path: pathlib.Path, value_type: str,
+) -> None:
+    """The column parse IS the cell parse, for every type it serves.
+
+    The float case is the fuzz above; this runs the same equivalence over the
+    int and str corpora, whose divergences from float are the point of the
+    type dispatch -- ``int("3.5")`` raises where ``float("3.5")`` does not,
+    and a str score's ``na_values`` is empty by default where a numeric one's
+    is not.
+
+    A numeric column is compared as float64, which is the contract that array
+    carries: an int past 2**53 is a value in both paths, exact per record and
+    correctly rounded here.  A str column is compared as it stands, ``None``
+    and all.
+    """
+    tokens = _TOKENS_BY_TYPE[value_type]
+    for index, na_values in enumerate([None, ".", "NA", "-1"]):
+        score_def = _typed_def(
+            tmp_path / f"{value_type}{index}", value_type, na_values)
+        for width in (1, 2, 3, 7, 8, 16, 33, len(tokens)):
+            cells = np.array((tokens * 4)[:width], dtype=object)
+            got = score_def.parse_array(cells)
+            want = [score_def.parse_value(cell) for cell in cells]
+            if value_type == "str":
+                assert list(got) == want, (na_values, width)
+                continue
+            assert np.array_equal(
+                got, np.array(_as_floats(want)), equal_nan=True), (
+                na_values, width,
+                [c for c, g, w in zip(cells, got, _as_floats(want), strict=True)
+                 if not (g == w or (np.isnan(g) and np.isnan(w)))])
+
+
+def test_parse_array_refuses_a_type_it_does_not_parse(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A ``bool`` score has no column parse, and says so by name.
+
+    No consumer asks for one, so rather than invent a coercion the definition
+    refuses -- and names the capability query that would have said no.
+    """
+    score_def = _typed_def(tmp_path, "float")
+    score_def.value_type = "bool"
+
+    with pytest.raises(TypeError, match="does not serve 'bool' scores"):
+        score_def.parse_array(np.array(["True"], dtype=object))
+
+
+def test_the_int_fast_path_parses_with_int_not_float(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A column every ``float()`` accepts must still be parsed by ``int()``.
+
+    The whole-array ``astype`` is all-or-nothing, so a single token that
+    ``int()`` refuses sends the batch to the per-cell loop -- which means a
+    corpus containing any junk at all exercises the loop and never the fast
+    path.  A column of nothing but float-shaped tokens is the only input that
+    reaches the fast path and can tell the two coercions apart: parsed as
+    float it yields values the per-record path drops.
+    """
+    score_def = _typed_def(tmp_path, "int")
+    cells = np.array(["3", "3.5", "1e3"], dtype=object)
+
+    got = score_def.parse_array(cells)
+
+    assert np.array_equal(
+        got, np.array([3.0, np.nan, np.nan]), equal_nan=True), got
+    assert [score_def.parse_value(c) for c in cells] == [3, None, None]
+
+
+def test_an_int_past_float64_range_is_a_non_value_not_a_raise(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The one cell the array contract cannot carry is counted, not raised.
+
+    ``int()`` parses a token of any width, but assigning one past float64's
+    range into the column raises ``OverflowError`` -- and this parse runs
+    inside a generator, outside the scan's per-score nullify handler, so an
+    escaping exception would take down the whole scan over one bad cell.
+    """
+    score_def = _typed_def(tmp_path, "int")
+    cells = np.array(["3", "9" * 400], dtype=object)
+
+    with caplog.at_level(logging.WARNING):
+        caplog.clear()
+        got = score_def.parse_array(cells)
+
+    assert np.array_equal(got, np.array([3.0, np.nan]), equal_nan=True), got
+    assert "unable to parse 1 of 2 values" in caplog.records[-1].getMessage()
+    # The scalar parse keeps it, which is exactly why this is stated as a
+    # divergence rather than pinned as agreement.
+    assert score_def.parse_value("9" * 400) == int("9" * 400)
+
+
+def test_int_parse_array_agrees_with_parse_value_on_float_cells(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The float-dtype branch of the int parse truncates, as ``int()`` does.
+
+    A bigWig payload arrives as float64.  ``int(3.7)`` is 3 -- truncation
+    toward zero, not rounding -- and ``int(nan)`` / ``int(inf)`` raise, so
+    both are non-values rather than bins.
+    """
+    score_def = _typed_def(tmp_path, "int", na_values="-1")
+    cells = np.array([-1.0, 3.7, -3.7, 0.0, np.nan, np.inf, -np.inf])
+
+    got = score_def.parse_array(cells)
+    want = _as_floats([score_def.parse_value(float(c)) for c in cells])
+
+    assert np.array_equal(got, np.array(want), equal_nan=True), (got, want)
+    assert np.isnan(got[0]), "the configured NA sentinel must not survive"
+    assert got[1] == 3.0
+    assert got[2] == -3.0
+
+
+def test_str_parse_array_keeps_an_empty_cell_as_a_value(
+    tmp_path: pathlib.Path,
+) -> None:
+    """"" is a str score's value, not its non-value.
+
+    The default ``na_values`` for ``str`` is empty where ``float``'s and
+    ``int``'s carry ``""``, so a column parse that shared one NA table across
+    the types would silently drop every empty cell of a categorical score.
+    """
+    score_def = _typed_def(tmp_path, "str")
+    cells = np.array(["a", "", "nan", "."], dtype=object)
+
+    assert list(score_def.parse_array(cells)) == ["a", "", "nan", "."]
+
+    # ...and a configured sentinel still is one.
+    configured = _typed_def(tmp_path / "na", "str", na_values=".")
+    assert list(configured.parse_array(cells)) == ["a", "", "nan", None]
 
 
 def test_parse_array_logs_one_summary_per_batch(
