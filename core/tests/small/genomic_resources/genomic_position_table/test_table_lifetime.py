@@ -27,10 +27,9 @@ already lives, in test_inmemory_genomic_position_table.py.
 
 The second half only matters because the first can be satisfied without it: a
 table can be perfectly collectable and still be several megabytes that nobody
-will ever read again, for as long as its holder lives.
-``_INMEMORY_FRAGMENT_SCORE_CACHE`` is exactly such a holder -- it keeps
-``FragmentScore`` scores process-wide, while an annotation pipeline's
-teardown closes them.
+will ever read again, for as long as its holder lives.  An annotation pipeline
+is exactly such a holder -- it keeps its scores for the whole run, closing and
+reopening them around the reads.
 
 **Why collectability is pinned at all.** The repair path builds a table
 **per region task** --
@@ -763,11 +762,9 @@ def test_a_closed_inmemory_table_retains_no_records(
 
     The in-memory backend loads the WHOLE file into ``records_by_chr``, so
     until it releases them a closed table costs one live record tuple per row
-    of the file -- and that is not merely untidy, because closed scores are
-    deliberately kept alive: ``_INMEMORY_FRAGMENT_SCORE_CACHE`` holds
-    ``FragmentScore`` scores process-wide while an annotation pipeline's
-    teardown closes them, so a cached-and-closed score pinned every record
-    of its file for the life of the process.
+    of the file -- and that is not merely untidy, because a closed score is
+    not necessarily a dropped one.  A holder that keeps a score past a close
+    would pin every record of its file for as long as it lives.
 
     Parametrised over two file sizes two orders of magnitude apart, and
     asserting the same number for both, because the claim is about the
@@ -805,11 +802,9 @@ def test_an_inmemory_scan_in_flight_when_close_lands_raises(
     Consuming a scan lazily outside the block that opened the table is easy to
     write by accident -- ``gen = score.fetch_region_values(...)`` inside a
     ``with``, ``list(gen)`` after it -- and the in-memory backend is the one
-    deliberately
-    shared past a close: ``_INMEMORY_FRAGMENT_SCORE_CACHE`` hands the same
-    score to every holder in the process, so one pipeline's teardown can
-    close it while another scan is mid-flight.  For an annotation read a
-    silently truncated scan is wrong data rather than an error (gain#350).
+    that can answer such a read at all, having the records in hand rather
+    than a closed file handle.  For an annotation read a silently truncated
+    scan is wrong data rather than an error.
     """
     builder = (
         a_position_score()

@@ -8,12 +8,11 @@ a mismatched resource type, the fragment score's shared-instance caching,
 and the ``_from_resource_id`` repository resolution.
 """
 import pathlib
-from collections.abc import Callable, Generator
+from collections.abc import Callable
 
 import pytest
 import pytest_mock
 from gain.genomic_resources.genomic_scores import (
-    _INMEMORY_FRAGMENT_SCORE_CACHE,
     AlleleScore,
     FragmentScore,
     GenomicScore,
@@ -51,19 +50,6 @@ _WRONG_TYPE_MESSAGE = (
 FromResource = Callable[[GenomicResource], GenomicScore]
 # A `build_*_from_resource_id` factory: `grr` defaults to the ambient GRR.
 FromResourceId = Callable[..., GenomicScore]
-
-
-@pytest.fixture(autouse=True)
-def _clean_fragment_score_cache() -> Generator[None, None, None]:
-    """Isolate every test from the process-wide fragment-score cache.
-
-    The cache is a module global that outlives the test that filled it;
-    without this a stale entry from one test can satisfy another test's
-    lookup, and a test asserting on caching can pass for the wrong reason.
-    """
-    _INMEMORY_FRAGMENT_SCORE_CACHE.clear()
-    yield
-    _INMEMORY_FRAGMENT_SCORE_CACHE.clear()
 
 
 @pytest.fixture
@@ -142,34 +128,32 @@ def test_from_resource_id_rejects_a_mismatched_resource_type(
         factory(resource_id, grr)
 
 
-def test_fragment_score_is_cached_and_shared(
+def test_no_score_kind_is_shared_between_builds(
     grr: GenomicResourceRepo,
 ) -> None:
-    """Repeated builds hand back the SAME object, not an equal one.
+    """Every kind hands back a FRESH score, so each caller owns what it got.
 
-    Pins the deliberate asymmetry: cnv_collection is cached process-wide,
-    position/allele scores are not.
+    A shared instance would mean one holder's ``close()`` closing it for
+    every other holder, which is why no kind is shared.
     """
     resource = grr.get_resource("scores/fragment")
-
     first = build_fragment_score_from_resource(resource)
-    second = build_fragment_score_from_resource(resource)
-    assert first is second
 
-    # ... and the generic dispatcher hands back that same cached instance.
-    assert build_score_from_resource(resource) is first
+    assert build_fragment_score_from_resource(resource) is not first
+    # ... and neither does the generic dispatcher nor the by-id factory
+    # hand back something already given out.
+    assert build_score_from_resource(resource) is not first
     assert build_fragment_score_from_resource_id(
-        "scores/fragment", grr) is first
+        "scores/fragment", grr) is not first
 
 
-def test_fragment_score_cache_does_not_collide_across_versions(
+def test_two_versions_of_one_resource_id_are_distinct_scores(
     tmp_path: pathlib.Path,
 ) -> None:
-    """Two versions of one resource id are two distinct scores.
+    """``fragments(2.0)`` reads its own data, not ``fragments(1.0)``'s.
 
-    ``get_id()`` is version-less, so keying the cache on it alone makes
-    ``fragments(2.0)`` collide with ``fragments(1.0)`` and silently hand
-    back the older version's data.
+    ``get_id()`` is version-less, so anything keyed on it alone would
+    conflate the two and hand back the older version's data.
     """
     repo = (
         a_grr()
@@ -194,15 +178,15 @@ def test_fragment_score_cache_does_not_collide_across_versions(
     assert new.resource.get_full_id() == "fragments(2.0)"
 
     with old.open() as old_open, new.open() as new_open:
-        # Distinct score values, so each cache entry is demonstrably reading
-        # its own version's data.
+        # Distinct score values, so each is demonstrably reading its own
+        # version's data.
         assert old_open.fetch_fragment_scores("1", 1, 1000) \
             == [{"score": 0.1}]
         assert new_open.fetch_fragment_scores("1", 1, 1000) \
             == [{"score": 0.2}]
 
 
-def test_position_and_allele_scores_are_not_cached(
+def test_position_and_allele_scores_are_fresh_per_build(
     grr: GenomicResourceRepo,
 ) -> None:
     pos = grr.get_resource("scores/pos")

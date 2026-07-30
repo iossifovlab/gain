@@ -10,7 +10,6 @@ import pytest_mock
 
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.genomic_scores import (
-    _INMEMORY_FRAGMENT_SCORE_CACHE,
     FragmentScore,
 )
 from gain.genomic_resources.histogram import (
@@ -352,13 +351,11 @@ def test_repo_repair_does_not_rebuild_the_statistics_it_just_built(
     build_filesystem_test_repository(named_columns_grr)
     cli_manage(["repo-repair", "-R", str(named_columns_grr), "-j", "1"])
 
-    # The second run is a new process: no score is open in it, because the
-    # process-wide cache that holds the ones the build opened is gone.  That
-    # cache is why a fragment score reproduces this and a position score
-    # does not -- it hands `_store_stats_hash` back the very score object
-    # the statistics tasks opened, definition and all.
-    _INMEMORY_FRAGMENT_SCORE_CACHE.clear()
-
+    # Nothing carries an opened score from the first run into the second:
+    # every factory hands back a fresh score, so the second run reads the
+    # resource exactly as a new process would.  The precise guard on #502 is
+    # `test_the_statistics_hash_survives_opening_the_score`; this one checks
+    # the end-to-end symptom the user would see.
     try:
         cli_manage([
             "repo-repair", "--dry-run",
