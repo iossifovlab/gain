@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Generator
 from typing import Any
 
 from gain import logging
@@ -13,7 +13,9 @@ logger = logging.getLogger(__name__)
 class SequentialExecutor(TaskGraphExecutorBase):
     """A Task Graph Executor that executes task in sequential order."""
 
-    def _execute(self, graph: TaskGraph) -> Iterator[tuple[Task, Any]]:
+    def _execute(
+        self, graph: TaskGraph,
+    ) -> Generator[tuple[Task, Any], None, None]:
         finished_tasks = 0
         initial_task_count = len(graph)
 

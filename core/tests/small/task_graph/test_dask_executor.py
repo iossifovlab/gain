@@ -12,6 +12,7 @@ from dask.distributed import Client
 from gain.genomic_resources.histogram import HistogramError
 from gain.task_graph import dask_executor
 from gain.task_graph.cache import CacheRecordType, FileTaskCache
+from gain.task_graph.cli_tools import task_graph_run_with_results
 from gain.task_graph.dask_executor import (
     RESULTS_WORKER_THREAD_NAME,
     SUBMIT_WORKER_THREAD_NAME,
@@ -423,8 +424,7 @@ def test_abandoning_the_result_iterator_shuts_the_run_down(
     joins, clearing ``_executing`` -- used to sit after the ``while`` loop
     unprotected, and ``GeneratorExit`` skipped all of it: both worker
     threads survived for the life of the process and the executor stayed
-    permanently "executing", so the long-lived module-level executors in
-    ``web_api`` could never run another graph.
+    permanently "executing", so it could never run another graph.
     """
     def a_graph(prefix: str, count: int) -> TaskGraph:
         graph = TaskGraph()
@@ -450,6 +450,158 @@ def test_abandoning_the_result_iterator_shuts_the_run_down(
     results = dict(executor.execute(a_graph("Reused", 20)))
     assert len(results) == 20, (
         "the executor could not run a second graph after an abandoned run"
+    )
+
+
+def test_abandoned_runs_do_not_accumulate_across_a_shared_client(
+    dask_client: Client,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Abandoning run after run must not poison a later run (gain#480).
+
+    The ordering pin the single-run test above cannot be. The threads a
+    leaked run leaves behind are parked in ``claim_for_submit`` /
+    ``claim_for_gather`` on a state whose ``shutdown()`` was never called, so
+    they never stop: they wake every ``WAIT_TIMEOUT`` for the life of the
+    process. That cost is per-abandoned-run and cumulative, which is why the
+    defect was first seen not as a failure but as a whole pytest session that
+    stopped exiting and, one test later, a deadlock in every subsequent dask
+    run -- with the innocent next test blamed.
+
+    So the assertion that matters here is not just "no threads survive one
+    run" but "N abandoned runs later, a normal run on the same session
+    client still completes". A test that exercises a single run in a fresh
+    process cannot see this.
+    """
+    def a_graph(prefix: str, count: int) -> TaskGraph:
+        graph = TaskGraph()
+        for i in range(count):
+            graph.create_task(f"{prefix}{i}", double, args=[i], deps=[])
+        return graph
+
+    assert not _live_run_worker_threads(), "leaked from an earlier test"
+
+    abandoned_runs = 5
+    for run in range(abandoned_runs):
+        executor = DaskExecutor(
+            dask_client, task_log_dir=str(tmp_path / "logs"))
+        tasks_iter = executor.execute(a_graph(f"Abandoned{run}_", 50))
+        next(tasks_iter)
+        tasks_iter.close()
+
+        assert not _live_run_worker_threads(), (
+            f"abandoned run {run + 1} of {abandoned_runs} left worker "
+            f"threads alive; each one leaks a pair that spins for the life "
+            f"of the process"
+        )
+
+    # The victim: a plain, complete run on the same shared client, bounded so
+    # a poisoned client fails the test instead of hanging the session.
+    executor = DaskExecutor(dask_client, task_log_dir=str(tmp_path / "logs"))
+    results = _run_in_thread_with_timeout(
+        executor, a_graph("Later_", 20), timeout=60.0)
+
+    assert len(results) == 20, (
+        f"a run following {abandoned_runs} abandoned runs delivered "
+        f"{len(results)} of 20 results"
+    )
+
+
+def tagged(stamp: str, x: int) -> str:
+    return f"{stamp}:{x * 2}"
+
+
+def test_an_abandoned_run_does_not_feed_stale_results_to_the_next_run(
+    dask_client: Client,
+    tmp_path: pathlib.Path,
+) -> None:
+    """An abandoned run must release the keys it pinned (gain#480).
+
+    Joining the worker threads is only half of "a run releases what it
+    owns". The other half is the futures: a run that ends abnormally leaves
+    its submitted futures in the run state, and the executor submits with an
+    explicit ``key=`` derived from the task id, so those keys stay pinned on
+    a client that outlives the run. A later run of the same graph is then
+    deduplicated against them and is handed the ABANDONED run's results
+    without executing anything -- and ``execute`` writes them into the task
+    cache, so with a ``FileTaskCache`` the stale answers persist.
+
+    That is a silent wrong answer, not a hang, which makes it the more
+    dangerous half. Retrying a failed run in the same process is exactly
+    when it bites, and it is exactly what a caller does after a run without
+    ``--keep-going`` reports a task error.
+
+    The stamp is a task *argument*, so it is baked in when the graph is
+    built rather than read when the task runs: the dask key does not depend
+    on it, so a stale key returns the first run's stamp no matter when the
+    cluster gets round to executing it. Deterministic either way.
+    """
+    def a_graph(stamp: str) -> TaskGraph:
+        graph = TaskGraph()
+        for i in range(25):
+            graph.create_task(
+                f"Stamped{i}", tagged, args=[stamp, i], deps=[])
+        return graph
+
+    executor = DaskExecutor(dask_client, task_log_dir=str(tmp_path / "logs"))
+
+    tasks_iter = executor.execute(a_graph("first"))
+    next(tasks_iter)
+    tasks_iter.close()
+
+    results = _run_in_thread_with_timeout(
+        executor, a_graph("second"), timeout=60.0)
+
+    assert len(results) == 25
+    stamps = {str(result).split(":")[0] for _, result in results}
+    assert stamps == {"second"}, (
+        f"the second run returned results stamped {sorted(stamps)}; the "
+        f"abandoned run left its task keys pinned on the shared client, so "
+        f"the second run was deduplicated against them and never ran"
+    )
+
+
+def boom() -> None:
+    raise ValueError("boom")
+
+
+def test_a_failing_task_without_keep_going_tears_the_run_down(
+    dask_client: Client,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The real non-keep-going path must tear the run down (gain#480).
+
+    The tests above abandon the run by calling ``close()`` on the result
+    iterator. Production never does that: ``task_graph_run_with_results``
+    ends a run without ``--keep-going`` by ``raise``-ing the task's error
+    from inside its own ``for`` loop, and an exception propagating out of a
+    generator does *not* close the sub-iterator that generator was reading
+    -- the sub-iterator is released only when the abandoned generator object
+    is collected, and the raised exception's traceback keeps it referenced
+    for as long as anything holds the exception. So the run's teardown is
+    deferred to a garbage collection that may never come, which for the dask
+    executor means both worker threads spin against the shared client
+    meanwhile.
+
+    Every task fails, so the very first result the run yields is the error
+    that ends it, with the rest of the graph still outstanding -- the
+    worst-case abandonment, and a deterministic one.
+    """
+    graph = TaskGraph()
+    for i in range(30):
+        graph.create_task(f"Boom{i}", boom, args=[], deps=[])
+
+    executor = DaskExecutor(dask_client, task_log_dir=str(tmp_path / "logs"))
+
+    assert not _live_run_worker_threads(), "leaked from an earlier test"
+
+    with pytest.raises(ValueError, match="boom"):
+        list(task_graph_run_with_results(graph, executor, keep_going=False))
+
+    assert not _live_run_worker_threads(), (
+        "the run that ended by raising a task error left its worker threads "
+        "alive; the non-keep-going path is how production ends a failing "
+        "run, so this leaks a spinning pair on every failed annotation"
     )
 
 
@@ -620,6 +772,16 @@ def _assert_failing_client_delivers_every_task_as_error(
             f"Task{i} was delivered as {result!r}; a task in a batch whose "
             f"{what} failed must be delivered as an error"
         )
+
+    # Terminating is only half the contract: a run that ends abnormally must
+    # also release what it owns, because the client outlives it (gain#480).
+    # Delivering every task as an error and then leaving a worker thread
+    # spinning against the shared client would satisfy every assertion above
+    # and still poison every later run in the process.
+    assert not _live_run_worker_threads(), (
+        f"the run terminated after the failed {what} but left its worker "
+        f"threads alive; a run must join both on every exit path"
+    )
 
 
 def test_a_submission_that_fails_ends_the_run_instead_of_hanging(

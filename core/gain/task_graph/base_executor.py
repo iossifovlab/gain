@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import multiprocessing as mp
 import os
 import pickle  # noqa: S403
 import time
 from abc import abstractmethod
-from collections.abc import Generator, Iterator
+from collections.abc import Generator
 from copy import copy
 from typing import Any
 
@@ -214,38 +215,66 @@ class TaskGraphExecutorBase(TaskGraphExecutor):
         for task, result in completed_tasks.items():
             yield task, result
 
-    def execute(self, graph: TaskGraph) -> Iterator[tuple[Task, Any]]:
+    def execute(
+        self, graph: TaskGraph,
+    ) -> Generator[tuple[Task, Any], None, None]:
         assert not self._executing, \
             "Cannot execute a new graph while an old one is still running."
 
         self._executing = True
+        try:
+            completed_tasks = list(self.get_completed_tasks(graph))
+            graph.process_completed_tasks(completed_tasks)
 
-        completed_tasks = list(self.get_completed_tasks(graph))
-        graph.process_completed_tasks(completed_tasks)
+            if len(graph) == 0:
+                logger.warning(
+                    "All tasks are already COMPUTED; nothing to compute")
+                return
 
-        if len(graph) == 0:
+            # closing(), not a bare `for`: this is a generator, and a consumer
+            # that abandons it part way -- `task_graph_run_with_results`
+            # raises out of its `for` loop on the first error unless
+            # --keep-going -- closes it, throwing GeneratorExit in at the
+            # yield below. That unwinds this frame, but it does NOT close the
+            # sub-generator: the iterator a `for` loop holds is released when
+            # this generator object is deallocated, not when its close()
+            # returns, and the consumer is still holding a reference to it. So
+            # `_execute`'s own teardown would run only whenever this object
+            # happened to be collected -- and for the dask executor that
+            # teardown is what shuts the run state down and joins both worker
+            # threads, so until then they spin against the shared client for
+            # the life of the process (gain#480). Closing it here makes that
+            # teardown run before close() returns, on every path.
+            with contextlib.closing(self._execute(graph)) as task_results:
+                for task_node, result in task_results:
+                    is_error = isinstance(result, BaseException)
+                    self._task_cache.cache(
+                        task_node,
+                        is_error=is_error,
+                        result=result,
+                    )
+                    yield task_node, result
+        finally:
+            # In the finally for the same reason: an abandoned run that left
+            # this flag set made the executor permanently unusable, since the
+            # assert above then fires on its next graph. Every executor built
+            # here today is built per CLI invocation, so that is latent -- but
+            # it turns "the run failed" into "the executor is dead" for any
+            # caller that reuses one, which is a strange thing to have to
+            # know. This method sets the flag, so this method clears it.
             self._executing = False
-            logger.warning(
-                "All tasks are already COMPUTED; nothing to compute")
-            return
-
-        for task_node, result in self._execute(graph):
-            is_error = isinstance(result, BaseException)
-            self._task_cache.cache(
-                task_node,
-                is_error=is_error,
-                result=result,
-            )
-            yield task_node, result
-
-        self._executing = False
 
     @abstractmethod
-    def _execute(self, graph: TaskGraph) -> Iterator[tuple[Task, Any]]:
+    def _execute(
+        self, graph: TaskGraph,
+    ) -> Generator[tuple[Task, Any], None, None]:
         """Execute the given task graph.
 
+        Must be a generator: :meth:`execute` closes it to tear the run down
+        when its own consumer abandons it part way (gain#480).
+
         Args:
-            task_graph: Task graph to execute.
+            graph: Task graph to execute.
 
         Yields:
             Tuples of (task, result) as tasks complete.

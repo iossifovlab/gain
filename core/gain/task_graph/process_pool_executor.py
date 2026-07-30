@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import time
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Generator
 from concurrent.futures import (
     Future,
     ProcessPoolExecutor,
@@ -88,7 +88,9 @@ class ProcessPoolTaskExecutor(TaskGraphExecutorBase):
 
         return submitted_tasks
 
-    def _execute(self, graph: TaskGraph) -> Iterator[tuple[Task, Any]]:
+    def _execute(
+        self, graph: TaskGraph,
+    ) -> Generator[tuple[Task, Any], None, None]:
         not_completed: set[Future[Any]] = set()
         completed: deque[Future[Any]] = deque()
         initial_task_count = len(graph)

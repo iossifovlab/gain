@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import sys
 import textwrap
 import traceback
@@ -218,20 +219,34 @@ def task_graph_run_with_results(
     """Run a task graph, yielding the results from each task."""
     if executor is None:
         executor = SequentialExecutor()
-    tasks_iter = executor.execute(task_graph)
-    for task, result_or_error in tasks_iter:
-        if isinstance(result_or_error, Exception):
-            if keep_going:
-                print(f"Task {task.task_id} failed with:",
-                      file=sys.stderr)
-                traceback.print_exception(
-                    None, value=result_or_error,
-                    tb=result_or_error.__traceback__,
-                    file=sys.stdout,
-                )
-            else:
-                raise result_or_error
-        yield result_or_error
+
+    # closing(), because the `raise` below is the normal way a run without
+    # --keep-going ends, and it leaves this generator's frame without
+    # exhausting `tasks_iter`. An exception propagating out of a generator
+    # does not close the iterator that generator was reading: `tasks_iter` is
+    # released only when this abandoned generator object is collected, and
+    # the raised error's traceback keeps it referenced for as long as anyone
+    # holds the error -- which the caller reporting the failure necessarily
+    # does. So the run's teardown was deferred to a collection that need
+    # never come, and for the dask executor that teardown is what joins the
+    # two run-loop worker threads: every failed run left a pair of them
+    # spinning against a client that outlives it (gain#480). Unlike frame
+    # release, a `with` block unwinds synchronously, on the raise and on the
+    # GeneratorExit of a consumer that abandons us in turn.
+    with contextlib.closing(executor.execute(task_graph)) as tasks_iter:
+        for task, result_or_error in tasks_iter:
+            if isinstance(result_or_error, Exception):
+                if keep_going:
+                    print(f"Task {task.task_id} failed with:",
+                          file=sys.stderr)
+                    traceback.print_exception(
+                        None, value=result_or_error,
+                        tb=result_or_error.__traceback__,
+                        file=sys.stdout,
+                    )
+                else:
+                    raise result_or_error
+            yield result_or_error
 
 
 def task_graph_all_done(task_graph: TaskGraph, task_cache: TaskCache) -> bool:
