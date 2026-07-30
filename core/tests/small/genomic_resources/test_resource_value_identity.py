@@ -4,10 +4,9 @@
 A resource's value identity is *what it is* -- its id, its version and its
 configuration.  Two things are deliberately excluded.
 
-The manifest is a lazily-built cache, so including it would make equality a
-function of which side happened to have loaded one; ``invalidate`` would then
-mutate equality under a live dict key, and a resource would not be reliably
-retrievable from the container it was put in (#524).
+The manifest is a lazily-built cache.  Equality does not read it, so a
+resource compares the same whether or not it is holding one, and
+``invalidate`` never changes what a resource equals (#524).
 
 The protocol is *where* the resource was reached, not what it is.  A
 cache-backed resource and the remote twin it mirrors denote the same resource
@@ -18,6 +17,7 @@ and compare equal; identity, not equality, is what tells them apart -- see
 compares, which is what makes ``a == b`` imply ``hash(a) == hash(b)``.
 """
 import pathlib
+from unittest import mock
 
 import pytest
 from gain.genomic_resources.cached_repository import CachingProtocol
@@ -126,9 +126,9 @@ def test_resource_stays_retrievable_as_a_dict_key(
 ) -> None:
     """A resource put in a dict is found again, whatever its cache does.
 
-    The reproduction from #524: the lookup missed while the two sides
-    disagreed about their manifests, and ``invalidate`` could evict a live
-    key without moving its hash.
+    A lookup needs both legs: the hash finds the slot, equality confirms the
+    key.  The manifest memo only ever reached the second, which is why the
+    miss in #524 came with an unchanged hash.
     """
     lookup = _same_resource_cold(resource)
     resource.get_manifest()
@@ -163,6 +163,22 @@ def test_cached_resource_equals_the_remote_it_mirrors(
     assert hash(cached) == hash(remote)
 
 
+def test_comparison_with_a_foreign_type_is_symmetric(
+    resource: GenomicResource,
+) -> None:
+    """A resource defers to the other operand rather than refusing outright.
+
+    Answering ``False`` to an unrecognised type suppresses the reflected
+    comparison, so the answer would depend on which side of ``==`` the
+    resource sat -- as it does for any test double that equals everything.
+    """
+    assert resource == mock.ANY
+    # Deliberately reflected: that this direction agrees with the one above
+    # is the whole property under test.
+    assert mock.ANY == resource  # noqa: SIM300
+    assert resource != "not a resource"
+
+
 def test_resources_differing_in_config_are_not_equal(
     resource: GenomicResource,
 ) -> None:
@@ -173,5 +189,31 @@ def test_resources_differing_in_config_are_not_equal(
         resource.proto,
         config={"type": "something_else"},
     )
+
+    assert resource != other
+
+
+def test_two_versions_of_a_resource_are_not_the_same_value(
+    resource: GenomicResource,
+) -> None:
+    """Version is part of what a resource is.
+
+    Nothing else separates them now that neither dunder reads the protocol,
+    so equality is the only thing keeping two versions of one resource apart.
+    """
+    older = GenomicResource(
+        resource.resource_id, (1,), resource.proto, config=resource.config)
+    newer = GenomicResource(
+        resource.resource_id, (2,), resource.proto, config=resource.config)
+
+    assert older != newer
+
+
+def test_differently_named_resources_are_not_the_same_value(
+    resource: GenomicResource,
+) -> None:
+    """The resource id is part of what a resource is."""
+    other = GenomicResource(
+        "another", resource.version, resource.proto, config=resource.config)
 
     assert resource != other
