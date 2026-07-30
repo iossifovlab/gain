@@ -171,3 +171,49 @@ def test_no_gain_module_uses_stdlib_logging_directly() -> None:
         "these gain modules use stdlib logging instead of "
         f"`from gain import logging`: {offenders}"
     )
+
+
+def test_the_grr_does_not_import_the_annotation_layer(
+) -> None:
+    """``genomic_resources`` sits below ``annotation`` and stays there.
+
+    The annotation config depends on the GRR -- the resource query language
+    lives in ``genomic_resources.resource_query`` precisely so that the
+    pipeline config, the repositories and the CLIs cannot disagree about
+    what ``*`` means (gain#441).  An import back the other way would close
+    that into a cycle and put the query language above the repositories it
+    filters.
+
+    Two upward imports predate the rule and are allowed by name rather than
+    by pattern, so that a NEW one fails here instead of quietly joining
+    them:
+
+    * ``implementations/annotation_pipeline_impl`` implements the
+      ``annotation_pipeline`` resource *type* -- the resource it describes
+      is an annotation pipeline, so it cannot be described without the
+      annotation layer.
+    * ``cli_cache_repo`` is a CLI that composes the two layers rather than
+      a part of either.
+
+    Neither is a repository, a protocol, or the query language, which are
+    the modules the layering is actually about.
+    """
+    grr_pkg = pathlib.Path(GAIN_SRC) / "genomic_resources"
+    allowed = {
+        grr_pkg / "implementations" / "annotation_pipeline_impl.py",
+        grr_pkg / "cli_cache_repo.py",
+    }
+    offenders = []
+    for py in grr_pkg.rglob("*.py"):
+        if py in allowed:
+            continue
+        for line in py.read_text(encoding="utf8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith(("from gain.annotation",
+                                    "import gain.annotation")):
+                offenders.append(f"{py.relative_to(GAIN_SRC)}: {stripped}")
+    assert offenders == [], (
+        f"the GRR imports the annotation layer: {offenders}. "
+        f"genomic_resources sits below annotation -- move the shared code "
+        f"down into genomic_resources instead, as resource_query does"
+    )

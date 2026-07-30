@@ -80,6 +80,20 @@ def test_cli_browse_with_grr_argument(
     )
 
 
+def test_cli_browse_filtered_by_query(
+    repo_fixture: tuple[pathlib.Path, GenomicResourceProtocolRepo],
+    repo_def: pathlib.Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """``grr_browse -q`` narrows the listing with the wildcard language."""
+    cli_browse(["--grr", str(repo_def), "-q", "sub/*"])
+    out, err = capsys.readouterr()
+
+    assert err == ""
+    assert "sub/two" in out
+    assert "test_grr one" not in out
+
+
 def test_cli_browse_with_env_variable(
     repo_fixture: tuple[pathlib.Path, GenomicResourceProtocolRepo],
     repo_def: pathlib.Path,

@@ -28,14 +28,19 @@ def run_list_command(
         proto: ReadOnlyRepositoryProtocol | GenomicResourceRepo,
         args: argparse.Namespace) -> None:
     """List the resources of a repository."""
+    # Read defensively rather than as attributes: this runs for both
+    # `grr_manage list` and `grr_browse`, and is also driven directly by
+    # tests that pass a bare namespace-less object.
     search_term = getattr(args, "search", None)
     resource_type = getattr(args, "type", None)
+    resource_query = getattr(args, "query", None)
     long_format = getattr(args, "summary", False)
     repos: list = [proto]
     if isinstance(proto, GenomicResourceGroupRepo):
         repos = proto.children
     for repo in repos:
-        for res in repo.search_resources(search_term, resource_type):
+        for res in repo.search_resources(
+                search_term, resource_type, resource_query):
             try:
                 # A resource with no committed '.MANIFEST' has one built
                 # here, on demand, so listing fails for any reason building
