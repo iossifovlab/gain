@@ -358,7 +358,7 @@ def test_open_routes_a_backend_to_the_extractor_its_payload_needs(
         # which is what fails if a backend is routed to an extractor whose raw
         # lookup does not fit its payload.
         score_id = next(iter(score.get_all_scores()))
-        assert score.get_score_from_record(record, score_id) is not None
+        assert score.get_score_value_from_record(record, score_id) is not None
 
 
 # Whether this backend serves ``get_region_value_arrays`` -- the OPTIONAL bulk
@@ -446,7 +446,7 @@ def test_a_backend_serves_value_arrays_exactly_when_it_claims_to(
         value for _, _, cols in batches for value in cols[score_id]
     ]
     expected = [
-        opened.get_score_from_record(rec, score_id)
+        opened.get_score_value_from_record(rec, score_id)
         for rec in records]
     assert np.array_equal(
         np.array(values, dtype=np.float64),

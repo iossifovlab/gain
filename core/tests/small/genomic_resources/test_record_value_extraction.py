@@ -1,12 +1,12 @@
 """Equivalence tests for reading score values off a record.
 
-``GenomicScore.get_values_from_record`` reads several scores from one record
-given a list of already-resolved score definitions, hoisting the
-name->definition lookup out of the per-record loop.  These tests pin it to the
-single-score ``get_score_from_record`` path: for every input the bulk method
-must return *exactly* what looping the single one returns -- including
-``None`` for an absent key, ``None`` for a configured NA value, and ``None``
-(plus a logged parse failure) for an unparseable value.
+``GenomicScore.get_score_values_from_record`` reads several scores from one
+record given a list of already-resolved score definitions, hoisting the
+name->definition lookup out of the per-record loop.  These tests pin it to
+the single-score ``get_score_value_from_record`` path: for every input the
+bulk method must return *exactly* what looping the single one returns --
+including ``None`` for an absent key, ``None`` for a configured NA value,
+and ``None`` (plus a logged parse failure) for an unparseable value.
 
 There are three extractors, chosen once per opened score by
 ``GenomicScore.open`` from the table's type, and they differ only in where a
@@ -110,12 +110,12 @@ def test_bulk_matches_per_score_on_tabular(tmp_path) -> None:
     with score:
         for record in score.fetch_records("1", 10, 11):
             per_score = [
-                score.get_score_from_record(record, s)
+                score.get_score_value_from_record(record, s)
                 for s in score.get_all_scores()]
-            bulk = score.get_values_from_record(record, _defs(score))
+            bulk = score.get_score_values_from_record(record, _defs(score))
             assert bulk == per_score
         record = next(iter(score.fetch_records("1", 10, 10)))
-        assert score.get_values_from_record(
+        assert score.get_score_values_from_record(
             record, _defs(score)) == [0.5, "hello"]
 
 
@@ -143,9 +143,9 @@ def test_bulk_na_value_yields_none(tmp_path, tabix, extractor) -> None:
         # does not raise -- so only the na_values check makes this None.
         assert "nan" in score.score_definitions["s_float"].na_values
         per_score = [
-                score.get_score_from_record(record, s)
+                score.get_score_value_from_record(record, s)
                 for s in score.get_all_scores()]
-        bulk = score.get_values_from_record(record, _defs(score))
+        bulk = score.get_score_values_from_record(record, _defs(score))
         # The absolute assertions are the real guard here.  While both paths
         # share ``_extract_value``, ``bulk == per_score`` is tautological --
         # dropping the na_values check makes BOTH return ``nan``, and the
@@ -180,7 +180,7 @@ def test_bulk_unparseable_value_logs_and_yields_none(
         caplog.clear()
         with caplog.at_level(logging.ERROR):
             per_score = [
-                score.get_score_from_record(record, s)
+                score.get_score_value_from_record(record, s)
                 for s in score.get_all_scores()]
         per_score_records = len(caplog.records)
         assert per_score_records >= 1
@@ -188,7 +188,7 @@ def test_bulk_unparseable_value_logs_and_yields_none(
 
         caplog.clear()
         with caplog.at_level(logging.ERROR):
-            bulk = score.get_values_from_record(record, defs)
+            bulk = score.get_score_values_from_record(record, defs)
         assert bulk == per_score
         assert bulk[0] is None
         assert len(caplog.records) == per_score_records
@@ -208,9 +208,9 @@ chr1   11  .  A   T   .    .      scoreA=0.2;scoreB=0.5
     with score:
         record = next(iter(score.fetch_records("chr1", 10, 10)))
         per_score = [
-                score.get_score_from_record(record, s)
+                score.get_score_value_from_record(record, s)
                 for s in score.get_all_scores()]
-        bulk = score.get_values_from_record(record, _defs(score))
+        bulk = score.get_score_values_from_record(record, _defs(score))
         assert bulk == per_score
         # scoreB is absent from this record's INFO -> null raw value -> None
         assert None in bulk
@@ -241,7 +241,7 @@ chr1   10  .  A   T   .    .      scoreA=0.1
         # through the record payload's __getitem__ would index the
         # (variant, allele index) pair, not the INFO field.
 
-        assert score.get_score_from_record(record, "scoreA") == \
+        assert score.get_score_value_from_record(record, "scoreA") == \
             pytest.approx(0.1)
 
 
@@ -263,7 +263,7 @@ def test_record_backend_reads_a_record_through_the_column_extractor(
         assert record[POS_END] == 10
         assert record[REF] is None
         assert record[ALT] is None
-        assert score.get_score_from_record(record, "s_float") == 0.5
+        assert score.get_score_value_from_record(record, "s_float") == 0.5
 
 
 def test_the_score_is_routed_before_it_reports_itself_open(tmp_path) -> None:
@@ -330,7 +330,8 @@ def test_bigwig_backend_is_routed_to_the_identity_extractor(tmp_path) -> None:
         record = next(iter(score.fetch_records("chr1", 5, 5)))
         assert type(record) is tuple
         assert score._extract_value is extract_bigwig_value
-        assert score.get_score_from_record(record, "bw") == pytest.approx(0.11)
+        assert score.get_score_value_from_record(record, "bw") == \
+            pytest.approx(0.11)
 
 
 def test_get_score_from_record_singular(tmp_path) -> None:
@@ -345,8 +346,8 @@ def test_get_score_from_record_singular(tmp_path) -> None:
     with score:
         record = next(iter(score.fetch_records("1", 10, 10)))
         assert type(record) is tuple
-        assert score.get_score_from_record(record, "s_float") == 0.5
-        assert score.get_score_from_record(record, "s_str") == "hello"
+        assert score.get_score_value_from_record(record, "s_float") == 0.5
+        assert score.get_score_value_from_record(record, "s_str") == "hello"
 
 
 def test_get_values_returns_new_ordered_list(tmp_path) -> None:
@@ -359,7 +360,7 @@ def test_get_values_returns_new_ordered_list(tmp_path) -> None:
         reversed_defs = list(reversed(_defs(score)))
         # tabular .txt -> in-memory backend -> extract_column_value
         assert type(record) is tuple
-        assert score.get_values_from_record(
+        assert score.get_score_values_from_record(
             record, reversed_defs) == ["hello", 0.5]
 
 

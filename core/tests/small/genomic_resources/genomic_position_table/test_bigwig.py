@@ -185,7 +185,7 @@ def test_bigwig_score_is_read_by_the_identity_extractor(
         assert score._extract_value is extract_bigwig_value
         record = next(iter(score.fetch_records("chr1", 5, 5)))
         assert type(record) is tuple
-        assert score.get_score_from_record(record, "bw") == \
+        assert score.get_score_value_from_record(record, "bw") == \
             pytest.approx(0.11)
 
 

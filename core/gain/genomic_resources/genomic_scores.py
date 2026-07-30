@@ -798,17 +798,18 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         wrapped every record in a per-line score-line object; this one hands
         the record itself over.  A caller reads the positional fields from the
         record's slots (``record[CHROM]``, ``record[POS_BEGIN]``, ...) and a
-        score through :meth:`get_score_from_record` /
-        :meth:`get_values_from_record` on this score.  There is deliberately
-        no shim -- one would hand a caller back the exact per-line allocation
-        this removal exists to avoid, which is the trade #239 examined and
-        rejected for the line adapters.
+        score through :meth:`get_score_value_from_record` /
+        :meth:`get_score_values_from_record` on this score.  There is
+        deliberately no shim -- one would hand a caller back the exact
+        per-line allocation this removal exists to avoid, which is the trade
+        #239 examined and rejected for the line adapters.
 
         This adds nothing to what the table yields.  It exists so a caller
         need not reach past the score to its table, and it is kept public
         because the record-consuming half of this API
-        (:meth:`get_score_from_record`, :meth:`get_values_from_record`) is
-        public and has an out-of-package consumer -- ``AlleleScoreAnnotator``
+        (:meth:`get_score_value_from_record`,
+        :meth:`get_score_values_from_record`) is public and has an
+        out-of-package consumer -- ``AlleleScoreAnnotator``
         filters records with a ``Callable[[Record], bool]`` and reads their
         REF/ALT slots.  A public consumer of records with no public producer
         would be incoherent.
@@ -838,18 +839,18 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """
         return self.table.get_records_in_region(chrom, pos_begin, pos_end)
 
-    def get_score_from_record(
+    def get_score_value_from_record(
         self, record: Record, score_id: str,
     ) -> ScoreValue:
         """Read one configured score off a record of this score's table."""
         return self._extract_value(record, self.score_definitions[score_id])
 
-    def get_values_from_record(
+    def get_score_values_from_record(
         self, record: Record, score_defs: list[GenomicScoreDef],
     ) -> list[ScoreValue]:
         """Read several scores off one record, for ALREADY-resolved defs.
 
-        The bulk counterpart of :meth:`get_score_from_record`: a caller
+        The bulk counterpart of :meth:`get_score_value_from_record`: a caller
         resolves score names to definitions once per fetch and passes them per
         record, so the name->definition lookup stays out of the per-record
         loop.
@@ -1045,7 +1046,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             if score_defs is None:
                 score_defs = [
                     self.score_definitions[scr_id] for scr_id in scores]
-            val = self.get_values_from_record(record, score_defs)
+            val = self.get_score_values_from_record(record, score_defs)
 
             if pos_begin is not None:
                 left = max(pos_begin, rec_begin)
@@ -1383,7 +1384,7 @@ class PositionScore(GenomicScore):
         # Resolve names to definitions once for this point fetch.
         score_defs = [
             self.score_definitions[scr] for scr in requested_scores]
-        return self.get_values_from_record(records[0], score_defs)
+        return self.get_score_values_from_record(records[0], score_defs)
 
 
 class AlleleScore(GenomicScore):
@@ -1643,7 +1644,7 @@ class AlleleScore(GenomicScore):
         Renamed from ``fetch_allele_line``, which returned a score line; the
         record's REF/ALT slots carry what its ``ref``/``alt`` properties did,
         and its scores are read through
-        :meth:`GenomicScore.get_score_from_record`.
+        :meth:`GenomicScore.get_score_value_from_record`.
         """
         for record in self.fetch_records(chrom, pos, pos):
             if record[REF] == ref and record[ALT] == alt:
@@ -1672,7 +1673,7 @@ class AlleleScore(GenomicScore):
             self.score_definitions[sc] for sc in requested_scores]
         return dict(zip(
             requested_scores,
-            self.get_values_from_record(selected, score_defs),
+            self.get_score_values_from_record(selected, score_defs),
             strict=True))
 
 
@@ -1767,7 +1768,7 @@ class FragmentScore(GenomicScore):
         for record in records:
             attributes = dict(zip(
                 requested_scores,
-                self.get_values_from_record(record, score_defs),
+                self.get_score_values_from_record(record, score_defs),
                 strict=True))
             fragments.append(Fragment(record[CHROM], record[POS_BEGIN],
                                       record[POS_END], attributes))
