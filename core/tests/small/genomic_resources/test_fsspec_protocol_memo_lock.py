@@ -8,62 +8,31 @@ read of the attribute -- while ``invalidate`` cleared that attribute taking no
 lock at all.  An invalidation landing between the two made the method return
 ``None``, in violation of its declared ``dict[str, GenomicResource]`` return
 type, and its callers crash on the ``None`` (#458).
+
+Locking only.  What the returned resources are still good *for* after an
+invalidation is #513, in
+``test_fsspec_protocol_invalidate_semantics.py``.
 """
-import pathlib
 import threading
 from collections.abc import Callable, Generator
 from types import TracebackType
 from typing import Any
 
 import pytest
-from gain.genomic_resources.cli import _create_contents_db
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadOnlyProtocol,
     FsspecReadWriteProtocol,
 )
-from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
+
+# ``read_only_proto`` / ``read_write_proto`` come from the package conftest,
+# over the same repository ``test_fsspec_protocol_invalidate_semantics.py``
+# uses.
+from .conftest import (
+    SMALL_REPO_RESOURCE_IDS as RESOURCE_IDS,
 )
-from gain.genomic_resources.testing import (
-    build_filesystem_test_protocol,
-    setup_directories,
+from .conftest import (
+    RunInThreads,
 )
-
-from .conftest import RunInThreads
-
-RESOURCE_IDS = ("one", "two", "three")
-
-
-def _setup_repo(root_path: pathlib.Path) -> None:
-    """Lay out a small repository and give it manifests, contents and index."""
-    setup_directories(root_path, {
-        resource_id: {
-            GR_CONF_FILE_NAME: "type: basic\n",
-            "data.txt": "alabala",
-        }
-        for resource_id in RESOURCE_IDS
-    })
-    # Repairs the repository: writes every manifest and the ``.CONTENTS``
-    # a read-only protocol needs in order to load anything at all.
-    rw_proto = build_filesystem_test_protocol(root_path)
-    # ``search_resources`` answers from the FTS index, not from ``.CONTENTS``,
-    # so a test that goes through it needs the index to exist.
-    _create_contents_db(rw_proto)
-
-
-@pytest.fixture
-def read_only_proto(tmp_path: pathlib.Path) -> FsspecReadOnlyProtocol:
-    root_path = tmp_path / "grr"
-    _setup_repo(root_path)
-    return build_filesystem_test_protocol(
-        root_path, repair=False, read_only=True)
-
-
-@pytest.fixture
-def read_write_proto(tmp_path: pathlib.Path) -> FsspecReadWriteProtocol:
-    root_path = tmp_path / "grr"
-    _setup_repo(root_path)
-    return build_filesystem_test_protocol(root_path, repair=False)
 
 
 class InvalidateOnRelease:
@@ -140,11 +109,12 @@ def test_get_all_resources_dict_survives_an_invalidate_at_lock_release(
 ) -> None:
     """The memo is returned as built, not re-read after the lock (#458).
 
-    Scope: this pins the *dict*, not the resources in it.  ``invalidate``
-    unbinds the ``proto`` of every resource it clears, so the ones returned
-    here are unusable even though the dict is intact -- a real defect, but a
-    separate one about invalidation semantics rather than about locking, and
-    tracked as #513.
+    Scope: this pins the *dict*, not the resources in it.  That the resources
+    in it survive an invalidation is #513's separate concern about
+    invalidation semantics -- ``invalidate`` used to unbind every resource's
+    ``proto``, so this test passed with an intact dict full of unusable
+    resources.  Guarded now by
+    ``test_fsspec_protocol_invalidate_semantics.py``.
     """
     trap = arm_invalidate_on_release(read_only_proto)
 

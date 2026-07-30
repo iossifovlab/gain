@@ -10,7 +10,12 @@ from typing import Any
 
 import pytest
 import pytest_mock
-from gain.genomic_resources.fsspec_protocol import FsspecRepositoryProtocol
+from gain.genomic_resources.cli import _create_contents_db
+from gain.genomic_resources.fsspec_protocol import (
+    FsspecReadOnlyProtocol,
+    FsspecReadWriteProtocol,
+    FsspecRepositoryProtocol,
+)
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
 )
@@ -168,3 +173,46 @@ def run_in_threads() -> RunInThreads:
         return results, errors
 
     return run
+
+
+#: Resource ids of the small repository ``setup_small_repo`` lays out, and
+#: that the ``read_only_proto`` / ``read_write_proto`` fixtures serve. Shared
+#: by the two modules covering the resource memo's concurrency and
+#: invalidation semantics (#458, #513): they need the identical repository,
+#: and keeping two copies of the setup is how one of them silently drifted
+#: into needing an FTS index the other did not build.
+SMALL_REPO_RESOURCE_IDS = ("one", "two", "three")
+
+
+def setup_small_repo(root_path: pathlib.Path) -> None:
+    """Lay out a small repository: manifests, contents and FTS index."""
+    setup_directories(root_path, {
+        resource_id: {
+            GR_CONF_FILE_NAME: "type: basic\n",
+            "data.txt": "alabala",
+        }
+        for resource_id in SMALL_REPO_RESOURCE_IDS
+    })
+    # Repairs the repository: writes every manifest and the ``.CONTENTS`` a
+    # read-only protocol needs in order to load anything at all.
+    rw_proto = build_filesystem_test_protocol(root_path)
+    # ``search_resources`` answers from the FTS index, not from ``.CONTENTS``,
+    # so a test that goes through it needs the index to exist.
+    _create_contents_db(rw_proto)
+
+
+@pytest.fixture
+def read_only_proto(tmp_path: pathlib.Path) -> FsspecReadOnlyProtocol:
+    """A read-only protocol over a freshly repaired small repository."""
+    root_path = tmp_path / "grr"
+    setup_small_repo(root_path)
+    return build_filesystem_test_protocol(
+        root_path, repair=False, read_only=True)
+
+
+@pytest.fixture
+def read_write_proto(tmp_path: pathlib.Path) -> FsspecReadWriteProtocol:
+    """A read-write protocol over a freshly repaired small repository."""
+    root_path = tmp_path / "grr"
+    setup_small_repo(root_path)
+    return build_filesystem_test_protocol(root_path, repair=False)
