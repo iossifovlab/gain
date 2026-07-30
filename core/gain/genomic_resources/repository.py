@@ -53,7 +53,7 @@ import hashlib
 import ntpath
 import os
 import re
-from collections.abc import Generator, Iterator
+from collections.abc import Generator, Iterator, Sequence
 from dataclasses import asdict, dataclass
 from typing import IO, Any, cast
 from urllib.parse import unquote
@@ -640,6 +640,53 @@ class ManifestUpdate:
             True if there are files to delete or update
         """
         return bool(self.entries_to_delete or self.entries_to_update)
+
+
+@dataclass(frozen=True)
+class ResourceScan:
+    """What one scan of a resource's directory found.
+
+    ``unreadable`` names the files the scan listed but could not stat --
+    a dangling symlink, or a file deleted between the listing and the
+    stat. They are NOT in ``manifest``: there is no size to put there.
+
+    They are carried rather than raised because the scan cannot yet know
+    whether they matter. A DVC-managed file materialised as a link into a
+    shared cache is unreadable exactly when that cache has been garbage
+    collected, and its ``.dvc`` sidecar still describes it perfectly --
+    so it is manifested from the sidecar and nothing is wrong. Only a
+    name that NOTHING can describe is a broken resource, and that is not
+    known until the sidecars have been merged in (gain#503).
+    """
+
+    manifest: Manifest
+    unreadable: frozenset[str]
+
+
+class UnreadableResourceFilesError(ValueError):
+    """Files of ONE resource that could not be read or described.
+
+    Collected rather than raised on the first offender, so a single run
+    reports every one of them. A ``ValueError`` so that
+    ``cli._report_resource_failure`` renders it as one line naming the
+    resource and carrying the cause, with the traceback demoted to DEBUG
+    (gain#364) -- and so that one broken resource fails itself instead of
+    aborting the repository-wide command (gain#503).
+    """
+
+    def __init__(self, resource_id: str, names: Sequence[str]) -> None:
+        self.resource_id = resource_id
+        self.names = tuple(names)
+        listed = ", ".join(f"<{name}>" for name in self.names)
+        super().__init__(
+            f"{len(self.names)} file(s) could not be read and no '.dvc' "
+            f"sidecar describes them: {listed}. A file the scan lists must "
+            f"end up in the manifest or fail the resource -- dropping it "
+            f"would leave a '.MANIFEST' that silently omits part of the "
+            f"resource. If these are symlinks into a DVC cache, restore "
+            f"them with 'dvc pull' (or 'dvc checkout'); if they are stale "
+            f"links, remove them",
+        )
 
 
 class GenomicResource:
@@ -1302,8 +1349,25 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         """
 
     @abc.abstractmethod
+    def scan_resource_entries(self, resource: GenomicResource) -> ResourceScan:
+        """Scan resource directory for its files.
+
+        Args:
+            resource: Resource to scan
+
+        Returns:
+            A :class:`ResourceScan` holding the entries that could be
+            described and the names of the files that could not.
+        """
+
     def collect_resource_entries(self, resource: GenomicResource) -> Manifest:
         """Scan resource directory and build manifest from files found.
+
+        The entries-only view of :meth:`scan_resource_entries`, for callers
+        that just want the names and sizes on disk. A caller that WRITES a
+        manifest must use the scan itself, so that a file it could not
+        describe fails the resource instead of vanishing from the manifest
+        (gain#503).
 
         Args:
             resource: Resource to scan
@@ -1311,6 +1375,7 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         Returns:
             Manifest containing entries for all files in the resource
         """
+        return self.scan_resource_entries(resource).manifest
 
     def _warn_dvc_size_mismatch(
             self, resource: GenomicResource, name: str,
@@ -1458,6 +1523,35 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
                 continue
             manifest.add(entry)
 
+    def _check_unreadable_entries(
+        self,
+        resource: GenomicResource,
+        manifest: Manifest,
+        scan: ResourceScan,
+    ) -> None:
+        """Fail the resource for a file nothing could describe.
+
+        Called AFTER the sidecars have been merged in, because that merge
+        is what rescues the case this exists for: a DVC-managed file
+        materialised as a symlink into a shared cache is unreadable
+        exactly when that cache has been garbage collected, and its
+        sidecar describes it just as well as it describes a file that was
+        never pulled at all. Such a resource is not broken and must
+        manifest normally.
+
+        What is left is a file the scan listed, could not read, and no
+        sidecar accounts for. Dropping it silently would write a
+        '.MANIFEST' that omits part of the resource -- the failure mode
+        ``_merge_unscanned_dvc_entries`` exists to prevent (#373) -- so it
+        fails the resource by name instead (gain#503).
+        """
+        if not scan.unreadable:
+            return
+        unaccounted = scan.unreadable - manifest.names()
+        if unaccounted:
+            raise UnreadableResourceFilesError(
+                resource.resource_id, sorted(unaccounted))
+
     def build_manifest(
         self, resource: GenomicResource,
         prebuild_entries: dict[str, ManifestEntry] | None = None,
@@ -1467,9 +1561,10 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         """Build full manifest for the resource."""
         if prebuild_entries is None:
             prebuild_entries = {}
+        scan = self.scan_resource_entries(resource)
         manifest = Manifest()
         drifts: list[DvcContentDrift] = []
-        for entry in self.collect_resource_entries(resource):
+        for entry in scan.manifest:
             drift = self._update_manifest_entry_and_state(
                 resource, entry, prebuild_entries,
                 verify_content=verify_content)
@@ -1481,6 +1576,7 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
             raise DvcContentDriftError(resource.resource_id, drifts)
         self._merge_unscanned_dvc_entries(
             resource, manifest, prebuild_entries)
+        self._check_unreadable_entries(resource, manifest, scan)
         return manifest
 
     def check_update_manifest(
@@ -1501,10 +1597,11 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         except FileNotFoundError:
             current_manifest = Manifest()
 
+        scan = self.scan_resource_entries(resource)
         manifest = Manifest()
         entries_to_update = set()
         drifts: list[DvcContentDrift] = []
-        for entry in self.collect_resource_entries(resource):
+        for entry in scan.manifest:
             drift = self._update_manifest_entry_and_state(
                 resource, entry, prebuild_entries,
                 verify_content=verify_content, save_state=save_state)
@@ -1524,6 +1621,7 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
 
         self._merge_unscanned_dvc_entries(
             resource, manifest, prebuild_entries)
+        self._check_unreadable_entries(resource, manifest, scan)
 
         entries_to_delete = current_manifest.names() - manifest.names()
         return ManifestUpdate(manifest, entries_to_delete, entries_to_update)

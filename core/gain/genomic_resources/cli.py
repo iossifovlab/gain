@@ -624,10 +624,19 @@ def _run_repo_manifest_command_internal(
                 force=force,
                 use_dvc=use_dvc,
             )
-        except DvcContentDriftError as err:
+        except (DvcContentDriftError, *_RESOURCE_ERRORS) as err:
             # Collected, not raised: every drifted resource of the
             # repository is reported by one run, and the resources that
             # agree with their sidecars are still repaired (#373).
+            #
+            # The set is `_RESOURCE_ERRORS` rather than `DvcContentDriftError`
+            # alone because a manifest can fail for reasons that have nothing
+            # to do with DVC -- an unreadable file, a resource whose content
+            # cannot be described. Those used to escape this loop and abort
+            # the whole run, so every resource ordered AFTER the offending
+            # one was silently never visited (gain#503). Deliberately not
+            # widened to bare `Exception`: an unexpected error is still a
+            # crash, and should look like one.
             _report_resource_failure(
                 err, "could not verify", res.resource_id)
             failed.add(res.resource_id)

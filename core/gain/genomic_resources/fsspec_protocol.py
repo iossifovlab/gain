@@ -51,6 +51,7 @@ from gain.genomic_resources.repository import (
     ReadOnlyRepositoryProtocol,
     ReadWriteRepositoryProtocol,
     ResourceFileState,
+    ResourceScan,
     is_generated_info_page,
     is_gr_id_token,
     parse_gr_id_version_token,
@@ -1021,11 +1022,12 @@ class FsspecReadWriteProtocol(
             yield self.build_genomic_resource(
                 res_id, res_ver, config, manifest)
 
-    def collect_resource_entries(self, resource: GenomicResource) -> Manifest:
-        """Scan the resource and resturn a manifest."""
+    def scan_resource_entries(self, resource: GenomicResource) -> ResourceScan:
+        """Scan the resource and return what was found."""
         resource_path = resource.get_genomic_resource_id_version()
 
         result = Manifest()
+        unreadable: set[str] = set()
         ancestor_specs = self._collect_ancestor_specs(resource_path)
         for name, path in self._scan_resource_for_files(
                 resource_path, [], ancestor_specs):
@@ -1039,9 +1041,44 @@ class FsspecReadWriteProtocol(
             if is_generated_info_page(name):
                 continue
 
-            size = self._get_filepath_size(path)
+            try:
+                size = self._get_filepath_size(path)
+            except FileNotFoundError:
+                # The listing yielded this name and the stat says it is not
+                # there. Reported rather than raised: a `.dvc` sidecar may
+                # still describe it, and only the caller -- which has the
+                # sidecars -- can tell a garbage-collected DVC cache link
+                # from a genuinely broken resource (gain#503).
+                #
+                # Caught rather than pre-tested so that a repository with
+                # nothing dangling pays NOTHING: the happy path is the same
+                # single stat it always was, and the link probe below runs
+                # only for a name that already failed.
+                logger.warning(
+                    "cannot read <%s> of <%s>%s; leaving it to its '.dvc' "
+                    "sidecar to describe",
+                    name, resource.resource_id,
+                    self._dangling_link_detail(path))
+                unreadable.add(name)
+                continue
             result.add(ManifestEntry(name, size, None))
-        return result
+        return ResourceScan(result, frozenset(unreadable))
+
+    def _dangling_link_detail(self, path: str) -> str:
+        """Return ' (a symlink to X)' when ``path`` is a dangling link.
+
+        Purely to make the warning say WHY the file is missing, which for
+        the case this was written for -- a link into a DVC cache that has
+        been garbage collected -- is the whole diagnosis. Only ever called
+        on a name that already failed to stat, so the extra probe never
+        touches the happy path.
+        """
+        if self.scheme != "file":
+            return ""
+        local_path = path.removeprefix(f"{self.scheme}://")
+        if not os.path.islink(local_path):
+            return ""
+        return f" (a symlink to <{os.readlink(local_path)}>, which is gone)"
 
     def get_all_resources(self) -> Generator[GenomicResource, None, None]:
         """Return generator over all resources in the repository."""
