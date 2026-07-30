@@ -161,9 +161,17 @@ own.
   comparison now returns early when the incumbent is not yet configured, and
   the review that caught this is the reason the window is written down twice:
   here, and as a comment at the check.
-- Also left alone: `build_fsspec_protocol` ignores `read_only` for `http(s)`
-  urls and always builds a read-only protocol, so the mode arm of the refusal
-  cannot fire there and a caller asking for a writable http protocol is still
-  answered with a read-only one (iossifovlab/gain#528). It is the same
-  silent-wrong-mode shape as this issue, on a scheme where read-write is not
-  implementable at all.
+- Left alone here, fixed since in iossifovlab/gain#528:
+  `build_fsspec_protocol` ignored `read_only` for `http(s)` urls and always
+  built a read-only protocol, so a caller asking for a writable http protocol
+  was answered with a read-only one — the same silent-wrong-mode shape as this
+  issue, on a scheme where read-write is not implementable at all.
+
+  The mode arm of the refusal above cannot reach it: the mode it compares is
+  the mode of the class `build_fsspec_protocol` *picked*, which on the http
+  branch is read-only whatever the caller asked for. So #528 is answered in
+  the builder rather than in `__new__` — an explicit `read_only=False` over an
+  `http(s)` url now raises there, while an omitted `read_only` goes on
+  building the read-only protocol silently. That distinction needed
+  `read_only` to default to absent rather than `False`, since the two were
+  otherwise indistinguishable.
