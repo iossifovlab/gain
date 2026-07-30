@@ -359,6 +359,29 @@ describe('SingleAnnotationComponent', () => {
     expect(component.report).toBeNull();
   });
 
+  it('should surface the error message when annotation fails', () => {
+    jest.spyOn(mockSingleAnnotationService, 'getReport')
+      .mockReturnValueOnce(throwError(new Error('Bad Gateway')));
+    component.annotatableInput.setValue('chr1 11796321 G A');
+    component.annotate();
+    expect(component.annotateErrorMessage).toBe('Bad Gateway');
+  });
+
+  it('should clear a previous annotation error when a new annotation starts', () => {
+    jest.spyOn(mockSingleAnnotationService, 'getReport')
+      .mockReturnValueOnce(throwError(new Error('Bad Gateway')));
+    component.annotatableInput.setValue('chr1 11796321 G A');
+    component.annotate();
+    expect(component.annotateErrorMessage).toBe('Bad Gateway');
+
+    // A stale error must not survive into the next attempt: it would render
+    // alongside the new report, and the e2e error-race would fail on it.
+    component.annotatableInput.setValue('chr1 11796321 G T');
+    component.annotate();
+    expect(component.annotateErrorMessage).toBe('');
+    expect(component.report).toStrictEqual(mockReport);
+  });
+
   it('should show error for input with only chromosome and no position', () => {
     component.annotatableInput.setValue('chr1');
     component.annotate();

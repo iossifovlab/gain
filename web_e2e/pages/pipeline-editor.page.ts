@@ -1,4 +1,5 @@
 import { Locator, Page } from '@playwright/test';
+import { waitForLoadedEditor } from '../utils';
 
 /**
  * Page object for the pipeline editor surface: the pipeline dropdown, the YAML
@@ -66,7 +67,7 @@ export class PipelineEditor {
 
   /** Wait until the pipeline editor has finished loading a pipeline. */
   public static async waitForLoaded(page: Page): Promise<void> {
-    await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+    await waitForLoadedEditor(page);
   }
 
   /** Select a pipeline from the dropdown by name. */

@@ -1,5 +1,6 @@
 import { Locator, Page } from '@playwright/test';
 import { PipelineEditor } from './pipeline-editor.page';
+import { SINGLE_ANNOTATION_ERROR, waitForSuccessOrError } from '../utils';
 
 /**
  * Page object for the single-annotation surface: the annotatable input + Go
@@ -105,9 +106,15 @@ export class SingleAnnotation {
     await PipelineEditor.waitForLoaded(page);
   }
 
-  /** Wait until the annotation report is rendered. */
+  /**
+   * Wait until the annotation report is rendered, failing fast if the annotate
+   * request errors and the component renders its error message instead
+   * (iossifovlab/gain#492).
+   */
   public async waitForReport(): Promise<void> {
-    await this.page.waitForSelector('#report', { timeout: 120000 });
+    await waitForSuccessOrError(this.page, '#report', SINGLE_ANNOTATION_ERROR, {
+      description: 'the annotation report',
+    });
   }
 
   /** Type an annotatable, run it, and wait for the report. */
