@@ -37,10 +37,12 @@ test.describe('Single annotation error handling', () => {
       await singleAnnotation.annotatableInput.fill('chr1 11796321 G A');
       await singleAnnotation.goButton.click();
 
-      // The component renders the failure, and no report appears.
+      // The component renders the failure, and no report appears. The status
+      // must be in the text: a bare 'Error occurred!' would leave the failure
+      // report with nothing identifying the cause, which is the point of #492.
       const errorMessage = page.locator(utils.SINGLE_ANNOTATION_ERROR);
       await expect(errorMessage).toBeVisible();
-      await expect(errorMessage).toContainText('502');
+      await expect(errorMessage).toContainText('HTTP 502');
       await expect(singleAnnotation.report).not.toBeVisible();
     });
 
