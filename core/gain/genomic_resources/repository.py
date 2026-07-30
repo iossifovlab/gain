@@ -838,9 +838,13 @@ class GenomicResource:
 
     def get_manifest(self) -> Manifest:
         """Load resource manifest if it exists. Otherwise builds it."""
-        if self._manifest is None:
-            self._manifest = self.proto.get_manifest(self)
-        return self._manifest
+        # Returned through a local, never by re-reading ``_manifest``: an
+        # ``invalidate`` landing between the store and a second read would
+        # otherwise make this return ``None`` (#519).
+        manifest = self._manifest
+        if manifest is None:
+            manifest = self._manifest = self.proto.get_manifest(self)
+        return manifest
 
     def get_loaded_manifest(self) -> Manifest | None:
         """Return the resource manifest without ever building one.
@@ -851,12 +855,19 @@ class GenomicResource:
         a read-only GRR mount.  A pure read path that merely wants to
         consult the manifest uses this instead and copes with ``None``.
         """
-        if self._manifest is None:
+        # Through a local, as in :meth:`get_manifest` (#519).  The stakes are
+        # higher here: ``None`` is a meaningful answer -- "no stored manifest"
+        # -- so a re-read caught by an ``invalidate`` does more than break the
+        # annotation, it makes a resource that has a manifest look like one
+        # that does not.  The ``FileNotFoundError`` branch returns directly,
+        # keeping that answer reachable for a resource genuinely without one.
+        manifest = self._manifest
+        if manifest is None:
             try:
-                self._manifest = self.proto.load_manifest(self)
+                manifest = self._manifest = self.proto.load_manifest(self)
             except FileNotFoundError:
                 return None
-        return self._manifest
+        return manifest
 
     def get_file_url(self, filename: str) -> str:
         return self.proto.get_resource_file_url(self, filename)
