@@ -242,7 +242,7 @@ def test_a_materialised_file_the_scan_skipped_falls_back_to_its_sidecar(
         for entry in original_scan(resource).manifest:
             if entry.name != "b.big":
                 result.add(entry)
-        return ResourceScan(result, frozenset())
+        return ResourceScan(result, {})
 
     monkeypatch.setattr(
         proto_fixture, "scan_resource_entries", scan_without_b_big)

@@ -15,7 +15,7 @@ import re
 import tempfile
 import time
 from collections.abc import Callable, Generator
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, suppress
 from dataclasses import asdict
 from threading import Lock
 from typing import (
@@ -1027,7 +1027,7 @@ class FsspecReadWriteProtocol(
         resource_path = resource.get_genomic_resource_id_version()
 
         result = Manifest()
-        unreadable: set[str] = set()
+        unreadable: dict[str, str] = {}
         ancestor_specs = self._collect_ancestor_specs(resource_path)
         for name, path in self._scan_resource_for_files(
                 resource_path, [], ancestor_specs):
@@ -1043,42 +1043,59 @@ class FsspecReadWriteProtocol(
 
             try:
                 size = self._get_filepath_size(path)
-            except FileNotFoundError:
-                # The listing yielded this name and the stat says it is not
-                # there. Reported rather than raised: a `.dvc` sidecar may
-                # still describe it, and only the caller -- which has the
-                # sidecars -- can tell a garbage-collected DVC cache link
-                # from a genuinely broken resource (gain#503).
+            except OSError as error:
+                # The listing yielded this name and the stat could not
+                # describe it. Reported rather than raised: a `.dvc` sidecar
+                # may still describe it, and only the caller -- which has
+                # the sidecars -- can tell a garbage-collected DVC cache
+                # link from a genuinely broken resource (gain#503).
+                #
+                # `OSError`, not `FileNotFoundError`: a symlink into a
+                # shared DVC cache fails to resolve for more reasons than a
+                # collected cache object -- a loop (ELOOP), a target whose
+                # parent is not a directory (ENOTDIR), a cache directory
+                # this run may not traverse (EACCES). They are one situation
+                # to the user, whose `exists()` is False for every one of
+                # them, and were one crash each.
                 #
                 # Caught rather than pre-tested so that a repository with
-                # nothing dangling pays NOTHING: the happy path is the same
+                # nothing broken pays NOTHING: the happy path is the same
                 # single stat it always was, and the link probe below runs
                 # only for a name that already failed.
-                logger.warning(
-                    "cannot read <%s> of <%s>%s; leaving it to its '.dvc' "
-                    "sidecar to describe",
-                    name, resource.resource_id,
-                    self._dangling_link_detail(path))
-                unreadable.add(name)
+                if self.scheme != "file":
+                    # Only a local filesystem has symlinks. A remote store
+                    # that lists a key and then fails to describe it is far
+                    # likelier to be a transient fault than a steady state,
+                    # and letting a sidecar answer for it would publish an
+                    # md5 sum for an object that is not in the bucket.
+                    raise
+                reason = self._unreadable_detail(path, error)
+                logger.debug(
+                    "cannot read <%s> of <%s>: %s",
+                    name, resource.resource_id, reason)
+                unreadable[name] = reason
                 continue
             result.add(ManifestEntry(name, size, None))
-        return ResourceScan(result, frozenset(unreadable))
+        return ResourceScan(result, unreadable)
 
-    def _dangling_link_detail(self, path: str) -> str:
-        """Return ' (a symlink to X)' when ``path`` is a dangling link.
+    def _unreadable_detail(self, path: str, error: OSError) -> str:
+        """Return why ``path`` could not be read, for a human to read.
 
-        Purely to make the warning say WHY the file is missing, which for
-        the case this was written for -- a link into a DVC cache that has
-        been garbage collected -- is the whole diagnosis. Only ever called
-        on a name that already failed to stat, so the extra probe never
-        touches the happy path.
+        For the case this was written for -- a link into a DVC cache that
+        is no longer resolvable -- naming the link target IS the diagnosis,
+        and the errno distinguishes a collected cache object from a cache
+        that is merely unreachable. Only ever called for a name that
+        already failed to stat, so this never touches the happy path.
         """
-        if self.scheme != "file":
-            return ""
+        reason = error.strerror or type(error).__name__
         local_path = path.removeprefix(f"{self.scheme}://")
-        if not os.path.islink(local_path):
-            return ""
-        return f" (a symlink to <{os.readlink(local_path)}>, which is gone)"
+        target: str | None = None
+        with suppress(OSError):
+            if os.path.islink(local_path):
+                target = os.readlink(local_path)
+        if target is None:
+            return reason
+        return f"a symlink to <{target}>: {reason}"
 
     def get_all_resources(self) -> Generator[GenomicResource, None, None]:
         """Return generator over all resources in the repository."""

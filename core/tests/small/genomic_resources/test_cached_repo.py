@@ -18,9 +18,9 @@ from gain.genomic_resources.cached_repository import (
 )
 from gain.genomic_resources.cli import (
     _create_contents_db,
-    _run_list_command,
     cli_manage,
 )
+from gain.genomic_resources.cli_list import run_list_command
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
     build_fsspec_protocol,
@@ -606,7 +606,7 @@ def test_cached_repo_list_cli(
             content = infile.read()
             assert content == "alabala"
 
-        _run_list_command(cache_repo, [])  # type: ignore
+        run_list_command(cache_repo, [])  # type: ignore
         out, err = capsys.readouterr()
         print(out)
         assert err == ""
@@ -644,7 +644,7 @@ def test_cached_repo_nested_list_cli(
             content = infile.read()
             assert content == "alabala"
 
-        _run_list_command(cache_repo, [])  # type: ignore
+        run_list_command(cache_repo, [])  # type: ignore
         out, err = capsys.readouterr()
         print(out)
         assert err == ""

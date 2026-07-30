@@ -14,10 +14,13 @@ from urllib.parse import urlparse
 
 import apsw
 import yaml
-from cerberus.schema import SchemaError
 
 from gain import __version__, logging
-from gain.genomic_resources.cached_repository import GenomicResourceCachedRepo
+from gain.genomic_resources.cli_errors import (
+    RESOURCE_ERRORS,
+    report_resource_failure,
+)
+from gain.genomic_resources.cli_list import run_list_command
 from gain.genomic_resources.dvc import (
     DvcContentDriftError,
     is_dvc_directory_out,
@@ -27,7 +30,6 @@ from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
     build_fsspec_protocol,
 )
-from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
@@ -65,7 +67,6 @@ from gain.utils.fs_utils import (
     find_directory_with_a_file,
     find_subdirectories_with_a_file,
 )
-from gain.utils.helpers import convert_size
 from gain.utils.verbosity_configuration import VerbosityConfiguration
 
 logger = logging.getLogger("grr_manage")
@@ -110,39 +111,6 @@ class CommandResult:
 # a malformed config, a schema violation, a file that is not there.  They
 # are reported as one line carrying the cause, with the traceback demoted to
 # DEBUG.  Anything else is a defect in GAIn and keeps its traceback at ERROR.
-_RESOURCE_ERRORS = (ValueError, SchemaError, FileNotFoundError)
-
-
-def _report_resource_failure(
-    err: Exception, action: str, resource_id: str,
-) -> None:
-    """Report a failed operation on one resource, at the right tier.
-
-    ``action`` names what could not be done -- never the phase the failure
-    happened in.  A handler that wraps several operations cannot know which
-    one raised, and naming the wrong one sends the reader looking in the
-    wrong place (gain#364); the cause, which is always carried, says it.
-    """
-    # LOG014 is suppressed rather than obeyed: every caller is an exception
-    # handler, which is exactly what makes `exc_info` meaningful here -- the
-    # linter cannot see that through the call.
-    if isinstance(err, _RESOURCE_ERRORS):
-        # `str(err)` is empty for an exception raised without a message --
-        # `raise ValueError()`, or a bare `assert` under `python -O`. The
-        # class name is then the only thing left that says anything about
-        # the cause, and this issue is exactly about losing it (gain#364).
-        logger.error(
-            "%s <%s>: %s", action, resource_id,
-            str(err) or type(err).__name__)
-        logger.debug(
-            "%s <%s> failed", action, resource_id,
-            exc_info=True)  # noqa: LOG014
-        return
-    logger.error(
-        "%s <%s>: unexpected internal error", action, resource_id,
-        exc_info=True)  # noqa: LOG014
-
-
 def _add_repository_resource_parameters_group(
     parser: argparse.ArgumentParser, *, use_resource: bool = True,
 ) -> None:
@@ -234,40 +202,6 @@ def _configure_list_subparser(subparsers: argparse._SubParsersAction) -> None:
         help="Projects the size in human-readable format.")
     _add_repository_resource_parameters_group(parser, use_resource=False)
     VerbosityConfiguration.set_arguments(parser)
-
-
-def _run_list_command(
-        proto: ReadOnlyRepositoryProtocol | GenomicResourceRepo,
-        args: argparse.Namespace) -> None:
-    search_term = getattr(args, "search", None)
-    resource_type = getattr(args, "type", None)
-    long_format = getattr(args, "summary", False)
-    repos: list = [proto]
-    if isinstance(proto, GenomicResourceGroupRepo):
-        repos = proto.children
-    for repo in repos:
-        for res in repo.search_resources(search_term, resource_type):
-            res_size = sum(fs for _, fs in res.get_manifest().get_files())
-
-            files_msg = f"{len(list(res.get_manifest().get_files())):2d}"
-            if isinstance(repo, GenomicResourceCachedRepo):
-                cached_files = repo.get_resource_cached_files(res.get_id())
-                files_msg = f"{len(cached_files):2d}/{files_msg}"
-
-            res_size_msg = res_size \
-                if hasattr(args, "bytes") and args.bytes is True \
-                else convert_size(res_size)
-            repo_id = repo.repo_id if isinstance(repo, GenomicResourceRepo) \
-                else repo.get_id()
-            print(
-                f"{res.get_type():20} {res.get_version_str():7s} "
-                f"{files_msg} {res_size_msg:12} "
-                f"{repo_id} "
-                f"{res.get_id()}")
-            if long_format:
-                summary = res.get_summary()
-                if summary:
-                    print(f"  {summary.strip()}")
 
 
 def _configure_repo_init_subparser(
@@ -624,20 +558,17 @@ def _run_repo_manifest_command_internal(
                 force=force,
                 use_dvc=use_dvc,
             )
-        except (DvcContentDriftError, *_RESOURCE_ERRORS) as err:
+        except (DvcContentDriftError, *RESOURCE_ERRORS) as err:
             # Collected, not raised: every drifted resource of the
             # repository is reported by one run, and the resources that
             # agree with their sidecars are still repaired (#373).
             #
-            # The set is `_RESOURCE_ERRORS` rather than `DvcContentDriftError`
-            # alone because a manifest can fail for reasons that have nothing
-            # to do with DVC -- an unreadable file, a resource whose content
-            # cannot be described. Those used to escape this loop and abort
-            # the whole run, so every resource ordered AFTER the offending
-            # one was silently never visited (gain#503). Deliberately not
-            # widened to bare `Exception`: an unexpected error is still a
-            # crash, and should look like one.
-            _report_resource_failure(
+            # `RESOURCE_ERRORS` too, not drift alone: a manifest also
+            # fails for reasons unrelated to DVC, and those escaped this
+            # loop and aborted the run -- so every resource ordered AFTER
+            # the offender was silently never visited (gain#503). NOT
+            # widened to `Exception`: an unexpected error is still a crash.
+            report_resource_failure(
                 err, "could not verify", res.resource_id)
             failed.add(res.resource_id)
 
@@ -715,7 +646,7 @@ def _create_contents_db(
             validate_index_columns(res.resource_id, header)
             collected.append((res.resource_id, header, row))
         except Exception as err:  # noqa: BLE001
-            _report_resource_failure(
+            report_resource_failure(
                 err, "skipping FTS index for", res.resource_id)
             failed.add(res.resource_id)
 
@@ -736,7 +667,7 @@ def _create_contents_db(
         try:
             claimed = merge_index_columns(resource_id, header, claimed)
         except Exception as err:  # noqa: BLE001
-            _report_resource_failure(
+            report_resource_failure(
                 err, "skipping FTS index for", resource_id)
             failed.add(resource_id)
             continue
@@ -900,7 +831,7 @@ def _store_stats_hash(
             stats_hash = impl.calc_statistics_hash()
             outfile.write(stats_hash)
     except Exception as err:  # noqa: BLE001
-        _report_resource_failure(
+        report_resource_failure(
             err, "couldn't store statistics hash for", resource.resource_id)
         return False
     return True
@@ -987,7 +918,7 @@ def _statistics_not_built(
                     "statistics of <%s> were not built", res.resource_id)
                 not_built.add(res.resource_id)
         except Exception as err:  # noqa: BLE001
-            _report_resource_failure(
+            report_resource_failure(
                 err, "could not check the statistics of", res.resource_id)
             not_built.add(res.resource_id)
     return frozenset(not_built)
@@ -1045,7 +976,7 @@ def _run_repo_stats_command(
         except Exception as err:  # noqa: BLE001
             # Collected, not raised: the resources after this one in the
             # repository are still repaired.
-            _report_resource_failure(
+            report_resource_failure(
                 err, "skipping statistics for", res.resource_id)
             failed.add(res.resource_id)
 
@@ -1096,11 +1027,15 @@ def _run_repo_stats_command(
         # and persisted the resulting states - so re-verifying them here
         # would be a second full read of the repository, not a second
         # opinion (#251). The freshly written statistics files have no state
-        # and are hashed here. It cannot fail: the default mode never
-        # verifies a sidecar, so it has no drift to report.
-        _run_repo_manifest_command_internal(
+        # and are hashed here. Its outcome is collected: the default mode
+        # has no sidecar drift to report, but a file can still turn out
+        # undescribable between the two passes of one run, and such a
+        # resource must not be published from the manifest this pass
+        # declined to write (gain#503).
+        stats_manifest_outcome = _run_repo_manifest_command_internal(
             proto, stats_resources,
             dry_run=False, force=True, use_dvc=True)
+        failed |= set(stats_manifest_outcome.failed)
 
     assert isinstance(proto, FsspecReadWriteProtocol)
     _build_content_file(proto, frozenset(failed))
@@ -1150,7 +1085,7 @@ def _run_repo_info_command(
         try:
             _do_resource_info_command(repo, proto, res)
         except Exception as err:  # noqa: BLE001
-            _report_resource_failure(
+            report_resource_failure(
                 err, "skipping info page for", res.resource_id)
             failed.add(res.resource_id)
     return dataclasses.replace(result, failed=frozenset(failed))
@@ -1253,7 +1188,7 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
     repo = _create_grr_repo(args, repo_url)
     proto = _create_proto(repo_url, args.extra_args)
     if command == "list":
-        _run_list_command(proto, args)
+        run_list_command(proto, args)
         return
 
     if not isinstance(proto, ReadWriteRepositoryProtocol):
@@ -1497,4 +1432,4 @@ def cli_browse(cli_args: list[str] | None = None) -> None:
     print(yaml.safe_dump(redact_definition(definition), sort_keys=False))
 
     repo = build_genomic_resource_repository(definition=definition)
-    _run_list_command(repo, args)
+    run_list_command(repo, args)

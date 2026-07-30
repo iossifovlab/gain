@@ -53,7 +53,7 @@ import hashlib
 import ntpath
 import os
 import re
-from collections.abc import Generator, Iterator, Sequence
+from collections.abc import Generator, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import IO, Any, cast
 from urllib.parse import unquote
@@ -646,9 +646,9 @@ class ManifestUpdate:
 class ResourceScan:
     """What one scan of a resource's directory found.
 
-    ``unreadable`` names the files the scan listed but could not stat --
-    a dangling symlink, or a file deleted between the listing and the
-    stat. They are NOT in ``manifest``: there is no size to put there.
+    ``unreadable`` maps each file the scan listed but could not stat --
+    a dangling symlink, a symlink loop, a directory it may not traverse --
+    to why. They are NOT in ``manifest``: there is no size to put there.
 
     They are carried rather than raised because the scan cannot yet know
     whether they matter. A DVC-managed file materialised as a link into a
@@ -657,10 +657,15 @@ class ResourceScan:
     so it is manifested from the sidecar and nothing is wrong. Only a
     name that NOTHING can describe is a broken resource, and that is not
     known until the sidecars have been merged in (gain#503).
+
+    The reason travels with the name so that whoever DOES know the
+    outcome can report it: a resource is scanned more than once per
+    command, so the scan itself is the wrong place to say anything the
+    user should see exactly once.
     """
 
     manifest: Manifest
-    unreadable: frozenset[str]
+    unreadable: Mapping[str, str]
 
 
 class UnreadableResourceFilesError(ValueError):
@@ -668,7 +673,7 @@ class UnreadableResourceFilesError(ValueError):
 
     Collected rather than raised on the first offender, so a single run
     reports every one of them. A ``ValueError`` so that
-    ``cli._report_resource_failure`` renders it as one line naming the
+    ``cli_errors.report_resource_failure`` renders it as one line naming the
     resource and carrying the cause, with the traceback demoted to DEBUG
     (gain#364) -- and so that one broken resource fails itself instead of
     aborting the repository-wide command (gain#503).
@@ -1547,7 +1552,20 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         """
         if not scan.unreadable:
             return
-        unaccounted = scan.unreadable - manifest.names()
+        names = set(scan.unreadable)
+        unaccounted = names - manifest.names()
+        for name in sorted(names & manifest.names()):
+            # Reported HERE rather than from the scan because only here is
+            # it true: the scan runs more than once per command and cannot
+            # know a sidecar will answer for the file. Still a WARNING and
+            # not silence -- the manifest is correct, but a resource whose
+            # data cannot be read is one nobody can actually use.
+            logger.warning(
+                "<%s> of <%s> could not be read (%s); its '.dvc' sidecar "
+                "describes it, so the manifest is correct, but the file "
+                "itself is unusable until 'dvc pull' (or 'dvc checkout') "
+                "restores it",
+                name, resource.resource_id, scan.unreadable[name])
         if unaccounted:
             raise UnreadableResourceFilesError(
                 resource.resource_id, sorted(unaccounted))

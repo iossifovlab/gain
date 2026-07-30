@@ -77,8 +77,8 @@ class DvcContentDriftError(ValueError):
     Collected rather than raised on the first offender, so that a single
     ``grr_manage --without-dvc`` run reports all of them (#373). It is a
     ``ValueError`` because it is a fault of the RESOURCE, and
-    ``cli._report_resource_failure`` reports those as one line carrying the
-    cause, with the traceback demoted to ``DEBUG`` (gain#364).
+    ``cli_errors.report_resource_failure`` reports those as one line
+    carrying the cause, with the traceback demoted to ``DEBUG`` (gain#364).
     """
 
     def __init__(

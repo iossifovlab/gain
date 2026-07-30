@@ -7,7 +7,12 @@ import textwrap
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
-from gain.genomic_resources.testing import setup_directories
+from gain.genomic_resources.repository import UnreadableResourceFilesError
+from gain.genomic_resources.testing import (
+    build_filesystem_test_protocol,
+    build_inmemory_test_protocol,
+    setup_directories,
+)
 
 DATA = "chrom\tpos_begin\ts\n1\t1\t0.1\n"
 
@@ -63,6 +68,146 @@ def dangling_repo(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
     return path
 
 
+def _make_broken_link(directory: pathlib.Path, shape: str) -> None:
+    """Create a link under ``directory`` that cannot be stat'ed.
+
+    Every shape here is indistinguishable from the others to a user --
+    `Path.exists()` is False for all of them -- but the errno differs, and
+    only ENOENT used to be handled (gain#503). ELOOP and ENOTDIR are used
+    rather than EACCES because they behave identically for root, which CI
+    may well be.
+    """
+    if shape == "enoent":
+        os.symlink(GONE, directory / "broken.bin")
+    elif shape == "eloop":
+        os.symlink("loop_b", directory / "loop_a")
+        os.symlink("loop_a", directory / "loop_b")
+    elif shape == "enotdir":
+        # The target's PARENT is a regular file, so resolving it is not
+        # 'missing' but 'not a directory'.
+        (directory / "afile").write_text("x", encoding="utf8")
+        os.symlink(directory / "afile" / "nope", directory / "broken.bin")
+    else:
+        raise AssertionError(shape)
+
+
+@pytest.mark.parametrize("shape", ["enoent", "eloop", "enotdir"])
+def test_any_unreadable_link_shape_fails_only_its_resource(
+    tmp_path_factory: pytest.TempPathFactory,
+    caplog: pytest.LogCaptureFixture,
+    shape: str,
+) -> None:
+    """Not just ENOENT: any link that cannot be stat'ed (gain#503).
+
+    A symlink into a shared DVC cache fails to resolve for more reasons
+    than a garbage-collected cache object -- a loop, a target whose parent
+    is not a directory, a cache directory the run cannot traverse. All of
+    them used to abort the whole repository run.
+    """
+    # Given a repository whose middle resource carries a broken link
+    path = tmp_path_factory.mktemp(f"broken_{shape}")
+    setup_directories(path, {
+        "aaa": {"genomic_resource.yaml": "", "data.txt": DATA},
+        "mid": {"genomic_resource.yaml": "", "data.txt": DATA},
+        "zzz": {"genomic_resource.yaml": "", "data.txt": DATA},
+    })
+    _make_broken_link(path / "mid", shape)
+
+    # When the whole repository is manifested
+    with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as excinfo:
+        cli_manage(["repo-manifest", "-R", str(path)])
+
+    # Then only the offending resource fails ...
+    assert excinfo.value.code == 1
+    assert "mid" in caplog.text
+    assert not (path / "mid" / ".MANIFEST").exists()
+
+    # ... and the resources on both sides of it are still manifested
+    assert (path / "aaa" / ".MANIFEST").exists()
+    assert (path / "zzz" / ".MANIFEST").exists()
+
+
+def test_build_manifest_refuses_to_drop_an_unreadable_file(
+    dangling_repo: pathlib.Path,
+) -> None:
+    """`build_manifest` must fail rather than shrink the manifest.
+
+    It is a writer in its own right (`build_inmemory_protocol` saves what
+    it returns), so the guard has to hold here and not only on the
+    `check_update_manifest` path the CLI happens to use (gain#503).
+    """
+    # Given a resource carrying a dangling symlink and no sidecar for it
+    proto = build_filesystem_test_protocol(dangling_repo, repair=False)
+    res = proto.get_resource("mid")
+
+    # When its manifest is built directly
+    with pytest.raises(UnreadableResourceFilesError) as excinfo:
+        proto.build_manifest(res)
+
+    # Then it fails naming the file, instead of returning a manifest that
+    # silently omits it
+    assert "dangling.bin" in str(excinfo.value)
+
+
+def test_a_remote_protocol_never_swallows_an_unreadable_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only a local filesystem has symlinks (gain#503).
+
+    A remote store that lists a key and then cannot describe it is far
+    likelier to be a transient fault than a steady state. Letting a '.dvc'
+    sidecar answer for it would publish an md5 sum for an object that is
+    not in the bucket, so the error must still propagate.
+    """
+    # Given a non-local protocol whose store fails to describe a file
+    proto = build_inmemory_test_protocol({
+        "one": {
+            "genomic_resource.yaml": "",
+            "data.txt": DATA,
+        },
+    })
+    assert proto.scheme != "file"
+
+    def explode(_path: str) -> int:
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(proto, "_get_filepath_size", explode)
+
+    # When the resource is scanned, the failure is not swallowed
+    with pytest.raises(FileNotFoundError):
+        proto.scan_resource_entries(proto.get_resource("one"))
+
+
+def test_listing_a_repository_survives_a_broken_resource(
+    dangling_repo: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`list` builds a manifest lazily; it must not die doing so.
+
+    A resource with no committed '.MANIFEST' has one built on demand
+    during ENUMERATION, which is the one place this codebase refuses to
+    raise from -- ADR 0003 and the gain#464 shape. Listing a repository
+    must describe the resources it can and name the ones it cannot.
+    """
+    # Given a repository whose `mid` resource carries a dangling symlink
+    # and where nothing has a committed manifest yet
+    path = dangling_repo
+    assert not (path / "mid" / ".MANIFEST").exists()
+
+    # When the repository is listed
+    with caplog.at_level(logging.ERROR):
+        cli_manage(["list", "-R", str(path)])
+
+    # Then the resources it can describe are listed ...
+    listed = capsys.readouterr().out
+    assert "aaa" in listed
+    assert "zzz" in listed
+
+    # ... and the one it cannot is named rather than fatal
+    assert "mid" in caplog.text
+
+
 @pytest.fixture
 def dvc_dangling_repo(
     tmp_path_factory: pytest.TempPathFactory,
@@ -102,6 +247,36 @@ def test_dvc_managed_dangling_symlink_is_taken_from_the_sidecar(
     manifest = (path / "one" / ".MANIFEST").read_text(encoding="utf8")
     assert md5_of(DATA) in manifest
     assert "data.txt" in manifest
+
+
+def test_a_rescued_file_is_reported_once_and_accurately(
+    dvc_dangling_repo: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One message per file, and it must be true when it is written.
+
+    A resource is scanned more than once per command, so a message emitted
+    from the scan is emitted repeatedly -- and the scan cannot yet know
+    whether a sidecar will answer for the file, so anything it says about
+    that is a guess (gain#503).
+    """
+    # Given a DVC-managed data file whose cache entry is gone
+    path = dvc_dangling_repo
+
+    # When the repository is manifested
+    with caplog.at_level(logging.DEBUG):
+        cli_manage(["repo-manifest", "-R", str(path)])
+
+    # Then exactly one warning names it, and says what actually happened
+    warnings = [
+        record.getMessage() for record in caplog.records
+        if record.levelno == logging.WARNING
+        and "could not be read" in record.getMessage()
+    ]
+    assert len(warnings) == 1, warnings
+    assert "sidecar" in warnings[0]
+    # ... including WHY it could not be read, which is the diagnosis
+    assert GONE in warnings[0]
 
 
 def test_dangling_dvc_link_manifests_as_if_it_were_absent(

@@ -174,7 +174,7 @@ def test_cli_browse_does_not_print_credentials(
     """))
     # Stop before touching the network: we only care about the stdout dump of
     # the definition that happens before the repository is listed.
-    mocker.patch.object(grr_cli, "_run_list_command")
+    mocker.patch.object(grr_cli, "run_list_command")
 
     cli_browse(["--grr", str(definition_file)])
     out, _err = capsys.readouterr()
