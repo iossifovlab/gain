@@ -666,8 +666,8 @@ def test_format_annotation_plan_plain_pipeline() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def position_score_grr() -> GenomicResourceRepo:
+def _build_position_score_grr() -> GenomicResourceRepo:
+    """Build a fresh repository over the same content, memoizing nothing."""
     return build_inmemory_test_repository({
         "one": {
             "genomic_resource.yaml": textwrap.dedent("""
@@ -685,6 +685,11 @@ def position_score_grr() -> GenomicResourceRepo:
             """),
         },
     })
+
+
+@pytest.fixture
+def position_score_grr() -> GenomicResourceRepo:
+    return _build_position_score_grr()
 
 
 _POSITION_SCORE_CONFIG = [{"position_score": "one"}]
@@ -735,6 +740,38 @@ def test_reannotation_identical_configs_diff_work_dir_reuses_all(
     assert reann.annotators == []
     assert _plan_names(reann.plan.copied) == ["score"]
     assert not reann.plan.added
+    assert not reann.plan.computed
+
+
+def test_reannotation_reuses_an_annotator_across_a_cold_manifest(
+    tmp_path: Path,
+) -> None:
+    """Whether a resource has loaded its manifest is not a config change.
+
+    The two pipelines reach the same resource through separate repositories,
+    each holding its own resource object -- as a rerun does when it rebuilds
+    the previous pipeline's repository from the saved config.  Only one side
+    has a manifest in hand, and the annotation itself is untouched, so
+    everything must still be reused.
+    """
+    grr_new = _build_position_score_grr()
+    grr_previous = _build_position_score_grr()
+
+    pipeline_new = build_annotation_pipeline(
+        _POSITION_SCORE_CONFIG, grr_new,
+        work_dir=tmp_path / "work_new")
+    pipeline_previous = build_annotation_pipeline(
+        _POSITION_SCORE_CONFIG, grr_previous,
+        work_dir=tmp_path / "work_previous")
+
+    grr_previous.get_resource("one").get_manifest()
+    grr_new.get_resource("one").invalidate()
+
+    reann = ReannotationPipeline(pipeline_new, pipeline_previous)
+
+    assert reann.infos_new == set()
+    assert reann.infos_rerun == set()
+    assert _plan_names(reann.plan.copied) == ["score"]
     assert not reann.plan.computed
 
 

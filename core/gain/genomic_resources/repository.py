@@ -729,7 +729,7 @@ class GenomicResource:
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, GenomicResource):
-            return False
+            return NotImplemented
         return self.resource_id == other.resource_id and \
             self.version == other.version and \
             self.config == other.config
