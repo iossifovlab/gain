@@ -1,3 +1,5 @@
+import tempfile
+from pathlib import Path
 from typing import Any, ClassVar
 from urllib.parse import quote
 
@@ -7,7 +9,10 @@ from gain import logging
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.genomic_resources.genomic_scores import GenomicScore
-from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository import (
+    GenomicResource,
+    GenomicResourceRepo,
+)
 from gain.genomic_resources.resource_implementation import (
     GenomicResourceImplementation,
     InfoImplementationMixin,
@@ -40,14 +45,39 @@ class AnnotationPipelineImplementation(
             self.resource.get_config()["filename"])
         self.pipeline: AnnotationPipeline | None = None
 
+    def _load_pipeline_to_describe(
+        self, grr: GenomicResourceRepo,
+    ) -> AnnotationPipeline:
+        """Build the pipeline the page describes.
+
+        A page renders what the pipeline *is*, and never runs it: the
+        annotators are built so their attributes and resources can be listed,
+        and nothing here opens them.  So the ``work_dir`` handed in is needed
+        only to satisfy the annotator constructors, and no directory is ever
+        created under it -- ``AnnotatorBase`` makes that in ``open()``, which
+        this path does not reach (pinned by
+        ``test_rendering_a_page_does_not_open_the_pipeline``).
+
+        It is still named explicitly rather than left to
+        ``build_annotation_pipeline``'s fallback, which is deprecated and due
+        to become an error (#333): ``grr_manage`` renders both pages of every
+        resource, so this caller alone accounted for two deprecation warnings
+        per pipeline resource in every repo-wide run (#507).  A temporary
+        directory scoped to the call, rather than a fixed shared path: a
+        constant under the system temp dir is the shape that made a
+        pipeline's work dir another user's to create (#276, #278).
+        """
+        with tempfile.TemporaryDirectory(
+                prefix="gain-annotation-doc-") as work_dir:
+            return load_pipeline_from_yaml(
+                self.raw, grr, work_dir=Path(work_dir))
+
     def get_info(self, **kwargs: Any) -> str:
-        grr = kwargs["repo"]
-        self.pipeline = load_pipeline_from_yaml(self.raw, grr)
+        self.pipeline = self._load_pipeline_to_describe(kwargs["repo"])
         return InfoImplementationMixin.get_info(self)
 
     def get_statistics_info(self, **kwargs: Any) -> str:
-        grr = kwargs["repo"]
-        self.pipeline = load_pipeline_from_yaml(self.raw, grr)
+        self.pipeline = self._load_pipeline_to_describe(kwargs["repo"])
         return InfoImplementationMixin.get_statistics_info(self)
 
     template_name: ClassVar[str] = "annotation_pipeline.jinja"

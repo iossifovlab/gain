@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613,C0415
 """Expanded tests for annotation_pipeline_impl module."""
+import logging
 import pathlib
 from unittest.mock import patch
 
@@ -193,6 +194,60 @@ def test_get_info_loads_pipeline(grr_fixture: GenomicResourceRepo) -> None:
     assert impl.pipeline is None
     impl.get_info(repo=grr_fixture)
     assert impl.pipeline is not None
+
+
+@pytest.mark.parametrize("render", ["get_info", "get_statistics_info"])
+def test_rendering_a_page_does_not_take_the_deprecated_work_dir(
+    grr_fixture: GenomicResourceRepo,
+    caplog: pytest.LogCaptureFixture,
+    render: str,
+) -> None:
+    """Both pages name their own work dir instead of inheriting the fallback.
+
+    `grr_manage` renders both for every resource, so a pipeline resource that
+    leaves `work_dir` to `build_annotation_pipeline` puts two deprecation
+    warnings in every repo-repair, repo-stats and repo-info run -- ten of
+    them on the deployed GRR (#507).
+    """
+    impl = AnnotationPipelineImplementation(
+        grr_fixture.get_resource("pipeline"),
+    )
+
+    with caplog.at_level(
+            logging.WARNING, logger="gain.annotation.annotation_factory"):
+        getattr(impl, render)(repo=grr_fixture)
+
+    assert [
+        record.getMessage() for record in caplog.records
+        if "work_dir" in record.getMessage()
+    ] == []
+
+
+@pytest.mark.parametrize("render", ["get_info", "get_statistics_info"])
+def test_rendering_a_page_does_not_open_the_pipeline(
+    grr_fixture: GenomicResourceRepo,
+    render: str,
+) -> None:
+    """The precondition that lets the work dir be scoped to the call.
+
+    `AnnotatorBase` creates its work dir in `open()` (`annotator_base.py`),
+    and describing a pipeline never gets there -- which is why a directory
+    that does not outlive the render is a legitimate thing to hand it.  Were
+    a render to start opening its annotators, they would come up pointing at
+    a directory that has already been removed, so this is pinned rather than
+    assumed.
+    """
+    impl = AnnotationPipelineImplementation(
+        grr_fixture.get_resource("pipeline"),
+    )
+
+    getattr(impl, render)(repo=grr_fixture)
+
+    assert impl.pipeline is not None
+    assert [
+        annotator for annotator in impl.pipeline.annotators
+        if annotator.is_open()
+    ] == []
 
 
 def test_get_info_multiple_annotators(
