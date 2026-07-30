@@ -222,12 +222,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
     # How this resource kind's records read, stated ONCE here and consumed by
     # BOTH statistics scan paths -- the per-record one and the vectorized bulk
-    # one.  They used to be stated twice: once implicitly in the per-record
-    # accumulators (a ``FragmentScoreImplementation`` override that pinned the
-    # weight to 1) and once in the bulk clip/guard helper, which simply
-    # assumed position-score semantics and was gated to position scores
-    # because of it.  Two statements of one rule is how the paths drift, so
-    # there is now one (gain#421).
+    # one.  Two statements of one rule is how the paths drift.
     #
     # The defaults are the "one record, one count" rule that everything except
     # a position score follows.  ``RECORD_WEIGHT_IS_SPAN`` is also where
@@ -894,11 +889,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         statistics scan also requires a bounded region and a resource kind it
         is exercised against, and it keeps asking that itself (see
         ``GenomicScoreImplementation._bulk_scan_eligible``).  What it does
-        NOT require is a particular record shape -- the accumulators used to
-        assume a position score's span weight and one value per position, and
-        since gain#421 they read the kind's own ``RECORD_ORDERING`` and
-        ``RECORD_WEIGHT_IS_SPAN`` instead, which is what let an allele and a
-        fragment score in.
+        NOT require is a particular record shape: the accumulators read the
+        kind's own ``RECORD_ORDERING`` and ``RECORD_WEIGHT_IS_SPAN``, so a
+        position, allele and fragment score are all served.
 
         Answerable on an UNOPENED score: the table and the score definitions
         are both built in ``__init__``, so nothing here touches the file.

@@ -679,15 +679,14 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
         The shared gate for the histogram and min/max bulk paths, and the place
         the conditions that are THIS caller's live -- as opposed to the one
-        condition that is the backend's, which the score now answers itself:
+        condition that is the backend's, which the score answers itself:
 
         * a resource kind the bulk path is exercised against
           (:data:`_BULK_SCAN_RESOURCE_TYPES`): a position, allele or fragment
-          score.  Its record semantics no longer have to be assumed -- the
-          score class states them (``RECORD_ORDERING``,
-          ``RECORD_WEIGHT_IS_SPAN``) and both scan paths read them from there
-          -- so what this test now excludes is only ``np_score``, of which no
-          production GRR has one;
+          score.  Their record semantics are not assumed here -- the score
+          class states them (``RECORD_ORDERING``, ``RECORD_WEIGHT_IS_SPAN``)
+          and both scan paths read them from there -- so what this excludes
+          is ``np_score``, of which no production GRR has one;
         * every score a ``float``: ``int()`` / ``str()`` parsing is not the
           float parse the bulk path does;
         * and the backend serves the bulk read at all -- asked of the score,
@@ -916,17 +915,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 class FragmentScoreImplementation(GenomicScoreImplementation):
     """Assists in the management of a fragment score resource.
 
-    Carries no statistics behaviour of its own.  It used to override the
-    per-record histogram add, pinning a fragment's weight to 1 -- an
-    independent second statement of a rule the bulk scan had to restate for
-    itself, and could only restate by assuming position-score semantics.  It
-    is now declared once on ``FragmentScore`` (``RECORD_WEIGHT_IS_SPAN``) and
-    read by both scan paths (gain#421).
-
-    Its sibling override added a record count to the min/max statistic; that
-    count had no consumer anywhere in the stack and no deployed GRR ever
-    carried it, so gain#421 removed it outright rather than teaching a second
-    path to reproduce it.
+    Carries no statistics behaviour of its own: a fragment's weight-1 rule
+    is declared on ``FragmentScore`` (``RECORD_WEIGHT_IS_SPAN``) and read by
+    both scan paths from there.
     """
     # pylint: disable=useless-parent-delegation
 

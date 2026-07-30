@@ -56,10 +56,8 @@ class MinMaxValue(Statistic):
 
     @staticmethod
     def deserialize(content: str) -> MinMaxValue:
-        # A stray ``count:`` key is ignored rather than rejected.  Fragment
-        # scores used to accrue a record count here (gain#421 removed it);
-        # no deployed GRR carries a min_max file at all, but tolerating the
-        # key costs nothing and keeps this readable against any that did.
+        # Unknown keys are ignored rather than rejected, so a file carrying
+        # extra fields still reads.
         data = yaml.safe_load(content)
         return MinMaxValue(
             data["score_id"],

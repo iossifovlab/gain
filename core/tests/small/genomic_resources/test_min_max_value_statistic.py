@@ -61,8 +61,8 @@ def test_min_max_value_deserialize() -> None:
     assert min_max_value.max == 10
 
 
-def test_min_max_value_deserialize_ignores_a_legacy_count() -> None:
-    """A fragment score's record count (gain#421) is no longer read back."""
+def test_min_max_value_deserialize_ignores_an_unknown_key() -> None:
+    """An unrecognised key in a serialized min/max is ignored, not fatal."""
     min_max_value = MinMaxValue.deserialize(
         "count: 7\nmax: 10\nmin: 5\nscore_id: test_score\n",
     )
