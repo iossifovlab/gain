@@ -27,6 +27,7 @@ from gain.genomic_resources.fsspec_protocol import (
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GenomicResource,
+    ReadWriteRepositoryProtocol,
 )
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
@@ -55,14 +56,21 @@ class EnumerationOnlySeam:
     #: rebinds it per instance on first use.
     enumerations = 0
 
-    def _collect_all_resources(self) -> Iterable[GenomicResource]:
+    #: Whether the memo lock was held while the seam ran, recorded rather
+    #: than asserted so the assertion lives in a test with a name.
+    lock_held_while_enumerating: bool | None = None
+
+    def _enumerate_resources(self) -> Iterable[GenomicResource]:
         self.enumerations += 1
+        protocol = cast("FsspecReadOnlyProtocol", self)
+        self.lock_held_while_enumerating = \
+            protocol._all_resources_lock.locked()
         # A config is passed so each resource is complete without a
         # ``genomic_resource.yaml`` on disk: these exist to be enumerated,
         # and none of them is backed by a directory.
-        build = cast("FsspecReadOnlyProtocol", self).build_genomic_resource
         return [
-            build(resource_id, (0,), config={"type": "basic"})
+            protocol.build_genomic_resource(
+                resource_id, (0,), config={"type": "basic"})
             for resource_id in self.ENUMERATED_IDS
         ]
 
@@ -202,6 +210,41 @@ def test_the_memo_is_ordered_by_full_id_whatever_the_seam_yields(
     ] == ["alpha", "beta", "gamma"]
 
 
+@pytest.mark.parametrize("fixture_name", ["seam_proto", "writable_seam_proto"])
+def test_the_seam_runs_with_the_memo_lock_held(
+    fixture_name: str, request: pytest.FixtureRequest,
+) -> None:
+    """The seam's one hard contract, and the one no other test would catch.
+
+    ``_enumerate_resources`` is documented as running under
+    ``_all_resources_lock``, which is what lets its implementations be
+    written with no locking in them at all -- and what makes re-entering
+    ``get_all_resources_dict`` or ``invalidate`` from one a deadlock.
+
+    Nothing else here would notice if that stopped being true.  A refactor
+    that enumerated first and took the lock only to install the result would
+    leave every other test in this module passing -- same resources, same
+    order, same single enumeration -- while silently reopening the #458
+    window for an ``invalidate`` landing between the two steps.
+    """
+    proto = request.getfixturevalue(fixture_name)
+
+    proto.get_all_resources_dict()
+
+    assert proto.lock_held_while_enumerating is True
+
+
+def fsspec_protocol_classes() -> list[type]:
+    """Every fsspec protocol class currently defined, test-local ones too."""
+    found = []
+    pending = [FsspecReadOnlyProtocol]
+    while pending:
+        protocol_class = pending.pop()
+        found.append(protocol_class)
+        pending.extend(protocol_class.__subclasses__())
+    return found
+
+
 def test_the_memo_protocol_is_implemented_exactly_once() -> None:
     """No fsspec protocol may carry a second copy of the memo protocol.
 
@@ -211,18 +254,40 @@ def test_the_memo_protocol_is_implemented_exactly_once() -> None:
     on the day it is written, and then quietly ages out of step with this one,
     which is exactly what #458 met.  ``_FILESYSTEM_KWARGS``' drift guard
     (#514) is here for the same reason.
+
+    Walked over live subclasses rather than a hand-written list, so the
+    assertion covers the protocol that has not been written yet -- which is
+    the only one it can usefully protect.
     """
     memo_holders = [
         protocol_class.__name__
-        for protocol_class in (
-            FsspecReadOnlyProtocol, FsspecReadWriteProtocol)
+        for protocol_class in fsspec_protocol_classes()
         if "get_all_resources_dict" in vars(protocol_class)
     ]
     assert memo_holders == ["FsspecReadOnlyProtocol"]
 
-    # ...and every protocol contributes the part that genuinely differs.
-    assert "_collect_all_resources" in vars(FsspecReadOnlyProtocol)
-    assert "_collect_all_resources" in vars(FsspecReadWriteProtocol)
+
+def test_a_writable_fsspec_protocol_never_inherits_the_contents_enumeration(
+) -> None:
+    """A writable protocol must enumerate by scanning, and say so.
+
+    The seam has a working default -- the ``.CONTENTS`` reader -- so a
+    writable protocol that neglects to override it does not fail loudly the
+    way ``ReadWriteRepositoryProtocol``'s abstract ``collect_all_resources``
+    makes a missing scan fail.  It answers from ``.CONTENTS`` instead: stale
+    on a repository it is itself rewriting, and absent altogether on one that
+    has never been repaired.  Implementing the abstract method is not enough,
+    because the memo reads the seam.  This is the assertion that turns that
+    into a failure at the moment the class is added.
+    """
+    inheritors = [
+        protocol_class.__name__
+        for protocol_class in fsspec_protocol_classes()
+        if issubclass(protocol_class, ReadWriteRepositoryProtocol)
+        and protocol_class._enumerate_resources
+        is FsspecReadOnlyProtocol._enumerate_resources
+    ]
+    assert inheritors == []
 
 
 def test_the_two_protocols_keep_their_own_enumerations(

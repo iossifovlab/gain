@@ -695,17 +695,28 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         """Return generator over all resources in the repository."""
         yield from self.get_all_resources_dict().values()
 
-    def _collect_all_resources(self) -> Iterable[GenomicResource]:
+    def _enumerate_resources(self) -> Iterable[GenomicResource]:
         """Enumerate this repository's resources, in any order.
 
-        The one seam ``get_all_resources_dict`` leaves to a subclass. That
-        method holds the memo, the lock, the keying and the ordering; a
-        subclass contributes only what it can enumerate, and so cannot get
-        the locking wrong by getting the enumeration right (#515).
+        The one seam ``get_all_resources_dict`` leaves to a subclass: that
+        method holds the memo, the lock, the keying and the ordering, so
+        there is one implementation of the memo protocol to get right rather
+        than one per protocol (#515).
 
-        Called with ``_all_resources_lock`` HELD. An implementation must
-        therefore not take that lock, nor re-enter ``get_all_resources_dict``
-        or ``invalidate`` -- the lock is not reentrant.
+        Called with ``_all_resources_lock`` HELD, and the lock is NOT
+        reentrant. An implementation must therefore not take it, and must not
+        re-enter ``get_all_resources_dict``, ``get_all_resources``, ``close``
+        or ``invalidate`` -- on this protocol or on any protocol whose
+        invalidation cascades back to this one. That is a real trap and not a
+        theoretical one: ``CachingProtocol.get_all_resources_dict``
+        legitimately invalidates a *sub*-protocol from inside its own memo
+        population, and the same idiom here deadlocks the process with no
+        traceback. Pinned by
+        ``test_the_seam_runs_with_the_memo_lock_held``.
+
+        Named apart from the public ``collect_all_resources`` on purpose:
+        that one is the read-write scan itself, and this one is the memo's
+        seam. Overriding the wrong one is silent.
 
         This implementation reads the repository's ``.CONTENTS``, the only
         enumeration available to a protocol that cannot scan for itself.
@@ -748,20 +759,26 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         The whole memo protocol -- the lock, the check-then-populate, the
         keying, the ordering and the return -- lives here and only here, for
         every fsspec protocol. A subclass enumerates the repository by
-        overriding ``_collect_all_resources`` and inherits the rest. Both
-        halves used to be duplicated in ``FsspecReadWriteProtocol``, and the
-        release-then-read defect of #458 was in both copies while the report
-        named one of them (#515).
+        overriding ``_enumerate_resources`` and inherits the rest (#515).
+
+        ``FsspecReadWriteProtocol`` used to carry a second copy of all of it
+        and differ only in the enumeration, which is how the release-then-read
+        defect of #458 came to be in two places while the report named one.
         """
         with self._all_resources_lock:
             if self._all_resources is None:
                 # Ordered here rather than in the seam: the memo's key order
                 # is this method's guarantee, so an enumeration cannot cost
                 # the repository its ordering by yielding as it finds.
+                #
+                # ``sorted`` drains the seam's iterable HERE, inside the
+                # lock. A seam that returns a generator therefore still does
+                # all of its work under the lock, exactly as the two
+                # hand-written copies did.
                 self._all_resources = {
                     res.get_full_id(): res
                     for res in sorted(
-                        self._collect_all_resources(),
+                        self._enumerate_resources(),
                         key=lambda r: r.get_full_id(),
                     )
                 }
@@ -1351,13 +1368,19 @@ class FsspecReadWriteProtocol(
             return reason
         return f"a symlink to <{target}>: {reason}"
 
-    def _collect_all_resources(self) -> Iterable[GenomicResource]:
+    def _enumerate_resources(self) -> Iterable[GenomicResource]:
         """Enumerate by scanning the repository, not by reading ``.CONTENTS``.
 
-        The whole of this class's contribution to ``get_all_resources_dict``:
-        a writable repository is authoritative about itself, so it scans
-        rather than trusting a ``.CONTENTS`` it may itself be mid-way through
-        rewriting. The memo, its lock and the ordering are inherited (#515).
+        The whole of this class's contribution to ``get_all_resources_dict``;
+        the memo, its lock and the ordering are inherited (#515).
+
+        Scanning is not a preference here, it is the only thing that can
+        work: this class *writes* ``.CONTENTS`` -- ``build_content_file``
+        enumerates through ``get_all_resources`` and serializes the result --
+        so reading it back to answer that same enumeration would be circular,
+        and on a repository that has never been repaired there is no
+        ``.CONTENTS`` to read at all. That is the ``grr_manage repo-repair``
+        path over a fresh directory.
         """
         return self.collect_all_resources()
 
