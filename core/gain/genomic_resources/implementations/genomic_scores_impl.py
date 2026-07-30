@@ -327,8 +327,11 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         )
         ref_genome = self._get_reference_genome_cached(grr, ref_genome_id)
         for chrom in self.score.get_all_chromosomes():
-            # Resolved afresh for every contig: a contig whose length cannot be
-            # determined must be skipped, never inherit the previous contig's.
+            # Resolved afresh for every contig, never inherited from the
+            # previous one.  Two different things can leave it unset, and they
+            # get opposite treatment below: a contig PROVEN to hold no records
+            # is skipped, a contig whose length merely could not be DETERMINED
+            # is scanned whole.
             chrom_length: int | None = None
             if ref_genome is not None and chrom in ref_genome.chromosomes:
                 chrom_length = ref_genome.get_chrom_length(chrom)
@@ -336,15 +339,22 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 if isinstance(self.score.table, InmemoryGenomicPositionTable):
                     # The in-memory backend yields record tuples; read the end
                     # position from its named slot rather than an adapter attr.
-                    # A known-but-empty contig (e.g. a chrom_mapping onto a file
-                    # contig with no data rows) yields no records at all: it has
-                    # no maximum end position, so ``default=None`` hands it to
-                    # the warn-and-skip below instead of raising out of max().
+                    # This backend holds the whole file, so no maximum end
+                    # position PROVES the contig has no records (e.g. a
+                    # chrom_mapping onto a file contig with no data rows).
+                    # There is nothing to scan and nothing to validate, and an
+                    # unbounded region here would cost a table open per empty
+                    # contig -- hundreds of them for a mapping that covers
+                    # hg38's alts.
                     chrom_length = \
                         max((record[POS_END]
                              for record in
                              self.score.table.get_records_in_region(chrom)),
                             default=None)
+                    if chrom_length is None:
+                        logger.info(
+                            "contig %s holds no records; not scanned", chrom)
+                        continue
                 elif isinstance(self.score.table, BigWigTable):
                     chrom_length = \
                         self.score.table.get_chromosome_length(chrom)
@@ -357,8 +367,19 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                         chrom_length = get_chromosome_length_tabix(
                             self.score.table.pysam_file, fchrom)
             if chrom_length is None:
+                # Reached only when the length could not be determined for a
+                # contig that may well hold records -- skipping it would leave
+                # them out of the statistics AND out of the ordering checks the
+                # scan performs on the way, while the resource still reported
+                # its statistics as freshly built.  A length is what SPLITTING
+                # needs, not what READING needs, so scan the contig whole.  An
+                # unbounded region keeps the per-record path (see
+                # :meth:`_do_histogram_task`): slower than a split contig,
+                # never wrong.
                 logger.warning(
-                    "unable to find chromosome length for %s", chrom)
+                    "unable to find chromosome length for %s; "
+                    "scanning it as a single unbounded region", chrom)
+                regions.append(Region(chrom))
                 continue
 
             regions.extend(
