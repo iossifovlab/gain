@@ -400,15 +400,24 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         return self.public_url
 
     def invalidate(self) -> None:
+        """Drop the memoized resources, leaving handed-out ones alone.
+
+        Clears only this protocol's own cache. The resources in the memo are
+        handed out by reference, so unbinding their ``proto`` on the way out
+        -- as this used to do -- breaks the objects live callers are already
+        holding, and they raise ``AttributeError`` on ``None`` at first use
+        (#513). Their lifetime is the caller's business; dropping the memo is
+        enough to make the next read reload, and enough to let a resource no
+        one else holds be collected, since the memo held the only reference
+        to it. Not the protocol, though -- ``_FSSPEC_PROTOCOLS`` memoizes
+        every protocol for the life of the process and never evicts, so no
+        amount of unbinding here ever released one.
+        """
         # Under the memo lock, and over the whole body: returning the memo
         # from inside the lock is only half the guarantee, because an
-        # unsynchronised ``invalidate`` can still clear the attribute -- and
-        # unbind the ``proto`` of every resource in it -- in the middle of a
-        # populating read (#458).
+        # unsynchronised ``invalidate`` can still clear the attribute in the
+        # middle of a populating read (#458).
         with self._all_resources_lock:
-            if self._all_resources is not None:
-                for resource in self._all_resources.values():
-                    resource.proto = None  # type: ignore
             self._all_resources = None
 
     def close(self) -> None:
