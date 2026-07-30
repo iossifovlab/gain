@@ -12,6 +12,7 @@ from gain.genomic_resources.repository import (
     GenomicResource,
     Manifest,
     ReadWriteRepositoryProtocol,
+    ResourceScan,
 )
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
@@ -234,17 +235,17 @@ def test_a_materialised_file_the_scan_skipped_falls_back_to_its_sidecar(
     prebuild_entries = collect_dvc_entries(proto_fixture, res)
     assert proto_fixture.file_exists(res, "b.big")
 
-    original_scan = proto_fixture.collect_resource_entries
+    original_scan = proto_fixture.scan_resource_entries
 
-    def scan_without_b_big(resource: GenomicResource) -> Manifest:
+    def scan_without_b_big(resource: GenomicResource) -> ResourceScan:
         result = Manifest()
-        for entry in original_scan(resource):
+        for entry in original_scan(resource).manifest:
             if entry.name != "b.big":
                 result.add(entry)
-        return result
+        return ResourceScan(result, {})
 
     monkeypatch.setattr(
-        proto_fixture, "collect_resource_entries", scan_without_b_big)
+        proto_fixture, "scan_resource_entries", scan_without_b_big)
 
     manifest = proto_fixture.build_manifest(res, prebuild_entries)
 

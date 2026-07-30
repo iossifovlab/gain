@@ -15,7 +15,7 @@ import re
 import tempfile
 import time
 from collections.abc import Callable, Generator
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, suppress
 from dataclasses import asdict
 from threading import Lock
 from typing import (
@@ -51,6 +51,7 @@ from gain.genomic_resources.repository import (
     ReadOnlyRepositoryProtocol,
     ReadWriteRepositoryProtocol,
     ResourceFileState,
+    ResourceScan,
     is_generated_info_page,
     is_gr_id_token,
     parse_gr_id_version_token,
@@ -1021,11 +1022,12 @@ class FsspecReadWriteProtocol(
             yield self.build_genomic_resource(
                 res_id, res_ver, config, manifest)
 
-    def collect_resource_entries(self, resource: GenomicResource) -> Manifest:
-        """Scan the resource and resturn a manifest."""
+    def scan_resource_entries(self, resource: GenomicResource) -> ResourceScan:
+        """Scan the resource and return what was found."""
         resource_path = resource.get_genomic_resource_id_version()
 
         result = Manifest()
+        unreadable: dict[str, str] = {}
         ancestor_specs = self._collect_ancestor_specs(resource_path)
         for name, path in self._scan_resource_for_files(
                 resource_path, [], ancestor_specs):
@@ -1039,9 +1041,61 @@ class FsspecReadWriteProtocol(
             if is_generated_info_page(name):
                 continue
 
-            size = self._get_filepath_size(path)
+            try:
+                size = self._get_filepath_size(path)
+            except OSError as error:
+                # The listing yielded this name and the stat could not
+                # describe it. Reported rather than raised: a `.dvc` sidecar
+                # may still describe it, and only the caller -- which has
+                # the sidecars -- can tell a garbage-collected DVC cache
+                # link from a genuinely broken resource (gain#503).
+                #
+                # `OSError`, not `FileNotFoundError`: a symlink into a
+                # shared DVC cache fails to resolve for more reasons than a
+                # collected cache object -- a loop (ELOOP), a target whose
+                # parent is not a directory (ENOTDIR), a cache directory
+                # this run may not traverse (EACCES). They are one situation
+                # to the user, whose `exists()` is False for every one of
+                # them, and were one crash each.
+                #
+                # Caught rather than pre-tested so that a repository with
+                # nothing broken pays NOTHING: the happy path is the same
+                # single stat it always was, and the link probe below runs
+                # only for a name that already failed.
+                if self.scheme != "file":
+                    # Only a local filesystem has symlinks. A remote store
+                    # that lists a key and then fails to describe it is far
+                    # likelier to be a transient fault than a steady state,
+                    # and letting a sidecar answer for it would publish an
+                    # md5 sum for an object that is not in the bucket.
+                    raise
+                reason = self._unreadable_detail(path, error)
+                logger.debug(
+                    "cannot read <%s> of <%s>: %s",
+                    name, resource.resource_id, reason)
+                unreadable[name] = reason
+                continue
             result.add(ManifestEntry(name, size, None))
-        return result
+        return ResourceScan(result, unreadable)
+
+    def _unreadable_detail(self, path: str, error: OSError) -> str:
+        """Return why ``path`` could not be read, for a human to read.
+
+        For the case this was written for -- a link into a DVC cache that
+        is no longer resolvable -- naming the link target IS the diagnosis,
+        and the errno distinguishes a collected cache object from a cache
+        that is merely unreachable. Only ever called for a name that
+        already failed to stat, so this never touches the happy path.
+        """
+        reason = error.strerror or type(error).__name__
+        local_path = path.removeprefix(f"{self.scheme}://")
+        target: str | None = None
+        with suppress(OSError):
+            if os.path.islink(local_path):
+                target = os.readlink(local_path)
+        if target is None:
+            return reason
+        return f"a symlink to <{target}>: {reason}"
 
     def get_all_resources(self) -> Generator[GenomicResource, None, None]:
         """Return generator over all resources in the repository."""
