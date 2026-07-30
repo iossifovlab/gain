@@ -84,7 +84,7 @@ def test_the_bigwig_value_read_is_the_identity(
         assert record[PAYLOAD] == pytest.approx(0.11)
 
         monkeypatch.setattr(GenomicScoreDef, "parse_value", _boom)
-        assert score.get_score_from_record(record, "bw") == \
+        assert score.get_score_value_from_record(record, "bw") == \
             pytest.approx(0.11)
 
 
@@ -143,7 +143,7 @@ def test_the_only_bigwig_column_is_the_payload_itself(
             "chr1", 1, 6, [0], 100))
         bulk = [value for _, _, cols in batches for value in cols[0]]
         per_record = [
-            score.get_score_from_record(record, "bw")
+            score.get_score_value_from_record(record, "bw")
             for record in score.fetch_records("chr1", 1, 6)
         ]
     assert bulk == pytest.approx([0.5, 0.7, 0.9])
@@ -311,7 +311,7 @@ def test_the_canonical_bigwig_config_addresses_no_column_at_all(
     with score.open():
         assert score.score_definitions["bw"].score_index == 0
         record = next(iter(score.fetch_records("chr1", 5, 5)))
-        assert score.get_score_from_record(record, "bw") == \
+        assert score.get_score_value_from_record(record, "bw") == \
             pytest.approx(0.11)
 
 
@@ -340,7 +340,7 @@ def test_the_deprecated_value_index_opens_and_reports_once(
     score = _a_bigwig_resource(tmp_path, _indexed(3, key=key))
     with caplog.at_level("DEBUG"), score.open():
         record = next(iter(score.fetch_records("chr1", 5, 5)))
-        assert score.get_score_from_record(record, "bw") == \
+        assert score.get_score_value_from_record(record, "bw") == \
             pytest.approx(0.11)
 
     reported = [
@@ -457,8 +457,8 @@ def test_a_configured_bigwig_na_value_survives_the_emptied_default(
         assert score._extract_value is extract_bigwig_value_na
         na_record = next(iter(score.fetch_records("chr1", 1, 1)))
         real_record = next(iter(score.fetch_records("chr1", 11, 11)))
-        assert score.get_score_from_record(na_record, "bw") is None
-        assert score.get_score_from_record(real_record, "bw") == \
+        assert score.get_score_value_from_record(na_record, "bw") is None
+        assert score.get_score_value_from_record(real_record, "bw") == \
             pytest.approx(1.0)
 
 
@@ -522,10 +522,10 @@ def test_a_linsight_shaped_bigwig_table_reports_opens_and_reads(
 
     with score.open():
         record = next(iter(score.fetch_records("chr1", 5, 5)))
-        assert score.get_score_from_record(record, "bw") == \
+        assert score.get_score_value_from_record(record, "bw") == \
             pytest.approx(0.11)
         record = next(iter(score.fetch_records("chr1", 15, 15)))
-        assert score.get_score_from_record(record, "bw") == \
+        assert score.get_score_value_from_record(record, "bw") == \
             pytest.approx(0.22)
 
 
@@ -553,5 +553,5 @@ def test_a_header_on_a_bigwig_table_is_warned_about_and_ignored(
 
     with score.open():
         record = next(iter(score.fetch_records("chr1", 5, 5)))
-        assert score.get_score_from_record(record, "bw") == \
+        assert score.get_score_value_from_record(record, "bw") == \
             pytest.approx(0.11)

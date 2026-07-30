@@ -386,7 +386,7 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
     An optional annotator-level boolean expression evaluated against each
     record before it is included in the result.  Supported
     operators: ``>``, ``<``, ``==``, ``in``, ``and``, ``or``.  Variables
-    resolve via ``GenomicScore.get_score_from_record``.
+    resolve via ``GenomicScore.get_score_value_from_record``.
     """
 
     ALLELE_FILTER_GRAMMAR = textwrap.dedent("""
@@ -517,7 +517,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             left_value = left.children[0].children[0].value
 
             def left_accessor(_record: Record) -> Any:
-                return score.get_score_from_record(_record, left_value)
+                return score.get_score_value_from_record(_record, left_value)
         else:
             assert isinstance(left.children[0], Tree)
             assert isinstance(left.children[0].data, Token)
@@ -547,7 +547,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             right_value = right.children[0].children[0].value
 
             def right_accessor(_record: Record) -> Any:
-                return score.get_score_from_record(_record, right_value)
+                return score.get_score_value_from_record(_record, right_value)
         else:
             assert isinstance(right.children[0], Tree)
             assert isinstance(right.children[0].data, Token)
@@ -622,7 +622,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             return self._empty_result()
 
         scores: dict[str, Any] = {
-            sc: self.allele_score.get_score_from_record(record, sc)
+            sc: self.allele_score.get_score_value_from_record(record, sc)
             for sc in (
                 self.simple_score_queries or self.allele_score.get_all_scores()
             )
@@ -665,7 +665,8 @@ Non-``VCFAllele`` annotatables always use region aggregation.
 
             for source in self.allele_score_sources:
                 raw[source].append(
-                    self.allele_score.get_score_from_record(record, source))
+                    self.allele_score.get_score_value_from_record(
+                        record, source))
 
             if self.allele_attribute is not None:
                 allele_str = f"{record[CHROM]}:{record[POS_BEGIN]}"
@@ -674,7 +675,8 @@ Non-``VCFAllele`` annotatables always use region aggregation.
                 if self.attrs_to_include:
                     attrs_str = ",".join(
                         stringify(
-                            self.allele_score.get_score_from_record(record, a))
+                            self.allele_score.get_score_value_from_record(
+                                record, a))
                         for a in self.attrs_to_include)
                     allele_str += f":{attrs_str}"
                 alleles.add(allele_str)
