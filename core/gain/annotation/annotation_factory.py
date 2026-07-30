@@ -20,10 +20,7 @@ from gain.annotation.annotation_pipeline import (
     InputAnnotableAnnotatorDecorator,
     ValueTransformAnnotatorDecorator,
 )
-from gain.genomic_resources.repository import (
-    GenomicResource,
-    GenomicResourceRepo,
-)
+from gain.genomic_resources.repository import GenomicResourceRepo
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +147,9 @@ def load_pipeline_from_file_or_resource(
             f"'{arg}' is neither a valid file path "
             f"nor a valid GRR resource id")
     if resource.get_type() != "annotation_pipeline":
-        raise TypeError("Expected an annotation_pipeline resource.")
+        raise TypeError(
+            f"Expected an annotation_pipeline resource. "
+            f"{resource.resource_id} is a {resource.get_type()} resource.")
     raw = resource.get_file_content(resource.get_config()["filename"])
     return load_pipeline_from_yaml(
         raw, grr,
@@ -170,26 +169,6 @@ def load_pipeline_from_yaml(
         allow_repeated_attributes=allow_repeated_attributes,
         work_dir=work_dir,
     )
-
-
-def load_pipeline_from_grr(
-    grr: GenomicResourceRepo,
-    resource: GenomicResource,
-) -> AnnotationPipeline:
-    """Load a pipeline from a grr and a resource."""
-    if resource.get_type() != "annotation_pipeline":
-        logger.error(
-            "trying to open a resource %s of type "
-            "%s as annotation pipeline",
-            resource.resource_id, resource.get_type())
-        raise ValueError(
-            f"wrong resource type {resource.get_type()} of "
-            f"{resource.resource_id}; expected annotation_pipeline")
-
-    raw: str = resource.get_file_content(
-        resource.get_config()["filename"])
-
-    return load_pipeline_from_yaml(raw, grr)
 
 
 def build_pipeline_annotator(

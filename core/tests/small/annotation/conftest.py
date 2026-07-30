@@ -212,6 +212,19 @@ def annotate_directory_fixture(
                         filename: annotation.yaml
                     """,
                 },
+                # `one` and `four` both publish a score named `score`, so a
+                # pipeline over the pair only builds when the caller allows
+                # repeated attributes.
+                "res_pipeline_repeated": {
+                    "annotation.yaml": """
+                        - position_score: one
+                        - position_score: four
+                    """,
+                    "genomic_resource.yaml": """
+                        type: annotation_pipeline
+                        filename: annotation.yaml
+                    """,
+                },
                 "test_genome": {
                     "genomic_resource.yaml": """
                         type: genome
