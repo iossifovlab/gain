@@ -286,23 +286,24 @@ def build_inmemory_protocol(
             "absolute path: %s", root_path)
         raise ValueError(f"not an absolute root path: {root_path}")
 
-    built = build_fsspec_protocol(proto_id, f"memory://{root_path}")
-    if not isinstance(built, FsspecReadWriteProtocol):
-        # This function's return type promises a read-write protocol, and it
-        # used to make that promise true by ``cast`` alone -- an assertion to
-        # the type checker that nothing checked at run time (#528). The memory
+    proto = build_fsspec_protocol(proto_id, f"memory://{root_path}")
+    if not isinstance(proto, FsspecReadWriteProtocol):
+        # Defensive, and unreachable today -- deliberately kept anyway. This
+        # function's return type promises a read-write protocol, and it used
+        # to make that promise true by ``cast`` alone: an assertion to the
+        # type checker that nothing checked at run time (#528). The memory
         # scheme does build read-write, so the promise held; nothing kept it
-        # holding. Narrowed rather than cast so a protocol without the write
-        # methods this function goes on to call cannot be returned as one that
-        # has them.
+        # holding.
         #
-        # Not reachable through this module today: a memo hit whose mode
-        # disagrees is refused earlier, in ``__new__`` (#514), which is what
-        # the message below points at when the id is already taken.
+        # The one way the builder above can hand back something else is a memo
+        # hit on an id already held by a read-only protocol, and that is
+        # refused earlier and more informatively in ``__new__`` (#514) -- so
+        # this branch has no test, because no caller can reach it. It exists
+        # so that a future change to the builder's dispatch cannot quietly
+        # turn the promise false.
         raise TypeError(
             f"protocol {proto_id!r} over memory://{root_path} is not "
             f"read-write, so it cannot hold an embedded repository")
-    proto = built
     for rid, rver, rcontent in _scan_for_resources(content, []):
         resource = GenomicResource(rid, rver, proto)
         for fname, fcontent in _scan_for_resource_files(rcontent, []):
@@ -1892,6 +1893,46 @@ FsspecRepositoryProtocol = FsspecReadOnlyProtocol | FsspecReadWriteProtocol
 _FSSPEC_PROTOCOLS: dict[tuple[str, str], FsspecRepositoryProtocol] = {}
 
 
+#: The string spellings of a boolean this module accepts for ``read_only``,
+#: matching what the definition models coerce and what yaml would have
+#: produced unquoted. Kept deliberately closed: a value outside it is a
+#: mistake to report, not a value to guess at.
+_FALSE_SPELLINGS = frozenset({"false", "no", "off", "0", ""})
+_TRUE_SPELLINGS = frozenset({"true", "yes", "on", "1"})
+
+
+def _resolve_read_only(*, value: str | bool | None) -> bool | None:
+    """Return ``read_only`` as a boolean, or ``None`` if it was not passed.
+
+    ``read_only`` is documented as the one boolean keyword, but it reaches
+    this module as a *string* from two directions, and a bare truthiness test
+    read every one of them -- ``"false"`` included -- as read-only, which is
+    the inversion of what was asked for (#528):
+
+    * ``grr_manage --extra-args read_only=false`` parses into ``dict[str,
+      str]`` and is splatted in verbatim;
+    * a repository definition is built from the **raw** definition dict, not
+      from the validated model, so a quoted ``read_only: "false"`` in yaml
+      arrives here as ``"false"`` even though ``FileRepoDefinition`` coerced
+      it to ``False`` when the definition was checked.
+
+    A value that spells no boolean at all raises rather than defaulting: it
+    can only be a mistake, and every way of guessing at it silently produces
+    a repository in a mode nobody asked for.
+    """
+    if value is None or isinstance(value, bool):
+        return value
+    spelling = value.strip().lower()
+    if spelling in _FALSE_SPELLINGS:
+        return False
+    if spelling in _TRUE_SPELLINGS:
+        return True
+    spellings = sorted(_TRUE_SPELLINGS | (_FALSE_SPELLINGS - {""}))
+    raise ValueError(
+        f"read_only must be a boolean, not {value!r}; write one of "
+        f"{spellings} if it has to be spelled as a string")
+
+
 def build_fsspec_protocol(
     proto_id: str, root_url: str, **kwargs: str | bool | None,
 ) -> FsspecRepositoryProtocol:
@@ -1905,7 +1946,7 @@ def build_fsspec_protocol(
     """
     # pylint: disable=import-outside-toplevel
     public_url = cast("str | None", kwargs.pop("public_url", None))
-    read_only = kwargs.pop("read_only", None)
+    read_only = _resolve_read_only(value=kwargs.pop("read_only", None))
     filesystem = _build_filesystem(root_url, **kwargs)
 
     url = urlparse(root_url)

@@ -105,34 +105,74 @@ def test_a_local_protocol_reads_read_only_exactly_as_before(
     can tell the two apart, and absent has to keep meaning read-write here --
     which is what a caller that passes nothing has always got.
     """
+    # ``tmp_path`` differs per parametrize case, so one id cannot collide in
+    # the process-global protocol memo.
     proto = build_fsspec_protocol(
-        f"local-{expected.name}-{len(kwargs)}",
-        f"file://{tmp_path}", **kwargs)
+        "local-read-only-probe", f"file://{tmp_path}", **kwargs)
 
     assert proto.mode() == expected
 
 
-def test_the_inmemory_builder_never_returns_a_read_only_protocol(
+@pytest.mark.parametrize(
+    "spelling", ["false", "False", "FALSE", "no", "off", "0"])
+def test_a_read_write_request_spelled_as_a_string_is_still_a_request(
+    tmp_path: pathlib.Path,
+    spelling: str,
+) -> None:
+    """``read_only`` arrives as a string from two directions, and both mean it.
+
+    ``grr_manage --extra-args read_only=false`` parses into ``dict[str, str]``
+    and is splatted in verbatim, and a repository definition is built from the
+    *raw* dict -- so a quoted ``read_only: "false"`` in yaml reaches here as a
+    string even though the definition model validated it to ``False``.
+
+    Every one of these spellings is a plain truthy string, so a bare
+    truthiness test read them all as *read-only* -- the exact inversion of
+    what was asked for, silently, which is the defect #528 is about.
+    """
+    assert build_fsspec_protocol(
+        f"local-str-{spelling}", f"file://{tmp_path}",
+        read_only=spelling).mode() == Mode.READWRITE
+
+    with pytest.raises(ValueError, match="read-only"):
+        build_fsspec_protocol(
+            f"http-str-{spelling}", "https://grr.example.com",
+            read_only=spelling)
+
+
+def test_a_read_only_value_that_means_nothing_is_refused() -> None:
+    """A value that is neither a boolean nor a boolean spelling is a mistake.
+
+    Guessing at it is how ``read_only=maybe`` becomes a silently read-only
+    repository. Refusing keeps the keyword's promise that it is a boolean.
+    """
+    with pytest.raises(ValueError, match="read_only"):
+        build_fsspec_protocol(
+            "http-str-nonsense", "https://grr.example.com",
+            read_only="maybe")
+
+
+def test_the_inmemory_builder_refuses_an_id_held_by_a_read_only_protocol(
     tmp_path: pathlib.Path,
 ) -> None:
-    """The mirror-image half of #528, on the memory scheme.
+    """A mistyped protocol never escapes ``build_inmemory_protocol``.
 
-    ``build_inmemory_protocol`` promises a read-write protocol in its return
-    type and used to make that true by ``cast`` alone -- an assertion to the
-    type checker that nothing checked at runtime.  The memory scheme does
-    build read-write, so the promise held; what was missing was anything to
-    keep it holding.
+    Its return type promises read-write and used to be made true by ``cast``
+    alone -- an assertion to the type checker that nothing checked at run
+    time.  The memory scheme does build read-write, so the promise held.
 
-    The reachable way to break it is the memo: ids are per-process and never
-    evicted, so an id already held by a read-only protocol over the same root
-    is the one case where the builder can be handed something other than what
-    it asked for.  It must fail, with a message about the conflict, rather
-    than return a protocol whose write methods do not exist.
+    The only way the builder can be handed something else is the memo: ids are
+    per-process and never evicted, so an id already held by a read-only
+    protocol over the same root is a collision.  This pins that it fails, and
+    names the id it failed on.
+
+    Note what raises is the #514 rebuild refusal in ``__new__``, which gets
+    there first -- not the narrowing inside ``build_inmemory_protocol``, which
+    is defensive and has no reachable caller.  This test does not cover that
+    narrowing and is not claimed to.
     """
     build_fsspec_protocol(
         "inmemory-collision", f"memory://{tmp_path}", read_only=True)
 
-    with pytest.raises((ValueError, TypeError)) as excinfo:
+    with pytest.raises(ValueError, match="inmemory-collision"):
         build_inmemory_protocol("inmemory-collision", str(tmp_path), {})
-
-    assert "inmemory-collision" in str(excinfo.value)
