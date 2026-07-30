@@ -133,10 +133,8 @@ def test_dispatch_min_max_falls_back_for_whole_table_scan(
     _assert_min_max_equal(via_task, ref)
 
 
-def test_int_score_is_not_bulk_scan_eligible(
-    tmp_path: pathlib.Path,
-) -> None:
-    resource = (
+def _int_tabix(tmp_path: pathlib.Path) -> GenomicResource:
+    return (
         a_position_score()
         .with_score("s", "int")
         .with_data(
@@ -144,6 +142,88 @@ def test_int_score_is_not_bulk_scan_eligible(
             chrom  pos_begin  pos_end  s
             chr1   1          2        3
             chr1   3          4        7
+            chr1   5          6        .
+            chr1   7          8        3.5
+            chr1   9          10       -4
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+def test_int_score_is_bulk_scan_eligible(
+    tmp_path: pathlib.Path,
+) -> None:
+    assert G._bulk_scan_eligible(_int_tabix(tmp_path), ["s"])
+
+
+def test_bulk_min_max_matches_per_record_int_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _int_tabix(tmp_path)
+    ref = G._do_min_max(resource, ["s"], "chr1", 1, 10)
+    bulk = G._do_min_max_bulk(resource, ["s"], "chr1", 1, 10)
+
+    _assert_min_max_equal(bulk, ref)
+    # "3.5" is not an int, so it is a non-value in both paths, and "." is the
+    # configured one -- the extremes come from 3, 7 and -4.
+    assert (bulk["s"].min, bulk["s"].max) == (-4, 7)
+
+
+def test_an_int_score_min_max_serializes_as_ints(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The saved statistic keeps the type the value has.
+
+    ``MinMaxValue.serialize`` writes whatever it was folded with, so a column
+    read that left the extremes as ``float`` would rewrite every int score's
+    ``min_max`` file from ``min: 3`` to ``min: 3.0`` the next time its
+    statistics were built.
+    """
+    resource = _int_tabix(tmp_path)
+    ref = G._do_min_max(resource, ["s"], "chr1", 1, 10)
+    bulk = G._do_min_max_bulk(resource, ["s"], "chr1", 1, 10)
+
+    assert bulk["s"].serialize() == ref["s"].serialize()
+    assert "min: -4\n" in bulk["s"].serialize()
+
+
+def test_a_str_score_is_bulk_scan_eligible_as_a_column_read(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The capability query is about the parse, not about min/max.
+
+    A str score never reaches a min/max scan -- only a number histogram
+    without a view range schedules one -- but the bulk column read serves it,
+    which is what makes its categorical histogram batchable.
+    """
+    resource = (
+        a_position_score()
+        .with_score("s", "str")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  s
+            chr1   1          2        aaa
+            chr1   3          4        bbb
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    assert G._bulk_scan_eligible(resource, ["s"])
+
+
+def test_a_bool_score_is_not_bulk_scan_eligible(
+    tmp_path: pathlib.Path,
+) -> None:
+    """No column parse is defined for ``bool``, so the gate stays shut."""
+    resource = (
+        a_position_score()
+        .with_score("s", "bool")
+        .with_data(
+            """
+            chrom  pos_begin  pos_end  s
+            chr1   1          2        True
+            chr1   3          4        False
             """)
         .with_tabix()
         .build_resource(tmp_path)

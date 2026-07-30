@@ -25,6 +25,7 @@ from gain.genomic_resources.genomic_scores import (
     build_score_from_resource,
 )
 from gain.genomic_resources.histogram import (
+    CategoricalHistogram,
     CategoricalHistogramConfig,
     Histogram,
     HistogramConfig,
@@ -526,11 +527,12 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         Reads a region as batches of column arrays -- tabix pulls raw pysam
         rows directly and bigWig converts each fetched interval chunk in one
         shot, neither building a ``Record`` per row -- and accumulates each
-        score's histogram with :meth:`NumberHistogram.add_batch` rather than a
+        score's histogram with the histogram's own ``add_batch`` rather than a
         per-record ``add_value``.  The clip, the weight, the overlap rule and
         the value coercion are identical to the per-record path (pinned by the
         bulk-vs-per-record tests, and by both paths reading one statement of
-        the per-kind rules); the dispatch restricts this to float scores over
+        the per-kind rules); the dispatch restricts this to the score and
+        histogram combinations :meth:`_can_bulk_histogram` admits, over
         tabix/bigWig tables -- everything else keeps :meth:`_do_histogram`.
         """
         result: dict[str, Histogram] = {}
@@ -597,9 +599,17 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         ``[start, end]`` exactly as ``_fetch_region_records`` does (dropping
         records ending before ``start``), weights it as ``score``'s kind
         weights it, enforces whatever overlap rule that kind states across the
-        batch boundary, and adds each float score's values vectorized.
+        batch boundary, and adds each score's values vectorized.
         Returns the last clipped right edge so the next batch can continue the
         overlap check.
+
+        A histogram that refuses its batch is nullified and the rest of the
+        resource's scores carry on, exactly as :meth:`_do_histogram` nullifies
+        one that refuses a value: a categorical histogram raises once its
+        values outgrow ``UNIQUE_VALUES_LIMIT``, and the score it belongs to
+        must not cost the others their statistics.  A nullified score is
+        skipped by every later batch, which is what the per-record path gets
+        from ``NullHistogram.add_value`` being a no-op.
         """
         pos_begin, pos_end, value_cells = arrays
         keep, weights, prev_right = \
@@ -607,9 +617,20 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 pos_begin, pos_end, region, prev_right, score)
 
         for score_id, hist in result.items():
-            values = value_cells[score_id]
-            assert isinstance(hist, NumberHistogram)
-            hist.add_batch(values[keep], weights)
+            if not isinstance(hist, (NumberHistogram, CategoricalHistogram)):
+                continue
+            values = value_cells[score_id][keep]
+            try:
+                hist.add_batch(values, weights)
+            except TypeError as err:
+                logger.exception(
+                    "Failed adding a batch of %s values to the histogram of "
+                    "%s; %s:%s-%s", values.size, score.resource_id, *region)
+                result[score_id] = NullHistogram(NullHistogramConfig(str(err)))
+            except HistogramError as err:
+                logger.warning(
+                    "Histogram for %s nullified: %s", score_id, err)
+                result[score_id] = NullHistogram(NullHistogramConfig(str(err)))
 
         return prev_right
 
@@ -671,28 +692,53 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     ) -> bool:
         """Whether the vectorized scan may serve this histogram build.
 
-        :meth:`_bulk_scan_eligible` plus the one condition that is this
-        caller's alone: every score must feed a NUMBER histogram.  A
-        categorical or null histogram keeps the per-record
-        :meth:`_do_histogram` -- ``add_batch`` is a number-histogram method,
-        and a null histogram has nothing to accumulate.
+        :meth:`_bulk_scan_eligible` plus the conditions that are this caller's
+        alone -- every score must feed a histogram that can accumulate a whole
+        batch, and be handed the batch shape that histogram accepts:
+
+        * a NUMBER histogram takes a ``float`` or an ``int`` score, whose
+          columns the bulk read yields as the ``float64``
+          ``NumberHistogram.add_batch`` accumulates;
+        * a CATEGORICAL histogram takes a ``str`` score, whose column the bulk
+          read yields as the ``str`` objects
+          ``CategoricalHistogram.add_batch`` counts;
+        * a NULL histogram has nothing to accumulate and is skipped by both
+          paths, so it constrains neither.
+
+        The two pairings are the whole rule, and the mismatches are what it
+        exists to keep out: the per-record path meets a value its histogram
+        refuses one at a time, catches the ``TypeError`` and nullifies that
+        one score, whereas a batch of the wrong shape is not a value the
+        histogram can refuse -- it is a coercion failure inside ``add_batch``.
+        So a categorical histogram over an ``int`` score, or a number
+        histogram over a ``str`` one, keeps :meth:`_do_histogram`, which
+        handles both as it always has.
         """
-        number_score_ids = []
+        pairing = {
+            NumberHistogramConfig: ("float", "int"),
+            CategoricalHistogramConfig: ("str",),
+        }
+        bulk_score_ids = []
+        score_defs = build_score_implementation_from_resource(
+            resource).score.score_definitions
         for score_id, hist_conf in all_hist_confs.items():
             if isinstance(hist_conf, NullHistogramConfig):
                 continue
-            if not isinstance(hist_conf, NumberHistogramConfig):
+            value_types = pairing.get(type(hist_conf))
+            score_def = score_defs.get(score_id)
+            if value_types is None or score_def is None \
+                    or score_def.value_type not in value_types:
                 return False
-            number_score_ids.append(score_id)
+            bulk_score_ids.append(score_id)
         return GenomicScoreImplementation._bulk_scan_eligible(
-            resource, number_score_ids)
+            resource, bulk_score_ids)
 
     @staticmethod
     def _bulk_scan_eligible(
         resource: GenomicResource,
         score_ids: list[str],
     ) -> bool:
-        """Whether a vectorized region scan may serve these float scores.
+        """Whether a vectorized region scan may serve these scores.
 
         The shared gate for the histogram and min/max bulk paths, and the place
         the conditions that are THIS caller's live -- as opposed to the one
@@ -704,8 +750,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
           class states them (``RECORD_ORDERING``, ``RECORD_WEIGHT_IS_SPAN``)
           and both scan paths read them from there -- so what this excludes
           is ``np_score``, of which no production GRR has one;
-        * every score a ``float``: ``int()`` / ``str()`` parsing is not the
-          float parse the bulk path does;
+        * every score of a value type the column parse defines
+          (``float``, ``int``, ``str``) -- asked of the score, which owns
+          that parse;
         * and the backend serves the bulk read at all -- asked of the score,
           not tested on the table's class.  This is what keeps a VCF-backed
           allele score on the per-record path: its record payload is not a raw
@@ -804,6 +851,13 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         with the nans dropped first -- an empty remainder contributes nothing --
         folded into the running ``MinMaxValue`` exactly as ``add_value`` seeds
         and combines them.
+
+        An extremum of an ``int`` score is converted back to ``int``, because
+        that is the type the per-record ``add_value`` folds in and therefore
+        what ``MinMaxValue.serialize`` writes (``min: 3``, not ``min: 3.0``).
+        The column arrives as ``float64`` -- the array's non-value has to be a
+        nan -- so the round trip is exact up to 2**53 and the correctly
+        rounded integer above it.
         """
         pos_begin, pos_end, value_cells = arrays
         keep, _weights, prev_right = \
@@ -814,8 +868,12 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             values = value_cells[score_id][keep]
             finite = values[~np.isnan(values)]
             if finite.size:
-                low = float(finite.min())
-                high = float(finite.max())
+                is_int = \
+                    score.score_definitions[score_id].value_type == "int"
+                low: float = int(finite.min()) if is_int \
+                    else float(finite.min())
+                high: float = int(finite.max()) if is_int \
+                    else float(finite.max())
                 min_max.min = low if np.isnan(min_max.min) \
                     else min(min_max.min, low)
                 min_max.max = high if np.isnan(min_max.max) \

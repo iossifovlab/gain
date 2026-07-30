@@ -49,6 +49,11 @@ _DEFAULT_NA_VALUES: dict[str, tuple[str, ...]] = {
 # so a numeric raw payload (e.g. a bigWig ``float``) matches by value, not text.
 _NA_COERCIBLE_TYPES = ("int", "float")
 
+# Value types ``GenomicScoreDef.parse_array`` defines a column parse for, and
+# so the ones a bulk column read can serve.  ``bool`` is absent because no
+# column consumer asks for it.
+BULK_PARSEABLE_VALUE_TYPES = ("float", "int", "str")
+
 
 def normalize_na_values(na_values: Any, value_type: str) -> set[Any]:
     """Normalize a configured ``na_values`` into a type-aware sentinel set.
@@ -283,11 +288,23 @@ class GenomicScoreDef(ScoreDef):
 
         The column half of this definition's parsing contract, and the reason
         the bulk statistics scan is worth having.  Equivalent to
-        ``[parse_value(c) for c in cells]`` with ``None`` rendered as ``nan``
-        -- a float64 array has no ``None``, and for every consumer a non-value
-        and a nan are the same skip.  That equivalence is not an aspiration:
+        ``[parse_value(c) for c in cells]``, with the "no value" that the
+        scalar contract spells ``None`` rendered in whatever form the returned
+        array can carry.  That equivalence is not an aspiration:
         test_parse_array_agrees_with_parse_value_fuzz asserts it token by
-        token, over several ``na_values`` configs and several array widths.
+        token, per value type, over several ``na_values`` configs and several
+        array widths.
+
+        The returned array is one of two shapes, chosen by ``value_type``:
+
+        * ``float`` and ``int`` -- a ``float64`` array whose ``nan`` is the
+          non-value.  A float64 array has no ``None``, and for every consumer
+          of a numeric column a non-value and a nan are the same skip.
+        * ``str`` -- an ``object`` array of ``str``, whose ``None`` is the
+          non-value, exactly as :meth:`parse_value` returns it.
+
+        Any other value type is refused: ``bool`` has no column consumer, and
+        an unset ``value_type`` is not a parse this can define.
 
         **Parsed with numpy, deliberately NOT with ``pd.to_numeric``**, which
         is not correctly rounded -- it returns 9.999999999999999e-26 for
@@ -295,16 +312,20 @@ class GenomicScoreDef(ScoreDef):
         digits.  ``ndarray.astype`` agrees with ``float()`` on every token
         tested, including the PEP-515 underscores and Unicode digits pandas
         rejects outright.
-
-        Float scores only, which is what ``_bulk_scan_eligible`` gates on: an
-        ``int`` score would need ``int()`` semantics (``int("3.5")`` raises
-        where ``float("3.5")`` does not).  Opening that gate is gain#405's
-        follow-up, and this assert is what makes the limit visible until then.
         """
-        assert self.value_type == "float", (
-            f"parse_array is float-only; score {self.score_id} is "
-            f"{self.value_type}")
+        if self.value_type == "float":
+            return self._parse_float_array(cells)
+        if self.value_type == "int":
+            return self._parse_int_array(cells)
+        if self.value_type == "str":
+            return self._parse_text_array(cells)
+        raise TypeError(
+            f"parse_array does not serve {self.value_type!r} scores; "
+            f"score {self.score_id}. Ask "
+            f"GenomicScore.supports_region_value_arrays before calling.")
 
+    def _parse_float_array(self, cells: np.ndarray) -> np.ndarray:
+        """A ``float`` score's column, as float64 with nan for no value."""
         if cells.dtype.kind == "f":
             # Already numeric (a bigWig payload): nothing to parse, and the
             # per-record path does not parse it either.
@@ -344,6 +365,80 @@ class GenomicScoreDef(ScoreDef):
                     "unable to parse %s of %s values for score %s",
                     failed, values.size, self.score_id)
         return values
+
+    def _parse_int_array(self, cells: np.ndarray) -> np.ndarray:
+        """An ``int`` score's column, as float64 with nan for no value.
+
+        ``int()`` semantics, not ``float()`` ones: ``"3.5"``, ``"1e3"`` and
+        ``"0x10"`` are parse failures here and become nan, exactly as
+        :meth:`parse_value` logs them and returns ``None``.  The fast path is
+        ``astype(np.int64)``, which converts an object cell by calling
+        ``int()`` on it, so it agrees with the scalar parse by construction --
+        including the PEP-515 underscores.  It is all-or-nothing, so one bad
+        cell sends the batch to the per-cell loop, which is what a mixed column
+        needs anyway.
+
+        The result is float64 rather than int64 because the array's non-value
+        has to live somewhere, and int64 has no nan.  Values are therefore
+        exact up to 2**53 and correctly rounded above it, where the per-record
+        path keeps an arbitrary-precision Python ``int``; the divergence is
+        visible only in a ``min_max`` extremum past 2**53, since a number
+        histogram widens to float for its bin arithmetic either way.
+        """
+        if cells.dtype.kind == "f":
+            # A numeric payload (bigWig): the scalar parse applies int() to
+            # the raw float, which truncates toward zero.  A nan or an inf is
+            # not an int at all -- int() raises on both, so parse_value logs
+            # and returns None -- and both must come out as the non-value
+            # rather than as a bin.
+            values = np.trunc(cells.astype(np.float64, copy=True))
+            values[~np.isfinite(values)] = np.nan
+            values[self._na_mask(cells)] = np.nan
+            return values
+
+        raw = np.asarray(cells, dtype=object)
+        na_mask = self._na_mask(raw)
+        values = np.full(raw.shape, np.nan, dtype=np.float64)
+        work = raw[~na_mask]
+        try:
+            values[~na_mask] = work.astype(np.int64)
+        except (TypeError, ValueError, OverflowError):
+            failed = 0
+            for idx, cell in zip(np.flatnonzero(~na_mask), work, strict=True):
+                try:
+                    # A Python int too wide for int64 still parses here and is
+                    # widened on assignment, so an out-of-range token is a
+                    # value, not a failure.
+                    values[idx] = int(cell)
+                except (TypeError, ValueError):
+                    values[idx] = np.nan
+                    failed += 1
+            if failed:
+                logger.warning(
+                    "unable to parse %s of %s values for score %s",
+                    failed, values.size, self.score_id)
+        return values
+
+    def _parse_text_array(self, cells: np.ndarray) -> np.ndarray:
+        """A ``str`` score's column, as an object array with None for no value.
+
+        There is no vectorized ``str()``: an object array of text is already
+        what the scalar parse would return for every cell, so the pass below
+        coerces only what is not text yet (a numeric payload) and is otherwise
+        a copy.  The win for a categorical score is not this parse -- it is
+        counting a whole batch at once instead of building a ``Record`` per
+        row.
+
+        A ``str`` score's default ``na_values`` is empty, so ``""`` is a value
+        here unless a config says otherwise; that is the scalar parse's rule
+        too, kept by asking the same :meth:`_na_mask`.
+        """
+        raw = np.asarray(cells, dtype=object)
+        na_mask = self._na_mask(raw)
+        return np.array(
+            [None if is_na else (cell if isinstance(cell, str) else str(cell))
+             for is_na, cell in zip(na_mask, raw, strict=True)],
+            dtype=object)
 
 
 def extract_column_value(
