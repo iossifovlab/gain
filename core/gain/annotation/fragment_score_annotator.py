@@ -259,7 +259,9 @@ class FragmentScoreAnnotator(AnnotatorBase):
         raise ValueError(f"Unsupported operator {operator.data}")
 
     def open(self) -> Annotator:
-        self.fragment_score.open()
+        # Trusts the resource rather than re-checking it per record; see
+        # docs/adr/0005-validating-a-resource-once.md.
+        self.fragment_score.open(validate_ordering=False)
         super().open()
         return self
 

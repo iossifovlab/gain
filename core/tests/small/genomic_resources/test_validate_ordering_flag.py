@@ -25,9 +25,12 @@ What these tests pin, per kind:
   which is the thing that must check.
 """
 import pathlib
+import textwrap
 from collections.abc import Generator
 
 import pytest
+from gain.annotation.annotatable import VCFAllele
+from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.genomic_scores import (
     PositionScore,
     build_allele_score_from_resource,
@@ -41,6 +44,7 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 )
 from gain.genomic_resources.score_def import ScoreValue
 from gain.genomic_resources.testing.builders import (
+    a_grr,
     a_position_score,
     an_allele_score,
 )
@@ -259,3 +263,43 @@ def test_the_bulk_scan_checks_regardless_of_the_flag(
     with pytest.raises(ValueError, match="multiple values for positions"):
         GenomicScoreImplementation._do_histogram_bulk(
             resource, confs, "chr1", 1, 100)
+
+
+def test_the_score_annotator_opts_out_end_to_end(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The payoff: annotating a touching position score does not raise.
+
+    A direct read of this same resource does raise (see
+    ``test_a_touching_position_score_raises_when_checking``), so this pins
+    the opt-out end to end rather than white-box.  It is what the ADR trades
+    away: a resource that never went through ``resource-repair`` is annotated
+    from unvalidated data instead of refusing.
+    """
+    repo = (
+        a_grr()
+        .with_resource("scores/touching", (
+            a_position_score()
+            .with_score("s", "float")
+            .with_data("""
+                chrom  pos_begin  pos_end  s
+                chr1   10         20       0.1
+                chr1   15         25       0.2
+            """)))
+        .build_repo(tmp_path)
+    )
+    pipeline = load_pipeline_from_yaml(textwrap.dedent("""
+        - position_score:
+            resource_id: scores/touching
+            attributes:
+              - source: s
+                name: s
+    """), repo)
+
+    with pipeline.open() as opened:
+        annotator = opened.annotators[0]
+        # The annotator's open() is what carries the decision.
+        assert annotator.score._validate_ordering is False
+        # And the read it performs completes rather than refusing.
+        assert opened.annotate(
+            VCFAllele("chr1", 12, "A", "T"), {}) is not None
