@@ -270,7 +270,7 @@ class FragmentScoreAnnotator(AnnotatorBase):
         self, annotatable: Annotatable,
         context: dict[str, Any],  # noqa: ARG002
     ) -> dict[str, Any]:
-        fragments = self.fragment_score.fetch_fragments(
+        fragments = self.fragment_score.fetch_fragment_scores(
             annotatable.chrom, annotatable.pos, annotatable.pos_end)
 
         if self.fragment_filter:

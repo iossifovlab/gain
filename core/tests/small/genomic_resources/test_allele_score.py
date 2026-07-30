@@ -49,7 +49,7 @@ def test_the_simplest_allele_score() -> None:
     score.open()
 
     assert score.get_all_scores() == ["freq"]
-    assert score.fetch_scores("1", 10, "A", "C") == {"freq": 0.03}
+    assert score.fetch_allele_scores("1", 10, "A", "C") == {"freq": 0.03}
 
 
 def test_allele_score_fetch_region() -> None:
@@ -130,10 +130,10 @@ def test_allele_score_missing_alt() -> None:
     })
     score = AlleleScore(res)
     score.open()
-    assert score.fetch_scores("1", 10, "A", "A", ["freq"]) is None
-    assert score.fetch_scores("1", 10, "A", "G", ["freq"]) is None
-    assert score.fetch_scores("1", 10, "A", "T", ["freq"]) is None
-    assert score.fetch_scores("1", 10, "A", "C", ["freq"]) is None
+    assert score.fetch_allele_scores("1", 10, "A", "A", ["freq"]) is None
+    assert score.fetch_allele_scores("1", 10, "A", "G", ["freq"]) is None
+    assert score.fetch_allele_scores("1", 10, "A", "T", ["freq"]) is None
+    assert score.fetch_allele_scores("1", 10, "A", "C", ["freq"]) is None
 
 
 def test_allele_score_mode_defaults_to_alleles() -> None:
@@ -255,7 +255,7 @@ def test_allele_score_fetch_scores_invalid_chromosome() -> None:
     with pytest.raises(
         ValueError, match="not among the available chromosomes",
     ):
-        score.fetch_scores("2", 10, "A", "G")
+        score.fetch_allele_scores("2", 10, "A", "G")
 
 
 def test_allele_score_fetch_region_spanning_record_at_pos_begin() -> None:

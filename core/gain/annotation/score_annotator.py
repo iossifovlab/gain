@@ -324,7 +324,7 @@ phastCons, phyloP, FitCons2, etc.
 
         if annotatable.type == Annotatable.Type.SUBSTITUTION:
             assert isinstance(annotatable, VCFAllele)
-            point_scores = self.position_score.fetch_scores(
+            point_scores = self.position_score.fetch_position_scores(
                 annotatable.chromosome, annotatable.position, sources)
             if not point_scores:
                 return self._empty_result()

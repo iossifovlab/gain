@@ -41,7 +41,7 @@ def test_the_simplest_np_score() -> None:
     score.open()
 
     assert score.get_all_scores() == ["cadd_raw"]
-    assert score.fetch_scores("1", 10, "A", "C") == {"cadd_raw": 0.03}
+    assert score.fetch_allele_scores("1", 10, "A", "C") == {"cadd_raw": 0.03}
 
 
 def test_np_score_fetch_region() -> None:

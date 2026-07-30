@@ -139,7 +139,7 @@ def test_fragment_score_resource(
     attributes: list[dict[str, Any]],
 ) -> None:
     with fragments.open() as score:
-        aaa = score.fetch_fragments(
+        aaa = score.fetch_fragment_scores(
             chrom, beg, end)
         assert len(aaa) == count
         assert [a.attributes for a in aaa] == attributes
@@ -166,12 +166,12 @@ def test_fragment_score_no_open(fragments: FragmentScore) -> None:
         ValueError,
         match="The resource <score_one> is not open",
     ):
-        fragments.fetch_fragments("1", 5, 15)
+        fragments.fetch_fragment_scores("1", 5, 15)
 
 
 def test_fragment_score_bad_chrom(fragments: FragmentScore) -> None:
     score = fragments.open()
-    res = score.fetch_fragments("3", 5, 15)
+    res = score.fetch_fragment_scores("3", 5, 15)
 
     assert len(res) == 0
 

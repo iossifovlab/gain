@@ -402,20 +402,21 @@ def test_region_fetch_nonempty_region_unknown_score_still_raises(
 def test_point_fetch_empty_region_unknown_score_returns_none(
     tmp_path,
 ) -> None:
-    # PositionScore.fetch_scores resolves after `if not lines: return None`,
+    # PositionScore.fetch_position_scores resolves after
+    # `if not lines: return None`,
     # so an empty region short-circuits before touching the unknown score id.
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
         1      10         0.5      hello
     """)
     with score:
-        assert score.fetch_scores("1", 5000, scores=["NOPE"]) is None
+        assert score.fetch_position_scores("1", 5000, scores=["NOPE"]) is None
 
 
 def test_allele_point_fetch_empty_region_unknown_score_returns_none(
     tmp_path,
 ) -> None:
-    # AlleleScore.fetch_scores resolves after its `if not lines`/
+    # AlleleScore.fetch_allele_scores resolves after its `if not lines`/
     # `if not selected_line` guards -- an empty region returns None.
     builder = a_vcf_info_score().with_data("""
 ##fileformat=VCFv4.1
@@ -426,5 +427,5 @@ chr1   10  .  A   T   .    .      scoreA=0.1
     repo = a_grr().with_resource("vcf", builder).build_repo(tmp_path)
     score = AlleleScore(repo.get_resource("vcf")).open()
     with score:
-        assert score.fetch_scores(
+        assert score.fetch_allele_scores(
             "chr1", 5000, "A", "T", scores=["NOPE"]) is None

@@ -75,7 +75,7 @@ def test_new_resource_type_opens_and_reads(
     assert resource.get_type() == FRAGMENT_SCORE_TYPE
 
     with FragmentScore(resource).open() as score:
-        fragments = score.fetch_fragments("1", 5, 60)
+        fragments = score.fetch_fragment_scores("1", 5, 60)
 
     assert [(f.chrom, f.pos_begin, f.pos_end) for f in fragments] == [
         ("1", 10, 20), ("1", 50, 100),

@@ -52,7 +52,7 @@ def test_bare_default_is_a_readable_minimal_score(
     assert res.get_type() == "position_score"
     score = PositionScore(res).open()
     assert len(score.get_all_scores()) == 1
-    values = score.fetch_scores("1", 10)
+    values = score.fetch_position_scores("1", 10)
     assert values is not None
     assert isinstance(values[0], float)
 
@@ -80,10 +80,10 @@ def test_grr_resource_reads_back_authored_values(
     assert isinstance(repo, GenomicResourceProtocolRepo)
     score = PositionScore(repo.get_resource("scores/pos")).open()
     assert score.get_all_scores() == ["phastCons100way"]
-    assert score.fetch_scores("1", 11) == [0.03]
-    assert score.fetch_scores("1", 15) == [0.46]
-    assert score.fetch_scores("2", 8) == [0.01]
-    assert score.fetch_scores("1", 12) is None
+    assert score.fetch_position_scores("1", 11) == [0.03]
+    assert score.fetch_position_scores("1", 15) == [0.46]
+    assert score.fetch_position_scores("2", 8) == [0.01]
+    assert score.fetch_position_scores("1", 12) is None
 
 
 def test_builders_are_immutable_no_cross_variation_leak() -> None:
@@ -126,7 +126,7 @@ def test_column_name_defaults_to_score_id(
     )
     score = PositionScore(res).open()
     assert score.get_all_scores() == ["myscore"]
-    assert score.fetch_scores("1", 10) == [0.7]
+    assert score.fetch_position_scores("1", 10) == [0.7]
 
 
 def test_explicit_column_name_override(
@@ -144,7 +144,7 @@ def test_explicit_column_name_override(
     )
     score = PositionScore(res).open()
     assert score.get_all_scores() == ["myscore"]
-    assert score.fetch_scores("1", 10) == [0.7]
+    assert score.fetch_position_scores("1", 10) == [0.7]
 
 
 def test_data_missing_declared_score_column_raises(
@@ -269,8 +269,8 @@ def test_range_rows_with_pos_end(
     score = PositionScore(res).open()
     assert score.table is not None
     assert score.table.pos_end_key == 2
-    assert score.fetch_scores("1", 12) == [0.02]
-    assert score.fetch_scores("1", 18) == [0.03]
+    assert score.fetch_position_scores("1", 12) == [0.02]
+    assert score.fetch_position_scores("1", 18) == [0.03]
 
 
 def test_realized_table_is_plain_txt(
@@ -299,7 +299,7 @@ def test_multiple_scores_in_one_resource(
     )
     score = PositionScore(res).open()
     assert score.get_all_scores() == ["s_float", "s_int"]
-    assert score.fetch_scores("1", 10) == [0.02, 5]
+    assert score.fetch_position_scores("1", 10) == [0.02, 5]
 
 
 def test_bare_reference_genome_is_readable_minimal(
@@ -507,7 +507,7 @@ def test_grr_mixes_genome_and_position_score(
         assert ref.get_sequence("1", 1, 10) == "ACGTACGTAC"
 
     score = PositionScore(repo.get_resource("scores/pos")).open()
-    assert score.fetch_scores("1", 10) == [0.5]
+    assert score.fetch_position_scores("1", 10) == [0.5]
 
 
 # ---------------------------------------------------------------------------
@@ -829,7 +829,7 @@ def test_position_score_with_histogram_emits_block(
     assert config["scores"][0]["histogram"]["number_of_bins"] == 4
     # the score still reads back
     score = PositionScore(res).open()
-    assert score.fetch_scores("1", 10) == [0.5]
+    assert score.fetch_position_scores("1", 10) == [0.5]
 
 
 def test_gene_score_with_histogram_defends_against_later_mutation(
@@ -958,7 +958,7 @@ def test_grr_mixes_gene_score_position_score_and_genome(
         assert ref.get_sequence("1", 1, 10) == "ACGTACGTAC"
 
     score = PositionScore(repo.get_resource("scores/pos")).open()
-    assert score.fetch_scores("1", 10) == [0.5]
+    assert score.fetch_position_scores("1", 10) == [0.5]
 
     gene_score = build_gene_score_from_resource(repo.get_resource("genes/pli"))
     assert gene_score.get_gene_value("pli", "GENE2") == pytest.approx(0.9)
@@ -996,9 +996,9 @@ def test_position_score_line_matches_with_data(
     typed_score = PositionScore(typed_res).open()
     for chrom, pos in [("1", 10), ("1", 11), ("2", 8)]:
         assert (
-            typed_score.fetch_scores(chrom, pos)
-            == string_score.fetch_scores(chrom, pos))
-    assert typed_score.fetch_scores("1", 99) is None
+            typed_score.fetch_position_scores(chrom, pos)
+            == string_score.fetch_position_scores(chrom, pos))
+    assert typed_score.fetch_position_scores("1", 99) is None
 
 
 def test_position_score_line_with_pos_end(
@@ -1012,8 +1012,8 @@ def test_position_score_line_with_pos_end(
         .build_resource(tmp_path)
     )
     score = PositionScore(res).open()
-    assert score.fetch_scores("1", 12) == [0.02]
-    assert score.fetch_scores("1", 18) == [0.03]
+    assert score.fetch_position_scores("1", 12) == [0.02]
+    assert score.fetch_position_scores("1", 18) == [0.03]
 
 
 def test_with_data_and_with_score_line_mutually_exclusive(
@@ -1052,8 +1052,8 @@ def test_position_score_with_tabix_realizes_gz_and_reads_back(
     assert not (tmp_path / "data.txt").exists()
 
     score = PositionScore(res).open()
-    assert score.fetch_scores("1", 10) == [0.02]
-    assert score.fetch_scores("1", 11) == [0.03]
+    assert score.fetch_position_scores("1", 10) == [0.02]
+    assert score.fetch_position_scores("1", 11) == [0.03]
 
 
 def test_position_score_tabix_matches_plain_readback(
@@ -1075,10 +1075,12 @@ def test_position_score_tabix_matches_plain_readback(
     # Pin the concrete authored range values on the tabix path so the test
     # cannot pass vacuously (both sides None): pos 12 falls in range 10-15
     # (0.02) and pos 18 in range 17-19 (0.03).
-    assert tabix.fetch_scores("1", 12) == [0.02]
-    assert tabix.fetch_scores("1", 18) == [0.03]
-    assert tabix.fetch_scores("1", 12) == plain.fetch_scores("1", 12)
-    assert tabix.fetch_scores("1", 18) == plain.fetch_scores("1", 18)
+    assert tabix.fetch_position_scores("1", 12) == [0.02]
+    assert tabix.fetch_position_scores("1", 18) == [0.03]
+    assert tabix.fetch_position_scores("1", 12) == \
+        plain.fetch_position_scores("1", 12)
+    assert tabix.fetch_position_scores("1", 18) == \
+        plain.fetch_position_scores("1", 18)
 
 
 def test_gene_score_with_gzip_realizes_gz_and_reads_back(
@@ -1119,7 +1121,7 @@ def test_build_repo_tempdir_reads_back_and_cleans_up() -> None:
         root = pathlib.Path(repo.proto.get_url().removeprefix("file://"))
         assert root.exists()
         score = PositionScore(repo.get_resource("scores/pos")).open()
-        assert score.fetch_scores("1", 10) == [0.5]
+        assert score.fetch_position_scores("1", 10) == [0.5]
 
     # The temp dir is gone once the context exits.
     assert not root.exists()
@@ -1134,7 +1136,7 @@ def test_build_resource_tempdir_reads_back_and_cleans_up() -> None:
     with build_resource_tempdir(builder) as res:
         root = pathlib.Path(res.proto.get_url().removeprefix("file://"))
         assert root.exists()
-        assert PositionScore(res).open().fetch_scores("1", 10) == [0.7]
+        assert PositionScore(res).open().fetch_position_scores("1", 10) == [0.7]
 
     assert not root.exists()
 
@@ -1177,9 +1179,9 @@ def test_np_score_reads_back_by_ref_alt(
     )
     score = AlleleScore(res).open()
     assert score.get_all_scores() == ["cadd_raw"]
-    assert score.fetch_scores("1", 10, "A", "C") == {"cadd_raw": 0.03}
-    assert score.fetch_scores("1", 10, "A", "G") == {"cadd_raw": 0.02}
-    assert score.fetch_scores("1", 16, "C", "T") == {"cadd_raw": 0.04}
+    assert score.fetch_allele_scores("1", 10, "A", "C") == {"cadd_raw": 0.03}
+    assert score.fetch_allele_scores("1", 10, "A", "G") == {"cadd_raw": 0.02}
+    assert score.fetch_allele_scores("1", 16, "C", "T") == {"cadd_raw": 0.04}
 
 
 def test_allele_score_reads_back_by_ref_alt(
@@ -1198,8 +1200,8 @@ def test_allele_score_reads_back_by_ref_alt(
     )
     score = AlleleScore(res).open()
     assert score.get_all_scores() == ["freq"]
-    assert score.fetch_scores("1", 10, "A", "C") == {"freq": 0.03}
-    assert score.fetch_scores("1", 16, "C", "A") == {"freq": 0.05}
+    assert score.fetch_allele_scores("1", 10, "A", "C") == {"freq": 0.03}
+    assert score.fetch_allele_scores("1", 16, "C", "A") == {"freq": 0.05}
 
 
 def test_np_score_with_pos_end_range_reads_back(
@@ -1221,8 +1223,8 @@ def test_np_score_with_pos_end_range_reads_back(
     assert score.table is not None
     assert score.table.pos_end_key == 2
     # a position inside the [10, 15] span matches the record
-    assert score.fetch_scores("1", 12, "A", "G") == {"cadd_raw": 0.02}
-    assert score.fetch_scores("1", 10, "A", "G") == {"cadd_raw": 0.02}
+    assert score.fetch_allele_scores("1", 12, "A", "G") == {"cadd_raw": 0.02}
+    assert score.fetch_allele_scores("1", 10, "A", "G") == {"cadd_raw": 0.02}
 
 
 def test_np_score_with_score_line_matches_with_data(
@@ -1240,8 +1242,8 @@ def test_np_score_with_score_line_matches_with_data(
         .build_resource(tmp_path)
     )
     score = AlleleScore(typed).open()
-    assert score.fetch_scores("1", 10, "A", "G") == {"cadd_raw": 0.02}
-    assert score.fetch_scores("1", 10, "A", "C") == {"cadd_raw": 0.03}
+    assert score.fetch_allele_scores("1", 10, "A", "G") == {"cadd_raw": 0.02}
+    assert score.fetch_allele_scores("1", 10, "A", "C") == {"cadd_raw": 0.03}
 
 
 def test_np_score_with_tabix_reads_back(
@@ -1261,8 +1263,8 @@ def test_np_score_with_tabix_reads_back(
     assert (tmp_path / "data.txt.gz").is_file()
     assert (tmp_path / "data.txt.gz.tbi").is_file()
     score = AlleleScore(res).open()
-    assert score.fetch_scores("1", 10, "A", "G") == {"cadd_raw": 0.02}
-    assert score.fetch_scores("1", 16, "C", "T") == {"cadd_raw": 0.04}
+    assert score.fetch_allele_scores("1", 10, "A", "G") == {"cadd_raw": 0.02}
+    assert score.fetch_allele_scores("1", 16, "C", "T") == {"cadd_raw": 0.04}
 
 
 def test_grr_composes_np_and_allele_scores(
@@ -1289,9 +1291,9 @@ def test_grr_composes_np_and_allele_scores(
         .build_repo(tmp_path)
     )
     np_score = AlleleScore(repo.get_resource("scores/np")).open()
-    assert np_score.fetch_scores("1", 10, "A", "G") == {"cadd": 0.02}
+    assert np_score.fetch_allele_scores("1", 10, "A", "G") == {"cadd": 0.02}
     allele_score = AlleleScore(repo.get_resource("scores/allele")).open()
-    assert allele_score.fetch_scores("1", 10, "A", "C") == {"freq": 0.03}
+    assert allele_score.fetch_allele_scores("1", 10, "A", "C") == {"freq": 0.03}
 
 
 def test_np_score_builder_no_cross_variation_leak(
@@ -1321,9 +1323,9 @@ def test_np_score_builder_no_cross_variation_leak(
     score_b = AlleleScore(sibling_b.build_resource(tmp_path / "b")).open()
 
     assert score_a.get_all_scores() == ["sa"]
-    assert score_a.fetch_scores("1", 10, "A", "G") == {"sa": 0.11}
+    assert score_a.fetch_allele_scores("1", 10, "A", "G") == {"sa": 0.11}
     assert score_b.get_all_scores() == ["sb"]
-    assert score_b.fetch_scores("1", 10, "A", "G") == {"sb": 0.99}
+    assert score_b.fetch_allele_scores("1", 10, "A", "G") == {"sb": 0.99}
     # the shared base is untouched by either derivation
     assert base.scores == ()
     assert base.rows == ()
@@ -1347,8 +1349,8 @@ def test_allele_score_builder_no_cross_variation_leak(
     score_a = AlleleScore(sibling_a.build_resource(tmp_path / "a")).open()
     score_b = AlleleScore(sibling_b.build_resource(tmp_path / "b")).open()
 
-    assert score_a.fetch_scores("1", 10, "A", "G") == {"freq": 0.11}
-    assert score_b.fetch_scores("1", 10, "A", "G") == {"freq": 0.99}
+    assert score_a.fetch_allele_scores("1", 10, "A", "G") == {"freq": 0.11}
+    assert score_b.fetch_allele_scores("1", 10, "A", "G") == {"freq": 0.99}
     # the shared base carries neither sibling's data
     assert base.data is None
 
@@ -1525,13 +1527,13 @@ def test_score_line_with_tabix_composes_and_matches_plain(
     assert (tmp_path / "t" / "data.txt.gz.tbi").is_file()
     # Pin the concrete authored values on the tabix path so the test cannot
     # pass vacuously (both sides None).
-    assert tabix_score.fetch_scores("1", 10) == [0.02]
-    assert tabix_score.fetch_scores("1", 11) == [0.03]
-    assert tabix_score.fetch_scores("2", 8) == [0.01]
+    assert tabix_score.fetch_position_scores("1", 10) == [0.02]
+    assert tabix_score.fetch_position_scores("1", 11) == [0.03]
+    assert tabix_score.fetch_position_scores("2", 8) == [0.01]
     for chrom, pos in [("1", 10), ("1", 11), ("2", 8)]:
         assert (
-            tabix_score.fetch_scores(chrom, pos)
-            == plain_score.fetch_scores(chrom, pos))
+            tabix_score.fetch_position_scores(chrom, pos)
+            == plain_score.fetch_position_scores(chrom, pos))
 
 
 def test_score_addressed_by_column_index_reads_back(
@@ -1550,8 +1552,8 @@ def test_score_addressed_by_column_index_reads_back(
     )
     score = PositionScore(res).open()
     # column_index 3 addresses s_extra, which no column_name declares.
-    assert score.fetch_scores("1", 10) == [0.1, 7]
-    assert score.fetch_scores("1", 11) == [0.2, 8]
+    assert score.fetch_position_scores("1", 10) == [0.1, 7]
+    assert score.fetch_position_scores("1", 11) == [0.2, 8]
 
 
 def test_column_index_and_column_name_are_mutually_exclusive() -> None:
@@ -1616,10 +1618,10 @@ def test_chrom_mapping_add_prefix_reads_back(tmp_path: pathlib.Path) -> None:
         .build_resource(tmp_path)
     )
     score = PositionScore(res).open()
-    assert score.fetch_scores("chr1", 10) == [0.1]
+    assert score.fetch_position_scores("chr1", 10) == [0.1]
     # The mapping is applied to the table, so the raw contig is gone.
     with pytest.raises(ValueError, match="not among the available"):
-        score.fetch_scores("1", 10)
+        score.fetch_position_scores("1", 10)
 
 
 def test_bigwig_score_reads_back(tmp_path: pathlib.Path) -> None:
@@ -1637,8 +1639,8 @@ def test_bigwig_score_reads_back(tmp_path: pathlib.Path) -> None:
     score = PositionScore(res).open()
     # bedGraph intervals are 0-based half-open: 1-based pos 10 -> [0, 10).
     # bigWig stores float32, so the value does not round-trip exactly.
-    first = score.fetch_scores("chr1", 10)
-    second = score.fetch_scores("chr1", 11)
+    first = score.fetch_position_scores("chr1", 10)
+    second = score.fetch_position_scores("chr1", 11)
     assert first is not None
     assert second is not None
     assert first[0] == pytest.approx(0.11)
@@ -1698,7 +1700,7 @@ def test_bare_fragment_score_is_readable_minimal(
     res = a_fragment_score().build_resource(tmp_path)
 
     assert res.get_type() == "cnv_collection"
-    fragments = FragmentScore(res).open().fetch_fragments("1", 10, 200)
+    fragments = FragmentScore(res).open().fetch_fragment_scores("1", 10, 200)
     assert len(fragments) == 2
 
 
@@ -1715,7 +1717,7 @@ def test_fragment_score_reads_back_its_regions(
         """)
         .build_resource(tmp_path)
     )
-    fragments = FragmentScore(res).open().fetch_fragments("chr1", 10, 200)
+    fragments = FragmentScore(res).open().fetch_fragment_scores("chr1", 10, 200)
 
     assert [(f.pos_begin, f.pos_end) for f in fragments] \
         == [(10, 19), (20, 200)]
@@ -1736,7 +1738,7 @@ chr1   10  .  A   T   .    .      AF=0.25
     assert (tmp_path / "data.vcf.gz").is_file()
     assert (tmp_path / "data.vcf.gz.tbi").is_file()
     score = AlleleScore(res).open()
-    assert score.fetch_scores("chr1", 10, "A", "T") == {"AF": 0.25}
+    assert score.fetch_allele_scores("chr1", 10, "A", "T") == {"AF": 0.25}
 
 
 def test_vcf_info_score_requires_info_header(tmp_path: pathlib.Path) -> None:
@@ -1768,8 +1770,8 @@ def test_position_score_zero_based_shifts_positions(
     assert config is not None
     assert config["table"]["zero_based"] is True
     score = PositionScore(res).open()
-    assert score.fetch_scores("1", 10) is None
-    assert score.fetch_scores("1", 11) == [0.5]
+    assert score.fetch_position_scores("1", 10) is None
+    assert score.fetch_position_scores("1", 11) == [0.5]
 
 
 def test_zero_based_tabix_matches_inmemory(tmp_path: pathlib.Path) -> None:
@@ -1792,12 +1794,15 @@ def test_zero_based_tabix_matches_inmemory(tmp_path: pathlib.Path) -> None:
     plain = build(tabix=False)
     tabix = build(tabix=True)
     # 0-based half-open [20, 22) -> 1-based positions 21 and 22.
-    assert tabix.fetch_scores("1", 21) == [0.7]
-    assert tabix.fetch_scores("1", 22) == [0.7]
-    assert tabix.fetch_scores("1", 20) is None
-    assert tabix.fetch_scores("1", 21) == plain.fetch_scores("1", 21)
-    assert tabix.fetch_scores("1", 22) == plain.fetch_scores("1", 22)
-    assert tabix.fetch_scores("1", 20) == plain.fetch_scores("1", 20)
+    assert tabix.fetch_position_scores("1", 21) == [0.7]
+    assert tabix.fetch_position_scores("1", 22) == [0.7]
+    assert tabix.fetch_position_scores("1", 20) is None
+    assert tabix.fetch_position_scores("1", 21) == \
+        plain.fetch_position_scores("1", 21)
+    assert tabix.fetch_position_scores("1", 22) == \
+        plain.fetch_position_scores("1", 22)
+    assert tabix.fetch_position_scores("1", 20) == \
+        plain.fetch_position_scores("1", 20)
 
 
 def test_zero_based_invalid_row_rejected_by_score_layer(
@@ -2029,7 +2034,7 @@ def test_bigwig_score_with_histogram_emits_block(
     assert hist["view_range"] == {"min": 0.0, "max": 1.0}
     # the score still reads back
     score = PositionScore(res).open()
-    value = score.fetch_scores("chr1", 5)
+    value = score.fetch_position_scores("chr1", 5)
     assert value is not None
     assert value[0] == pytest.approx(0.5)
 
@@ -2152,8 +2157,8 @@ def test_header_mode_none_tabix_reads_back_by_index(
     assert config["table"]["header_mode"] == "none"
 
     score = PositionScore(resource).open()
-    assert score.fetch_scores("1", 11) == [0.02]
-    assert score.fetch_scores("1", 21) == [0.03]
+    assert score.fetch_position_scores("1", 11) == [0.02]
+    assert score.fetch_position_scores("1", 21) == [0.03]
 
 
 def test_header_mode_none_plain_matches_tabix_readback(
@@ -2179,10 +2184,12 @@ def test_header_mode_none_plain_matches_tabix_readback(
 
     plain = build(tabix=False)
     tabix = build(tabix=True)
-    assert plain.fetch_scores("1", 10) == [0.5]
-    assert plain.fetch_scores("1", 11) == [0.6]
-    assert tabix.fetch_scores("1", 10) == plain.fetch_scores("1", 10)
-    assert tabix.fetch_scores("1", 11) == plain.fetch_scores("1", 11)
+    assert plain.fetch_position_scores("1", 10) == [0.5]
+    assert plain.fetch_position_scores("1", 11) == [0.6]
+    assert tabix.fetch_position_scores("1", 10) == \
+        plain.fetch_position_scores("1", 10)
+    assert tabix.fetch_position_scores("1", 11) == \
+        plain.fetch_position_scores("1", 11)
     assert "chrom" not in (tmp_path / "p" / "data.txt").read_text()
 
 
@@ -2211,8 +2218,8 @@ def test_header_mode_none_allele_score_addresses_ref_alt_by_index(
     assert config["table"]["alternative"] == {"column_index": 3}
 
     score = AlleleScore(resource).open()
-    assert score.fetch_scores("1", 10, "A", "G") == {"freq": 0.1}
-    assert score.fetch_scores("1", 10, "A", "C") == {"freq": 0.2}
+    assert score.fetch_allele_scores("1", 10, "A", "G") == {"freq": 0.1}
+    assert score.fetch_allele_scores("1", 10, "A", "C") == {"freq": 0.2}
 
 
 def test_header_mode_none_rejects_a_name_addressed_score() -> None:
@@ -2257,7 +2264,7 @@ def test_header_mode_list_moves_the_header_into_the_config(
     assert config["table"]["header"] == ["chrom", "pos_begin", "v"]
 
     score = PositionScore(resource).open()
-    assert score.fetch_scores("1", 10) == [0.5]
+    assert score.fetch_position_scores("1", 10) == [0.5]
 
 
 def test_a_bare_data_frame_is_a_readable_minimal_csv(
@@ -2470,7 +2477,7 @@ def test_bigwig_score_meta_reads_back_through_the_resource(
 
     assert resource.get_summary() == "a bigWig"
     assert resource.get_labels() == {"reference_genome": "hg38"}
-    assert PositionScore(resource).open().fetch_scores(
+    assert PositionScore(resource).open().fetch_position_scores(
         "chr1", 5) == pytest.approx([0.1])
 
 
@@ -2486,7 +2493,7 @@ def test_vcf_info_score_meta_reads_back_through_the_resource(
 
     assert resource.get_summary() == "a VCF-info score"
     assert resource.get_labels() == {"domain": "variant"}
-    assert AlleleScore(resource).open().fetch_scores(
+    assert AlleleScore(resource).open().fetch_allele_scores(
         "chr1", 10, "A", "T") == pytest.approx({"score": 0.1})
 
 
@@ -2597,7 +2604,7 @@ def test_tabix_table_score_carries_meta(
     )
 
     assert resource.get_summary() == "a tabix score"
-    assert PositionScore(resource).open().fetch_scores(
+    assert PositionScore(resource).open().fetch_position_scores(
         "1", 10) == pytest.approx([0.1])
 
 

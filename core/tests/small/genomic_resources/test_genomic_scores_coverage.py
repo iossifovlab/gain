@@ -248,7 +248,7 @@ def test_position_score_multiple_values_for_position() -> None:
 
 
 def test_position_score_fetch_scores_multiple_lines() -> None:
-    """Test error when fetch_scores returns multiple lines."""
+    """Test error when fetch_position_scores returns multiple lines."""
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
             type: position_score
@@ -270,7 +270,7 @@ def test_position_score_fetch_scores_multiple_lines() -> None:
     score.open()
 
     with pytest.raises(ValueError, match="multiple values"):
-        score.fetch_scores("1", 10)
+        score.fetch_position_scores("1", 10)
 
 
 def test_allele_score_invalid_resource_type() -> None:
@@ -387,7 +387,7 @@ def test_fragment_score_invalid_resource_type() -> None:
 
 
 def test_fragment_score_fetch_fragments() -> None:
-    """Test FragmentScore.fetch_fragments method."""
+    """Test FragmentScore.fetch_fragment_scores method."""
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
             type: cnv_collection
@@ -412,7 +412,7 @@ def test_fragment_score_fetch_fragments() -> None:
     fragment_score = FragmentScore(res)
     fragment_score.open()
 
-    fragments = fragment_score.fetch_fragments("1", 150, 350)
+    fragments = fragment_score.fetch_fragment_scores("1", 150, 350)
     assert len(fragments) == 2
     assert fragments[0].chrom == "1"
     assert fragments[0].pos_begin == 100
@@ -420,15 +420,15 @@ def test_fragment_score_fetch_fragments() -> None:
     assert fragments[0].attributes["cnv_type"] == "DEL"
     assert fragments[0].attributes["frequency"] == 0.01
 
-    fragments = fragment_score.fetch_fragments("1", 1000, 2000)
+    fragments = fragment_score.fetch_fragment_scores("1", 1000, 2000)
     assert len(fragments) == 0
 
-    fragments = fragment_score.fetch_fragments("chr99", 1, 100)
+    fragments = fragment_score.fetch_fragment_scores("chr99", 1, 100)
     assert len(fragments) == 0
 
 
 def test_fragment_score_not_open() -> None:
-    """Test FragmentScore.fetch_fragments when not opened."""
+    """Test FragmentScore.fetch_fragment_scores when not opened."""
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
             type: cnv_collection
@@ -448,7 +448,7 @@ def test_fragment_score_not_open() -> None:
     fragment_score = FragmentScore(res)
 
     with pytest.raises(ValueError, match="is not open"):
-        fragment_score.fetch_fragments("1", 100, 200)
+        fragment_score.fetch_fragment_scores("1", 100, 200)
 
 
 def test_build_score_from_resource_invalid_type() -> None:

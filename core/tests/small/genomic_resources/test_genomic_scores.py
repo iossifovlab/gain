@@ -1627,11 +1627,11 @@ def test_bigwig_position_score_fetch_scores_at_position(
     bigwig_position_score: PositionScore,
 ) -> None:
     ps = bigwig_position_score
-    result = ps.fetch_scores("chr1", 5)
+    result = ps.fetch_position_scores("chr1", 5)
     assert result is not None
     assert result[0] == pytest.approx(0.1)
 
-    result = ps.fetch_scores("chr1", 15)
+    result = ps.fetch_position_scores("chr1", 15)
     assert result is not None
     assert result[0] == pytest.approx(0.2)
 

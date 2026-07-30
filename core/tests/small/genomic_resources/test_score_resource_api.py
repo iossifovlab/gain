@@ -11,7 +11,8 @@ method that assumes any of those re-creates the false ``is-a`` this whole epic
 exists to avoid.
 
 So the base's public method set is pinned here against an explicit allowlist.
-If someone lifts ``open``/``close``/``fetch_scores``/``get_all_chromosomes`` (or
+If someone lifts ``open``/``close``/``fetch_position_scores``/
+``get_all_chromosomes`` (or
 any other lifecycle, table or aggregator method) into the base "because both
 subclasses happen to have one", this test fails and names the intruder.
 
@@ -46,7 +47,8 @@ ALLOWED_PUBLIC_METHODS = {
 # Listed explicitly so a regression reads as intent, not a set-difference.
 FORBIDDEN_ON_BASE = {
     "open", "close", "is_open", "__enter__", "__exit__",
-    "fetch_records", "fetch_scores", "fetch_region", "fetch_region_values",
+    "fetch_records", "fetch_region", "fetch_region_values",
+    "fetch_position_scores", "fetch_allele_scores", "fetch_fragment_scores",
     "fetch_scores_agg", "get_all_chromosomes",
 }
 

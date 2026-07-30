@@ -236,7 +236,7 @@ def test_build_a_configuration_with_embedded() -> None:
 
     score = PositionScore(res)
     score.open()
-    assert score.fetch_scores("chr1", 23) == [0.01]
+    assert score.fetch_position_scores("chr1", 23) == [0.01]
 
 
 # ---------------------------------------------------------------------------

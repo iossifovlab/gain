@@ -2929,7 +2929,7 @@ def test_zero_based_authored_in_vcf_config_warns_through_schema(
         with score:
             # Coordinate/read behavior unchanged: the VCF row authored at POS
             # 10 still reads 1-based at 10, the ignored zero_based key aside.
-            assert score.fetch_scores("chr1", 10, "A", "T") == {
+            assert score.fetch_allele_scores("chr1", 10, "A", "T") == {
                 "score": pytest.approx(0.1),
             }
 
@@ -2969,7 +2969,8 @@ def test_zero_based_authored_in_bigwig_config_warns_through_schema(
         with score:
             # Unchanged conversion: file interval [0, 10) reads 1-based at 5,
             # regardless of the ignored zero_based key.
-            assert score.fetch_scores("chr1", 5) == [pytest.approx(0.11)]
+            assert score.fetch_position_scores("chr1", 5) == \
+                [pytest.approx(0.11)]
 
     warnings = [
         r.message for r in caplog.records if r.levelname == "WARNING"

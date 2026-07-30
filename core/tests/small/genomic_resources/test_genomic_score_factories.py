@@ -195,10 +195,10 @@ def test_fragment_score_cache_does_not_collide_across_versions(
 
     with old.open() as old_open, new.open() as new_open:
         assert [(c.chrom, c.pos_begin, c.pos_end)
-                for c in old_open.fetch_fragments("1", 1, 1000)] == \
+                for c in old_open.fetch_fragment_scores("1", 1, 1000)] == \
             [("1", 100, 200)]
         assert [(c.chrom, c.pos_begin, c.pos_end)
-                for c in new_open.fetch_fragments("1", 1, 1000)] == \
+                for c in new_open.fetch_fragment_scores("1", 1, 1000)] == \
             [("1", 300, 400)]
 
 
