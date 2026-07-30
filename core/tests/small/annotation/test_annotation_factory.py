@@ -15,12 +15,25 @@ from gain.genomic_resources.repository import GenomicResourceRepo
 
 _FACTORY_LOGGER = "gain.annotation.annotation_factory"
 
-#: Every keyword argument a pipeline builder threads down to its annotators.
+#: Keyword arguments every pipeline builder must accept and forward.
 _FORWARDED_KEYWORDS = ("work_dir", "allow_repeated_attributes")
+
+#: The builders as they stand; the discovery below must keep finding them.
+_KNOWN_BUILDERS = frozenset({
+    "build_annotation_pipeline",
+    "load_pipeline_from_file",
+    "load_pipeline_from_file_or_resource",
+    "load_pipeline_from_yaml",
+})
 
 
 def _pipeline_builder_names() -> list[str]:
-    """Name every public entry point that turns a config into a pipeline."""
+    """Name the public `annotation_factory` functions that build pipelines.
+
+    Matched by naming convention, so this is not an exhaustive census of
+    every route into a pipeline -- a builder named off-convention here, or
+    one living in another module, is invisible to it.
+    """
     return sorted(
         name
         for name, obj in vars(annotation_factory).items()
@@ -149,18 +162,31 @@ def test_load_pipeline_from_file_or_resource_grr_id_branch(
     assert len(pipeline.annotators) == 1
 
 
+def test_pipeline_builder_discovery_still_finds_the_known_builders() -> None:
+    """Guard the guard below, which is only as good as its discovery.
+
+    An empty `parametrize` set is reported as *skipped*, and a skipped run is
+    a green one -- so a rename that discovery stopped matching would quietly
+    disarm the keyword check rather than fail it.
+    """
+    assert _KNOWN_BUILDERS.issubset(_pipeline_builder_names())
+
+
 @pytest.mark.parametrize("builder_name", _pipeline_builder_names())
 @pytest.mark.parametrize("keyword", _FORWARDED_KEYWORDS)
 def test_pipeline_builders_all_accept_the_forwarded_keywords(
     builder_name: str,
     keyword: str,
 ) -> None:
-    """No way into a pipeline may quietly drop what its siblings forward.
+    """Every builder must at least *take* what its siblings forward.
 
     A builder that omits one of these does not fail loudly -- it silently
     falls back to the deprecated default work dir, or silently loses the
     caller's repeated-attribute handling.  Whoever adds the next builder gets
     told here rather than by a stray warning in a repo-wide run.
+
+    Accepting is all this pins; that the value is then *forwarded* is pinned
+    behaviourally, per branch, by the tests further down.
     """
     builder = getattr(annotation_factory, builder_name)
     parameters = inspect.signature(builder).parameters
@@ -168,6 +194,12 @@ def test_pipeline_builders_all_accept_the_forwarded_keywords(
     assert keyword in parameters, (
         f"{builder_name} does not accept `{keyword}`, so a caller cannot "
         f"pass one and it cannot be forwarded on"
+    )
+    # keyword-only, so that a caller passing it by name cannot be broken by
+    # a builder quietly reordering or re-purposing its positionals
+    assert parameters[keyword].kind is inspect.Parameter.KEYWORD_ONLY, (
+        f"{builder_name} does not take `{keyword}` as a keyword-only "
+        f"argument"
     )
 
 
@@ -179,8 +211,9 @@ def test_load_pipeline_from_file_or_resource_grr_id_branch_work_dir(
 ) -> None:
     """An explicit work dir survives the resource branch, not just the file one.
 
-    The resource branch reads the pipeline out of the GRR rather than off the
-    disk, and used to be the branch where a caller's work dir could go missing.
+    The deleted `load_pipeline_from_grr` also reached a pipeline held in the
+    GRR, and dropped the caller's work dir on the way; this pins that the
+    branch inheriting its job does not.
     """
     explicit = tmp_path / "resource_work"
     with caplog.at_level("WARNING", logger=_FACTORY_LOGGER):
@@ -234,5 +267,16 @@ def test_load_pipeline_from_file_or_resource_missing(
 def test_load_pipeline_from_file_or_resource_wrong_type(
     annotation_grr: GenomicResourceRepo,
 ) -> None:
-    with pytest.raises(TypeError, match="annotation_pipeline"):
+    """The refusal says which resource was wrong and what it actually is.
+
+    This is now the only way into a pipeline held in the GRR, and a run
+    names plenty of resources, so a bare "expected an annotation_pipeline"
+    leaves the reader to work out which of them it means.
+    """
+    with pytest.raises(TypeError) as excinfo:
         load_pipeline_from_file_or_resource("one", annotation_grr)
+
+    message = str(excinfo.value)
+    assert "annotation_pipeline" in message
+    assert "one" in message
+    assert "position_score" in message

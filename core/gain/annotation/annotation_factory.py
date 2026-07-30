@@ -147,7 +147,9 @@ def load_pipeline_from_file_or_resource(
             f"'{arg}' is neither a valid file path "
             f"nor a valid GRR resource id")
     if resource.get_type() != "annotation_pipeline":
-        raise TypeError("Expected an annotation_pipeline resource.")
+        raise TypeError(
+            f"Expected an annotation_pipeline resource. "
+            f"{resource.resource_id} is a {resource.get_type()} resource.")
     raw = resource.get_file_content(resource.get_config()["filename"])
     return load_pipeline_from_yaml(
         raw, grr,
