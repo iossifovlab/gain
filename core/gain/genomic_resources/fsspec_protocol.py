@@ -286,9 +286,23 @@ def build_inmemory_protocol(
             "absolute path: %s", root_path)
         raise ValueError(f"not an absolute root path: {root_path}")
 
-    proto = cast(
-        FsspecReadWriteProtocol,
-        build_fsspec_protocol(proto_id, f"memory://{root_path}"))
+    built = build_fsspec_protocol(proto_id, f"memory://{root_path}")
+    if not isinstance(built, FsspecReadWriteProtocol):
+        # This function's return type promises a read-write protocol, and it
+        # used to make that promise true by ``cast`` alone -- an assertion to
+        # the type checker that nothing checked at run time (#528). The memory
+        # scheme does build read-write, so the promise held; nothing kept it
+        # holding. Narrowed rather than cast so a protocol without the write
+        # methods this function goes on to call cannot be returned as one that
+        # has them.
+        #
+        # Not reachable through this module today: a memo hit whose mode
+        # disagrees is refused earlier, in ``__new__`` (#514), which is what
+        # the message below points at when the id is already taken.
+        raise TypeError(
+            f"protocol {proto_id!r} over memory://{root_path} is not "
+            f"read-write, so it cannot hold an embedded repository")
+    proto = built
     for rid, rver, rcontent in _scan_for_resources(content, []):
         resource = GenomicResource(rid, rver, proto)
         for fname, fcontent in _scan_for_resource_files(rcontent, []):
@@ -1884,11 +1898,14 @@ def build_fsspec_protocol(
     """Create fsspec GRR protocol based on the root url.
 
     ``read_only`` is the one boolean among the keyword arguments -- hence the
-    widened value type; every other keyword is a url or a credential.
+    widened value type; every other keyword is a url or a credential. It is
+    absent by default rather than ``False`` so that *asking* for a read-write
+    protocol can be told apart from not asking at all: the two mean different
+    things on an http(s) url, where only one of them is serviceable (#528).
     """
     # pylint: disable=import-outside-toplevel
     public_url = cast("str | None", kwargs.pop("public_url", None))
-    read_only = kwargs.pop("read_only", False)
+    read_only = kwargs.pop("read_only", None)
     filesystem = _build_filesystem(root_url, **kwargs)
 
     url = urlparse(root_url)
@@ -1905,6 +1922,26 @@ def build_fsspec_protocol(
             public_url=public_url,
             **kwargs)
     if url.scheme in {"http", "https"}:
+        if read_only is not None and not read_only:
+            # Asked for read-write over a scheme that cannot serve it. The
+            # read-only protocol below is still the only correct object to
+            # return, so this refusal costs no capability -- what it buys is
+            # that the request is answered rather than dropped. It used to be
+            # popped and never consulted here, so the caller learned its
+            # protocol was read-only from an absent write method somewhere
+            # downstream (#528) -- the same silent-wrong-mode shape #514
+            # fixed for the memo rebuild.
+            #
+            # Note the mode arm of that rebuild refusal cannot cover this: it
+            # compares the mode of the class this function *picked*, which on
+            # this branch is read-only whatever the caller asked for.
+            raise ValueError(
+                f"protocol {proto_id!r} over {_strip_url_userinfo(root_url)} "
+                f"cannot be built read-write: an http(s) repository is "
+                f"read-only -- there is nothing to create over http and no "
+                f"lockfile to take. Omit read_only to build the read-only "
+                f"protocol, or use a file:// or s3:// url for a repository "
+                f"that can be written to")
         return FsspecReadOnlyProtocol(
             proto_id, root_url,
             filesystem=filesystem,

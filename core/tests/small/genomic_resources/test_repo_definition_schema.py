@@ -50,6 +50,37 @@ def test_file_read_only() -> None:
     _valid({"type": "directory", "directory": "/data/grr", "read_only": True})
 
 
+@pytest.mark.parametrize(
+    "definition",
+    [
+        pytest.param(
+            {"type": "http", "url": "https://grr.example.com",
+             "read_only": False},
+            id="http"),
+        pytest.param(
+            {"type": "url", "url": "https://grr.example.com",
+             "read_only": False},
+            id="url"),
+    ],
+)
+def test_read_only_is_not_a_keyword_of_a_remote_repository(
+    definition: dict,
+) -> None:
+    """``read_only`` belongs to the file types alone, and must stay there.
+
+    This is a coupling, not a preference. ``build_fsspec_protocol`` refuses an
+    explicit ``read_only=False`` over an http(s) url (#528), so the day this
+    keyword is accepted on a remote definition is the day such a definition
+    stops being an invalid-definition error and becomes a protocol build
+    failure instead -- a different error, from a different layer, for a
+    definition that reads as though it should work.
+
+    An http(s) repository is read-only whatever a definition says, so the
+    keyword has nothing to express here; ``extra="forbid"`` is what says so.
+    """
+    assert "read_only" in str(_invalid(definition))
+
+
 def test_s3_minimal() -> None:
     _valid({"type": "s3", "url": "s3://my-bucket/grr"})
 
