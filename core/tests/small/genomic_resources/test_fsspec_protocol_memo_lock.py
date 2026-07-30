@@ -129,12 +129,15 @@ def test_read_write_get_all_resources_dict_survives_invalidate_at_release(
     read_write_proto: FsspecReadWriteProtocol,
     arm_invalidate_on_release: ArmInvalidateOnRelease,
 ) -> None:
-    """The read-write override carries the same memo, and the same bug.
+    """The class ``grr_manage`` runs against carries the guarantee too.
 
-    ``FsspecReadWriteProtocol`` subclasses the read-only protocol and
-    overrides ``get_all_resources_dict`` with its own copy of the
-    release-then-read shape, so fixing only the base class leaves the class
-    that ``grr_manage`` actually runs against broken (#458).
+    ``FsspecReadWriteProtocol`` used to override ``get_all_resources_dict``
+    with its own copy of the release-then-read shape, so fixing only the base
+    class left this -- the class ``grr_manage`` actually runs against --
+    broken (#458).  It now inherits the memo protocol and contributes only its
+    enumeration (#515), which is what makes the two cases here one
+    guarantee rather than two; this exercises it through the subclass, since
+    inheriting a fix is a claim worth checking rather than assuming.
     """
     trap = arm_invalidate_on_release(read_write_proto)
 

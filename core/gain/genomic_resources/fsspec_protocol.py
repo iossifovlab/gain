@@ -14,7 +14,7 @@ import pathlib
 import re
 import tempfile
 import time
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterable
 from contextlib import AbstractContextManager, suppress
 from dataclasses import asdict
 from threading import Lock
@@ -695,45 +695,73 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         """Return generator over all resources in the repository."""
         yield from self.get_all_resources_dict().values()
 
+    def _collect_all_resources(self) -> Iterable[GenomicResource]:
+        """Enumerate this repository's resources, in any order.
+
+        The one seam ``get_all_resources_dict`` leaves to a subclass. That
+        method holds the memo, the lock, the keying and the ordering; a
+        subclass contributes only what it can enumerate, and so cannot get
+        the locking wrong by getting the enumeration right (#515).
+
+        Called with ``_all_resources_lock`` HELD. An implementation must
+        therefore not take that lock, nor re-enter ``get_all_resources_dict``
+        or ``invalidate`` -- the lock is not reentrant.
+
+        This implementation reads the repository's ``.CONTENTS``, the only
+        enumeration available to a protocol that cannot scan for itself.
+        """
+        all_resources = []
+
+        contents = self.load_contents()
+
+        for entry in contents:
+            # ``.CONTENTS`` is remote, untrusted GRR content and its ``id``
+            # is joined onto the repository url, so a traversing id reads --
+            # and, through the caching repository, WRITES -- outside the
+            # root. Dropped with a warning rather than raised on: one
+            # poisoned entry must not cost the repository its healthy
+            # resources (gain#467).
+            reason = uncontained_resource_id_reason(entry["id"])
+            if reason is not None:
+                logger.warning(
+                    "repo %s: dropping resource <%s> from %s -- "
+                    "its id %s",
+                    self.proto_id, entry["id"],
+                    GR_CONTENTS_FILE_NAME, reason)
+                continue
+            version = tuple(map(int, entry["version"].split(".")))
+            manifest = Manifest.from_manifest_entries(entry["manifest"])
+            resource = self.build_genomic_resource(
+                entry["id"], version, config=entry["config"],
+                manifest=manifest)
+            logger.debug(
+                "repo %s loaded resource %s",
+                self.proto_id,
+                resource.resource_id)
+            all_resources.append(resource)
+
+        return all_resources
+
     def get_all_resources_dict(self) -> dict[str, GenomicResource]:
+        """Return the repository's resources, keyed by full id.
+
+        The whole memo protocol -- the lock, the check-then-populate, the
+        keying, the ordering and the return -- lives here and only here, for
+        every fsspec protocol. A subclass enumerates the repository by
+        overriding ``_collect_all_resources`` and inherits the rest. Both
+        halves used to be duplicated in ``FsspecReadWriteProtocol``, and the
+        release-then-read defect of #458 was in both copies while the report
+        named one of them (#515).
+        """
         with self._all_resources_lock:
             if self._all_resources is None:
-                all_resources = []
-
-                contents = self.load_contents()
-
-                for entry in contents:
-                    # ``.CONTENTS`` is remote, untrusted GRR content and
-                    # its ``id`` is joined onto the repository url, so a
-                    # traversing id reads -- and, through the caching
-                    # repository, WRITES -- outside the root. Dropped with
-                    # a warning rather than raised on: one poisoned entry
-                    # must not cost the repository its healthy resources
-                    # (gain#467).
-                    reason = uncontained_resource_id_reason(entry["id"])
-                    if reason is not None:
-                        logger.warning(
-                            "repo %s: dropping resource <%s> from %s -- "
-                            "its id %s",
-                            self.proto_id, entry["id"],
-                            GR_CONTENTS_FILE_NAME, reason)
-                        continue
-                    version = tuple(map(int, entry["version"].split(".")))
-                    manifest = Manifest.from_manifest_entries(
-                        entry["manifest"])
-                    resource = self.build_genomic_resource(
-                        entry["id"], version, config=entry["config"],
-                        manifest=manifest)
-                    logger.debug(
-                        "repo %s loaded resource %s",
-                        self.proto_id,
-                        resource.resource_id)
-                    all_resources.append(resource)
-
+                # Ordered here rather than in the seam: the memo's key order
+                # is this method's guarantee, so an enumeration cannot cost
+                # the repository its ordering by yielding as it finds.
                 self._all_resources = {
                     res.get_full_id(): res
                     for res in sorted(
-                        all_resources,
+                        self._collect_all_resources(),
                         key=lambda r: r.get_full_id(),
                     )
                 }
@@ -1323,24 +1351,15 @@ class FsspecReadWriteProtocol(
             return reason
         return f"a symlink to <{target}>: {reason}"
 
-    def get_all_resources(self) -> Generator[GenomicResource, None, None]:
-        """Return generator over all resources in the repository."""
+    def _collect_all_resources(self) -> Iterable[GenomicResource]:
+        """Enumerate by scanning the repository, not by reading ``.CONTENTS``.
 
-        yield from self.get_all_resources_dict().values()
-
-    def get_all_resources_dict(self) -> dict[str, GenomicResource]:
-        with self._all_resources_lock:
-            if self._all_resources is None:
-                self._all_resources = {
-                    res.get_full_id(): res
-                    for res in sorted(
-                        self.collect_all_resources(),
-                        key=lambda r: r.get_full_id(),
-                    )
-                }
-            # Returned from inside the lock, for the reason the read-only
-            # override gives (#458).
-            return self._all_resources
+        The whole of this class's contribution to ``get_all_resources_dict``:
+        a writable repository is authoritative about itself, so it scans
+        rather than trusting a ``.CONTENTS`` it may itself be mid-way through
+        rewriting. The memo, its lock and the ordering are inherited (#515).
+        """
+        return self.collect_all_resources()
 
     def _get_resource_file_state_path(
             self, resource: GenomicResource, filename: str) -> str:
