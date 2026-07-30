@@ -7,7 +7,7 @@
 - `GenomicScore._fetch_lines` renamed to `fetch_lines` (public). Callers inside
   `PositionScore`, `AlleleScore`, and `CnvCollection` updated accordingly.
 
-- `AlleleScore.fetch_scores` return type changed from `list[ScoreValue]` to
+- `AlleleScore.fetch_allele_scores` return type changed from `list[ScoreValue]` to
   `dict[str, ScoreValue]` (score_id → value). This makes it easier for callers
   to look up individual scores by name without maintaining a parallel index list.
 
@@ -25,7 +25,7 @@
 
 - `simple_score_queries` is now filtered to only include attribute sources that
   exist in the resource's `score_definitions`. Virtual attributes (like `"allele"`)
-  are excluded, preventing a `KeyError` when `fetch_scores` is called.
+  are excluded, preventing a `KeyError` when `fetch_allele_scores` is called.
 
 ### `AlleleScoreAnnotator` — modes
 

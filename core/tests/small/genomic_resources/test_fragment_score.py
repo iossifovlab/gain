@@ -139,10 +139,10 @@ def test_fragment_score_resource(
     attributes: list[dict[str, Any]],
 ) -> None:
     with fragments.open() as score:
-        aaa = score.fetch_fragments(
+        aaa = score.fetch_fragment_scores(
             chrom, beg, end)
         assert len(aaa) == count
-        assert [a.attributes for a in aaa] == attributes
+        assert aaa == attributes
 
 
 def test_fragment_score_wrong_resource_types(
@@ -166,12 +166,12 @@ def test_fragment_score_no_open(fragments: FragmentScore) -> None:
         ValueError,
         match="The resource <score_one> is not open",
     ):
-        fragments.fetch_fragments("1", 5, 15)
+        fragments.fetch_fragment_scores("1", 5, 15)
 
 
 def test_fragment_score_bad_chrom(fragments: FragmentScore) -> None:
     score = fragments.open()
-    res = score.fetch_fragments("3", 5, 15)
+    res = score.fetch_fragment_scores("3", 5, 15)
 
     assert len(res) == 0
 
@@ -255,7 +255,8 @@ def test_fragment_score_implementation_do_min_max(
     )
 
     assert isinstance(statistics["freq"], MinMaxValue)
-    assert statistics["freq"].count == 3
+    assert statistics["freq"].min == 0.00001
+    assert statistics["freq"].max == 0.3
 
 
 def test_cli_manage_fragment_score_histograms(

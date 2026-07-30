@@ -194,12 +194,12 @@ def test_fragment_score_cache_does_not_collide_across_versions(
     assert new.resource.get_full_id() == "fragments(2.0)"
 
     with old.open() as old_open, new.open() as new_open:
-        assert [(c.chrom, c.pos_begin, c.pos_end)
-                for c in old_open.fetch_fragments("1", 1, 1000)] == \
-            [("1", 100, 200)]
-        assert [(c.chrom, c.pos_begin, c.pos_end)
-                for c in new_open.fetch_fragments("1", 1, 1000)] == \
-            [("1", 300, 400)]
+        # Distinct score values, so each cache entry is demonstrably reading
+        # its own version's data.
+        assert old_open.fetch_fragment_scores("1", 1, 1000) \
+            == [{"score": 0.1}]
+        assert new_open.fetch_fragment_scores("1", 1, 1000) \
+            == [{"score": 0.2}]
 
 
 def test_position_and_allele_scores_are_not_cached(

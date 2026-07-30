@@ -30,7 +30,7 @@ Example::
             .build_repo(tmp_path)
         )
         score = PositionScore(repo.get_resource("scores/pos")).open()
-        assert score.fetch_scores("1", 10) == [0.1]
+        assert score.fetch_position_scores("1", 10) == [0.1]
 """
 from __future__ import annotations
 
@@ -660,11 +660,9 @@ class BigWigScoreBuilder(MetaMixin):
 
     **The emitted score block addresses no column**, which is the canonical
     bigWig config: a bigWig record's payload IS its value, so there is nothing
-    to address.  This builder used to emit ``index: 3``, which addressed the
-    value inside the four-element payload a bigWig record once carried; that
-    key is now a deprecated no-op, accepted with a warning for the deployed
-    resources that still carry it.  A test that wants that path authors it as
-    yaml -- see ``test_bigwig_scores.py``.
+    to address.  An ``index:`` key is a deprecated no-op, accepted with a
+    warning for the deployed resources that carry it; a test that wants that
+    path authors it as yaml -- see ``test_bigwig_scores.py``.
     """
 
     score_id: str = "score"
@@ -679,11 +677,10 @@ class BigWigScoreBuilder(MetaMixin):
     def with_fetch_size(self, fetch_size: int) -> Self:
         """Emit ``fetch_size:`` in the ``table:`` config.
 
-        A budget in *records per range query*, not base pairs.  This used to
-        offer the two buffered-strategy knobs as well; that strategy is gone
-        (see ``docs/adr/0002-remove-bigwig-fetch-buffering.md``), and the
-        builder is ours rather than config surface, so it stops offering
-        knobs that do nothing rather than keeping them for compatibility.
+        A budget in *records per range query*, not base pairs.  The only
+        fetch knob offered: this builder is ours rather than config surface,
+        so it offers no key that does nothing (see
+        ``docs/adr/0002-remove-bigwig-fetch-buffering.md``).
         """
         return dataclasses.replace(
             self, fetch_budgets={"fetch_size": fetch_size})

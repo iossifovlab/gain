@@ -4,6 +4,13 @@ import logging
 
 import pytest
 from gain.genomic_resources import GenomicResource
+from gain.genomic_resources.genomic_position_table.record import (
+    ALT,
+    CHROM,
+    POS_BEGIN,
+    POS_END,
+    REF,
+)
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     FragmentScore,
@@ -248,7 +255,7 @@ def test_position_score_multiple_values_for_position() -> None:
 
 
 def test_position_score_fetch_scores_multiple_lines() -> None:
-    """Test error when fetch_scores returns multiple lines."""
+    """Test error when fetch_position_scores returns multiple lines."""
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
             type: position_score
@@ -270,7 +277,7 @@ def test_position_score_fetch_scores_multiple_lines() -> None:
     score.open()
 
     with pytest.raises(ValueError, match="multiple values"):
-        score.fetch_scores("1", 10)
+        score.fetch_position_scores("1", 10)
 
 
 def test_allele_score_invalid_resource_type() -> None:
@@ -302,7 +309,7 @@ def test_allele_score_mode_from_name_invalid() -> None:
 
 
 def test_allele_score_fetch_region_spanning_record() -> None:
-    """Test fetch_region with spanning records (pos_begin != pos_end)."""
+    """Test the region read with spanning records (pos_begin != pos_end)."""
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
             type: allele_score
@@ -326,14 +333,17 @@ def test_allele_score_fetch_region_spanning_record() -> None:
     score = AlleleScore(res)
     score.open()
 
-    result = list(score.fetch_region("1", 10, 20, ["freq"]))
-    assert result == [(10, "A", "G", [0.02])]
+    assert list(score.fetch_region_values("1", 10, 20, ["freq"])) \
+        == [(10, 10, [0.02])]
+    # The nucleotides come off the record, not the values stream.
+    assert [(r[POS_BEGIN], r[REF], r[ALT])
+            for r in score.fetch_records("1", 10, 20)] == [(10, "A", "G")]
 
 
 def test_allele_score_fetch_region_overlapping_positions(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Test fetch_region with overlapping positions (same pos, same alleles)."""
+    """Test the region read with overlapping positions and alleles."""
     caplog.set_level(logging.DEBUG)
 
     res: GenomicResource = build_inmemory_test_resource({
@@ -360,7 +370,9 @@ def test_allele_score_fetch_region_overlapping_positions(
     score = AlleleScore(res)
     score.open()
 
-    result = list(score.fetch_region("1", 10, 11, ["freq"]))
+    # Two records share position 10 with different ref/alt, so both are
+    # yielded rather than one being collapsed away.
+    result = list(score.fetch_region_values("1", 10, 11, ["freq"]))
     assert len(result) == 2
 
 
@@ -387,7 +399,7 @@ def test_fragment_score_invalid_resource_type() -> None:
 
 
 def test_fragment_score_fetch_fragments() -> None:
-    """Test FragmentScore.fetch_fragments method."""
+    """Test FragmentScore.fetch_fragment_scores method."""
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
             type: cnv_collection
@@ -412,23 +424,24 @@ def test_fragment_score_fetch_fragments() -> None:
     fragment_score = FragmentScore(res)
     fragment_score.open()
 
-    fragments = fragment_score.fetch_fragments("1", 150, 350)
+    fragments = fragment_score.fetch_fragment_scores("1", 150, 350)
     assert len(fragments) == 2
-    assert fragments[0].chrom == "1"
-    assert fragments[0].pos_begin == 100
-    assert fragments[0].pos_end == 200
-    assert fragments[0].attributes["cnv_type"] == "DEL"
-    assert fragments[0].attributes["frequency"] == 0.01
+    assert fragments[0]["cnv_type"] == "DEL"
+    assert fragments[0]["frequency"] == 0.01
+    # A fragment's own span is read through the records, not the score fetch.
+    records = list(fragment_score.fetch_records("1", 150, 350))
+    assert (records[0][CHROM], records[0][POS_BEGIN], records[0][POS_END]) \
+        == ("1", 100, 200)
 
-    fragments = fragment_score.fetch_fragments("1", 1000, 2000)
+    fragments = fragment_score.fetch_fragment_scores("1", 1000, 2000)
     assert len(fragments) == 0
 
-    fragments = fragment_score.fetch_fragments("chr99", 1, 100)
+    fragments = fragment_score.fetch_fragment_scores("chr99", 1, 100)
     assert len(fragments) == 0
 
 
 def test_fragment_score_not_open() -> None:
-    """Test FragmentScore.fetch_fragments when not opened."""
+    """Test FragmentScore.fetch_fragment_scores when not opened."""
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
             type: cnv_collection
@@ -448,7 +461,7 @@ def test_fragment_score_not_open() -> None:
     fragment_score = FragmentScore(res)
 
     with pytest.raises(ValueError, match="is not open"):
-        fragment_score.fetch_fragments("1", 100, 200)
+        fragment_score.fetch_fragment_scores("1", 100, 200)
 
 
 def test_build_score_from_resource_invalid_type() -> None:
@@ -659,7 +672,7 @@ def test_position_score_fetch_region_all() -> None:
     result = [
         rec
         for chrom in score.get_all_chromosomes()
-        for rec in score.fetch_region(chrom, None, None)
+        for rec in score.fetch_region_values(chrom, None, None)
     ]
     assert len(result) == 4
 
@@ -700,6 +713,6 @@ def test_allele_score_fetch_region_all() -> None:
     result = [
         rec
         for chrom in score.get_all_chromosomes()
-        for rec in score.fetch_region(chrom, None, None)
+        for rec in score.fetch_region_values(chrom, None, None)
     ]
     assert len(result) == 9

@@ -139,7 +139,7 @@ combined to extract and visualize signal over a biologically meaningful region.
 
     xs = []
     ys = []
-    for pos_begin, pos_end, values in score.fetch_region(chrom, start, end):
+    for pos_begin, pos_end, values in score.fetch_region_values(chrom, start, end):
         if values is not None:
             for p in range(pos_begin, pos_end + 1):
                 xs.append(p)

@@ -33,11 +33,11 @@ def test_the_simplest_position_score() -> None:
     score.open()
 
     assert score.get_all_scores() == ["phastCons100way"]
-    assert score.fetch_scores("1", 11) == [0.03]
-    assert score.fetch_scores("1", 15) == [0.46]
-    assert score.fetch_scores("2", 8) == [0.01]
-    assert score.fetch_scores("1", 10) == [0.02]
-    assert score.fetch_scores("1", 12) is None
+    assert score.fetch_position_scores("1", 11) == [0.03]
+    assert score.fetch_position_scores("1", 15) == [0.46]
+    assert score.fetch_position_scores("2", 8) == [0.01]
+    assert score.fetch_position_scores("1", 10) == [0.02]
+    assert score.fetch_position_scores("1", 12) is None
 
 
 def test_region_score() -> None:
@@ -77,7 +77,7 @@ def test_region_score() -> None:
     assert score.table.pos_begin_key == 1  # "pos_begin"
     assert score.table.pos_end_key == 2  # "pos_end"
 
-    assert score.fetch_scores("1", 12) == [0.02, None]
+    assert score.fetch_position_scores("1", 12) == [0.02, None]
 
 
 def test_phastcons100way() -> None:
@@ -111,7 +111,7 @@ def test_phastcons100way() -> None:
 
     assert score.get_all_scores() == ["phastCons100way"]
 
-    assert score.fetch_scores("1", 54773) == [0]
+    assert score.fetch_position_scores("1", 54773) == [0]
 
 
 def test_position_score_fetch_region() -> None:

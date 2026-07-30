@@ -338,7 +338,7 @@ def test_score_definition_via_index_headerless_tabix(
     assert len(score.score_definitions) == 1
     assert "piscore" in score.score_definitions
     assert tuple(score.get_all_scores()) == ("piscore",)
-    assert score.get_score_from_record(score_line, "piscore") == 3.14
+    assert score.get_score_value_from_record(score_line, "piscore") == 3.14
 
 
 def test_score_definition_list_header_tabix(tmp_path: pathlib.Path) -> None:
@@ -387,7 +387,7 @@ def test_score_definition_list_header_tabix(tmp_path: pathlib.Path) -> None:
     assert score_line[POS_END] == 12
     assert score_line[REF] == "A"
     assert score_line[ALT] == "G"
-    assert score.get_score_from_record(score_line, "piscore") == 3.14
+    assert score.get_score_value_from_record(score_line, "piscore") == 3.14
 
 
 def test_forbid_column_names_in_scores_when_no_header_configured() -> None:
@@ -511,7 +511,7 @@ def test_line_score_value_parsing(tmp_path: pathlib.Path) -> None:
     score = build_score_from_resource(res)
     score.open()
     result = [
-        score.get_score_from_record(line, "c2")
+        score.get_score_value_from_record(line, "c2")
         for line in score.fetch_records("1", 10, 30)]
     assert result == [3.14, 4.14, 5.14]
 
@@ -628,7 +628,7 @@ def test_line_score_na_values(tmp_path: pathlib.Path) -> None:
     score = build_score_from_resource(res)
     score.open()
     result = [
-        score.get_score_from_record(line, "c2")
+        score.get_score_value_from_record(line, "c2")
         for line in score.fetch_records("1", 10, 30)]
     assert result == [3.14, None, None]
 
@@ -644,7 +644,7 @@ def test_vcf_tuple_scores_autoconcat_to_string(vcf_score: AlleleScore) -> None:
     vcf_score.open()
     results = tuple(
         (r[CHROM], r[POS_BEGIN], r[POS_END],
-         vcf_score.get_score_from_record(r, "B"))
+         vcf_score.get_score_value_from_record(r, "B"))
         for r in vcf_score.fetch_records("chr1", 2, 30)
     )
     assert results == (
@@ -786,7 +786,7 @@ def test_vcf_reads_the_pysam_proxies_once_per_record(
 
         score_defs = list(vcf_score.score_definitions.values())
         assert len(score_defs) == 4
-        values = vcf_score.get_values_from_record(counted, score_defs)
+        values = vcf_score.get_score_values_from_record(counted, score_defs)
 
         # ...and reading all four scores off it reads them no more: the
         # extractor takes them from the payload, it does not go to the variant.
@@ -795,7 +795,8 @@ def test_vcf_reads_the_pysam_proxies_once_per_record(
 
         # The values are the ones the real record reads: moving the proxies
         # into the payload is a cost change, not a semantic one.
-        assert values == vcf_score.get_values_from_record(record, score_defs)
+        assert values == vcf_score.get_score_values_from_record(
+            record, score_defs)
         assert values == [3, "31", "c32", "d31"]
 
 
@@ -824,12 +825,12 @@ def test_vcf_reads_the_info_metadata_only_for_a_tuple_value(
 
         # A -- Number=1, so the value is a scalar and its number cannot
         # change which value this allele reads.  The metadata is never asked.
-        assert vcf_score.get_score_from_record(counted_line, "A") == 3
+        assert vcf_score.get_score_value_from_record(counted_line, "A") == 3
         assert counting.meta_gets == 0
 
         # C -- Number=R, a tuple: the number is what says the reference sits
         # at offset 0, so the metadata IS read, once, for this key.
-        assert vcf_score.get_score_from_record(counted_line, "C") == "c32"
+        assert vcf_score.get_score_value_from_record(counted_line, "C") == "c32"
         assert counting.meta_gets == 1
 
     # An absent key still answers None -- and does so without touching the
@@ -839,7 +840,7 @@ def test_vcf_reads_the_info_metadata_only_for_a_tuple_value(
         absent = next(iter(vcf_score.fetch_records("chr1", 2, 2)))
         absent_line, absent_counting = _count_record(absent)
 
-        assert vcf_score.get_score_from_record(absent_line, "D") is None
+        assert vcf_score.get_score_value_from_record(absent_line, "D") is None
         assert absent_counting.meta_gets == 0
 
 
@@ -885,9 +886,9 @@ def test_vcf_selects_info_values_by_allele_index(
 
         results = [
             (line[CHROM], line[POS_BEGIN], line[ALT],
-             vcf_score.get_score_from_record(line, "A"),
-             vcf_score.get_score_from_record(line, "C"),
-             vcf_score.get_score_from_record(line, "D"))
+             vcf_score.get_score_value_from_record(line, "A"),
+             vcf_score.get_score_value_from_record(line, "C"),
+             vcf_score.get_score_value_from_record(line, "D"))
             for line in lines
         ]
 
@@ -983,7 +984,7 @@ chr1   5   .  A   T   .    .       D=d11
 
         results = [
             (line[POS_BEGIN], line[ALT],
-             score.get_score_from_record(line, "D")) for line in lines
+             score.get_score_value_from_record(line, "D")) for line in lines
         ]
 
     assert results == [
@@ -1042,7 +1043,7 @@ chr1   5   .  A   T   .    .       D=d11
         assert score.score_definitions["D"].value_parser is None
 
         values = [
-            score.get_score_from_record(line, "D")
+            score.get_score_value_from_record(line, "D")
             for line in score.fetch_records("chr1", 1, 30)
         ]
 
@@ -1099,7 +1100,7 @@ chr1   5   .  A   T,G   .    .       D=d11,d12
     with score.open():
         results = [
             (line[POS_BEGIN], line[ALT],
-             score.get_score_from_record(line, "D"))
+             score.get_score_value_from_record(line, "D"))
             for line in score.fetch_records("chr1", 1, 30)
         ]
 
@@ -1155,7 +1156,7 @@ chr1   9   .  A   T   .    .       S=solo
     with score.open():
         assert score.score_definitions["S"].value_parser is str
         assert [
-            score.get_score_from_record(line, "S")
+            score.get_score_value_from_record(line, "S")
             for line in score.fetch_records("chr1", 5, 9)
         ] == ["c11|c12", "solo"]
 
@@ -1240,8 +1241,8 @@ def test_score_definition_new_configuration_fields(
 
     score_line = next(score.fetch_records("1", 10, 12))
     assert tuple(score.get_all_scores()) == ("piscore", "2piscore")
-    assert score.get_score_from_record(score_line, "piscore") == 3.14
-    assert score.get_score_from_record(score_line, "2piscore") == 6.28
+    assert score.get_score_value_from_record(score_line, "piscore") == 3.14
+    assert score.get_score_value_from_record(score_line, "2piscore") == 6.28
 
 
 def test_score_definition_histograms(
@@ -1286,8 +1287,8 @@ def test_score_definition_histograms(
 
     score_line = next(score.fetch_records("1", 10, 10))
     assert tuple(score.get_all_scores()) == ("score1", "score2")
-    assert score.get_score_from_record(score_line, "score1") == "aaa"
-    assert score.get_score_from_record(score_line, "score2") == "bbb"
+    assert score.get_score_value_from_record(score_line, "score1") == "aaa"
+    assert score.get_score_value_from_record(score_line, "score2") == "bbb"
 
     score1_def = score.score_definitions["score1"]
     assert score1_def.hist_conf is None
@@ -1603,9 +1604,9 @@ def test_bigwig_position_score_fetch_records(
     # BigWig [0,10) → GAIn [1,10]; [10,20) → [11,20]
     lines = list(bigwig_position_score.fetch_records("chr1", 1, 15))
     assert len(lines) == 2
-    assert bigwig_position_score.get_score_from_record(
+    assert bigwig_position_score.get_score_value_from_record(
         lines[0], "score") == pytest.approx(0.1)
-    assert bigwig_position_score.get_score_from_record(
+    assert bigwig_position_score.get_score_value_from_record(
         lines[1], "score") == pytest.approx(0.2)
 
 
@@ -1626,11 +1627,11 @@ def test_bigwig_position_score_fetch_scores_at_position(
     bigwig_position_score: PositionScore,
 ) -> None:
     ps = bigwig_position_score
-    result = ps.fetch_scores("chr1", 5)
+    result = ps.fetch_position_scores("chr1", 5)
     assert result is not None
     assert result[0] == pytest.approx(0.1)
 
-    result = ps.fetch_scores("chr1", 15)
+    result = ps.fetch_position_scores("chr1", 15)
     assert result is not None
     assert result[0] == pytest.approx(0.2)
 
@@ -1640,9 +1641,9 @@ def test_bigwig_position_score_multi_chrom(
 ) -> None:
     lines_chr2 = list(bigwig_position_score.fetch_records("chr2", 1, 20))
     assert len(lines_chr2) == 2
-    assert bigwig_position_score.get_score_from_record(
+    assert bigwig_position_score.get_score_value_from_record(
         lines_chr2[0], "score") == pytest.approx(0.4)
-    assert bigwig_position_score.get_score_from_record(
+    assert bigwig_position_score.get_score_value_from_record(
         lines_chr2[1], "score") == pytest.approx(0.5)
 
 

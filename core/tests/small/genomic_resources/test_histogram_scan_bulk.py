@@ -277,11 +277,13 @@ def test_bulk_matches_per_record_float_underscore_token(
 
 
 def test_np_score_is_not_bulk_eligible(tmp_path: pathlib.Path) -> None:
-    # An np_score/allele_score reads with per-allele (weight-1,
-    # multiple-alleles-per-position) semantics; the position-score bulk path
-    # would impose span weights and its overlap guard would raise on a
-    # multi-allele site.  The dispatch must keep such scores on the per-record
-    # path -- and never raise.
+    # An np_score is deliberately left out of the bulk gate: no production GRR
+    # has one, so the bulk path is not exercised against it and is not opened
+    # to it untested.  The exclusion is NOT about accumulator semantics -- an
+    # np_score reads with the same per-allele (weight-1, several records at a
+    # position) rules an allele score does, and gain#421 admitted those by
+    # having both scan paths read the kind's own record facts.  The dispatch
+    # must keep such scores on the per-record path -- and never raise.
     resource = (
         a_np_score().with_score("score", "float").with_tabix()
         .build_resource(tmp_path)

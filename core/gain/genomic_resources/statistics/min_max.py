@@ -14,13 +14,11 @@ class MinMaxValue(Statistic):
         score_id: str,
         min_value: float = np.nan,
         max_value: float = np.nan,
-        count: int = 0,
     ):
         super().__init__("min_max", "Calculates Min and Max values")
         self.score_id = score_id
         self.min = min_value
         self.max = max_value
-        self.count = count
 
     def add_value(self, value: float | None) -> None:
         # Skip nan as ``NumberHistogram.add_value`` does: a ``min(nan, x)`` /
@@ -48,32 +46,19 @@ class MinMaxValue(Statistic):
             self.max = max(other.max, self.max)
         else:
             self.max = max(self.max, other.max)
-        self.count += other.count
-
-    def add_count(self, count: int = 1) -> None:
-        self.count += count
 
     def serialize(self) -> str:
-        serialized = {
+        return yaml.dump({
             "score_id": self.score_id,
             "min": self.min,
             "max": self.max,
-        }
-        if self.count != 0:
-            serialized["count"] = self.count
-        return yaml.dump(serialized)
+        })
 
     @staticmethod
     def deserialize(content: str) -> MinMaxValue:
+        # Unknown keys are ignored rather than rejected, so a file carrying
+        # extra fields still reads.
         data = yaml.safe_load(content)
-
-        if "count" in data:
-            return MinMaxValue(
-                data["score_id"],
-                data["min"],
-                data["max"],
-                data["count"],
-            )
         return MinMaxValue(
             data["score_id"],
             data["min"],

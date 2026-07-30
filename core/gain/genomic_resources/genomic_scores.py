@@ -5,7 +5,6 @@ import abc
 import copy
 import enum
 from collections.abc import Generator, Iterator
-from dataclasses import dataclass
 from itertools import starmap
 from threading import Lock
 from types import TracebackType
@@ -87,6 +86,31 @@ logger = logging.getLogger(__name__)
 # enough that the per-batch numpy overhead disappears against the per-row work
 # it replaces, small enough that one batch's arrays stay comfortably in cache.
 DEFAULT_VALUE_ARRAYS_BATCH_SIZE = 100_000
+
+
+class RecordOrdering(enum.Enum):
+    """How a resource kind's records may be laid out along a contig.
+
+    ``DISJOINT`` -- at most one record per position, so two records that
+    touch are a data error.  That is what a position score promises, and
+    what ``PositionScore.fetch_region_values`` raises on.
+
+    ``SHARED`` -- several records may legitimately sit at one position.
+    That is what an allele score IS (one record per ref/alt pair at a site)
+    and what a fragment score is (overlapping intervals), so there is
+    nothing to reject.
+
+    There is deliberately NO third value for "records that run backwards".
+    The per-record allele fetch does raise on ``pos < prev_right``, but only
+    tabix- and bigWig-backed tables ever reach the vectorized scan, and
+    tabix refuses to index a file whose positions decrease
+    (``[E::hts_idx_push] Unsorted positions on sequence``).  Such a resource
+    therefore cannot be built, the branch could never run, and no test could
+    pin it -- so the bulk guard enforces only the shared-position rule.
+    """
+
+    DISJOINT = "disjoint"
+    SHARED = "shared"
 
 
 class GenomicScore(ScoreResource[GenomicScoreDef]):
@@ -185,8 +209,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
     Abstract Methods:
         Subclasses must implement:
-        - _fetch_region_values(): Core method for retrieving score values
-          in a genomic region, used for statistics computation
+        - fetch_region_values(): the region read every kind provides, and the
+          one the statistics scan and ``aggregate_region`` are built on
 
     See Also:
         - PositionScore: For position-based genomic scores
@@ -195,13 +219,22 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         - GenomicPositionTable: Table format abstraction
     """
 
-    # What each fetched line is wrapped in.  Installed by :meth:`open`, from
-    # the table's ``yields_records`` claim, and declared here with NO default
-    # on purpose: there is no longer a score line that suits an unrouted score.
-    # Every backend yields records (#239 deleted the adapters), but a record's
-    # payload still means two different things -- a raw row or a VCF
-    # (variant, allele index) pair -- so there is no class that reads both, and
-    # a default would have to be wrong for one of them.  Unset until open()
+    # How this resource kind's records read, stated ONCE here and consumed by
+    # BOTH statistics scan paths -- the per-record one and the vectorized bulk
+    # one.  Two statements of one rule is how the paths drift.
+    #
+    # The defaults are the "one record, one count" rule that everything except
+    # a position score follows.  ``RECORD_WEIGHT_IS_SPAN`` is also where
+    # :meth:`_record_weight` -- the per-record weight the annotators'
+    # aggregation applies -- reads the rule from, so the two cannot disagree.
+    RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.SHARED
+    RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
+
+    # How a value is read off a record.  Installed by :meth:`open`, from the
+    # table's ``yields_records`` claim, and declared here with NO default on
+    # purpose: a record's payload means two different things -- a raw row or a
+    # VCF (variant, allele index) pair -- so no single extractor reads both,
+    # and a default would have to be wrong for one of them.  Unset until open()
     # routes, an unopened score raises AttributeError rather than silently
     # reading a VCF record as a row; open() installs it *before* publishing
     # table_loaded, so no caller can observe the gap (see open()).
@@ -212,8 +245,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     # per CLASS because the reduction is a property of the resource type -- a
     # position score is aggregated over a region of positions, an allele score
     # over the alleles at one -- and a ``GenomicScoreDef`` cannot know which
-    # kind it belongs to.  That is why there used to be two fields on the
-    # definition and only ever one of them read.
+    # kind it belongs to.
     #
     # Applied by :meth:`_apply_default_aggregator` to every score whose config
     # does not state an ``aggregator:``, which today is every deployed score:
@@ -315,26 +347,14 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                     "add_prefix": {"type": "string"},
                     "del_prefix": {"type": "string", "excludes": "add_prefix"},
                 }},
-                # bigWig fetch tuning.  The two ``*_fetch_size`` keys are
-                # budgets in RECORDS per range query -- the bigWig backend
-                # adapts its base-pair window toward them (see
-                # ``table_bigwig``).  The backend has always read all three off
-                # the table definition; before #259 the schema rejected them as
-                # unknown fields, so configuring one failed validation outright.
-                # ``fetch_size`` is a budget in RECORDS per range query -- the
-                # bigWig backend adapts its base-pair window toward it.  It was
-                # called ``direct_fetch_size`` while a second, buffered fetch
-                # strategy existed; that strategy is gone, so the name is too.
-                # The rename is deliberately NOT aliased: the capability still
-                # exists, so a config naming it the old way means something
-                # specific, and failing validation lets the operator rename it
-                # rather than silently getting the default.
+                # bigWig fetch tuning.  ``fetch_size`` is a budget in
+                # RECORDS per range query -- the bigWig backend adapts its
+                # base-pair window toward it (see ``table_bigwig``).
                 "fetch_size": {"type": "integer", "min": 1},
-                # The buffered strategy's two knobs, kept in the schema and
-                # ignored.  Unlike the rename above, these configure a feature
-                # that no longer EXISTS, so there is nothing for an operator to
-                # rename to -- refusing the resource would take it offline to
-                # tell it that.  ``build_genomic_position_table`` warns.
+                # Accepted and ignored: they configure no capability.  They
+                # stay in the schema because refusing the resource would take
+                # it offline merely to report a dead key, and there is nothing
+                # to rename them to.  ``build_genomic_position_table`` warns.
                 "buffer_fetch_size": {"type": "integer", "min": 1},
                 "use_buffered_threshold": {"type": "integer", "min": 0},
             }},
@@ -430,17 +450,14 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     ) -> dict[str, GenomicScoreDef]:
         """Fill in what a definition cannot decide for itself.
 
-        **The value type.**  ``type:`` is optional, and an unstated one has
-        always been READ as a float -- that is what the value parser
-        defaults to.  The declared type used to be left at ``None``, so such
-        a score parsed as a float while reporting no type, and everything
-        keyed on the type quietly opted out.  Most damagingly
+        **The value type.**  ``type:`` is optional, and an unstated one is
+        recorded as ``float`` -- what the value parser defaults to anyway.
+        Recording it matters rather than leaving it ``None``:
         ``GenomicScoreDef.__post_init__`` returns early on a ``None`` type,
-        so ``na_values`` was never normalized: it stayed the raw string the
-        config gave, which turns the NA check into a SUBSTRING test, and a
-        score configured ``na_values: "-1"`` silently read a real value of 1
-        as a null.  That is the exact defect ``normalize_na_values`` exists
-        to prevent, reachable by omitting one key.
+        which would skip ``na_values`` normalization and leave the raw config
+        string in place.  That turns the NA check into a SUBSTRING test, so a
+        score configured ``na_values: "-1"`` would read a real value of 1 as
+        a null -- the exact defect ``normalize_na_values`` prevents.
 
         It is resolved HERE rather than at parse time because for a VCF
         score an unstated type means "the type the file's header declares",
@@ -574,10 +591,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         path pays nothing for it.
 
         A table that yields no records is a programming error, not a data
-        error: since #239 there is no adapter score line to fall back to, so a
-        backend leaving the flag False has nothing that can read it and we
-        refuse rather than guess.  (Nothing in the tree reaches it: it guards a
-        backend added later without its migration.)
+        error: there is no fallback reader, so a backend leaving the flag
+        False has nothing that can read it and we refuse rather than guess.
+        (Nothing in the tree reaches it: it guards a backend added later
+        without its migration.)
         """
         if is_vcf:
             return extract_vcf_value
@@ -625,11 +642,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         if is_vcf:
             # A VCF score has no column to resolve: it is addressed by INFO
             # KEY, which is ``col_name``, and :func:`extract_vcf_value` reads
-            # that attribute directly.  This branch used to copy the same
-            # string into ``score_index`` as well, which is what made that
-            # field ``int | str`` and forced an ``isinstance`` assert at the
-            # other end; the copy said nothing the original did not.  So all
-            # that is left here is the invariant the copy used to assert.
+            # that attribute directly.  All this enforces is that the key is
+            # actually there.
             for score_def in self.score_definitions.values():
                 if score_def.col_name is None:
                     raise ValueError(
@@ -687,7 +701,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         * a refusal costs no handle.  Routing after ``table.open()`` would
           leave a caller that is not using the ``with`` form holding an opened
-          pysam handle it can no longer reach: ``table_loaded`` would still be
+          pysam handle it cannot reach: ``table_loaded`` would still be
           False, so ``close()`` would not have been reached.  Raising first
           means there is nothing to leak.  The bigWig config validation sits
           here for exactly that reason.
@@ -695,8 +709,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
           everyone else: from that write on, another caller's open() takes the
           is_open() early return above and reads ``_extract_value`` straight
           away.  Routed last, that caller could catch the score
-          published-but-unrouted -- and since #239 left the routing with no
-          default at all, that caller reads an AttributeError.  Scores are
+          published-but-unrouted, and since the routing has no default at
+          all, that caller reads an AttributeError.  Scores are
           shared across threads (the process-wide in-memory fragment-score
           cache; gain-web-api's thread pool), so the window is reachable;
           this ordering keeps the ROUTING out of it.  Pinned by
@@ -758,16 +772,12 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     def _record_to_begin_end(record: Record) -> tuple[str, int, int]:
         """Read a record's three positional slots, checking their order.
 
-        Three slot reads, no method call and no per-line object -- the score
-        line this used to go through cost five property dispatches per record,
-        each of which called ``typing.cast``.
+        Three slot reads, no method call and no per-record object.
 
         The message names the record by its DECODED slots rather than
         interpolating it.  A record's last slot is the backend's payload, so
-        ``f"{record}"`` would print a whole ``pysam.VariantRecord`` (its repr
-        is the entire VCF line) or a ``TupleProxy``; the retired score line
-        had a ``__repr__`` written to avoid exactly that, and this reproduces
-        what it said.
+        ``f"{record}"`` would print a whole ``pysam.VariantRecord`` -- whose
+        repr is the entire VCF line -- or a ``TupleProxy``.
         """
         chrom = record[CHROM]
         pos_begin = record[POS_BEGIN]
@@ -794,62 +804,37 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     ) -> Iterator[Record]:
         """Fetch the records of a region.
 
-        **Renamed from ``fetch_lines``, which no longer exists.**  That method
-        wrapped every record in a per-line score-line object; this one hands
-        the record itself over.  A caller reads the positional fields from the
-        record's slots (``record[CHROM]``, ``record[POS_BEGIN]``, ...) and a
-        score through :meth:`get_score_from_record` /
-        :meth:`get_values_from_record` on this score.  There is deliberately
-        no shim -- one would hand a caller back the exact per-line allocation
-        this removal exists to avoid, which is the trade #239 examined and
-        rejected for the line adapters.
+        A caller reads a record's positional fields from its slots
+        (``record[CHROM]``, ``record[POS_BEGIN]``, ...) and a score value
+        through :meth:`get_score_value_from_record` or
+        :meth:`get_score_values_from_record` on this score.
 
-        This adds nothing to what the table yields.  It exists so a caller
-        need not reach past the score to its table, and it is kept public
-        because the record-consuming half of this API
-        (:meth:`get_score_from_record`, :meth:`get_values_from_record`) is
-        public and has an out-of-package consumer -- ``AlleleScoreAnnotator``
-        filters records with a ``Callable[[Record], bool]`` and reads their
-        REF/ALT slots.  A public consumer of records with no public producer
-        would be incoherent.
+        Adds nothing to what the table yields.  It exists so a caller need
+        not reach past the score to its table, and is public because the
+        record-consuming half of this API is.
 
-        **Not a generator, deliberately.**  It used to be one, wrapping the
-        table's records in ``yield from`` inside a ``try/except`` that logged
-        and re-raised.  Delegating through a generator frame costs ~59 ns per
-        record (measured on a trivial generator: 135.7 -> 194.3 ns/item),
-        which is 5-6% of this path's per-record cost and a third of what the
-        identity value read won.  Returning the table's generator instead of
-        delegating to it pays that once per call rather than once per record.
-
-        The ``try/except`` went with it.  It logged and re-raised, so the
-        error was reported twice; its one real contribution was naming the
-        resource when ``BigWigTable`` refused an unknown contig with a bare
-        ``raise KeyError``.  That exception now names the contig, the
-        resource and the file's contigs itself, which is where the
-        information belonged.
-
-        **A contig is required**, here and everywhere in the region-read
-        family.  This method briefly accepted ``None`` for "the whole table",
-        absorbing a mode the tables had just given up; nothing needs it now.
-        ``grr_manage --region-size 0`` was the only caller, and it iterates
-        contigs instead (see ``_do_noregion_histograms``).  A caller that
-        genuinely wants every record of a table asks the table:
+        ``chrom`` is required, here and throughout the region-read family.
+        A caller that wants every record of a table asks the table:
         ``score.table.get_all_records()``.
+
+        Not a generator function: it returns the table's generator rather
+        than delegating to it, so a bad argument raises from the call and
+        not from the first ``next()``.
         """
         return self.table.get_records_in_region(chrom, pos_begin, pos_end)
 
-    def get_score_from_record(
+    def get_score_value_from_record(
         self, record: Record, score_id: str,
     ) -> ScoreValue:
         """Read one configured score off a record of this score's table."""
         return self._extract_value(record, self.score_definitions[score_id])
 
-    def get_values_from_record(
+    def get_score_values_from_record(
         self, record: Record, score_defs: list[GenomicScoreDef],
     ) -> list[ScoreValue]:
         """Read several scores off one record, for ALREADY-resolved defs.
 
-        The bulk counterpart of :meth:`get_score_from_record`: a caller
+        The bulk counterpart of :meth:`get_score_value_from_record`: a caller
         resolves score names to definitions once per fetch and passes them per
         record, so the name->definition lookup stays out of the per-record
         loop.
@@ -875,9 +860,12 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         facade parses, so it is float-only (an ``int`` score needs ``int()``
         semantics -- ``int("3.5")`` raises where ``float("3.5")`` does not).
         What a *consumer* additionally needs stays with the consumer: the
-        statistics scan also requires a position score, because its
-        accumulators assume a span weight and one value per position, and it
-        keeps asking that itself.
+        statistics scan also requires a bounded region and a resource kind it
+        is exercised against, and it keeps asking that itself (see
+        ``GenomicScoreImplementation._bulk_scan_eligible``).  What it does
+        NOT require is a particular record shape: the accumulators read the
+        kind's own ``RECORD_ORDERING`` and ``RECORD_WEIGHT_IS_SPAN``, so a
+        position, allele and fragment score are all served.
 
         Answerable on an UNOPENED score: the table and the score definitions
         are both built in ``__init__``, so nothing here touches the file.
@@ -930,8 +918,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         adaptive fetch window -- ignores it.
 
         Each score id gets an array of its own -- the parse builds one per
-        id, so two ids sharing a payload column no longer alias, as they did
-        while this method returned the backend's raw cells.
+        id, so two ids sharing a payload column do not alias.
 
         The guards below run when this method is CALLED, not on the first
         ``next()`` -- which is why the streaming half lives in
@@ -961,11 +948,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 f"{chrom} is not among the available chromosomes.")
 
         # score id -> payload column index, resolved once for the whole scan.
-        # No cast: ``score_index`` IS an int.  It used to be ``int | str``,
-        # the str being a VCF INFO name, and this had to assert -- by cast --
-        # that the VCF backend never reaches here.  A VCF score is now
-        # addressed by ``col_name`` and has no ``score_index`` at all, so the
-        # claim is carried by the type instead of by a comment.
+        # No cast needed: ``score_index`` is an ``int``.  A VCF score is
+        # addressed by ``col_name`` and has none, which is how the type
+        # already says the VCF backend does not reach here.
         columns = {
             score_id: self.score_definitions[score_id].score_index
             for score_id in scores
@@ -1017,9 +1002,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             None, None]:
         """Return score values in a region, with the record they came from.
 
-        The last element used to be a score line; it is the record itself now.
-        Two of the three callers discard it and the third reads only
-        positional slots off it, so nothing was lost with the object.
+        The last element is the record itself.  Two of the three callers
+        discard it and the third reads only positional slots off it.
         """
         if not self.is_open():
             raise ValueError(f"genomic score <{self.resource_id}> is not open")
@@ -1045,7 +1029,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             if score_defs is None:
                 score_defs = [
                     self.score_definitions[scr_id] for scr_id in scores]
-            val = self.get_values_from_record(record, score_defs)
+            val = self.get_score_values_from_record(record, score_defs)
 
             if pos_begin is not None:
                 left = max(pos_begin, rec_begin)
@@ -1068,25 +1052,35 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         This method is used for calculation of score statistics.
         """
 
-    @staticmethod
-    def _record_weight(left: int, right: int) -> int:  # noqa: ARG004
+    @classmethod
+    def _record_weight(cls, left: int, right: int) -> int:
         """How many times one record's value counts when aggregating.
 
         The rule is a property of the resource TYPE, and ``WeightedValues``
         already states it: "a position-score record counts once per base
         pair of the queried region it covers, an allele line counts once, a
         fragment counts once however long it is".  One record, one count,
-        is the answer for everything except a position score, which
-        overrides.
+        is the answer for everything except a position score.
 
-        This exists so :meth:`aggregate_region` can live on the base class
-        and still agree with the annotators, which apply exactly this rule.
-        Deriving a weight from ``pos_begin``/``pos_end`` in the base instead
-        would give a fragment its length as a weight and silently disagree
-        with the fragment score annotator for every fragment longer than one
-        base pair.
+        **It is not stated here.**  This reads
+        :attr:`RECORD_WEIGHT_IS_SPAN`, the kind's single statement of the
+        weight rule, and turns it into the per-record number
+        :meth:`aggregate_region` needs.  The statistics scan cannot call
+        this -- the bulk path weighs a whole batch of records at once, with
+        no record to hand it -- so it reads the flag directly.  Two
+        readings, one rule: a kind that overrode this hook without the flag
+        (or the reverse) would weigh its records one way when annotating and
+        another when computing statistics, silently.  Pinned by
+        test_the_weight_rule_is_stated_once_per_kind.
+
+        This hook exists at all so :meth:`aggregate_region` can live on the
+        base class and still agree with the annotators, which apply exactly
+        this rule.  Deriving a weight from ``pos_begin``/``pos_end``
+        unconditionally would give a fragment its length as a weight and
+        silently disagree with the fragment score annotator for every
+        fragment longer than one base pair.
         """
-        return 1
+        return right - left + 1 if cls.RECORD_WEIGHT_IS_SPAN else 1
 
     def aggregate_region(
         self,
@@ -1117,11 +1111,11 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         itself.  ``list`` returns ``[]``; ``max`` returns ``None``; and so
         does ``count``, which chooses to report nothing rather than 0 for an
         empty region (see ``CountAggregator.get_final``).  This method does
-        not second-guess any of them.  That is deliberately unlike
-        :meth:`fetch_scores`, which
-        returns ``None`` for a position with no data -- aggregating nothing
-        is a well-defined question, reading a value where there is none is
-        not.
+        not second-guess any of them.  That is deliberately unlike the
+        per-position reads (``fetch_position_scores``,
+        ``fetch_allele_scores``), which return ``None`` where there is no
+        data -- aggregating nothing is a well-defined question, reading a
+        value where there is none is not.
 
         Values reach the aggregator exactly as the record carried them,
         ``None`` included, because that is what the annotators do (each
@@ -1235,9 +1229,9 @@ class PositionScore(GenomicScore):
         >>> score = build_score_from_resource(resource)
         >>> with score.open() as score:
         ...     # Fetch scores at a specific position
-        ...     values = score.fetch_scores("chr1", 12345)
+        ...     values = score.fetch_position_scores("chr1", 12345)
         ...     # Fetch scores across a region
-        ...     for pos_begin, pos_end, scores in score.fetch_region(
+        ...     for pos_begin, pos_end, scores in score.fetch_region_values(
         ...         "chr1", 10000, 20000
         ...     ):
         ...         print(f"{pos_begin}-{pos_end}: {scores}")
@@ -1255,19 +1249,23 @@ class PositionScore(GenomicScore):
         score_definitions: Dictionary mapping score IDs to their definitions
 
     Key Methods:
-        fetch_scores: Get score values at a specific position
-        fetch_region: Iterate over score values in a genomic region
+        fetch_position_scores: Get score values at a specific position
+        fetch_region_values: Iterate over score values in a genomic region
         fetch_region_weighted_values: Iterate over ``(values, weight)`` pairs
             in a genomic region, for a caller that aggregates it
     """
 
-    @staticmethod
-    def _record_weight(left: int, right: int) -> int:
-        """A position-score record counts once per base pair it covers."""
-        return right - left + 1
+    # One value per position (an overlap is a data error) and a record counts
+    # once per base pair of the queried region it covers.
+    RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.DISJOINT
+    RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = True
+
+    # No ``_record_weight`` override: the base derives the per-record weight
+    # from ``RECORD_WEIGHT_IS_SPAN`` above, so the span rule is stated once
+    # and both the aggregation hook and the statistics scan read it there.
 
     # A region of positions reduces by ``mean``: each position's value counts
-    # once per base pair it covers (see _record_weight).
+    # once per base pair it covers (see RECORD_WEIGHT_IS_SPAN).
     DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {
         "float": "mean",
         "int": "mean",
@@ -1319,16 +1317,6 @@ class PositionScore(GenomicScore):
             returned_region = (lchrom, left, right, val)
             yield (left, right, val)
 
-    def fetch_region(
-        self, chrom: str,
-        pos_begin: int | None,
-        pos_end: int | None,
-        scores: list[str] | None = None,
-    ) -> Generator[
-            tuple[int, int, list[ScoreValue] | None], None, None]:
-        """Return position score values in a region."""
-        yield from self.fetch_region_values(chrom, pos_begin, pos_end, scores)
-
     def fetch_region_weighted_values(
         self,
         chrom: str,
@@ -1354,7 +1342,7 @@ class PositionScore(GenomicScore):
                 continue
             yield (values, weight)
 
-    def fetch_scores(
+    def fetch_position_scores(
         self, chrom: str, position: int,
         scores: list[str] | None = None,
     ) -> list[ScoreValue] | None:
@@ -1383,7 +1371,7 @@ class PositionScore(GenomicScore):
         # Resolve names to definitions once for this point fetch.
         score_defs = [
             self.score_definitions[scr] for scr in requested_scores]
-        return self.get_values_from_record(records[0], score_defs)
+        return self.get_score_values_from_record(records[0], score_defs)
 
 
 class AlleleScore(GenomicScore):
@@ -1425,14 +1413,17 @@ class AlleleScore(GenomicScore):
         >>> score = build_score_from_resource(resource)
         >>> with score.open() as score:
         ...     # Fetch scores for a specific variant
-        ...     values = score.fetch_scores(
+        ...     values = score.fetch_allele_scores(
         ...         "chr1", 12345, "A", "T"
         ...     )
-        ...     # Iterate over variants in a region
-        ...     for pos, ref, alt, scores in score.fetch_region(
-        ...         "chr1", 10000, 20000
-        ...     ):
-        ...         print(f"{pos} {ref}>{alt}: {scores}")
+        ...     # Iterate over the alleles in a region.  The nucleotides
+        ...     # come off the record; the values come off the score.
+        ...     for record in score.fetch_records("chr1", 10000, 20000):
+        ...         values = score.get_score_values_from_record(
+        ...             record, score_defs
+        ...         )
+        ...         print(f"{record[POS_BEGIN]} "
+        ...               f"{record[REF]}>{record[ALT]}: {values}")
 
     Aggregating those values over the region is the *annotator's* job, not the
     resource's -- see ``gain.annotation.score_annotator``.
@@ -1446,8 +1437,8 @@ class AlleleScore(GenomicScore):
         mode: Operating mode (SUBSTITUTIONS or ALLELES)
 
     Key Methods:
-        fetch_scores: Get score values for a specific variant
-        fetch_region: Iterate over variant scores in a genomic region
+        fetch_allele_scores: Get score values for a specific variant
+        fetch_region_values: Iterate over allele scores in a genomic region
         substitutions_mode: Check if operating in SUBSTITUTIONS mode
         alleles_mode: Check if operating in ALLELES mode
 
@@ -1469,6 +1460,14 @@ class AlleleScore(GenomicScore):
         "str": "list",
         "bool": None,
     }
+
+    # Several records share a position -- one per ref/alt pair -- and each
+    # weighs 1.  Structurally so: :meth:`fetch_region_values` yields
+    # ``(pos, pos, values)``, collapsing the record to a point however wide an
+    # optional ``pos_end`` column reaches, so a span weight would not merely be
+    # a different choice, it would disagree with the per-record read.
+    RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.SHARED
+    RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
 
     class Mode(enum.Enum):
         """Allele score mode."""
@@ -1581,59 +1580,49 @@ class AlleleScore(GenomicScore):
         scores: list[str] | None = None,
     ) -> Generator[
             tuple[int, int, list[ScoreValue] | None], None, None]:
-        """Return score values in a region."""
-        for pos, _, _, values in self.fetch_region(
+        """Return score values in a region, one entry per allele record.
+
+        Several records legitimately share a position -- one per ref/alt pair
+        -- so each is yielded separately, and the span is the point
+        ``(pos, pos)``: an allele's value stands for its ref/alt pair, not for
+        the bases an optional ``pos_end`` column may cover.  A caller that
+        needs the nucleotides themselves reads ``record[REF]`` /
+        ``record[ALT]`` off :meth:`fetch_records`.
+
+        Repeats at one position pass; a record whose position precedes the
+        previous one is a data error and raises.  That is the rule
+        :attr:`RECORD_ORDERING` states for this kind, and the rule the
+        vectorized statistics scan enforces on a whole batch at once.
+        """
+        # The position last yielded and the ref/alt pairs already seen AT it.
+        # A repeat of one is worth a note but not a refusal: it is the shape
+        # of a duplicated row, not of a table read out of order.
+        prev_chrom: str | None = None
+        prev_pos: int | None = None
+        seen_alleles: set[tuple[str | None, str | None]] = set()
+
+        for lchrom, _left, _right, val, record in self._fetch_region_records(
                 chrom, pos_begin, pos_end, scores):
-            yield pos, pos, values
-
-    def fetch_region(
-        self,
-        chrom: str,
-        pos_begin: int | None,
-        pos_end: int | None,
-        scores: list[str] | None = None,
-    ) -> Generator[
-            tuple[int, str | None, str | None, list[ScoreValue] | None],
-            None, None]:
-        """Return position score values in a region."""
-        region_records = self._fetch_region_records(
-            chrom, pos_begin, pos_end, scores,
-        )
-        first = next(region_records, None)
-        if first is None:
-            return
-        lchrom, _left, _right, val, record = first
-        pos = record[POS_BEGIN]
-
-        returned_region: tuple[
-            str, int | None, int | None, list[ScoreValue] | None,
-            set[tuple[str | None, str | None]],
-        ] = (lchrom, pos, pos, val, {(record[REF], record[ALT])})
-        yield (pos, record[REF], record[ALT], val)
-
-        for lchrom, _left, _right, val, record in region_records:
             pos = record[POS_BEGIN]
-            returned_nucleotides = (record[REF], record[ALT])
-            if (pos, pos) == (returned_region[1], returned_region[2]):
-                if returned_nucleotides in returned_region[4]:
+            alleles = (record[REF], record[ALT])
+
+            if pos == prev_pos:
+                if alleles in seen_alleles:
                     logger.debug(
                         "multiple values for positions %s:%s "
                         "and nucleotides %s",
-                        chrom, pos, returned_nucleotides)
-
-                returned_region[4].add((record[REF], record[ALT]))
-                yield (pos, record[REF], record[ALT], val)
+                        chrom, pos, alleles)
+                seen_alleles.add(alleles)
+                yield pos, pos, val
                 continue
-            prev_chrom = returned_region[0]
+
             if lchrom != prev_chrom:
-                returned_region = (lchrom, None, None, None, set())
-            prev_right = returned_region[2]
-            if prev_right is not None and pos < prev_right:
+                prev_pos = None
+            if prev_pos is not None and pos < prev_pos:
                 raise ValueError(
-                    f"multiple values for positions [{pos}, {prev_right}]")
-            returned_region = (
-                lchrom, pos, pos, val, {(record[REF], record[ALT])})
-            yield (pos, record[REF], record[ALT], val)
+                    f"multiple values for positions [{pos}, {prev_pos}]")
+            prev_chrom, prev_pos, seen_alleles = lchrom, pos, {alleles}
+            yield pos, pos, val
 
     def fetch_allele_record(
         self, chrom: str, pos: int, ref: str, alt: str,
@@ -1643,14 +1632,14 @@ class AlleleScore(GenomicScore):
         Renamed from ``fetch_allele_line``, which returned a score line; the
         record's REF/ALT slots carry what its ``ref``/``alt`` properties did,
         and its scores are read through
-        :meth:`GenomicScore.get_score_from_record`.
+        :meth:`GenomicScore.get_score_value_from_record`.
         """
         for record in self.fetch_records(chrom, pos, pos):
             if record[REF] == ref and record[ALT] == alt:
                 return record
         return None
 
-    def fetch_scores(
+    def fetch_allele_scores(
         self, chrom: str, position: int,
         reference: str, alternative: str,
         scores: list[str] | None = None,
@@ -1672,22 +1661,8 @@ class AlleleScore(GenomicScore):
             self.score_definitions[sc] for sc in requested_scores]
         return dict(zip(
             requested_scores,
-            self.get_values_from_record(selected, score_defs),
+            self.get_score_values_from_record(selected, score_defs),
             strict=True))
-
-
-@dataclass
-class Fragment:
-    """One interval of a fragment score: a span plus its attributes."""
-
-    chrom: str
-    pos_begin: int
-    pos_end: int
-    attributes: dict[str, Any]
-
-    @property
-    def size(self) -> int:
-        return self.pos_end - self.pos_begin
 
 
 class FragmentScore(GenomicScore):
@@ -1698,14 +1673,13 @@ class FragmentScore(GenomicScore):
     :data:`FRAGMENT_SCORE_TYPES`.
     """
 
+    # Fragments overlap freely and each weighs 1 however long it is.
+    RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.SHARED
+    RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
+
     # As AlleleScore, except that strings join rather than list -- a fragment
-    # score's string attributes are rendered into one cell.  This table is
-    # the whole of what ``_CNVScoreDef`` existed for: it was a subclass of
-    # ``GenomicScoreDef`` whose only member was a ``__post_init__`` carrying
-    # these defaults, and ``_parse_scoredef_config`` was overridden here
-    # solely to construct it.  With the defaults owned by the score class,
-    # both were exact copies of the base and are gone -- which also retires
-    # the near-copy that ``_parse_column_address`` warns about.
+    # score's string attributes are rendered into one cell.  Owned by the
+    # score class, so no score-definition subclass is needed to carry them.
     DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {
         "float": "max",
         "int": "max",
@@ -1742,21 +1716,32 @@ class FragmentScore(GenomicScore):
                 chrom, pos_begin, pos_end, scores):
             yield start, stop, values
 
-    def fetch_fragments(
+    def fetch_fragment_scores(
         self, chrom: str,
         start: int, stop: int,
         scores: list[str] | None = None,
-    ) -> list[Fragment]:
-        """Return the fragments that overlap the provided region."""
+    ) -> list[dict[str, ScoreValue]]:
+        """Fetch score values for every fragment overlapping a region.
+
+        One dict per overlapping fragment, keyed by score id, as
+        :meth:`AlleleScore.fetch_allele_scores` keys one allele's values --
+        the list is per fragment, not per score.  A region no fragment
+        overlaps gives ``[]``; unlike the two per-position reads there is no
+        ``None``, because several fragments overlapping is the normal case
+        and "none of them" is a count of zero rather than absent data.
+
+        A fragment's own span is not reported.  Callers want the values it
+        carries; a caller that needs the intervals themselves reads records
+        through :meth:`fetch_records`.
+        """
         if not self.is_open():
             raise ValueError(f"The resource <{self.resource_id}> is not open")
-        fragments: list = []
         if chrom not in self.table.get_chromosomes():
-            return fragments
+            return []
 
         records = list(self.fetch_records(chrom, start, stop))
         if not records:
-            return fragments
+            return []
 
         requested_scores = scores or self.get_all_scores()
         # Resolve names to definitions once for this fetch.
@@ -1764,14 +1749,13 @@ class FragmentScore(GenomicScore):
             self.score_definitions[score_id]
             for score_id in requested_scores]
 
-        for record in records:
-            attributes = dict(zip(
+        return [
+            dict(zip(
                 requested_scores,
-                self.get_values_from_record(record, score_defs),
+                self.get_score_values_from_record(record, score_defs),
                 strict=True))
-            fragments.append(Fragment(record[CHROM], record[POS_BEGIN],
-                                      record[POS_END], attributes))
-        return fragments
+            for record in records
+        ]
 
 
 def build_position_score_from_resource(

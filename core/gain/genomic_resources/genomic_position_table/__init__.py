@@ -8,7 +8,7 @@ nothing else records it: an importer of ``VCFLine`` now gets an ImportError.
 There is no drop-in replacement object, and none is wanted -- a VCF line is a
 record tuple, and what used to be read off a ``VCFLine`` is read from the
 record's slots (``CHROM`` ... ``ALT``) or, for scores, through the score
-layer's ``GenomicScore.get_score_from_record``.
+layer's ``GenomicScore.get_score_value_from_record``.
 
 **Removed exports: ``Line`` and ``BigWigLine``** (and, with them, the
 ``LineBase`` protocol they satisfied and the ``row()`` method all three
@@ -27,7 +27,7 @@ The score layer's adapter-era ``ScoreLine`` was deleted by #239 too, but it was
 never exported from this package and was never an adapter itself -- it *wrapped*
 one, asserting its line was a ``Line`` or a ``BigWigLine``.  That assert is why
 it could not outlive them.  It has no bearing on this package's exports; a score
-caller goes through ``GenomicScore.get_score_from_record`` (see below).
+caller goes through ``GenomicScore.get_score_value_from_record`` (see below).
 
 There is no replacement and no deprecation shim.  A shim was considered and
 rejected: it costs nothing to anyone who does not call it, but hands anyone who
@@ -38,8 +38,8 @@ record's slots instead (``record[CHROM]``, ``record[POS_BEGIN]``,
 ``line.get(key)`` for a column indexes the record's payload
 (``record[PAYLOAD][key]``); a caller wanting the whole raw row back takes
 ``tuple(record[PAYLOAD])``.  For scores, none of this is the intended route at
-all -- go through the score layer's ``GenomicScore.get_score_from_record``
-or ``get_values_from_record``, which read the same slots and additionally
+all -- go through the score layer's ``GenomicScore.get_score_value_from_record``
+or ``get_score_values_from_record``, which read the same slots and additionally
 handle NA values, parsing and aggregation.
 
 **The ``tuple()`` around that last one is the migration, not noise.**
@@ -246,7 +246,7 @@ already carries in its decoded slots, repeated purely so the single value was
 addressable at ``payload[3]``; it is now the bare ``float``.  An out-of-tree
 reader that indexed the payload gets a ``TypeError`` ('float' object is not
 subscriptable); read ``record[PAYLOAD]``, which IS the value, or go through
-``GenomicScore.get_score_from_record``.
+``GenomicScore.get_score_value_from_record``.
 
 **This entry used to say the shape was deliberately NOT changed.**  It is
 kept, inverted, rather than deleted, because the three reasons it gave were
@@ -348,11 +348,23 @@ itself.  ``get_region_value_arrays`` had already settled on ``chrom: str``,
 so the two region reads now agree.
 
 **The whole-table mode is not gone, only moved.**  It is live -- ``grr_manage
---region-size 0`` computes statistics in a single pass with no contig, via
-``_do_noregion_histograms`` -- and it is now dispatched once, in
-``GenomicScore.fetch_records``, which is where the nullable contig actually
-originates.  The score layer's ``fetch_region_values`` / ``fetch_region``
-keep accepting ``chrom=None`` and are unchanged.
+--region-size 0`` computes statistics in a single pass -- but it is expressed
+by ITERATING contigs, in ``_do_noregion_histograms``, rather than by handing a
+null contig down.  No member of the region-read family takes ``chrom=None``:
+``GenomicScore.fetch_records`` and ``fetch_region_values`` both require a
+contig, and a caller that wants every record of a table asks the table
+(``get_all_records()``).
+
+**``GenomicScore.fetch_region`` is gone; use ``fetch_region_values``.**  There
+were two of them and they meant opposite things: on ``PositionScore``
+``fetch_region`` was a pure alias of ``fetch_region_values``, while on
+``AlleleScore`` it was the real read and ``fetch_region_values`` the adapter
+over it -- yielding ``(pos, ref, alt, values)`` where every other kind yields
+``(begin, end, values)``.  ``fetch_region_values`` is now the single region
+read, uniform across all three kinds.  Its REF/ALT were what the allele
+variant added, and nothing consumed them: a caller that needs the nucleotides
+reads ``record[REF]`` / ``record[ALT]`` off ``fetch_records``, which is what
+``AlleleScoreAnnotator`` and ``fetch_allele_record`` already did.
 
 """
 from .line import LineBuffer

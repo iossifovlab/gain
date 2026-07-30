@@ -66,10 +66,11 @@ def test_legacy_resource_type_still_opens_and_reads(
     assert resource.get_type() == LEGACY_RESOURCE_TYPE
 
     with FragmentScore(resource).open() as score:
-        fragments = score.fetch_fragments("1", 5, 60)
+        fragments = score.fetch_fragment_scores("1", 5, 60)
 
-    assert [(f.chrom, f.pos_begin, f.pos_end) for f in fragments] == [
-        ("1", 10, 20), ("1", 50, 100),
+    assert fragments == [
+        {"frequency": 0.02, "collection": "SSC"},
+        {"frequency": 0.1, "collection": "AGRE"},
     ]
 
 

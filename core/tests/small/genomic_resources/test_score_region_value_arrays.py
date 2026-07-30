@@ -124,7 +124,7 @@ def test_bigwig_score_value_arrays_match_the_record_read(
         batches = list(score.fetch_region_value_arrays("chr1", 1, 6, ["bw"]))
         records = list(score.fetch_records("chr1", 1, 6))
         record_values = [
-            score.get_score_from_record(rec, "bw")
+            score.get_score_value_from_record(rec, "bw")
             for rec in records]
 
     spans = [

@@ -20,7 +20,6 @@ def _assert_min_max_equal(bulk: dict, ref: dict) -> None:
             (sid, got.min, want.min)
         assert np.array_equal([got.max], [want.max], equal_nan=True), \
             (sid, got.max, want.max)
-        assert got.count == want.count, (sid, got.count, want.count)
 
 
 def _multiscore_tabix(tmp_path: pathlib.Path) -> GenomicResource:

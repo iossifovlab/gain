@@ -162,15 +162,11 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
     ) -> str:
         """Collect score aggregator documentation.
 
-        This carried its own copy of the per-value-type default tables, as a
-        fallback for a definition whose aggregator was unset.  Both copies
-        are gone: the score class owns the table
+        No fallback for an unset aggregator, and no local copy of the
+        per-value-type defaults: the score class owns that table
         (``GenomicScore.DEFAULT_AGGREGATORS``) and ``_build_scoredefs``
-        applies it, so a definition's ``aggregator`` is always resolved by
-        the time anything reads it.  The fallback was unreachable anyway --
-        ``__post_init__`` filled the fields for every score with a value
-        type -- so it was a second statement of the defaults that no test
-        could catch drifting.
+        applies it, so a definition's ``aggregator`` is already resolved by
+        the time anything reads it.
         """
         if attribute_conf_agg is None:
             score_def = self.score.get_score_definition(attr.source)
@@ -324,7 +320,7 @@ phastCons, phyloP, FitCons2, etc.
 
         if annotatable.type == Annotatable.Type.SUBSTITUTION:
             assert isinstance(annotatable, VCFAllele)
-            point_scores = self.position_score.fetch_scores(
+            point_scores = self.position_score.fetch_position_scores(
                 annotatable.chromosome, annotatable.position, sources)
             if not point_scores:
                 return self._empty_result()
@@ -386,7 +382,7 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
     An optional annotator-level boolean expression evaluated against each
     record before it is included in the result.  Supported
     operators: ``>``, ``<``, ``==``, ``in``, ``and``, ``or``.  Variables
-    resolve via ``GenomicScore.get_score_from_record``.
+    resolve via ``GenomicScore.get_score_value_from_record``.
     """
 
     ALLELE_FILTER_GRAMMAR = textwrap.dedent("""
@@ -488,11 +484,10 @@ Non-``VCFAllele`` annotatables always use region aggregation.
     ) -> Callable[[Record], bool]:
         """Compile a Lark parse tree into a record predicate.
 
-        The predicate used to take a score line and call ``get_score`` on it.
-        With the score lines gone a value is read off a RECORD, through the
-        score that owns the definitions -- so the score is threaded in here
-        and closed over by each variable accessor, and the predicate itself
-        stays a one-argument callable the fetch loop can apply per record.
+        A value is read off a RECORD, through the score that owns the
+        definitions -- so the score is threaded in here and closed over by
+        each variable accessor, leaving the predicate a one-argument callable
+        the fetch loop applies per record.
         """
         if tree.data == "and_":
             assert isinstance(tree.children[0], Tree)
@@ -517,7 +512,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             left_value = left.children[0].children[0].value
 
             def left_accessor(_record: Record) -> Any:
-                return score.get_score_from_record(_record, left_value)
+                return score.get_score_value_from_record(_record, left_value)
         else:
             assert isinstance(left.children[0], Tree)
             assert isinstance(left.children[0].data, Token)
@@ -547,7 +542,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             right_value = right.children[0].children[0].value
 
             def right_accessor(_record: Record) -> Any:
-                return score.get_score_from_record(_record, right_value)
+                return score.get_score_value_from_record(_record, right_value)
         else:
             assert isinstance(right.children[0], Tree)
             assert isinstance(right.children[0].data, Token)
@@ -622,7 +617,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             return self._empty_result()
 
         scores: dict[str, Any] = {
-            sc: self.allele_score.get_score_from_record(record, sc)
+            sc: self.allele_score.get_score_value_from_record(record, sc)
             for sc in (
                 self.simple_score_queries or self.allele_score.get_all_scores()
             )
@@ -665,7 +660,8 @@ Non-``VCFAllele`` annotatables always use region aggregation.
 
             for source in self.allele_score_sources:
                 raw[source].append(
-                    self.allele_score.get_score_from_record(record, source))
+                    self.allele_score.get_score_value_from_record(
+                        record, source))
 
             if self.allele_attribute is not None:
                 allele_str = f"{record[CHROM]}:{record[POS_BEGIN]}"
@@ -674,7 +670,8 @@ Non-``VCFAllele`` annotatables always use region aggregation.
                 if self.attrs_to_include:
                     attrs_str = ",".join(
                         stringify(
-                            self.allele_score.get_score_from_record(record, a))
+                            self.allele_score.get_score_value_from_record(
+                                record, a))
                         for a in self.attrs_to_include)
                     allele_str += f":{attrs_str}"
                 alleles.add(allele_str)

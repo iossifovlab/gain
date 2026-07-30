@@ -152,7 +152,7 @@ def test_clinvar_fetch_scores(
 ) -> None:
     result = vcf_info_clinvar\
         .open()\
-        .fetch_scores(chrom, pos, ref, alt, scores)
+        .fetch_allele_scores(chrom, pos, ref, alt, scores)
     assert result == expected
 
 
@@ -438,5 +438,5 @@ def test_gnomad_vcf_fetch_rscores(
     scores: list[str],
     expected: list | None,
 ) -> None:
-    result = vcf_info_gnomad.fetch_scores(chrom, pos, ref, alt, scores)
+    result = vcf_info_gnomad.fetch_allele_scores(chrom, pos, ref, alt, scores)
     assert result == expected
