@@ -203,6 +203,53 @@ def test_parse_array_refuses_a_type_it_does_not_parse(
         score_def.parse_array(np.array(["True"], dtype=object))
 
 
+def test_the_int_fast_path_parses_with_int_not_float(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A column every ``float()`` accepts must still be parsed by ``int()``.
+
+    The whole-array ``astype`` is all-or-nothing, so a single token that
+    ``int()`` refuses sends the batch to the per-cell loop -- which means a
+    corpus containing any junk at all exercises the loop and never the fast
+    path.  A column of nothing but float-shaped tokens is the only input that
+    reaches the fast path and can tell the two coercions apart: parsed as
+    float it yields values the per-record path drops.
+    """
+    score_def = _typed_def(tmp_path, "int")
+    cells = np.array(["3", "3.5", "1e3"], dtype=object)
+
+    got = score_def.parse_array(cells)
+
+    assert np.array_equal(
+        got, np.array([3.0, np.nan, np.nan]), equal_nan=True), got
+    assert [score_def.parse_value(c) for c in cells] == [3, None, None]
+
+
+def test_an_int_past_float64_range_is_a_non_value_not_a_raise(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The one cell the array contract cannot carry is counted, not raised.
+
+    ``int()`` parses a token of any width, but assigning one past float64's
+    range into the column raises ``OverflowError`` -- and this parse runs
+    inside a generator, outside the scan's per-score nullify handler, so an
+    escaping exception would take down the whole scan over one bad cell.
+    """
+    score_def = _typed_def(tmp_path, "int")
+    cells = np.array(["3", "9" * 400], dtype=object)
+
+    with caplog.at_level(logging.WARNING):
+        caplog.clear()
+        got = score_def.parse_array(cells)
+
+    assert np.array_equal(got, np.array([3.0, np.nan]), equal_nan=True), got
+    assert "unable to parse 1 of 2 values" in caplog.records[-1].getMessage()
+    # The scalar parse keeps it, which is exactly why this is stated as a
+    # divergence rather than pinned as agreement.
+    assert score_def.parse_value("9" * 400) == int("9" * 400)
+
+
 def test_int_parse_array_agrees_with_parse_value_on_float_cells(
     tmp_path: pathlib.Path,
 ) -> None:

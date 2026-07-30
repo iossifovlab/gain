@@ -475,6 +475,34 @@ def test_bulk_categorical_nullifies_exactly_as_per_record_does(
     _assert_categorical_equal(bulk, ref)
 
 
+def test_a_nullified_score_is_skipped_by_every_later_batch(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nullifying mid-scan must not leave a NullHistogram taking batches.
+
+    The per-record path gets this for free -- ``NullHistogram.add_value`` is a
+    no-op -- but a ``NullHistogram`` has no ``add_batch`` at all, so the bulk
+    path needs a skip, and only a scan of MORE THAN ONE batch can reach it.
+    ``_SCAN_BATCH_SIZE`` is 100_000 and every fixture here holds a handful of
+    records, so without forcing the batch size this case cannot occur in the
+    suite and would first appear in production, on a resource past 100k rows.
+    """
+    distinct = CategoricalHistogram.UNIQUE_VALUES_LIMIT + 30
+    resource = _many_valued_str_tabix(tmp_path, distinct)
+    confs: dict = {"s": CategoricalHistogramConfig.default_config()}
+    monkeypatch.setattr(
+        GenomicScoreImplementation, "_SCAN_BATCH_SIZE", 10)
+
+    ref = GenomicScoreImplementation._do_histogram(
+        resource, confs, "chr1", 1, distinct)
+    bulk = GenomicScoreImplementation._do_histogram_bulk(
+        resource, confs, "chr1", 1, distinct)
+
+    assert isinstance(bulk["s"], NullHistogram)
+    _assert_categorical_equal(bulk, ref)
+
+
 def test_a_nullified_score_does_not_cost_the_others_theirs(
     tmp_path: pathlib.Path,
 ) -> None:

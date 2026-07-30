@@ -284,7 +284,12 @@ currently works. It stays on the per-record path.
   own overshoot would change a resource's recorded output.
 - insertion order is preserved, because it decides which values a display
   truncation keeps.
-- a refused batch raises before it accumulates anything.
+- a batch refused for its *type* raises before it accumulates anything. A
+  batch that trips the *limit* accumulates first and then raises, so its
+  counter holds the whole batch where the scalar loop's holds exactly one
+  value too many. Neither is observable through the scan — both paths replace
+  the object with a `NullHistogram` — but `add_batch` is public, so it says so
+  rather than claiming a symmetry it does not have.
 
 ### The int column's one honest divergence
 

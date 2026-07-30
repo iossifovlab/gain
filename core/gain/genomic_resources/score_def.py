@@ -384,6 +384,15 @@ class GenomicScoreDef(ScoreDef):
         path keeps an arbitrary-precision Python ``int``; the divergence is
         visible only in a ``min_max`` extremum past 2**53, since a number
         histogram widens to float for its bin arithmetic either way.
+
+        Past float64's range entirely -- a token of some 309 digits or more --
+        the array cannot carry the value at all, and it becomes a non-value
+        here where :meth:`parse_value` returns the exact ``int``.  That is the
+        one place the two parses part company on whether a cell HAS a value,
+        and it is counted into the batch's parse-failure warning rather than
+        raised, because this runs inside a generator, outside the scan's
+        per-score nullify handler: an escaping exception takes down a whole
+        resource's statistics over one cell.
         """
         if cells.dtype.kind == "f":
             # A numeric payload (bigWig): the scalar parse applies int() to
@@ -407,10 +416,13 @@ class GenomicScoreDef(ScoreDef):
             for idx, cell in zip(np.flatnonzero(~na_mask), work, strict=True):
                 try:
                     # A Python int too wide for int64 still parses here and is
-                    # widened on assignment, so an out-of-range token is a
-                    # value, not a failure.
+                    # widened on assignment, so an out-of-int64 token is a
+                    # value.  Past float64's range the assignment itself
+                    # raises OverflowError -- there is no float to widen it to
+                    # -- which is counted as a parse failure rather than
+                    # allowed to escape the scan.
                     values[idx] = int(cell)
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, OverflowError):
                     values[idx] = np.nan
                     failed += 1
             if failed:

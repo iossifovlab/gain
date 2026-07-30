@@ -188,28 +188,70 @@ def test_an_int_score_min_max_serializes_as_ints(
     assert "min: -4\n" in bulk["s"].serialize()
 
 
+def _str_tabix(tmp_path: pathlib.Path, cell: str = "aaa") -> GenomicResource:
+    return (
+        a_position_score()
+        .with_score("s", "str")
+        .with_na_values(".")
+        .with_data(
+            f"""
+            chrom  pos_begin  pos_end  s
+            chr1   1          2        {cell}
+            chr1   3          4        {cell}
+            """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
 def test_a_str_score_is_bulk_scan_eligible_as_a_column_read(
     tmp_path: pathlib.Path,
 ) -> None:
     """The capability query is about the parse, not about min/max.
 
-    A str score never reaches a min/max scan -- only a number histogram
-    without a view range schedules one -- but the bulk column read serves it,
-    which is what makes its categorical histogram batchable.
+    The bulk column read serves a str score, which is what makes its
+    categorical histogram batchable -- and it is the min/max consumer's own
+    job to add that a min/max is a number, which the sibling below pins.
     """
-    resource = (
-        a_position_score()
-        .with_score("s", "str")
-        .with_data(
-            """
-            chrom  pos_begin  pos_end  s
-            chr1   1          2        aaa
-            chr1   3          4        bbb
-            """)
-        .with_tabix()
-        .build_resource(tmp_path)
-    )
+    assert G._bulk_scan_eligible(_str_tabix(tmp_path), ["s"])
+
+
+def test_a_str_score_never_takes_the_bulk_min_max_path(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A min/max reduces with ``np.isnan``, so it is numbers only.
+
+    A str score is scheduled for a min/max scan only through a
+    misconfiguration -- a number histogram over a str score, with no view
+    range -- but the column read serves it, so nothing in
+    :meth:`_bulk_scan_eligible` alone keeps it off this path.  The condition
+    belongs to this consumer, which is where it is stated.
+    """
+    resource = _str_tabix(tmp_path)
+
     assert G._bulk_scan_eligible(resource, ["s"])
+    assert not G._can_bulk_min_max(resource, ["s"])
+
+
+def test_an_all_na_str_column_does_not_raise_through_the_task(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The shape where an ungated bulk min/max would change the outcome.
+
+    With real text in the column both paths refuse the value alike.  With
+    every cell an NA sentinel the per-record path completes quietly on an
+    empty min/max -- so this is the column where reducing an object array
+    instead raises ``ufunc 'isnan' not supported``, out of a generator and
+    past every nullify handler, and a resource that used to degrade to
+    nullified statistics dies outright.
+    """
+    resource = _str_tabix(tmp_path, cell=".")
+
+    ref = G._do_min_max(resource, ["s"], "chr1", 1, 4)
+    dispatched = G._do_min_max_task(resource, ["s"], "chr1", 1, 4)
+
+    _assert_min_max_equal(dispatched, ref)
+    assert np.isnan(ref["s"].min) and np.isnan(ref["s"].max)
 
 
 def test_a_bool_score_is_not_bulk_scan_eligible(

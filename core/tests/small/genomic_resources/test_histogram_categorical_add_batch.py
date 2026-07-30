@@ -123,15 +123,45 @@ def test_add_batch_refuses_a_value_add_value_refuses(
     assert "bad <0.5>" in str(batch.value)
 
 
-def test_add_batch_leaves_nothing_behind_when_it_refuses() -> None:
-    """A refused batch does not half-count: it raises before it accumulates."""
+def test_a_type_refusal_leaves_nothing_behind() -> None:
+    """A batch refused for its type does not half-count.
+
+    The types are checked before anything is accumulated, so a batch whose
+    third value is unusable does not leave the first two counted.
+    """
     hist = CategoricalHistogram(_config())
     with pytest.raises(TypeError):
         hist.add_batch(
-            np.array(["a", 0.5], dtype=object),
-            np.ones(2, dtype=np.int64))
+            np.array(["a", "b", 0.5], dtype=object),
+            np.ones(3, dtype=np.int64))
 
     assert hist.raw_values == {}
+
+
+def test_a_limit_refusal_accumulates_first_and_says_so() -> None:
+    """The limit is tested after the batch lands, unlike the type check.
+
+    The scalar loop stops at the value that crosses the limit, so it holds
+    exactly one too many; a batch is counted whole and then tested, so it
+    holds the whole batch.  Not observable through the scan -- both paths
+    replace the histogram with a ``NullHistogram`` -- but ``add_batch`` is
+    public and the docstring states this rather than claiming the symmetry.
+    """
+    values = _too_many_values(40)
+    weights = np.ones(values.size, dtype=np.int64)
+
+    batched = CategoricalHistogram(_config())
+    with pytest.raises(HistogramError):
+        batched.add_batch(values, weights)
+
+    scalar = CategoricalHistogram(_config())
+    with pytest.raises(HistogramError):
+        for value in values:
+            scalar.add_value(value)
+
+    assert len(batched.raw_values) == values.size
+    assert len(scalar.raw_values) == \
+        CategoricalHistogram.UNIQUE_VALUES_LIMIT + 1
 
 
 def _too_many_values(extra: int) -> np.ndarray:

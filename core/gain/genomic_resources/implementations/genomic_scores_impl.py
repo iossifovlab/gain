@@ -734,6 +734,38 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             resource, bulk_score_ids)
 
     @staticmethod
+    def _can_bulk_min_max(
+        resource: GenomicResource,
+        score_ids: list[str],
+    ) -> bool:
+        """Whether the vectorized scan may serve this min/max pass.
+
+        :meth:`_bulk_scan_eligible` plus the one condition that is this
+        caller's alone: every score must be a NUMBER.  The reduction is
+        ``min()``/``max()`` over the non-nan values of a float64 column, and a
+        ``str`` score's column is an object array, which ``np.isnan`` refuses
+        outright.
+
+        A str score reaches here only through a misconfiguration: a min/max is
+        scheduled for a score whose histogram is a number histogram without a
+        view range, and a number histogram over a str score is exactly the
+        mismatch :meth:`_can_bulk_histogram` keeps off the bulk path.  Left
+        ungated, a column of nothing but NA sentinels would raise here, out of
+        a generator and past every nullify handler, where the per-record path
+        yields an empty min/max and nullifies that one histogram -- so the
+        condition is stated for this consumer too, not assumed from the other.
+        """
+        score_defs = build_score_implementation_from_resource(
+            resource).score.score_definitions
+        for score_id in score_ids:
+            score_def = score_defs.get(score_id)
+            if score_def is None \
+                    or score_def.value_type not in ("float", "int"):
+                return False
+        return GenomicScoreImplementation._bulk_scan_eligible(
+            resource, score_ids)
+
+    @staticmethod
     def _bulk_scan_eligible(
         resource: GenomicResource,
         score_ids: list[str],
@@ -783,7 +815,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         scan keeps the per-record :meth:`_do_min_max`.
         """
         if chrom is not None and start is not None and end is not None \
-                and GenomicScoreImplementation._bulk_scan_eligible(
+                and GenomicScoreImplementation._can_bulk_min_max(
                     resource, score_ids):
             return GenomicScoreImplementation._do_min_max_bulk(
                 resource, score_ids, chrom, start, end)
