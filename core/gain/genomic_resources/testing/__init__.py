@@ -32,7 +32,6 @@ from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceProtocolRepo,
-    Mode,
 )
 
 logger = logging.getLogger(__name__)
@@ -363,8 +362,9 @@ def _derive_test_proto_id(root: str, *, read_only: bool = False) -> str:
     readable while debugging; the digest is what carries the uniqueness.
 
     A read-only protocol gets its own ``-ro`` id over the same root, because
-    the memo is keyed on the id alone: sharing one id between the two modes
-    would let whichever build came first decide the mode of every later one.
+    the memo is keyed on the id and the url alone. Sharing one id between the
+    two modes does not yield two protocols -- it is refused (#514) -- and a
+    test that wants both modes over one root wants two protocols.
     """
     digest = hashlib.sha256(root.encode("utf-8")).hexdigest()[:8]
     name = _UNSAFE_ID_CHARACTER_RE.sub(
@@ -460,8 +460,8 @@ def build_filesystem_test_protocol(
     build in the other mode gets an id -- and so an instance -- of its own.
     Pass an explicit ``proto_id`` when a test wants a genuinely separate
     protocol over one root; an explicit id names one memoized instance, so
-    reusing it in the other mode is refused rather than silently answered
-    with the mode built first.
+    ``build_fsspec_protocol`` refuses to reuse it in the other mode rather
+    than answering with the mode built first (#514).
     """
     if read_only and repair:
         raise ValueError(
@@ -473,12 +473,6 @@ def build_filesystem_test_protocol(
         resolved_id,
         str(root_path),
         read_only=read_only)
-    expected_mode = Mode.READONLY if read_only else Mode.READWRITE
-    if proto.mode() != expected_mode:
-        raise ValueError(
-            f"test protocol {resolved_id!r} over {root_path} already exists "
-            f"as {proto.mode().name}; building it as "
-            f"{expected_mode.name} needs an id of its own")
     if repair:
         rw_proto = cast(FsspecReadWriteProtocol, proto)
         for res in rw_proto.get_all_resources():
