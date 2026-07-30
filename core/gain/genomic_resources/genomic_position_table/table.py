@@ -242,12 +242,12 @@ class GenomicPositionTable(abc.ABC):
 
         Stated once, here, because the alternative is deciding it per field --
         and per field the answer always looks like "this one is small".  It is
-        not about tidiness: closed tables are deliberately kept alive.
-        ``_INMEMORY_FRAGMENT_SCORE_CACHE`` holds ``FragmentScore`` scores
-        process-wide while an annotation pipeline's teardown closes them, so
-        whatever a closed table retains is retained for the life of the
-        process -- and retained for nothing, since ``open()`` rebuilds all of
-        it from the file rather than reusing it (gain#350).
+        not about tidiness: a closed table is not necessarily a dropped one.
+        A holder may keep a score, and so its table, long after closing it --
+        an annotation pipeline holds its scores for a whole run -- so whatever
+        a closed table retains is retained for as long as that holder lives,
+        and retained for nothing, since ``open()`` rebuilds all of it from the
+        file rather than reusing it.
 
         A closed table stays **reopenable**: ``open()`` re-establishes
         everything released here, and answers exactly as a table that was never

@@ -6,7 +6,6 @@ import copy
 import enum
 from collections.abc import Generator, Iterator
 from itertools import starmap
-from threading import Lock
 from types import TracebackType
 from typing import (
     TYPE_CHECKING,
@@ -1187,8 +1186,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         Fresh per call, not reused: an aggregator is a mutable accumulator
         and explicitly not thread-safe (see :class:`Aggregator`).  Reuse is
         an annotator optimisation resting on being single-threaded; a score
-        is shared process-wide (the fragment-score cache, the web api's
-        thread pool), so this cannot assume the same.
+        may be read from several threads (the web api's thread pool), so
+        this cannot assume the same.
 
         ``Aggregator.build`` raises a bare ``KeyError('mediann')`` for an
         unknown name, saying nothing about which score asked for it.
@@ -1796,31 +1795,16 @@ def build_allele_score_from_resource_id(
     return build_allele_score_from_resource(grr.get_resource(resource_id))
 
 
-_INMEMORY_FRAGMENT_SCORE_CACHE: dict[tuple[str, str], FragmentScore] = {}
-_INMEMORY_FRAGMENT_SCORE_CACHE_LOCK = Lock()
-
-
 def build_fragment_score_from_resource(
     resource: GenomicResource,
 ) -> FragmentScore:
-    """Build a fragment score from a `cnv_collection` resource.
+    """Build a fragment score from a fragment-score resource.
 
-    Fragment scores are cached in memory and shared process-wide, keyed by
-    versioned resource id and repository URL. Callers must not assume they
-    own the returned object's lifecycle -- in particular, closing it closes
-    it for every other holder (see gain#350).
-
-    The key uses ``get_full_id()`` rather than ``get_id()``: the latter is
-    version-less, so two versions of one resource id would share a single
-    cache entry and the second caller would receive the first version's
-    data.
+    A fresh score every call, as the position and allele factories give:
+    the caller owns what it gets back and may close it without affecting
+    anyone else.
     """
-    cache_id = (resource.get_full_id(), resource.get_repo_url())
-
-    with _INMEMORY_FRAGMENT_SCORE_CACHE_LOCK:
-        if cache_id not in _INMEMORY_FRAGMENT_SCORE_CACHE:
-            _INMEMORY_FRAGMENT_SCORE_CACHE[cache_id] = FragmentScore(resource)
-        return _INMEMORY_FRAGMENT_SCORE_CACHE[cache_id]
+    return FragmentScore(resource)
 
 
 def build_fragment_score_from_resource_id(
@@ -1841,12 +1825,8 @@ def build_score_from_resource(
     the typed factories directly when the resource type is known statically;
     this one exists for callers handed a resource of unknown type.
 
-    Beware the asymmetry inherited from the typed factories: a
-    `cnv_collection` resource yields a process-wide CACHED, shared
-    `FragmentScore`, while `position_score` and `allele_score` yield a fresh
-    instance every call. A caller that closes what it got back therefore
-    closes it for every other holder of the cached fragment score (see
-    gain#350).
+    Every kind yields a fresh instance per call, so the caller owns the
+    score it gets back and closing it affects nothing else.
     """
     resource_type = resource.get_type()
     if resource_type == "position_score":
