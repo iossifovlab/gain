@@ -82,6 +82,7 @@ from gain.genomic_resources.genomic_position_table.record import (
     POS_BEGIN,
 )
 from gain.genomic_resources.genomic_position_table.table import (
+    ContigExtent,
     GenomicPositionTable,
 )
 from gain.genomic_resources.genomic_scores import (
@@ -736,6 +737,41 @@ def test_a_closed_table_refuses_a_chromosome_length(
 
     with pytest.raises(ValueError, match="not open"):
         table.get_chromosome_length(chrom)
+
+
+@pytest.mark.parametrize("build,_score_line", _LIFETIME_BACKENDS)
+def test_a_closed_table_refuses_to_find_a_chromosome_length(
+    build: object,
+    _score_line: object,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The tri-state hook refuses a closed table too, on every backend.
+
+    The stakes are higher here than for the raising wrapper above, which is why
+    this is pinned separately rather than left to follow from it.  The hook's
+    other answers include ``ContigExtent.EMPTY`` -- "this contig holds no
+    records" -- and that is NOT an error: a caller acts on it by skipping the
+    contig and moving on.  So a backend that let a closed table fall through to
+    its no-records branch would report every contig of a table nobody opened as
+    empty, and a whole-genome statistics run would skip the entire genome and
+    then record a fresh ``stats_hash`` claiming it had scanned it.
+
+    A refusal is the only answer that cannot be mistaken for data.
+    """
+    score, region = build(tmp_path)  # type: ignore[operator]
+    chrom = region[0]
+    table = score.table
+
+    table.open()
+    found = table.find_chromosome_length(chrom)
+    assert not isinstance(found, ContigExtent), (
+        f"the fixture yields no length for {chrom} from a "
+        f"{type(table).__name__}: a closed table refusing it would prove "
+        f"nothing")
+    table.close()
+
+    with pytest.raises(ValueError, match="not open"):
+        table.find_chromosome_length(chrom)
 
 
 def _an_inmemory_score(

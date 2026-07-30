@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+import enum
 from collections.abc import Generator, Iterable
 from types import TracebackType
 from typing import ClassVar, cast
@@ -14,6 +15,47 @@ from gain.genomic_resources.repository import GenomicResource
 from .record import Record
 
 logger = logging.getLogger(__name__)
+
+
+class ContigExtent(enum.Enum):
+    """Why a backend has no length to report for a contig.
+
+    The return of :meth:`GenomicPositionTable.find_chromosome_length` when
+    there is no number to give.  The two members are NOT interchangeable, and
+    that is the whole reason this type exists: a caller that splits a contig
+    into regions treats them oppositely (gain#509).
+
+    Which member a backend can return is a property OF THE BACKEND, not of the
+    contig -- which is what the caller used to encode as an ``isinstance``
+    ladder over concrete table classes:
+
+    * a backend holding the whole file (in-memory) can PROVE a contig has no
+      records, and never has to guess a length for one that does -- so it
+      returns ``EMPTY`` and never ``UNDETERMINED``;
+    * a backend reading lengths out of a header (bigWig) always has an exact
+      length for a contig it lists, and returns neither;
+    * a backend probing an index (tabix, VCF) only indexes contigs that HAVE
+      records, so it never sees an empty one, and its probe can fail on a
+      contig that is not -- so it returns ``UNDETERMINED`` and never ``EMPTY``.
+
+    Neither member is a failure.  A caller that asked wrongly -- a closed
+    table, a contig the table does not list -- gets ``ValueError`` instead, and
+    that split is the contract: an exception means *the question was bad*, a
+    member means *the question was fine and the answer is not a number*.
+    """
+
+    EMPTY = enum.auto()
+    """The backend PROVED the contig holds no records.
+
+    There is nothing to read, so nothing to split and nothing to validate.
+    """
+
+    UNDETERMINED = enum.auto()
+    """No length is available, and the contig may well hold records.
+
+    Distinct from ``EMPTY`` because those records still have to be read: a
+    length is what SPLITTING a contig needs, not what READING one needs.
+    """
 
 
 class GenomicPositionTable(abc.ABC):
@@ -253,12 +295,17 @@ class GenomicPositionTable(abc.ABC):
         everything released here, and answers exactly as a table that was never
         closed.  Until it is reopened it **refuses the reads that depend on
         what it read out of the file** -- that is the contract, and it is what
-        releasing the state above amounts to at the call site.  Three of those
+        releasing the state above amounts to at the call site.  Four of those
         reads refuse in one stated way, ``ValueError``, on all four backends:
         :meth:`get_chromosomes` once ``chrom_order`` is released, and
-        :meth:`get_file_chromosomes` and ``get_chromosome_length`` off the
-        handle their ``open()`` establishes and this ``close()`` drops.  Those
-        three are what a caller may write an ``except ValueError`` around.
+        :meth:`get_file_chromosomes` and :meth:`find_chromosome_length` off the
+        handle their ``open()`` establishes and this ``close()`` drops -- plus
+        :meth:`get_chromosome_length`, which refuses by relaying what the hook
+        beneath it raises.  Those four are what a caller may write an
+        ``except ValueError`` around.  The hook is the one that must guard, and
+        its stakes are the higher: an unguarded closed table would reach its
+        no-records branch and answer ``ContigExtent.EMPTY``, which is not an
+        error at all (gain#509).
 
         **The record reads refuse too, but not in one way, and their exception
         type is not part of the contract.**  Neither ``get_all_records`` nor
@@ -422,12 +469,66 @@ class GenomicPositionTable(abc.ABC):
         return chromosome
 
     @abc.abstractmethod
+    def find_chromosome_length(
+            self, chrom: str,
+            step: int = 100_000_000) -> int | ContigExtent:
+        """Return the length of a contig, or why there is not one.
+
+        The hook every backend implements; :meth:`get_chromosome_length` is
+        built on it.  A returned length is guaranteed to be LARGER than the
+        actual contig length -- callers rely on that to split a contig into
+        regions without dropping its tail.
+
+        Returns a :class:`ContigExtent` member instead of a number when the
+        backend has no length to give, and the member says WHY: ``EMPTY`` when
+        the backend can prove the contig holds no records, ``UNDETERMINED``
+        when a length simply could not be established and the contig may hold
+        records after all.  A caller that splits contigs into regions must treat
+        those two oppositely -- skip the first, read the second whole -- which
+        is why this hook reports them apart rather than collapsing both into
+        ``None`` (gain#509).
+
+        Raises ``ValueError`` when the QUESTION is bad rather than the answer
+        absent: a table that is not open, or a contig not in
+        :meth:`get_chromosomes`.  Implementations must guard the closed table
+        FIRST, before any read that a closed table refuses -- including
+        ``get_chromosomes()``, which the contig-naming diagnostics interpolate
+        (gain#358).
+        """
+
     def get_chromosome_length(
             self, chrom: str, step: int = 100_000_000) -> int:
         """Return the length of a chromosome (or contig).
 
         Returned value is guarnteed to be larget than the actual contig length.
+
+        The raising view of :meth:`find_chromosome_length`, for the callers --
+        most of them -- that have nothing useful to do with a contig whose
+        length is unavailable and want to be told rather than handed a value
+        they must classify.  Concrete here rather than per backend so the two
+        cannot drift: every reason the hook has no number becomes a
+        ``ValueError``, whichever backend produced it, and a new backend gets
+        this behaviour by implementing the hook alone.
         """
+        length = self.find_chromosome_length(chrom, step)
+        # The two members are named apart rather than collapsed into one "no
+        # length" message, because they are different facts about the resource
+        # and an operator reading a failed statistics build acts on them
+        # differently: an empty contig is usually a chrom_mapping naming
+        # something the file does not carry, while an undetermined length is a
+        # probe that could not answer for a contig that may well hold records.
+        # Both name the contig asked about and the contigs the table does have
+        # -- reads that are safe here, because the hook has already refused a
+        # closed table.
+        if length is ContigExtent.EMPTY:
+            raise ValueError(
+                f"contig {chrom} has no records in the table's contigs: "
+                f"{self.get_chromosomes()}")
+        if length is ContigExtent.UNDETERMINED:
+            raise ValueError(
+                f"could not determine the length of contig {chrom} "
+                f"in the table's contigs: {self.get_chromosomes()}")
+        return length
 
     # Memoised PER INSTANCE, and deliberately not with functools.cache: that
     # decorator keeps its memo on the class-level function object and keys it
@@ -440,7 +541,7 @@ class GenomicPositionTable(abc.ABC):
     # It also bought nothing there: each task builds a fresh table, so a
     # class-level memo keyed by self never saw a hit.  What a memo is actually
     # for here is the repeated calls WITHIN one table's life -- get_chromosomes
-    # and get_chromosome_length both call this -- and an instance attribute
+    # and find_chromosome_length both call this -- and an instance attribute
     # serves those and dies with the instance.
     #
     # Pinned by test_table_lifetime.py, which asserts both that a closed and

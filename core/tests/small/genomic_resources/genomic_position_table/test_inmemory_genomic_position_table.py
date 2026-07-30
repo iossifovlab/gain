@@ -4,6 +4,7 @@ import pathlib
 
 import pytest
 from gain.genomic_resources.genomic_position_table import (
+    ContigExtent,
     build_genomic_position_table,
 )
 from gain.genomic_resources.genomic_position_table.record import (
@@ -250,6 +251,80 @@ def test_get_records_in_region_unknown_contig_raises(
     # ...but an unknown contig is an error.
     with pytest.raises(ValueError, match="chromosome nosuch"):
         list(tab.get_records_in_region("nosuch"))
+
+
+def test_find_chromosome_length_reports_a_populated_contigs_length(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The tri-state hook answers with a number when it has one.
+
+    ``find_chromosome_length`` is what ``get_chromosome_length`` is built on:
+    it reports the length when there is one, and otherwise says WHY there is
+    not -- a distinction a caller needs, because a contig proven to hold no
+    records and a contig whose length merely could not be determined get
+    opposite treatment (gain#509).
+    """
+    tab = _empty_mapped_contig_table(tmp_path)
+    # The same number the raising wrapper reports, for the same contig: the
+    # wrapper adds refusal, not arithmetic.
+    assert tab.find_chromosome_length("kept") == 13
+
+
+def test_find_chromosome_length_proves_a_known_contig_is_empty(
+    tmp_path: pathlib.Path,
+) -> None:
+    """This backend holds the whole file, so no records PROVES no records.
+
+    That proof is what the caller needs: there is nothing to read on this
+    contig, so it can be skipped outright rather than scanned as an unbounded
+    region -- which for a mapping covering hg38's alts would cost a table open
+    per empty contig.
+    """
+    tab = _empty_mapped_contig_table(tmp_path)
+    assert tab.find_chromosome_length("empty") is ContigExtent.EMPTY
+
+
+def test_find_chromosome_length_unknown_contig_raises_not_empty(
+    tmp_path: pathlib.Path,
+) -> None:
+    """An unknown contig is a bad question, not a proven-empty answer.
+
+    The two look identical from inside this backend -- neither has records to
+    take a maximum over -- but they are not the same claim, and collapsing them
+    would let a typo'd or mis-mapped contig name read as "proven to hold no
+    records" and be silently dropped from a scan.  ``EMPTY`` is reserved for a
+    contig the table LISTS and has no rows for.
+    """
+    tab = _empty_mapped_contig_table(tmp_path)
+    with pytest.raises(ValueError, match="nosuch"):
+        tab.find_chromosome_length("nosuch")
+
+
+def test_find_chromosome_length_on_a_closed_table_says_it_is_not_open(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A closed table must refuse, not report every contig as empty.
+
+    ``close()`` empties ``records_by_chr``, so without a not-open guard AHEAD
+    of the no-records branch a closed table would answer ``EMPTY`` for every
+    contig -- including one the file is full of.  That is worse here than the
+    wrong message gain#358 fixed on the raising wrapper: ``EMPTY`` is not an
+    error, so a caller would skip the whole genome and report success.
+
+    Asserted against THIS backend's own wording rather than any "not open"
+    text, because a closed table refuses ``get_chromosomes()`` too: without its
+    own guard this method still raises, but out of the middle of building the
+    no-records message, so the caller gets the base class's generic complaint
+    about a read this method never meant to make.  That is the gain#358 shape,
+    and matching loosely would let it back in.
+    """
+    tab = _empty_mapped_contig_table(tmp_path)
+    tab.close()
+    with pytest.raises(ValueError, match="in-memory table not open") as err:
+        tab.find_chromosome_length("kept")
+    # ...and it names the resource, so an operator knows WHICH table was read
+    # after closing.
+    assert tab.genomic_resource.resource_id in str(err.value)
 
 
 def test_get_chromosome_length_empty_mapped_contig_raises(

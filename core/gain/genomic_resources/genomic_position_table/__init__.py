@@ -128,10 +128,18 @@ records it.  #350 made
 ``close()`` release everything a table read out of its file, the contig order,
 the chromosome map and the ``get_file_chromosomes`` memo included, and the
 reads that used to be answered out of that retained state now fail instead.
-Three of them fail in one stated way, ``ValueError``, on all four backends:
-``get_chromosomes()``, ``get_file_chromosomes()`` and
-``get_chromosome_length()``.  Those three are what an out-of-tree caller may
-write an ``except ValueError`` around.  **The record reads
+Four of them fail in one stated way, ``ValueError``, on all four backends:
+``get_chromosomes()``, ``get_file_chromosomes()``,
+``find_chromosome_length()`` and ``get_chromosome_length()``.  Those four are
+what an out-of-tree caller may write an ``except ValueError`` around.
+``find_chromosome_length`` is the one that reads the file handle -- the raising
+wrapper above it only classifies what it returns -- and it carries the guard for
+a reason beyond the diagnostic: its other answers include
+``ContigExtent.EMPTY``, which is not an error, so a closed table falling through
+to it would report every contig as holding no records and a whole-genome scan
+would skip the genome and still record a fresh ``stats_hash`` (gain#509).
+
+**The record reads
 (``get_all_records()``, ``get_records_in_region()``) refuse as well, but their
 exception type is NOT part of the contract**: neither carries a not-open guard
 of its own, so measured on a closed table some backend/method pairs raise the
@@ -366,8 +374,71 @@ variant added, and nothing consumed them: a caller that needs the nucleotides
 reads ``record[REF]`` / ``record[ALT]`` off ``fetch_records``, which is what
 ``AlleleScoreAnnotator`` and ``fetch_allele_record`` already did.
 
+**New export ``ContigExtent`` and a new abstract method
+``find_chromosome_length``; ``get_chromosome_length`` is no longer abstract.**
+Recorded here because ``__all__`` is this package's public surface and the three
+backends in it inherit the method, which makes it a public name of ``gain`` (the
+same reason the closed-table note below is recorded).
+
+**For CALLERS this is purely additive.**  ``get_chromosome_length`` keeps its
+signature and its contract -- still ``int`` or ``ValueError`` -- and is now
+CONCRETE on ``GenomicPositionTable``, a thin raising view of the new hook.  No
+existing call site changes.
+
+**For an out-of-tree BACKEND it is a break, in the same shape as the
+``get_file_chromosomes`` rename above: the class no longer instantiates.**
+``find_chromosome_length`` is an ``@abc.abstractmethod``, so a backend that
+implements only ``get_chromosome_length`` -- which used to be the abstract one
+-- now fails at construction with ``TypeError: Can't instantiate abstract class
+... without an implementation for abstract method 'find_chromosome_length'``.
+It is a loud failure at the first instantiation rather than a silent behaviour
+change, which is why the hook was left abstract: the alternative, a base
+implementation delegating to ``get_chromosome_length``, turns a backend that
+overrides neither into infinite recursion at call time.  No such backend exists
+anywhere in the stack; all four in-tree ones were migrated with the change.
+
+A backend migrates by renaming its ``get_chromosome_length`` to
+``find_chromosome_length``, widening the return type to ``int | ContigExtent``,
+and returning a member instead of raising where it has no number.  Overriding
+``get_chromosome_length`` as well is allowed but pointless, and lets the two
+drift.
+
+The enum is exported because a caller cannot interpret the new method's answer
+without it, and its two members are deliberately NOT interchangeable:
+``EMPTY`` means the backend PROVED the contig holds no records, ``UNDETERMINED``
+means no length could be established and the contig may hold records anyway.
+Which one a backend can return is a property of the backend -- the in-memory one
+holds the whole file and returns only ``EMPTY``, the tabix and VCF ones read an
+index that carries only non-empty contigs and return only ``UNDETERMINED``, and
+bigWig reads exact sizes from a header and returns neither.  A caller that
+splits contigs into regions must treat the two oppositely: skip a proven-empty
+contig, read an undetermined one whole.  Collapsing them -- into ``None``, or
+into one ``except ValueError`` -- is what this shape exists to prevent, because
+it silently drops records from a scan whose ``stats_hash`` then claims the
+resource was scanned (gain#509).
+
+``ValueError`` keeps its old meaning and gains a sharper edge: it now marks the
+QUESTION as bad rather than the answer as absent -- a table that is not open, or
+a contig outside ``get_chromosomes()``.  Note this splits one case the in-memory
+backend used to conflate: an unknown contig still raises, while a contig the
+table lists and has no rows for now answers ``EMPTY`` from the hook (and still
+raises from ``get_chromosome_length``, with the same message as before).
+
+**Two ``get_chromosome_length`` messages did change, both on the tabix and VCF
+backends**, because the raising view is now written once on the base class
+instead of per backend.  A contig whose length the probe cannot determine used
+to raise ``Could not find contig '<file contig>'`` and now raises ``could not
+determine the length of contig <contig> in the table's contigs: [...]``; a
+contig that will not unmap used to raise ``error in mapping chromsome ...`` and
+now reaches the same message, having become ``UNDETERMINED``.  Both name the
+contig in REFERENCE space where the old text named the file contig, so the one
+thing the old diagnostic carried that the new one does not is which *file*
+contig the probe was looking for -- recoverable from the table's
+``chrom_mapping``.  The type is unchanged, so an ``except ValueError`` is
+unaffected; only a caller matching on the text is.
 """
 from .line import LineBuffer
+from .table import ContigExtent
 from .table_bigwig import BigWigTable
 from .table_tabix import TabixGenomicPositionTable
 from .table_vcf import VCFGenomicPositionTable
@@ -375,6 +446,7 @@ from .utils import build_genomic_position_table
 
 __all__ = [
     "BigWigTable",
+    "ContigExtent",
     "LineBuffer",
     "TabixGenomicPositionTable",
     "VCFGenomicPositionTable",
