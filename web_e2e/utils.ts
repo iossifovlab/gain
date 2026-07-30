@@ -13,6 +13,110 @@ export function getRandomString(): string {
   return Math.random().toString(36).substring(2, 9);
 }
 
+/**
+ * Default budget for the long waits below. The backend serialises synchronous
+ * views on daphne's single thread_sensitive thread (iossifovlab/gain#150), so
+ * a slow-but-progressing request legitimately takes tens of seconds under
+ * 4-worker CI contention. Must stay ABOVE the Apache ProxyTimeout in
+ * web_ui/httpd.conf so a true stall surfaces as a reportable 502 rather than
+ * as an opaque client timeout -- see the comment there before changing either.
+ */
+export const LONG_WAIT_TIMEOUT = 120000;
+
+/**
+ * Grace window granted to the success element after the error element wins the
+ * race, to absorb a stale error frame. Long enough to cover an Angular render
+ * under CI contention, far short of the full wait budget.
+ */
+export const ERROR_GRACE_TIMEOUT = 5000;
+
+/** Error element rendered by the single-annotation component. */
+export const SINGLE_ANNOTATION_ERROR = '#single-annotation-container .error-message';
+
+/** Error element rendered by the annotation-pipeline component. */
+export const PIPELINE_ERROR = '#pipelines-container .error-message';
+
+/**
+ * Wait for `successSelector`, failing fast if the UI renders `errorSelector`
+ * instead.
+ *
+ * A plain waitForSelector on a success-only element cannot tell "still
+ * working" from "already failed": when a request errors, the component
+ * renders its error text and the success element never appears, so the wait
+ * burns its entire budget and then reports only which selector it wanted.
+ * That is how iossifovlab/gain#492 cost 120s twice per occurrence and still
+ * produced a failure message that named neither the failing request nor the
+ * error the page had been displaying the whole time.
+ *
+ * Racing the two means the error path fails in seconds with the visible text
+ * quoted, so the JUnit report alone identifies the cause without a trace --
+ * which matters because traces are captured only on retry and are subject to
+ * Jenkins build rotation.
+ */
+export async function waitForSuccessOrError(
+  page: Page,
+  successSelector: string,
+  errorSelector: string,
+  options: { timeout?: number; description?: string } = {},
+): Promise<void> {
+  const timeout = options.timeout ?? LONG_WAIT_TIMEOUT;
+  const what = options.description ?? successSelector;
+
+  const success = page.locator(successSelector).first();
+  const error = page.locator(errorSelector).first();
+
+  // Settle both branches to a sentinel instead of letting the loser reject:
+  // Promise.race leaves the loser pending, and an unhandled rejection when it
+  // later times out would surface as a spurious failure in an unrelated test.
+  const outcome = await Promise.race([
+    success.waitFor({ state: 'visible', timeout }).then(() => 'success' as const, () => 'timeout' as const),
+    error.waitFor({ state: 'visible', timeout }).then(() => 'error' as const, () => 'timeout' as const),
+  ]);
+
+  if (outcome === 'success') {
+    return;
+  }
+
+  if (outcome === 'error') {
+    // The error element can win the race transiently: a previous step's error
+    // may still be in the DOM for a tick while the success element is being
+    // rendered (e.g. a pipeline config error clearing as a newly-typed valid
+    // config finishes validating). Give the success element a short grace
+    // window before declaring failure, so a stale frame cannot turn a passing
+    // flow into a spurious error. Still fails in seconds, not the full budget.
+    const recovered = await success
+      .waitFor({ state: 'visible', timeout: ERROR_GRACE_TIMEOUT })
+      .then(() => true, () => false);
+    if (recovered) {
+      return;
+    }
+
+    const text = (await error.textContent())?.trim() ?? '(empty)';
+    throw new Error(
+      `Waiting for ${what} failed: the UI rendered an error instead -- "${text}" ` +
+      `(matched ${errorSelector}).`
+    );
+  }
+
+  throw new Error(
+    `Waiting for ${what} timed out after ${timeout}ms: neither ${successSelector} ` +
+    `nor the error element ${errorSelector} became visible. The request is most ` +
+    'likely still stalled on the backend (iossifovlab/gain#150).'
+  );
+}
+
+/**
+ * Wait for the pipeline editor to reach its loaded state, failing fast on a
+ * config/load error. `.loaded-editor` comes from the selected pipeline's
+ * status class; a config error replaces it with `invalid-config`, so on the
+ * error path the success class can never appear.
+ */
+export async function waitForLoadedEditor(page: Page): Promise<void> {
+  await waitForSuccessOrError(page, '.loaded-editor', PIPELINE_ERROR, {
+    description: 'the pipeline editor to finish loading',
+  });
+}
+
 export async function registerUser(page: Page, email: string, password: string): Promise<void> {
   await page.goto('/register', {waitUntil: 'load'});
   await page.locator('#email').pressSequentially(email);
@@ -162,10 +266,10 @@ export async function waitForSession(page: Page): Promise<void> {
 }
 
 export async function selectPipeline(page: Page, pipeline: string): Promise<void> {
-  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  await waitForLoadedEditor(page);
   await page.locator('.dropdown-icon').click();
   await page.getByRole('option', { name: 'circle ' + pipeline, exact: true }).click();
-  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  await waitForLoadedEditor(page);
 }
 
 export async function customDefaultPipeline(page: Page): Promise<void> {
@@ -192,7 +296,7 @@ export async function customDefaultPipeline(page: Page): Promise<void> {
 
   await saveResponse;
 
-  await page.waitForSelector('.loaded-editor', { state: 'visible', timeout: 120000 });
+  await waitForLoadedEditor(page);
 }
 
 export async function navigateToQuotas(page: Page): Promise<void> {

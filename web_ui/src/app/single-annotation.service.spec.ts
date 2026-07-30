@@ -476,7 +476,27 @@ describe('SingleAnnotationService', () => {
 
     const result = service.getReport(new Annotatable('chr14', 204000100, 'A', 'AA', null, null, null), 'pipeline');
 
-    await expect(() => lastValueFrom(result.pipe(take(1)))).rejects.toThrow('Error occurred!');
+    await expect(() => lastValueFrom(result.pipe(take(1)))).rejects.toThrow('Error occurred! (HTTP 500)');
+  });
+
+  it('should carry the status when the proxy severs a stalled annotate', async() => {
+    // What a stalled backend looks like to the browser: Apache gives up on the
+    // request and returns 502 (iossifovlab/gain#492).
+    const httpError = new HttpErrorResponse({status: 502});
+    jest.spyOn(HttpClient.prototype, 'post').mockReturnValue(throwError(() => httpError));
+
+    const result = service.getReport(new Annotatable('chr14', 204000100, 'A', 'AA', null, null, null), 'pipeline');
+
+    await expect(() => lastValueFrom(result.pipe(take(1)))).rejects.toThrow('Error occurred! (HTTP 502)');
+  });
+
+  it('should report a transport failure as a network error', async() => {
+    const httpError = new HttpErrorResponse({status: 0});
+    jest.spyOn(HttpClient.prototype, 'post').mockReturnValue(throwError(() => httpError));
+
+    const result = service.getReport(new Annotatable('chr14', 204000100, 'A', 'AA', null, null, null), 'pipeline');
+
+    await expect(() => lastValueFrom(result.pipe(take(1)))).rejects.toThrow('Error occurred! (network error)');
   });
 
   it('should get annotatables history', async() => {

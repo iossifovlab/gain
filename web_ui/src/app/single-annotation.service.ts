@@ -60,7 +60,16 @@ export class SingleAnnotationService {
       catchError((err: HttpErrorResponse) => {
         switch (err.status) {
           case 429: return throwError(() => new Error((err.error as {reason: string})['reason']));
-          default: return throwError(() => new Error('Error occurred!'));
+          default: {
+            // Carry the status in the message. A bare 'Error occurred!' cannot
+            // distinguish a 502 from the reverse proxy severing a stalled
+            // request (iossifovlab/gain#492, and #150 behind it) from a 4xx
+            // rejection, which leaves both the user and the e2e failure report
+            // with nothing to act on. `err.status` is 0 for a transport-level
+            // failure, where no HTTP status was ever received.
+            const detail = err.status ? `HTTP ${err.status}` : 'network error';
+            return throwError(() => new Error(`Error occurred! (${detail})`));
+          }
         }
       }));
   }

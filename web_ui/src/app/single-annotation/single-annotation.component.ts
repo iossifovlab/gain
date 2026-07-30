@@ -212,6 +212,12 @@ export class SingleAnnotationComponent implements OnInit {
     }
     this.getReportSubscription.unsubscribe();
     this.loading = true;
+    // Clear any error from a previous attempt. Without this the message from a
+    // failed annotation stays on screen indefinitely -- including next to the
+    // report of a later successful one -- and the e2e error-race in
+    // web_e2e/utils.waitForSuccessOrError would trip on the stale element
+    // instead of waiting for the report (iossifovlab/gain#492).
+    this.annotateErrorMessage = '';
     this.getReportSubscription = this.singleAnnotationService.getReport(
       this.annotatableJson,
       pipelineId
