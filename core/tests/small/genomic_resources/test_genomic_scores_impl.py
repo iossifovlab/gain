@@ -217,10 +217,10 @@ def test_get_chrom_regions_skips_empty_mapped_contig(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     # A chrom_mapping.filename maps 'kept' onto a file contig with data rows
-    # and 'empty' onto one with none.  'empty' is a known-but-empty contig:
-    # the in-memory table yields no records for it, so there is no chromosome
-    # length to compute -- the contig must be warned about and SKIPPED, not
-    # blow up the statistics build.
+    # and 'empty' onto one with none.  The in-memory backend holds the whole
+    # file, so yielding no records PROVES 'empty' has none -- there is nothing
+    # to scan and nothing to validate, so it is skipped rather than scanned as
+    # an unbounded region, which would cost a table open per empty contig.
     res = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
             type: position_score
@@ -251,11 +251,55 @@ def test_get_chrom_regions_skips_empty_mapped_contig(
     impl = build_score_implementation_from_resource(res)
     impl.score.open()
 
-    with caplog.at_level("WARNING"):
+    # INFO, not WARNING: a mapping that names a contig the file does not
+    # carry is ordinary, and there is nothing for an operator to fix.
+    with caplog.at_level("INFO"):
         regions = impl._get_chrom_regions(1000)
 
     assert {region.chrom for region in regions} == {"kept"}
-    assert "unable to find chromosome length for empty" in caplog.text
+    assert "contig empty holds no records" in caplog.text
+
+
+def test_get_chrom_regions_scans_a_contig_of_unknown_length_whole(
+    caplog: pytest.LogCaptureFixture,
+    mocker: pytest_mock.MockFixture,
+    tmp_path: pathlib.Path,
+) -> None:
+    """An undeterminable length must not drop the contig from the scan.
+
+    A length is what SPLITTING needs, not what READING needs.  Skipping the
+    contig would leave its records out of the statistics and out of the
+    ordering checks the scan performs on the way -- while the resource still
+    reported its statistics as freshly built, which is the claim a reader is
+    entitled to trust.
+    """
+    res = (
+        a_position_score()
+        .with_score("score", "float")
+        .with_data("""
+            chrom  pos_begin  score
+            chr1   10         0.1
+            chr1   20         0.2
+        """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    impl = build_score_implementation_from_resource(res)
+    impl.score.open()
+
+    # The tabix probe is the one branch that can fail to determine a length
+    # for a contig that demonstrably HAS records.
+    mocker.patch(
+        "gain.genomic_resources.implementations.genomic_scores_impl"
+        ".get_chromosome_length_tabix",
+        return_value=None)
+
+    with caplog.at_level("WARNING"):
+        regions = impl._get_chrom_regions(1000)
+
+    assert [(r.chrom, r.start, r.stop) for r in regions] \
+        == [("chr1", None, None)]
+    assert "scanning it as a single unbounded region" in caplog.text
 
 
 def test_add_statistics_build_tasks_creates_min_max_tasks() -> None:
