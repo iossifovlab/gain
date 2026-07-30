@@ -1717,11 +1717,15 @@ def test_fragment_score_reads_back_its_regions(
         """)
         .build_resource(tmp_path)
     )
-    fragments = FragmentScore(res).open().fetch_fragment_scores("chr1", 10, 200)
+    score = FragmentScore(res).open()
 
-    assert [(f.pos_begin, f.pos_end) for f in fragments] \
+    assert score.fetch_fragment_scores("chr1", 10, 200) \
+        == [{"frequency": 0.1}, {"frequency": 0.2}]
+    # The spans themselves are not part of the score read; a caller that
+    # wants the intervals goes through the records.
+    assert [(r[POS_BEGIN], r[POS_END])
+            for r in score.fetch_records("chr1", 10, 200)] \
         == [(10, 19), (20, 200)]
-    assert [f.attributes["frequency"] for f in fragments] == [0.1, 0.2]
 
 
 def test_vcf_info_score_reads_back(tmp_path: pathlib.Path) -> None:

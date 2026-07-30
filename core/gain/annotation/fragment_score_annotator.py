@@ -15,7 +15,8 @@ from gain.annotation.annotation_pipeline import (
     AttributeSpec,
 )
 from gain.annotation.annotator_base import AnnotatorBase
-from gain.genomic_resources.genomic_scores import Fragment, FragmentScore
+from gain.genomic_resources.genomic_scores import FragmentScore
+from gain.genomic_resources.score_def import ScoreValue
 
 #: Preferred spelling of the fragment-filter parameter.
 FRAGMENT_FILTER_PARAMETER = "fragment_filter"
@@ -177,7 +178,7 @@ class FragmentScoreAnnotator(AnnotatorBase):
     @classmethod
     def _build_fragment_filter_func(
         cls, tree: Tree,
-    ) -> Callable[[Fragment], bool]:
+    ) -> Callable[[dict[str, ScoreValue]], bool]:
         if tree.data == "and_":
             assert isinstance(tree.children[0], Tree)
             assert isinstance(tree.children[1], Tree)
@@ -200,8 +201,8 @@ class FragmentScoreAnnotator(AnnotatorBase):
             assert isinstance(left.children[0].children[0], Token)
             left_value = left.children[0].children[0].value
 
-            def left_accessor(_fragment: Fragment) -> Any:
-                return _fragment.attributes.get(left_value)
+            def left_accessor(_values: dict[str, ScoreValue]) -> Any:
+                return _values.get(left_value)
         else:
             assert isinstance(left.children[0], Tree)
             assert isinstance(left.children[0].data, Token)
@@ -212,7 +213,7 @@ class FragmentScoreAnnotator(AnnotatorBase):
                 left_value = float(left_value)
 
             def left_accessor(
-                    _fragment: Fragment,
+                    _values: dict[str, ScoreValue],
             ) -> Any:  # pylint: disable=unused-argument
                 return left_value
         assert isinstance(tree.children[1], Tree)
@@ -230,8 +231,8 @@ class FragmentScoreAnnotator(AnnotatorBase):
             assert isinstance(right.children[0].children[0], Token)
             right_value = right.children[0].children[0].value
 
-            def right_accessor(_fragment: Fragment) -> Any:
-                return _fragment.attributes.get(right_value)
+            def right_accessor(_values: dict[str, ScoreValue]) -> Any:
+                return _values.get(right_value)
         else:
             assert isinstance(right.children[0], Tree)
             assert isinstance(right.children[0].data, Token)
@@ -242,7 +243,7 @@ class FragmentScoreAnnotator(AnnotatorBase):
                 right_value = float(right_value)
 
             def right_accessor(
-                    _fragment: Fragment,
+                    _values: dict[str, ScoreValue],
             ) -> Any:  # pylint: disable=unused-argument
                 return right_value
 
@@ -287,7 +288,7 @@ class FragmentScoreAnnotator(AnnotatorBase):
 
         for fragment in fragments:
             for source in raw:
-                raw[source].append(fragment.attributes[source])
+                raw[source].append(fragment[source])
 
         result: dict[str, Any] = {}
         for attr in self._attributes:

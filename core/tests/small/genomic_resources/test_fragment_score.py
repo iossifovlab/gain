@@ -142,7 +142,7 @@ def test_fragment_score_resource(
         aaa = score.fetch_fragment_scores(
             chrom, beg, end)
         assert len(aaa) == count
-        assert [a.attributes for a in aaa] == attributes
+        assert aaa == attributes
 
 
 def test_fragment_score_wrong_resource_types(

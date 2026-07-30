@@ -4,6 +4,11 @@ import logging
 
 import pytest
 from gain.genomic_resources import GenomicResource
+from gain.genomic_resources.genomic_position_table.record import (
+    CHROM,
+    POS_BEGIN,
+    POS_END,
+)
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     FragmentScore,
@@ -414,11 +419,12 @@ def test_fragment_score_fetch_fragments() -> None:
 
     fragments = fragment_score.fetch_fragment_scores("1", 150, 350)
     assert len(fragments) == 2
-    assert fragments[0].chrom == "1"
-    assert fragments[0].pos_begin == 100
-    assert fragments[0].pos_end == 200
-    assert fragments[0].attributes["cnv_type"] == "DEL"
-    assert fragments[0].attributes["frequency"] == 0.01
+    assert fragments[0]["cnv_type"] == "DEL"
+    assert fragments[0]["frequency"] == 0.01
+    # A fragment's own span is read through the records, not the score fetch.
+    records = list(fragment_score.fetch_records("1", 150, 350))
+    assert (records[0][CHROM], records[0][POS_BEGIN], records[0][POS_END]) \
+        == ("1", 100, 200)
 
     fragments = fragment_score.fetch_fragment_scores("1", 1000, 2000)
     assert len(fragments) == 0

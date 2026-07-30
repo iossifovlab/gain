@@ -5,7 +5,6 @@ import abc
 import copy
 import enum
 from collections.abc import Generator, Iterator
-from dataclasses import dataclass
 from itertools import starmap
 from threading import Lock
 from types import TracebackType
@@ -1720,20 +1719,6 @@ class AlleleScore(GenomicScore):
             strict=True))
 
 
-@dataclass
-class Fragment:
-    """One interval of a fragment score: a span plus its attributes."""
-
-    chrom: str
-    pos_begin: int
-    pos_end: int
-    attributes: dict[str, Any]
-
-    @property
-    def size(self) -> int:
-        return self.pos_end - self.pos_begin
-
-
 class FragmentScore(GenomicScore):
     """A genomic score over fragments -- intervals carrying attributes.
 
@@ -1794,17 +1779,28 @@ class FragmentScore(GenomicScore):
         self, chrom: str,
         start: int, stop: int,
         scores: list[str] | None = None,
-    ) -> list[Fragment]:
-        """Return the fragments that overlap the provided region."""
+    ) -> list[dict[str, ScoreValue]]:
+        """Fetch score values for every fragment overlapping a region.
+
+        One dict per overlapping fragment, keyed by score id, as
+        :meth:`AlleleScore.fetch_allele_scores` keys one allele's values --
+        the list is per fragment, not per score.  A region no fragment
+        overlaps gives ``[]``; unlike the two per-position reads there is no
+        ``None``, because several fragments overlapping is the normal case
+        and "none of them" is a count of zero rather than absent data.
+
+        A fragment's own span is not reported.  Callers want the values it
+        carries; a caller that needs the intervals themselves reads records
+        through :meth:`fetch_records`.
+        """
         if not self.is_open():
             raise ValueError(f"The resource <{self.resource_id}> is not open")
-        fragments: list = []
         if chrom not in self.table.get_chromosomes():
-            return fragments
+            return []
 
         records = list(self.fetch_records(chrom, start, stop))
         if not records:
-            return fragments
+            return []
 
         requested_scores = scores or self.get_all_scores()
         # Resolve names to definitions once for this fetch.
@@ -1812,14 +1808,13 @@ class FragmentScore(GenomicScore):
             self.score_definitions[score_id]
             for score_id in requested_scores]
 
-        for record in records:
-            attributes = dict(zip(
+        return [
+            dict(zip(
                 requested_scores,
                 self.get_score_values_from_record(record, score_defs),
                 strict=True))
-            fragments.append(Fragment(record[CHROM], record[POS_BEGIN],
-                                      record[POS_END], attributes))
-        return fragments
+            for record in records
+        ]
 
 
 def build_position_score_from_resource(
