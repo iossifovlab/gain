@@ -1062,9 +1062,12 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         Only a position score has an answer -- its value stands for every
         base it covers, so only the covered part counts.
 
-        Shared because three things are worth doing once per scan rather
-        than once per kind: dropping a record that ends before the region,
-        resolving the score ids to definitions, and extracting the values.
+        Shared because two things are worth doing once per scan rather than
+        once per kind: resolving the score ids to definitions, and extracting
+        the values.  Every backend already drops a record ending before the
+        region, so nothing here re-checks it; a record that arrives without
+        overlapping is a malformed resource, refused by
+        :meth:`_validate_records`.
         """
         if not self.is_open():
             raise ValueError(f"genomic score <{self.resource_id}> is not open")
@@ -1080,9 +1083,6 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         for record in self.fetch_records(chrom, pos_begin, pos_end):
             _chrom, rec_begin, rec_end = self._record_to_begin_end(record)
-            if pos_begin is not None and rec_end < pos_begin:
-                continue
-
             val = self.get_score_values_from_record(record, score_defs)
 
             yield (rec_begin, rec_end, val)
@@ -1125,20 +1125,32 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         stream = self._region_values(chrom, pos_begin, pos_end, scores)
         if not self._validate_ordering:
             return stream
-        return self._enforce_ordering(stream, chrom)
+        return self._validate_records(stream, chrom)
 
-    def _enforce_ordering(
+    def _validate_records(
         self,
         stream: Generator[
             tuple[int, int, list[ScoreValue] | None], None, None],
         chrom: str,
     ) -> Generator[
             tuple[int, int, list[ScoreValue] | None], None, None]:
-        """Pass records through, refusing an order this kind cannot mean.
+        """Pass records through, refusing ones this kind cannot mean.
 
-        One statement of the rule for every kind, taken from
-        :attr:`RECORD_ORDERING`.  It reads only the span each kind already
-        yields, which is why one implementation serves all of them:
+        Two rules, both read off the span every kind already yields, which is
+        why one implementation serves all of them.
+
+        **A span must not run backwards.**  ``begin > end`` says the record
+        does not reach the region it was handed back for.  No backend can
+        produce that -- each one drops a record ending before the query -- so
+        it means the table's index and its ``pos_end`` configuration disagree
+        about which column ends a record, and the backend filtered on one
+        while this layer reads the other.  Left alone it reaches a position
+        score's weight as ``end - begin + 1``: a NEGATIVE count into a
+        histogram bar, silently.  Refusing such a resource properly, at open,
+        needs the index's own column numbers -- see gain#553.
+
+        **Records must be ordered the way the kind promises**, per
+        :attr:`RECORD_ORDERING`:
 
         * ``DISJOINT`` -- a position score promises one value per position,
           so two records that so much as touch are a data error.
@@ -1146,7 +1158,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
           several records at one position, so only a record that moves
           BACKWARDS is an error.
 
-        The vectorized statistics scan enforces the same rule on a whole
+        The vectorized statistics scan enforces the ordering rule on a whole
         batch at once (``_clip_keep_guard``), reading the same attribute.
         It is not conditional there: that path is reached only from a
         statistics build, which is the thing that must check.
@@ -1155,6 +1167,13 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         prev_begin: int | None = None
         prev_end: int | None = None
         for begin, end, values in stream:
+            if begin > end:
+                raise ValueError(
+                    f"genomic score <{self.resource_id}>: record "
+                    f"{chrom}:{begin}-{end} does not reach the region it "
+                    f"was returned for; the table's index and its pos_end "
+                    f"configuration disagree about which column ends a "
+                    f"record")
             if prev_end is not None and (
                     begin <= prev_end if disjoint
                     else begin < cast(int, prev_begin)):

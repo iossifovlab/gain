@@ -116,7 +116,30 @@ def test_shared_ordering_refuses_a_record_that_moves_backwards(
 
     with score.open() as opened, \
             pytest.raises(ValueError, match="multiple values for positions"):
-        list(opened._enforce_ordering(backwards(), "chr1"))
+        list(opened._validate_records(backwards(), "chr1"))
+
+
+def test_a_backwards_span_is_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``begin > end`` means the record does not reach the region.
+
+    No backend produces it -- each drops a record ending before the query --
+    so it says the table's index and its ``pos_end`` config disagree about
+    which column ends a record.  Unrefused it becomes a position score's
+    weight as ``end - begin + 1``: a negative count into a histogram bar.
+    Driven directly, because constructing the misconfiguration takes a
+    hand-written index; gain#553 is the proper refusal, at open.
+    """
+    score = _overlapping_position_score(tmp_path)
+
+    def backwards_span() -> Generator[
+            tuple[int, int, list[ScoreValue] | None], None, None]:
+        yield 500, 20, [0.1]
+
+    with score.open() as opened, \
+            pytest.raises(ValueError, match="does not reach the region"):
+        list(opened._validate_records(backwards_span(), "chr1"))
 
 
 def test_not_checking_hands_back_the_producer_untouched(
