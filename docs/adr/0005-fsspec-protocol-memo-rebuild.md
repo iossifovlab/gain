@@ -207,6 +207,30 @@ own.
   mode it replaces (a duplicated `__init__`) was survivable, and a permanent
   deadlock would not be.
 
+  Both guards that release a key sit *after* `__new__` has taken it, and the
+  deserialize path can die in between — a truncated or corrupt frame carrying
+  a protocol, or a `KeyboardInterrupt` landing there. `__setstate__` never
+  runs, and the metaclass is not on that path at all, so nothing announces
+  the abandonment and the record leaks. That was a **regression from the
+  behaviour this replaced**: the published-then-configured arrangement
+  self-healed (a later build got the unconfigured incumbent back, took the
+  `hasattr` early return, and `type.__call__` re-ran `__init__` on it),
+  whereas a leaked record makes every later build of that key block forever
+  in an untimed wait, with no log line. On a dask worker — the case the
+  memo-in-`__new__` arrangement exists for — distributed reports the frame
+  error, the worker survives, and it never touches that GRR again.
+
+  So `_ProtocolConstruction` holds its instance **weakly**, and its
+  collection is the signal: a construction whose half-built instance is gone
+  is one nobody can finish, and `__new__` drops the record and takes the key
+  on rather than waiting for it. A `weakref.finalize` wakes any thread
+  already waiting; it deliberately takes no lock, because a finalizer runs at
+  whatever allocation point collects the instance — including one inside
+  `_FSSPEC_PROTOCOLS_GUARD` — and the record is dropped under the guard by
+  `__new__` instead. The corollary is that `__new__` must not bind the
+  in-flight instance to a local across its wait: a strong reference there
+  pins the very thing whose collection is being read.
+
   What did **not** change: `__init__` still re-runs on every rebuild, so the
   refresh above is intact — the racing-build test now pins the count, at one
   construction and one refresh, so the "already initialised" no-op rejected

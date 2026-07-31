@@ -26,6 +26,7 @@ from typing import (
     cast,
 )
 from urllib.parse import urlparse
+from weakref import finalize, ref
 
 import apsw
 import fsspec
@@ -461,32 +462,70 @@ class _ProtocolConstruction:
 
     It is released exactly once, whether the construction was published or
     abandoned, so a waiter is never left blocked by a build that raised.
+
+    The instance is held WEAKLY, and that is load-bearing rather than tidy:
+    the two guards that release a key -- ``_BuiltOnceProtocolMeta.__call__``
+    and ``__setstate__`` -- both sit *after* ``__new__`` has taken it, and the
+    deserialize path can die in between, when a frame carrying a protocol is
+    truncated or corrupt, or when a ``KeyboardInterrupt`` lands there. Neither
+    guard is reached then, so nothing announces the abandonment. What is left
+    to go on is that the half-built instance itself is dropped: a construction
+    whose instance has been collected is one nobody can ever finish, and
+    ``__new__`` takes such a key on rather than waiting for it.
     """
 
     def __init__(
         self, instance: FsspecReadOnlyProtocol, key: tuple[str, str],
     ) -> None:
-        self.instance = instance
         self.key = key
+        self._instance = ref(instance)
         self._done = Event()
         self._owner = get_ident()
+        self._finalizer = finalize(instance, self._instance_collected)
+        # Process teardown is not an abandonment worth reporting, and a
+        # construction still in flight then has no waiter left to wake.
+        self._finalizer.atexit = False
 
-    def owned_by_this_thread(self) -> bool:
-        """Whether this thread is the one already constructing the key.
+    @property
+    def instance(self) -> FsspecReadOnlyProtocol | None:
+        """The instance being constructed, or ``None`` once it is dropped."""
+        return self._instance()
+
+    def _instance_collected(self) -> None:
+        """Wake the waiters of a construction that can no longer finish.
+
+        Deliberately takes no lock. A finalizer runs at whatever allocation
+        point collects the instance -- including one inside
+        ``_FSSPEC_PROTOCOLS_GUARD`` -- so acquiring that guard here could
+        deadlock the very thread it interrupted. Waking is enough: the record
+        is dropped by ``__new__``, under the guard, the next time anything
+        looks at the key.
+        """
+        self._done.set()
+
+    def reentered_by_this_thread(self) -> FsspecReadOnlyProtocol | None:
+        """The instance, if this thread is the one constructing the key.
 
         Only read to keep a re-entrant construction from waiting on itself.
         Nothing in the tree builds a protocol from inside a protocol's
         constructor, so this guards against a deadlock rather than describing
-        a supported shape.
+        a supported shape. The answer cannot be a live construction with a
+        collected instance -- the thread inside it is holding the instance.
         """
-        return self._owner == get_ident()
+        if self._owner != get_ident():
+            return None
+        return self._instance()
 
     def wait(self) -> None:
-        """Block until this construction is published or abandoned."""
+        """Block until this construction is published, abandoned or dropped."""
         self._done.wait()
 
     def release(self) -> None:
         """Wake everything waiting on this construction."""
+        # Detached rather than left armed: a published protocol is never
+        # evicted, so its finalizer would hold this record -- and the
+        # construction bookkeeping behind it -- for the life of the process.
+        self._finalizer.detach()
         self._done.set()
 
 
@@ -669,6 +708,28 @@ class FsspecReadOnlyProtocol(
                         proto_id, _strip_url_userinfo(url))
                     return existing
                 pending = _FSSPEC_PROTOCOLS_UNDER_CONSTRUCTION.get(key)
+                if pending is not None:
+                    reentered = pending.reentered_by_this_thread()
+                    if reentered is not None:
+                        # This thread is already constructing this key.
+                        # Nothing in the tree does that, and waiting would be
+                        # waiting on ourselves.
+                        return reentered
+                    # Asked without binding the answer to a local: a strong
+                    # reference held across the wait below would pin the
+                    # half-built instance, and its collection is the whole
+                    # signal being read here.
+                    if pending.instance is None:
+                        # Nobody holds the half-built instance any more, so
+                        # nobody is coming back to finish it: the deserialize
+                        # that took this key died between ``__new__`` and
+                        # ``__setstate__``, where neither of the guards that
+                        # release a key is reached. Drop the record and take
+                        # the key on -- leaving it would block every builder
+                        # of it for the life of the process, in an untimed
+                        # wait and with no log line (#527).
+                        del _FSSPEC_PROTOCOLS_UNDER_CONSTRUCTION[key]
+                        pending = None
                 if pending is None:
                     instance = super().__new__(cls)
                     # Before the instance is reachable, and never again: the
@@ -681,11 +742,6 @@ class FsspecReadOnlyProtocol(
                     _FSSPEC_PROTOCOLS_UNDER_CONSTRUCTION[key] = construction
                     instance._construction = construction
                     return instance
-                if pending.owned_by_this_thread():
-                    # This thread is already constructing this key. Nothing in
-                    # the tree does that, and waiting would be waiting on
-                    # ourselves.
-                    return pending.instance
             # Waited for OUTSIDE the guard: a construction runs the whole
             # ``__init__`` chain, which for a read-write protocol does
             # filesystem I/O, and holding the memo lock across that would put

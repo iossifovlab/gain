@@ -34,12 +34,16 @@ over its own ``tmp_path``.
 """
 import pathlib
 import pickle  # noqa: S403
+import pickletools
 import threading
 from typing import Any
 
 import pytest
 from gain.genomic_resources import fsspec_protocol
-from gain.genomic_resources.fsspec_protocol import build_fsspec_protocol
+from gain.genomic_resources.fsspec_protocol import (
+    FsspecReadWriteProtocol,
+    build_fsspec_protocol,
+)
 
 from .conftest import RunInThreads
 
@@ -398,3 +402,102 @@ def test_an_unpickle_that_raises_leaves_its_key_buildable(
 
     assert _unbound_attributes(rebuilt) == []
     assert fsspec_protocol._FSSPEC_PROTOCOLS[key] is rebuilt
+
+
+def _cut_before_the_state_is_applied(payload: bytes) -> bytes:
+    """Truncate a pickled protocol between ``__new__`` and ``__setstate__``.
+
+    The last ``BUILD`` in the stream is the one that applies the outermost
+    object's state, so everything before it has already created the protocol
+    -- through ``__getnewargs_ex__`` -> ``__new__``, which takes the key --
+    while the deserialize now runs out of input before ``__setstate__``, the
+    only place the deserialize path itself guards. Protocol 2 on purpose: 5
+    frames the stream and rejects a short one before executing any opcode, so
+    it cannot express this window at all.
+    """
+    build_positions = [
+        pos for opcode, _arg, pos in pickletools.genops(payload)
+        if opcode.name == "BUILD"
+    ]
+    assert build_positions, "the pickled protocol carries no BUILD opcode"
+    return payload[:build_positions[-1]]
+
+
+def test_a_deserialize_that_dies_before_setstate_leaves_its_key_buildable(
+    tmp_path: pathlib.Path,
+    run_in_threads: RunInThreads,
+) -> None:
+    """Taking the key is ``__new__``'s; finishing it may never happen.
+
+    A corrupt or truncated frame carrying a protocol fails *between*
+    ``__new__`` and ``__setstate__``, so neither of the two guards that
+    release a key is reached -- not the metaclass's, which the deserialize
+    path does not go through, and not ``__setstate__``'s own, which never
+    runs. The record then sits in flight forever and every later build of
+    that key blocks in an untimed wait, with no log line: on a dask worker
+    -- the case the memo-in-``__new__`` arrangement exists for -- distributed
+    reports the task error, the worker survives, and it never touches that
+    GRR again.
+    """
+    proto_id = "construction-truncated-unpickle"
+    url = f"file://{tmp_path}/grr"
+    key = (proto_id, url)
+    payload = pickle.dumps(build_fsspec_protocol(proto_id, url), protocol=2)
+    del fsspec_protocol._FSSPEC_PROTOCOLS[key]
+
+    with pytest.raises(EOFError):
+        pickle.loads(_cut_before_the_state_is_applied(payload))
+
+    rebuilt = _build_off_the_main_thread(run_in_threads, proto_id, url)
+
+    assert _unbound_attributes(rebuilt) == []
+    assert fsspec_protocol._FSSPEC_PROTOCOLS[key] is rebuilt
+
+
+def test_a_construction_dropped_mid_flight_wakes_the_threads_waiting_on_it(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A key nobody can finish must not hold its waiters forever.
+
+    The deserialize above is one way for a caller to take a key through
+    ``__new__`` and then never come back for it; a ``KeyboardInterrupt``
+    delivered in the same window is another. Either way the half-built
+    instance is dropped, and what tells that apart from a construction still
+    running is that nothing holds the instance any more.
+
+    Taken here through ``__new__`` directly rather than through a pickle,
+    because a thread already waiting is the half a truncated deserialize
+    cannot express: it fails too fast to let another thread arrive.
+    """
+    proto_id = "construction-dropped-mid-flight"
+    url = f"file://{tmp_path}/grr"
+    key = (proto_id, url)
+
+    taken = FsspecReadWriteProtocol.__new__(
+        FsspecReadWriteProtocol, proto_id, url)
+
+    waiter: dict[str, Any] = {}
+    waiter_done = threading.Event()
+
+    def build_and_wait() -> None:
+        # pylint: disable=broad-exception-caught
+        try:
+            waiter["protocol"] = build_fsspec_protocol(proto_id, url)
+        except BaseException as exc:  # noqa: BLE001
+            waiter["error"] = exc
+        waiter_done.set()
+
+    waiting = threading.Thread(target=build_and_wait, daemon=True)
+    waiting.start()
+    assert not waiter_done.wait(0.2), \
+        "a build was answered while the key was still being constructed"
+
+    # The moment the deserialize dies: the last reference to the half-built
+    # instance goes, and the construction holding the key can never finish.
+    del taken
+
+    assert waiter_done.wait(10.0), \
+        "the waiter was never woken -- the key is stranded in flight"
+    assert "error" not in waiter
+    assert _unbound_attributes(waiter["protocol"]) == []
+    assert fsspec_protocol._FSSPEC_PROTOCOLS[key] is waiter["protocol"]
