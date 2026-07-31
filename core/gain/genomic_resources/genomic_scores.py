@@ -1722,11 +1722,19 @@ class AlleleScore(GenomicScore):
     def fetch_allele_record(
         self, chrom: str, pos: int, ref: str, alt: str,
     ) -> Record | None:
-        """Fetch the record matching the given allele exactly.
+        """Return the record matching this allele exactly, or None.
 
-        Renamed from ``fetch_allele_line``, which returned a score line; the
-        record's REF/ALT slots carry what its ``ref``/``alt`` properties did,
-        and its scores are read through
+        Exact on all four of chrom, position, ref and alt: several records
+        share a position, one per ref/alt pair, so the nucleotides are what
+        pick between them.
+
+        Hands back the record rather than its values, which is what lets a
+        caller decide whether it wants the allele at all before paying to
+        extract anything -- ``AlleleScoreAnnotator`` applies its
+        ``allele_filter`` here, and returns empty without reading a single
+        score for an allele the filter rejects.  A caller that just wants
+        the values asks :meth:`fetch_allele_scores`; one that wants them off
+        this record reads
         :meth:`GenomicScore.get_score_value_from_record`.
         """
         for record in self.fetch_records(chrom, pos, pos):
