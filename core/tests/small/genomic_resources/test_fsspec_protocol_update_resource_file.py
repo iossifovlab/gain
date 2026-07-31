@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import os
 import time
 from typing import Any
 
@@ -9,8 +10,22 @@ from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
     TruncatedDownloadError,
 )
+from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing import build_inmemory_test_protocol
 from pytest_mock import MockerFixture
+
+
+def _grr_dir_entries(
+    proto: FsspecReadWriteProtocol, resource: GenomicResource,
+) -> list[str]:
+    """Return the names inside the resource's protocol-internal .grr dir."""
+    grr_dir = os.path.join(proto.get_resource_url(resource), ".grr")
+    if not proto.filesystem.exists(grr_dir):
+        return []
+    return [
+        os.path.basename(entry)
+        for entry in proto.filesystem.ls(grr_dir, detail=False)
+    ]
 
 
 @pytest.mark.grr_rw
@@ -347,6 +362,205 @@ def test_copy_resource_file_checksum_mismatch_records_size(
     # the error records the received byte count (full length, so it is the
     # manifest size) -- proving the transfer was NOT truncated
     assert str(expected_size) in str(exc_info.value)
+
+
+@pytest.mark.grr_rw
+def test_copy_resource_file_checksum_mismatch_leaves_no_file(
+        content_fixture: dict[str, Any],
+        fsspec_proto: FsspecReadWriteProtocol,
+        mocker: MockerFixture) -> None:
+    # A download whose bytes do not hash to the manifest md5 must not be
+    # published: the resource file's real path must stay as empty as it was
+    # before the attempt, so presence in the cache implies verified content.
+    # See gain#273.
+
+    # Given
+    src_proto = build_inmemory_test_protocol(content_fixture)
+    proto = fsspec_proto
+
+    src_res = src_proto.get_resource("sub/two")
+    dst_res = proto.get_resource("sub/two")
+
+    proto.delete_resource_file(dst_res, "genes.gtf")
+    assert not proto.file_exists(dst_res, "genes.gtf")
+
+    real_open = src_res.open_raw_file
+
+    def corrupt_open(filename: str, mode: str = "rt", **kwargs: Any) -> Any:
+        return _CorruptingFile(real_open(filename, mode, **kwargs))
+
+    mocker.patch.object(src_res, "open_raw_file", side_effect=corrupt_open)
+    mocker.patch("gain.genomic_resources.fsspec_protocol.time.sleep")
+
+    # When / Then
+    with pytest.raises(ChecksumMismatchError):
+        proto.copy_resource_file(src_res, dst_res, "genes.gtf")
+
+    assert not proto.file_exists(dst_res, "genes.gtf")
+
+
+@pytest.mark.grr_rw
+def test_copy_resource_file_checksum_mismatch_leaves_no_temp_file(
+        content_fixture: dict[str, Any],
+        fsspec_proto: FsspecReadWriteProtocol,
+        mocker: MockerFixture) -> None:
+    # The temp file a failed download streamed into must be cleaned up, so a
+    # repeatedly-corrupt file does not accumulate partials in the resource's
+    # protocol-internal .grr directory. See gain#273.
+
+    # Given
+    src_proto = build_inmemory_test_protocol(content_fixture)
+    proto = fsspec_proto
+
+    src_res = src_proto.get_resource("sub/two")
+    dst_res = proto.get_resource("sub/two")
+
+    before = _grr_dir_entries(proto, dst_res)
+
+    real_open = src_res.open_raw_file
+
+    def corrupt_open(filename: str, mode: str = "rt", **kwargs: Any) -> Any:
+        return _CorruptingFile(real_open(filename, mode, **kwargs))
+
+    mocker.patch.object(src_res, "open_raw_file", side_effect=corrupt_open)
+    mocker.patch("gain.genomic_resources.fsspec_protocol.time.sleep")
+
+    # When / Then
+    with pytest.raises(ChecksumMismatchError):
+        proto.copy_resource_file(src_res, dst_res, "genes.gtf")
+
+    assert _grr_dir_entries(proto, dst_res) == before
+
+
+@pytest.mark.grr_rw
+def test_copy_resource_file_checksum_mismatch_keeps_cached_content(
+        content_fixture: dict[str, Any],
+        fsspec_proto: FsspecReadWriteProtocol,
+        mocker: MockerFixture) -> None:
+    # A corrupt re-download of an already-cached file must leave the cached
+    # content in place rather than replace it with the corrupt bytes -- the
+    # real path holds either the old content or the new, never the garbage
+    # of a failed attempt. See gain#273.
+
+    # Given
+    src_proto = build_inmemory_test_protocol(content_fixture)
+    proto = fsspec_proto
+
+    src_res = src_proto.get_resource("sub/two")
+    dst_res = proto.get_resource("sub/two")
+
+    with proto.open_raw_file(dst_res, "genes.gtf", mode="wt") as outfile:
+        outfile.write("already cached")
+
+    real_open = src_res.open_raw_file
+
+    def corrupt_open(filename: str, mode: str = "rt", **kwargs: Any) -> Any:
+        return _CorruptingFile(real_open(filename, mode, **kwargs))
+
+    mocker.patch.object(src_res, "open_raw_file", side_effect=corrupt_open)
+    mocker.patch("gain.genomic_resources.fsspec_protocol.time.sleep")
+
+    # When / Then
+    with pytest.raises(ChecksumMismatchError):
+        proto.copy_resource_file(src_res, dst_res, "genes.gtf")
+
+    with proto.open_raw_file(dst_res, "genes.gtf") as infile:
+        assert infile.read() == "already cached"
+
+
+@pytest.mark.grr_rw
+def test_copy_resource_file_exhausted_retries_leave_nothing_behind(
+        content_fixture: dict[str, Any],
+        fsspec_proto: FsspecReadWriteProtocol,
+        mocker: MockerFixture) -> None:
+    # A read that stalls on every attempt until the retry budget is spent
+    # must leave neither a file at the resource file's real path nor a temp
+    # file in the resource's .grr directory. See gain#273.
+
+    # Given
+    src_proto = build_inmemory_test_protocol(content_fixture)
+    proto = fsspec_proto
+
+    src_res = src_proto.get_resource("sub/two")
+    dst_res = proto.get_resource("sub/two")
+
+    proto.delete_resource_file(dst_res, "genes.gtf")
+    assert not proto.file_exists(dst_res, "genes.gtf")
+    before = _grr_dir_entries(proto, dst_res)
+
+    mocker.patch.object(
+        src_res, "open_raw_file",
+        side_effect=lambda *_a, **_k: _StallingFile())
+    mocker.patch("gain.genomic_resources.fsspec_protocol.time.sleep")
+
+    # When / Then
+    with pytest.raises(FSTimeoutError):
+        proto.copy_resource_file(src_res, dst_res, "genes.gtf")
+
+    assert not proto.file_exists(dst_res, "genes.gtf")
+    assert _grr_dir_entries(proto, dst_res) == before
+
+
+@pytest.mark.grr_rw
+def test_copy_resource_file_success_leaves_no_temp_file(
+        content_fixture: dict[str, Any],
+        fsspec_proto: FsspecReadWriteProtocol) -> None:
+    # The temp file a download streams into is consumed by the move that
+    # publishes it, so a successful copy adds the resource file and its
+    # .state -- and nothing else -- to the resource. See gain#273.
+
+    # Given
+    src_proto = build_inmemory_test_protocol(content_fixture)
+    proto = fsspec_proto
+
+    src_res = src_proto.get_resource("sub/two")
+    dst_res = proto.get_resource("sub/two")
+
+    proto.delete_resource_file(dst_res, "genes.gtf")
+
+    # When
+    state = proto.copy_resource_file(src_res, dst_res, "genes.gtf")
+
+    # Then
+    assert state is not None
+    assert proto.file_exists(dst_res, "genes.gtf")
+    assert not [
+        entry for entry in _grr_dir_entries(proto, dst_res)
+        if entry.endswith(".part")
+    ]
+
+
+@pytest.mark.grr_rw
+def test_copy_resource_file_cleanup_failure_does_not_mask_the_download_error(
+        content_fixture: dict[str, Any],
+        fsspec_proto: FsspecReadWriteProtocol,
+        mocker: MockerFixture) -> None:
+    # Removing the temp file of a failed attempt is best effort: if it
+    # cannot be removed, the error the caller -- and the retry loop that
+    # classifies it -- sees must still be the download's own failure, not
+    # the cleanup's. See gain#273.
+
+    # Given
+    src_proto = build_inmemory_test_protocol(content_fixture)
+    proto = fsspec_proto
+
+    src_res = src_proto.get_resource("sub/two")
+    dst_res = proto.get_resource("sub/two")
+
+    real_open = src_res.open_raw_file
+
+    def corrupt_open(filename: str, mode: str = "rt", **kwargs: Any) -> Any:
+        return _CorruptingFile(real_open(filename, mode, **kwargs))
+
+    mocker.patch.object(src_res, "open_raw_file", side_effect=corrupt_open)
+    mocker.patch.object(
+        proto.filesystem, "rm",
+        side_effect=OSError("cannot remove the temp file"))
+    mocker.patch("gain.genomic_resources.fsspec_protocol.time.sleep")
+
+    # When / Then
+    with pytest.raises(ChecksumMismatchError):
+        proto.copy_resource_file(src_res, dst_res, "genes.gtf")
 
 
 @pytest.mark.grr_rw
