@@ -151,49 +151,102 @@ class GenomicPositionTable(abc.ABC):
         # Called from every backend's open(), and so the point at which a
         # reopened table must forget what the previous open() read.
         self._file_chromosomes = None
-        self.chrom_order = self.get_file_chromosomes()
-        if "chrom_mapping" in self.definition:
-            mapping = self.definition.chrom_mapping
-            if "filename" in mapping:
-                self.chrom_map = {}
-                self.chrom_order = []
-                with self.genomic_resource.open_raw_file(
-                        mapping["filename"], "rt") as infile:
-                    hcs = infile.readline().strip("\n\r").split("\t")
-                    if hcs != ["chrom", "file_chrom"]:
-                        raise ValueError(
-                            f"The chromosome mapping file "
-                            f"{mapping['filename']} in resource "
-                            f"{self.genomic_resource.get_id()} is "
-                            f"expected to have the two columns "
-                            f"'chrom' and 'file_chrom'")
-                    for line in infile:
-                        chrom, fchrom = line.strip("\n\r").split("\t")
-                        assert chrom not in self.chrom_map
-                        self.chrom_map[chrom] = fchrom
-                        self.chrom_order.append(chrom)
-                    assert len(set(self.chrom_map.values())) == \
-                        len(self.chrom_map)
-            else:
-                chromosomes = self.chrom_order
-                new_chromosomes: list[str] = chromosomes
+        file_chromosomes = self.get_file_chromosomes()
+        self.chrom_order = file_chromosomes
+        if "chrom_mapping" not in self.definition:
+            return
 
-                if "del_prefix" in mapping:
-                    pref = mapping.del_prefix
-                    new_chromosomes = [
-                        ch.removeprefix(pref)
-                        for ch in new_chromosomes
-                    ]
+        mapping = self.definition.chrom_mapping
+        if "filename" in mapping:
+            self.chrom_map = self._read_chrom_mapping_file(mapping)
+        else:
+            self.chrom_map = self._build_prefix_chrom_mapping(
+                mapping, file_chromosomes)
+        self.chrom_order = list(self.chrom_map)
+        self.rev_chrom_map = {
+            fch: ch for ch, fch in self.chrom_map.items()}
 
-                if "add_prefix" in mapping:
-                    pref = mapping.add_prefix
-                    new_chromosomes = [
-                        f"{pref}{chrom}" for chrom in new_chromosomes]
-                self.chrom_map = dict(
-                    zip(new_chromosomes, chromosomes, strict=True))
-                self.chrom_order = new_chromosomes
-            self.rev_chrom_map = {
-                fch: ch for ch, fch in self.chrom_map.items()}
+    def _read_chrom_mapping_file(self, mapping: Box) -> dict[str, str]:
+        """Read the ``chrom -> file_chrom`` map the resource ships as a file.
+
+        The map must be a bijection: a chromosome listed twice states two
+        file contigs for one chromosome, and two chromosomes on one file
+        contig make ``rev_chrom_map`` -- the map read backwards, which is
+        what turns a record's file contig back into a chromosome -- lose one
+        of them.  Both are user-supplied configuration, so both raise.
+        """
+        chrom_map: dict[str, str] = {}
+        owner_of: dict[str, str] = {}
+        with self.genomic_resource.open_raw_file(
+                mapping["filename"], "rt") as infile:
+            hcs = infile.readline().strip("\n\r").split("\t")
+            if hcs != ["chrom", "file_chrom"]:
+                raise ValueError(
+                    f"{self._mapping_file_prefix(mapping)} "
+                    f"expected to have the two columns "
+                    f"'chrom' and 'file_chrom'")
+            for line in infile:
+                chrom, fchrom = line.strip("\n\r").split("\t")
+                if chrom in chrom_map:
+                    raise ValueError(
+                        f"{self._mapping_file_prefix(mapping)} "
+                        f"expected to list each chromosome once; "
+                        f"{chrom!r} is listed more than once")
+                if fchrom in owner_of:
+                    raise ValueError(
+                        f"{self._mapping_file_prefix(mapping)} "
+                        f"expected to map each chromosome onto a distinct "
+                        f"file chromosome; {owner_of[fchrom]!r} and "
+                        f"{chrom!r} are both mapped onto {fchrom!r}")
+                owner_of[fchrom] = chrom
+                chrom_map[chrom] = fchrom
+        return chrom_map
+
+    def _mapping_file_prefix(self, mapping: Box) -> str:
+        """Open every mapping-file complaint the same way.
+
+        Names the file and the resource it belongs to, and ends on ``is`` so
+        each caller appends only what it found wrong.
+        """
+        return (
+            f"The chromosome mapping file {mapping['filename']} "
+            f"in resource {self.genomic_resource.get_id()} is")
+
+    def _build_prefix_chrom_mapping(
+        self, mapping: Box, file_chromosomes: list[str],
+    ) -> dict[str, str]:
+        """Derive the ``chrom -> file_chrom`` map from the prefix transforms.
+
+        Applies ``del_prefix`` and then ``add_prefix``, and requires the
+        composed transform to be injective on THIS file's contigs.
+        ``removeprefix`` strips only where the prefix is present, so on a
+        file mixing prefixed and unprefixed contigs it collides two of them
+        onto one name; the map would then keep whichever came last and
+        silently drop the other's records.  A following ``add_prefix``
+        renames such a collision but does not undo it, which is why the
+        check runs on the final names rather than after either transform.
+        """
+        chromosomes: list[str] = file_chromosomes
+
+        if "del_prefix" in mapping:
+            pref = mapping.del_prefix
+            chromosomes = [ch.removeprefix(pref) for ch in chromosomes]
+
+        if "add_prefix" in mapping:
+            pref = mapping.add_prefix
+            chromosomes = [f"{pref}{chrom}" for chrom in chromosomes]
+
+        chrom_map: dict[str, str] = {}
+        for chrom, fchrom in zip(
+                chromosomes, file_chromosomes, strict=True):
+            if chrom in chrom_map:
+                raise ValueError(
+                    f"The chromosome mapping in resource "
+                    f"{self.genomic_resource.get_id()} maps the file "
+                    f"chromosomes {chrom_map[chrom]!r} and {fchrom!r} onto "
+                    f"the same chromosome {chrom!r}")
+            chrom_map[chrom] = fchrom
+        return chrom_map
 
     def get_column_key(self, col: str) -> int | None:
         """Find the index of a column in the table.

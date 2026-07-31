@@ -43,6 +43,7 @@ from gain.genomic_resources.genomic_scores import (
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing import (
+    build_filesystem_test_repository,
     build_filesystem_test_resource,
     build_inmemory_test_resource,
     convert_to_tab_separated,
@@ -956,6 +957,161 @@ def test_invalid_chrom_mapping_file_with_tabix(tmp_path: pathlib.Path) -> None:
         "The chromosome mapping file chrom_map.txt in resource  "
         "is expected to have the two columns 'chrom' and 'file_chrom'"
     )
+
+
+def test_del_prefix_that_collides_two_file_contigs_is_rejected(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A ``del_prefix`` collision fails at open() instead of dropping a contig.
+
+    ``removeprefix`` strips only where the prefix is present, so on a file
+    that mixes prefixed and unprefixed contigs it is not injective: ``chr1``
+    and ``1`` both map onto ``1``.  Building the map anyway would drop one of
+    them -- silently losing its scores -- and leave ``chrom_order`` listing a
+    contig ``chrom_map`` no longer reaches.
+    """
+    repo = (
+        a_grr()
+        .with_resource(
+            "scores/collide",
+            a_position_score()
+            .with_score("c2", "float")
+            .with_chrom_mapping(del_prefix="chr")
+            .with_data("""
+                chrom  pos_begin  pos_end  c2
+                chr1   10         12       3.14
+                1      11         11       4.14
+                chr2   12         14       5.14
+            """),
+        )
+        .build_repo(tmp_path)
+    )
+    res = repo.get_resource("scores/collide")
+    assert res.config is not None
+
+    with pytest.raises(ValueError, match="The chromosome") as exception:
+        build_genomic_position_table(res, res.config["table"]).open()
+
+    message = str(exception.value)
+    assert "scores/collide" in message
+    assert "'chr1'" in message
+    assert "'1'" in message
+
+
+def build_resource_with_chrom_mapping_file(
+    tmp_path: pathlib.Path, mapping: str,
+) -> GenomicResource:
+    """Realize a one-resource GRR whose table maps contigs through a file."""
+    setup_directories(
+        tmp_path, {
+            "scores/mapped": {
+                "genomic_resource.yaml": """
+                    table:
+                        filename: data.mem
+                        chrom_mapping:
+                            filename: chrom_map.txt
+                    scores:
+                    - id: c2
+                      name: c2
+                      type: float""",
+                "data.mem": convert_to_tab_separated("""
+                    chrom    pos_begin pos_end  c2
+                    chr1     10        12       3.14
+                    chr22    11        11       4.14"""),
+                "chrom_map.txt": convert_to_tab_separated(mapping),
+            },
+        })
+    return build_filesystem_test_repository(tmp_path).get_resource(
+        "scores/mapped")
+
+
+def test_a_chrom_mapping_file_listing_a_chromosome_twice_is_rejected(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A repeated ``chrom`` in the mapping file is a user-config error.
+
+    The second row would overwrite the first, so the file states two
+    different file contigs for one chromosome and only one of them survives.
+    """
+    res = build_resource_with_chrom_mapping_file(tmp_path, """
+        chrom   file_chrom
+        gosho   chr1
+        gosho   chr22
+    """)
+    assert res.config is not None
+
+    with pytest.raises(ValueError, match="The chromosome") as exception:
+        build_genomic_position_table(res, res.config["table"]).open()
+
+    message = str(exception.value)
+    assert "chrom_map.txt" in message
+    assert "scores/mapped" in message
+    assert "'gosho'" in message
+
+
+def test_a_chrom_mapping_file_pointing_two_chromosomes_at_one_contig(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Two chromosomes on one file contig make the mapping non-invertible.
+
+    ``rev_chrom_map`` is the map read backwards, and it is what turns a
+    record's file contig back into a chromosome; with two chromosomes on one
+    file contig only the last of them is ever produced.
+    """
+    res = build_resource_with_chrom_mapping_file(tmp_path, """
+        chrom   file_chrom
+        gosho   chr1
+        pesho   chr1
+    """)
+    assert res.config is not None
+
+    with pytest.raises(ValueError, match="The chromosome") as exception:
+        build_genomic_position_table(res, res.config["table"]).open()
+
+    message = str(exception.value)
+    assert "chrom_map.txt" in message
+    assert "scores/mapped" in message
+    assert "'gosho'" in message
+    assert "'pesho'" in message
+    assert "'chr1'" in message
+
+
+def test_del_prefix_collision_is_rejected_under_a_following_add_prefix(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The collision is judged on the FINAL names, after every transform.
+
+    ``del_prefix: chr`` folds ``chr1`` and ``1`` together; a following
+    ``add_prefix: chr`` renames the fold to ``chr1`` but does not undo it.
+    The check must therefore look at the names the map is actually keyed by,
+    not at the intermediate result of any one transform.
+    """
+    repo = (
+        a_grr()
+        .with_resource(
+            "scores/collide",
+            a_position_score()
+            .with_score("c2", "float")
+            .with_chrom_mapping(del_prefix="chr", add_prefix="chr")
+            .with_data("""
+                chrom  pos_begin  pos_end  c2
+                chr1   10         12       3.14
+                1      11         11       4.14
+                chr2   12         14       5.14
+            """),
+        )
+        .build_repo(tmp_path)
+    )
+    res = repo.get_resource("scores/collide")
+    assert res.config is not None
+
+    with pytest.raises(ValueError, match="The chromosome") as exception:
+        build_genomic_position_table(res, res.config["table"]).open()
+
+    message = str(exception.value)
+    assert "scores/collide" in message
+    assert "'chr1'" in message
+    assert "'1'" in message
 
 
 def test_column_with_name() -> None:
