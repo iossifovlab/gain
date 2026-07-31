@@ -364,60 +364,63 @@ def test_get_values_returns_new_ordered_list(tmp_path) -> None:
             record, reversed_defs) == ["hello", 0.5]
 
 
-# --- empty-region + unknown-score-id: the score-name resolution must not
-# happen when no line is extracted.  Base only resolved a name inside the
-# per-line loop (or after a `if not lines: return` guard), so an empty
-# region never rejected an unknown score id.  Hoisting the resolution out
-# of the loop must preserve that: an empty region with an unknown score id
-# must behave exactly as base -- no KeyError.
+# --- an unknown score id is refused the same way whatever the region holds.
+# `_resolve_score_defs` validates the requested ids before any data is read,
+# so a typo cannot answer one way on a populated contig and another on an
+# empty one.  These four pin that across every entry point that takes score
+# ids: the region read, and the three point reads.
 
-def test_region_fetch_empty_region_unknown_score_is_not_an_error(
+def test_region_fetch_empty_region_unknown_score_raises(
     tmp_path,
 ) -> None:
-    # Regression for the eager-resolution divergence: on base an empty
-    # region with an unknown score id yields no rows; it must not raise.
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
         1      10         0.5      hello
     """)
-    with score:
-        assert list(score.fetch_region_values(
-            "1", 5000, 5001, scores=["NOPE"])) == []
+    with score, pytest.raises(ValueError, match="does not define"):
+        list(score.fetch_region_values(
+            "1", 5000, 5001, scores=["NOPE"]))
 
 
-def test_region_fetch_nonempty_region_unknown_score_still_raises(
+def test_region_fetch_nonempty_region_unknown_score_raises(
     tmp_path,
 ) -> None:
-    # Behaviour preservation on the other side: a region that does yield a
-    # line still rejects an unknown score id (base raised KeyError inside
-    # the loop via score_defs[...]).
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
         1      10         0.5      hello
     """)
-    with score, pytest.raises(KeyError):
+    with score, pytest.raises(ValueError, match="does not define"):
         list(score.fetch_region_values("1", 10, 10, scores=["NOPE"]))
 
 
-def test_point_fetch_empty_region_unknown_score_returns_none(
+def test_point_fetch_empty_region_unknown_score_raises(
     tmp_path,
 ) -> None:
-    # PositionScore.fetch_position_scores resolves after
-    # `if not lines: return None`,
-    # so an empty region short-circuits before touching the unknown score id.
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
         1      10         0.5      hello
     """)
-    with score:
-        assert score.fetch_position_scores("1", 5000, scores=["NOPE"]) is None
+    with score, pytest.raises(ValueError, match="does not define"):
+        score.fetch_position_scores("1", 5000, scores=["NOPE"])
 
 
-def test_allele_point_fetch_empty_region_unknown_score_returns_none(
+def test_the_refusal_names_the_unknown_id_and_the_available_ones(
     tmp_path,
 ) -> None:
-    # AlleleScore.fetch_allele_scores resolves after its `if not lines`/
-    # `if not selected_line` guards -- an empty region returns None.
+    """The message has to be actionable: a typo is the likely cause."""
+    score = _open_position(tmp_path, """
+        chrom  pos_begin  s_float  s_str
+        1      10         0.5      hello
+    """)
+    with score, pytest.raises(ValueError) as err:
+        score.fetch_position_scores("1", 10, scores=["s_flaot"])
+    assert "s_flaot" in str(err.value)
+    assert "s_float" in str(err.value)
+
+
+def test_allele_point_fetch_empty_region_unknown_score_raises(
+    tmp_path,
+) -> None:
     builder = a_vcf_info_score().with_data("""
 ##fileformat=VCFv4.1
 ##INFO=<ID=scoreA,Number=1,Type=Float,Description="score A">
@@ -426,6 +429,6 @@ chr1   10  .  A   T   .    .      scoreA=0.1
 """)
     repo = a_grr().with_resource("vcf", builder).build_repo(tmp_path)
     score = AlleleScore(repo.get_resource("vcf")).open()
-    with score:
-        assert score.fetch_allele_scores(
-            "chr1", 5000, "A", "T", scores=["NOPE"]) is None
+    with score, pytest.raises(ValueError, match="does not define"):
+        score.fetch_allele_scores(
+            "chr1", 5000, "A", "T", scores=["NOPE"])
