@@ -1,15 +1,22 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 """``search_resources(resource_query=...)`` across the repository layers."""
+import gzip
 import pathlib
 
+import apsw
 import pytest
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotationConfigurationError,
 )
+from gain.genomic_resources.cli import _create_contents_db
 from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
-from gain.genomic_resources.repository import GenomicResourceProtocolRepo
+from gain.genomic_resources.repository import (
+    GR_SQLITE_META_FILE_NAME,
+    GenomicResourceProtocolRepo,
+)
 from gain.genomic_resources.resource_query import ResourceQueryParseError
+from gain.genomic_resources.testing import build_filesystem_test_protocol
 from gain.genomic_resources.testing.builders import a_grr, a_position_score
 
 
@@ -37,6 +44,303 @@ def unindexed_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
         )
         .build_repo(tmp_path)
     )
+
+
+@pytest.fixture
+def labelled_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
+    """An indexed repository carrying the labels that tell paths apart.
+
+    ``note`` is genuinely empty on one resource and absent from another;
+    ``target`` is absent from two. The index stores ``""`` for both
+    spellings, so these are the resources on which a faithful translation
+    and a guessed one disagree.
+    """
+    repo = (
+        a_grr()
+        .with_resource(
+            "scores/res_a",
+            a_position_score().with_labels(
+                domain="alpha", note="", target="TF1",
+                # Free-form YAML: not every label value is a string.
+                perturbed=False, year=2019),
+        )
+        .with_resource(
+            "scores/res_b",
+            a_position_score().with_labels(domain="beta", note="noted"),
+        )
+        .with_resource(
+            "other/res_c",
+            a_position_score().with_labels(domain="alpha"),
+        )
+        .build_repo(tmp_path)
+    )
+    _create_contents_db(build_filesystem_test_protocol(tmp_path))
+    return repo
+
+
+# Every shape the query language can take, over labels that are present,
+# empty, absent, and unknown to the repository altogether.
+QUERY_CORPUS = [
+    "*",
+    "scores/*",
+    "*/res_a",
+    "scores/res_*",
+    '*[domain="alpha"]',
+    '*[domain="al*"]',
+    '*[domain="*"]',
+    '*[note="*"]',
+    '*[note="noted"]',
+    '*[note="not*"]',
+    '*[target="*"]',
+    '*[target="TF1"]',
+    '*["ote" in note]',
+    '*["alpha" in domain]',
+    '*["TF" in target]',
+    'scores/*[domain="alpha"]',
+    '*[domain="alpha" and note="*"]',
+    '*[domain="alpha" and "TF" in target]',
+    '*[nosuchlabel="*"]',
+    '*[nosuchlabel="value"]',
+    '*["x" in nosuchlabel]',
+    # The index also has columns that are fields of the resource rather
+    # than entries of its labels. A label query naming one is asking about
+    # a label, and no resource can carry these as labels -- the index build
+    # refuses a label key that repeats a field it already has.
+    '*[type="position_score"]',
+    '*[type="*"]',
+    '*[id="scores/res_a"]',
+    '*[full_id="scores/res_a"]',
+    '*[summary="*"]',
+    '*[description="*"]',
+    '*[score_ids="*"]',
+    '*["phastCons" in score_ids]',
+    # A key that differs from a real label only in case. SQLite resolves a
+    # column name case-insensitively; the Python path looks the key up in
+    # a dict, which does not.
+    '*[Domain="alpha"]',
+    '*[DOMAIN="*"]',
+    # A label value that YAML made a bool or an int. Both sides render it
+    # the same way or they disagree.
+    '*[perturbed="False"]',
+    '*["Fal" in perturbed]',
+    '*[year="2019"]',
+    '*["19" in year]',
+]
+
+
+@pytest.mark.parametrize("query", QUERY_CORPUS)
+def test_the_query_means_the_same_with_and_without_the_index(
+    labelled_grr: GenomicResourceProtocolRepo, query: str,
+) -> None:
+    """One query, two evaluation paths, one answer.
+
+    ``resource_query`` on its own never opens the index. Adding a
+    ``resource_type`` every resource satisfies cannot change which
+    resources should come back -- it only routes the search through the
+    index. Any difference between the two sets is the query meaning two
+    different things depending on how it was asked.
+    """
+    without_index = {
+        r.resource_id
+        for r in labelled_grr.search_resources(resource_query=query)
+    }
+    through_index = {
+        r.resource_id
+        for r in labelled_grr.search_resources(
+            resource_query=query, resource_type="position_score")
+    }
+
+    assert without_index == through_index
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        # An absent label reads as empty, so a wildcard accepts it -- on
+        # both paths. These are the sets the differential above is pinned
+        # to; without them it could pass on two paths that agree and are
+        # both wrong.
+        ('*[target="*"]', {"scores/res_a", "scores/res_b", "other/res_c"}),
+        ('*[note="*"]', {"scores/res_a", "scores/res_b", "other/res_c"}),
+        ('*[nosuchlabel="*"]',
+         {"scores/res_a", "scores/res_b", "other/res_c"}),
+        # ... and rejects it for anything an empty value fails.
+        ('*[target="TF1"]', {"scores/res_a"}),
+        ('*["TF" in target]', {"scores/res_a"}),
+        ('*[nosuchlabel="value"]', set()),
+        ('*["x" in nosuchlabel]', set()),
+        # A resource field is not a label. `type` names a column of the
+        # index, but no resource carries a *label* called `type`, so the
+        # clause reads as empty for every one of them -- it must not be
+        # answered out of the column that happens to share the name.
+        ('*[type="position_score"]', set()),
+        ('*[id="scores/res_a"]', set()),
+        ('*[full_id="scores/res_a"]', set()),
+        ('*["phastCons" in score_ids]', set()),
+        ('*[type="*"]',
+         {"scores/res_a", "scores/res_b", "other/res_c"}),
+        ('*[score_ids="*"]',
+         {"scores/res_a", "scores/res_b", "other/res_c"}),
+        # ... and neither is a case variant of a label that does exist.
+        ('*[Domain="alpha"]', set()),
+        # A bool and an int label, compared in their rendered form.
+        ('*[perturbed="False"]', {"scores/res_a"}),
+        ('*[year="2019"]', {"scores/res_a"}),
+    ],
+)
+def test_the_indexed_path_returns_the_expected_resources(
+    labelled_grr: GenomicResourceProtocolRepo,
+    query: str, expected: set[str],
+) -> None:
+    found = {
+        r.resource_id
+        for r in labelled_grr.search_resources(
+            resource_query=query, resource_type="position_score")
+    }
+
+    assert found == expected
+
+
+def _publish_index_with_column(
+    root: pathlib.Path, column: str, rows: list[tuple[str, str, str]],
+) -> None:
+    """Overwrite the repository's FTS index with a hand-built one.
+
+    Stands in for a published `.CONTENTS.sqlite3.gz` that gain did not
+    build -- the read path deserializes whatever the repository serves,
+    without revetting the column names the index build would have refused.
+    """
+    db_path = root / "hostile.sqlite3"
+    with apsw.Connection(str(db_path)) as conn:
+        conn.execute(
+            "CREATE TABLE contents_metadata "
+            "(key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute(
+            "CREATE VIRTUAL TABLE contents USING "
+            f'fts5(full_id, id, type, "{column}")')
+        for row in rows:
+            # S608: splicing the column name is the whole point here --
+            # this builds the artefact a hostile repository would publish,
+            # which is what the code under test has to survive.
+            conn.execute(
+                "INSERT INTO contents (full_id, id, type, "  # noqa: S608
+                f'"{column}") VALUES (?, ?, ?, ?)', (*row, ""))
+    (root / GR_SQLITE_META_FILE_NAME).write_bytes(
+        gzip.compress(db_path.read_bytes(), mtime=0))
+    db_path.unlink()
+
+
+def test_a_crafted_index_column_name_cannot_break_out_of_the_query(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A published index is an untrusted artifact.
+
+    ``grr_manage`` vets every column name it creates, but the read path
+    deserializes whatever `.CONTENTS.sqlite3.gz` the repository serves --
+    and the query language admits parentheses in a label key. A key naming
+    a column crafted to close one call and open its own expression must
+    not widen the search past the filters that were asked for.
+    """
+    repo = (
+        a_grr()
+        .with_resource("scores/res_a", a_position_score())
+        .with_resource("secret/res_b", a_position_score())
+        .build_repo(tmp_path)
+    )
+    _publish_index_with_column(
+        tmp_path, "id)or(1", [
+            ("scores/res_a", "scores/res_a", "position_score"),
+            ("secret/res_b", "secret/res_b", "position_score"),
+        ])
+
+    found = list(repo.search_resources(
+        resource_query='scores/*[id)or(1="never-matches-anything"]',
+        resource_type="position_score"))
+
+    assert found == []
+
+
+def test_a_label_key_no_resource_carries_is_not_an_error(
+    labelled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    """The index has no column for a label nothing carries.
+
+    Every resource reads as ``""`` for it, which a wildcard accepts and a
+    literal rejects -- the same answer the unindexed path gives. What must
+    not happen is the search failing because the column is missing.
+    """
+    assert len(list(labelled_grr.search_resources(
+        resource_query='*[nosuchlabel="*"]',
+        resource_type="position_score"))) == 3
+    assert list(labelled_grr.search_resources(
+        resource_query='*[nosuchlabel="value"]',
+        resource_type="position_score")) == []
+
+
+@pytest.mark.parametrize("query", [
+    "scores/*",
+    '*[domain="alpha"]',
+    '*[note="*"]',
+    '*[type="position_score"]',
+    '*[nosuchlabel="*"]',
+])
+def test_a_search_term_routes_the_query_the_same_way_a_type_does(
+    labelled_grr: GenomicResourceProtocolRepo, query: str,
+) -> None:
+    """The other filter that opens the index must not change the answer.
+
+    ``search_term`` narrows through FTS ``MATCH`` rather than a column
+    comparison, so it reaches the push-down by a different route than
+    ``resource_type`` does.
+    """
+    everything = {
+        r.resource_id
+        for r in labelled_grr.search_resources(search_term="position")
+    }
+    assert everything == {"scores/res_a", "scores/res_b", "other/res_c"}
+
+    without_index = {
+        r.resource_id
+        for r in labelled_grr.search_resources(resource_query=query)
+    }
+    through_index = {
+        r.resource_id
+        for r in labelled_grr.search_resources(
+            resource_query=query, search_term="position")
+    }
+
+    assert without_index == through_index
+
+
+def test_each_search_opens_its_own_metadata_connection(
+    labelled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    """The push-down registers functions on the connection it is handed.
+
+    It reuses one set of function names per search, which is only sound
+    because no two searches share a connection.
+    """
+    proto = labelled_grr.proto
+    first = proto.open_repository_sqlite3_metadata_db()
+    second = proto.open_repository_sqlite3_metadata_db()
+
+    assert first is not second
+
+
+def test_the_query_conjoins_with_a_search_term(
+    labelled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    """All three filters narrow together, in one statement."""
+    found = {
+        r.resource_id
+        for r in labelled_grr.search_resources(
+            search_term="res_a",
+            resource_type="position_score",
+            resource_query='scores/*[domain="alpha"]',
+        )
+    }
+
+    assert found == {"scores/res_a"}
 
 
 def test_a_search_term_needs_an_index(

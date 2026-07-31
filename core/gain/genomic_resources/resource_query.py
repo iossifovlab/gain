@@ -16,9 +16,10 @@ repositories and the CLIs cannot disagree about what ``*`` means.
 """
 from __future__ import annotations
 
+import enum
 import fnmatch
 import functools
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -80,79 +81,83 @@ def _get_parser() -> Lark:
     return Lark(RESOURCE_QUERY_GRAMMAR)
 
 
-def _equals_predicate(value: str) -> Callable[[str], bool]:
-    def predicate(label: str) -> bool:
-        return label == value or fnmatch.fnmatch(label, value)
-    return predicate
+class LabelOperator(enum.Enum):
+    """The comparisons a label clause can make."""
+
+    EQUALS = "equals"
+    CONTAINS = "contains"
 
 
-def _contains_predicate(value: str) -> Callable[[str], bool]:
-    def predicate(label: str) -> bool:
-        return value in label
-    return predicate
+@dataclass(frozen=True)
+class LabelClause:
+    """One condition on one label: ``key = value`` or ``value in key``.
 
-
-def _add_label_predicate(
-    predicates: dict[str, Callable[[str], bool]],
-    key: str,
-    predicate: Callable[[str], bool],
-) -> None:
-    """Conjoin a predicate with the ones already collected for ``key``.
-
-    Several conditions of an `and` query may constrain the same label
-    (``"a" in pheno and "b" in pheno``); all of them must hold.
+    A clause is data, not a closure, so a caller that evaluates the query
+    somewhere other than in Python -- against the FTS index, say -- can
+    read what was asked without reimplementing what it means. Whatever
+    engine runs the search, :meth:`matches` stays the only definition of
+    the comparison.
     """
-    existing = predicates.get(key)
-    if existing is None:
-        predicates[key] = predicate
-        return
 
-    def combined(label: str) -> bool:
-        return bool(existing(label)) and predicate(label)
+    key: str
+    operator: LabelOperator
+    value: str
 
-    predicates[key] = combined
+    def matches(self, label: str) -> bool:
+        """Check whether a rendered label value satisfies this clause."""
+        if self.operator is LabelOperator.CONTAINS:
+            return self.value in label
+        return label == self.value or fnmatch.fnmatch(label, self.value)
+
+    def matches_an_absent_label(self) -> bool:
+        """Check whether this clause holds for a label that is not there.
+
+        An absent label is matched as ``""``; a repository that can tell
+        nothing else about a key -- because no resource in it carries the
+        key at all -- can settle the whole clause with this.
+        """
+        return self.matches("")
 
 
-def _build_label_predicates(
-    node: Any,
-    predicates: dict[str, Callable[[str], bool]] | None = None,
-) -> dict[str, Callable[[str], bool]]:
-    """Build the label predicates from a parsed filter node."""
-    if predicates is None:
-        predicates = {}
+def _build_label_clauses(node: Any) -> tuple[LabelClause, ...]:
+    """Collect the label clauses of a parsed filter node.
 
+    Clauses are kept as a flat sequence rather than folded into one
+    predicate per key: several conditions of an `and` query may constrain
+    the same label (``"a" in pheno and "b" in pheno``), and all of them
+    must hold.
+    """
+    clauses: list[LabelClause] = []
     for child in node.children:
         if child.data.value == "equals":
-            key = child.children[0].value
-            value = child.children[1].value
-            _add_label_predicate(predicates, key, _equals_predicate(value))
+            clauses.append(LabelClause(
+                child.children[0].value,
+                LabelOperator.EQUALS,
+                child.children[1].value,
+            ))
         elif child.data.value == "in":
             # the `in` rule spells the value BEFORE the label name
             # (`"value" in name`), the opposite of `equals`
-            value = child.children[0].value
-            key = child.children[1].value
-            _add_label_predicate(predicates, key, _contains_predicate(value))
+            clauses.append(LabelClause(
+                child.children[1].value,
+                LabelOperator.CONTAINS,
+                child.children[0].value,
+            ))
         elif child.data.value == "and_":
-            _build_label_predicates(child, predicates)
+            clauses.extend(_build_label_clauses(child))
         else:
             raise ResourceQueryParseError(
                 f"Unsupported label query operation: {child.data}",
             )
-    return predicates
+    return tuple(clauses)
 
 
-@dataclass(frozen=True, eq=False)
+@dataclass(frozen=True)
 class ResourceQuery:
-    """A parsed resource query: an id glob plus label predicates.
-
-    ``eq=False``: the label predicates are closures, so a generated
-    ``__eq__`` would compare function identity (two parses of the same
-    query would differ) and a generated ``__hash__`` would raise on the
-    predicate mapping. Identity comparison is the honest contract.
-    """
+    """A parsed resource query: an id glob plus label clauses."""
 
     resource_id_pattern: str
-    label_predicates: Mapping[str, Callable[[str], bool]]
+    label_clauses: tuple[LabelClause, ...]
 
     @staticmethod
     def parse(query: str) -> ResourceQuery:
@@ -176,18 +181,18 @@ class ResourceQuery:
         assert isinstance(resource_id_node.children[0], Token)
         resource_id_pattern = resource_id_node.children[0].value
 
-        predicates: dict[str, Callable[[str], bool]] = {}
+        clauses: tuple[LabelClause, ...] = ()
         if tree.children[1] is not None:
-            predicates = _build_label_predicates(tree.children[1])
+            clauses = _build_label_clauses(tree.children[1])
 
-        return ResourceQuery(resource_id_pattern, predicates)
+        return ResourceQuery(resource_id_pattern, clauses)
 
     def match_id(self, resource_id: str) -> bool:
         """Check whether ``resource_id`` matches the query's id glob."""
         return fnmatch.fnmatch(resource_id, self.resource_id_pattern)
 
     def match_labels(self, labels: Mapping[str, Any]) -> bool:
-        """Check whether ``labels`` satisfies the query's label predicates.
+        """Check whether ``labels`` satisfies every one of the query's clauses.
 
         ``meta.labels`` is a free-form YAML mapping, so a label value is
         whatever YAML made of it -- ``perturbed: False`` is a bool and
@@ -195,13 +200,17 @@ class ResourceQuery:
         bulk. The query language only ever spells values as text, so every
         label value is compared in its rendered form; without that both
         ``in`` and ``=`` raise a bare ``TypeError`` out of the predicate.
+
+        A label the resource does not carry is matched as ``""``. The FTS
+        index cannot represent the difference -- it stores ``""`` for every
+        label column a resource does not carry -- so treating absence as a
+        distinct case would put this matcher permanently out of step with
+        the same query evaluated in SQL.
         """
-        for key, predicate in self.label_predicates.items():
-            if key not in labels:
-                return False
-            if not predicate(str(labels[key])):
-                return False
-        return True
+        return all(
+            clause.matches(str(labels.get(clause.key, "")))
+            for clause in self.label_clauses
+        )
 
     def match(self, resource: GenomicResource) -> bool:
         """Check whether ``resource`` matches the query."""

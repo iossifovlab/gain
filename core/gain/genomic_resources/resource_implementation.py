@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -15,13 +14,15 @@ from gain.task_graph.graph import TaskDesc
 from gain.templates import get_template
 from gain.utils.helpers import convert_size
 
-from .repository import GenomicResource
+from .repository import (
+    GR_INDEX_RESOURCE_FIELDS,
+    INDEX_COLUMN_PATTERN,
+    INDEX_COLUMN_RE,
+    GenomicResource,
+)
 
 logger = logging.getLogger(__name__)
 
-
-INDEX_COLUMN_PATTERN = "[A-Za-z_][A-Za-z0-9_]*"
-_INDEX_COLUMN_RE = re.compile(f"{INDEX_COLUMN_PATTERN}\\Z")
 
 # Names FTS5 will not accept as a column of the index table: it reserves
 # `rank` and `rowid`, and every FTS5 table has a hidden column named after
@@ -62,7 +63,7 @@ def _index_column_problem(column: object, taken: set[str]) -> str | None:
         # the regex raises a TypeError, which the index build can only
         # report as an internal error (gain#464, gain#364).
         return f"is not a string but {type(column).__name__}"
-    if not _INDEX_COLUMN_RE.match(column):
+    if not INDEX_COLUMN_RE.match(column):
         return "is not a valid SQL identifier"
     if column.upper() in apsw.keywords:
         # Refusing every one of `apsw.keywords` is deliberately stricter
@@ -286,7 +287,7 @@ class GenomicResourceImplementation(ABC):
         meta = res.get_config().get("meta", {}) or {}
         labels: dict = res.get_labels() or {}
         header: tuple[str, ...] = (
-            "full_id", "id", "type", "description", "summary",
+            *GR_INDEX_RESOURCE_FIELDS,
             *labels.keys(),
         )
         validate_index_columns(res.resource_id, header)

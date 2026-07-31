@@ -77,18 +77,18 @@ def test_an_empty_query_is_rejected_rather_than_matching_everything() -> None:
         ResourceQuery.parse("")
 
 
-def test_a_query_is_compared_and_hashed_by_identity() -> None:
-    """The predicates are closures, so value equality cannot be meaningful.
+def test_two_parses_of_the_same_query_are_equal_and_hash_alike() -> None:
+    """A parsed query is a value.
 
-    A generated ``__eq__`` would compare closure identity anyway, and the
-    matching ``__hash__`` would raise on the predicate mapping. Identity is
-    what the class actually offers, and it hashes.
+    Its clauses are data rather than closures, so equality compares what
+    was asked instead of which parse asked it.
     """
     query = ResourceQuery.parse('*[a="1"]')
 
-    assert query == query
-    assert query != ResourceQuery.parse('*[a="1"]')
-    assert hash(query) == hash(query)
+    assert query == ResourceQuery.parse('*[a="1"]')
+    assert query != ResourceQuery.parse('*[a="2"]')
+    assert query != ResourceQuery.parse('other/*[a="1"]')
+    assert hash(query) == hash(ResourceQuery.parse('*[a="1"]'))
 
 
 def test_equals_is_an_fnmatch_over_the_label_value() -> None:
@@ -99,11 +99,40 @@ def test_equals_is_an_fnmatch_over_the_label_value() -> None:
     assert not query.match_labels({"phenotype": "epilepsy"})
 
 
-def test_a_label_the_resource_does_not_carry_never_matches() -> None:
-    query = ResourceQuery.parse('*[phenotype="autism"]')
+def test_an_absent_label_fails_every_clause_that_rejects_an_empty_value(
+) -> None:
+    """Absence is matched as ``""``, so it fails whatever ``""`` fails.
 
-    assert not query.match_labels({})
-    assert not query.match_labels({"provenance": "UCSC"})
+    This is the whole blast radius of matching absence as the empty value:
+    a literal value rejects ``""``, and so does a containment test, because
+    the grammar requires at least one character in a value and no non-empty
+    string is contained in ``""``. That leaves a wildcard as the only clause
+    an absent label satisfies.
+    """
+    equals = ResourceQuery.parse('*[phenotype="autism"]')
+    assert not equals.match_labels({})
+    assert not equals.match_labels({"provenance": "UCSC"})
+
+    contains = ResourceQuery.parse('*["tism" in phenotype]')
+    assert not contains.match_labels({})
+    assert not contains.match_labels({"provenance": "UCSC"})
+
+
+def test_an_absent_label_is_matched_as_the_empty_value() -> None:
+    """A resource that does not carry a label has it as ``""``.
+
+    The FTS index cannot represent the difference: building it fills ``""``
+    for every label column a resource does not carry, and both spellings
+    then read back identically. A matcher that refused an absent key
+    outright could therefore never agree with the same query evaluated
+    against the index, whichever way the SQL was written -- so absence and
+    emptiness are one case here too.
+    """
+    query = ResourceQuery.parse('*[phenotype="*"]')
+
+    assert query.match_labels({"phenotype": "autism"})
+    assert query.match_labels({"phenotype": ""})
+    assert query.match_labels({})
 
 
 def test_in_is_a_substring_test() -> None:
