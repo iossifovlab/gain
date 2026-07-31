@@ -1267,6 +1267,10 @@ RESOURCE_PRODUCERS: list[
         "search_resources_by_term",
         lambda repo: list(repo.search_resources(search_term="domain_a")),
     ),
+    (
+        "search_resources_by_query",
+        lambda repo: list(repo.search_resources(resource_query="scores/*")),
+    ),
 ]
 
 

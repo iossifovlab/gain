@@ -6,6 +6,7 @@ import pathlib
 import pytest
 import pytest_mock
 from gain.genomic_resources.cli import (
+    _create_contents_db,
     _create_grr_repo,
     _find_resources,
     cli_manage,
@@ -17,6 +18,7 @@ from gain.genomic_resources.repository import (
     GenomicResourceProtocolRepo,
 )
 from gain.genomic_resources.testing import (
+    build_filesystem_test_protocol,
     build_filesystem_test_repository,
     setup_directories,
 )
@@ -107,6 +109,110 @@ def test_cli_list(
         "basic                0        2 7.0 B        manage one\n"
         "gene_models          1.0      2 50.0 B       manage sub/two\n"
     )
+
+
+def test_cli_list_filtered_by_query(
+    repo_fixture: tuple[pathlib.Path, GenomicResourceProtocolRepo],
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """``list -q`` selects with the annotator wildcard language."""
+    path, _repo = repo_fixture
+
+    cli_manage(["list", "-R", str(path), "-q", "sub/*"])
+    out, err = capsys.readouterr()
+
+    assert err == ""
+    assert out == (
+        "gene_models          1.0      2 50.0 B       manage sub/two\n"
+    )
+
+
+def test_cli_list_filtered_by_type_and_search_term(
+    repo_fixture: tuple[pathlib.Path, GenomicResourceProtocolRepo],
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """``list -t`` and ``list -s`` were previously ``grr_browse``-only.
+
+    Both are applied in SQL against the FTS index, so unlike ``-q`` they
+    need one built.
+    """
+    path, _repo = repo_fixture
+    cli_manage(["repo-manifest", "-R", str(path)])
+    # Only `one` reaches the index: this fixture's `sub/two` declares an
+    # unknown `file:` key, so indexing it fails and it is skipped.
+    _create_contents_db(build_filesystem_test_protocol(path, repair=False))
+    capsys.readouterr()
+
+    cli_manage(["list", "-R", str(path), "-t", "basic"])
+    out, err = capsys.readouterr()
+    assert err == ""
+    assert "manage one" in out
+    assert "sub/two" not in out
+
+    cli_manage(["list", "-R", str(path), "-s", "one"])
+    out, err = capsys.readouterr()
+    assert err == ""
+    assert "manage one" in out
+    assert "sub/two" not in out
+
+
+def test_cli_list_query_matching_nothing_lists_nothing(
+    repo_fixture: tuple[pathlib.Path, GenomicResourceProtocolRepo],
+    capsys: pytest.CaptureFixture,
+) -> None:
+    path, _repo = repo_fixture
+
+    cli_manage(["list", "-R", str(path), "-q", "no/such/*"])
+    out, err = capsys.readouterr()
+
+    assert err == ""
+    assert out == ""
+
+
+def test_cli_list_rejects_a_malformed_query(
+    repo_fixture: tuple[pathlib.Path, GenomicResourceProtocolRepo],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A bad ``-q`` is a usage error, not a traceback out of the listing."""
+    path, _repo = repo_fixture
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_manage(["list", "-R", str(path), "-q", 'sub/*[bad="x"'])
+
+    assert excinfo.value.code == 1
+    assert 'sub/*[bad="x"' in caplog.text
+
+
+def test_cli_list_with_an_empty_query_lists_everything(
+    repo_fixture: tuple[pathlib.Path, GenomicResourceProtocolRepo],
+    capsys: pytest.CaptureFixture,
+) -> None:
+    path, _repo = repo_fixture
+
+    cli_manage(["list", "-R", str(path), "-q", ""])
+    out, err = capsys.readouterr()
+
+    assert err == ""
+    assert "manage one" in out
+    assert "manage sub/two" in out
+
+
+def test_cli_list_by_type_without_an_index_says_so(
+    repo_fixture: tuple[pathlib.Path, GenomicResourceProtocolRepo],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``-s``/``-t`` need an FTS index; say that instead of dying.
+
+    A checked-out GRR has a `.CONTENTS.json` and no `.CONTENTS.sqlite3.gz`,
+    which is exactly the repository `grr_manage` is usually pointed at.
+    """
+    path, _repo = repo_fixture
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_manage(["list", "-R", str(path), "-t", "basic"])
+
+    assert excinfo.value.code == 1
+    assert "index" in caplog.text.lower()
 
 
 def test_cli_list_without_repo_argument(

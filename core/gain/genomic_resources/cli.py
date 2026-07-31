@@ -200,6 +200,18 @@ def _configure_list_subparser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument(
         "--hr", default=False, action="store_true",
         help="Projects the size in human-readable format.")
+    # The same three filters `grr_browse` offers, so that the two listings
+    # of the same repository cannot be narrowed differently.
+    parser.add_argument(
+        "-s", "--search", type=str, default=None,
+        help="FTS search term to filter resources.")
+    parser.add_argument(
+        "-t", "--type", type=str, default=None,
+        help="Filter resources by type.")
+    parser.add_argument(
+        "-q", "--query", type=str, default=None,
+        help="Filter resources by a wildcard query over the resource id "
+             "and labels, e.g. 'hg38/scores/*[phenotype=\"autism\"]'.")
     _add_repository_resource_parameters_group(parser, use_resource=False)
     VerbosityConfiguration.set_arguments(parser)
 
@@ -1399,6 +1411,10 @@ def cli_browse(cli_args: list[str] | None = None) -> None:
     group.add_argument(
         "-t", "--type", type=str, default=None,
         help="Filter resources by type.")
+    group.add_argument(
+        "-q", "--query", type=str, default=None,
+        help="Filter resources by a wildcard query over the resource id "
+             "and labels, e.g. 'hg38/scores/*[phenotype=\"autism\"]'.")
     group.add_argument(
         "--summary", default=False, action="store_true",
         help="Print a summary for each resource below its listing line.")

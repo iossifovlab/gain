@@ -325,3 +325,96 @@ def test_search_resources_gene_score_by_score_id(
     )
     assert len(resources) == 1
     assert resources[0].resource_id == "gene_scores/res_d"
+
+
+def test_search_resources_by_query_globs_the_id(
+    search_grr_fixture: GenomicResourceProtocolRepo,
+) -> None:
+    resources = list(
+        search_grr_fixture.search_resources(resource_query="scores/*"),
+    )
+    assert {r.resource_id for r in resources} == {
+        "scores/res_a", "scores/res_b"}
+
+
+def test_search_resources_by_query_is_path_anchored(
+    search_grr_fixture: GenomicResourceProtocolRepo,
+) -> None:
+    """``res_*`` anchors at the id start, so no resource matches.
+
+    An FTS term match would find all four, because it prefixes a token.
+    """
+    resources = list(
+        search_grr_fixture.search_resources(resource_query="res_*"),
+    )
+    assert resources == []
+
+
+def test_search_resources_by_query_supports_an_infix_star(
+    search_grr_fixture: GenomicResourceProtocolRepo,
+) -> None:
+    """``*res_a`` is a plain ``fts5: syntax error`` as a search term."""
+    resources = list(
+        search_grr_fixture.search_resources(resource_query="*res_a"),
+    )
+    assert [r.resource_id for r in resources] == ["scores/res_a"]
+
+
+def test_search_resources_by_query_filters_on_labels(
+    search_grr_fixture: GenomicResourceProtocolRepo,
+) -> None:
+    resources = list(
+        search_grr_fixture.search_resources(
+            resource_query='*[domain="domain_a"]'),
+    )
+    assert [r.resource_id for r in resources] == ["scores/res_a"]
+
+
+def test_search_resources_query_narrows_the_resource_type(
+    search_grr_fixture: GenomicResourceProtocolRepo,
+) -> None:
+    """The three filters conjoin; the query does not replace the type."""
+    resources = list(
+        search_grr_fixture.search_resources(
+            resource_type="position_score",
+            resource_query='*[ref="ref_a"]',
+        ),
+    )
+    assert {r.resource_id for r in resources} == {
+        "scores/res_a", "scores/res_b"}
+
+    resources = list(
+        search_grr_fixture.search_resources(
+            resource_type="gene_models",
+            resource_query='*[ref="ref_a"]',
+        ),
+    )
+    assert [r.resource_id for r in resources] == ["annotation/res_c"]
+
+
+def test_search_resources_query_narrows_the_search_term(
+    search_grr_fixture: GenomicResourceProtocolRepo,
+) -> None:
+    resources = list(
+        search_grr_fixture.search_resources(
+            search_term="ref_a",
+            resource_query="scores/*",
+        ),
+    )
+    assert {r.resource_id for r in resources} == {
+        "scores/res_a", "scores/res_b"}
+
+
+def test_search_resources_query_matching_nothing_yields_nothing(
+    search_grr_fixture: GenomicResourceProtocolRepo,
+) -> None:
+    """A query selecting nothing is empty, not an error.
+
+    The annotation layer refuses an empty wildcard; a repository listing
+    must not.
+    """
+    resources = list(
+        search_grr_fixture.search_resources(
+            resource_query="no/such/prefix/*"),
+    )
+    assert resources == []

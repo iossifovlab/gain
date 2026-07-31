@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 import copy
-import fnmatch
 import json
-import textwrap
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, TypedDict
 
 import yaml
-from lark import Lark, Token, Tree
 
 from gain import logging
 from gain.genomic_resources.aggregators import (
@@ -21,6 +18,10 @@ from gain.genomic_resources.aggregators import (
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
+)
+from gain.genomic_resources.resource_query import (
+    ResourceQuery,
+    ResourceQueryParseError,
 )
 from gain.genomic_resources.resource_types import FRAGMENT_SCORE_TYPES
 
@@ -330,131 +331,25 @@ class AnnotationConfigParser:
 
     WILDCARD_LIMIT = 500
 
-    ANNOTATION_CONFIG_GRAMMAR = textwrap.dedent("""
-        ?start: resource_id [filter]
-
-        ?resource_id: (resource_name | wildcard)
-
-        wildcard: /[\\w\\d\\/_\\-*]+/
-
-        filter: "[" (equals | in | and_)+ "]"
-
-        and_: operation "and" operation
-
-        equals: (name"=\\""value"\\"") | (name"='"value"'")
-
-        in: ("\\""value"\\"" " in " name) | ("'"value"'" " in " name)
-
-        resource_name: /[\\w\\d\\/_\\-!@#$%^<>+]+/
-
-        ?name: /[\\w\\d\\/_\\-!@#$%^<>+*]+/
-
-        ?value: /[\\w\\d\\/ _\\-!@#$%^<>+*]+/
-
-        ?operation: equals | in | and_
-
-        %ignore " "
-    """)
-
-    @staticmethod
-    def match_labels_query(
-        query: dict[str, Callable[[str], bool]],
-        resource_labels: dict[str, Any],
-    ) -> bool:
-        """Check if the labels query for a wildcard matches.
-
-        ``meta.labels`` is a free-form YAML mapping, so a label value is
-        whatever YAML made of it -- ``perturbed: False`` is a bool and
-        ``year: 2019`` an int, both of which the production GRRs carry in
-        bulk.  The query language only ever spells values as text, so every
-        label value is compared in its rendered form; without that both
-        ``in`` and ``=`` raise a bare ``TypeError`` out of the predicate.
-        """
-        for k, v in query.items():
-            if k not in resource_labels:
-                return False
-
-            if not v(str(resource_labels[k])):
-                return False
-        return True
-
-    @staticmethod
-    def _add_label_predicate(
-        labels_query: dict[str, Any],
-        key: str,
-        predicate: Callable[[str], bool],
-    ) -> None:
-        """Conjoin a predicate with the ones already collected for ``key``.
-
-        Several conditions of an `and` query may constrain the same label
-        (``"a" in pheno and "b" in pheno``); all of them must hold.
-        """
-        existing = labels_query.get(key)
-        if existing is None:
-            labels_query[key] = predicate
-            return
-
-        def combined(label: str) -> bool:
-            return bool(existing(label)) and predicate(label)
-
-        labels_query[key] = combined
-
-    @staticmethod
-    def _equals_predicate(value: str) -> Callable[[str], bool]:
-        def predicate(label: str) -> bool:
-            return label == value or fnmatch.fnmatch(label, value)
-        return predicate
-
-    @staticmethod
-    def _contains_predicate(value: str) -> Callable[[str], bool]:
-        def predicate(label: str) -> bool:
-            return value in label
-        return predicate
-
-    @staticmethod
-    def build_labels_query(
-        node: Any,
-        labels_query: dict[str, Any] | None = None,
-    ) -> dict[str, Callable[[str], bool]]:
-        """Build labels query from parsed tree node."""
-        if labels_query is None:
-            labels_query = {}
-
-        for child in node.children:
-            if child.data.value == "equals":
-                key = child.children[0].value
-                value = child.children[1].value
-
-                AnnotationConfigParser._add_label_predicate(
-                    labels_query, key,
-                    AnnotationConfigParser._equals_predicate(value),
-                )
-            elif child.data.value == "in":
-                # the `in` rule spells the value BEFORE the label name
-                # (`"value" in name`), the opposite of `equals`
-                value = child.children[0].value
-                key = child.children[1].value
-
-                AnnotationConfigParser._add_label_predicate(
-                    labels_query, key,
-                    AnnotationConfigParser._contains_predicate(value),
-                )
-            elif child.data.value == "and_":
-                AnnotationConfigParser.build_labels_query(
-                    child, labels_query)
-            else:
-                raise AnnotationConfigurationError(
-                    f"Unsupported label query operation: {child.data}",
-                )
-        return labels_query
-
     @staticmethod
     def query_resources(
-        annotator_type: str, resource_id: str, grr: GenomicResourceRepo,
+        annotator_type: str, resource_query: str, grr: GenomicResourceRepo,
     ) -> list[str]:
-        """Collect resources matching a given query."""
-        labels_query: dict[str, Callable[[str], bool]] = {}
+        """Collect the ids of the resources matching ``resource_query``.
 
+        ``resource_query`` is an id glob plus an optional label filter, not
+        a resource id -- the config key it is read from is spelled
+        ``resource_id``, but by the time it reaches here it has been
+        recognised as a wildcard. It is spelled the same as the
+        ``search_resources`` parameter that takes the same language.
+
+        The query language itself lives in ``genomic_resources``; what this
+        adds is the annotation layer's policy about the result -- an
+        annotator name selects the resource types it can consume, a wildcard
+        that selects nothing is a configuration error, and one that selects
+        more than ``WILDCARD_LIMIT`` resources is refused rather than
+        silently expanded into a pipeline of that size.
+        """
         # Maps an annotator name a user may type to the resource types it
         # consumes.  A SET, not one type: a fragment score has two accepted
         # spellings and either annotator name must find either of them --
@@ -472,32 +367,21 @@ class AnnotationConfigParser:
             "gene_score_annotator": {"gene_score"},
         }
 
-        config_parser = Lark(AnnotationConfigParser.ANNOTATION_CONFIG_GRAMMAR)
-        tree = config_parser.parse(resource_id)
+        try:
+            parsed_query = ResourceQuery.parse(resource_query)
+        except ResourceQueryParseError as err:
+            raise AnnotationConfigurationError(str(err)) from err
 
-        assert len(tree.children) == 2
-        resource_id_node = tree.children[0]
-        assert isinstance(resource_id_node, Tree)
-        assert isinstance(resource_id_node.children[0], Token)
-        parsed_id = resource_id_node.children[0].value
+        accepted_types = annotator_resources_map.get(
+            annotator_type, frozenset())
 
-        if tree.children[1] is not None:
-            labels_query = AnnotationConfigParser.build_labels_query(
-                tree.children[1])
-
-        def match(resource: GenomicResource) -> bool:
-            return (
-                resource.get_type() in annotator_resources_map.get(
-                    annotator_type, frozenset())
-                and fnmatch.fnmatch(resource.get_id(), parsed_id)
-                and AnnotationConfigParser.match_labels_query(
-                   labels_query, resource.get_labels()))
         selected_resources: set[str] = set()
         result: list[str] = []
         for resource in grr.get_all_resources():
             if resource.get_id() in selected_resources:
                 continue
-            if match(resource):
+            if resource.get_type() in accepted_types \
+                    and parsed_query.match(resource):
                 selected_resources.add(resource.resource_id)
                 result.append(resource.resource_id)
                 if len(result) > AnnotationConfigParser.WILDCARD_LIMIT:
@@ -505,12 +389,14 @@ class AnnotationConfigParser:
                         f"Too many resources ({len(result)}/"
                         f"{AnnotationConfigParser.WILDCARD_LIMIT}) "
                         "match the wildcard "
-                        f"'{parsed_id}' for annotator '{annotator_type}'.",
+                        f"'{parsed_query.resource_id_pattern}' "
+                        f"for annotator '{annotator_type}'.",
                     )
 
         if len(result) == 0:
             raise AnnotationConfigurationError(
-                f"No resources match the wildcard '{parsed_id}' "
+                f"No resources match the wildcard "
+                f"'{parsed_query.resource_id_pattern}' "
                 f"for annotator type '{annotator_type}'.",
             )
         return result

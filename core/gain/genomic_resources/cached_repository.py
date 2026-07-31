@@ -401,12 +401,26 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
         self,
         search_term: str | None = None,
         resource_type: str | None = None,
+        resource_query: str | None = None,
+    ) -> Generator[GenomicResource, None, None]:
+        # The child is called HERE rather than inside the generator below,
+        # so that it validates the query when this call is made instead of
+        # on the first iteration.
+        return self._to_cache_resources(
+            self.child.search_resources(
+                search_term, resource_type, resource_query))
+
+    def _to_cache_resources(
+        self, remote_resources: Iterable[GenomicResource],
     ) -> Generator[GenomicResource, None, None]:
         # Resolving each hit costs no extra remote enumeration: the FTS
         # search already builds the remote's resource dict to resolve its
         # own hits.
-        for remote_resource in self.child.search_resources(
-                search_term, resource_type):
+        #
+        # The query is evaluated by the child, on the remote resource,
+        # before the cache wrapping: both carry the same id and the same
+        # labels, and the remote is what the child already has in hand.
+        for remote_resource in remote_resources:
             yield self._to_cache_resource(remote_resource)
 
     def _check_cache_dir_is_the_id_under_the_cache_url(

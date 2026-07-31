@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 """Architecture tests for gain package using pytestarch."""
+import ast
 import os
 import pathlib
 
@@ -171,3 +172,89 @@ def test_no_gain_module_uses_stdlib_logging_directly() -> None:
         "these gain modules use stdlib logging instead of "
         f"`from gain import logging`: {offenders}"
     )
+
+
+def test_the_grr_does_not_import_the_annotation_layer(
+) -> None:
+    """``genomic_resources`` sits below ``annotation`` and stays there.
+
+    The annotation config depends on the GRR -- the resource query language
+    lives in ``genomic_resources.resource_query`` precisely so that the
+    pipeline config, the repositories and the CLIs cannot disagree about
+    what ``*`` means (gain#441).  An import back the other way would close
+    that into a cycle and put the query language above the repositories it
+    filters.
+
+    Two upward imports predate the rule and are allowed by name rather than
+    by pattern, so that a NEW one fails here instead of quietly joining
+    them:
+
+    * ``implementations/annotation_pipeline_impl`` implements the
+      ``annotation_pipeline`` resource *type* -- the resource it describes
+      is an annotation pipeline, so it cannot be described without the
+      annotation layer.
+    * ``cli_cache_repo`` is a CLI that composes the two layers rather than
+      a part of either.
+
+    Neither is a repository, a protocol, or the query language, which are
+    the modules the layering is actually about.
+    """
+    grr_pkg = pathlib.Path(GAIN_SRC) / "genomic_resources"
+    allowed = {
+        grr_pkg / "implementations" / "annotation_pipeline_impl.py",
+        grr_pkg / "cli_cache_repo.py",
+    }
+    offenders = []
+    for py in grr_pkg.rglob("*.py"):
+        if py in allowed:
+            continue
+        offenders.extend(
+            f"{py.relative_to(GAIN_SRC)}: {imported}"
+            for imported in sorted(_imported_modules(py))
+            if imported == "gain.annotation"
+            or imported.startswith("gain.annotation.")
+        )
+    assert offenders == [], (
+        f"the GRR imports the annotation layer: {offenders}. "
+        f"genomic_resources sits below annotation -- move the shared code "
+        f"down into genomic_resources instead, as resource_query does"
+    )
+
+
+def _imported_modules(py: pathlib.Path) -> set[str]:
+    """Absolute dotted names ``py`` imports, however it spells them.
+
+    Resolved from the AST rather than matched against the source text, so
+    that ``from gain import annotation``, a relative ``from ..annotation
+    import x`` and an ``importlib.import_module("gain.annotation.x")`` are
+    all seen -- a text scan for ``from gain.annotation`` catches none of
+    the three, and matches a line inside a docstring that imports nothing.
+    """
+    tree = ast.parse(py.read_text(encoding="utf8"))
+    # The package that contains this module, as a dotted path: `gain` plus
+    # the directories between GAIN_SRC and the file.
+    package = ["gain", *py.relative_to(GAIN_SRC).parts[:-1]]
+
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                # `from . import x` stays in the containing package;
+                # each extra dot climbs one above it.
+                base = package[:len(package) - (node.level - 1)]
+            else:
+                base = []
+            prefix = [*base, node.module] if node.module else base
+            module = ".".join(prefix)
+            if module:
+                imported.add(module)
+            imported.update(
+                f"{module}.{alias.name}" if module else alias.name
+                for alias in node.names
+            )
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            # `importlib.import_module("gain.annotation.x")` and friends.
+            imported.add(node.value)
+    return imported
