@@ -582,7 +582,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
         ``arrays`` is one ``(pos_begin, pos_end, {score_id: cells})`` batch as
         produced by :meth:`_region_value_arrays`.  Clips each record to
-        ``[start, end]`` exactly as ``_fetch_region_records`` does (dropping
+        ``[start, end]`` exactly as ``_fetch_record_values`` does (dropping
         records ending before ``start``), weights it as ``score``'s kind
         weights it, enforces whatever overlap rule that kind states across the
         batch boundary, and adds each score's values vectorized.
@@ -631,7 +631,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         """Clip a batch to the region, per ``score``'s record semantics.
 
         Returns ``(keep, weights, prev_right)``: the mask of records surviving
-        the ``pos_end >= start`` skip (``_fetch_region_records`` drops records
+        the ``pos_end >= start`` skip (``_fetch_record_values`` drops records
         ending before the query, for EVERY resource kind), their weights, and
         the carry for the next batch's overlap check.
 

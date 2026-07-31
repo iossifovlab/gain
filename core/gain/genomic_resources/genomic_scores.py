@@ -1020,19 +1020,26 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         return self.table.get_chromosomes()
 
-    def _fetch_region_records(
+    def _fetch_record_values(
         self,
         chrom: str,
         pos_begin: int | None,
         pos_end: int | None,
         scores: list[str] | None = None,
     ) -> Generator[
-            tuple[str, int, int, list[ScoreValue] | None, Record],
-            None, None]:
-        """Return score values in a region, with the record they came from.
+            tuple[int, int, list[ScoreValue] | None], None, None]:
+        """Yield each record's OWN bounds and its values.
 
-        The last element is the record itself.  Two of the three callers
-        discard it and the third reads only positional slots off it.
+        One entry per record touching the region, in the order the table
+        yields them.  The bounds are the record's, not the query's: a caller
+        that wants the overlap clips it itself, because whether the overlap
+        means anything is the resource kind's business, not this layer's.
+        Only a position score has an answer -- its value stands for every
+        base it covers, so only the covered part counts.
+
+        Shared because three things are worth doing once per scan rather
+        than once per kind: dropping a record that ends before the region,
+        resolving the score ids to definitions, and extracting the values.
         """
         if not self.is_open():
             raise ValueError(f"genomic score <{self.resource_id}> is not open")
@@ -1051,7 +1058,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         score_defs: list[GenomicScoreDef] | None = None
 
         for record in self.fetch_records(chrom, pos_begin, pos_end):
-            rec_chrom, rec_begin, rec_end = self._record_to_begin_end(record)
+            _chrom, rec_begin, rec_end = self._record_to_begin_end(record)
             if pos_begin is not None and rec_end < pos_begin:
                 continue
 
@@ -1060,12 +1067,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                     self.score_definitions[scr_id] for scr_id in scores]
             val = self.get_score_values_from_record(record, score_defs)
 
-            if pos_begin is not None:
-                left = max(pos_begin, rec_begin)
-            else:
-                left = rec_begin
-            right = min(pos_end, rec_end) if pos_end is not None else rec_end
-            yield (rec_chrom, left, right, val, record)
+            yield (rec_begin, rec_end, val)
 
     @abc.abstractmethod
     def _region_values(
@@ -1393,9 +1395,12 @@ class PositionScore(GenomicScore):
         position score's value stands for every base it covers and only the
         covered part of the query counts.
         """
-        for _lchrom, left, right, val, _ in self._fetch_region_records(
+        for rec_begin, rec_end, val in self._fetch_record_values(
             chrom, pos_begin, pos_end, scores,
         ):
+            left = rec_begin if pos_begin is None \
+                else max(pos_begin, rec_begin)
+            right = rec_end if pos_end is None else min(pos_end, rec_end)
             yield (left, right, val)
 
     def fetch_region_weighted_values(
@@ -1679,10 +1684,9 @@ class AlleleScore(GenomicScore):
         needs the nucleotides themselves reads ``record[REF]`` /
         ``record[ALT]`` off :meth:`fetch_records`.
         """
-        for _lchrom, _left, _right, val, record in self._fetch_region_records(
+        for rec_begin, _rec_end, val in self._fetch_record_values(
                 chrom, pos_begin, pos_end, scores):
-            pos = record[POS_BEGIN]
-            yield pos, pos, val
+            yield rec_begin, rec_begin, val
 
     def fetch_allele_record(
         self, chrom: str, pos: int, ref: str, alt: str,
@@ -1773,13 +1777,14 @@ class FragmentScore(GenomicScore):
             tuple[int, int, list[ScoreValue] | None], None, None]:
         """Yield each fragment's own span and values.
 
-        A fragment's span is reported whole rather than clipped to the query:
-        it weighs 1 however long it is, so the covered part carries no more
-        meaning than the rest.
+        The fragment's full extent, not its overlap with the queried region:
+        a fragment is an interval, and the window someone happened to ask
+        through is not part of it.  Nothing weighs the record by it -- a
+        fragment counts once however long it is
+        (:attr:`RECORD_WEIGHT_IS_SPAN` is False).
         """
-        for _, start, stop, values, _ in self._fetch_region_records(
-                chrom, pos_begin, pos_end, scores):
-            yield start, stop, values
+        yield from self._fetch_record_values(
+            chrom, pos_begin, pos_end, scores)
 
     def fetch_fragment_scores(
         self, chrom: str,

@@ -30,6 +30,8 @@ from gain.genomic_resources.genomic_scores import (
     GenomicScore,
     PositionScore,
     build_allele_score_from_resource,
+    build_fragment_score_from_resource,
+    build_position_score_from_resource,
     build_position_score_from_resource_id,
     build_score_from_resource,
     build_score_from_resource_id,
@@ -59,6 +61,11 @@ from gain.genomic_resources.testing import (
     setup_genome,
     setup_tabix,
     setup_vcf,
+)
+from gain.genomic_resources.testing.builders import (
+    a_fragment_score,
+    a_position_score,
+    an_allele_score,
 )
 from gain.task_graph.graph import TaskGraph
 
@@ -1473,20 +1480,64 @@ def test_get_histogram_image_public_url() -> None:
     assert url != score.get_histogram_image_url("score")
 
 
-def test_fetch_region_records_requires_open() -> None:
+def test_each_kind_decides_what_span_it_reports(
+    tmp_path: pathlib.Path,
+) -> None:
+    """One record, one query, three answers -- and each is the kind's own.
+
+    ``_fetch_record_values`` hands every kind the record's OWN bounds and
+    does no clipping, because whether the overlap with the query means
+    anything is the kind's business:
+
+    * a POSITION score's value stands for every base it covers, so only the
+      covered part of the query counts -- it clips;
+    * an ALLELE score's value stands for one ref/alt pair, so it collapses
+      to the point the record sits at, however wide ``pos_end`` reaches;
+    * a FRAGMENT is an interval, and the window someone happened to ask
+      through is not part of it -- it reports its full extent.
+    """
+    data = """
+        chrom  pos_begin  pos_end  s
+        chr1   10         300      0.1
+    """
+    position = build_position_score_from_resource(
+        a_position_score().with_score("s", "float")
+        .with_data(data).build_resource(tmp_path / "pos"))
+    fragment = build_fragment_score_from_resource(
+        a_fragment_score().with_score("s", "float")
+        .with_data(data).build_resource(tmp_path / "frag"))
+    allele = build_allele_score_from_resource(
+        an_allele_score().with_score("s", "float")
+        .with_data("""
+            chrom  pos_begin  pos_end  reference  alternative  s
+            chr1   10         300      A          G            0.1
+        """).build_resource(tmp_path / "allele"))
+
+    with position.open() as opened:
+        assert list(opened.fetch_region_values("chr1", 50, 150, ["s"])) \
+            == [(50, 150, [0.1])]
+    with fragment.open() as opened:
+        assert list(opened.fetch_region_values("chr1", 50, 150, ["s"])) \
+            == [(10, 300, [0.1])]
+    with allele.open() as opened:
+        assert list(opened.fetch_region_values("chr1", 50, 150, ["s"])) \
+            == [(10, 10, [0.1])]
+
+
+def test_fetch_record_values_requires_open() -> None:
     score = build_score_from_resource(build_simple_position_score_resource())
 
-    region_iter = score._fetch_region_records("1", 10, 10)
+    region_iter = score._fetch_record_values("1", 10, 10)
     with pytest.raises(ValueError, match="is not open"):
         next(region_iter)
 
 
-def test_fetch_region_records_checks_available_chromosomes() -> None:
+def test_fetch_record_values_checks_available_chromosomes() -> None:
     score = build_score_from_resource(build_simple_position_score_resource())
     score.open()
 
     with pytest.raises(ValueError, match="not among the available"):
-        next(score._fetch_region_records("2", 10, 10))
+        next(score._fetch_record_values("2", 10, 10))
 
 
 def test_record_to_begin_end_validates_order() -> None:
