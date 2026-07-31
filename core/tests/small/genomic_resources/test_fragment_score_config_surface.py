@@ -41,12 +41,13 @@ CORE_PYPROJECT = pathlib.Path(__file__).parents[3] / "pyproject.toml"
 
 @pytest.fixture
 def legacy_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
-    """A GRR with one fragment score declared the way deployed GRRs do."""
+    """A GRR with one fragment score declared under the legacy type."""
     return (
         a_grr()
         .with_resource(
             "fragments",
             a_fragment_score()
+            .with_resource_type(LEGACY_RESOURCE_TYPE)
             .with_score("frequency", "float")
             .with_score("collection", "str")
             .with_data("""
@@ -174,8 +175,8 @@ def test_legacy_cnv_filter_parameter_is_still_honoured(
 # What this pins is narrow: these particular PYTHON names no longer exist.
 # It is not a claim that the old vocabulary is gone from the sources.  It
 # survives deliberately wherever it spells a CONFIGURATION string -- the
-# resource type dispatched in ``genomic_scores``, ``SCORE_TYPE`` in the
-# test builders, the annotator names in ``annotation_config``, the
+# resource type dispatched in ``genomic_scores``, ``with_resource_type``
+# in the test builders, the annotator names in ``annotation_config``, the
 # ``cnv_filter`` parameter -- because deployed GRRs and user pipelines
 # type those.  They are config, not leftovers; widening them is gain#471.
 @pytest.mark.parametrize("module_name,symbol", [

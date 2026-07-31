@@ -603,7 +603,7 @@ class FragmentScoreBuilder(_TableScoreBuilder):
     weights every record 1 however long it is.
     """
 
-    SCORE_TYPE: ClassVar[str] = "cnv_collection"
+    SCORE_TYPE: ClassVar[str] = "fragment_score"
     DEFAULT_DATA: ClassVar[str] = """
         chrom  pos_begin  pos_end  score
         1      10         19       0.1
@@ -613,8 +613,10 @@ class FragmentScoreBuilder(_TableScoreBuilder):
     def with_resource_type(self, resource_type: str) -> Self:
         """Render ``fragment_score`` or ``cnv_collection`` as the ``type:``.
 
-        Defaults to the legacy spelling, which every deployed GRR declares.
-        Only a fragment score has two (gain#471), hence not on the base.
+        A bare builder already renders ``fragment_score``, the preferred
+        spelling; reach for this to pin the legacy ``cnv_collection``.
+        Raises if ``resource_type`` names no fragment score.  Only a
+        fragment score has two spellings, hence not on the base.
         """
         return dataclasses.replace(
             self, resource_type=require_fragment_score_type(resource_type))
