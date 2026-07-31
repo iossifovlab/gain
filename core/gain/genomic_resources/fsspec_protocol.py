@@ -14,6 +14,7 @@ import pathlib
 import re
 import tempfile
 import time
+import uuid
 from collections.abc import Callable, Generator, Iterable
 from contextlib import AbstractContextManager, suppress
 from dataclasses import asdict
@@ -1411,6 +1412,25 @@ class FsspecReadWriteProtocol(
         resource_url = self.get_resource_url(resource)
         return os.path.join(resource_url, ".grr", f"{filename}.state")
 
+    def _get_resource_file_download_path(
+            self, resource: GenomicResource, filename: str) -> str:
+        """Return a unique path to download a resource file into.
+
+        Inside the resource's ``.grr`` directory, next to the file's
+        ``.state`` and ``.lockfile``: protocol-internal, on the same
+        filesystem as the resource file itself, and skipped by everything
+        that enumerates resource files. The ``uuid`` component keeps two
+        concurrent attempts on the same file from writing the same temp
+        path. See gain#273.
+
+        Another join of its own, so it repeats the containment check --
+        see gain#467.
+        """
+        validate_resource_file_name(resource.resource_id, filename)
+        resource_url = self.get_resource_url(resource)
+        return os.path.join(
+            resource_url, ".grr", f"{filename}.{uuid.uuid4().hex}.part")
+
     def get_resource_file_timestamp(
             self, resource: GenomicResource, filename: str) -> float:
         url = self.get_resource_file_url(resource, filename)
@@ -1559,10 +1579,16 @@ class FsspecReadWriteProtocol(
             expected_size: int,
             on_bytes: Callable[[int], None] | None = None,
     ) -> ResourceFileState:
-        """Download a single resource file once and verify it.
+        """Download a single resource file once, verify it, then publish it.
 
-        Opens a fresh remote handle and truncates the destination, so a
-        retried call recovers cleanly from a partially-written file.
+        Opens a fresh remote handle and streams into a private temp file in
+        the resource's ``.grr`` directory; the file is moved to its real
+        path only once it has been verified, so the repository never holds
+        an unverified resource file and a failed attempt leaves nothing
+        behind at the real path (gain#273). On a local filesystem the move
+        is an atomic rename; on an object store it degrades to a
+        copy-and-delete, which loses the atomicity but keeps the
+        verify-then-publish order -- one code path for every scheme.
 
         The download is verified twice: the number of bytes written must
         equal the manifest's recorded size (a silent short read in the
@@ -1577,42 +1603,53 @@ class FsspecReadWriteProtocol(
         right after it is written, to drive a byte-level progress bar
         (see gain#77).
         """
-        bytes_written = 0
-        with remote_resource.open_raw_file(
-                filename, "rb",
-                uncompress=False) as infile, \
-                self.open_raw_file(
-                    dest_resource,
-                    filename, "wb",
-                    uncompress=False) as outfile:
+        tmp_filepath = self._get_resource_file_download_path(
+            dest_resource, filename)
+        tmp_parent = os.path.dirname(tmp_filepath)
+        if not self.filesystem.exists(tmp_parent):
+            self.filesystem.makedirs(tmp_parent, exist_ok=True)
 
-            md5_hash = hashlib.md5()  # noqa
-            while chunk := infile.read(self.CHUNK_SIZE):
-                outfile.write(chunk)
-                bytes_written += len(chunk)
-                if on_bytes is not None:
-                    on_bytes(len(chunk))
-                md5_hash.update(chunk)
+        published = False
+        try:
+            bytes_written = 0
+            with remote_resource.open_raw_file(
+                    filename, "rb",
+                    uncompress=False) as infile, \
+                    self.filesystem.open(tmp_filepath, "wb") as outfile:
 
-        md5 = md5_hash.hexdigest()
+                md5_hash = hashlib.md5()  # noqa
+                while chunk := infile.read(self.CHUNK_SIZE):
+                    outfile.write(chunk)
+                    bytes_written += len(chunk)
+                    if on_bytes is not None:
+                        on_bytes(len(chunk))
+                    md5_hash.update(chunk)
 
-        if not self.filesystem.exists(dest_filepath):
-            raise OSError(f"destination file not created {dest_filepath}")
+            md5 = md5_hash.hexdigest()
 
-        if bytes_written != expected_size:
-            raise TruncatedDownloadError(
-                f"file copy is truncated "
-                f"{dest_resource.resource_id} ({filename}); "
-                f"received {bytes_written} bytes, "
-                f"expected {expected_size}")
+            if not self.filesystem.exists(tmp_filepath):
+                raise OSError(f"destination file not created {tmp_filepath}")
 
-        if md5 != expected_md5:
-            raise ChecksumMismatchError(
-                f"file copy is broken "
-                f"{dest_resource.resource_id} ({filename}); "
-                f"received {bytes_written} bytes (size ok); "
-                f"md5sum are different: "
-                f"{md5}!={expected_md5}")
+            if bytes_written != expected_size:
+                raise TruncatedDownloadError(
+                    f"file copy is truncated "
+                    f"{dest_resource.resource_id} ({filename}); "
+                    f"received {bytes_written} bytes, "
+                    f"expected {expected_size}")
+
+            if md5 != expected_md5:
+                raise ChecksumMismatchError(
+                    f"file copy is broken "
+                    f"{dest_resource.resource_id} ({filename}); "
+                    f"received {bytes_written} bytes (size ok); "
+                    f"md5sum are different: "
+                    f"{md5}!={expected_md5}")
+
+            self.filesystem.mv(tmp_filepath, dest_filepath)
+            published = True
+        finally:
+            if not published:
+                self._discard_partial_download(tmp_filepath)
 
         state = self.build_resource_file_state(
             dest_resource,
@@ -1622,6 +1659,26 @@ class FsspecReadWriteProtocol(
         self.save_resource_file_state(dest_resource, state)
 
         return state
+
+    def _discard_partial_download(self, tmp_filepath: str) -> None:
+        """Remove the temp file of a download that was never published.
+
+        Called for every way out of :meth:`_download_resource_file` that
+        does not publish -- a checksum mismatch, a stalled read, an
+        interrupt -- so no attempt leaves a partial behind. The temp file
+        may not exist at all (the remote handle can fail before the first
+        write), and a removal that fails must not replace the failure that
+        got us here: the retry loop classifies the error it sees, and a
+        cleanup error in its place would be neither retryable nor true.
+        """
+        try:
+            self.filesystem.rm(tmp_filepath)
+        except FileNotFoundError:
+            pass
+        except Exception:  # noqa: BLE001  pylint: disable=broad-except
+            logger.warning(
+                "unable to remove the partial download %s",
+                tmp_filepath, exc_info=True)
 
     def classify_resource_file(
             self, remote_resource: GenomicResource,
