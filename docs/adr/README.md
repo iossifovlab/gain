@@ -68,8 +68,10 @@ of one decision will drift.
 | [0003](0003-resource-file-name-containment.md) | Resource file names are contained by construction | accepted |
 | [0004](0004-core-test-hang-diagnostic.md) | A hung `core` test is diagnosed by faulthandler, not pytest-timeout | accepted |
 | [0005](0005-fsspec-protocol-memo-rebuild.md) | Rebuilding a memoized fsspec protocol refreshes it, and may not reconfigure it | accepted |
+| [0006](0006-resource-value-identity.md) | A genomic resource's value identity excludes its manifest and its protocol | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > Per the convention above numbers are never reused, so both keep the number
-> they were written with; cite them by slug, not by number. `0006` is the next
-> free number.
+> they were written with. Cite either one by slug — `0003` alone does not
+> identify an ADR. A new ADR takes the next number above the highest one in
+> this index, so a new ADR must be added to the index in the same change.
