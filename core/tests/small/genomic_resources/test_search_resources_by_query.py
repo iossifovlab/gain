@@ -7,9 +7,11 @@ from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotationConfigurationError,
 )
+from gain.genomic_resources.cli import _create_contents_db
 from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import GenomicResourceProtocolRepo
 from gain.genomic_resources.resource_query import ResourceQueryParseError
+from gain.genomic_resources.testing import build_filesystem_test_protocol
 from gain.genomic_resources.testing.builders import a_grr, a_position_score
 
 
@@ -37,6 +39,152 @@ def unindexed_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
         )
         .build_repo(tmp_path)
     )
+
+
+@pytest.fixture
+def labelled_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
+    """An indexed repository carrying the labels that tell paths apart.
+
+    ``note`` is genuinely empty on one resource and absent from another;
+    ``target`` is absent from two. The index stores ``""`` for both
+    spellings, so these are the resources on which a faithful translation
+    and a guessed one disagree.
+    """
+    repo = (
+        a_grr()
+        .with_resource(
+            "scores/res_a",
+            a_position_score().with_labels(
+                domain="alpha", note="", target="TF1"),
+        )
+        .with_resource(
+            "scores/res_b",
+            a_position_score().with_labels(domain="beta", note="noted"),
+        )
+        .with_resource(
+            "other/res_c",
+            a_position_score().with_labels(domain="alpha"),
+        )
+        .build_repo(tmp_path)
+    )
+    _create_contents_db(build_filesystem_test_protocol(tmp_path))
+    return repo
+
+
+# Every shape the query language can take, over labels that are present,
+# empty, absent, and unknown to the repository altogether.
+QUERY_CORPUS = [
+    "*",
+    "scores/*",
+    "*/res_a",
+    "scores/res_*",
+    '*[domain="alpha"]',
+    '*[domain="al*"]',
+    '*[domain="*"]',
+    '*[note="*"]',
+    '*[note="noted"]',
+    '*[note="not*"]',
+    '*[target="*"]',
+    '*[target="TF1"]',
+    '*["ote" in note]',
+    '*["alpha" in domain]',
+    '*["TF" in target]',
+    'scores/*[domain="alpha"]',
+    '*[domain="alpha" and note="*"]',
+    '*[domain="alpha" and "TF" in target]',
+    '*[nosuchlabel="*"]',
+    '*[nosuchlabel="value"]',
+    '*["x" in nosuchlabel]',
+]
+
+
+@pytest.mark.parametrize("query", QUERY_CORPUS)
+def test_the_query_means_the_same_with_and_without_the_index(
+    labelled_grr: GenomicResourceProtocolRepo, query: str,
+) -> None:
+    """One query, two evaluation paths, one answer.
+
+    ``resource_query`` on its own never opens the index. Adding a
+    ``resource_type`` every resource satisfies cannot change which
+    resources should come back -- it only routes the search through the
+    index. Any difference between the two sets is the query meaning two
+    different things depending on how it was asked.
+    """
+    without_index = {
+        r.resource_id
+        for r in labelled_grr.search_resources(resource_query=query)
+    }
+    through_index = {
+        r.resource_id
+        for r in labelled_grr.search_resources(
+            resource_query=query, resource_type="position_score")
+    }
+
+    assert without_index == through_index
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        # An absent label reads as empty, so a wildcard accepts it -- on
+        # both paths. These are the sets the differential above is pinned
+        # to; without them it could pass on two paths that agree and are
+        # both wrong.
+        ('*[target="*"]', {"scores/res_a", "scores/res_b", "other/res_c"}),
+        ('*[note="*"]', {"scores/res_a", "scores/res_b", "other/res_c"}),
+        ('*[nosuchlabel="*"]',
+         {"scores/res_a", "scores/res_b", "other/res_c"}),
+        # ... and rejects it for anything an empty value fails.
+        ('*[target="TF1"]', {"scores/res_a"}),
+        ('*["TF" in target]', {"scores/res_a"}),
+        ('*[nosuchlabel="value"]', set()),
+        ('*["x" in nosuchlabel]', set()),
+    ],
+)
+def test_the_indexed_path_returns_the_expected_resources(
+    labelled_grr: GenomicResourceProtocolRepo,
+    query: str, expected: set[str],
+) -> None:
+    found = {
+        r.resource_id
+        for r in labelled_grr.search_resources(
+            resource_query=query, resource_type="position_score")
+    }
+
+    assert found == expected
+
+
+def test_a_label_key_no_resource_carries_is_not_an_error(
+    labelled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    """The index has no column for a label nothing carries.
+
+    Every resource reads as ``""`` for it, which a wildcard accepts and a
+    literal rejects -- the same answer the unindexed path gives. What must
+    not happen is the search failing because the column is missing.
+    """
+    assert len(list(labelled_grr.search_resources(
+        resource_query='*[nosuchlabel="*"]',
+        resource_type="position_score"))) == 3
+    assert list(labelled_grr.search_resources(
+        resource_query='*[nosuchlabel="value"]',
+        resource_type="position_score")) == []
+
+
+def test_the_query_conjoins_with_a_search_term(
+    labelled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    """All three filters narrow together, in one statement."""
+    found = {
+        r.resource_id
+        for r in labelled_grr.search_resources(
+            search_term="res_a",
+            resource_type="position_score",
+            resource_query='scores/*[domain="alpha"]',
+        )
+    }
+
+    assert found == {"scores/res_a"}
 
 
 def test_a_search_term_needs_an_index(

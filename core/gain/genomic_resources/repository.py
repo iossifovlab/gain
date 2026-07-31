@@ -53,7 +53,13 @@ import hashlib
 import ntpath
 import os
 import re
-from collections.abc import Generator, Iterator, Mapping, Sequence
+from collections.abc import (
+    Callable,
+    Generator,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from dataclasses import asdict, dataclass
 from typing import IO, Any, cast
 from urllib.parse import unquote
@@ -1002,6 +1008,82 @@ class Mode(enum.Enum):
     READWRITE = 2
 
 
+# The names the resource-query push-down registers on a metadata
+# connection. The connection is deserialized fresh for every search, so
+# these never have to be unique across concurrent searches.
+_MATCH_ID_FUNCTION = "gain_query_match_id"
+_MATCH_LABEL_FUNCTION_PREFIX = "gain_query_match_label_"
+
+# A condition no row satisfies. Spelled ``0`` rather than ``FALSE`` so the
+# statement does not depend on the SQLite version that added the keyword.
+_NO_ROWS_CONDITION = "0"
+
+
+def _sql_matcher(match: Callable[[str], bool]) -> Callable[..., bool]:
+    """Adapt a matcher to the values an index column hands back.
+
+    A column standing for a label the resource does not carry holds ``""``,
+    which is what makes absence and emptiness one case for the query
+    language. A column with no value at all is the same statement, so it is
+    rendered the same way rather than reaching the matcher as ``None``.
+
+    Typed with an open parameter list because that is the shape apsw
+    accepts for a scalar function; each one registered here is declared
+    with exactly one argument.
+    """
+    def matcher(value: Any) -> bool:
+        return match("" if value is None else str(value))
+    return matcher
+
+
+def _resource_query_conditions(
+    conn: apsw.Connection, query: ResourceQuery,
+) -> list[str]:
+    """Express ``query`` as SQL conditions over the ``contents`` table.
+
+    The comparisons are not restated in SQL. Each one is registered as a
+    scalar function backed by the very matcher the Python path calls, so
+    what ``*`` and ``in`` mean is defined once no matter which path
+    evaluates the query -- rewriting them as ``GLOB`` and ``LIKE`` would be
+    a second definition, free to drift from the first. What SQL
+    contributes is the push-down: these conditions conjoin with the FTS
+    ``MATCH`` in one statement instead of filtering its rows afterwards.
+    """
+    cursor = conn.cursor()
+    columns = {
+        row[1] for row in cursor.execute("pragma table_info('contents')")
+    }
+
+    conn.createscalarfunction(
+        _MATCH_ID_FUNCTION, _sql_matcher(query.match_id), 1,
+        deterministic=True)
+    conditions = [f"{_MATCH_ID_FUNCTION}(id)"]
+
+    for position, clause in enumerate(query.label_clauses):
+        if clause.key not in columns:
+            # No resource in the repository carries this key, so the index
+            # has no column for it and every resource reads as ``""`` --
+            # which settles the clause for all of them at once, in
+            # whichever direction it falls. Matched by exact name on
+            # purpose: SQLite resolves a column name case-insensitively,
+            # where the Python path looks the key up in a dict.
+            if not clause.matches_an_absent_label():
+                return [_NO_ROWS_CONDITION]
+            continue
+        function_name = f"{_MATCH_LABEL_FUNCTION_PREFIX}{position}"
+        conn.createscalarfunction(
+            function_name, _sql_matcher(clause.matches), 1,
+            deterministic=True)
+        # The key is spliced rather than bound because SQL cannot
+        # parameterise an identifier. What makes that safe is the
+        # membership test above: the name reaching the statement is one
+        # the index already has a column for, and every such name was
+        # vetted as a bare identifier before it became one (gain#464).
+        conditions.append(f"{function_name}({clause.key})")
+
+    return conditions
+
+
 class ReadOnlyRepositoryProtocol(abc.ABC):
     """Abstract base class for read-only repository storage protocols.
 
@@ -1111,15 +1193,17 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
         """Search for resources using SQLite full-text search.
 
         The three filters conjoin: a resource must satisfy every one that is
-        supplied. ``search_term`` and ``resource_type`` are applied in SQL
-        against the FTS index; ``resource_query`` is the annotator wildcard
-        language (an id glob plus an optional label query) and is applied as
-        a Python post-filter, because FTS5 can express neither a
-        path-anchored glob nor an infix ``*``.
+        supplied. ``search_term`` and ``resource_type`` are matched against
+        the FTS index; ``resource_query`` is the annotator wildcard language
+        -- an id glob plus an optional label query -- and joins them in the
+        same statement, so the index narrows once rather than handing rows
+        to a filter.
 
-        A ``resource_query`` on its own never opens the index. That is what
-        makes it work on a repository with no ``.CONTENTS.sqlite3.gz`` at
-        all, where opening the metadata db raises.
+        A ``resource_query`` on its own never opens the index, and is
+        matched in Python instead. That is what makes it work on a
+        repository with no ``.CONTENTS.sqlite3.gz`` at all, where opening
+        the metadata db raises. Both routes evaluate the same parsed query,
+        so which one runs is not observable in the result.
 
         An empty ``resource_query`` is an unset one: it is what a shell
         substitutes for a variable that was never set, and the useful
@@ -1186,6 +1270,9 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
                 placeholders = ", ".join("?" * len(accepted))
                 conditions.append(f"type IN ({placeholders})")
                 params.extend(accepted)
+            if parsed_query is not None:
+                conditions.extend(
+                    _resource_query_conditions(conn, parsed_query))
             if conditions:
                 query += " WHERE "
                 query += " AND ".join(conditions)
@@ -1204,9 +1291,6 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
                         "repo %s: index names resource <%s>, which the "
                         "repository contents do not; skipping it",
                         self.proto_id, row[0])
-                    continue
-                if parsed_query is not None \
-                        and not parsed_query.match(resource):
                     continue
                 yield resource
 
