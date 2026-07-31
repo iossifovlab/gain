@@ -333,9 +333,15 @@ class AnnotationConfigParser:
 
     @staticmethod
     def query_resources(
-        annotator_type: str, resource_id: str, grr: GenomicResourceRepo,
+        annotator_type: str, resource_query: str, grr: GenomicResourceRepo,
     ) -> list[str]:
-        """Collect resources matching a given query.
+        """Collect the ids of the resources matching ``resource_query``.
+
+        ``resource_query`` is an id glob plus an optional label filter, not
+        a resource id -- the config key it is read from is spelled
+        ``resource_id``, but by the time it reaches here it has been
+        recognised as a wildcard. It is spelled the same as the
+        ``search_resources`` parameter that takes the same language.
 
         The query language itself lives in ``genomic_resources``; what this
         adds is the annotation layer's policy about the result -- an
@@ -362,7 +368,7 @@ class AnnotationConfigParser:
         }
 
         try:
-            query = ResourceQuery.parse(resource_id)
+            parsed_query = ResourceQuery.parse(resource_query)
         except ResourceQueryParseError as err:
             raise AnnotationConfigurationError(str(err)) from err
 
@@ -374,7 +380,8 @@ class AnnotationConfigParser:
         for resource in grr.get_all_resources():
             if resource.get_id() in selected_resources:
                 continue
-            if resource.get_type() in accepted_types and query.match(resource):
+            if resource.get_type() in accepted_types \
+                    and parsed_query.match(resource):
                 selected_resources.add(resource.resource_id)
                 result.append(resource.resource_id)
                 if len(result) > AnnotationConfigParser.WILDCARD_LIMIT:
@@ -382,14 +389,14 @@ class AnnotationConfigParser:
                         f"Too many resources ({len(result)}/"
                         f"{AnnotationConfigParser.WILDCARD_LIMIT}) "
                         "match the wildcard "
-                        f"'{query.resource_id_pattern}' "
+                        f"'{parsed_query.resource_id_pattern}' "
                         f"for annotator '{annotator_type}'.",
                     )
 
         if len(result) == 0:
             raise AnnotationConfigurationError(
                 f"No resources match the wildcard "
-                f"'{query.resource_id_pattern}' "
+                f"'{parsed_query.resource_id_pattern}' "
                 f"for annotator type '{annotator_type}'.",
             )
         return result
