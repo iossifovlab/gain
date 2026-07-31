@@ -237,11 +237,14 @@ class RunState:
         come for it. The caller releases them, because ``Future.release()``
         is a dask call and must not run under this lock.
 
-        Releasing matters for more than tidiness. The executor submits with
-        an explicit ``key=`` derived from the task id, so an unreleased
-        future keeps that key pinned on a client that outlives the run, and
-        a later run of the same graph is deduplicated against it and handed
-        the abandoned run's results instead of executing (gain#480).
+        Releasing matters for more than tidiness. An unreleased future keeps
+        its result in cluster memory for the life of a client that outlives
+        the run, so a process that abandons run after run -- retrying a
+        failed annotation is exactly that -- accumulates the results of every
+        one of them (gain#480). It no longer decides *correctness*: each run
+        submits under its own key namespace, so a later run cannot be
+        deduplicated against these keys whether they are released in time or
+        not (gain#531).
 
         Emptying the collections is also what makes the release safe against
         a dask callback thread that fires afterwards: :meth:`task_finished`

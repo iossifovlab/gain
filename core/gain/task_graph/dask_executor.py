@@ -1,5 +1,6 @@
 import threading
 import time
+import uuid
 from collections.abc import Generator, Sequence
 from copy import copy
 from typing import Any
@@ -45,7 +46,7 @@ class DaskExecutor(TaskGraphExecutorBase):
         self._params = copy(kwargs)
         self._params["task_log_dir"] = log_dir
 
-    def _submit_worker_func(self, state: RunState) -> None:
+    def _submit_worker_func(self, state: RunState, run_id: str) -> None:
         """Hand queued tasks to the cluster until the run shuts down."""
         start = time.time()
         submit_count = 0
@@ -57,7 +58,10 @@ class DaskExecutor(TaskGraphExecutorBase):
                 return
 
             tasks = list(batch.tasks)
-            task_ids = [safe_task_id(task.task.task_id) for task in tasks]
+            task_ids = [
+                f"{safe_task_id(task.task.task_id)}-{run_id}"
+                for task in tasks
+            ]
 
             # No lock is held across map(). The batch does not need one: it
             # sits in the in-flight submit state for the whole width of the
@@ -225,7 +229,8 @@ class DaskExecutor(TaskGraphExecutorBase):
         is robustness -- but were one to raise, an unguarded loop would kill
         the results worker and re-strand any batch that completes after this
         one (the hang gain#372 exists to prevent), or leave the rest of an
-        abandoned run's keys pinned (gain#480). Each release stands alone.
+        abandoned run's results occupying cluster memory (gain#480). Each
+        release stands alone.
         """
         for future in futures:
             try:
@@ -247,8 +252,24 @@ class DaskExecutor(TaskGraphExecutorBase):
     ) -> Generator[tuple[Task, Any], None, None]:
         state = RunState()
 
+        # Every run gets its own dask key namespace. The keys the executor
+        # submits under are derived from the task ids, which a second run of
+        # the same graph repeats exactly -- and dask deduplicates by key, so
+        # without this a run is handed an earlier run's results for any key
+        # the client still knows, and never executes those tasks at all.
+        #
+        # Releasing the futures a run owns (below) is what should retire
+        # those keys, but it cannot be relied on to have happened by the time
+        # the next run submits: `Future.release()` only schedules `_dec_ref`
+        # on the client's IOLoop, while `Client.map()` talks to the scheduler
+        # from the calling thread, so the next run's submission overtakes the
+        # release it is racing. Namespacing the keys makes the correctness of
+        # a run independent of that timing (gain#531); releasing still
+        # matters, for the cluster memory the abandoned results occupy.
+        run_id = uuid.uuid4().hex[:8]
+
         submit_worker = threading.Thread(
-            target=self._submit_worker_func, args=(state,),
+            target=self._submit_worker_func, args=(state, run_id),
             name=SUBMIT_WORKER_THREAD_NAME, daemon=True)
         submit_worker.start()
 
@@ -315,10 +336,9 @@ class DaskExecutor(TaskGraphExecutorBase):
 
             # Both workers have stopped, so anything still held is work this
             # run gave up on: the consumer abandoned the generator and the
-            # results will never be collected. Release it, or the keys stay
-            # pinned on a client that outlives the run and the next run of
-            # the same graph is deduplicated against them and handed these
-            # results without executing (gain#480). Empty on every normal
+            # results will never be collected. Release it, or the results of
+            # a run nobody wants sit in cluster memory for the life of a
+            # client that outlives the run (gain#480). Empty on every normal
             # path, where the loop only exits once nothing is outstanding.
             self._release_futures(state.abandon_outstanding())
 

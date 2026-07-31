@@ -534,7 +534,13 @@ def test_an_abandoned_run_does_not_feed_stale_results_to_the_next_run(
     The stamp is a task *argument*, so it is baked in when the graph is
     built rather than read when the task runs: the dask key does not depend
     on it, so a stale key returns the first run's stamp no matter when the
-    cluster gets round to executing it. Deterministic either way.
+    cluster gets round to executing it.
+
+    Reaching the stale results still takes winning a race against the
+    abandoned run's release, though, so as a pin this one goes red only some
+    of the time (gain#531) -- see
+    ``test_two_runs_of_the_same_graph_do_not_share_dask_keys`` below for the
+    same property with the timing taken out.
     """
     def a_graph(stamp: str) -> TaskGraph:
         graph = TaskGraph()
@@ -559,6 +565,74 @@ def test_an_abandoned_run_does_not_feed_stale_results_to_the_next_run(
         f"abandoned run left its task keys pinned on the shared client, so "
         f"the second run was deduplicated against them and never ran"
     )
+
+
+class _KeyRecordingClient(_WrappedClient):
+    """A real client that records the dask keys it is asked to map under."""
+
+    def __init__(self, client: Client) -> None:
+        super().__init__(client)
+        self.keys: list[list[str]] = []
+
+    def map(self, *args: Any, key: Any = None, **kwargs: Any) -> Any:
+        self.keys.append(list(key))
+        return self._client.map(*args, key=key, **kwargs)
+
+
+def test_two_runs_of_the_same_graph_do_not_share_dask_keys(
+    dask_client: Client,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Each run must submit under keys of its own (gain#531).
+
+    The stale-results test above is the defect as a user meets it, but it
+    only goes red when the abandoned run's release loses the race against the
+    next run's submission -- so it reproduces on maybe one run in three, and
+    the defect it is pinning is not intermittent at all. This is the same
+    property with the timing taken out: two runs of the same graph, the keys
+    they hand to ``Client.map()`` compared directly.
+
+    Sharing them is what makes an earlier run's results reachable by a later
+    one, because dask deduplicates by key -- a key it still knows is answered
+    from memory rather than executed. Releasing the futures a run owns is what
+    should retire those keys, but ``Future.release()`` only schedules the
+    decrement on the client's IOLoop while ``Client.map()`` talks to the
+    scheduler from the calling thread, so no ordering between the two is
+    guaranteed and correctness must not rest on one.
+
+    The task id must still be legible in the key: it is the whole reason the
+    executor passes ``key=`` rather than letting dask name the tasks, and it
+    is what makes a dask dashboard or a worker log readable.
+    """
+    def a_graph() -> TaskGraph:
+        graph = TaskGraph()
+        for i in range(5):
+            graph.create_task(f"Stamped{i}", double, args=[i], deps=[])
+        return graph
+
+    client = _KeyRecordingClient(dask_client)
+    executor = DaskExecutor(client, task_log_dir=str(tmp_path / "logs"))
+
+    assert len(_run_in_thread_with_timeout(
+        executor, a_graph(), timeout=60.0)) == 5
+    first_run_keys = {key for batch in client.keys for key in batch}
+
+    client.keys.clear()
+    assert len(_run_in_thread_with_timeout(
+        executor, a_graph(), timeout=60.0)) == 5
+    second_run_keys = {key for batch in client.keys for key in batch}
+
+    assert first_run_keys and second_run_keys
+    assert not (first_run_keys & second_run_keys), (
+        f"both runs submitted under {sorted(first_run_keys & second_run_keys)}"
+        f"; a key the client still knows is answered from the earlier run's "
+        f"results instead of being executed"
+    )
+    for i in range(5):
+        assert any(key.startswith(f"Stamped{i}") for key in second_run_keys), (
+            f"no key identifies Stamped{i}; the task id must stay legible in "
+            f"the dask key, which is why the executor names its tasks at all"
+        )
 
 
 def boom() -> None:
