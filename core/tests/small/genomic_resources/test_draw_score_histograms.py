@@ -268,28 +268,37 @@ def test_draws_the_other_resources_when_one_type_is_unsupported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     a_grr().with_resource(
+        "aaa/good", a_position_score_with_one_histogram("first_score"),
+    ).with_resource(
         "future/thing", UnsupportedResourceBuilder(),
     ).with_resource(
-        "scores/pos", a_position_score_with_one_histogram(),
+        "zzz/good", a_position_score_with_one_histogram("last_score"),
     ).build_repo(tmp_path)
-    image = tmp_path / "scores/pos/statistics/histogram_phastCons.png"
+    good_images = [
+        tmp_path / "aaa/good/statistics/histogram_first_score.png",
+        tmp_path / "zzz/good/statistics/histogram_last_score.png",
+    ]
 
     # `resource-repair` builds the repository-wide FTS index too, and
     # already does the right thing with the unsupported resource: reports
     # it, skips it, and exits non-zero because a resource failed.  That
     # exit is not what this test is about -- the statistics of the good
-    # resource are built by then, as the drawn image below proves.
-    with contextlib.suppress(SystemExit):
-        build_statistics_without_images(tmp_path, "scores/pos")
-    assert not image.exists()
+    # resources are built by then, as the drawn images below prove.
+    for resource_id in ("aaa/good", "zzz/good"):
+        with contextlib.suppress(SystemExit):
+            build_statistics_without_images(tmp_path, resource_id)
+    assert not any(image.exists() for image in good_images)
 
     monkeypatch.chdir(tmp_path)
     # the skipped resource makes the run exit non-zero, which is asserted
-    # separately; what matters here is that the good resource was drawn
+    # separately; what matters here is that the good resources were drawn
     with contextlib.suppress(SystemExit):
         main(["-R", str(tmp_path)])
 
-    assert image.exists()
+    # resources are enumerated in filesystem order, so one good resource
+    # is on either side of the bad one: whichever order this machine
+    # hands them back, a good resource FOLLOWS the failure
+    assert all(image.exists() for image in good_images)
 
 
 def test_exits_non_zero_naming_the_resource_it_could_not_draw(
@@ -322,20 +331,28 @@ def test_draws_the_other_resources_when_one_carries_no_scores(
 ) -> None:
     """A genome sits in every real GRR; it must not stop the sweep."""
     a_grr().with_resource(
+        "aaa/good", a_position_score_with_one_histogram("first_score"),
+    ).with_resource(
         "genome/mock", a_reference_genome(),
     ).with_resource(
-        "scores/pos", a_position_score_with_one_histogram(),
+        "zzz/good", a_position_score_with_one_histogram("last_score"),
     ).build_repo(tmp_path)
-    image = tmp_path / "scores/pos/statistics/histogram_phastCons.png"
+    good_images = [
+        tmp_path / "aaa/good/statistics/histogram_first_score.png",
+        tmp_path / "zzz/good/statistics/histogram_last_score.png",
+    ]
 
-    build_statistics_without_images(tmp_path, "scores/pos")
-    assert not image.exists()
+    for resource_id in ("aaa/good", "zzz/good"):
+        build_statistics_without_images(tmp_path, resource_id)
+    assert not any(image.exists() for image in good_images)
 
     monkeypatch.chdir(tmp_path)
     with caplog.at_level(logging.DEBUG):
         main(["-R", str(tmp_path)])
 
-    assert image.exists()
+    # a good resource on either side of the genome, so one of them
+    # follows it whatever order the filesystem hands them back
+    assert all(image.exists() for image in good_images)
     # having no scores is not a failure -- it is the normal state of a
     # genome, so it must not be reported at failure level or blame the run
     assert not [
@@ -346,6 +363,9 @@ def test_draws_the_other_resources_when_one_carries_no_scores(
     assert not [
         record for record in caplog.records if record.exc_info is not None
     ]
+    # the skipped resource is named in the record, though only a `-v` run
+    # shows it: the default level is WARNING, and a genome carrying no
+    # scores is too ordinary to warn about on every sweep
     assert "genome/mock" in caplog.text
 
 
@@ -376,3 +396,128 @@ def test_draws_the_other_resources_when_one_fails_while_drawing(
     assert excinfo.value.code != 0
     assert good_image.exists()
     assert "scores/broken" in caplog.text
+
+
+@pytest.mark.parametrize("corruption", [
+    pytest.param("{ this is not json", id="not-json"),
+    pytest.param('{"bins": [1, 2]}', id="no-config"),
+    pytest.param('{"config": {}}', id="config-without-type"),
+    pytest.param("null", id="null"),
+])
+def test_isolates_a_resource_however_its_statistics_are_broken(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    corruption: str,
+) -> None:
+    """Every way one resource can be unreadable costs only that resource.
+
+    Reading a histogram back is not one failure mode but many: the file
+    may not be JSON, or be JSON of the wrong shape, and the drawing step
+    below it runs a plot function named by the resource itself.  Which
+    exception class comes out is not something this tool can enumerate.
+    """
+    a_grr().with_resource(
+        "aaa/good", a_position_score_with_one_histogram("first_score"),
+    ).with_resource(
+        "scores/broken", a_position_score_with_one_histogram("broken_score"),
+    ).with_resource(
+        "zzz/good", a_position_score_with_one_histogram("last_score"),
+    ).build_repo(tmp_path)
+    good_images = [
+        tmp_path / "aaa/good/statistics/histogram_first_score.png",
+        tmp_path / "zzz/good/statistics/histogram_last_score.png",
+    ]
+
+    for resource_id in ("aaa/good", "scores/broken", "zzz/good"):
+        build_statistics_without_images(tmp_path, resource_id)
+
+    (tmp_path / "scores/broken/statistics/histogram_broken_score.json"
+     ).write_text(corruption)
+
+    monkeypatch.chdir(tmp_path)
+    with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as excinfo:
+        main(["-R", str(tmp_path)])
+
+    assert excinfo.value.code != 0
+    # a good resource sits on either side of the broken one, so whatever
+    # order the filesystem hands them back, one of them follows it
+    assert all(image.exists() for image in good_images)
+    assert "scores/broken" in caplog.text
+
+
+def test_reports_a_selection_in_which_nothing_carries_scores(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Selecting only scoreless resources is an error however many match.
+
+    ``-r`` takes a glob, so how many resources a pattern matches is a
+    property of the repository, not of what the user asked for.  Asking
+    for histograms and getting none is the same mistake whether the
+    pattern caught one genome or two.
+    """
+    a_grr().with_resource(
+        "genome/one", a_reference_genome(),
+    ).with_resource(
+        "genome/two", a_reference_genome(),
+    ).build_repo(tmp_path)
+
+    with pytest.raises(TypeError) as excinfo:
+        main(["-R", str(tmp_path), "-r", "genome/*"])
+
+    message = str(excinfo.value)
+    assert "genome/one" in message
+    assert "genome/two" in message
+    assert "score" in message
+
+
+def test_a_selection_that_drew_something_is_not_an_error(
+    tmp_path: pathlib.Path,
+) -> None:
+    """One drawable resource is enough; the scoreless ones are skipped."""
+    a_grr().with_resource(
+        "mixed/genome", a_reference_genome(),
+    ).with_resource(
+        "mixed/pos", a_position_score_with_one_histogram(),
+    ).build_repo(tmp_path)
+    image = tmp_path / "mixed/pos/statistics/histogram_phastCons.png"
+
+    build_statistics_without_images(tmp_path, "mixed/pos")
+    assert not image.exists()
+
+    main(["-R", str(tmp_path), "-r", "mixed/*"])
+
+    assert image.exists()
+
+
+def test_names_every_resource_it_could_not_draw(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A sweep reports all of its failures, not just the one it died on."""
+    a_grr().with_resource(
+        "future/one", UnsupportedResourceBuilder("some_future_type"),
+    ).with_resource(
+        "future/two", UnsupportedResourceBuilder("another_future_type"),
+    ).with_resource(
+        "scores/pos", a_position_score_with_one_histogram(),
+    ).build_repo(tmp_path)
+    image = tmp_path / "scores/pos/statistics/histogram_phastCons.png"
+
+    with contextlib.suppress(SystemExit):
+        build_statistics_without_images(tmp_path, "scores/pos")
+
+    monkeypatch.chdir(tmp_path)
+    with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as excinfo:
+        main(["-R", str(tmp_path)])
+
+    assert excinfo.value.code != 0
+    assert image.exists()
+    summary = [
+        record.getMessage() for record in caplog.records
+        if "could not be drawn" in record.getMessage()
+    ]
+    assert len(summary) == 1
+    assert "future/one" in summary[0]
+    assert "future/two" in summary[0]

@@ -8,7 +8,6 @@ from gain.genomic_resources.cli import (
     _find_resources,
 )
 from gain.genomic_resources.cli_errors import (
-    RESOURCE_ERRORS,
     report_resource_failure,
 )
 from gain.genomic_resources.histogram import (
@@ -101,41 +100,87 @@ def main(
         print("Resource not found...")
         sys.exit(1)
 
-    # Selecting exactly one resource is an assertion that it has
-    # histograms to draw; being told it has none is then the answer, not
-    # noise.  Across a sweep the same resource is merely uninteresting --
-    # every real GRR holds a genome and gene models (gain#537).
-    one_resource_selected = len(resourses) == 1
-
     failed: set[str] = set()
+    scoreless: list[tuple[str, str]] = []
+    found_a_score_resource = False
     for res in resourses:
-        assert res.config is not None
         try:
             _draw_resource_histograms(res)
         except ScorelessResourceError:
-            if one_resource_selected:
-                raise
+            # Not a failure: a genome carrying no scores is its normal
+            # state, and every real GRR holds one.  Collected rather than
+            # raised so that a sweep is not stopped by the most ordinary
+            # resource in the repository (gain#537).
+            scoreless.append((res.resource_id, res.get_type()))
             logger.info(
                 "nothing to draw for <%s>: a %s resource carries no scores",
                 res.resource_id, res.get_type())
-        except RESOURCE_ERRORS as err:
-            # One resource the tool cannot build an implementation for
-            # costs the user that resource, not the rest of the
-            # repository -- the same bargain every `grr_manage` sweep
-            # already makes (gain#364, gain#537).  NOT widened to
-            # `Exception`: an unexpected error is still a crash.
+        except Exception as err:  # noqa: BLE001
+            # One resource the tool cannot draw costs the user that
+            # resource, not the rest of the repository -- the same
+            # bargain every `grr_manage` sweep already makes (gain#364,
+            # gain#537).
+            #
+            # `Exception`, not `RESOURCE_ERRORS`, because this loop is of
+            # the family that RENDERS a resource, like the info-page loop
+            # -- not the manifest loop, which only hashes files and can
+            # afford to enumerate what a resource may raise.  Reading a
+            # histogram back off a resource raises `KeyError` or
+            # `TypeError` for a statistics file that is well-formed JSON
+            # of the wrong shape, and drawing runs a plot function the
+            # RESOURCE names, whose module body may raise anything at
+            # all.  Every one of those is the fault of one resource, and
+            # a narrower catch let each of them abort the sweep -- the
+            # very bug this is meant to fix.  `report_resource_failure`
+            # still separates the two tiers: what is not a
+            # `RESOURCE_ERRORS` is reported as an unexpected internal
+            # error, with a traceback.
             report_resource_failure(
                 err, "could not draw histograms for", res.resource_id)
             failed.add(res.resource_id)
+        else:
+            found_a_score_resource = True
 
     if failed:
         # Reported once at the end as well as per resource: a long sweep
         # scrolls its individual failures out of sight, and the exit
         # status alone does not say which resources to go and look at.
+        # Reported before the scoreless case below because a resource
+        # that BROKE is the more urgent of the two.
         logger.error(
             "resources whose histograms could not be drawn in GRR <%s>: %s",
             repo_url, ", ".join(sorted(failed)))
         sys.exit(1)
+
+    if args.resource is not None and scoreless and not found_a_score_resource:
+        # Naming resources and getting no histogram at all is a mistake
+        # worth reporting, and `-r` is the only way a user asserts that
+        # particular resources have some.  Keyed on that assertion rather
+        # than on how many resources matched: `-r` takes a glob, so the
+        # match count is a property of the repository, not of the ask,
+        # and keying on it made the same command an error or a silent
+        # success depending on what else the repository happened to hold.
+        raise ScorelessResourceError(_no_scores_message(scoreless))
+
+
+def _no_scores_message(scoreless: list[tuple[str, str]]) -> str:
+    """Say that nothing in a selection carries scores, naming each one.
+
+    The one-resource wording is kept verbatim from when this could only
+    ever be about a single resource (#337): it is what a user pointing
+    the tool at one resource by id has always been told.
+    """
+    if len(scoreless) == 1:
+        resource_id, resource_type = scoreless[0]
+        return (
+            f"can't draw histograms for resource <{resource_id}>: "
+            f"a {resource_type} resource carries no scores")
+    listed = ", ".join(
+        f"<{resource_id}> ({resource_type})"
+        for resource_id, resource_type in sorted(scoreless))
+    return (
+        f"can't draw histograms: no selected resource carries "
+        f"scores -- {listed}")
 
 
 def _draw_resource_histograms(res: GenomicResource) -> None:
