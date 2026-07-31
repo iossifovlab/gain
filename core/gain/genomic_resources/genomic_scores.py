@@ -829,6 +829,31 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """Read one configured score off a record of this score's table."""
         return self._extract_value(record, self.score_definitions[score_id])
 
+    def _resolve_score_defs(
+        self, scores: list[str] | None,
+    ) -> list[GenomicScoreDef]:
+        """Resolve requested score ids to definitions, refusing unknown ones.
+
+        ``None`` asks for every score this resource defines.  A score id the
+        resource does not define is a caller error, and it is refused here --
+        before any data is read -- so the refusal does not depend on whether
+        the queried region happens to hold a record.  A typo answering
+        differently on a populated contig than on an empty one is the failure
+        this exists to prevent.
+        """
+        if scores is None:
+            scores = self.get_all_scores()
+        unknown = [
+            score_id for score_id in scores
+            if score_id not in self.score_definitions
+        ]
+        if unknown:
+            raise ValueError(
+                f"genomic score <{self.resource_id}> does not define "
+                f"{sorted(unknown)}; it has "
+                f"{sorted(self.score_definitions)}")
+        return [self.score_definitions[score_id] for score_id in scores]
+
     def get_score_values_from_record(
         self, record: Record, score_defs: list[GenomicScoreDef],
     ) -> list[ScoreValue]:
@@ -1018,23 +1043,16 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             raise ValueError(
                 f"{chrom} is not among the available chromosomes.")
 
-        if scores is None:
-            scores = self.get_all_scores()
-        # Hoist the score name->definition resolution out of the per-record
-        # loop: it is fixed for the whole scan.  Resolve lazily on the first
-        # record so that an empty region does not touch score_definitions --
-        # matching the base behaviour where an unknown score id is only
-        # rejected when there is a record to extract it from.
-        score_defs: list[GenomicScoreDef] | None = None
+        # Resolved once for the whole scan rather than per record, and
+        # before the first record rather than on it: an unknown score id is
+        # refused whether or not the region turns out to hold anything.
+        score_defs = self._resolve_score_defs(scores)
 
         for record in self.fetch_records(chrom, pos_begin, pos_end):
             rec_chrom, rec_begin, rec_end = self._record_to_begin_end(record)
             if pos_begin is not None and rec_end < pos_begin:
                 continue
 
-            if score_defs is None:
-                score_defs = [
-                    self.score_definitions[scr_id] for scr_id in scores]
             val = self.get_score_values_from_record(record, score_defs)
 
             if pos_begin is not None:
@@ -1357,9 +1375,7 @@ class PositionScore(GenomicScore):
             raise ValueError(
                 f"{chrom} is not among the available chromosomes.")
 
-        if scores is None:
-            scores = self.get_all_scores()
-        assert all(isinstance(s, str) for s in scores)
+        score_defs = self._resolve_score_defs(scores)
 
         records = list(self.fetch_records(chrom, position, position))
         if not records:
@@ -1373,10 +1389,6 @@ class PositionScore(GenomicScore):
                 f"multiple values ({len(records)}) for positions "
                 f"{chrom}:{position}")
 
-        requested_scores = scores or self.get_all_scores()
-        # Resolve names to definitions once for this point fetch.
-        score_defs = [
-            self.score_definitions[scr] for scr in requested_scores]
         return self.get_score_values_from_record(records[0], score_defs)
 
 
@@ -1656,15 +1668,13 @@ class AlleleScore(GenomicScore):
                 f"{chrom} is not among the available chromosomes for "
                 f"NP Score resource {self.resource_id}")
 
+        requested_scores = scores or self.get_all_scores()
+        score_defs = self._resolve_score_defs(requested_scores)
+
         selected = self.fetch_allele_record(
             chrom, position, reference, alternative)
         if selected is None:
             return None
-
-        requested_scores = scores or self.get_all_scores()
-        # Resolve names to definitions once for this point fetch.
-        score_defs = [
-            self.score_definitions[sc] for sc in requested_scores]
         return dict(zip(
             requested_scores,
             self.get_score_values_from_record(selected, score_defs),
@@ -1745,15 +1755,12 @@ class FragmentScore(GenomicScore):
         if chrom not in self.table.get_chromosomes():
             return []
 
+        requested_scores = scores or self.get_all_scores()
+        score_defs = self._resolve_score_defs(requested_scores)
+
         records = list(self.fetch_records(chrom, start, stop))
         if not records:
             return []
-
-        requested_scores = scores or self.get_all_scores()
-        # Resolve names to definitions once for this fetch.
-        score_defs = [
-            self.score_definitions[score_id]
-            for score_id in requested_scores]
 
         return [
             dict(zip(
