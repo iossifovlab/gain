@@ -1,10 +1,13 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import contextlib
+import logging
 import pathlib
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.draw_score_histograms import main
 from gain.genomic_resources.histogram import NullHistogram
+from gain.genomic_resources.repository import GR_CONF_FILE_NAME
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
@@ -16,6 +19,37 @@ from gain.genomic_resources.testing.builders import (
 )
 
 
+class UnsupportedResourceBuilder:
+    """Realizes a resource whose ``type:`` no implementation is built for.
+
+    Stands in for what a client actually meets in the wild: a GRR written
+    by a newer GAIn, or one still declaring a type this client has since
+    dropped.  Nothing is mocked -- the type is simply absent from the
+    implementation registry, which is exactly the deployed condition.
+    """
+
+    def __init__(self, resource_type: str = "some_future_type") -> None:
+        self.resource_type = resource_type
+
+    def realize_into(self, resource_dir: pathlib.Path) -> None:
+        resource_dir.mkdir(parents=True, exist_ok=True)
+        (resource_dir / GR_CONF_FILE_NAME).write_text(
+            f"type: {self.resource_type}\n")
+
+
+def a_position_score_with_one_histogram(score_id: str = "phastCons"):
+    """A minimal drawable position score -- one score, one histogram."""
+    return (
+        a_position_score()
+        .with_score(score_id, "float")
+        .with_data(f"""
+            chrom  pos_begin  pos_end  {score_id}
+            1      10         15       0.02
+            1      17         19       0.03
+        """)
+    )
+
+
 def build_statistics_without_images(
     repo_path: pathlib.Path, resource_id: str,
 ) -> None:
@@ -24,12 +58,20 @@ def build_statistics_without_images(
     The tool draws histograms from statistics that already exist, so a test
     has to build them first.  Removing the images ``resource-repair`` plots
     along the way leaves any image found afterwards provably the tool's own.
+
+    The images are dropped whether or not the run reported a failure: a
+    repository holding an unsupported resource makes ``resource-repair``
+    exit non-zero after it has already built this resource's statistics,
+    and the caller that tolerates that exit still needs a clean slate.
     """
-    cli_manage([
-        "resource-repair", "-R", str(repo_path), "-r", resource_id, "-j", "1",
-    ])
-    for image in (repo_path / resource_id / "statistics").glob("*.png"):
-        image.unlink()
+    try:
+        cli_manage([
+            "resource-repair", "-R", str(repo_path),
+            "-r", resource_id, "-j", "1",
+        ])
+    finally:
+        for image in (repo_path / resource_id / "statistics").glob("*.png"):
+            image.unlink()
 
 
 def test_draws_position_score_histogram(tmp_path: pathlib.Path) -> None:
@@ -219,3 +261,118 @@ def test_exits_when_repository_is_missing(tmp_path: pathlib.Path) -> None:
         main(["-R", str(not_a_repository), "-r", "scores/pos"])
 
     assert excinfo.value.code != 0
+
+
+def test_draws_the_other_resources_when_one_type_is_unsupported(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    a_grr().with_resource(
+        "future/thing", UnsupportedResourceBuilder(),
+    ).with_resource(
+        "scores/pos", a_position_score_with_one_histogram(),
+    ).build_repo(tmp_path)
+    image = tmp_path / "scores/pos/statistics/histogram_phastCons.png"
+
+    # `resource-repair` builds the repository-wide FTS index too, and
+    # already does the right thing with the unsupported resource: reports
+    # it, skips it, and exits non-zero because a resource failed.  That
+    # exit is not what this test is about -- the statistics of the good
+    # resource are built by then, as the drawn image below proves.
+    with contextlib.suppress(SystemExit):
+        build_statistics_without_images(tmp_path, "scores/pos")
+    assert not image.exists()
+
+    monkeypatch.chdir(tmp_path)
+    # the skipped resource makes the run exit non-zero, which is asserted
+    # separately; what matters here is that the good resource was drawn
+    with contextlib.suppress(SystemExit):
+        main(["-R", str(tmp_path)])
+
+    assert image.exists()
+
+
+def test_exits_non_zero_naming_the_resource_it_could_not_draw(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    a_grr().with_resource(
+        "future/thing", UnsupportedResourceBuilder(),
+    ).with_resource(
+        "scores/pos", a_position_score_with_one_histogram(),
+    ).build_repo(tmp_path)
+
+    with contextlib.suppress(SystemExit):
+        build_statistics_without_images(tmp_path, "scores/pos")
+
+    monkeypatch.chdir(tmp_path)
+    with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as excinfo:
+        main(["-R", str(tmp_path)])
+
+    assert excinfo.value.code != 0
+    assert "future/thing" in caplog.text
+    assert "some_future_type" in caplog.text
+
+
+def test_draws_the_other_resources_when_one_carries_no_scores(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A genome sits in every real GRR; it must not stop the sweep."""
+    a_grr().with_resource(
+        "genome/mock", a_reference_genome(),
+    ).with_resource(
+        "scores/pos", a_position_score_with_one_histogram(),
+    ).build_repo(tmp_path)
+    image = tmp_path / "scores/pos/statistics/histogram_phastCons.png"
+
+    build_statistics_without_images(tmp_path, "scores/pos")
+    assert not image.exists()
+
+    monkeypatch.chdir(tmp_path)
+    with caplog.at_level(logging.DEBUG):
+        main(["-R", str(tmp_path)])
+
+    assert image.exists()
+    # having no scores is not a failure -- it is the normal state of a
+    # genome, so it must not be reported at failure level or blame the run
+    assert not [
+        record for record in caplog.records
+        if record.levelno >= logging.WARNING
+        and "genome/mock" in record.getMessage()
+    ]
+    assert not [
+        record for record in caplog.records if record.exc_info is not None
+    ]
+    assert "genome/mock" in caplog.text
+
+
+def test_draws_the_other_resources_when_one_fails_while_drawing(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Isolation covers drawing, not only building the implementation."""
+    a_grr().with_resource(
+        "scores/good", a_position_score_with_one_histogram("good_score"),
+    ).with_resource(
+        "scores/broken", a_position_score_with_one_histogram("broken_score"),
+    ).build_repo(tmp_path)
+    good_image = tmp_path / "scores/good/statistics/histogram_good_score.png"
+
+    for resource_id in ("scores/good", "scores/broken"):
+        build_statistics_without_images(tmp_path, resource_id)
+
+    # the statistics survived the build but cannot be read back
+    (tmp_path / "scores/broken/statistics/histogram_broken_score.json"
+     ).write_text("{ this is not json")
+
+    monkeypatch.chdir(tmp_path)
+    with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as excinfo:
+        main(["-R", str(tmp_path)])
+
+    assert excinfo.value.code != 0
+    assert good_image.exists()
+    assert "scores/broken" in caplog.text
