@@ -301,6 +301,14 @@ def vcf_proto_with_index(tmp_path: pathlib.Path) -> RepositoryProtocol:
 
 
 @pytest.fixture
+def vcf_proto_with_csi_index(tmp_path: pathlib.Path) -> RepositoryProtocol:
+    """Filesystem protocol where the VCF has a .csi index."""
+    setup_directories(tmp_path, {"res": {GR_CONF_FILE_NAME: ""}})
+    setup_vcf(tmp_path / "res" / "data.vcf.gz", VCF_CONTENT, csi=True)
+    return build_filesystem_test_protocol(tmp_path)
+
+
+@pytest.fixture
 def vcf_proto_without_index(tmp_path: pathlib.Path) -> RepositoryProtocol:
     """Filesystem protocol where the VCF has NO .tbi index."""
     setup_directories(tmp_path, {"res": {GR_CONF_FILE_NAME: ""}})
@@ -322,6 +330,16 @@ def test_open_vcf_file_with_index_reads_contigs(
 def test_open_vcf_file_with_index_fetches_by_region(
         vcf_proto_with_index: RepositoryProtocol) -> None:
     proto = vcf_proto_with_index
+    res = proto.get_resource("res")
+    with proto.open_vcf_file(res, "data.vcf.gz") as vcf:
+        records = list(vcf.fetch("1"))
+    assert len(records) == 2
+
+
+@pytest.mark.grr_tabix
+def test_open_vcf_file_with_csi_index_fetches_by_region(
+        vcf_proto_with_csi_index: RepositoryProtocol) -> None:
+    proto = vcf_proto_with_csi_index
     res = proto.get_resource("res")
     with proto.open_vcf_file(res, "data.vcf.gz") as vcf:
         records = list(vcf.fetch("1"))

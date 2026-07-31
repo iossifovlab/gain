@@ -898,7 +898,8 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         file_url = self._get_file_url(resource, filename)
 
         if index_filename is None:
-            index_filename = f"{filename}.tbi"
+            index_filename = resolve_tabix_index_filename_for_read(
+                resource, filename)
 
         if not resource.file_exists(index_filename):
             return pysam.VariantFile(file_url)  # pylint: disable=no-member
