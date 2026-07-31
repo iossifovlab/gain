@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import itertools
 import threading
+import uuid
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -92,6 +93,13 @@ class RunState:
     """
 
     def __init__(self) -> None:
+        # Names this run apart from every other run on the same client, so
+        # the dask keys it submits can be named apart too. Two runs sharing a
+        # key are deduplicated by the scheduler, and the later one is handed
+        # the earlier one's results without executing -- see
+        # ``dask_executor.dask_keys`` (gain#531).
+        self.run_id = uuid.uuid4().hex
+
         # One condition -- so one lock -- for every state below. Every
         # public method here is short and never calls into dask, so no
         # thread can be held up behind a network round trip.
@@ -237,11 +245,13 @@ class RunState:
         come for it. The caller releases them, because ``Future.release()``
         is a dask call and must not run under this lock.
 
-        Releasing matters for more than tidiness. The executor submits with
-        an explicit ``key=`` derived from the task id, so an unreleased
-        future keeps that key pinned on a client that outlives the run, and
-        a later run of the same graph is deduplicated against it and handed
-        the abandoned run's results instead of executing (gain#480).
+        Releasing matters for more than tidiness: an unreleased future keeps
+        its key, and the result that key holds, alive on a client that
+        outlives the run, so an abandoned run's memory is never reclaimed
+        (gain#480). What it does NOT do is protect the next run -- releasing
+        is asynchronous, so it never could. Keys are named per run and per
+        task instead, which is what makes a later run of the same graph
+        independent of whatever this one left behind (gain#531).
 
         Emptying the collections is also what makes the release safe against
         a dask callback thread that fires afterwards: :meth:`task_finished`
