@@ -1692,6 +1692,7 @@ def test_tabix_jump_config(
 ])
 def test_tabix_max_buffer(
         tmp_path: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
         buffer_maxsize: int, jump_threshold: int) -> None:
     setup_directories(
         tmp_path, {
@@ -1718,7 +1719,13 @@ def test_tabix_max_buffer(
     res = build_filesystem_test_resource(tmp_path)
     assert res.config is not None
 
-    TabixGenomicPositionTable.BUFFER_MAXSIZE = buffer_maxsize
+    # Through monkeypatch, NOT a bare assignment: this is a CLASS attribute,
+    # so an unrestored write leaks into every tabix table built afterwards in
+    # the same process.  A leaked small value makes a later table serve its
+    # queries unbuffered, which silently defeats any test whose point is that
+    # the buffer was warm.
+    monkeypatch.setattr(
+        TabixGenomicPositionTable, "BUFFER_MAXSIZE", buffer_maxsize)
 
     with build_genomic_position_table(res, res.config["tabix_table"]) as table:
         assert isinstance(table, TabixGenomicPositionTable)
