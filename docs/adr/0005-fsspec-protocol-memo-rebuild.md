@@ -5,7 +5,9 @@
 - **Issues:** [#514](https://github.com/iossifovlab/gain/issues/514); builds on
   [#458](https://github.com/iossifovlab/gain/issues/458) (the memo lock) and
   [#488](https://github.com/iossifovlab/gain/issues/488) (mode-scoped test
-  protocol ids)
+  protocol ids); extended by
+  [#527](https://github.com/iossifovlab/gain/issues/527), which made
+  construction itself one atomic, serialised step (see the Consequences)
 
 ## Context
 
@@ -147,20 +149,74 @@ own.
   it learns to read without joining that set is one a rebuild could go on
   changing silently, so the coupling is stated in both places and pinned by
   `test_every_filesystem_keyword_is_compared_on_a_rebuild`.
-- Still open, and deliberately out of scope: `__new__` publishes the instance
-  into `_FSSPEC_PROTOCOLS` *before* `__init__` has configured it, so two threads
-  building the same **new** key concurrently can hand one of them a
-  half-initialised protocol. Binding the memo and its lock in `__new__` narrows
-  that window but does not close it; closing it means moving publication out of
-  `__new__`, which is a separate change (iossifovlab/gain#527).
+- Left open here, closed since in iossifovlab/gain#527: `__new__` reached
+  `_FSSPEC_PROTOCOLS` under no mutual exclusion at all, and published the
+  instance *before* `__init__` had configured it. Binding the memo and its
+  lock in `__new__` narrowed that window; it did not close it, and it did not
+  touch a second half this ADR never recorded.
 
-  The refusal has to *tolerate* that window rather than discover it. A first
-  attempt read `existing.public_url` unconditionally, which turned a race that
-  had merely run `__init__` twice into an `AttributeError` raised out of
-  `__new__` — a strictly worse outcome than the behaviour it replaced. The
-  comparison now returns early when the incumbent is not yet configured, and
-  the review that caught this is the reason the window is written down twice:
-  here, and as a comment at the check.
+  **The window.** Between publication and configuration the instance was
+  reachable with `filesystem`, `url`, `public_url`, `kwargs` and `proto_id`
+  unbound, so `get_url()` and `get_public_url()` raised `AttributeError` out
+  of methods that cannot fail. The refusal had to *tolerate* that rather than
+  discover it: a first attempt read `existing.public_url` unconditionally,
+  which turned a race that had merely run `__init__` twice into an
+  `AttributeError` raised out of `__new__` — a strictly worse outcome than
+  the behaviour it replaced.
+
+  **The half that was not reported.** `__new__` was also a plain
+  check-then-set — memo read, construct on a miss, assign, with nothing
+  serialising the three — so two threads that both missed for one key both
+  built, and the second assignment overwrote the first. One caller then held
+  an orphan protocol the memo does not know about, which breaks the
+  "`(proto_id, url)` names ONE protocol instance" invariant this whole
+  arrangement rests on: the orphan is never compared by
+  `_refuse_a_reconfiguring_rebuild`, it carries an `_all_resources` memo and
+  an `_all_resources_lock` of its own so #458's mutual exclusion is lost
+  between the two halves and the refresh contract above never reaches it, and
+  pickle no longer round-trips to one object.
+
+  **What was done.** `_FSSPEC_PROTOCOLS` now holds *only configured*
+  protocols. `__new__` takes a module-level guard across the memo read, the
+  instance creation and the bookkeeping, and records an in-flight
+  `_ProtocolConstruction` in `_FSSPEC_PROTOCOLS_UNDER_CONSTRUCTION` instead of
+  publishing; a key is in one dict or the other, never both. A thread that
+  finds a construction in flight waits on its `Event` — *outside* the guard,
+  because `FsspecReadWriteProtocol.__init__` does filesystem I/O and holding
+  the guard across it would put every protocol build in the process behind
+  one remote round trip — and then rounds the loop, to be answered from the
+  memo or to take an abandoned construction on.
+
+  Publication is `_finish_construction`, and it is driven from two places
+  because there are two ways to construct a protocol. `_BuiltOnceProtocolMeta`
+  takes over the class call protocol so publication happens after the whole
+  `__init__` chain has returned, which is what keeps a read-write protocol
+  from being handed to a waiter before `makedirs` has created its root — the
+  base constructor body is too early. And `__setstate__` finishes its own,
+  because **unpickling never calls `__init__` at all**
+  (`__getnewargs_ex__` → `__new__` → `__setstate__`): a construction lock
+  taken in `__new__` and released in `__init__`, the shape that first
+  suggests itself, deadlocks every deserialize into a cold memo. The
+  metaclass is also the only place that sees a construction failing *before*
+  `__init__` is entered — a call-signature error — which would otherwise
+  strand the key and block every later builder of it forever.
+
+  A construction that raises is **abandoned**: its record is dropped and its
+  `Event` set, so the key stays buildable and the waiters take it on. That is
+  the property that makes serialising construction safe at all — the failure
+  mode it replaces (a duplicated `__init__`) was survivable, and a permanent
+  deadlock would not be.
+
+  What did **not** change: `__init__` still re-runs on every rebuild, so the
+  refresh above is intact — the racing-build test now pins the count, at one
+  construction and one refresh, so the "already initialised" no-op rejected
+  above cannot creep back in as a way of making a rebuild cheap.
+
+  The `hasattr(existing, "kwargs")` early return in the refusal is **gone**.
+  It existed only to tolerate the window, the window cannot occur now, and
+  tolerating it anyway would mean a regression that reopened it answered a
+  divergent rebuild silently instead of being found. The mode arm still reads
+  no instance state, as it always did.
 - Left alone here, fixed since in iossifovlab/gain#528:
   `build_fsspec_protocol` ignored `read_only` for `http(s)` urls and always
   built a read-only protocol, so a caller asking for a writable http protocol

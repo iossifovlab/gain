@@ -2,6 +2,7 @@
 # pylint: disable=too-many-lines
 from __future__ import annotations
 
+import abc
 import asyncio
 import copy
 import datetime
@@ -18,7 +19,7 @@ import uuid
 from collections.abc import Callable, Generator, Iterable
 from contextlib import AbstractContextManager, suppress
 from dataclasses import asdict
-from threading import Lock
+from threading import Event, Lock, get_ident
 from typing import (
     IO,
     Any,
@@ -402,18 +403,15 @@ def _refuse_a_reconfiguring_rebuild(
             f"a {requested.name} build -- give the {requested.name} protocol "
             f"an id of its own")
 
-    if not hasattr(existing, "kwargs"):
-        # Published but not yet configured: another thread is inside this
-        # instance's ``__init__`` (``__new__`` memoizes before it runs -- see
-        # ADR 0005). There is nothing to compare a rebuild against yet, and
-        # reading the attributes anyway would turn a race that merely runs
-        # ``__init__`` twice, as it did before #514, into an ``AttributeError``
-        # raised out of ``__new__``. ``kwargs`` is the last thing ``__init__``
-        # binds before it invalidates, so it standing in for "configured"
-        # covers ``public_url`` too. The mode check above needs no state, so it
-        # still applies.
-        return
-
+    # The incumbent's attributes are always there to compare against:
+    # ``_FSSPEC_PROTOCOLS`` holds only protocols whose whole construction has
+    # returned (#527). This used to need an early return for an incumbent
+    # published before ``__init__`` had configured it -- reading
+    # ``public_url`` anyway turned a race that merely ran ``__init__`` twice
+    # into an ``AttributeError`` raised out of ``__new__``. That tolerance is
+    # deliberately NOT kept now that the window is closed: it would let a
+    # regression that reopened it answer a divergent rebuild silently instead
+    # of being found. See ADR 0005.
     requested_public_url = kwargs.get("public_url")
     if requested_public_url is None:
         requested_public_url = _display_url(url)
@@ -452,7 +450,127 @@ def _refuse_a_reconfiguring_rebuild(
             f"its own")
 
 
-class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
+class _ProtocolConstruction:
+    """One in-flight construction of a memoized protocol key.
+
+    A protocol becomes reachable through ``_FSSPEC_PROTOCOLS`` only once it is
+    configured, so between ``__new__`` creating the instance and ``__init__``
+    (or ``__setstate__``) finishing with it, the construction needs somewhere
+    else to be recorded -- otherwise a second thread over the same key cannot
+    tell "nobody has built this" from "somebody is building it", and builds a
+    second instance over a key that is supposed to name one (#527).
+
+    It is released exactly once, whether the construction was published or
+    abandoned, so a waiter is never left blocked by a build that raised.
+    """
+
+    def __init__(
+        self, instance: FsspecReadOnlyProtocol, key: tuple[str, str],
+    ) -> None:
+        self.instance = instance
+        self.key = key
+        self._done = Event()
+        self._owner = get_ident()
+
+    def owned_by_this_thread(self) -> bool:
+        """Whether this thread is the one already constructing the key.
+
+        Only read to keep a re-entrant construction from waiting on itself.
+        Nothing in the tree builds a protocol from inside a protocol's
+        constructor, so this guards against a deadlock rather than describing
+        a supported shape.
+        """
+        return self._owner == get_ident()
+
+    def wait(self) -> None:
+        """Block until this construction is published or abandoned."""
+        self._done.wait()
+
+    def release(self) -> None:
+        """Wake everything waiting on this construction."""
+        self._done.set()
+
+
+def _finish_construction(instance: FsspecReadOnlyProtocol) -> None:
+    """Publish a protocol that has finished being configured.
+
+    A no-op unless this instance is the one under construction for its key: a
+    rebuild of a memoized protocol re-runs ``__init__`` on the live instance,
+    and that refresh is not a publication.
+    """
+    construction = instance.__dict__.pop("_construction", None)
+    if construction is None:
+        return
+    with _FSSPEC_PROTOCOLS_GUARD:
+        if _FSSPEC_PROTOCOLS_UNDER_CONSTRUCTION.get(
+                construction.key) is construction:
+            del _FSSPEC_PROTOCOLS_UNDER_CONSTRUCTION[construction.key]
+        _FSSPEC_PROTOCOLS[construction.key] = instance
+    construction.release()
+
+
+def _abandon_construction(instance: FsspecReadOnlyProtocol) -> None:
+    """Drop a construction that raised, leaving its key buildable again.
+
+    The alternative -- leaving the record in place -- would make one failed
+    build permanently unbuildable AND block every thread already waiting on
+    it forever, which is a far worse outcome than the duplicated ``__init__``
+    the serialisation replaced.
+    """
+    construction = instance.__dict__.pop("_construction", None)
+    if construction is None:
+        return
+    with _FSSPEC_PROTOCOLS_GUARD:
+        if _FSSPEC_PROTOCOLS_UNDER_CONSTRUCTION.get(
+                construction.key) is construction:
+            del _FSSPEC_PROTOCOLS_UNDER_CONSTRUCTION[construction.key]
+    construction.release()
+
+
+class _BuiltOnceProtocolMeta(abc.ABCMeta):
+    """Publishes a protocol only once its whole construction has returned.
+
+    ``__new__`` cannot publish the instance itself, because Python runs
+    ``__init__`` only after ``__new__`` has returned -- which is exactly the
+    window this class closes (#527). Nor can the base ``__init__``:
+    ``FsspecReadWriteProtocol.__init__`` creates the repository root *after*
+    the base constructor body, so a protocol published from there would be
+    handed to a waiting thread before its root existed.
+
+    Taking over the call protocol gives one place that is after the whole
+    ``__init__`` chain and before the caller receives the object. It is also
+    the only place that sees a construction failing *before* ``__init__`` is
+    entered -- a call-signature error -- which would otherwise strand the key
+    and block every later builder of it forever.
+
+    Unpickling does not come through here at all: it runs
+    ``__getnewargs_ex__`` -> ``__new__`` -> ``__setstate__`` and never calls
+    ``__init__``, so ``__setstate__`` finishes its own construction.
+    """
+
+    def __call__(cls, *args: Any, **kwargs: Any) -> Any:
+        # ``cls`` is the protocol class being instantiated, not the metaclass;
+        # the cast says so, since ``ABCMeta.__new__`` is a class-creation
+        # signature and this is the instance-creation one.
+        target = cast("type[Any]", cls)
+        instance = target.__new__(target, *args, **kwargs)
+        if not isinstance(instance, cls):
+            # ``type.__call__``'s own rule, kept: an instance of another class
+            # is not initialised. Unreachable here -- a memo hit of another
+            # class is a mode mismatch, and refused in ``__new__``.
+            return instance
+        try:
+            # pylint: disable=unnecessary-dunder-call
+            type(instance).__init__(instance, *args, **kwargs)
+        except BaseException:
+            _abandon_construction(instance)
+            raise
+        _finish_construction(instance)
+        return instance
+
+
+class FsspecReadOnlyProtocol(
+        ReadOnlyRepositoryProtocol, metaclass=_BuiltOnceProtocolMeta):
     """Provides fsspec genomic resources repository protocol.
 
     ``(proto_id, url)`` names ONE protocol instance for the life of the
@@ -467,6 +585,14 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
     reconfiguration: a rebuild asking for a different mode, public url or
     credentials is refused rather than applied to the incumbent. See
     ``docs/adr/0005-fsspec-protocol-memo-rebuild.md`` (#514).
+
+    Construction is one atomic step, and a protocol is reachable through the
+    memo only once the whole of it has returned (#527). ``__new__`` records an
+    in-flight construction instead of publishing, so a thread that arrives
+    while another is building that key waits and is answered with the same,
+    configured instance -- rather than either building a second protocol over
+    a key that names one, or reading one whose ``filesystem``, ``url``,
+    ``public_url`` and ``kwargs`` are not bound yet.
     """
 
     #: The repository's resources, memoized on first read, and the lock that
@@ -476,6 +602,12 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
     #: already holding (#514).
     _all_resources: dict[str, GenomicResource] | None
     _all_resources_lock: Lock
+
+    #: Present only while this instance is being constructed, and removed by
+    #: whichever of ``_finish_construction``/``_abandon_construction`` gets to
+    #: it -- so its presence is what tells a rebuild's ``__init__`` apart from
+    #: the first one (#527).
+    _construction: _ProtocolConstruction
 
     def __getnewargs_ex__(self) -> tuple[tuple, dict]:
         # pylint: disable=invalid-getnewargs-ex-returned
@@ -512,23 +644,56 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         # to be different keys -- which is how a pickle round trip minted a
         # second protocol over one directory (#514).
         key = (proto_id, _fetch_url_form(url))
-        existing = _FSSPEC_PROTOCOLS.get(key)
-        if existing is not None:
-            _refuse_a_reconfiguring_rebuild(
-                cls, existing, proto_id, url, kwargs)
-            logger.debug(
-                "protocol with id %s and url %s already exists, "
-                "returning the existing instance",
-                proto_id, _strip_url_userinfo(url))
-            return existing
-        instance = super().__new__(cls)
-        # Before the instance is published, and never again: the memo lock is
-        # the one piece of state a rebuild must not touch, so it is bound
-        # where construction happens exactly once (#514).
-        instance._all_resources_lock = Lock()
-        instance._all_resources = None
-        _FSSPEC_PROTOCOLS[key] = instance
-        return instance
+        # The memo read, the instance creation and the record of an in-flight
+        # construction are one step, under one lock. They used to be a plain
+        # check-then-set: two threads that both missed for one key both built,
+        # and the second publication replaced the first, so the loser walked
+        # away holding an orphan protocol the memo does not know about -- with
+        # a resource memo and a lock of its own, outside the mutual exclusion
+        # of #458 and outside the rebuild refusal of #514 (#527).
+        #
+        # The instance is NOT published here. ``__init__`` runs only after
+        # ``__new__`` has returned, so anything published from here is
+        # reachable with ``filesystem``, ``url``, ``public_url`` and
+        # ``kwargs`` still unbound; publication is
+        # ``_finish_construction``'s, driven by ``_BuiltOnceProtocolMeta``
+        # for a normal build and by ``__setstate__`` for an unpickle.
+        while True:
+            with _FSSPEC_PROTOCOLS_GUARD:
+                existing = _FSSPEC_PROTOCOLS.get(key)
+                if existing is not None:
+                    _refuse_a_reconfiguring_rebuild(
+                        cls, existing, proto_id, url, kwargs)
+                    logger.debug(
+                        "protocol with id %s and url %s already exists, "
+                        "returning the existing instance",
+                        proto_id, _strip_url_userinfo(url))
+                    return existing
+                pending = _FSSPEC_PROTOCOLS_UNDER_CONSTRUCTION.get(key)
+                if pending is None:
+                    instance = super().__new__(cls)
+                    # Before the instance is reachable, and never again: the
+                    # memo lock is the one piece of state a rebuild must not
+                    # touch, so it is bound where construction happens
+                    # exactly once (#514).
+                    instance._all_resources_lock = Lock()
+                    instance._all_resources = None
+                    construction = _ProtocolConstruction(instance, key)
+                    _FSSPEC_PROTOCOLS_UNDER_CONSTRUCTION[key] = construction
+                    instance._construction = construction
+                    return instance
+                if pending.owned_by_this_thread():
+                    # This thread is already constructing this key. Nothing in
+                    # the tree does that, and waiting would be waiting on
+                    # ourselves.
+                    return pending.instance
+            # Waited for OUTSIDE the guard: a construction runs the whole
+            # ``__init__`` chain, which for a read-write protocol does
+            # filesystem I/O, and holding the memo lock across that would put
+            # every protocol build in the process behind one remote round
+            # trip. Then round the loop: the key is either published by now,
+            # or the construction was abandoned and this thread takes it on.
+            pending.wait()
 
     def __init__(
         self, proto_id: str,
@@ -599,17 +764,33 @@ class FsspecReadOnlyProtocol(ReadOnlyRepositoryProtocol):
         del state["filesystem"]
         del state["_all_resources"]
         del state["_all_resources_lock"]
+        # Defensive: an in-flight construction is this process's bookkeeping
+        # (and holds an ``Event``, which does not pickle). A configured
+        # protocol has none, so this only ever fires for a protocol pickled
+        # from inside its own constructor.
+        state.pop("_construction", None)
         return state
 
     def __setstate__(self, state: dict[str, Any]) -> None:
-        self.__dict__.update(state)
-        self.filesystem = _build_filesystem(
-            self._fetch_url, **self.kwargs)
-        # Unpickling reaches ``__new__`` through ``__getnewargs_ex__``, so in a
-        # process that already has this protocol it lands on the live instance
-        # -- the same rebuild that ``__init__`` performs, and the same reason
-        # not to rebind the lock a reader is holding here either (#514).
-        self.invalidate()
+        # Unpickling is the one path that reaches ``__new__`` without
+        # ``__init__`` ever running -- ``__getnewargs_ex__`` -> ``__new__`` ->
+        # here -- so this is where a deserialize into a COLD memo finishes its
+        # own construction. A scheme that published from ``__init__`` alone
+        # would leave the key in flight forever and hang every later builder
+        # of it (#527).
+        try:
+            self.__dict__.update(state)
+            self.filesystem = _build_filesystem(
+                self._fetch_url, **self.kwargs)
+            # In a process that already has this protocol, ``__new__`` landed
+            # on the live instance, so this is the same rebuild ``__init__``
+            # performs -- and the same reason not to rebind the lock a reader
+            # is holding here either (#514).
+            self.invalidate()
+        except BaseException:
+            _abandon_construction(self)
+            raise
+        _finish_construction(self)
 
     def get_url(self) -> str:
         return self.url
@@ -1948,6 +2129,20 @@ FsspecRepositoryProtocol = FsspecReadOnlyProtocol | FsspecReadWriteProtocol
 
 
 _FSSPEC_PROTOCOLS: dict[tuple[str, str], FsspecRepositoryProtocol] = {}
+
+#: The constructions currently in flight, one per key at most. A key is here
+#: OR in ``_FSSPEC_PROTOCOLS``, never both: an instance moves across when its
+#: whole ``__init__`` chain (or ``__setstate__``) has returned, which is what
+#: keeps an unconfigured protocol from ever being reachable (#527).
+_FSSPEC_PROTOCOLS_UNDER_CONSTRUCTION: dict[
+    tuple[str, str], _ProtocolConstruction] = {}
+
+#: Serialises every look at the two dicts above. Held only across the memo
+#: read and the bookkeeping that answers it -- never across ``__init__``,
+#: which for a read-write protocol does filesystem I/O and would otherwise
+#: put every protocol construction in the process behind one remote round
+#: trip (#527).
+_FSSPEC_PROTOCOLS_GUARD = Lock()
 
 
 #: The string spellings of a boolean this module accepts for ``read_only``,

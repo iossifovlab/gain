@@ -30,6 +30,7 @@ import pathlib
 import pickle  # noqa: S403
 import re
 import threading
+from typing import Any
 
 import pytest
 from gain.genomic_resources import fsspec_protocol
@@ -206,19 +207,25 @@ def test_a_rebuild_differing_only_in_a_non_filesystem_keyword_is_honoured(
     assert second is first
 
 
-def test_a_build_racing_the_very_first_one_is_not_refused(
+def test_a_build_racing_the_very_first_one_waits_and_is_not_refused(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A published-but-unconfigured incumbent has nothing to compare against.
+    """A racing build waits for the first one and shares its protocol.
 
-    ``__new__`` publishes an instance into the memo *before* ``__init__``
-    configures it, so a thread racing the very first build of a key can find
-    an instance with no ``public_url`` and no ``kwargs`` yet. Comparing a
-    rebuild against those attributes must not be how that race is discovered:
-    it would turn a race that merely runs ``__init__`` twice -- which is what
-    happened before #514, and what still happens -- into an ``AttributeError``
-    from ``__new__``.
+    ``__new__`` used to publish an instance into the memo *before*
+    ``__init__`` configured it, so a thread racing the very first build of a
+    key found an incumbent with no ``public_url`` and no ``kwargs`` yet. The
+    refusal had to *tolerate* that rather than discover it (#514) -- reading
+    those attributes anyway turned a race that merely ran ``__init__`` twice
+    into an ``AttributeError`` raised out of ``__new__``.
+
+    #527 closed the window instead: nothing is published until the whole
+    construction has returned, so what a racing build meets is an in-flight
+    construction and it waits for it. Still not refused, and now three
+    stronger things hold -- it blocks rather than seeing a half-built object,
+    both callers end up with the SAME instance, and only ONE instance is ever
+    constructed for the key.
 
     The stall substitutes a module function called from inside ``__init__``,
     because no public seam of the protocol runs in that window; a stress test
@@ -239,34 +246,69 @@ def test_a_build_racing_the_very_first_one_is_not_refused(
             has_stalled = True
         if first:
             inside_init.set()
-            assert release.wait(10.0), "the racing build never finished"
+            assert release.wait(10.0), "the stalled build was never released"
         return original_display_url(target)
 
     monkeypatch.setattr(
         fsspec_protocol, "_display_url", stalling_display_url)
 
-    errors: list[BaseException] = []
+    # Every instance ``__init__`` runs on, in order, so the test can tell one
+    # construction from the rebuild-refresh that follows it.
+    initialised: list[int] = []
+    original_init = fsspec_protocol.FsspecReadWriteProtocol.__init__
 
-    def build_first() -> None:
+    def counting_init(self: Any, *args: Any, **kwargs: Any) -> None:
+        with stalled:
+            initialised.append(id(self))
+        original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(
+        fsspec_protocol.FsspecReadWriteProtocol, "__init__", counting_init)
+
+    built: dict[str, Any] = {}
+    errors: list[BaseException] = []
+    second_done = threading.Event()
+
+    def build(name: str) -> None:
         # pylint: disable=broad-exception-caught
         try:
-            build_fsspec_protocol("rebuild", url)
+            protocol = build_fsspec_protocol("rebuild", url)
         except BaseException as exc:  # noqa: BLE001
             errors.append(exc)
+        else:
+            built[name] = protocol
 
-    thread = threading.Thread(target=build_first, daemon=True)
-    thread.start()
+    def build_second() -> None:
+        build("second")
+        second_done.set()
+
+    # Daemon threads: a build left waiting by a lock-ordering regression must
+    # not keep the interpreter alive after this test has already failed.
+    first = threading.Thread(
+        target=build, args=("first",), daemon=True)
+    second = threading.Thread(target=build_second, daemon=True)
+
+    first.start()
     assert inside_init.wait(10.0), "the first build never reached __init__"
+    second.start()
+    assert not second_done.wait(0.2), \
+        "a racing build was answered before the first one was configured"
 
-    try:
-        second = build_fsspec_protocol("rebuild", url)
-    finally:
-        release.set()
+    release.set()
+    for thread in (first, second):
         thread.join(timeout=10.0)
+        assert not thread.is_alive(), "a build never finished -- deadlock?"
 
     assert not errors
-    assert not thread.is_alive()
-    assert second.get_public_url() == url
+    assert built["first"] is built["second"]
+    assert built["second"].get_public_url() == url
+    # ONE instance was constructed for the key. The second ``__init__`` is the
+    # racing build's own, re-run on the instance it was handed -- the rebuild
+    # -as-refresh contract of ADR 0005, which closing this window must not
+    # cost. Pinned as a count so that an "already initialised" no-op, the fix
+    # that ADR rejected, cannot creep back in unnoticed.
+    assert len(set(initialised)) == 1
+    assert len(initialised) == 2
 
 
 def test_a_matching_rebuild_keeps_the_lock_that_guards_the_memo(
