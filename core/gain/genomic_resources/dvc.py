@@ -5,6 +5,10 @@ stores and gitignores the file itself. GAIn reads those sidecars in three
 places -- the repository scan, ``grr_manage``'s entry collection and the
 manifest builder -- and this module is the only place that interprets one,
 so the three can never classify the same sidecar differently.
+
+Recognising a sidecar by name is part of that vocabulary: naming it here
+keeps the info pages, which hide sidecars, and the manifest builder, which
+reads them, from ever disagreeing about which files are sidecars.
 """
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -15,6 +19,18 @@ import yaml
 from gain import logging
 
 logger = logging.getLogger(__name__)
+
+DVC_SUFFIX = ".dvc"
+
+
+def is_dvc_sidecar(name: str) -> bool:
+    """Return True if ``name`` names a ``.dvc`` sidecar."""
+    return name.endswith(DVC_SUFFIX)
+
+
+def dvc_sidecar_target(name: str) -> str:
+    """Return the path the sidecar ``name`` describes."""
+    return name.removesuffix(DVC_SUFFIX)
 
 
 def parse_dvc_pointer_out(

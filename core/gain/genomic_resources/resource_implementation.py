@@ -14,6 +14,7 @@ from gain.task_graph.graph import TaskDesc
 from gain.templates import get_template
 from gain.utils.helpers import convert_size
 
+from .dvc import is_dvc_sidecar
 from .repository import (
     GR_INDEX_NON_LABEL_COLUMNS,
     GR_INDEX_RESOURCE_FIELDS,
@@ -387,7 +388,8 @@ class InfoImplementationMixin:
             self.FileEntry(entry.name, convert_size(entry.size), entry.md5)
             for entry in self.resource.get_manifest().entries.values()
             if not entry.name.startswith("statistics")
-            and entry.name != "index.html"]
+            and entry.name != "index.html"
+            and not is_dvc_sidecar(entry.name)]
         template_data["resource_files"].append(
             self.FileEntry("statistics/", "", ""))
         return template_data
@@ -407,7 +409,8 @@ class InfoImplementationMixin:
                 entry.md5,
             )
             for entry in self.resource.get_manifest().entries.values()
-            if entry.name.startswith("statistics")]
+            if entry.name.startswith("statistics")
+            and not is_dvc_sidecar(entry.name)]
         return template_data
 
     def get_info(self, **kwargs: Any) -> str:  # noqa: ARG002
