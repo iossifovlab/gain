@@ -100,7 +100,8 @@ def run_list_command(
                 # here, on demand, so listing fails for any reason building
                 # a manifest can. Reported and skipped, never raised: a
                 # raise truncates the listing at whatever sorted first
-                # (ADR 0003, the gain#464 shape, gain#503).
+                # (ADR 0003-resource-file-name-containment, the gain#464
+                # shape, gain#503).
                 files = list(res.get_manifest().get_files())
             except RESOURCE_ERRORS as err:
                 report_resource_failure(err, "could not list", res.get_id())
