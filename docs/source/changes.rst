@@ -427,8 +427,12 @@ Release Notes
     * Reference genomes may now be supplied as bgzipped FASTA (a ``.fai``
       faidx and ``.gzi`` index required; optional ``index_file``
       override), working local, cached or over HTTP/S3.
-    * ``annotate_columns`` was renamed to ``annotate_tabular`` (old name
-      kept as a deprecated alias).
+    * The ``annotate_columns`` CLI was renamed to ``annotate_tabular``
+      (the old CLI name is kept as a deprecated alias).
+    * **Breaking API change:** the ``/api/jobs/annotate_columns`` HTTP
+      route was renamed to ``/api/jobs/annotate_tabular`` without an
+      alias, so the old route returns 404. External HTTP clients must
+      update their URL; the bundled web UI was migrated in this release.
     * Reworked the annotator class hierarchy onto a common
       ``AnnotatorBase``, fixing output-name and aggregation bugs across
       the chrom-mapping, liftover, normalize-allele, gene-set and
