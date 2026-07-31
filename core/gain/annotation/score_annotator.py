@@ -120,7 +120,7 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
         # record.  A resource whose statistics are current has been scanned
         # end to end without an ordering violation, because a statistics
         # build records no fresh stats_hash for a resource whose scan raised.
-        # See docs/adr/0005-validating-a-resource-once.md.
+        # See docs/adr/0008-validating-a-resource-once.md.
         self.score.open(validate_ordering=False)
         super().open()
         return self

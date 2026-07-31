@@ -1837,14 +1837,20 @@ class FragmentScore(GenomicScore):
         ``None``, because several fragments overlapping is the normal case
         and "none of them" is a count of zero rather than absent data.
 
+        A contig this resource does not have is a different answer: that is
+        the caller asking about something that does not exist, and it is
+        refused, as the per-position reads refuse it.  Answering ``[]`` would
+        make "no fragments here" and "no such contig" indistinguishable.
+
         A fragment's own span is not reported.  Callers want the values it
         carries; a caller that needs the intervals themselves reads records
         through :meth:`fetch_records`.
         """
         if not self.is_open():
             raise ValueError(f"The resource <{self.resource_id}> is not open")
-        if chrom not in self.table.get_chromosomes():
-            return []
+        if chrom not in self.get_all_chromosomes():
+            raise ValueError(
+                f"{chrom} is not among the available chromosomes.")
 
         requested_scores = scores or self.get_all_scores()
         score_defs = self._resolve_score_defs(requested_scores)

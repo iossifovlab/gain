@@ -69,6 +69,8 @@ of one decision will drift.
 | [0004](0004-core-test-hang-diagnostic.md) | A hung `core` test is diagnosed by faulthandler, not pytest-timeout | accepted |
 | [0005](0005-fsspec-protocol-memo-rebuild.md) | Rebuilding a memoized fsspec protocol refreshes it, and may not reconfigure it | accepted |
 | [0006](0006-resource-value-identity.md) | A genomic resource's value identity excludes its manifest and its protocol | accepted |
+| [0007](0007-resource-query-pushdown.md) | Resource query push-down | accepted |
+| [0008](0008-validating-a-resource-once.md) | A resource is validated when its statistics are built, not on every read | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > Per the convention above numbers are never reused, so both keep the number

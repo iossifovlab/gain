@@ -1,4 +1,4 @@
-# 5. A resource is validated when its statistics are built, not on every read
+# 8. A resource is validated when its statistics are built, not on every read
 
 - **Status:** accepted
 - **Date:** 2026-07-30
@@ -53,8 +53,18 @@ answer, and out-of-tree callers are unaffected. Only two call sites opt out —
 **The vectorized guard stays unconditional.** `_clip_keep_guard` is reached
 only from a statistics build, which is the caller that must check, so nothing
 would ever pass `False` there. Making it conditional would add a way to get it
-wrong for no benefit. A test pins the asymmetry so it does not get tidied into
-consistency later.
+wrong for no benefit. A test pins the asymmetry — by handing the guard a score
+opened with the flag off — so it does not get tidied into consistency later.
+
+**It enforces less than the per-record validator, and that qualifies the
+claim below.** `_clip_keep_guard` checks the `DISJOINT` overlap rule and
+nothing else: not `SHARED`, and not the backwards-span rule that
+`_validate_records` carries. So for a resource the bulk path serves — tabix
+or bigWig, float/int/str scores, which is most deployed position and fragment
+scores — a fresh `stats_hash` means "no `DISJOINT` overlap was found", not the
+full per-record rule set. Closing that means either teaching the vectorized
+guard the other two rules or refusing the resource at open (gain#553); until
+one of those lands, this is the honest strength of the guarantee.
 
 ## Why trusting the statistics is sound
 
@@ -70,8 +80,10 @@ is the machinery's own refusal to record success it did not have:
   catching a task that failed silently.
 
 So: **a current `stats_hash` means the resource was scanned end to end without
-an ordering violation.** That is a stronger claim than "the statistics are
-current", and it is the claim annotation trusts.
+a violation the scanning path checks for.** That is a stronger claim than "the
+statistics are current", and it is the claim annotation trusts — with the
+qualification recorded above, that the vectorized path checks only the
+`DISJOINT` rule.
 
 It was not quite true when this was decided. `_get_chrom_regions` skipped any
 contig whose length it could not determine, so those records reached neither

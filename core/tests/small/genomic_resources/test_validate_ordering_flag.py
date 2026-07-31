@@ -28,8 +28,9 @@ import pathlib
 import textwrap
 from collections.abc import Generator
 
+import numpy as np
 import pytest
-from gain.annotation.annotatable import VCFAllele
+from gain.annotation.annotatable import Region
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.genomic_scores import (
     PositionScore,
@@ -261,16 +262,35 @@ def test_an_unopened_score_still_reports_itself_unopened(
         list(score.fetch_region_values("chr1", 1, 100, ["s"]))
 
 
-def test_the_bulk_scan_checks_regardless_of_the_flag(
+def test_the_bulk_guard_checks_a_score_opened_with_the_flag_off(
     tmp_path: pathlib.Path,
 ) -> None:
-    """The vectorized path is NOT governed by ``validate_ordering``.
+    """The vectorized guard is NOT governed by ``validate_ordering``.
 
     It is reached only from a statistics build, which is precisely the caller
-    that must check -- so its guard is unconditional, and a score opened with
-    the flag off still raises through it.  Pinning this keeps the asymmetry a
-    decision rather than a thing someone tidies away.
+    that must check, so nothing would ever pass ``False`` to it -- making it
+    conditional would only add a way to get it wrong.  Pinning that keeps the
+    asymmetry a decision rather than a thing someone tidies into consistency.
+
+    Driven by handing ``_clip_keep_guard`` a score opened with the flag OFF.
+    Going through ``_do_histogram_bulk`` would prove nothing: it builds its
+    own implementation and opens the score itself, so the flag under test
+    never reaches the guard.
     """
+    score = _overlapping_position_score(tmp_path)
+    with score.open(validate_ordering=False) as opened:
+        assert opened._validate_ordering is False
+        # Two records whose clipped spans touch -- a DISJOINT violation.
+        with pytest.raises(ValueError, match="multiple values for positions"):
+            GenomicScoreImplementation._clip_keep_guard(
+                np.array([10, 15]), np.array([20, 25]),
+                ("chr1", 1, 100), None, opened)
+
+
+def test_the_bulk_scan_refuses_an_overlapping_position_score(
+    tmp_path: pathlib.Path,
+) -> None:
+    """And the guard is reached from the scan, not merely reachable."""
     resource = (
         a_position_score()
         .with_score("s", "float")
@@ -321,8 +341,19 @@ def test_the_score_annotator_opts_out_end_to_end(
 
     with pipeline.open() as opened:
         annotator = opened.annotators[0]
-        # The annotator's open() is what carries the decision.
+        # The annotator's open() is what carries the decision ...
         assert annotator.score._validate_ordering is False
-        # And the read it performs completes rather than refusing.
-        assert opened.annotate(
-            VCFAllele("chr1", 12, "A", "T"), {}) is not None
+
+        # ... and a REGION annotatable is what proves it matters: a
+        # substitution takes the point-read branch, where a single record
+        # covers the position and nothing would raise either way.  A region
+        # spanning both touching records goes through fetch_region_values,
+        # which is the guarded path.
+        region = Region("chr1", 10, 25)
+        assert opened.annotate(region, {}) is not None
+
+        # With the check back on, the same annotate refuses -- so the
+        # assertion above is about the opt-out, not about the fixture.
+        annotator.score._validate_ordering = True
+        with pytest.raises(ValueError, match="multiple values for positions"):
+            opened.annotate(region, {})
