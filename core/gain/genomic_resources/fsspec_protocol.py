@@ -38,7 +38,7 @@ from filelock import FileLock
 from markdown2 import markdown
 
 from gain import logging
-from gain.genomic_resources.dvc import parse_dvc_pointer_out
+from gain.genomic_resources.dvc import DVC_SUFFIX, parse_dvc_pointer_out
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
@@ -1183,7 +1183,7 @@ class FsspecReadWriteProtocol(
             return False
 
         # (2) a sibling pointer must exist and be a regular file.
-        dvc_name = f"{name}.dvc"
+        dvc_name = f"{name}{DVC_SUFFIX}"
         if dvc_name not in sibling_names:
             return False
         dvc_url = os.path.join(url, dvc_name)

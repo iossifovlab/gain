@@ -28,7 +28,9 @@ from gain.genomic_resources.cli_errors import (
 from gain.genomic_resources.cli_list import run_list_command
 from gain.genomic_resources.dvc import (
     DvcContentDriftError,
+    dvc_sidecar_target,
     is_dvc_directory_out,
+    is_dvc_sidecar,
     parse_dvc_pointer_out,
 )
 from gain.genomic_resources.fsspec_protocol import (
@@ -427,9 +429,9 @@ def collect_dvc_entries(
     result = {}
     manifest = proto.collect_resource_entries(res)
     for entry in manifest:
-        if not entry.name.endswith(".dvc"):
+        if not is_dvc_sidecar(entry.name):
             continue
-        filename = entry.name[:-4]
+        filename = dvc_sidecar_target(entry.name)
         basename = os.path.basename(filename)
 
         try:
