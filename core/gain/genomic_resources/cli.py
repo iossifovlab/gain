@@ -16,6 +16,11 @@ import apsw
 import yaml
 
 from gain import __version__, logging
+from gain.genomic_resources.cli_dvc import (
+    UnsupportedDvcDirectoryOutputError,
+    dvc_directory_output_message,
+    refuse_dvc_directory_outputs,
+)
 from gain.genomic_resources.cli_errors import (
     RESOURCE_ERRORS,
     report_resource_failure,
@@ -379,14 +384,6 @@ def _configure_resource_info_subparser(
     )
 
 
-class UnsupportedDvcDirectoryOutputError(Exception):
-    """A resource declares a ``dvc add <dir>`` output, which GAIn refuses.
-
-    Raised by :func:`collect_dvc_entries` and turned into a non-zero exit by
-    :func:`cli_manage` (#255).
-    """
-
-
 def collect_dvc_entries(
         proto: ReadWriteRepositoryProtocol,
         res: GenomicResource) -> dict[str, ManifestEntry]:
@@ -411,7 +408,10 @@ def collect_dvc_entries(
     content ever being checked, so the command fails instead (#255). This is
     the gate every ``grr_manage`` subcommand that builds or checks a manifest
     passes through, and it applies whether or not the directory is
-    materialised.
+    materialised. It is kept even though
+    :func:`cli_dvc.refuse_dvc_directory_outputs` refuses such a resource
+    before any command reaches this function: a manifest must never be
+    built from a sidecar GAIn cannot verify, whoever asks for it (#284).
 
     An entry is produced for every readable sidecar. Every materialised
     file's entry is consulted by
@@ -450,18 +450,9 @@ def collect_dvc_entries(
             continue
 
         if is_dvc_directory_out(out):
-            message = (
-                f"resource <{res.resource_id}> has a 'dvc add <dir>' output: "
-                f"the '.dvc' file <{entry.name}> describes the directory "
-                f"<{filename}>. 'dvc add <dir>' outputs are not supported by "
-                f"GAIn: the '.dir' md5 sum such a sidecar declares is the "
-                f"hash of a DVC cache object, not of any file in the "
-                f"resource, so GAIn can never verify it against the bytes it "
-                f"serves. DVC-manage the individual files instead: run 'dvc "
-                f"add <file>' on each file of <{filename}> (and remove "
-                f"<{entry.name}>)."
-            )
-            raise UnsupportedDvcDirectoryOutputError(message)
+            raise UnsupportedDvcDirectoryOutputError(
+                dvc_directory_output_message(
+                    res.resource_id, entry.name, filename))
 
         md5 = out.get("md5")
         size = out.get("size")
@@ -1250,6 +1241,11 @@ def _run_management_command(
     """
     command = cast(str, kwargs["command"])
     try:
+        # Before anything is written: a resource GAIn cannot certify fails
+        # the command here, where failing it costs nothing, rather than
+        # part-way through a repository it has already started rewriting
+        # (#284).
+        refuse_dvc_directory_outputs(proto, resources)
         if command.endswith("-manifest"):
             return _run_repo_manifest_command(proto, resources, **kwargs)
         if command.endswith("-stats"):

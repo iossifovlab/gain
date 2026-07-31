@@ -1160,6 +1160,97 @@ def test_every_manifest_subcommand_refuses_a_dvc_directory(
     assert not (path / "one" / ".MANIFEST").exists()
 
 
+# ---------------------------------------------------------------------------
+# The refusal is a PRE-FLIGHT: it happens before anything is written (#284)
+# ---------------------------------------------------------------------------
+# The gate above lives in `collect_dvc_entries`, i.e. at the point ONE
+# resource's manifest is built - so a repository-wide command had already
+# worked its way through the resources ordered before the offender, writing
+# their `.MANIFEST` and `.grr` state, by the time it refused. `repo-stats`
+# and `repo-info` add a whole task graph to what a refusal could leave
+# behind. A command that refuses a repository must refuse it before it
+# touches it, so the sidecars of every selected resource are checked up
+# front and the command fails with nothing written at all.
+
+HEALTHY_SCORE_DATA = """
+    chrom  pos_begin  value
+    1      10         0.1
+    1      11         0.2
+"""
+
+# Ids chosen so that the HEALTHY resource sorts first: the leak this section
+# is about is what the command wrote for the resources it got through before
+# reaching the offender.
+HEALTHY_RESOURCE_ID = "aaa_healthy_score"
+DIR_RESOURCE_ID = "zzz_dvc_directory"
+
+
+def setup_mixed_dvc_directory_grr(path: pathlib.Path) -> None:
+    """Set up a GRR with a healthy score BEFORE a `dvc add <dir>` output.
+
+    The score is realized rather than built through `a_grr().build_repo`:
+    that opens (and thereby REPAIRS) the repository, which would write the
+    very manifest and state files these tests watch for.
+    """
+    (
+        a_position_score()
+        .with_score("value", "float")
+        .with_histogram({
+            "type": "number", "number_of_bins": 4,
+            "view_range": {"min": 0.0, "max": 1.0}})
+        .with_data(HEALTHY_SCORE_DATA)
+        .realize_into(path / HEALTHY_RESOURCE_ID)
+    )
+    setup_directories(path, {
+        DIR_RESOURCE_ID: {
+            "genomic_resource.yaml": "",
+            ".gitignore": "/chunks\n",
+            "chunks.dvc": DIR_SIDECARS["dir-md5-and-nfiles"],
+            "chunks": {"a.txt": CHUNK_A, "b.txt": CHUNK_B},
+        },
+    })
+    build_filesystem_test_protocol(path, repair=False)
+
+
+def tree_of(path: pathlib.Path) -> set[str]:
+    """Every path under ``path``, relative to it."""
+    return {str(p.relative_to(path)) for p in path.rglob("*")}
+
+
+@pytest.mark.parametrize("subcommand", DVC_SUBCOMMANDS)
+def test_a_refused_grr_is_left_exactly_as_it_was_found(
+    tmp_path: pathlib.Path,
+    subcommand: str,
+) -> None:
+    """Not one of the eight writes anything before it refuses (#284).
+
+    The healthy resource ends up with no manifest, no state, and - the two
+    artefacts only a task graph produces, and the reason this is a bug
+    rather than a wart - no ``statistics/`` and no ``index.html``.
+    """
+    # Given a GRR whose healthy resource is visited before the offender
+    setup_mixed_dvc_directory_grr(tmp_path)
+    before = tree_of(tmp_path)
+
+    args = [subcommand, "-R", str(tmp_path)]
+    if not subcommand.endswith("-manifest"):
+        # The task-graph options are offered by the subcommands that have a
+        # task graph; `-j 1` keeps a regression from fanning out over every
+        # core before it writes what this test is watching for.
+        args.extend(["-j", "1"])
+    if subcommand.startswith("resource-"):
+        # A resource pattern, so the command spans BOTH resources: the
+        # claim is about what is written for a resource other than the
+        # refused one.
+        args.extend(["-r", "*"])
+
+    # When it is run - it fails, having written nothing at all
+    with pytest.raises(SystemExit) as excinfo:
+        cli_manage(args)
+    assert excinfo.value.code == 1
+    assert tree_of(tmp_path) == before
+
+
 def test_a_per_file_dvc_resource_is_not_refused(
     gitignored_dvc_proto_fixture: tuple[
         pathlib.Path, FsspecReadWriteProtocol],
