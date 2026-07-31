@@ -26,7 +26,10 @@ from gain.genomic_resources.histogram import (
     Histogram,
     plot_histogram,
 )
-from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository import (
+    GR_INDEX_SCORE_FIELDS,
+    GenomicResource,
+)
 from gain.genomic_resources.resource_implementation import (
     GenomicResourceImplementation,
     InfoImplementationMixin,
@@ -71,7 +74,7 @@ class ScoreImplementationBase(
             if sd.desc
         )
         return (
-            (*header, "score_ids", "score_descriptions"),
+            (*header, *GR_INDEX_SCORE_FIELDS),
             (*row, score_ids, score_descriptions),
         )
 

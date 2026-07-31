@@ -211,7 +211,10 @@ def _configure_list_subparser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument(
         "-q", "--query", type=str, default=None,
         help="Filter resources by a wildcard query over the resource id "
-             "and labels, e.g. 'hg38/scores/*[phenotype=\"autism\"]'.")
+             "and labels, e.g. 'hg38/scores/*[phenotype=\"autism\"]'. "
+             "A label a resource does not carry reads as empty, so "
+             '[key="*"] holds for every resource rather than '
+             "selecting the ones that have the label.")
     _add_repository_resource_parameters_group(parser, use_resource=False)
     VerbosityConfiguration.set_arguments(parser)
 
@@ -1414,7 +1417,10 @@ def cli_browse(cli_args: list[str] | None = None) -> None:
     group.add_argument(
         "-q", "--query", type=str, default=None,
         help="Filter resources by a wildcard query over the resource id "
-             "and labels, e.g. 'hg38/scores/*[phenotype=\"autism\"]'.")
+             "and labels, e.g. 'hg38/scores/*[phenotype=\"autism\"]'. "
+             "A label a resource does not carry reads as empty, so "
+             '[key="*"] holds for every resource rather than '
+             "selecting the ones that have the label.")
     group.add_argument(
         "--summary", default=False, action="store_true",
         help="Print a summary for each resource below its listing line.")

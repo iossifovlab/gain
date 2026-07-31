@@ -83,6 +83,35 @@ GR_SQLITE_META_FILE_NAME = ".CONTENTS.sqlite3.gz"
 GR_INDEX_FILE_NAME = "index.html"
 GR_STATISTICS_FOLDER_NAME = "statistics"
 
+#: What an FTS index column may be named. Every name the index build
+#: creates is vetted against this before it becomes a column, because a
+#: column name cannot be bound as a parameter and so has to be spliced
+#: into SQL (gain#464).
+INDEX_COLUMN_PATTERN = "[A-Za-z_][A-Za-z0-9_]*"
+INDEX_COLUMN_RE = re.compile(f"{INDEX_COLUMN_PATTERN}\\Z")
+
+#: The columns every resource contributes to the FTS index, in the order
+#: ``ResourceImplementation.collect_index_info`` emits them.
+GR_INDEX_RESOURCE_FIELDS = (
+    "full_id", "id", "type", "description", "summary",
+)
+
+#: The columns a *score* implementation contributes on top of those.
+GR_INDEX_SCORE_FIELDS = ("score_ids", "score_descriptions")
+
+#: Index columns that describe the resource rather than one of its
+#: ``meta.labels`` entries. A label query names a label, so a clause on one
+#: of these must not be answered out of the column that shares its name --
+#: and no resource can carry them as labels anyway, because the index build
+#: refuses a label key repeating a field the header already has.
+#:
+#: An implementation that contributes a further field of its own belongs
+#: here too; the index cannot tell on its own which of its columns came
+#: from a label.
+GR_INDEX_NON_LABEL_COLUMNS = frozenset(
+    GR_INDEX_RESOURCE_FIELDS + GR_INDEX_SCORE_FIELDS,
+)
+
 #: The path `grr_manage resource-info` writes the statistics page to;
 #: named here so the writer and the exclusion below cannot drift (#373).
 GR_STATISTICS_INDEX_FILE_NAME = \
@@ -1050,9 +1079,16 @@ def _resource_query_conditions(
     ``MATCH`` in one statement instead of filtering its rows afterwards.
     """
     cursor = conn.cursor()
-    columns = {
+    # A published index is an artefact of the repository, as untrusted as
+    # its manifest: this deserializes whatever `.CONTENTS.sqlite3.gz` was
+    # served, so the vetting the index *build* does is no guarantee here.
+    # A column gain would never have created is not treated as a label --
+    # which both keeps a crafted name out of the statement below and gives
+    # the honest answer, since no resource can carry such a label either.
+    label_columns = {
         row[1] for row in cursor.execute("pragma table_info('contents')")
-    }
+        if INDEX_COLUMN_RE.match(row[1])
+    } - GR_INDEX_NON_LABEL_COLUMNS
 
     conn.createscalarfunction(
         _MATCH_ID_FUNCTION, _sql_matcher(query.match_id), 1,
@@ -1060,13 +1096,15 @@ def _resource_query_conditions(
     conditions = [f"{_MATCH_ID_FUNCTION}(id)"]
 
     for position, clause in enumerate(query.label_clauses):
-        if clause.key not in columns:
-            # No resource in the repository carries this key, so the index
-            # has no column for it and every resource reads as ``""`` --
-            # which settles the clause for all of them at once, in
-            # whichever direction it falls. Matched by exact name on
-            # purpose: SQLite resolves a column name case-insensitively,
-            # where the Python path looks the key up in a dict.
+        if clause.key not in label_columns:
+            # The index has no label column of this name -- no resource
+            # carries the key, or the name belongs to a field of the
+            # resource rather than to a label. Either way every resource
+            # reads as ``""`` for it, which settles the clause for all of
+            # them at once, in whichever direction it falls. Matched by
+            # exact name on purpose: SQLite resolves a column name
+            # case-insensitively, where the Python path looks the key up
+            # in a dict.
             if not clause.matches_an_absent_label():
                 return [_NO_ROWS_CONDITION]
             continue
@@ -1075,11 +1113,12 @@ def _resource_query_conditions(
             function_name, _sql_matcher(clause.matches), 1,
             deterministic=True)
         # The key is spliced rather than bound because SQL cannot
-        # parameterise an identifier. What makes that safe is the
-        # membership test above: the name reaching the statement is one
-        # the index already has a column for, and every such name was
-        # vetted as a bare identifier before it became one (gain#464).
-        conditions.append(f"{function_name}({clause.key})")
+        # parameterise an identifier. Two things make that safe: the name
+        # got past the bare-identifier check above, and it is quoted here
+        # anyway -- the query grammar admits no `"` in a label key, so a
+        # quoted identifier cannot be escaped out of whatever the index
+        # published.
+        conditions.append(f'{function_name}("{clause.key}")')
 
     return conditions
 
