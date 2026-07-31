@@ -15,6 +15,7 @@ from gain.templates import get_template
 from gain.utils.helpers import convert_size
 
 from .repository import (
+    GR_INDEX_NON_LABEL_COLUMNS,
     GR_INDEX_RESOURCE_FIELDS,
     INDEX_COLUMN_PATTERN,
     INDEX_COLUMN_RE,
@@ -30,6 +31,14 @@ logger = logging.getLogger(__name__)
 # table _create_contents_db builds.  Compared case-insensitively, as SQLite
 # compares identifiers.
 _INDEX_RESERVED_COLUMNS = frozenset({"rank", "rowid", "contents"})
+
+# The index columns that describe the resource rather than one of its
+# labels, lowercased for the case-insensitive comparison SQLite makes.
+# A label key may never be one of these, whatever the resource's own
+# implementation contributes -- see `collect_index_info` (gain#542).
+_RESERVED_FIELD_NAMES = frozenset(
+    name.lower() for name in GR_INDEX_NON_LABEL_COLUMNS
+)
 
 
 def get_base_resource_schema() -> dict[str, Any]:
@@ -81,6 +90,16 @@ def _index_column_problem(column: object, taken: set[str]) -> str | None:
     if column.lower() in _INDEX_RESERVED_COLUMNS:
         return "is a name FTS5 reserves"
     if column.lower() in taken:
+        if column.lower() in _RESERVED_FIELD_NAMES:
+            # The name is one the index keeps for a resource field, and the
+            # curator's own resource may well have no such field -- a genome
+            # carrying a label named `score_ids` collides with a column only
+            # score resources fill.  "Repeats a field" would leave them
+            # looking for a field that is not there, so name them (gain#542).
+            return (
+                "is a name the index reserves for a resource field "
+                f"({', '.join(sorted(_RESERVED_FIELD_NAMES))})"
+            )
         return "repeats a field the index already has"
     return None
 
@@ -94,10 +113,14 @@ def validate_index_columns(
     ``INSERT`` statements that build the repository index, so a name that is
     not a bare identifier -- and not one SQL or FTS5 has already taken -- is
     at best unbuildable and at worst an injection (gain#464).  Repeats are
-    rejected too: the index keeps one
-    column per name, so a label key that repeats a fixed field silently
-    replaces that field's value for the resource, which then cannot be found
-    by it.
+    rejected too: the index keeps one column per name.  Where the repeated
+    name is a field of the resource itself, the label silently replaces that
+    field's value, which then cannot be found by it; where it is a name the
+    index reserves for a field some *other* implementation contributes, the
+    label lands in a column that means something else for every resource
+    that does contribute it (gain#542).  Both are reported against the
+    offending column, the second naming the reserved set, since the curator
+    has no such field of their own to look at.
 
     Raises ``ValueError`` naming the resource and the offending column.  The
     caller is the per-resource handler of the index build, so an offending
@@ -282,6 +305,14 @@ class GenomicResourceImplementation(ABC):
         Raises ``ValueError`` if a label key cannot name an index field --
         every implementation reaches the index through here, and the index
         build reports a raise from here against this one resource (gain#464).
+
+        An override that contributes further fields must call ``super()``
+        and append to what it returns.  This is the only place a label key
+        is checked against the names the index reserves: the build's own
+        re-check sees the finished header, in which an implementation's
+        fields legitimately appear, so it cannot tell a field from a label
+        (gain#542).  A field added by an override belongs in
+        ``GR_INDEX_NON_LABEL_COLUMNS``.
         """
         res = self.resource
         meta = res.get_config().get("meta", {}) or {}
@@ -290,7 +321,23 @@ class GenomicResourceImplementation(ABC):
             *GR_INDEX_RESOURCE_FIELDS,
             *labels.keys(),
         )
-        validate_index_columns(res.resource_id, header)
+        # Vetted against every non-label column, not just the fields this
+        # resource's own header carries.  A non-score resource carrying a
+        # label named `score_ids` is the case that reaches this: its own
+        # header has no score fields, so vetting the header alone lets it
+        # through (gain#542).
+        #
+        # Unconditional on purpose -- do NOT narrow this to "only when the
+        # repository also holds a score resource".  The query translator
+        # subtracts these names on every search, so a label spelled like
+        # one of them is unanswerable whatever else the repository holds;
+        # and the index's columns are the union across the repository, so
+        # whether the collision exists would otherwise depend on which
+        # other resources happen to be present.
+        validate_index_columns(
+            res.resource_id,
+            (*sorted(GR_INDEX_NON_LABEL_COLUMNS), *labels.keys()),
+        )
         row: tuple[str, ...] = (
             res.get_full_id(),
             res.resource_id,

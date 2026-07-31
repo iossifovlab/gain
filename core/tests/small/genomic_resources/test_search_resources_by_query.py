@@ -16,8 +16,13 @@ from gain.genomic_resources.repository import (
     GenomicResourceProtocolRepo,
 )
 from gain.genomic_resources.resource_query import ResourceQueryParseError
+from gain.genomic_resources.resource_types import equivalent_resource_types
 from gain.genomic_resources.testing import build_filesystem_test_protocol
-from gain.genomic_resources.testing.builders import a_grr, a_position_score
+from gain.genomic_resources.testing.builders import (
+    a_grr,
+    a_position_score,
+    a_reference_genome,
+)
 
 
 @pytest.fixture
@@ -54,6 +59,11 @@ def labelled_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
     ``target`` is absent from two. The index stores ``""`` for both
     spellings, so these are the resources on which a faithful translation
     and a guessed one disagree.
+
+    One resource is deliberately **not** a score. The score fields are in
+    the index only because a score implementation put them there, so a
+    repository of scores alone never exercises what a clause naming one
+    means for a resource that contributes none (gain#542).
     """
     repo = (
         a_grr()
@@ -71,6 +81,10 @@ def labelled_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
         .with_resource(
             "other/res_c",
             a_position_score().with_labels(domain="alpha"),
+        )
+        .with_resource(
+            "genomes/res_g",
+            a_reference_genome().with_labels(domain="alpha", note="noted"),
         )
         .build_repo(tmp_path)
     )
@@ -128,26 +142,37 @@ QUERY_CORPUS = [
 ]
 
 
+@pytest.mark.parametrize("resource_type", ["position_score", "genome"])
 @pytest.mark.parametrize("query", QUERY_CORPUS)
 def test_the_query_means_the_same_with_and_without_the_index(
-    labelled_grr: GenomicResourceProtocolRepo, query: str,
+    labelled_grr: GenomicResourceProtocolRepo,
+    query: str, resource_type: str,
 ) -> None:
     """One query, two evaluation paths, one answer.
 
-    ``resource_query`` on its own never opens the index. Adding a
-    ``resource_type`` every resource satisfies cannot change which
-    resources should come back -- it only routes the search through the
-    index. Any difference between the two sets is the query meaning two
+    ``resource_query`` on its own never opens the index; adding a
+    ``resource_type`` routes the search through it. Holding the type fixed
+    on both sides leaves the query evaluation as the only thing that can
+    differ, so any difference between the two sets is the query meaning two
     different things depending on how it was asked.
+
+    Run for both families in the repository: a clause naming a score field
+    has to mean the same thing for a resource that contributes one and for
+    a resource that does not (gain#542).
     """
+    # Expanded the way the indexed side expands it -- a fragment score
+    # answers to two spellings, so an exact comparison here would fail for
+    # a reason belonging to the test rather than to the query.
+    accepted = equivalent_resource_types(resource_type)
     without_index = {
         r.resource_id
         for r in labelled_grr.search_resources(resource_query=query)
+        if r.get_type() in accepted
     }
     through_index = {
         r.resource_id
         for r in labelled_grr.search_resources(
-            resource_query=query, resource_type="position_score")
+            resource_query=query, resource_type=resource_type)
     }
 
     assert without_index == through_index
@@ -196,6 +221,37 @@ def test_the_indexed_path_returns_the_expected_resources(
         r.resource_id
         for r in labelled_grr.search_resources(
             resource_query=query, resource_type="position_score")
+    }
+
+    assert found == expected
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        # The non-score resource contributes no score fields, so a clause
+        # naming one reads as empty for it -- a wildcard accepts that, and
+        # anything an empty value fails rejects it. Without these the
+        # differential above could pass on a genome that matches nothing
+        # either way (gain#542).
+        ('*[score_ids="*"]', {"genomes/res_g"}),
+        ('*[score_descriptions="*"]', {"genomes/res_g"}),
+        ('*["phastCons" in score_ids]', set()),
+        ('*[score_ids="score"]', set()),
+        # Its own labels still answer normally.
+        ('*[domain="alpha"]', {"genomes/res_g"}),
+        ('*[note="noted"]', {"genomes/res_g"}),
+        ('*[domain="beta"]', set()),
+    ],
+)
+def test_the_indexed_path_answers_a_score_clause_for_a_non_score_resource(
+    labelled_grr: GenomicResourceProtocolRepo,
+    query: str, expected: set[str],
+) -> None:
+    found = {
+        r.resource_id
+        for r in labelled_grr.search_resources(
+            resource_query=query, resource_type="genome")
     }
 
     assert found == expected
@@ -299,9 +355,13 @@ def test_a_search_term_routes_the_query_the_same_way_a_type_does(
     }
     assert everything == {"scores/res_a", "scores/res_b", "other/res_c"}
 
+    # The term reaches the scores and not the genome, so the comparison is
+    # made inside the universe it selects -- otherwise this would measure
+    # what the term matches rather than what the query means.
     without_index = {
         r.resource_id
         for r in labelled_grr.search_resources(resource_query=query)
+        if r.resource_id in everything
     }
     through_index = {
         r.resource_id

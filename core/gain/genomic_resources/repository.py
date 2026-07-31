@@ -103,11 +103,13 @@ GR_INDEX_SCORE_FIELDS = ("score_ids", "score_descriptions")
 #: ``meta.labels`` entries. A label query names a label, so a clause on one
 #: of these must not be answered out of the column that shares its name --
 #: and no resource can carry them as labels anyway, because the index build
-#: refuses a label key repeating a field the header already has.
+#: refuses a label key repeating any of these names, whatever fields the
+#: resource's own implementation contributes (gain#542).
 #:
 #: An implementation that contributes a further field of its own belongs
 #: here too; the index cannot tell on its own which of its columns came
-#: from a label.
+#: from a label. Registering it here is what both refuses it as a label key
+#: and keeps a clause naming it off that column.
 GR_INDEX_NON_LABEL_COLUMNS = frozenset(
     GR_INDEX_RESOURCE_FIELDS + GR_INDEX_SCORE_FIELDS,
 )

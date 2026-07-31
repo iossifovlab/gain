@@ -93,9 +93,17 @@ materialisation, which the side table above would enable.
   clause on one of them must not be answered out of the column that shares
   its name. `GR_INDEX_NON_LABEL_COLUMNS` is that list, and an implementation
   contributing a further field must extend it — the index cannot say on its
-  own which of its columns came from a label. A non-score resource carrying a
-  label literally named `score_ids` still merges into the score column; that
-  ambiguity predates this change and is not fixed by it.
+  own which of its columns came from a label.
+
+  *Superseded by gain#542:* as first written, a non-score resource carrying a
+  label literally named `score_ids` still merged into the score column, and
+  that ambiguity was left unfixed here. Recording which columns came from
+  labels at build time was considered and rejected — it makes the clause
+  answerable for the resource carrying the label but wrong for every resource
+  that contributes the field, moving the divergence rather than closing it.
+  The collision is refused at index-build time instead, so a name in
+  `GR_INDEX_NON_LABEL_COLUMNS` can never also be a label and the column has
+  one meaning.
 - **A published index is untrusted input on this path.** The read path
   deserializes whatever `.CONTENTS.sqlite3.gz` the repository serves, so the
   vetting `#464` added to the index *build* guarantees nothing here. Column
