@@ -9,7 +9,7 @@ from dask.distributed import Client, Future
 from gain import logging
 from gain.task_graph.base_executor import TaskGraphExecutorBase
 from gain.task_graph.cache import NoTaskCache, TaskCache
-from gain.task_graph.dask_run_state import RunState
+from gain.task_graph.dask_run_state import RunState, SubmitBatch
 from gain.task_graph.graph import Task, TaskGraph
 from gain.task_graph.logging import (
     ensure_log_dir,
@@ -23,6 +23,50 @@ logger = logging.getLogger(__name__)
 # can assert that a run really did tear its workers down.
 SUBMIT_WORKER_THREAD_NAME = "gain-dask-submit-worker"
 RESULTS_WORKER_THREAD_NAME = "gain-dask-results-worker"
+
+
+def dask_keys(run_id: str, batch: SubmitBatch) -> list[str]:
+    """Name a submit batch's dask keys, one per task.
+
+    The key must identify this submission and nothing else. Deriving it from
+    the task id alone -- as this did until gain#531 -- made every run of the
+    same graph against the same client submit the same keys, so a run
+    starting while an earlier one's keys were still known to the scheduler
+    was deduplicated against them and handed that run's results without
+    executing anything. Releasing the earlier run's futures cannot close
+    that window: ``Future.release()`` only queues ``client-releases-keys``,
+    and the key may still be ``processing`` on a worker.
+
+    So the run id is appended: two runs cannot name the same key, whether
+    the earlier one ended normally, was abandoned, or is still in flight --
+    including two executors sharing a client concurrently.
+
+    The task id alone does not identify a task within a run either.
+    ``safe_task_id`` collapses nine punctuation characters to ``_`` while
+    ``TaskGraph`` enforces uniqueness on the RAW id, so ``annotate chr1``
+    and ``annotate-chr1`` sanitize to the same string -- and ``Client.map``
+    builds its layer as a dict, so tasks sharing a key silently collapse
+    into a single computation and the run reports success having executed
+    one of them (gain#557). Hence the batch id and the task's position in
+    the batch: the run state hands out batch ids from a single counter for
+    the life of the run, so the pair is unique per submitted task by
+    construction.
+
+    The sanitized task id stays at the FRONT so a key remains traceable to
+    its task in the dashboard and in scheduler logs. This is dask's own
+    ``f"{key}-{token}"`` shape, which is what it would generate itself:
+    ``pure=False`` is already passed at the submit site, so no deduplication
+    is wanted here in the first place.
+    """
+    keys = [
+        f"{safe_task_id(task.task.task_id)}-{run_id}-{batch.batch_id}-{index}"
+        for index, task in enumerate(batch.tasks)
+    ]
+    # Cheap, and the failure it guards against is silent: duplicate keys are
+    # not rejected by ``Client.map``, they are merged. Assert rather than
+    # trust the construction above to stay unique through a later edit.
+    assert len(set(keys)) == len(keys), "duplicate dask keys in one batch"
+    return keys
 
 
 class DaskExecutor(TaskGraphExecutorBase):
@@ -57,7 +101,6 @@ class DaskExecutor(TaskGraphExecutorBase):
                 return
 
             tasks = list(batch.tasks)
-            task_ids = [safe_task_id(task.task.task_id) for task in tasks]
 
             # No lock is held across map(). The batch does not need one: it
             # sits in the in-flight submit state for the whole width of the
@@ -76,7 +119,7 @@ class DaskExecutor(TaskGraphExecutorBase):
             try:
                 futures = self._dask_client.map(
                     self._exec, tasks,
-                    key=task_ids,
+                    key=dask_keys(state.run_id, batch),
                     pure=False,
                     params=self._params,
                 )
@@ -315,11 +358,17 @@ class DaskExecutor(TaskGraphExecutorBase):
 
             # Both workers have stopped, so anything still held is work this
             # run gave up on: the consumer abandoned the generator and the
-            # results will never be collected. Release it, or the keys stay
-            # pinned on a client that outlives the run and the next run of
-            # the same graph is deduplicated against them and handed these
-            # results without executing (gain#480). Empty on every normal
-            # path, where the loop only exits once nothing is outstanding.
+            # results will never be collected. Release it, or every one of
+            # those keys -- and the result it holds -- stays alive on a
+            # client that outlives the run, a leak that grows with every
+            # abandoned run (gain#480). Empty on every normal path, where
+            # the loop only exits once nothing is outstanding.
+            #
+            # No later run depends on this happening, though: keys are named
+            # per run and per task, so a run cannot be deduplicated against
+            # another's leftovers whether or not they were released
+            # (gain#531). Releasing asynchronously, as this does, could never
+            # have carried that guarantee anyway.
             self._release_futures(state.abandon_outstanding())
 
     def close(self) -> None:

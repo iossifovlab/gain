@@ -4,7 +4,7 @@ import gc
 import pathlib
 import threading
 import time
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -507,7 +507,143 @@ def test_abandoned_runs_do_not_accumulate_across_a_shared_client(
     )
 
 
-def tagged(stamp: str, x: int) -> str:
+class _KeyRecordingClient(_WrappedClient):
+    """A real client that records the dask keys every ``map()`` is given.
+
+    Everything else is the real client, so the run really executes; the
+    keys are simply observed on their way past.
+    """
+
+    def __init__(self, client: Client) -> None:
+        super().__init__(client)
+        self.submitted_keys: list[str] = []
+
+    def map(self, *args: Any, **kwargs: Any) -> Any:
+        self.submitted_keys.extend(kwargs["key"])
+        return self._client.map(*args, **kwargs)
+
+
+def _a_graph_of_doubles(prefix: str, count: int) -> TaskGraph:
+    graph = TaskGraph()
+    for i in range(count):
+        graph.create_task(f"{prefix}{i}", double, args=[i], deps=[])
+    return graph
+
+
+def test_two_runs_of_the_same_graph_submit_disjoint_dask_keys(
+    dask_client: Client,
+    tmp_path: pathlib.Path,
+) -> None:
+    """No two runs may ever name the same dask key (gain#531).
+
+    The direct, deterministic statement of the property the end-to-end
+    stale-results test can only observe by winning a race. The executor used
+    to derive a task's dask key from its task id alone, so every run of the
+    same graph against the same client submitted the SAME keys by
+    construction -- and whether that returned another run's results was then
+    a matter of how quickly the scheduler got round to forgetting them.
+    Releasing a future does not do that synchronously, so no teardown can
+    close the window; only naming the keys apart can.
+
+    Disjointness is asserted for two runs that both complete normally,
+    because it must hold regardless of how the earlier run ended -- an
+    abandoned run is the dangerous case, not the only one.
+    """
+    client = _KeyRecordingClient(dask_client)
+    executor = DaskExecutor(
+        cast("Client", client), task_log_dir=str(tmp_path / "logs"))
+
+    assert len(dict(executor.execute(_a_graph_of_doubles("Keyed", 10)))) == 10
+    first_keys = list(client.submitted_keys)
+
+    client.submitted_keys.clear()
+    assert len(dict(executor.execute(_a_graph_of_doubles("Keyed", 10)))) == 10
+    second_keys = list(client.submitted_keys)
+
+    assert len(first_keys) == 10
+    assert len(second_keys) == 10
+    assert set(first_keys).isdisjoint(second_keys), (
+        f"the two runs share the dask keys "
+        f"{sorted(set(first_keys) & set(second_keys))}; a run submitting a "
+        f"key another run has used can be deduplicated against it and handed "
+        f"that run's results without executing (gain#531)"
+    )
+
+
+def test_a_submitted_dask_key_still_names_its_task_first(
+    dask_client: Client,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A key must stay readable as "this task, this run" (gain#531).
+
+    Naming the keys apart is only free if they remain identifiable: the dask
+    dashboard and the scheduler's own log lines quote the key, and a key
+    that is a bare nonce turns every one of them into a dead end. The
+    sanitized task id therefore leads, and what makes the key unique
+    follows it -- which is also dask's own ``f"{key}-{token}"`` shape.
+    """
+    client = _KeyRecordingClient(dask_client)
+    executor = DaskExecutor(
+        cast("Client", client), task_log_dir=str(tmp_path / "logs"))
+
+    assert len(dict(executor.execute(_a_graph_of_doubles("Traced", 5)))) == 5
+
+    by_task_id = {
+        key.split("-")[0]: key for key in client.submitted_keys
+    }
+    assert set(by_task_id) == {f"Traced{i}" for i in range(5)}, (
+        f"the submitted keys {sorted(client.submitted_keys)} do not each "
+        f"begin with their task id; a key must stay traceable to its task"
+    )
+
+
+def test_tasks_whose_ids_differ_only_in_punctuation_all_run(
+    dask_client: Client,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Sanitizing a task id must not merge two tasks into one (gain#557).
+
+    ``TaskGraph`` enforces uniqueness on the RAW task id, while
+    ``safe_task_id`` -- written for log FILE NAMES, long before dask -- maps
+    all nine of ``. /,()-:;`` to ``_``. The four ids below are four distinct
+    tasks that sanitize to one string, so keying the submission on the
+    sanitized id alone handed ``Client.map`` a duplicate key per task; it
+    builds its layer as a dict, so the four collapsed into a single
+    computation and the run reported success having executed one of them.
+
+    No error is raised anywhere on that path, which is what makes it worth
+    a test of its own: the caller cannot tell the difference between a task
+    that ran and a task whose key was someone else's.
+    """
+    ids = ["annotate chr1", "annotate-chr1", "annotate.chr1", "annotate:chr1"]
+
+    graph = TaskGraph()
+    for i, task_id in enumerate(ids):
+        graph.create_task(task_id, double, args=[i], deps=[])
+
+    executor = DaskExecutor(dask_client, task_log_dir=str(tmp_path / "logs"))
+
+    results = _run_in_thread_with_timeout(executor, graph, timeout=20.0)
+
+    assert len(results) == len(ids), (
+        f"the run delivered {len(results)} results for {len(ids)} tasks "
+        f"whose ids differ only in punctuation (gain#557)"
+    )
+    by_task = dict(results)
+    assert len(by_task) == len(ids), "a task was delivered more than once"
+    for i, task_id in enumerate(ids):
+        assert by_task[Task(task_id)] == i * 2, (
+            f"task {task_id!r} was delivered {by_task[Task(task_id)]!r} "
+            f"instead of its own result {i * 2}; its dask key was shared "
+            f"with a sibling task (gain#557)"
+        )
+
+
+def slowly_tagged(stamp: str, x: int) -> str:
+    # Slow enough that the rest of the run is still in flight when the first
+    # result is taken and the run abandoned -- see
+    # ``test_an_abandoned_run_does_not_feed_stale_results_to_the_next_run``.
+    time.sleep(0.1)
     return f"{stamp}:{x * 2}"
 
 
@@ -515,49 +651,78 @@ def test_an_abandoned_run_does_not_feed_stale_results_to_the_next_run(
     dask_client: Client,
     tmp_path: pathlib.Path,
 ) -> None:
-    """An abandoned run must release the keys it pinned (gain#480).
+    """A retry must never be handed an abandoned run's results (gain#531).
 
-    Joining the worker threads is only half of "a run releases what it
-    owns". The other half is the futures: a run that ends abnormally leaves
-    its submitted futures in the run state, and the executor submits with an
-    explicit ``key=`` derived from the task id, so those keys stay pinned on
-    a client that outlives the run. A later run of the same graph is then
-    deduplicated against them and is handed the ABANDONED run's results
-    without executing anything -- and ``execute`` writes them into the task
-    cache, so with a ``FileTaskCache`` the stale answers persist.
+    A run that ends abnormally leaves its submitted futures in the run state
+    and its keys known to the scheduler. If a later run of the same graph
+    submits the SAME keys -- which it did as long as a key was derived from
+    the task id alone -- it is deduplicated against them and handed the
+    ABANDONED run's results without executing anything. ``execute`` writes
+    every result it yields into the task cache, so with a ``FileTaskCache``
+    the stale answers persist.
 
     That is a silent wrong answer, not a hang, which makes it the more
-    dangerous half. Retrying a failed run in the same process is exactly
-    when it bites, and it is exactly what a caller does after a run without
-    ``--keep-going`` reports a task error.
+    dangerous half of gain#480. Retrying a failed run in the same process is
+    exactly when it bites, and it is exactly what a caller does after a run
+    without ``--keep-going`` reports a task error.
 
-    The stamp is a task *argument*, so it is baked in when the graph is
-    built rather than read when the task runs: the dask key does not depend
-    on it, so a stale key returns the first run's stamp no matter when the
-    cluster gets round to executing it. Deterministic either way.
+    Releasing the abandoned run's futures -- which its teardown does, and
+    must keep doing -- cannot be what protects the next run.
+    ``Future.release()`` decrements a client-side refcount and queues
+    ``client-releases-keys``; it does not wait for the scheduler to forget
+    the key, and the key may still be ``processing`` on a worker. So between
+    the release and the scheduler applying it there is a window, a few tens
+    of milliseconds wide, in which the keys are still the abandoned run's.
+    A retry landing inside it got that run's answers -- which is why this
+    test was ~8% flaky rather than red: teardown usually, but not always,
+    outlasted the window.
+
+    Suppressing the release is how that window is held open deterministically
+    here: the futures are kept instead of released, which is exactly what the
+    scheduler sees for as long as it has not applied the release. The next
+    run must be safe on its own, without anything having been forgotten.
+
+    The stamp is a task *argument*, baked in when the graph is built rather
+    than read when the task runs, so a stale key returns the first run's
+    stamp no matter when the cluster gets round to executing it.
     """
     def a_graph(stamp: str) -> TaskGraph:
         graph = TaskGraph()
-        for i in range(25):
+        for i in range(12):
             graph.create_task(
-                f"Stamped{i}", tagged, args=[stamp, i], deps=[])
+                f"Stamped{i}", slowly_tagged, args=[stamp, i], deps=[])
         return graph
 
     executor = DaskExecutor(dask_client, task_log_dir=str(tmp_path / "logs"))
 
-    tasks_iter = executor.execute(a_graph("first"))
-    next(tasks_iter)
-    tasks_iter.close()
+    # Held, not released -- and held for real: dropping the list would let
+    # ``Future.__del__`` release them after all.
+    unreleased: list[Any] = []
+    try:
+        with patch.object(
+            DaskExecutor, "_release_futures", staticmethod(unreleased.extend),
+        ):
+            tasks_iter = executor.execute(a_graph("first"))
+            next(tasks_iter)
+            tasks_iter.close()
 
-    results = _run_in_thread_with_timeout(
-        executor, a_graph("second"), timeout=60.0)
+        assert unreleased, (
+            "the abandoned run had nothing outstanding when it was torn "
+            "down, so the second run never faced its keys at all; this test "
+            "would pass without exercising anything"
+        )
 
-    assert len(results) == 25
+        results = _run_in_thread_with_timeout(
+            executor, a_graph("second"), timeout=60.0)
+    finally:
+        DaskExecutor._release_futures(unreleased)
+
+    assert len(results) == 12
     stamps = {str(result).split(":")[0] for _, result in results}
     assert stamps == {"second"}, (
-        f"the second run returned results stamped {sorted(stamps)}; the "
-        f"abandoned run left its task keys pinned on the shared client, so "
-        f"the second run was deduplicated against them and never ran"
+        f"the second run returned results stamped {sorted(stamps)}; it "
+        f"submitted the keys the abandoned run had already used, so it was "
+        f"deduplicated against them and never ran (gain#531)"
     )
 
 
