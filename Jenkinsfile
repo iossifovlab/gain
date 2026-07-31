@@ -32,9 +32,23 @@ def runProject(Map args) {
     // `uv build`. .git is excluded from the Docker build context via
     // .dockerignore, which keeps the test image small and cacheable;
     // it's only needed at distribution-build time.
+    //
+    // --name/--label are what let post.cleanup reap this container.
+    // Aborting the build (timeout, or a user cancel) sends SIGTERM to
+    // this `sh` step, which kills the docker *client* — dockerd keeps
+    // the container running, and `--rm` only fires on an exit that
+    // never comes. Unnamed, it survives under a random moniker that
+    // nothing can target: four such orphans from four timed-out builds
+    // were still running 90 minutes later, holding ~2900% CPU of the
+    // agent's 32 cores between them and starving every subsequent
+    // build into the same timeout. The label is the handle cleanup
+    // sweeps by; the name is so `docker ps` says which build it
+    // belongs to while that is happening.
     sh label: "Run ${name} CI", script: """
         mkdir -p reports/${name} dist/${name}
         docker run --rm \\
+            --name gain-${distName}-ci-${env.CI_TAG} \\
+            --label ci-tag=${env.CI_TAG} \\
             -v \$PWD/reports/${name}:/reports \\
             -v \$PWD/dist/${name}:/dist \\
             -v \$PWD/.git:/workspace/.git:ro \\
@@ -512,6 +526,8 @@ pipeline {
                                     sh label: 'Run spliceai_annotator CI (onnx backend)', script: """
                                         mkdir -p reports/spliceai_annotator_onnx
                                         docker run --rm \\
+                                            --name gain-spliceai-annotator-onnx-ci-${env.CI_TAG} \\
+                                            --label ci-tag=${env.CI_TAG} \\
                                             -v \$PWD/reports/spliceai_annotator_onnx:/reports \\
                                             -e SPLICEAI_BACKEND=onnx \\
                                             gain-spliceai-annotator-ci:${env.CI_TAG} \\
@@ -602,6 +618,8 @@ pipeline {
                                     sh label: 'Run web_ui CI', script: """
                                         mkdir -p reports/web_ui
                                         docker run --rm \\
+                                            --name gain-web-ui-ci-${env.CI_TAG} \\
+                                            --label ci-tag=${env.CI_TAG} \\
                                             -v \$PWD/reports/web_ui:/reports \\
                                             ${imageTag} \\
                                             sh -c '
@@ -696,6 +714,8 @@ pipeline {
                                 -t gain-core-ci:${CI_TAG} .
                             mkdir -p dist/core
                             docker run --rm \
+                                --name gain-core-wheel-${CI_TAG} \
+                                --label ci-tag=${CI_TAG} \
                                 -v $PWD/dist/core:/dist \
                                 -v $PWD/.git:/workspace/.git:ro \
                                 gain-core-ci:${CI_TAG} \
@@ -740,6 +760,8 @@ pipeline {
                             # 'Conda packages' stage.
                             DOCKER_USER="$(id -u):$(id -g)"
                             docker run --rm \
+                                --name gain-core-conda-${CI_TAG} \
+                                --label ci-tag=${CI_TAG} \
                                 --user "$DOCKER_USER" \
                                 -e HOME=/tmp \
                                 -v $PWD:/workspace \
@@ -781,6 +803,8 @@ pipeline {
                                 -t gain-core-ci:${CI_TAG} .
                             mkdir -p dist/docs
                             docker run --rm \
+                                --name gain-docs-build-${CI_TAG} \
+                                --label ci-tag=${CI_TAG} \
                                 -v $PWD:/workspace \
                                 -v $PWD/.git:/workspace/.git:ro \
                                 -w /workspace \
@@ -824,6 +848,8 @@ pipeline {
                         )]) {
                             sh '''
                                 docker run --rm \
+                                    --name gain-docs-deploy-${CI_TAG} \
+                                    --label ci-tag=${CI_TAG} \
                                     -v $PWD:/workspace \
                                     -v $SSH_KEY:/deploy.key:ro \
                                     -e SSH_USER \
@@ -873,6 +899,8 @@ pipeline {
                             for proj in core demo_annotator vep_annotator spliceai_annotator; do
                                 mkdir -p conda/$proj
                                 docker run --rm \
+                                    --name gain-$proj-conda-${CI_TAG} \
+                                    --label ci-tag=${CI_TAG} \
                                     --user "$DOCKER_USER" \
                                     -e HOME=/tmp \
                                     -v $PWD:/workspace \
@@ -1340,6 +1368,28 @@ pipeline {
         }
         cleanup {
             sh '''
+                # Containers first: a running one pins its image, so an
+                # rmi below would fail on exactly the build that most
+                # needs cleaning up.
+                #
+                # Aborting a build (the 1h timeout, or a user cancel)
+                # SIGTERMs the `sh` step, killing the docker *client*
+                # while dockerd keeps the container running — `--rm`
+                # only fires on an exit that never comes. Every
+                # `docker run` in this file therefore carries
+                # `--label ci-tag=$CI_TAG`, and this sweeps by that
+                # label. Sweeping by label rather than by an enumerated
+                # name list means a stage added later is reaped without
+                # anyone remembering to extend this block.
+                #
+                # The filter is $CI_TAG-scoped for the same reason the
+                # rmi loop below is: an unscoped sweep would kill a
+                # concurrently-building branch's containers outright,
+                # which is #478 with a bigger blast radius.
+                orphans="$(docker ps -aq --filter "label=ci-tag=${CI_TAG}")"
+                if [ -n "$orphans" ]; then
+                    echo "$orphans" | xargs -r docker rm -f || true
+                fi
                 # Remove exactly the names this build created — all of
                 # them $CI_TAG-scoped. An rmi of an unscoped
                 # <name>:$BUILD_NUMBER here would untag a concurrent
