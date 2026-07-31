@@ -305,7 +305,14 @@
                 const suffix = ["B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
                 const exp = Math.floor(Math.log(bytes) / Math.log(1024));
                 const size = Math.round(bytes / Math.pow(1024, exp) * 100) / 100;
-                return size + " " + suffix[exp];
+                // convert_size interpolates a rounded float, so an integral
+                // magnitude keeps a decimal place ("2.0 GB"). String() drops
+                // it, which would print folder sizes in a different format
+                // from the resource sizes listed beside them.
+                const text = Number.isInteger(size)
+                    ? size.toFixed(1)
+                    : String(size);
+                return text + " " + suffix[exp];
             }
 
             function escapeHtml(value) {
@@ -413,7 +420,11 @@
                     const d = res.data;
                     const meta = [
                         d.type,
-                        d.version ? "v" + d.version : null,
+                        // get_version_str() renders an unversioned resource
+                        // as "0", which is truthy — version 0 means absent.
+                        d.version && d.version !== "0"
+                            ? "v" + d.version
+                            : null,
                         d.summary,
                     ].filter(Boolean).join(" · ");
                     const row = document.createElement("div");
@@ -481,15 +492,19 @@
         const ths = Array.from(table.querySelectorAll('thead th'));
 
         // Proportionally rescale all columns when the wrapper changes size.
-        // Col widths start as CSS percentages; the observer only acts once pixel
-        // widths have been snapshotted on first drag (colTotal is NaN until then).
+        // Col widths start as inline CSS percentages, so colTotal is 100 on the
+        // first observation and the percentages are converted to pixels there.
         const wrapper = document.getElementById('table-wrapper');
         const wrapperObserver = new ResizeObserver(() => {
           const newWidth = table.clientWidth;
           const colTotal = cols.reduce((s, c) => s + parseInt(c.style.width, 10), 0);
+          // Bail on a zero measurement: hiding the wrapper (the hierarchical
+          // view does) fires the observer with clientWidth 0, and scaling by 0
+          // would zero every col permanently — colTotal would then be 0 too, so
+          // the guard below would return early forever and never recover.
           // Guard < 2px to avoid an infinite loop: writing col widths can itself
           // trigger the observer.
-          if (!colTotal || Math.abs(newWidth - colTotal) < 2) return;
+          if (!newWidth || !colTotal || Math.abs(newWidth - colTotal) < 2) return;
           const scale = newWidth / colTotal;
           cols.forEach(c => { c.style.width = Math.round(parseInt(c.style.width, 10) * scale) + 'px'; });
         });
