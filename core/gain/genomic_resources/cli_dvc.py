@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from typing import cast
 
 from gain import logging
+from gain.genomic_resources.cli_errors import RESOURCE_ERRORS
 from gain.genomic_resources.dvc import (
     is_dvc_directory_out,
     parse_dvc_pointer_out,
@@ -81,7 +82,14 @@ def refuse_dvc_directory_outputs(
     A sidecar this pass cannot read or cannot parse is not its business:
     it asks one question -- does any sidecar describe a directory? -- and
     ``cli.collect_dvc_entries`` remains the one place that reports an
-    unusable sidecar, so a run does not warn about it twice.
+    unusable sidecar, so a run does not warn about it twice. Neither is a
+    resource whose files cannot even be LISTED -- an unreadable directory,
+    a DVC cache this run may not traverse, a remote store that fails to
+    describe a key it just listed. It is skipped for the same reason:
+    the command's own per-resource handler is what reports it and fails
+    that resource alone, and a pre-flight that raised instead would take
+    the whole run down over one broken resource -- the very failure mode
+    gain#503 removed.
 
     It costs one extra listing of the selected resources, since the
     listing is what says which sidecars exist and the answer is needed
@@ -94,7 +102,14 @@ def refuse_dvc_directory_outputs(
             ``dvc add <dir>`` output.
     """
     for res in resources:
-        for entry in proto.collect_resource_entries(res):
+        try:
+            entries = list(proto.collect_resource_entries(res))
+        except RESOURCE_ERRORS:
+            logger.debug(
+                "cannot list <%s> before the command starts; leaving it to "
+                "the command itself", res.resource_id, exc_info=True)
+            continue
+        for entry in entries:
             if not entry.name.endswith(".dvc"):
                 continue
             filename = entry.name[:-4]

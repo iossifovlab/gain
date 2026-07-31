@@ -1183,6 +1183,7 @@ HEALTHY_SCORE_DATA = """
 # reaching the offender.
 HEALTHY_RESOURCE_ID = "aaa_healthy_score"
 DIR_RESOURCE_ID = "zzz_dvc_directory"
+UNLISTABLE_RESOURCE_ID = "zzz_unlistable"
 
 
 def setup_mixed_dvc_directory_grr(path: pathlib.Path) -> None:
@@ -1249,6 +1250,62 @@ def test_a_refused_grr_is_left_exactly_as_it_was_found(
         cli_manage(args)
     assert excinfo.value.code == 1
     assert tree_of(tmp_path) == before
+
+
+def setup_unlistable_resource_grr(path: pathlib.Path) -> pathlib.Path:
+    """Set up a GRR whose SECOND resource cannot be listed at all.
+
+    A subdirectory nobody may traverse is the EACCES case gain#503 is
+    about -- a DVC cache this run may not enter -- reproduced without a
+    cache: the listing of the resource raises, so any pass that walks the
+    resource's files raises with it.
+    """
+    setup_directories(path, {
+        HEALTHY_RESOURCE_ID: {
+            "genomic_resource.yaml": "",
+            "data.txt": ORIGINAL_DATA,
+        },
+        UNLISTABLE_RESOURCE_ID: {
+            "genomic_resource.yaml": "",
+            "sub": {"data.txt": ORIGINAL_DATA},
+        },
+    })
+    build_filesystem_test_protocol(path, repair=False)
+    locked = path / UNLISTABLE_RESOURCE_ID / "sub"
+    locked.chmod(0o000)
+    return locked
+
+
+def test_an_unlistable_resource_does_not_abort_the_preflight(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One resource the pre-flight cannot list fails only itself (gain#503).
+
+    The pre-flight walks every selected resource before the command
+    writes anything, so it meets a resource whose files cannot be listed
+    first -- and a listing that raises there used to take the whole run
+    down with an unhandled `OSError`, leaving the healthy resources of
+    the repository unprocessed and unreported.
+    """
+    if os.geteuid() == 0:
+        pytest.skip("root traverses a mode-000 directory regardless")
+    # Given a GRR with a healthy resource and one that cannot be listed
+    locked = setup_unlistable_resource_grr(tmp_path)
+
+    try:
+        # When the whole repository is manifested - it fails
+        with caplog.at_level(logging.ERROR), \
+                pytest.raises(SystemExit) as excinfo:
+            cli_manage(["repo-manifest", "-R", str(tmp_path)])
+        assert excinfo.value.code == 1
+
+        # Then the healthy resource was manifested anyway ...
+        assert (tmp_path / HEALTHY_RESOURCE_ID / ".MANIFEST").exists()
+        # ... and the offender is named as the one that failed
+        assert UNLISTABLE_RESOURCE_ID in caplog.text
+    finally:
+        locked.chmod(0o755)
 
 
 def test_a_per_file_dvc_resource_is_not_refused(
