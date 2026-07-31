@@ -1699,9 +1699,28 @@ def test_bare_fragment_score_is_readable_minimal(
 ) -> None:
     res = a_fragment_score().build_resource(tmp_path)
 
-    assert res.get_type() == "cnv_collection"
+    assert res.get_type() == "fragment_score"
     fragments = FragmentScore(res).open().fetch_fragment_scores("1", 10, 200)
     assert len(fragments) == 2
+
+
+@pytest.mark.parametrize(
+    "resource_type", ["fragment_score", "cnv_collection"])
+def test_fragment_score_renders_either_spelling_on_request(
+    tmp_path: pathlib.Path, resource_type: str,
+) -> None:
+    res = (
+        a_fragment_score()
+        .with_resource_type(resource_type)
+        .build_resource(tmp_path)
+    )
+
+    assert res.get_type() == resource_type
+
+
+def test_fragment_score_refuses_a_type_naming_no_fragment_score() -> None:
+    with pytest.raises(ValueError, match="does not name a fragment score"):
+        a_fragment_score().with_resource_type("position_score")
 
 
 def test_fragment_score_reads_back_its_regions(

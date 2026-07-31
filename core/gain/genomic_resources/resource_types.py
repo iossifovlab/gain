@@ -13,11 +13,13 @@ See ``docs/adr/0003-fragment-score-vocabulary.md``.
 
 #: The resource ``type:`` values that name a fragment score.
 #:
-#: Two spellings, both permanent.  ``fragment_score`` is what a new resource
-#: should declare; ``cnv_collection`` is what every deployed GRR declares
-#: today and is therefore NOT deprecated.  Migrating the deployed data is
-#: gain#469 and is gated on client rollout, so the legacy spelling outlives
-#: this module's memory of why.
+#: Two spellings, both permanent.  ``fragment_score`` is what a resource
+#: should declare, and what the public GRR declares since the migration;
+#: ``cnv_collection`` is what a repository that has not migrated declares
+#: and is therefore NOT deprecated.  The resources still on it are tracked
+#: in ``iossifovlab/grr``#19, and third-party repositories answer to no
+#: migration at all, so the legacy spelling outlives this module's memory
+#: of why.
 #:
 #: A tuple rather than a set: it is used for membership, but also rendered
 #: into user-facing messages and into SQL placeholders, and a set would

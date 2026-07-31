@@ -43,6 +43,7 @@ from gain.genomic_resources.testing import (
 from gain.genomic_resources.testing.builders import a_fragment_score, a_grr
 
 FRAGMENT_SCORE_TYPE = "fragment_score"
+LEGACY_RESOURCE_TYPE = "cnv_collection"
 
 CORE_PYPROJECT = pathlib.Path(__file__).parents[3] / "pyproject.toml"
 
@@ -187,7 +188,10 @@ def legacy_typed_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
         a_grr()
         .with_resource(
             "fragments",
-            a_fragment_score().with_score("frequency", "float").with_data("""
+            a_fragment_score()
+            .with_resource_type(LEGACY_RESOURCE_TYPE)
+            .with_score("frequency", "float")
+            .with_data("""
                 chrom  pos_begin  pos_end  frequency
                 1      10         20       0.02
             """),
@@ -202,22 +206,32 @@ def legacy_typed_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
     "cnv_collection",
     "cnv_collection_annotator",
 ])
-@pytest.mark.parametrize("grr_fixture", ["modern_grr", "legacy_typed_grr"])
+@pytest.mark.parametrize(("grr_fixture", "resource_type"), [
+    ("modern_grr", FRAGMENT_SCORE_TYPE),
+    ("legacy_typed_grr", LEGACY_RESOURCE_TYPE),
+])
 def test_every_annotator_name_wildcard_matches_either_resource_type(
     annotator_name: str,
     grr_fixture: str,
+    resource_type: str,
     request: pytest.FixtureRequest,
 ) -> None:
     """The two vocabularies are not two parallel worlds.
 
     A name and a type can be spelled independently -- a pipeline on the new
-    name may point at a GRR still on the old type, which is exactly the
-    state the deployed GRRs will be in until gain#469.  So all four
+    name may point at a GRR still on the old type, which is the state the
+    resources tracked in ``iossifovlab/grr``#19 are still in.  So all four
     annotator names must resolve against both resource types; keying the
     map on one spelling each would silently return no matches, and a
     wildcard that matches nothing annotates nothing rather than failing.
+
+    The type assertion is what keeps this a CROSS-vocabulary test: the two
+    fixtures only span the cross terms while they really do declare
+    different types, and a fixture that quietly picked up the other
+    spelling would leave all four cases exercising one of them twice.
     """
     grr = request.getfixturevalue(grr_fixture)
+    assert grr.get_resource("fragments").get_type() == resource_type
     assert AnnotationConfigParser.query_resources(
         annotator_name, "*", grr) == ["fragments"]
 

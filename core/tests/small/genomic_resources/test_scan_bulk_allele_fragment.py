@@ -177,7 +177,7 @@ def test_multi_base_allele_record_clipped_by_region_weighs_one(
 
 
 def _fragment_tabix(
-    tmp_path: pathlib.Path, resource_type: str = "cnv_collection",
+    tmp_path: pathlib.Path, resource_type: str = "fragment_score",
 ) -> GenomicResource:
     """A fragment score with overlapping spans of DIFFERING lengths."""
     return (
