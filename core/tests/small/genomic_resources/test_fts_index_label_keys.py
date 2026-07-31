@@ -71,6 +71,30 @@ def _resource_content(labels: dict[str, str]) -> dict[str, str]:
     }
 
 
+def _non_score_resource_content(labels: dict[str, str]) -> dict[str, str]:
+    """A resource whose implementation contributes no score fields.
+
+    The score fields are the ones a *score* implementation adds on top of
+    the base header, so a resource that is not a score is the only one that
+    can reach the index carrying a label spelled like one (gain#542).
+    """
+    labels_yaml = "\n".join(starmap(_label_line, labels.items()))
+    return {
+        "genomic_resource.yaml": textwrap.dedent("""
+            type: genome
+            filename: chr.fa
+            meta:
+                description: Example genome
+                labels:
+        """) + labels_yaml,
+        "chr.fa": convert_to_tab_separated("""
+            >chr1
+            NNACCCAAAC
+        """),
+        "chr.fa.fai": "chr1\t10\t7\t10\t11\n",
+    }
+
+
 def build_grr(
     tmp_path: pathlib.Path,
     resources: dict[str, dict[str, str]],
@@ -81,6 +105,37 @@ def build_grr(
         {
             resource_id: _resource_content(labels)
             for resource_id, labels in resources.items()
+        },
+    )
+    cli_manage(["repo-manifest", "-R", str(tmp_path)])
+    return build_filesystem_test_protocol(tmp_path, repair=False)
+
+
+def build_mixed_grr(
+    tmp_path: pathlib.Path,
+    scores: dict[str, dict[str, str]],
+    non_scores: dict[str, dict[str, str]],
+) -> FsspecReadWriteProtocol:
+    """Build a GRR holding both score and non-score resources.
+
+    The score fields are only in the index because a score implementation
+    put them there, so telling the two families apart is what makes the
+    shared-column case reachable (gain#542).
+    """
+    # The two families share one id space; letting a collision through
+    # would silently drop a resource the caller thinks it built.
+    assert not (scores.keys() & non_scores.keys())
+    setup_directories(
+        tmp_path,
+        {
+            **{
+                resource_id: _resource_content(labels)
+                for resource_id, labels in scores.items()
+            },
+            **{
+                resource_id: _non_score_resource_content(labels)
+                for resource_id, labels in non_scores.items()
+            },
         },
     )
     cli_manage(["repo-manifest", "-R", str(tmp_path)])
@@ -444,6 +499,40 @@ def _build_resource(labels: dict[str, str]) -> GenomicResource:
     return build_inmemory_test_resource(_resource_content(labels))
 
 
+def _build_non_score_resource(labels: dict[str, str]) -> GenomicResource:
+    return build_inmemory_test_resource(_non_score_resource_content(labels))
+
+
+def test_collect_index_info_refuses_a_score_field_as_a_label_key() -> None:
+    # A non-score resource's own header has no score fields, so nothing in
+    # it repeats `score_ids` -- but the index table's columns are the union
+    # across the repository, so the label would land in the very column
+    # score resources fill with their score-id list (gain#542).
+    impl = build_resource_implementation(
+        _build_non_score_resource({"score_ids": "mylabel"}))
+
+    with pytest.raises(ValueError, match="cannot index resource") as excinfo:
+        impl.collect_index_info()
+
+    assert "<score_ids>" in str(excinfo.value)
+
+
+def test_a_refused_score_field_label_names_the_reserved_fields() -> None:
+    # The curator's resource has no field of its own called `score_ids`, so
+    # "repeats a field the index already has" does not on its own tell them
+    # why their genome was dropped.  The message has to enumerate the names
+    # the index reserves, the way it already enumerates the FTS5 ones.
+    impl = build_resource_implementation(
+        _build_non_score_resource({"score_ids": "mylabel"}))
+
+    with pytest.raises(ValueError) as excinfo:
+        impl.collect_index_info()
+
+    message = str(excinfo.value)
+    for reserved in ("full_id", "score_ids", "score_descriptions"):
+        assert reserved in message
+
+
 def test_collect_index_info_returns_the_label_keys_as_fields() -> None:
     impl = build_resource_implementation(
         _build_resource({"ref_genome": "hg38"}))
@@ -478,6 +567,72 @@ def test_collect_index_info_refuses_a_label_key_it_cannot_index(
     assert INDEX_COLUMN_PATTERN in str(excinfo.value)
 
 
+@pytest.mark.parametrize("label_key", ["score_ids", "score_descriptions"])
+def test_a_non_score_resource_cannot_label_itself_with_a_score_field(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    label_key: str,
+) -> None:
+    # The index has one column per name for the whole repository, so this
+    # label would land in the column the score resource fills with its
+    # score-id list -- one column meaning a label for one resource and a
+    # resource field for another.  Rejected, and only that resource is
+    # lost (gain#542).
+    # A good resource on either side of the bad one: resources are walked
+    # in filesystem order, so an isolation claim tested with the survivor
+    # only ever before the offender passes without proving much.
+    proto = build_mixed_grr(
+        tmp_path,
+        scores={
+            "aaa_benign": {"ref_genome": "hg38"},
+            "zzz_benign": {"ref_genome": "hg19"},
+        },
+        non_scores={"evil": {label_key: "boom"}},
+    )
+
+    with caplog.at_level(logging.ERROR):
+        failed = _create_contents_db(proto)
+
+    assert failed == {"evil"}
+    messages = [
+        record.getMessage() for record in caplog.records
+        if record.levelno == logging.ERROR
+    ]
+    assert len(messages) == 1
+    assert "<evil>" in messages[0]
+    assert f"<{label_key}>" in messages[0]
+
+    # Losing the offender must not cost the repository anything else.
+    repo = GenomicResourceProtocolRepo(proto)
+    assert {
+        res.resource_id
+        for res in repo.search_resources(search_term="benign")
+    } == {"aaa_benign", "zzz_benign"}
+
+
+def test_a_non_score_resource_keeps_labels_that_collide_with_nothing(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The refusal must not spread to ordinary labels.  `reference_genome`
+    # is carried by real resources in the published repositories, so it is
+    # the spelling that would hurt most to lose.
+    proto = build_mixed_grr(
+        tmp_path,
+        scores={"benign": {"ref_genome": "hg38"}},
+        non_scores={"genome": {"reference_genome": "hg38"}},
+    )
+
+    assert _create_contents_db(proto) == frozenset()
+
+    repo = GenomicResourceProtocolRepo(proto)
+    assert {
+        res.resource_id
+        for res in repo.search_resources(
+            resource_query='*[reference_genome="hg38"]',
+            resource_type="genome")
+    } == {"genome"}
+
+
 def test_collect_index_info_refuses_a_label_key_that_is_not_a_string() -> None:
     impl = build_resource_implementation(
         _build_resource({RawKey("2024"): "release"}))
@@ -504,7 +659,11 @@ def test_validate_index_columns_accepts_the_fields_the_live_grr_uses() -> None:
     (["id", "cell-type"], "is not a valid SQL identifier"),
     (["id", "order"], "is an SQL keyword"),
     (["id", "rank"], "is a name FTS5 reserves"),
-    (["id", "ID"], "repeats a field the index already has"),
+    # A repeat of a name the index keeps for a resource field is reported
+    # as such -- the curator may have no field of that name to look at.
+    (["id", "ID"], "is a name the index reserves for a resource field"),
+    # A repeat of anything else is a plain collision between two labels.
+    (["assay", "Assay"], "repeats a field the index already has"),
     (["id", 2024], "is not a string but int"),
 ])
 def test_validate_index_columns_names_the_resource_and_the_column(
