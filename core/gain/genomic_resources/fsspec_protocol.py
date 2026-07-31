@@ -14,6 +14,7 @@ import pathlib
 import re
 import tempfile
 import time
+import uuid
 from collections.abc import Callable, Generator, Iterable
 from contextlib import AbstractContextManager, suppress
 from dataclasses import asdict
@@ -1561,8 +1562,9 @@ class FsspecReadWriteProtocol(
     ) -> ResourceFileState:
         """Download a single resource file once and verify it.
 
-        Opens a fresh remote handle and truncates the destination, so a
-        retried call recovers cleanly from a partially-written file.
+        Opens a fresh remote handle and writes into a unique temporary file
+        under the resource's internal ``.grr`` directory. The verified file
+        is moved into place only after the download completes successfully.
 
         The download is verified twice: the number of bytes written must
         equal the manifest's recorded size (a silent short read in the
@@ -1577,51 +1579,62 @@ class FsspecReadWriteProtocol(
         right after it is written, to drive a byte-level progress bar
         (see gain#77).
         """
-        bytes_written = 0
-        with remote_resource.open_raw_file(
-                filename, "rb",
-                uncompress=False) as infile, \
-                self.open_raw_file(
-                    dest_resource,
-                    filename, "wb",
-                    uncompress=False) as outfile:
+        state_path = self._get_resource_file_state_path(
+            dest_resource, filename)
+        temp_filepath = f"{state_path}.{uuid.uuid4().hex}.part"
+        temp_parent = os.path.dirname(temp_filepath)
+        if not self.filesystem.exists(temp_parent):
+            self.filesystem.makedirs(temp_parent, exist_ok=True)
 
-            md5_hash = hashlib.md5()  # noqa
-            while chunk := infile.read(self.CHUNK_SIZE):
-                outfile.write(chunk)
-                bytes_written += len(chunk)
-                if on_bytes is not None:
-                    on_bytes(len(chunk))
-                md5_hash.update(chunk)
+        try:
+            bytes_written = 0
+            with remote_resource.open_raw_file(
+                    filename, "rb",
+                    uncompress=False) as infile, \
+                    self.filesystem.open(temp_filepath, "wb") as outfile:
 
-        md5 = md5_hash.hexdigest()
+                md5_hash = hashlib.md5()  # noqa
+                while chunk := infile.read(self.CHUNK_SIZE):
+                    outfile.write(chunk)
+                    bytes_written += len(chunk)
+                    if on_bytes is not None:
+                        on_bytes(len(chunk))
+                    md5_hash.update(chunk)
 
-        if not self.filesystem.exists(dest_filepath):
-            raise OSError(f"destination file not created {dest_filepath}")
+            md5 = md5_hash.hexdigest()
 
-        if bytes_written != expected_size:
-            raise TruncatedDownloadError(
-                f"file copy is truncated "
-                f"{dest_resource.resource_id} ({filename}); "
-                f"received {bytes_written} bytes, "
-                f"expected {expected_size}")
+            if not self.filesystem.exists(temp_filepath):
+                raise OSError(
+                    f"temporary file not created {temp_filepath}")
 
-        if md5 != expected_md5:
-            raise ChecksumMismatchError(
-                f"file copy is broken "
-                f"{dest_resource.resource_id} ({filename}); "
-                f"received {bytes_written} bytes (size ok); "
-                f"md5sum are different: "
-                f"{md5}!={expected_md5}")
+            if bytes_written != expected_size:
+                raise TruncatedDownloadError(
+                    f"file copy is truncated "
+                    f"{dest_resource.resource_id} ({filename}); "
+                    f"received {bytes_written} bytes, "
+                    f"expected {expected_size}")
 
-        state = self.build_resource_file_state(
-            dest_resource,
-            filename,
-            md5sum=md5)
+            if md5 != expected_md5:
+                raise ChecksumMismatchError(
+                    f"file copy is broken "
+                    f"{dest_resource.resource_id} ({filename}); "
+                    f"received {bytes_written} bytes (size ok); "
+                    f"md5sum are different: "
+                    f"{md5}!={expected_md5}")
 
-        self.save_resource_file_state(dest_resource, state)
+            self.filesystem.mv(temp_filepath, dest_filepath)
 
-        return state
+            state = self.build_resource_file_state(
+                dest_resource,
+                filename,
+                md5sum=md5)
+
+            self.save_resource_file_state(dest_resource, state)
+
+            return state
+        finally:
+            if self.filesystem.exists(temp_filepath):
+                self.filesystem.delete(temp_filepath)
 
     def classify_resource_file(
             self, remote_resource: GenomicResource,
