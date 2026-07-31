@@ -188,7 +188,7 @@ how many resources of each type are present for each genome. The result is organ
     grr = build_genomic_resource_repository()
 
     genomes = ["hg19", "hg38", "hs1"]
-    types = ["genome", "gene_models", "position_score", "allele_score", "cnv_collection"]
+    types = ["genome", "gene_models", "position_score", "allele_score", "fragment_score"]
 
     # initialize counts
     counts = {g: defaultdict(int) for g in genomes}
@@ -224,11 +224,17 @@ where each entry gives the number of resources of that type for the correspondin
     :header-rows: 1
 
     resource_type,hg19,hg38,hs1
-    genome,1,3,1
-    gene_models,5,47,1
-    position_score,152,8,0
-    allele_score,5,31,0
-    cnv_collection,0,7,0
+    genome,2,4,1
+    gene_models,5,51,1
+    position_score,135,8,0
+    allele_score,4,26,0
+    fragment_score,0,6,0
+
+.. note::
+
+    These counts describe the default GRR as of 31 July 2026. They track the
+    contents of the repository, so the numbers you get will differ as
+    resources are added and removed.
 
 
 
