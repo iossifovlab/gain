@@ -118,8 +118,8 @@ def test_picker_filtered_by_the_new_type_finds_legacy_typed_resources(
     """The editor's resource picker must not go blank.
 
     The annotator template asks the picker for ``resource_type:
-    fragment_score``, but every deployed GRR declares ``cnv_collection``.
-    An exact-equality filter would therefore offer the user an empty list
+    fragment_score``, while a GRR may declare ``cnv_collection``. An
+    exact-equality filter would therefore offer the user an empty list
     -- a silent dead end, since an empty result is indistinguishable from
     "this GRR has none".
     """
@@ -144,13 +144,13 @@ RESOURCE_ANNOTATORS_URL = "/api/editor/resource_annotators"
 def test_resource_first_flow_works_for_a_legacy_typed_resource(
     client: APIClient,
 ) -> None:
-    """Picking a deployed fragment score must offer its annotator.
+    """Picking a legacy-typed fragment score must offer its annotator.
 
     The editor's resource-first flow asks "which annotators accept this
     resource?" by matching the annotator template's ``resource_type``
-    against the resource's own.  The template now says ``fragment_score``
-    while every deployed resource says ``cnv_collection``, so an equality
-    match returns an empty ``configs`` -- while ``default`` still names an
+    against the resource's own. The template says ``fragment_score`` while
+    this fixture says ``cnv_collection``, so an equality match returns an
+    empty ``configs`` -- while ``default`` still names an
     annotator.  The UI then looks the default up in the empty list, so this
     is a crash in the wizard rather than a shorter menu.
     """

@@ -2,11 +2,12 @@
 """Pin the configuration surface of the fragment score across its rename.
 
 The Python names moved from ``CnvCollection`` to ``FragmentScore``
-(gain#470); every string a user or a deployed GRR can type stayed exactly
-where it was.  The two halves are pinned here together on purpose -- the
+(gain#470); every configuration string a user or external GRR can supply
+stayed exactly where it was. The two halves are pinned here together -- the
 rename is only safe because the config surface did not move with it, and a
 later change that "finishes the job" by renaming a ``type:`` value or an
-entry-point key would break deployed resources this repository cannot grep.
+entry-point key would break third-party and private resources this repository
+cannot grep.
 
 gain#471 added the ``fragment_score`` spellings BESIDE these; the new half is
 pinned in ``test_fragment_score_vocabulary``.  Nothing here was replaced --
@@ -177,8 +178,8 @@ def test_legacy_cnv_filter_parameter_is_still_honoured(
 # survives deliberately wherever it spells a CONFIGURATION string -- the
 # resource type dispatched in ``genomic_scores``, ``with_resource_type``
 # in the test builders, the annotator names in ``annotation_config``, the
-# ``cnv_filter`` parameter -- because deployed GRRs and user pipelines
-# type those.  They are config, not leftovers; widening them is gain#471.
+# ``cnv_filter`` parameter -- because external GRRs and user pipelines may
+# type those. They are config, not leftovers; widening them was gain#471.
 @pytest.mark.parametrize("module_name,symbol", [
     ("gain.genomic_resources.genomic_scores", "CNV"),
     ("gain.genomic_resources.genomic_scores", "CnvCollection"),

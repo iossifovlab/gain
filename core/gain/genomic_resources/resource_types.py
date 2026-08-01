@@ -35,12 +35,10 @@ def equivalent_resource_types(resource_type: str) -> tuple[str, ...]:
     to itself, so a caller can filter by the result unconditionally without
     special-casing.
 
-    Exists because filtering resources by an exact type string went wrong
-    the moment a second spelling appeared: asking for ``fragment_score``
-    matched none of the deployed resources, which all declare
-    ``cnv_collection``.  An empty result is indistinguishable from "this
-    repository has none of those", so the failure is silent -- a wrong
-    answer rather than an error.
+    Exists because filtering resources by an exact type string can silently
+    omit resources that use the other accepted spelling. An empty result is
+    indistinguishable from "this repository has none of those", so the
+    failure is a wrong answer rather than an error.
     """
     if resource_type in FRAGMENT_SCORE_TYPES:
         return FRAGMENT_SCORE_TYPES

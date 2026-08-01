@@ -352,9 +352,9 @@ class AnnotationConfigParser:
         """
         # Maps an annotator name a user may type to the resource types it
         # consumes.  A SET, not one type: a fragment score has two accepted
-        # spellings and either annotator name must find either of them --
-        # a pipeline on the new name will point at GRRs still declaring the
-        # old type until gain#469 migrates them.
+        # spellings and either annotator name must find either of them.
+        # Third-party and private GRRs may use either spelling independently
+        # of migrations in repositories we control.
         annotator_resources_map = {
             "position_score": {"position_score"},
             "position_score_annotator": {"position_score"},

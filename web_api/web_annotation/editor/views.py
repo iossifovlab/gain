@@ -172,9 +172,9 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                 "resource_id": {
                     "field_type": "resource",
                     # Resolved against BOTH accepted resource types by the
-                    # resources endpoint -- deployed GRRs still declare
-                    # `cnv_collection`, and filtering on this string alone
-                    # would offer the user an empty picker.
+                    # resources endpoint. Third-party and private GRRs may
+                    # declare `cnv_collection`, and filtering on this string
+                    # alone would offer the user an empty picker.
                     "resource_type": "fragment_score",
                     "optional": False,
                 },
@@ -668,10 +668,10 @@ class ResourceAnnotators(EditorView):
                     field_type = field.get("field_type")
                     if field_type is not None and field_type == "resource":
                         resource_type = field.get("resource_type")
-                        # Expanded, not compared: the fragment score
-                        # template names `fragment_score` while every
-                        # deployed resource declares `cnv_collection`, and
-                        # an equality match here empties `configs` while
+                        # Expanded, not compared: the fragment score template
+                        # names `fragment_score`, while a resource may use the
+                        # accepted `cnv_collection` spelling. An equality
+                        # match here then empties `configs` while
                         # `default` still names an annotator -- which the
                         # UI then looks up in the empty list.
                         if resource_type is not None and (
@@ -699,8 +699,8 @@ class ResourceAnnotators(EditorView):
         resource_default_annotators_mapping = {
             "allele_score": "allele_score_annotator",
             "fragment_score": "fragment_score_annotator",
-            # Deployed GRRs still declare this type; both map to the one
-            # annotator, whose template emits the new vocabulary.
+            # Legacy-typed resources map to the same annotator, whose
+            # template emits the preferred vocabulary.
             "cnv_collection": "fragment_score_annotator",
             "gene_models": "effect_annotator",
             "gene_score": "gene_score_annotator",

@@ -288,8 +288,8 @@ def named_columns_grr(tmp_path: pathlib.Path) -> pathlib.Path:
     The addressing is the whole point of the fixture: ``get_column_key`` has
     an index to resolve only when the config names a column, so a table that
     leaves chrom/pos_begin/pos_end to their defaults never reaches the
-    resolution these tests are about.  Naming them is the shape of every
-    ``cnv_collection`` in the deployed GRR (#502).
+    resolution these tests are about. Naming them also exercises the legacy
+    ``cnv_collection`` configuration shape fixed in #502.
     """
     setup_directories(tmp_path, {
         "score_one": {
