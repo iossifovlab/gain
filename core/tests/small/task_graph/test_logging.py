@@ -76,8 +76,15 @@ def test_safe_task_id_truncates_long_ids() -> None:
     sanitized = safe_task_id(long_id)
 
     assert len(sanitized) <= 200
-    assert sanitized.startswith("x" * 150)
-    assert sanitized[150] == "_"
+    assert sanitized.startswith("x" * 100)
+    assert sanitized[100] == "_"
+    assert safe_task_id(long_id) == sanitized
+
+
+def test_safe_task_id_distinguishes_long_ids_with_the_same_prefix() -> None:
+    prefix = "x" * 200
+
+    assert safe_task_id(f"{prefix}a") != safe_task_id(f"{prefix}b")
 
 
 def test_configure_task_logging_returns_null_handler() -> None:

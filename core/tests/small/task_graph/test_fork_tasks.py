@@ -8,6 +8,7 @@ import pytest
 from gain.task_graph.base_executor import TaskGraphExecutorBase
 from gain.task_graph.cli_tools import TaskGraphCli
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph
+from gain.task_graph.logging import safe_task_id
 
 
 def add_to_list(what: int, where: list[int]) -> list[int]:
@@ -103,6 +104,38 @@ def test_exec_forked_simple(
     with fsspec.open(result_fn, "rb") as infile:
         result = pickle.load(infile)  # pyright: ignore
     assert result == [1]
+
+
+def test_exec_forked_with_long_task_id(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    task_id = "long-task-" + "x" * 210
+    task = TaskDesc(
+        Task(task_id),
+        sample_func,
+        [21],
+        {},
+        [],
+        [],
+        [],
+        [],
+    )
+    params = {
+        "fork_tasks": True,
+        "task_log_dir": None,
+        "task_status_dir": ".",
+    }
+
+    result = TaskGraphExecutorBase._exec(task, params)
+
+    assert result == 42
+    result_fn = TaskGraphExecutorBase._result_fn(
+        safe_task_id(task_id),
+        params,
+    )
+    assert pathlib.Path(result_fn).exists()
 
 
 def raise_exception() -> None:

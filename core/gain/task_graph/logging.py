@@ -1,6 +1,6 @@
+import hashlib
 import os
 import re
-import uuid
 from typing import Any
 
 from gain import logging
@@ -80,5 +80,5 @@ def safe_task_id(task_id: str) -> str:
     result = _RE_TASK_ID.sub("_", task_id)
     if len(result) <= 200:
         return result
-    result = result[:150]
-    return f"{result}_{uuid.uuid1()}"
+    digest = hashlib.sha256(task_id.encode("utf-8")).hexdigest()[:40]
+    return f"{result[:100]}_{digest}"
