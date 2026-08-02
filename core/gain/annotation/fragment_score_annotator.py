@@ -20,7 +20,7 @@ from gain.genomic_resources.score_def import ScoreValue
 
 #: Preferred spelling of the fragment-filter parameter.
 FRAGMENT_FILTER_PARAMETER = "fragment_filter"
-#: Legacy spelling, kept permanently -- deployed GRR pipelines write it.
+#: Legacy spelling, kept permanently -- pipelines we do not control write it.
 LEGACY_FILTER_PARAMETER = "cnv_filter"
 
 
@@ -35,9 +35,9 @@ class FragmentScoreAnnotator(AnnotatorBase):
     Configured as ``fragment_score`` / ``fragment_score_annotator``, with
     ``fragment_filter:`` selecting which fragments count.  The older
     ``cnv_collection`` / ``cnv_collection_annotator`` / ``cnv_filter``
-    spellings are equally accepted and are NOT deprecated -- deployed GRR
-    pipelines are written that way and migrating them is gain#469.  See
-    ``docs/adr/0003-fragment-score-vocabulary.md``.
+    spellings are equally accepted and are NOT deprecated -- third-party
+    and private pipelines are written that way and answer to no migration
+    of ours.  See ``docs/adr/0003-fragment-score-vocabulary.md``.
     """
 
     FRAGMENT_FILTER_GRAMMAR = textwrap.dedent("""
@@ -90,7 +90,7 @@ class FragmentScoreAnnotator(AnnotatorBase):
         self.filter_parser = Lark(self.FRAGMENT_FILTER_GRAMMAR)
 
         # Two spellings, both permanent -- `fragment_filter` is the one to
-        # write, `cnv_filter` is what deployed GRR pipelines already say.
+        # write, `cnv_filter` is what pipelines we do not control say.
         # Read BOTH unconditionally: `info.parameters` refuses a parameter
         # nobody read, so a `get` skipped after an early match would turn
         # the unmatched spelling into an "unused parameter" error instead

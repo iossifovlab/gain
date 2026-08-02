@@ -177,8 +177,9 @@ def test_legacy_cnv_filter_parameter_is_still_honoured(
 # survives deliberately wherever it spells a CONFIGURATION string -- the
 # resource type dispatched in ``genomic_scores``, ``with_resource_type``
 # in the test builders, the annotator names in ``annotation_config``, the
-# ``cnv_filter`` parameter -- because deployed GRRs and user pipelines
-# type those.  They are config, not leftovers; widening them is gain#471.
+# ``cnv_filter`` parameter -- because repositories and pipelines we do
+# not control type those.  They are config, not leftovers; widening them
+# is gain#471.
 @pytest.mark.parametrize("module_name,symbol", [
     ("gain.genomic_resources.genomic_scores", "CNV"),
     ("gain.genomic_resources.genomic_scores", "CnvCollection"),

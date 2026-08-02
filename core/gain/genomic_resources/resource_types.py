@@ -16,10 +16,10 @@ See ``docs/adr/0003-fragment-score-vocabulary.md``.
 #: Two spellings, both permanent.  ``fragment_score`` is what a resource
 #: should declare, and what the public GRR declares since the migration;
 #: ``cnv_collection`` is what a repository that has not migrated declares
-#: and is therefore NOT deprecated.  The resources still on it are tracked
-#: in ``iossifovlab/grr``#19, and third-party repositories answer to no
-#: migration at all, so the legacy spelling outlives this module's memory
-#: of why.
+#: and is therefore NOT deprecated.  Any first-party resources still on it
+#: are tracked in ``iossifovlab/grr``#19, and third-party repositories
+#: answer to no migration at all, so the legacy spelling outlives this
+#: module's memory of why.
 #:
 #: A tuple rather than a set: it is used for membership, but also rendered
 #: into user-facing messages and into SQL placeholders, and a set would
@@ -37,7 +37,7 @@ def equivalent_resource_types(resource_type: str) -> tuple[str, ...]:
 
     Exists because filtering resources by an exact type string went wrong
     the moment a second spelling appeared: asking for ``fragment_score``
-    matched none of the deployed resources, which all declare
+    matched nothing at all in a repository whose resources declare
     ``cnv_collection``.  An empty result is indistinguishable from "this
     repository has none of those", so the failure is silent -- a wrong
     answer rather than an error.

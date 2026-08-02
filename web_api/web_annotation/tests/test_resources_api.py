@@ -157,8 +157,8 @@ def test_get_resource_types(
         "gene_score",
         # Both accepted spellings are advertised here, unlike the editor's
         # annotator menu: this endpoint reports which resource types the
-        # API understands, and a deployed GRR really does contain the
-        # legacy one (gain#471).
+        # API understands, and the legacy one is permanently among them
+        # (gain#471).
         "fragment_score",
         "cnv_collection",
     }

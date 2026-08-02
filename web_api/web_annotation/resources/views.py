@@ -16,8 +16,7 @@ class ResourcesAPIView(AnnotationBaseView):
         "gene_set_collection", "genome",
         "gene_models", "allele_score",
         "liftover_chain",
-        # Both accepted spellings of a fragment score -- deployed GRRs
-        # declare the legacy one, new resources the other (gain#471).
+        # Both accepted spellings of a fragment score (gain#471).
         "fragment_score",
         "cnv_collection",
     }
