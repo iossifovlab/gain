@@ -18,6 +18,7 @@ from gain.genomic_resources.fsspec_protocol import (
 )
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
+    GenomicResource,
 )
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
@@ -216,3 +217,29 @@ def read_write_proto(tmp_path: pathlib.Path) -> FsspecReadWriteProtocol:
     root_path = tmp_path / "grr"
     setup_small_repo(root_path)
     return build_filesystem_test_protocol(root_path, repair=False)
+
+
+#: Id of the single ``type: basic`` resource ``BASIC_RESOURCE_LAYOUT`` lays
+#: out and the ``resource`` fixture below serves. Shared by the two modules
+#: covering the resource itself -- what makes two of them the same value
+#: (#524) and its manifest memo surviving a concurrent invalidate (#519):
+#: they need the identical resource, and keeping two copies of one setup is
+#: how the pair above silently drifted apart.
+BASIC_RESOURCE_ID = "one"
+
+BASIC_RESOURCE_LAYOUT = {
+    BASIC_RESOURCE_ID: {
+        GR_CONF_FILE_NAME: "type: basic\n",
+        "data.txt": "alabala",
+    },
+}
+
+
+@pytest.fixture
+def resource(tmp_path: pathlib.Path) -> GenomicResource:
+    """A resource whose manifest is written and loadable."""
+    root_path = tmp_path / "grr"
+    setup_directories(root_path, BASIC_RESOURCE_LAYOUT)
+    # Repairing the repository is what writes the manifest.
+    proto = build_filesystem_test_protocol(root_path)
+    return proto.get_resource(BASIC_RESOURCE_ID)
