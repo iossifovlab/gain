@@ -22,7 +22,6 @@ from unittest import mock
 import pytest
 from gain.genomic_resources.cached_repository import CachingProtocol
 from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
     GenomicResource,
 )
 from gain.genomic_resources.testing import (
@@ -30,23 +29,14 @@ from gain.genomic_resources.testing import (
     setup_directories,
 )
 
-RESOURCE_ID = "one"
-
-RESOURCE_LAYOUT = {
-    RESOURCE_ID: {
-        GR_CONF_FILE_NAME: "type: basic\n",
-        "data.txt": "alabala",
-    },
-}
-
-
-@pytest.fixture
-def resource(tmp_path: pathlib.Path) -> GenomicResource:
-    """A resource whose manifest is written and loadable."""
-    root_path = tmp_path / "grr"
-    setup_directories(root_path, RESOURCE_LAYOUT)
-    proto = build_filesystem_test_protocol(root_path)
-    return proto.get_resource(RESOURCE_ID)
+# ``resource`` comes from the package conftest, over the same single
+# ``type: basic`` resource ``test_resource_manifest_memo.py`` uses.
+from .conftest import (
+    BASIC_RESOURCE_ID as RESOURCE_ID,
+)
+from .conftest import (
+    BASIC_RESOURCE_LAYOUT as RESOURCE_LAYOUT,
+)
 
 
 def _same_resource_cold(resource: GenomicResource) -> GenomicResource:
