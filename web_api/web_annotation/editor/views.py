@@ -172,9 +172,10 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                 "resource_id": {
                     "field_type": "resource",
                     # Resolved against BOTH accepted resource types by the
-                    # resources endpoint -- deployed GRRs still declare
-                    # `cnv_collection`, and filtering on this string alone
-                    # would offer the user an empty picker.
+                    # resources endpoint -- a repository that never
+                    # migrated declares `cnv_collection`, and filtering on
+                    # this string alone would offer the user an empty
+                    # picker.
                     "resource_type": "fragment_score",
                     "optional": False,
                 },
@@ -669,9 +670,9 @@ class ResourceAnnotators(EditorView):
                     if field_type is not None and field_type == "resource":
                         resource_type = field.get("resource_type")
                         # Expanded, not compared: the fragment score
-                        # template names `fragment_score` while every
-                        # deployed resource declares `cnv_collection`, and
-                        # an equality match here empties `configs` while
+                        # template names `fragment_score` while an
+                        # unmigrated resource declares `cnv_collection`,
+                        # and an equality match here empties `configs` while
                         # `default` still names an annotator -- which the
                         # UI then looks up in the empty list.
                         if resource_type is not None and (
@@ -699,8 +700,8 @@ class ResourceAnnotators(EditorView):
         resource_default_annotators_mapping = {
             "allele_score": "allele_score_annotator",
             "fragment_score": "fragment_score_annotator",
-            # Deployed GRRs still declare this type; both map to the one
-            # annotator, whose template emits the new vocabulary.
+            # Both map to the one annotator, whose template emits the new
+            # vocabulary.
             "cnv_collection": "fragment_score_annotator",
             "gene_models": "effect_annotator",
             "gene_score": "gene_score_annotator",
