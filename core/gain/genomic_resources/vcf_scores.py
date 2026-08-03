@@ -19,16 +19,22 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from gain import logging
 from gain.genomic_resources.genomic_position_table.record import (
+    CHROM,
     PAYLOAD,
+    POS_BEGIN,
     Record,
 )
 from gain.genomic_resources.genomic_position_table.table_vcf import (
     ALLELE_INDEX,
     INFO,
     INFO_META,
+    VARIANT,
 )
 from gain.genomic_resources.score_def import GenomicScoreDef, ScoreValue
+
+logger = logging.getLogger(__name__)
 
 VCF_TYPE_CONVERSION_MAP = {
     "Integer": "int",
@@ -36,6 +42,65 @@ VCF_TYPE_CONVERSION_MAP = {
     "String": "str",
     "Flag": "bool",
 }
+
+
+def _check_allele_arity(
+    record: Record, score_def: GenomicScoreDef, number: str, count: int,
+) -> None:
+    """Warn if a per-allele INFO field's value count is not its allele count.
+
+    ``Number=A`` declares one value per ALT allele and ``Number=R`` one per
+    allele including the reference, so on a well-formed record the count is
+    fixed by the ALT column.  Neither shape of mismatch is rejected anywhere
+    -- not by pysam, not at resource load -- and both are silent to a reader:
+    a SHORT tuple leaves the alleles past its end with no value (they read
+    null, see :func:`extract_vcf_value`), an OVER-LONG one has values no
+    allele will ever select.  Only the resource's author can fix either, and
+    they cannot fix what nothing reports.
+
+    **Once per field per table, not once per line.**  The flag is
+    ``score_def.number_mismatch_warned``, and the definition is per-table
+    (see its comment in ``score_def``).  This is the per-record score read --
+    keeping it cheap is what #237 was about -- and a field whose arity is
+    wrong on one row is normally wrong on every row, so per-line logging
+    would bury the run in identical lines.  Testing the flag FIRST is what
+    bounds the cost on a malformed table: once it has warned, every later
+    record of it stops at a single attribute read.
+
+    A WELL-FORMED table has no such short circuit and pays the ALT lookup on
+    every record -- there is no cheaper way to learn how many values a row
+    ought to carry, and remembering the first row's count would only be
+    right for a table whose alleles never vary.  The cost lands where it can
+    be afforded: only inside the ``Number=A``/``Number=R`` branch, which no
+    ``Number=1`` field ever enters (it decodes to a scalar) and which already
+    builds a fresh pysam ``VariantMetadata`` per read -- so it is a fraction
+    added to an already-expensive branch, on a shape no production resource
+    in the GRRs uses today.
+
+    The message names the field, its number, the counts and the row that
+    tripped it.  It cannot name the resource: the read is a pure function of
+    ``(record, score_def)`` and neither carries a resource id.  The locus is
+    the better half of that trade anyway -- it names the offending row of the
+    offending file, which is what an author has to open.
+    """
+    if score_def.number_mismatch_warned:
+        return
+    alts = record[PAYLOAD][VARIANT].alts
+    # ``alts`` is None for a record whose ALT is absent ('.'): zero ALT
+    # alleles, so a Number=A field carries no values at all and a Number=R
+    # field carries only the reference's.
+    expected = len(alts) if alts is not None else 0
+    if number == "R":
+        expected += 1
+    if count == expected:
+        return
+    score_def.number_mismatch_warned = True
+    logger.warning(
+        "INFO field %s (Number=%s) of %s:%s carries %s value(s) for %s "
+        "allele(s); the VCF row is malformed and an allele with no value of "
+        "its own reads as null. Reported once per table.",
+        score_def.score_id, number, record[CHROM], record[POS_BEGIN],
+        count, expected)
 
 
 def extract_vcf_value(
@@ -67,6 +132,20 @@ def extract_vcf_value(
     * **Number=. and Type=String** -- an unbounded string field, joined on
       '|' into a single value (a VCF-local convention).
     * anything else -- handed to ``parse_value`` as pysam decoded it.
+
+    **Neither per-allele selection trusts the tuple to be the right length**
+    (#289).  Nothing rejects a row whose value count does not match its ALT
+    column -- not pysam, not resource load -- and indexing one bare aborted
+    the whole fetch: the second allele of ``ALT=T,G  S=d11`` ran off the end
+    with ``IndexError``, and the ``try`` in ``parse_value`` that turns a bad
+    cell into a logged null is deliberately not around this call (it guards
+    the PARSE, and #256's crash-guard test depends on that placement), so the
+    crash escaped ``get_score`` and took the scan with it.  An allele past
+    the end of the tuple therefore reads ``None`` -- the same null #256 gives
+    the ALT-less record, by the same rule: no applicable per-ALT value, no
+    score.  The mismatch itself is reported by :func:`_check_allele_arity`,
+    which also catches the mirror shape (more values than alleles, the extras
+    unreadable), once per table.
 
     A key the header **declares** but this record does not carry yields
     ``None`` rather than raising: ``info.get`` returns ``None``, ``None`` is
@@ -105,13 +184,17 @@ def extract_vcf_value(
         if number == "A":
             if allele_index is None:
                 return None
+            _check_allele_arity(record, score_def, number, len(value))
+            if allele_index >= len(value):
+                return None
             value = value[allele_index]
         elif number == "R":
-            value = value[
-                allele_index + 1
-                if allele_index is not None
-                else 0  # Get reference allele value if ALT is '.'
-            ]
+            _check_allele_arity(record, score_def, number, len(value))
+            # Get reference allele value if ALT is '.'
+            index = allele_index + 1 if allele_index is not None else 0
+            if index >= len(value):
+                return None
+            value = value[index]
         elif number == "." and meta.type == "String":
             value = "|".join(value)
     return score_def.parse_value(value)
