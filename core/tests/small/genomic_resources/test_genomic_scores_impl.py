@@ -1260,11 +1260,21 @@ def test_files_prefers_tbi_when_the_manifest_records_both_indexes(
 CUSTOM_INDEX_FILENAME = "data.custom.tbi"
 
 
-def a_custom_indexed_tabix_position_score() -> PositionScoreBuilder:
-    """A tabix score whose index is declared, and realized, off-convention."""
+def a_custom_indexed_tabix_position_score(
+    *, stale_conventional_index: bool = False,
+) -> PositionScoreBuilder:
+    """A tabix score whose index is declared, and realized, off-convention.
+
+    With ``stale_conventional_index`` a second copy of the index is left at
+    the conventional ``data.txt.gz.tbi`` as well, so the manifest carries
+    both names and the two resolution rules become distinguishable: which
+    name wins, and whether the conventional one is reachable as a fallback.
+    """
     return (
         a_position_score()
-        .with_tabix(index_filename=CUSTOM_INDEX_FILENAME)
+        .with_tabix(
+            index_filename=CUSTOM_INDEX_FILENAME,
+            keep_conventional_index=stale_conventional_index)
         .with_zero_based()
         .with_score("value", "float")
         .with_data(TABIX_INDEX_DATA)
@@ -1281,6 +1291,26 @@ def test_files_names_the_index_the_table_definition_configures(
     # whether or not ``index_filename`` was ever consulted.
     assert "data.txt.gz.tbi" not in res.get_manifest()
     assert "data.txt.gz.csi" not in res.get_manifest()
+    impl = build_score_implementation_from_resource(res)
+
+    with caplog.at_level("WARNING"):
+        files = impl.files
+
+    assert files == {"data.txt.gz", CUSTOM_INDEX_FILENAME}
+    assert caplog.text == ""
+
+
+def test_files_takes_the_configured_index_over_a_conventional_sidecar(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    res = a_custom_indexed_tabix_position_score(
+        stale_conventional_index=True).build_resource(tmp_path)
+    # Both names are in the manifest, so the file set can only be right by
+    # consulting ``index_filename`` -- the conventional probe would find
+    # ``data.txt.gz.tbi``, which is not the index the table opens.
+    assert CUSTOM_INDEX_FILENAME in res.get_manifest()
+    assert "data.txt.gz.tbi" in res.get_manifest()
     impl = build_score_implementation_from_resource(res)
 
     with caplog.at_level("WARNING"):
@@ -1323,6 +1353,31 @@ def test_files_warns_and_omits_a_configured_index_absent_from_the_manifest(
 
     assert files == {"data.txt.gz"}
     assert "misconfigured_score" in caplog.text
+    assert CUSTOM_INDEX_FILENAME in caplog.text
+
+
+def test_files_does_not_fall_back_to_a_sidecar_the_table_does_not_open(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    a_grr().with_resource(
+        "misconfigured_score",
+        a_custom_indexed_tabix_position_score(stale_conventional_index=True),
+    ).build_repo(tmp_path)
+    (tmp_path / "misconfigured_score" / CUSTOM_INDEX_FILENAME).unlink()
+    res = build_filesystem_test_repository(tmp_path).get_resource(
+        "misconfigured_score")
+    # The conventional sidecar is there for a fallback to reach -- and it
+    # must not be reached: the table opens ``index_filename``, so naming
+    # ``data.txt.gz.tbi`` in the file set would hash and prefetch an index
+    # the score never reads.
+    assert "data.txt.gz.tbi" in res.get_manifest()
+    impl = build_score_implementation_from_resource(res)
+
+    with caplog.at_level("WARNING"):
+        files = impl.files
+
+    assert files == {"data.txt.gz"}
     assert CUSTOM_INDEX_FILENAME in caplog.text
 
 

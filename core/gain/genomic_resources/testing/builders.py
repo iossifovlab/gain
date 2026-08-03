@@ -42,6 +42,7 @@ import copy
 import dataclasses
 import gzip
 import pathlib
+import shutil
 import tempfile
 import textwrap
 from collections.abc import Generator
@@ -146,6 +147,9 @@ class _TableScoreBuilder(MetaMixin):
     # A non-conventional index name, declared as ``index_filename:`` in the
     # table config and realized at that name; only meaningful with ``tabix``.
     index_filename: str | None = None
+    # Leaves a copy of the index at its conventional name too; only
+    # meaningful together with ``index_filename``.
+    keep_conventional_index: bool = False
     chrom_mapping: dict[str, Any] | None = None
     zero_based: bool = False
     header_mode: str | None = None
@@ -349,6 +353,7 @@ class _TableScoreBuilder(MetaMixin):
 
     def with_tabix(
         self, *, csi: bool = False, index_filename: str | None = None,
+        keep_conventional_index: bool = False,
     ) -> Self:
         """Realize the score table as tabix (``.txt.gz`` + ``.tbi``).
 
@@ -368,6 +373,12 @@ class _TableScoreBuilder(MetaMixin):
         an index left at its conventional name proves nothing about which
         name the code resolved.
 
+        ``keep_conventional_index`` (meaningful only alongside
+        ``index_filename``) additionally leaves a copy of the index at the
+        conventional name, so the resource carries BOTH.  That is the shape
+        that tells "the configured name wins" apart from "the conventional
+        probe happened to find the only index there was".
+
         Precondition: the authored rows (via :meth:`with_data` or
         :meth:`with_score_line`) must be position-sorted -- ascending by
         chrom then pos_begin -- when ``with_tabix`` is used, because
@@ -375,7 +386,8 @@ class _TableScoreBuilder(MetaMixin):
         loudly with an ``OSError`` un-annotated by the resource id.
         """
         return dataclasses.replace(
-            self, tabix=True, csi=csi, index_filename=index_filename)
+            self, tabix=True, csi=csi, index_filename=index_filename,
+            keep_conventional_index=keep_conventional_index)
 
     def realize_into(self, resource_dir: pathlib.Path) -> None:
         """Write this table-score resource into ``resource_dir``.
@@ -403,7 +415,8 @@ class _TableScoreBuilder(MetaMixin):
             _realize_tabix_table(
                 resource_dir / _TABIX_FILENAME, data,
                 write_header=write_header, csi=self.csi,
-                index_filename=self.index_filename)
+                index_filename=self.index_filename,
+                keep_conventional_index=self.keep_conventional_index)
         else:
             file_data = data if write_header else _strip_header(data)
             setup_directories(resource_dir, {
@@ -1122,7 +1135,8 @@ def _build_single_resource(
 def _realize_tabix_table(
     tabix_path: pathlib.Path, data: str, *,
     write_header: bool = True, csi: bool = False,
-    index_filename: str | None = None) -> None:
+    index_filename: str | None = None,
+    keep_conventional_index: bool = False) -> None:
     """Realize ``data`` as a tabix table (``.txt.gz`` + its index).
 
     With ``write_header`` (the default, the ``header_mode: file`` path) the
@@ -1139,7 +1153,8 @@ def _realize_tabix_table(
     With ``index_filename`` the index pysam wrote at its conventional name
     is MOVED to that name, so the resource carries the index only under the
     non-conventional name -- no adjacent sidecar is left behind for
-    htslib's auto-probe to find.
+    htslib's auto-probe to find.  ``keep_conventional_index`` copies it
+    instead, leaving the conventional sidecar in place as well.
     """
     header = _parse_header(data)
     chrom_col = header.index("chrom")
@@ -1150,8 +1165,11 @@ def _realize_tabix_table(
         tabix_path, content,
         seq_col=chrom_col, start_col=start_col, end_col=end_col, csi=csi)
     if index_filename is not None:
-        pathlib.Path(written_index).rename(
-            tabix_path.parent / index_filename)
+        target = tabix_path.parent / index_filename
+        if keep_conventional_index:
+            shutil.copyfile(written_index, target)
+        else:
+            pathlib.Path(written_index).rename(target)
 
 
 def _strip_header(data: str) -> str:
