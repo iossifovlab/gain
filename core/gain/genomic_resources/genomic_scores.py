@@ -97,7 +97,7 @@ class RecordOrdering(enum.Enum):
 
     ``DISJOINT`` -- at most one record per position, so two records that
     touch are a data error.  That is what a position score promises, and
-    what ``PositionScore.fetch_region_values`` raises on.
+    what ``PositionScore.validate_records`` raises on.
 
     ``SHARED`` -- several records may legitimately sit at one position.
     That is what an allele score IS (one record per ref/alt pair at a site)
@@ -214,7 +214,11 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     Abstract Methods:
         Subclasses must implement:
         - fetch_region_values(): the region read every kind provides, and the
-          one the statistics scan and ``aggregate_region`` are built on
+          one ``aggregate_region`` is built on.  The statistics scan reads
+          the same records through ``scan_records``, which validates them
+          (ADR 0008); a kind that normalizes its records to something other
+          than the clipped span they cover states that once, in
+          ``_region_values``, so both doors yield it.
 
     See Also:
         - PositionScore: For position-based genomic scores
@@ -1032,6 +1036,8 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         pos_begin: int | None,
         pos_end: int | None,
         scores: list[str] | None = None,
+        *,
+        validate: bool = False,
     ) -> Generator[
             tuple[str, int, int, list[ScoreValue] | None, Record],
             None, None]:
@@ -1039,6 +1045,17 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
         The last element is the record itself.  Two of the three callers
         discard it and the third reads only positional slots off it.
+
+        ``validate`` interposes :meth:`validate_records` between the table
+        and the normalization below, so the rule sees each record's RAW
+        span -- before this method clips it to the queried region, and before
+        a kind collapses it to a point.  It is set only by
+        :meth:`scan_records`, and it is a private keyword rather than an
+        argument of any public read: a reader is not offered the choice
+        (ADR 0008).
+
+        One read either way.  The validator is a transducer over the very
+        stream this loop consumes, not a second pass over the region.
         """
         if not self.is_open():
             raise ValueError(f"genomic score <{self.resource_id}> is not open")
@@ -1052,7 +1069,12 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         # refused whether or not the region turns out to hold anything.
         score_defs = self._resolve_score_defs(scores)
 
-        for record in self.fetch_records(chrom, pos_begin, pos_end):
+        records: Iterator[Record] = self.fetch_records(
+            chrom, pos_begin, pos_end)
+        if validate:
+            records = self.validate_records(records)
+
+        for record in records:
             rec_chrom, rec_begin, rec_end = self._record_to_begin_end(record)
             if pos_begin is not None and rec_end < pos_begin:
                 continue
@@ -1066,6 +1088,92 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             right = min(pos_end, rec_end) if pos_end is not None else rec_end
             yield (rec_chrom, left, right, val, record)
 
+    def validate_records(
+        self, records: Iterator[Record],
+    ) -> Generator[Record, None, None]:
+        """Yield a raw record stream through, refusing a malformed one.
+
+        A **transducer**: it hands back exactly what it was given, in order,
+        and raises :class:`MalformedResourceError` at the first record its
+        kind cannot mean.  It never re-reads and never materialises the
+        region -- the statistics scan pays for one read, and this rides it.
+
+        It reads RAW records rather than the spans a kind yields, because a
+        kind's normalization destroys the evidence: an allele score collapses
+        a record to the point it sits at, discarding its end entirely.  Raw
+        is also the only layer at which this and the vectorized validator
+        could ever state one rule (ADR 0008).
+
+        This base body carries the rule the allele and fragment reads enforce
+        today -- a record must not begin before the one before it -- so that
+        every kind stays validated during the scan while gain#589 and
+        gain#590 are still to land.  Those two give their kind a body of its
+        own and delete this default.
+        """
+        prev_chrom: str | None = None
+        prev_begin: int | None = None
+        for record in records:
+            chrom, begin, _end = self._record_to_begin_end(record)
+            if chrom != prev_chrom:
+                prev_begin = None
+            if prev_begin is not None and begin < prev_begin:
+                raise MalformedResourceError(
+                    f"<{self.resource_id}> is malformed: the record at "
+                    f"{chrom}:{begin} follows the record at "
+                    f"{chrom}:{prev_begin}; this score's records must not "
+                    f"move backwards")
+            prev_chrom, prev_begin = chrom, begin
+            yield record
+
+    def scan_records(
+        self,
+        chrom: str,
+        pos_begin: int | None = None,
+        pos_end: int | None = None,
+        scores: list[str] | None = None,
+    ) -> Generator[
+            tuple[int, int, list[ScoreValue] | None], None, None]:
+        """Read a region for the statistics scan, validating as it goes.
+
+        The scan's door, and the ONLY one it reads through: both per-record
+        passes and the ``--region-size 0`` path come here, so a pass added
+        later is validated by construction rather than by someone
+        remembering (ADR 0008).
+
+        Yields what :meth:`fetch_region_values` yields for this kind -- the
+        same normalized, clipped spans, in the same order -- so what the scan
+        measures does not depend on which door it came through.  What differs
+        is that the raw records pass through :meth:`validate_records` on the
+        way, within the one read of the region.
+        """
+        return self._region_values(
+            chrom, pos_begin, pos_end, scores, validate=True)
+
+    def _region_values(
+        self,
+        chrom: str,
+        pos_begin: int | None,
+        pos_end: int | None,
+        scores: list[str] | None,
+        *,
+        validate: bool,
+    ) -> Generator[
+            tuple[int, int, list[ScoreValue] | None], None, None]:
+        """Normalize a region's records to ``(begin, end, values)``.
+
+        The body behind both doors: :meth:`fetch_region_values` calls it with
+        ``validate=False`` and :meth:`scan_records` with ``True``, which is
+        the whole of the difference between them.  A kind whose records
+        normalize to something other than the clipped span they cover
+        overrides this and forwards ``validate`` unchanged.
+
+        The default is that clipped span, which is what a position score and
+        a fragment score both yield.
+        """
+        for _chrom, left, right, val, _record in self._fetch_region_records(
+                chrom, pos_begin, pos_end, scores, validate=validate):
+            yield left, right, val
+
     @abc.abstractmethod
     def fetch_region_values(
         self,
@@ -1077,7 +1185,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             tuple[int, int, list[ScoreValue] | None], None, None]:
         """Return score values - either all available or in a specific region.
 
-        This method is used for calculation of score statistics.
+        A plain read: it checks nothing about the records it yields.  The
+        statistics scan reads the same region through :meth:`scan_records`,
+        which does (ADR 0008).
         """
 
     @classmethod
@@ -1315,6 +1425,34 @@ class PositionScore(GenomicScore):
         scores_schema["aggregator"] = AGGREGATOR_SCHEMA
         return schema
 
+    def validate_records(
+        self, records: Iterator[Record],
+    ) -> Generator[Record, None, None]:
+        """Refuse two records that overlap -- or merely touch.
+
+        A position score promises one value per position, so a record
+        beginning where its predecessor has not yet ended claims a position
+        already taken.  ``begin <= prev_end`` and not ``<``: two records
+        sharing a single base pair is the same error as two overlapping by a
+        hundred.
+
+        The comparison is against RAW spans, so the verdict does not depend
+        on how the scan happened to partition the contig -- clipping a record
+        to a queried region can only shrink it, and two records a region
+        boundary pulled apart still claim one position between them.
+        """
+        prev_chrom: str | None = None
+        prev_end: int | None = None
+        for record in records:
+            chrom, begin, end = self._record_to_begin_end(record)
+            if chrom != prev_chrom:
+                prev_end = None
+            if prev_end is not None and begin <= prev_end:
+                raise overlapping_records_error(
+                    self.resource_id, chrom, begin, prev_end)
+            prev_chrom, prev_end = chrom, end
+            yield record
+
     def fetch_region_values(
         self,
         chrom: str,
@@ -1323,23 +1461,16 @@ class PositionScore(GenomicScore):
         scores: list[str] | None = None,
     ) -> Generator[
             tuple[int, int, list[ScoreValue] | None], None, None]:
-        """Return position score values in a region."""
-        returned_region: tuple[
-            str | None, int | None, int | None, list[ScoreValue] | None,
-        ] = (None, None, None, None)
-        for lchrom, left, right, val, _ in self._fetch_region_records(
-            chrom, pos_begin, pos_end, scores,
-        ):
-            prev_chrom = returned_region[0]
-            if prev_chrom and lchrom != prev_chrom:
-                returned_region = (lchrom, None, None, None)
-            prev_end = returned_region[2]
+        """Return position score values in a region.
 
-            if prev_end and left <= prev_end:
-                raise overlapping_records_error(
-                    self.resource_id, chrom, left, prev_end)
-            returned_region = (lchrom, left, right, val)
-            yield (left, right, val)
+        Each record is clipped to the queried region and yielded, in the
+        order the table holds them.  No ordering check: two records that
+        overlap are a malformed resource, and refusing it is the statistics
+        scan's job -- through :meth:`scan_records` -- rather than a
+        reader's (ADR 0008).
+        """
+        return self._region_values(
+            chrom, pos_begin, pos_end, scores, validate=False)
 
     def fetch_region_weighted_values(
         self,
@@ -1370,24 +1501,25 @@ class PositionScore(GenomicScore):
         self, chrom: str, position: int,
         scores: list[str] | None = None,
     ) -> list[ScoreValue] | None:
-        """Fetch score values at specific genomic position."""
+        """Fetch score values at specific genomic position.
+
+        The FIRST record covering the position answers, and a second one is
+        not an error here: several records at one position is a malformed
+        position score, and refusing it is the statistics scan's job rather
+        than a reader's (ADR 0008).  It is the same rule the region read
+        stopped enforcing, on the same path, so it leaves with it.
+        """
         if chrom not in self.get_all_chromosomes():
             raise ValueError(
                 f"{chrom} is not among the available chromosomes.")
 
         score_defs = self._resolve_score_defs(scores)
 
-        records = list(self.fetch_records(chrom, position, position))
-        if not records:
+        record = next(self.fetch_records(chrom, position, position), None)
+        if record is None:
             return None
 
-        if len(records) > 1:
-            raise MalformedResourceError(
-                f"<{self.resource_id}> is malformed: multiple values "
-                f"({len(records)}) for positions {chrom}:{position}; "
-                f"a position score allows at most one record per position")
-
-        return self.get_score_values_from_record(records[0], score_defs)
+        return self.get_score_values_from_record(record, score_defs)
 
 
 class AlleleScore(GenomicScore):
@@ -1609,6 +1741,29 @@ class AlleleScore(GenomicScore):
         previous one is a data error and raises.  That is the rule
         :attr:`RECORD_ORDERING` states for this kind, and the rule the
         vectorized statistics scan enforces on a whole batch at once.
+
+        This guard is the last read-path check left, and gain#589 removes it:
+        an allele score's rule then lives in its ``validate_records``, which
+        the statistics scan already applies through
+        :meth:`GenomicScore.scan_records`.
+        """
+        return self._region_values(
+            chrom, pos_begin, pos_end, scores, validate=False)
+
+    def _region_values(
+        self,
+        chrom: str,
+        pos_begin: int | None,
+        pos_end: int | None,
+        scores: list[str] | None,
+        *,
+        validate: bool,
+    ) -> Generator[
+            tuple[int, int, list[ScoreValue] | None], None, None]:
+        """Collapse each allele record to the point it sits at.
+
+        The normalization behind both of this kind's doors -- see
+        :meth:`GenomicScore._region_values`.
         """
         # The position last yielded and the ref/alt pairs already seen AT it.
         # A repeat of one is worth a note but not a refusal: it is the shape
@@ -1618,7 +1773,7 @@ class AlleleScore(GenomicScore):
         seen_alleles: set[tuple[str | None, str | None]] = set()
 
         for lchrom, _left, _right, val, record in self._fetch_region_records(
-                chrom, pos_begin, pos_end, scores):
+                chrom, pos_begin, pos_end, scores, validate=validate):
             pos = record[POS_BEGIN]
             alleles = (record[REF], record[ALT])
 
@@ -1736,10 +1891,14 @@ class FragmentScore(GenomicScore):
         scores: list[str] | None = None,
     ) -> Generator[
             tuple[int, int, list[ScoreValue] | None], None, None]:
-        """Return score values in a region."""
-        for _, start, stop, values, _ in self._fetch_region_records(
-                chrom, pos_begin, pos_end, scores):
-            yield start, stop, values
+        """Return score values in a region.
+
+        Fragments overlap freely, so there is nothing to normalize away and
+        nothing to check: every record is yielded, clipped to the queried
+        region, in the order the table holds them.
+        """
+        return self._region_values(
+            chrom, pos_begin, pos_end, scores, validate=False)
 
     def fetch_fragment_scores(
         self, chrom: str,

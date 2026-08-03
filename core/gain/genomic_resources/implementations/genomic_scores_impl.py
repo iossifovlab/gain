@@ -434,7 +434,11 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             for scr_id in score_ids
         }
         with impl.score.open() as score:
-            for _left, _right, rec in score.fetch_region_values(
+            # Through the scan's door, not the read path: the scan validates
+            # what it reads, and does so in one place so that this pass, the
+            # histogram pass and any pass added later are covered by
+            # construction (ADR 0008).
+            for _left, _right, rec in score.scan_records(
                     chrom, start, end, score_ids):
                 for score_index, score_id in enumerate(score_ids):
                     result[score_id].add_value(
@@ -507,7 +511,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             # One statement of the rule, read by this path and by the bulk
             # one: only a position score weighs a record by its span.
             weight_is_span = score.RECORD_WEIGHT_IS_SPAN
-            for left, right, rec in score.fetch_region_values(
+            # The scan's door -- see :meth:`_do_min_max`.
+            for left, right, rec in score.scan_records(
                     chrom, start, end, score_ids):
                 weight = right - left + 1 if weight_is_span else 1
                 for scr_index, scr_id in enumerate(score_ids):
@@ -681,9 +686,9 @@ class GenomicScoreImplementation(ScoreImplementationBase):
           (``min(end, pos_end) - max(start, pos_begin) + 1``); an allele record
           and a fragment count 1, however wide they are.
         * ``RECORD_ORDERING`` -- ``DISJOINT`` raises
-          ``MalformedResourceError`` on two records that touch, exactly as
-          ``PositionScore.fetch_region_values`` does, and across the batch
-          boundary via ``prev_right``; ``SHARED``
+          ``MalformedResourceError`` on two records that touch, as
+          ``PositionScore.validate_records`` does on the per-record path, and
+          across the batch boundary via ``prev_right``; ``SHARED``
           has nothing to reject, because several records at one position are
           what an allele or fragment score is made of.
         """

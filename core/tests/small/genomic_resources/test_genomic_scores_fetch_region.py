@@ -116,15 +116,35 @@ def test_position_score_fetch_region(
     ("chr2", 60, 120),
     ("chr3", 60, 120),
 ])
-def test_position_score_fetch_region_consistency(
+def test_position_score_fetch_region_does_not_check_consistency(
     position_score: PositionScore,
     chrom: str,
     begin: int | None,
     end: int | None,
 ) -> None:
+    # chr2 holds two overlapping records and chr3 two touching ones.  The
+    # read yields both without a word: since gain#588 the consistency of a
+    # position score's records is the statistics scan's question, and the
+    # test below asks it of the same two regions.
+    assert len(list(position_score.fetch_region_values(chrom, begin, end))) \
+        == 2
 
-    with pytest.raises(ValueError, match="multiple values for positions"):
-        list(position_score.fetch_region_values(chrom, begin, end))
+
+@pytest.mark.parametrize("chrom,begin,end", [
+    ("chr2", 60, 120),
+    ("chr3", 60, 120),
+])
+def test_position_score_scan_consistency(
+    position_score: PositionScore,
+    chrom: str,
+    begin: int | None,
+    end: int | None,
+) -> None:
+    # ... and the scan's door refuses what the read above handed back, which
+    # is where that check went rather than what happened to it.
+    with pytest.raises(MalformedResourceError,
+                       match="multiple values for positions"):
+        list(position_score.scan_records(chrom, begin, end))
 
 
 @pytest.fixture(scope="module")
@@ -531,8 +551,10 @@ def test_a_position_score_overlap_names_the_resource_locus_and_rule(
     score = build_position_score_from_resource(resource)
     score.open()
 
+    # Through the scan's door: since gain#588 that is where the refusal
+    # lives, and the message it carries is what gain#587 pinned.
     with pytest.raises(MalformedResourceError) as excinfo:
-        list(score.fetch_region_values("chr1", 1, 10))
+        list(score.scan_records("chr1", 1, 10))
 
     message = str(excinfo.value)
     assert "<overlapping>" in message
@@ -556,8 +578,10 @@ def test_a_position_score_repeat_names_the_resource_locus_and_rule(
     score = build_position_score_from_resource(resource)
     score.open()
 
+    # The point read stopped refusing this with gain#588 -- one rule, one
+    # path -- so the repeat is named by the scan that now owns the rule.
     with pytest.raises(MalformedResourceError) as excinfo:
-        score.fetch_position_scores("chr1", 10)
+        list(score.scan_records("chr1", 1, 20))
 
     message = str(excinfo.value)
     assert "<repeated>" in message
