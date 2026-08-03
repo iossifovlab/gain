@@ -2,6 +2,8 @@
 import pytest
 from django.test import Client
 
+from web_annotation.resources.views import SearchResources
+
 
 @pytest.mark.parametrize("current_client", ["admin", "user", "anonymous"])
 @pytest.mark.parametrize(
@@ -293,6 +295,57 @@ def test_malformed_resource_query_is_a_bad_request(
     # leaves the caller guessing which of its parameters was rejected.
     assert 'scores/*[phenotype ~ "autism"]' in message
     assert "~" in message
+
+
+def test_an_over_long_resource_query_is_a_bad_request(
+    clients: dict[str, Client],
+) -> None:
+    """A long query is refused on length, before anything parses it.
+
+    The grammar is ambiguous (``and_`` recurses through ``?operation``),
+    so Earley costs about O(n^3) in the length of the query: 500 clauses
+    -- 5003 characters, well inside Apache's 8190-byte request line -- is
+    ~95 seconds of CPU. This endpoint is anonymous and unthrottled, so a
+    handful of such GETs would pin every worker.
+    """
+    clauses = " and ".join(['k="v"'] * 500)
+    query = f"scores/*[{clauses}]"
+
+    response = clients["anonymous"].get(
+        "/api/resources/search", query_params={"query": query})
+
+    assert response.status_code == 400
+    message = response.json()["error"]
+    # The caller has to learn what the limit is to get under it.
+    assert str(len(query)) in message
+    assert str(SearchResources.MAX_RESOURCE_QUERY_LENGTH) in message
+
+
+def test_a_resource_query_at_the_length_cap_is_still_served(
+    clients: dict[str, Client],
+) -> None:
+    """The cap refuses what is over it, and nothing else.
+
+    A query as long as the limit allows is answered normally -- the guard
+    is a bound on the parser's input, not a new way for a well-formed
+    query to be rejected.
+    """
+    cap = SearchResources.MAX_RESOURCE_QUERY_LENGTH
+    clauses = " and ".join(['phenotype="autism"'] * 10)
+    query = f"scores/pos1[{clauses}]"
+    # The grammar ignores spaces, so the padding changes nothing but the
+    # length.
+    query = query.replace("]", " " * (cap - len(query)) + "]")
+    assert len(query) == cap
+
+    response = clients["anonymous"].get(
+        "/api/resources/search", query_params={"query": query})
+
+    assert response.status_code == 200
+    result = response.json()
+    assert {res["resource_id"] for res in result["resources"]} == {
+        "scores/pos1",
+    }
 
 
 @pytest.mark.parametrize("current_client", ["admin", "user", "anonymous"])
