@@ -696,6 +696,31 @@ def test_repo_repair_reports_a_malformed_resource_with_its_reason(
     assert "is consistent" not in caplog.text
 
 
+def test_a_malformed_resource_is_reported_under_region_size_zero(
+    malformed_between_healthy_grr: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # ``--region-size 0`` swaps the per-region tasks for a single
+    # whole-resource one.  It reads the same records through the same scan,
+    # so it must refuse the resource the same way -- a reader who picked the
+    # option must not be left with the reason-less summary line alone.
+    path = malformed_between_healthy_grr
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"), \
+            pytest.raises(SystemExit) as excinfo:
+        cli_manage([
+            "repo-repair", "-R", str(path), "-j", "1", "--region-size", "0"])
+
+    assert excinfo.value.code != 0
+    assert any(
+        record.name == "grr_manage"
+        and record.levelno == logging.ERROR
+        and "<m_malformed>" in record.getMessage()
+        and "at most one record per position" in record.getMessage()
+        for record in caplog.records)
+    assert "unexpected internal error" not in caplog.text
+
+
 def test_a_malformed_resource_is_never_an_unexpected_internal_error(
     malformed_between_healthy_grr: pathlib.Path,
     caplog: pytest.LogCaptureFixture,

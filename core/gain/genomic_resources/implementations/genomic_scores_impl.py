@@ -120,12 +120,15 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         contig.  The region-read family requires a contig, so the iteration
         over contigs is stated here rather than smuggled down as a null.
 
-        Each contig is scanned by the very functions the per-region tasks use
-        and folded together by the very functions that fold those tasks'
-        results, so this produces what a split run produces -- not something
-        merely believed to match.  An empty contig (an unscored alt, of which
-        hg38 has hundreds) contributes an empty histogram, which merges
-        cleanly; ``_merge_histograms`` only nullifies on a genuine error.
+        Each contig is scanned through the very task functions a split run
+        calls and folded together by the very functions that fold those
+        tasks' results, so this produces what a split run produces -- not
+        something merely believed to match, and a resource either of them
+        refuses is attributed there rather than reaching the reader as a
+        reason-less "statistics were not built".  An empty contig (an
+        unscored alt, of which hg38 has hundreds) contributes an empty
+        histogram, which merges cleanly; ``_merge_histograms`` only
+        nullifies on a genuine error.
         """
         impl = build_score_implementation_from_resource(resource)
         all_min_max_scores, all_hist_confs = \
@@ -138,13 +141,13 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             all_hist_confs = GenomicScoreImplementation._merge_min_max(
                 all_min_max_scores,
                 all_hist_confs,
-                *(GenomicScoreImplementation._do_min_max(
+                *(GenomicScoreImplementation._do_min_max_task(
                     resource, all_min_max_scores, chrom, None, None)
                   for chrom in chroms),
             )
         hist_result = GenomicScoreImplementation._merge_histograms(
             resource,
-            *(GenomicScoreImplementation._do_histogram(
+            *(GenomicScoreImplementation._do_histogram_task(
                 resource, all_hist_confs, chrom, None, None)
               for chrom in chroms),
         )
