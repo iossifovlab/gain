@@ -938,7 +938,7 @@ The annotator configuration looks like this:
 ..
 
   | **cache_dir**: path to the VEP cache directory (the directory passed to ``install_vep_cache``). Required.
-  | **vep_version**: VEP version to use. The value is used verbatim to select the Docker image tag ``ensemblorg/ensembl-vep:release_<vep_version>``, so it has to match a tag published for that image — in practice a full ``major.minor`` version such as ``113.4``. If not specified, the annotator uses ``ensemblorg/ensembl-vep:release_latest``.
+  | **vep_version**: VEP version to use. It selects the Docker image tag ``ensemblorg/ensembl-vep:release_<vep_version>``. A major-only version such as ``113`` is accepted and expanded to ``113.0``; a version that already carries a minor component, such as ``113.4``, is used as given. Quote a version with a minor component (``vep_version: "113.4"``) — unquoted, YAML reads it as a number and the annotator refuses it. If not specified, the annotator uses ``ensemblorg/ensembl-vep:release_latest``.
 
 
 The full VEP annotator can emit many additional VEP fields (listed below) by selecting them as
@@ -1204,9 +1204,12 @@ The annotator configuration looks like this:
    * - ``vep_version``
      - VEP version to use.
 
-       The value is used verbatim to select the Docker image tag
-       ``ensemblorg/ensembl-vep:release_<vep_version>``, so it has to match a tag published for
-       that image — in practice a full ``major.minor`` version such as ``113.4``.
+       It selects the Docker image tag ``ensemblorg/ensembl-vep:release_<vep_version>``. A
+       major-only version such as ``113`` is accepted and expanded to ``113.0``; a version that
+       already carries a minor component, such as ``113.4``, is used as given.
+
+       Quote a version with a minor component (``vep_version: "113.4"``) — unquoted, YAML reads
+       it as a number and the annotator refuses it.
 
        If not specified, the annotator uses ``ensemblorg/ensembl-vep:release_latest``.
 

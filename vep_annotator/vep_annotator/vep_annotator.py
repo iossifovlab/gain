@@ -11,6 +11,7 @@ from typing import Any, TextIO, cast
 
 import pysam
 from gain.annotation.annotatable import Annotatable, VCFAllele
+from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import AnnotationConfigParser
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
@@ -89,6 +90,25 @@ IMPACTS = {
 }
 
 
+def _resolve_vep_image_tag(vep_version: Any) -> str:
+    """Turn a `vep_version` parameter into an `ensembl-vep` image tag."""
+    if vep_version is None:
+        return "release_latest"
+
+    if isinstance(vep_version, float):
+        raise AnnotationConfigurationError(
+            f"the `vep_version` parameter must be quoted; YAML read it as "
+            f"the number {vep_version}, which can silently drop a trailing "
+            f"zero of the minor version. Use "
+            f'`vep_version: "<major>.<minor>"` instead',
+        )
+
+    version = str(vep_version)
+    if "." not in version:
+        version = f"{version}.0"
+    return f"release_{version}"
+
+
 class VEPAnnotatorBase(DockerAnnotator):
     """
     Base class for VEP annotators
@@ -117,15 +137,8 @@ class VEPAnnotatorBase(DockerAnnotator):
             info.attributes = AnnotationConfigParser.parse_raw_attributes(
                 attributes)
 
-        vep_version: str | None = info.parameters.get("vep_version", None)
-        if vep_version is not None and not vep_version.find("."):
-            vep_version = f"{vep_version}.0"
-        if vep_version is None:
-            vep_version = "release_latest"
-        else:
-            vep_version = f"release_{vep_version}"
-
-        self._vep_version = vep_version
+        self._vep_version = _resolve_vep_image_tag(
+            info.parameters.get("vep_version", None))
 
         super().__init__(
             pipeline, info,
