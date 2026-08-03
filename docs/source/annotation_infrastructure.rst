@@ -593,10 +593,12 @@ copy number.
 
 .. note::
 
-    **The older names still work and are not deprecated.** ``cnv_collection`` and
-    ``cnv_collection_annotator`` remain accepted as annotator names, ``type: cnv_collection``
-    remains accepted as a resource type, and ``cnv_filter:`` remains accepted as the filter
-    parameter. Prefer the ``fragment_score`` spellings in new configuration.
+    **The older names still work, but they are deprecated and stop being accepted in GAIn**
+    ``2027.1.0``. ``cnv_collection`` and ``cnv_collection_annotator`` are still accepted as
+    annotator names, ``type: cnv_collection`` is still accepted as a resource type, and
+    ``cnv_filter:`` is still accepted as the filter parameter -- each one now logs a warning
+    naming where it was written and what to write instead. Rewrite them to ``fragment_score``,
+    ``fragment_score_annotator``, ``type: fragment_score`` and ``fragment_filter:``.
 
     Do not configure both ``fragment_filter:`` and ``cnv_filter:`` on one annotator -- they are
     two spellings of one parameter, and GAIn refuses the pipeline rather than pick one.

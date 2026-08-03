@@ -355,6 +355,11 @@ class AnnotationConfigParser:
         # spellings and either annotator name must find either of them --
         # a pipeline on the new name will point at repositories that never
         # migrated, and third-party GRRs answer to no migration of ours.
+        #
+        # The legacy keys are deprecated (gain#538) but warn nowhere near
+        # here: this resolves a wildcard against every resource in the
+        # repository, so a warning would fire per candidate rather than per
+        # pipeline.  `FragmentScoreAnnotator.__init__` owns that.
         annotator_resources_map = {
             "position_score": {"position_score"},
             "position_score_annotator": {"position_score"},

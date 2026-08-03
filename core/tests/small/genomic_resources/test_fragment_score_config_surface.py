@@ -10,11 +10,15 @@ entry-point key would break deployed resources this repository cannot grep.
 
 gain#471 added the ``fragment_score`` spellings BESIDE these; the new half is
 pinned in ``test_fragment_score_vocabulary``.  Nothing here was replaced --
-these remain accepted permanently, and this module is what stops a later
-"finish the rename" pass from dropping them.
+these remain accepted until ``2027.1.0`` (gain#538 deprecated them, gain#539
+removes them), and this module is what stops a "finish the rename" pass from
+dropping them early.  Each legacy spelling must also ANNOUNCE itself: every
+surface below is pinned twice, once for what it still does and once for the
+warning it now emits.
 """
 import importlib
 import importlib.util
+import logging
 import pathlib
 import textwrap
 import tomllib
@@ -32,11 +36,54 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
     FragmentScoreImplementation,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.repository_factory import (
+    build_resource_implementation,
+)
+from gain.genomic_resources.resource_types import equivalent_resource_types
 from gain.genomic_resources.testing.builders import a_fragment_score, a_grr
 
 LEGACY_RESOURCE_TYPE = "cnv_collection"
+PREFERRED_RESOURCE_TYPE = "fragment_score"
+
+#: The release the legacy spellings stop working in (gain#539).  Every
+#: warning must name it -- a deprecation that does not say when it bites is
+#: an apology, not a notice.
+REMOVAL_RELEASE = "2027.1.0"
 
 CORE_PYPROJECT = pathlib.Path(__file__).parents[3] / "pyproject.toml"
+
+
+def deprecation_warnings(
+    caplog: pytest.LogCaptureFixture, surface: str, legacy_spelling: str,
+) -> list[str]:
+    """Return the messages warning about one legacy spelling of one surface.
+
+    Filtered by surface as well as spelling: ``cnv_collection`` is both a
+    resource type and an annotator name, and a pipeline built on the legacy
+    annotator name over a legacy-typed resource announces both offences.
+    Each test here is about exactly one of them.
+    """
+    needle = f"deprecated {surface} '{legacy_spelling}'"
+    return [
+        message for message in all_deprecation_warnings(caplog)
+        if needle in message
+    ]
+
+
+def all_deprecation_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Return every fragment-score vocabulary warning captured.
+
+    Recognised by the removal release rather than by the word "deprecated":
+    unrelated warnings elsewhere in the pipeline use that word too, and a
+    filter that caught them would make "the preferred spelling is silent"
+    fail for reasons that have nothing to do with this vocabulary.
+    """
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+        and REMOVAL_RELEASE in record.getMessage()
+    ]
 
 
 @pytest.fixture
@@ -48,6 +95,32 @@ def legacy_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
             "fragments",
             a_fragment_score()
             .with_resource_type(LEGACY_RESOURCE_TYPE)
+            .with_score("frequency", "float")
+            .with_score("collection", "str")
+            .with_data("""
+                chrom  pos_begin  pos_end  frequency  collection
+                1      10         20       0.02       SSC
+                1      50         100      0.1        AGRE
+            """),
+        )
+        .build_repo(tmp_path)
+    )
+
+
+@pytest.fixture
+def modern_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
+    """The same GRR, declared under the preferred type.
+
+    The control for every warning assertion below: it isolates the
+    annotator-side surfaces from the resource-``type:`` one, and it is what
+    "the preferred spelling stays silent" is checked against.
+    """
+    return (
+        a_grr()
+        .with_resource(
+            "fragments",
+            a_fragment_score()
+            .with_resource_type(PREFERRED_RESOURCE_TYPE)
             .with_score("frequency", "float")
             .with_score("collection", "str")
             .with_data("""
@@ -73,6 +146,58 @@ def test_legacy_resource_type_still_opens_and_reads(
         {"frequency": 0.02, "collection": "SSC"},
         {"frequency": 0.1, "collection": "AGRE"},
     ]
+
+
+def test_legacy_resource_type_warns_once_naming_the_resource(
+    legacy_grr: GenomicResourceRepo,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        FragmentScore(legacy_grr.get_resource("fragments"))
+
+    (message,) = deprecation_warnings(
+        caplog, "resource type", LEGACY_RESOURCE_TYPE)
+    assert "fragments" in message
+    assert PREFERRED_RESOURCE_TYPE in message
+    assert REMOVAL_RELEASE in message
+
+
+def test_repository_sweep_warns_once_per_legacy_resource(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Every offender is named, and only the offenders.
+
+    One warning per run would hide every legacy resource after the first,
+    which is the failure mode that makes a deprecation unactionable on a
+    repository with thousands of resources.
+    """
+    grr = (
+        a_grr()
+        .with_resource(
+            "old_one", a_fragment_score().with_resource_type(
+                LEGACY_RESOURCE_TYPE))
+        .with_resource(
+            "old_two", a_fragment_score().with_resource_type(
+                LEGACY_RESOURCE_TYPE))
+        .with_resource(
+            "current", a_fragment_score().with_resource_type(
+                PREFERRED_RESOURCE_TYPE))
+        .build_repo(tmp_path)
+    )
+
+    with caplog.at_level(logging.WARNING):
+        for resource in grr.get_all_resources():
+            build_resource_implementation(resource)
+
+    messages = deprecation_warnings(
+        caplog, "resource type", LEGACY_RESOURCE_TYPE)
+    assert len(messages) == 2
+    assert {"old_one", "old_two"} == {
+        resource_id
+        for resource_id in ("old_one", "old_two", "current")
+        if any(f"'{resource_id}'" in message for message in messages)
+    }
 
 
 def test_legacy_resource_type_still_dispatches_in_build_score(
@@ -131,6 +256,115 @@ def test_legacy_annotator_entry_point_keys_still_build(
     assert attributes["count"] == 2
 
 
+@pytest.mark.parametrize("annotator_name,preferred_name", [
+    ("cnv_collection", "fragment_score"),
+    ("cnv_collection_annotator", "fragment_score_annotator"),
+])
+def test_legacy_annotator_name_warns_once_naming_its_replacement(
+    annotator_name: str,
+    preferred_name: str,
+    modern_grr: GenomicResourceRepo,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        load_pipeline_from_yaml(f"- {annotator_name}: fragments", modern_grr)
+
+    (message,) = deprecation_warnings(
+        caplog, "annotator name", annotator_name)
+    assert "fragments" in message
+    assert f"write '{preferred_name}' instead" in message
+    assert REMOVAL_RELEASE in message
+
+
+@pytest.mark.parametrize("legacy_name,preferred_name", [
+    ("cnv_collection", "fragment_score"),
+    ("cnv_collection_annotator", "fragment_score_annotator"),
+])
+def test_legacy_annotator_name_annotates_identically_to_its_replacement(
+    legacy_name: str,
+    preferred_name: str,
+    modern_grr: GenomicResourceRepo,
+) -> None:
+    """The deprecation announces; it does not change an answer."""
+    def annotate(annotator_name: str) -> dict:
+        pipeline = load_pipeline_from_yaml(
+            f"- {annotator_name}: fragments", modern_grr)
+        # Bound and returned outside the `with`: the pipeline's `__exit__`
+        # is typed as able to suppress, so a `return` in the body does not
+        # read as the function's only exit.
+        with pipeline.open() as open_pipeline:
+            annotated = open_pipeline.annotate(Region("1", 15, 60))
+        return annotated
+
+    assert annotate(legacy_name) == annotate(preferred_name)
+
+
+@pytest.mark.parametrize("record_count", [1, 25])
+def test_warning_count_does_not_grow_with_annotated_records(
+    record_count: int,
+    legacy_grr: GenomicResourceRepo,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The seams are pipeline build and resource open, never a record.
+
+    A per-record warning would out-volume the annotation output itself,
+    which is the noise argument that kept this vocabulary silent until now.
+    """
+    with caplog.at_level(logging.WARNING):
+        pipeline = load_pipeline_from_yaml(
+            "- cnv_collection: fragments", legacy_grr)
+        with pipeline.open() as open_pipeline:
+            for _ in range(record_count):
+                open_pipeline.annotate(Region("1", 15, 60))
+
+    assert len(deprecation_warnings(
+        caplog, "annotator name", "cnv_collection")) == 1
+    assert len(deprecation_warnings(
+        caplog, "resource type", LEGACY_RESOURCE_TYPE)) == 1
+
+
+def test_preferred_spellings_emit_no_deprecation_warning(
+    modern_grr: GenomicResourceRepo,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        pipeline = load_pipeline_from_yaml(
+            textwrap.dedent("""
+                - fragment_score:
+                    resource_id: fragments
+                    fragment_filter: collection == "SSC"
+            """),
+            modern_grr)
+        with pipeline.open() as open_pipeline:
+            open_pipeline.annotate(Region("1", 15, 60))
+
+    assert all_deprecation_warnings(caplog) == []
+
+
+def test_querying_resources_by_type_emits_no_warning(
+    legacy_grr: GenomicResourceRepo,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A type filter is a query, not an open.
+
+    ``FRAGMENT_SCORE_TYPES`` is a membership test inside the repository
+    layer's SQL predicate and inside wildcard resolution; warning from
+    there would fire per query over resources the caller never opened --
+    including resources the caller never went on to open at all.
+    """
+    with caplog.at_level(logging.WARNING):
+        assert [
+            resource.get_id()
+            for resource in legacy_grr.get_all_resources()
+            if resource.get_type() in equivalent_resource_types(
+                PREFERRED_RESOURCE_TYPE)
+        ] == ["fragments"]
+        assert AnnotationConfigParser.query_resources(
+            "fragment_score", "*", legacy_grr) == ["fragments"]
+
+    assert all_deprecation_warnings(caplog) == []
+
+
 @pytest.mark.parametrize("annotator_name", [
     "cnv_collection",
     "cnv_collection_annotator",
@@ -166,6 +400,25 @@ def test_legacy_cnv_filter_parameter_is_still_honoured(
         attributes = open_pipeline.annotate(Region("1", 15, 60))
 
     assert attributes["count"] == 1
+
+
+def test_legacy_cnv_filter_parameter_warns_once_naming_its_replacement(
+    modern_grr: GenomicResourceRepo,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        load_pipeline_from_yaml(
+            textwrap.dedent("""
+                - fragment_score:
+                    resource_id: fragments
+                    cnv_filter: collection == "SSC"
+            """),
+            modern_grr)
+
+    (message,) = deprecation_warnings(caplog, "parameter", "cnv_filter")
+    assert "fragments" in message
+    assert "write 'fragment_filter' instead" in message
+    assert REMOVAL_RELEASE in message
 
 
 # The retired names are spelled out rather than derived, so that

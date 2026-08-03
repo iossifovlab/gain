@@ -187,7 +187,7 @@ def test_listing_a_repository_survives_a_broken_resource(
 
     A resource with no committed '.MANIFEST' has one built on demand
     during ENUMERATION, which is the one place this codebase refuses to
-    raise from -- ADR 0003-resource-file-name-containment and the gain#464
+    raise from -- ADR 0010-resource-file-name-containment and the gain#464
     shape. Listing a repository must describe the resources it can and
     name the ones it cannot.
     """

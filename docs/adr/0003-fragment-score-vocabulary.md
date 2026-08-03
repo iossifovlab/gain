@@ -4,8 +4,19 @@ Date: 2026-07-29
 
 ## Status
 
-Accepted. Implements iossifovlab/gain#471, the second half of the rename
-begun in #470. The deployed-data migration it defers is #469.
+Superseded by
+[0011-deprecate-cnv-collection-vocabulary.md](0011-deprecate-cnv-collection-vocabulary.md)
+(iossifovlab/gain#538), which deprecates the legacy vocabulary this record
+made permanent and silent, for removal in `2027.1.0`.
+
+The body below is left exactly as written and is **not** a description of
+today's behaviour. It is an accurate record of what was decided in July
+2026, on a premise — that one resource with an unrecognised `type:` can
+abort a whole repository-wide tooling run — that gain#364 has since made
+false. Read `0010` for what supersedes it, and why.
+
+Originally: accepted. Implements iossifovlab/gain#471, the second half of
+the rename begun in #470. The deployed-data migration it defers is #469.
 
 ## Context
 

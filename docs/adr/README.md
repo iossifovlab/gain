@@ -64,17 +64,23 @@ of one decision will drift.
 | --- | --- | --- |
 | [0001](0001-bulk-read-path-for-statistics.md) | A specialized bulk read path for the statistics scan | accepted |
 | [0002](0002-remove-bigwig-fetch-buffering.md) | Remove bigWig fetch buffering | accepted |
-| [0003](0003-fragment-score-vocabulary.md) | The fragment score speaks two configuration vocabularies, permanently | accepted |
-| [0003](0003-resource-file-name-containment.md) | Resource file names are contained by construction | accepted |
+| [0003](0003-fragment-score-vocabulary.md) | The fragment score speaks two configuration vocabularies, permanently | superseded by 0010 |
 | [0004](0004-core-test-hang-diagnostic.md) | A hung `core` test is diagnosed by faulthandler, not pytest-timeout | accepted |
 | [0005](0005-fsspec-protocol-memo-rebuild.md) | Rebuilding a memoized fsspec protocol refreshes it, and may not reconfigure it | accepted |
 | [0006](0006-resource-value-identity.md) | A genomic resource's value identity excludes its manifest and its protocol | accepted |
 | [0007](0007-resource-query-pushdown.md) | The resource query is pushed into the FTS index, and absence reads as empty | accepted |
 | [0008](0008-scan-owns-validation.md) | The statistics scan owns validation; reads never validate | accepted |
 | [0009](0009-jenkins-pipeline-definition-trust.md) | Push access to `gain` is Jenkins controller access | accepted |
+| [0010](0010-resource-file-name-containment.md) | Resource file names are contained by construction | accepted |
+| [0011](0011-deprecate-cnv-collection-vocabulary.md) | The `cnv_collection` configuration vocabulary is deprecated, removed in 2027.1.0 | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
-> Per the convention above numbers are never reused, so both keep the number
-> they were written with. Cite either one by slug — `0003` alone does not
-> identify an ADR. A new ADR takes the next number above the highest one in
-> this index, so a new ADR must be added to the index in the same change.
+> "Numbers are never reused" is a rule about not re-issuing a *retired* number;
+> it does not license two live records sharing one, which makes `0003` fail to
+> identify an ADR at all. The collision was resolved in gain#538 by moving the
+> later-cited record — `resource-file-name-containment`, referenced only from
+> this index — to `0009`, the next free number, and updating its two source
+> citations. `fragment-score-vocabulary` kept `0003`: it is cited by name from
+> `resource_types.py` and `fragment_score_annotator.py`. A new ADR takes the
+> next number above the highest one in this index, so a new ADR must be added
+> to the index in the same change.

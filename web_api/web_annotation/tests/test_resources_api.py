@@ -418,8 +418,8 @@ def test_get_resource_types(
         "gene_score",
         # Both accepted spellings are advertised here, unlike the editor's
         # annotator menu: this endpoint reports which resource types the
-        # API understands, and the legacy one is permanently among them
-        # (gain#471).
+        # API can READ, and it can read the deprecated one until it stops
+        # being accepted in 2027.1.0 (gain#471, gain#538).
         "fragment_score",
         "cnv_collection",
     }

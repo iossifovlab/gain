@@ -8,24 +8,59 @@ in the score layer could not be reached from the layer that needs it most.
 That is not a detail: the review of gain#471 found that the SQL-side
 predicate had been missed precisely because the helper was out of reach.
 
-See ``docs/adr/0003-fragment-score-vocabulary.md``.
+See ``docs/adr/0003-fragment-score-vocabulary.md``, superseded by
+``docs/adr/0011-deprecate-cnv-collection-vocabulary.md``.
 """
+
+#: The preferred resource ``type:`` for a fragment score.
+PREFERRED_FRAGMENT_SCORE_TYPE = "fragment_score"
+
+#: The deprecated resource ``type:`` for a fragment score.  Still accepted,
+#: and still declared by repositories that have not migrated.
+LEGACY_FRAGMENT_SCORE_TYPE = "cnv_collection"
+
+#: The GAIn release in which every legacy fragment-score spelling stops
+#: being accepted (gain#539).  Named in every deprecation warning: a notice
+#: that does not say when it bites cannot be scheduled against.
+LEGACY_VOCABULARY_REMOVAL_RELEASE = "2027.1.0"
 
 #: The resource ``type:`` values that name a fragment score.
 #:
-#: Two spellings, both permanent.  ``fragment_score`` is what a resource
-#: should declare, and what the public GRR declares since the migration;
-#: ``cnv_collection`` is what a repository that has not migrated declares
-#: and is therefore NOT deprecated.  Any first-party resources still on it
-#: are tracked in ``iossifovlab/grr``#19, and third-party repositories
-#: answer to no migration at all, so the legacy spelling outlives this
-#: module's memory of why.
+#: Two spellings.  ``fragment_score`` is what a resource should declare, and
+#: what the public GRR declares since the migration; ``cnv_collection`` is
+#: what a repository that has not migrated declares.  It is deprecated and
+#: stops being accepted in ``LEGACY_VOCABULARY_REMOVAL_RELEASE``; consuming
+#: it warns, at the places that open a resource rather than here.
 #:
 #: A tuple rather than a set: it is used for membership, but also rendered
 #: into user-facing messages and into SQL placeholders, and a set would
 #: order them arbitrarily.  Preferred spelling first, so a message reads as
 #: a recommendation.
-FRAGMENT_SCORE_TYPES = ("fragment_score", "cnv_collection")
+FRAGMENT_SCORE_TYPES = (
+    PREFERRED_FRAGMENT_SCORE_TYPE, LEGACY_FRAGMENT_SCORE_TYPE)
+
+
+def deprecated_spelling_message(
+    surface: str, legacy: str, preferred: str, *, found_in: str,
+) -> str:
+    """Return the warning text for one use of one legacy spelling.
+
+    ``surface`` names the kind of configuration the spelling was written as
+    (``"resource type"``, ``"annotator name"``, ``"parameter"``),
+    ``found_in`` names where it was written -- a resource id, or an
+    annotator within a pipeline.  Both are required because the stack at the
+    point of the warning points into GAIn's own config parsing rather than
+    at the YAML the reader has to edit, so the message must carry the
+    location itself.
+
+    A plain string rather than a logging call: the module that recognised
+    the spelling logs it, so the record carries that module's logger name.
+    """
+    return (
+        f"{found_in} uses deprecated {surface} '{legacy}'; "
+        f"write '{preferred}' instead -- '{legacy}' stops being accepted "
+        f"in GAIn {LEGACY_VOCABULARY_REMOVAL_RELEASE}"
+    )
 
 
 def equivalent_resource_types(resource_type: str) -> tuple[str, ...]:

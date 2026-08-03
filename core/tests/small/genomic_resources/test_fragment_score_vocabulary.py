@@ -2,11 +2,13 @@
 """The ``fragment_score`` configuration vocabulary, accepted beside the old.
 
 gain#470 renamed the Python surface and deliberately left every
-configuration string alone.  gain#471 adds the new spellings *beside* the
-old ones -- nothing is replaced, and nothing is deprecated.
+configuration string alone.  gain#471 added the new spellings *beside* the
+old ones; gain#538 then deprecated the old ones, for removal in ``2027.1.0``.
 
-The legacy half is pinned in ``test_fragment_score_config_surface``.  The
-two modules are complementary and both must pass: this one would go green
+Everything pinned here is the PREFERRED half, so nothing here may emit a
+deprecation warning -- ``test_fragment_score_config_surface`` owns the
+legacy half and the warnings it now carries.  The two modules are
+complementary and both must pass until the removal: this one would go green
 if the old spellings were dropped, and that one would go green if the new
 ones were never added.
 """

@@ -161,7 +161,8 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
         # Both spellings resolve to the same template, so a pipeline saved
         # with the legacy name still opens in the editor -- but what the
         # template EMITS is the new vocabulary, so anything saved from here
-        # is written the new way.
+        # is written the new way, and re-saving a legacy pipeline is how a
+        # user clears the deprecation warning (gain#538).
         if annotator_type in (
                 "fragment_score_annotator", "cnv_collection_annotator"):
             return {

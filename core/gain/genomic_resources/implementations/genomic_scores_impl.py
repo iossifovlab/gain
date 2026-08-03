@@ -70,8 +70,9 @@ _AccT = TypeVar("_AccT")
 
 # The resource kinds whose statistics the vectorized scan may serve, in every
 # spelling of each.  Expanded through ``equivalent_resource_types`` rather than
-# written out: a fragment score has TWO permanent type strings
-# (``fragment_score`` and ``cnv_collection``, gain#471), and a literal set
+# written out: a fragment score has TWO accepted type strings
+# (``fragment_score`` and the deprecated ``cnv_collection``, gain#471), and
+# a literal set
 # naming only one of them would send the other silently back to the per-record
 # path -- no error, no failing test, just the slow path forever.  ``np_score``
 # is deliberately absent: no production GRR has one, so the bulk path is not

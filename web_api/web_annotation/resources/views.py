@@ -17,7 +17,10 @@ class ResourcesAPIView(AnnotationBaseView):
         "gene_set_collection", "genome",
         "gene_models", "allele_score",
         "liftover_chain",
-        # Both accepted spellings of a fragment score (gain#471).
+        # Both accepted spellings of a fragment score (gain#471).  The
+        # legacy one is deprecated (gain#538) and still reported: this
+        # advertises what the API can READ, and unmigrated repositories
+        # really do contain it.
         "fragment_score",
         "cnv_collection",
     }
