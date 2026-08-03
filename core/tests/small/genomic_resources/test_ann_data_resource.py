@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import logging
 import pathlib
 from typing import Any
 
@@ -17,6 +18,10 @@ from gain.genomic_resources.testing import (
 )
 from gain.genomic_resources.testing.ann_data_builder import an_ann_data
 from gain.genomic_resources.testing.builders import a_grr
+
+# A distinctive constant, asserted absent from every rendering of a url --
+# the assertion style of ``test_http_auth_credential_leak``.
+_SECRET = "s3cr3t-do-not-log"  # noqa: S105
 
 
 @pytest.fixture
@@ -188,8 +193,37 @@ def test_rejects_a_non_file_url(
     mocker.patch.object(
         resource, "get_file_url", return_value="https://example.org/d.h5ad")
 
-    with pytest.raises(ValueError, match="cannot load the url"):
+    with pytest.raises(ValueError, match="cannot load the url") as excinfo:
         load_ann_data_from_resource(resource)
+
+    # A url carrying no userinfo is rendered verbatim -- the redaction of
+    # a credential-bearing one (#608) is a redaction, not a rewording.
+    assert str(excinfo.value) == (
+        "cannot load the url https://example.org/d.h5ad "
+        f"for the ann_data {resource.resource_id}")
+
+
+def test_a_rejected_url_does_not_leak_its_credentials(
+    tmp_path: pathlib.Path, mocker: Any, caplog: pytest.LogCaptureFixture,
+) -> None:
+    # ``get_file_url`` deliberately returns the credential-BEARING fetch
+    # url -- aiohttp and htslib read basic auth straight off the url
+    # string -- so every rendering of it here has to be redacted (#608).
+    resource = an_ann_data().build_resource(tmp_path)
+    mocker.patch.object(
+        resource, "get_file_url",
+        return_value=f"https://alice:{_SECRET}@grr.example.com/sub/d.h5ad")
+
+    with caplog.at_level(logging.ERROR), \
+            pytest.raises(ValueError, match="cannot load the url") as excinfo:
+        load_ann_data_from_resource(resource)
+
+    assert _SECRET not in caplog.text
+    assert "alice" not in caplog.text
+    assert _SECRET not in str(excinfo.value)
+    assert "alice" not in str(excinfo.value)
+    assert "https://grr.example.com/sub/d.h5ad" in str(excinfo.value)
+    assert "https://grr.example.com/sub/d.h5ad" in caplog.text
 
 
 class TestMtxFileToDirAndPrefix:
