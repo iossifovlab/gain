@@ -80,6 +80,26 @@ def test_safe_task_id_truncates_long_ids() -> None:
     assert sanitized[150] == "_"
 
 
+def test_safe_task_id_is_deterministic_for_long_ids() -> None:
+    # The forked executor computes the .result file name in the child and
+    # recomputes it in the parent; if the two disagree the parent reads a
+    # path that does not exist and silently yields None (gain#573).
+    long_id = "x" * 210
+
+    assert safe_task_id(long_id) == safe_task_id(long_id)
+
+
+def test_safe_task_id_does_not_collide_on_a_shared_long_prefix() -> None:
+    # Task ids derived from GRR resource paths share long prefixes and
+    # differ only in their tail. Two such ids must not map to the same
+    # safe id -- that is a silent task collapse (the gain#557 family).
+    shared_prefix = "x" * 210
+    first = f"{shared_prefix}_alpha"
+    second = f"{shared_prefix}_beta"
+
+    assert safe_task_id(first) != safe_task_id(second)
+
+
 def test_configure_task_logging_returns_null_handler() -> None:
     handler = configure_task_logging(None, "task", 1)
     assert isinstance(handler, logging.NullHandler)

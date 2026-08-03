@@ -105,6 +105,33 @@ def test_exec_forked_simple(
     assert result == [1]
 
 
+def test_exec_forked_round_trips_a_long_task_id(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The child writes ``<safe id>.result`` and the parent reads it back;
+    # if ``safe_task_id`` is not a pure function of the task id the parent
+    # opens a path that does not exist and silently returns None (gain#573).
+    # The task is built directly -- ``TaskGraph.make_task`` truncates raw
+    # ids to 200 chars, which would keep this off the affected branch.
+    task = TaskDesc(
+        Task("x" * 210),
+        add_to_list,
+        [1, []],
+        {},
+        [],
+        [],
+        [],
+        [],
+    )
+
+    result = TaskGraphExecutorBase._exec(
+        task,
+        {"fork_tasks": True, "task_status_dir": str(tmp_path)},
+    )
+
+    assert result == [1]
+
+
 def raise_exception() -> None:
     raise ValueError("Test exception")
 
