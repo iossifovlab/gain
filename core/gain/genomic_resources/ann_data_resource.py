@@ -8,6 +8,7 @@ from typing import Any
 import anndata as ad
 
 from gain import logging
+from gain.genomic_resources.fsspec_protocol import _strip_url_userinfo
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
@@ -181,12 +182,19 @@ def load_ann_data_from_resource(
 
     file_url = resource.get_file_url(file_name)
     if not file_url.startswith("file://"):
+        # ``get_file_url`` returns the credential-BEARING fetch url on
+        # purpose -- aiohttp and htslib read URL-embedded basic auth
+        # straight off the url string -- so every user-visible rendering of
+        # it has to drop the ``user:pass@`` userinfo first (#608).  The
+        # unredacted url keeps driving the scheme test and the local path
+        # below, which are internal.
+        display_url = _strip_url_userinfo(file_url)
         logger.error(
             "ann_data resources can only be loaded from a file:// url, "
             "and not from %s for the ann_data %s",
-            file_url, resource.resource_id)
+            display_url, resource.resource_id)
         raise ValueError(
-            f"cannot load the url {file_url} "
+            f"cannot load the url {display_url} "
             f"for the ann_data {resource.resource_id}")
 
     file_path = file_url[len("file://"):]
