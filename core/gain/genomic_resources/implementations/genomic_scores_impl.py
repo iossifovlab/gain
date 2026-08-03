@@ -237,19 +237,49 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         filename = self.score.table.definition.filename
         files = {filename}
         if isinstance(self.score.table, TabixGenomicPositionTable):
-            # The statistics hash is computed against the same manifest, so
-            # resolving from it here is free and keeps the two consistent.
-            index_filename = resolve_tabix_index_filename(
-                self.resource.get_manifest(), filename)
-            if index_filename is None:
-                logger.warning(
-                    "resource <%s>: tabix table %s has no index "
-                    "(neither %s.tbi nor %s.csi) in the resource manifest; "
-                    "the index is left out of the resource file set",
-                    self.resource.resource_id, filename, filename, filename)
-            else:
+            index_filename = self._resolve_index_filename(filename)
+            if index_filename is not None:
                 files.add(index_filename)
         return files
+
+    def _resolve_index_filename(self, filename: str) -> str | None:
+        """Return the tabix index of ``filename``, or ``None`` with a warning.
+
+        Resolves the index the way the table itself opens it: the table
+        definition's ``index_filename`` when it is set, and otherwise the
+        conventional ``.tbi`` / ``.csi`` probe over the resource manifest.
+
+        Only a name the manifest carries is ever returned -- the statistics
+        hash looks every file-set entry up in that same manifest and would
+        raise on a missing key.  A configured index absent from the
+        manifest is a misconfiguration; it is reported and dropped rather
+        than falling back to the conventional probe, which would silently
+        hash an index the table does not read (gain#595).
+        """
+        manifest = self.resource.get_manifest()
+        # The definition is a Box over untyped config, so ``get`` is Any.
+        configured = cast(
+            "str | None",
+            self.score.table.definition.get("index_filename"))
+        if configured is not None:
+            if configured in manifest:
+                return configured
+            logger.warning(
+                "resource <%s>: tabix table %s configures index_filename "
+                "%s, which is not in the resource manifest; the index is "
+                "left out of the resource file set",
+                self.resource.resource_id, filename, configured)
+            return None
+        # The statistics hash is computed against the same manifest, so
+        # resolving from it here is free and keeps the two consistent.
+        index_filename = resolve_tabix_index_filename(manifest, filename)
+        if index_filename is None:
+            logger.warning(
+                "resource <%s>: tabix table %s has no index "
+                "(neither %s.tbi nor %s.csi) in the resource manifest; "
+                "the index is left out of the resource file set",
+                self.resource.resource_id, filename, filename, filename)
+        return index_filename
 
     @staticmethod
     def _unpack_score_defs(
