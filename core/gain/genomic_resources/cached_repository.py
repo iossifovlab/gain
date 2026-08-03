@@ -313,13 +313,27 @@ class CachingProtocol(ReadOnlyRepositoryProtocol):
 
 
 class GenomicResourceCachedRepo(GenomicResourceRepo):
-    """Defines caching genomic resources repository."""
+    """Defines caching genomic resources repository.
+
+    Carries the id of the repository it wraps, unchanged: a cache decides
+    how a repository's resources are served, not what the repository is
+    called. The caching layer treats its other identities the same way --
+    ``CachingProtocol.get_url()`` and ``get_public_url()`` both report the
+    remote's.
+
+    The id used to be ``f"{child.repo_id}.caching_repo"``, which renamed a
+    repository an operator had already named, and renamed it *after* the
+    definition was validated: the ids ``check_child_ids_are_unique``
+    reasoned about were then not the ids the repositories were built with,
+    so a definition pairing ``{"id": "a", "cache_dir": ...}`` with
+    ``{"id": "a.caching_repo"}`` passed validation and built two
+    repositories sharing one id. See #447.
+    """
 
     def __init__(
             self, child: GenomicResourceRepo, cache_url: str,
             **kwargs: str | None):
-        repo_id: str = f"{child.repo_id}.caching_repo"
-        super().__init__(repo_id)
+        super().__init__(child.repo_id)
 
         cache_scheme = urlparse(cache_url).scheme
         if cache_scheme not in {"", "file"}:
@@ -596,6 +610,13 @@ class GenomicResourceCachedRepo(GenomicResourceRepo):
         Mirrors get_resource: the child resolves the resource (and owns
         repository_id semantics), then the hit is wrapped so the returned
         resource is cache-backed.
+
+        Forwarding ``repository_id`` unchanged is what makes this repository
+        answer to its own id: it carries the child's id (#447), so a filter
+        naming this repository names the child too, and the child
+        self-names -- a leaf protocol repo by comparing the filter against
+        its own id, a group by dropping the filter it matches itself. There
+        is no separate self-match to keep in step here.
 
         This used to enumerate every resource and pick the highest version
         across protocols, which had two defects. It filtered repository_id

@@ -2104,6 +2104,12 @@ class GenomicResourceRepo(abc.ABC):
         """Return one resource with id qual to resource_id.
 
         If resource is not found, exception is raised.
+
+        ``repository_id`` restricts the lookup to the repository carrying
+        that id, anywhere in this repository's tree -- including this
+        repository itself: every repository answers to its own id, so
+        passing ``repo.repo_id`` is equivalent to passing nothing (#447). A
+        falsy ``repository_id`` is no filter at all.
         """
 
     @abc.abstractmethod
@@ -2113,6 +2119,10 @@ class GenomicResourceRepo(abc.ABC):
         """Return one resource with id qual to resource_id.
 
         If resource is not found, None is returned.
+
+        ``repository_id`` selects a repository by id under the same rule as
+        :meth:`get_resource` -- a repository answers to its own id, and a
+        falsy id is no filter.
         """
 
     @abc.abstractmethod

@@ -391,6 +391,40 @@ def test_the_same_directory_at_two_nesting_levels_is_rejected(
             ]})
 
 
+def test_a_root_id_shared_with_a_child_is_rejected() -> None:
+    """The root is in the same id namespace as its descendants (#447).
+
+    Naming a repository by its own id now selects it, so a root sharing an
+    id with a descendant is no longer benign: the root matches first and
+    the descendant becomes unreachable by ``repository_id`` -- the very
+    outcome the child-uniqueness check exists to prevent. Refused when the
+    definition is loaded, before any repository is built.
+    """
+    with pytest.raises(ValueError, match="top"):
+        build_genomic_resource_repository(
+            {"id": "top", "type": "group", "children": [
+                {"id": "top", "type": "embedded", "content": {}},
+            ]})
+
+
+def test_a_synthesised_root_id_shared_with_a_descendant_is_rejected(
+) -> None:
+    """The root's id collides whether it was spelled or synthesised.
+
+    An id-less top-level group is named ``group_repo``; a descendant
+    spelling that id explicitly shadows it exactly as a spelled root id
+    would. The collision is refused across nesting levels, like every other
+    duplicate id in the tree.
+    """
+    with pytest.raises(ValueError, match="group_repo"):
+        build_genomic_resource_repository(
+            {"type": "group", "children": [
+                {"id": "nested", "type": "group", "children": [
+                    {"id": "group_repo", "type": "embedded", "content": {}},
+                ]},
+            ]})
+
+
 def test_id_less_children_of_nested_groups_are_addressable() -> None:
     """Positional ids must be unique across the whole definition tree.
 
@@ -782,6 +816,12 @@ def test_id_less_top_level_group_keeps_the_group_repo_id(
     ``None`` fallback; the factory now resolves it before the repository is
     built. The observable id -- and the cache directory named after it, which
     an operator's populated cache lives in -- must be byte-identical.
+
+    The expected id changed deliberately in #447: a ``cache_dir`` used to
+    make the built repository report ``group_repo.caching_repo``, because
+    the caching wrapper renamed what it wrapped. It no longer does -- a
+    cache decides how resources are served, not what the repository is
+    called -- so the root reports the same id with and without a cache.
     """
     repo = build_genomic_resource_repository(
         {"type": "group", "cache_dir": str(tmp_path / "cache"),
@@ -791,26 +831,24 @@ def test_id_less_top_level_group_keeps_the_group_repo_id(
                          "data.txt": "AAAA-from-a"}}},
          ]})
 
-    assert repo.repo_id == "group_repo.caching_repo"
+    assert repo.repo_id == "group_repo"
     assert repo.get_resource("one").get_file_content("data.txt") == \
         "AAAA-from-a"
 
 
-def test_synthesised_group_root_id_is_not_selectable_as_a_repository_id(
+def test_synthesised_group_root_id_is_selectable_as_a_repository_id(
 ) -> None:
-    """A group root's own id does not select it -- pinning, not regressing.
+    """A group root answers to its own id, like every other repository.
 
-    ``GenomicResourceGroupRepo.find_resource`` matches ``repository_id``
-    against its *children's* ids and forwards it down; it never compares the
-    filter against its own ``repo_id``. So naming the root selects nothing,
-    and the filter falls through every child unmatched -- ``None``.
+    The semantics changed deliberately in #447: this test used to assert
+    that naming the root selected *nothing*, because
+    ``GenomicResourceGroupRepo.find_resource`` compared ``repository_id``
+    against its children's ids only and never against its own. Now every
+    repository answers to its own id, so naming the repository the caller
+    is holding resolves the resource with no further filtering below that
+    point -- and a synthesised root id is as selectable as an explicit one.
 
-    This is pre-existing group semantics, unchanged by the root-id synthesis
-    of #461: before it, a group root already carried ``group_repo`` (supplied
-    by ``GenomicResourceGroupRepo``'s own ``None`` fallback) and that name was
-    already unselectable. The test exists so the change is not read as
-    delivering a selectability it never had. Selecting a *child* by its id
-    works, and is what the addressability tests above cover.
+    Selecting a *child* by its id, and the unfiltered lookup, are unchanged.
     """
     repo = build_genomic_resource_repository(
         {"type": "group", "children": [
@@ -821,7 +859,7 @@ def test_synthesised_group_root_id_is_not_selectable_as_a_repository_id(
 
     assert repo.repo_id == "group_repo"
 
-    assert repo.find_resource("one", repository_id=repo.repo_id) is None
+    assert repo.find_resource("one", repository_id=repo.repo_id) is not None
     assert repo.find_resource("one", repository_id="a") is not None
     assert repo.find_resource("one") is not None
 
@@ -834,6 +872,12 @@ def test_explicit_top_level_id_is_used_verbatim(
     A repository that already names itself keeps that name and keeps caching
     into ``<cache_dir>/<id>/``, so an existing populated cache is not
     orphaned by the id-synthesis this section is about.
+
+    The expected id changed deliberately in #447: the caching wrapper used
+    to report ``mine.caching_repo``, so the ``id`` an operator spelled was
+    verbatim only until a ``cache_dir`` was added next to it. Wrapping a
+    repository in a cache no longer renames it. The cache directory is
+    derived from the *protocol* id and was never affected either way.
     """
     repo = build_genomic_resource_repository({
         "id": "mine",
@@ -842,7 +886,7 @@ def test_explicit_top_level_id_is_used_verbatim(
         "cache_dir": str(tmp_path / "cache"),
     })
 
-    assert repo.repo_id == "mine.caching_repo"
+    assert repo.repo_id == "mine"
     assert repo.get_resource("one").get_file_content("data.txt")
     assert (tmp_path / "cache" / "mine" / "one" / "data.txt").is_file()
 
