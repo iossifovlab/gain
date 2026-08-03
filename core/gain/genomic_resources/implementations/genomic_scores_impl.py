@@ -7,6 +7,7 @@ from typing import Any, ClassVar, TypeVar, cast
 import numpy as np
 
 from gain import logging
+from gain.genomic_resources.cli_errors import report_resource_failure
 from gain.genomic_resources.genomic_position_table import (
     ContigExtent,
     TabixGenomicPositionTable,
@@ -37,6 +38,10 @@ from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
     resolve_tabix_index_filename,
+)
+from gain.genomic_resources.resource_errors import (
+    MalformedResourceError,
+    overlapping_records_error,
 )
 from gain.genomic_resources.resource_implementation import (
     InfoImplementationMixin,
@@ -115,12 +120,15 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         contig.  The region-read family requires a contig, so the iteration
         over contigs is stated here rather than smuggled down as a null.
 
-        Each contig is scanned by the very functions the per-region tasks use
-        and folded together by the very functions that fold those tasks'
-        results, so this produces what a split run produces -- not something
-        merely believed to match.  An empty contig (an unscored alt, of which
-        hg38 has hundreds) contributes an empty histogram, which merges
-        cleanly; ``_merge_histograms`` only nullifies on a genuine error.
+        Each contig is scanned through the very task functions a split run
+        calls and folded together by the very functions that fold those
+        tasks' results, so this produces what a split run produces -- not
+        something merely believed to match, and a resource either of them
+        refuses is attributed there rather than reaching the reader as a
+        reason-less "statistics were not built".  An empty contig (an
+        unscored alt, of which hg38 has hundreds) contributes an empty
+        histogram, which merges cleanly; ``_merge_histograms`` only
+        nullifies on a genuine error.
         """
         impl = build_score_implementation_from_resource(resource)
         all_min_max_scores, all_hist_confs = \
@@ -133,13 +141,13 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             all_hist_confs = GenomicScoreImplementation._merge_min_max(
                 all_min_max_scores,
                 all_hist_confs,
-                *(GenomicScoreImplementation._do_min_max(
+                *(GenomicScoreImplementation._do_min_max_task(
                     resource, all_min_max_scores, chrom, None, None)
                   for chrom in chroms),
             )
         hist_result = GenomicScoreImplementation._merge_histograms(
             resource,
-            *(GenomicScoreImplementation._do_histogram(
+            *(GenomicScoreImplementation._do_histogram_task(
                 resource, all_hist_confs, chrom, None, None)
               for chrom in chroms),
         )
@@ -672,9 +680,10 @@ class GenomicScoreImplementation(ScoreImplementationBase):
           base pair of the queried region it covers
           (``min(end, pos_end) - max(start, pos_begin) + 1``); an allele record
           and a fragment count 1, however wide they are.
-        * ``RECORD_ORDERING`` -- ``DISJOINT`` raises ``ValueError`` on two
-          records that touch, exactly as ``PositionScore.fetch_region_values``
-          does, and across the batch boundary via ``prev_right``; ``SHARED``
+        * ``RECORD_ORDERING`` -- ``DISJOINT`` raises
+          ``MalformedResourceError`` on two records that touch, exactly as
+          ``PositionScore.fetch_region_values`` does, and across the batch
+          boundary via ``prev_right``; ``SHARED``
           has nothing to reject, because several records at one position are
           what an allele or fragment score is made of.
         """
@@ -688,13 +697,18 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         kleft = left[keep]
         kright = right[keep]
         if score.RECORD_ORDERING is RecordOrdering.DISJOINT and kleft.size:
-            overlaps_within = kleft.size > 1 and bool(
-                np.any(kleft[1:] <= kright[:-1]))
-            overlaps_carry = prev_right is not None \
-                and int(kleft[0]) <= prev_right
-            if overlaps_within or overlaps_carry:
-                raise ValueError(
-                    f"multiple values for positions on {chrom}")
+            if prev_right is not None and int(kleft[0]) <= prev_right:
+                # The carry: the offender opens this batch and its partner
+                # closed the one before, so neither array holds the pair.
+                raise overlapping_records_error(
+                    score.resource_id, chrom, int(kleft[0]), prev_right)
+            if kleft.size > 1:
+                touching = kleft[1:] <= kright[:-1]
+                if bool(touching.any()):
+                    first = int(np.argmax(touching))
+                    raise overlapping_records_error(
+                        score.resource_id, chrom,
+                        int(kleft[first + 1]), int(kright[first]))
             prev_right = int(kright[-1])
         weights = (kright - kleft + 1).astype(np.int64) \
             if score.RECORD_WEIGHT_IS_SPAN \
@@ -829,14 +843,24 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         region -- a concrete contig for its overlap guard, and concrete bounds
         because that is what the score's bulk read takes -- so any unbounded
         scan keeps the per-record :meth:`_do_min_max`.
+
+        A resource the scan refuses is reported here and the refusal
+        re-raised: this is the only frame that knows both which resource the
+        scan was reading and that the reading is what failed, and the task
+        graph's own report names no resource.
         """
-        if chrom is not None and start is not None and end is not None \
-                and GenomicScoreImplementation._can_bulk_min_max(
-                    resource, score_ids):
-            return GenomicScoreImplementation._do_min_max_bulk(
+        try:
+            if chrom is not None and start is not None and end is not None \
+                    and GenomicScoreImplementation._can_bulk_min_max(
+                        resource, score_ids):
+                return GenomicScoreImplementation._do_min_max_bulk(
+                    resource, score_ids, chrom, start, end)
+            return GenomicScoreImplementation._do_min_max(
                 resource, score_ids, chrom, start, end)
-        return GenomicScoreImplementation._do_min_max(
-            resource, score_ids, chrom, start, end)
+        except MalformedResourceError as err:
+            report_resource_failure(
+                err, "could not scan the values of", resource.resource_id)
+            raise
 
     @staticmethod
     def _do_histogram_task(
@@ -852,14 +876,23 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         overlap guard runs along a single chromosome's records, and concrete
         bounds, because that is what the score's bulk read takes.  Any
         unbounded scan keeps the per-record path.
+
+        A resource the scan refuses is reported here and the refusal
+        re-raised, for the reason :meth:`_do_min_max_task` gives.
         """
-        if chrom is not None and start is not None and end is not None \
-                and GenomicScoreImplementation._can_bulk_histogram(
-                    resource, all_hist_confs):
-            return GenomicScoreImplementation._do_histogram_bulk(
+        try:
+            if chrom is not None and start is not None and end is not None \
+                    and GenomicScoreImplementation._can_bulk_histogram(
+                        resource, all_hist_confs):
+                return GenomicScoreImplementation._do_histogram_bulk(
+                    resource, all_hist_confs, chrom, start, end)
+            return GenomicScoreImplementation._do_histogram(
                 resource, all_hist_confs, chrom, start, end)
-        return GenomicScoreImplementation._do_histogram(
-            resource, all_hist_confs, chrom, start, end)
+        except MalformedResourceError as err:
+            report_resource_failure(
+                err, "could not build the histograms of",
+                resource.resource_id)
+            raise
 
     @staticmethod
     def _do_min_max_bulk(
