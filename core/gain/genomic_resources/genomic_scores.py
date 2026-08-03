@@ -58,7 +58,7 @@ from gain.genomic_resources.resource_types import (
     FRAGMENT_SCORE_TYPES,
     LEGACY_FRAGMENT_SCORE_TYPE,
     PREFERRED_FRAGMENT_SCORE_TYPE,
-    deprecated_spelling_message,
+    warn_deprecated_spelling,
 )
 from gain.genomic_resources.score_def import (
     BULK_PARSEABLE_VALUE_TYPES,
@@ -1871,13 +1871,17 @@ class FragmentScore(GenomicScore):
             # Warned here, not from the `in FRAGMENT_SCORE_TYPES` membership
             # tests: those also run inside the repository layer's SQL
             # predicate, which would fire the warning on every query rather
-            # than on every open.  Construction is once per pipeline build
-            # and once per resource in a repository-wide sweep, which is the
-            # per-offender volume this deprecation is worth.
-            logger.warning("%s", deprecated_spelling_message(
-                "resource type",
+            # than on every open.
+            #
+            # Announced through `warn_deprecated_spelling` rather than
+            # logged outright because construction is NOT once per resource:
+            # the statistics scan rebuilds the score inside every min/max
+            # and histogram task, so a repo-repair over an hg38-scale
+            # resource passes here once per region.
+            warn_deprecated_spelling(
+                logger, "resource type",
                 LEGACY_FRAGMENT_SCORE_TYPE, PREFERRED_FRAGMENT_SCORE_TYPE,
-                found_in=f"Resource '{resource.get_id()}'"))
+                found_in=f"Resource '{resource.get_id()}'")
         super().__init__(resource)
 
     @staticmethod

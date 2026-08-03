@@ -1,10 +1,10 @@
-import logging
 import textwrap
 from collections.abc import Callable
 from typing import Any
 
 from lark import Lark, Token, Tree
 
+from gain import logging
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
     AnnotationConfigurationError,
@@ -18,7 +18,7 @@ from gain.annotation.annotation_pipeline import (
 from gain.annotation.annotator_base import AnnotatorBase
 from gain.genomic_resources.genomic_scores import FragmentScore
 from gain.genomic_resources.resource_types import (
-    deprecated_spelling_message,
+    warn_deprecated_spelling,
 )
 from gain.genomic_resources.score_def import ScoreValue
 
@@ -99,14 +99,16 @@ class FragmentScoreAnnotator(AnnotatorBase):
         # through the YAML the reader has to edit, so the messages below
         # carry the location themselves.  This is the whole pipeline's worth
         # of them: the constructor runs once per pipeline build, not once
-        # per annotated record.
+        # per annotated record.  A run that rebuilds the same pipeline --
+        # once per partition, say -- collapses to one line per offending
+        # annotator through `warn_deprecated_spelling`.
         found_in = (
             f"Annotator {info.annotator_id} on resource '{resource_id}'")
         preferred_annotator_name = LEGACY_ANNOTATOR_NAMES.get(info.type)
         if preferred_annotator_name is not None:
-            logger.warning("%s", deprecated_spelling_message(
-                "annotator name", info.type, preferred_annotator_name,
-                found_in=found_in))
+            warn_deprecated_spelling(
+                logger, "annotator name", info.type,
+                preferred_annotator_name, found_in=found_in)
 
         # Deliberately constructed directly rather than through
         # `build_fragment_score_from_resource`: that factory returns a
@@ -128,9 +130,9 @@ class FragmentScoreAnnotator(AnnotatorBase):
         fragment_filter_str = info.parameters.get(FRAGMENT_FILTER_PARAMETER)
         cnv_filter_str = info.parameters.get(LEGACY_FILTER_PARAMETER)
         if cnv_filter_str is not None:
-            logger.warning("%s", deprecated_spelling_message(
-                "parameter", LEGACY_FILTER_PARAMETER,
-                FRAGMENT_FILTER_PARAMETER, found_in=found_in))
+            warn_deprecated_spelling(
+                logger, "parameter", LEGACY_FILTER_PARAMETER,
+                FRAGMENT_FILTER_PARAMETER, found_in=found_in)
         if fragment_filter_str is not None and cnv_filter_str is not None:
             raise AnnotationConfigurationError(
                 f"{info.type} configures both "

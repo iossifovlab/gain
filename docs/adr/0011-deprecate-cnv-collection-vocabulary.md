@@ -97,7 +97,7 @@ rather than per open, which is both wrong and extremely loud on a repository
 with thousands of resources.
 
 **Not per annotated record.** `FragmentScoreAnnotator.__init__` runs once per
-pipeline build; `FragmentScore.__init__` runs once per resource open.
+pipeline build, not once per annotated record.
 
 ### Volume is the design constraint
 
@@ -111,10 +111,45 @@ distinct offending resource or pipeline annotator, per run**:
 - Emphatically not one per record — that out-volumes the annotation output
   itself, which is the noise `0003` was right to refuse.
 
-A repository-wide sweep over N legacy resources emits exactly N warnings,
-each naming its own resource. Annotating M records through one pipeline
-emits a count that does not depend on M. Both are pinned in
+A repository-wide sweep over N legacy resources emits N warnings, each
+naming its own resource. Annotating M records through one pipeline emits a
+count that does not depend on M. Both are pinned in
 `core/tests/small/genomic_resources/test_fragment_score_config_surface.py`.
+
+### The chosen seams are *not* once-per-offender on their own
+
+The first draft of this record asserted that `FragmentScore.__init__` runs
+once per resource open, and rejected deduplication on that basis. **That was
+wrong**, and it was wrong in the same shape as the premise this ADR
+supersedes: an assumption about how often a code path runs, not measured.
+
+`GenomicScoreImplementation` builds a fresh `FragmentScore` every time it is
+constructed, and the statistics scan constructs one *inside every task*:
+`_can_bulk_min_max`, `_do_min_max`, `_do_min_max_bulk`, `_do_histogram_task`
+and `_do_noregion_histograms` each call
+`build_score_implementation_from_resource`. `grr_manage repo-repair` defaults
+to `region_size=3_000_000`, so an hg38-scale resource yields roughly a
+thousand regions and two task kinds — thousands of identical lines naming one
+resource, which is precisely the noise `0003` refused and which hides every
+other offender behind it. Measured on a three-row fragment score at
+`region_size=25`: 12 tasks, 33 warnings, one resource.
+
+So the volume guarantee is enforced rather than assumed.
+`warn_deprecated_spelling` in `resource_types.py` announces each rendered
+message once per process and drops repeats. Keying on the message rather
+than on a resource id means two announcements collapse exactly when they
+would have printed the same line: a different resource, or the same resource
+under a different surface, is a different offender and is still named.
+
+The scope is the process, not the run: a task graph executed across worker
+processes announces once per worker. That is bounded by the worker count
+instead of the task count, which is the property that matters — and it is
+not something a warning emitted from library code can do better without a
+run-scoped object that does not exist here.
+
+The set is process-global state, which is a real cost: it makes a test's
+outcome depend on what ran before it. `core/tests/conftest.py` pays it with
+an autouse fixture calling `reset_deprecation_notices()` before every test.
 
 ### What the web API advertises does not change
 
@@ -165,8 +200,18 @@ the warning is the *id* it carries. One warning per run over a repository of
 thousands names one resource and hides the rest, which converts an
 actionable notice into a vague one.
 
-**Deduplicate warnings through a process-wide seen-set.** Rejected as
-bought-and-paid-for complexity: the seams already chosen — resource open and
-pipeline build — are naturally once-per-offender, so the set would suppress
-nothing that is actually emitted while adding cross-test state that makes an
-assertion's outcome depend on what ran before it.
+**Deduplicate warnings through a process-wide seen-set.** Initially rejected
+as bought-and-paid-for complexity, on the belief that the chosen seams —
+resource open and pipeline build — were naturally once-per-offender.
+**Adopted**, because they are not: the statistics scan rebuilds the score
+once per region task, so the unguarded warning multiplied by the region
+count. Its real cost is the cross-test state, which is paid for by an
+autouse reset in `core/tests/conftest.py`.
+
+**Warn from a seam further out instead, so no deduplication is needed.**
+Considered and rejected: there is no such seam. `build_resource_implementation`
+is one entry point into a legacy resource, but the statistics tasks reach the
+score through `build_score_implementation_from_resource` without passing
+through it, and an annotation pipeline reaches it through neither. Warning at
+several outer seams instead of one inner seam trades a volume bug for a
+coverage bug, and the coverage bug is silent.

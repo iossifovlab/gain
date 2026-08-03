@@ -7,6 +7,7 @@ from gain.genomic_resources.genomic_context import (
     get_genomic_context,
 )
 from gain.genomic_resources.genomic_context_base import GenomicContext
+from gain.genomic_resources.resource_types import reset_deprecation_notices
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -107,6 +108,20 @@ def clean_genomic_context(
     mocker.patch(
         "gain.genomic_resources.genomic_context._REGISTERED_CONTEXTS",
         [])
+
+
+@pytest.fixture(autouse=True)
+def clean_deprecation_notices() -> None:
+    """Forget which deprecation warnings this worker already announced.
+
+    ``warn_deprecated_spelling`` announces each distinct message once per
+    process, so that a repository-wide statistics sweep names an offending
+    resource once rather than once per region task.  That set outlives a
+    test, so without this every "the legacy spelling warns" assertion would
+    depend on whether an earlier test in the same worker consumed it -- and
+    would pass or fail differently under ``-p no:randomly`` or ``-n``.
+    """
+    reset_deprecation_notices()
 
 
 @pytest.fixture

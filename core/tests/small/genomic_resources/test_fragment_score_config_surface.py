@@ -39,8 +39,18 @@ from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
-from gain.genomic_resources.resource_types import equivalent_resource_types
-from gain.genomic_resources.testing.builders import a_fragment_score, a_grr
+from gain.genomic_resources.resource_types import (
+    deprecated_spelling_message,
+    equivalent_resource_types,
+)
+from gain.genomic_resources.testing.builders import (
+    FragmentScoreBuilder,
+    a_fragment_score,
+    a_grr,
+)
+from gain.task_graph.cli_tools import task_graph_run
+from gain.task_graph.graph import TaskGraph
+from gain.task_graph.sequential_executor import SequentialExecutor
 
 LEGACY_RESOURCE_TYPE = "cnv_collection"
 PREFERRED_RESOURCE_TYPE = "fragment_score"
@@ -166,38 +176,68 @@ def test_repository_sweep_warns_once_per_legacy_resource(
     tmp_path: pathlib.Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Every offender is named, and only the offenders.
+    """Every offender is named exactly once, and only the offenders.
 
-    One warning per run would hide every legacy resource after the first,
-    which is the failure mode that makes a deprecation unactionable on a
-    repository with thousands of resources.
+    Shaped like ``grr_manage repo-repair``, which does not stop at
+    constructing an implementation: it builds and runs each resource's
+    statistics tasks, and every min/max and histogram task calls
+    ``build_score_implementation_from_resource`` again -- another
+    ``FragmentScore`` over the same resource.  Both ways of getting the
+    volume wrong are pinned here, because both make the notice
+    unactionable: one warning per run hides every legacy resource after
+    the first, and one per task buries all of them under thousands of
+    identical lines naming a single offender.
     """
+    def a_typed_fragment_score(resource_type: str) -> FragmentScoreBuilder:
+        return (
+            a_fragment_score()
+            .with_resource_type(resource_type)
+            .with_score("frequency", "float")
+            .with_data("""
+                chrom  pos_begin  pos_end  frequency
+                1      10         20       0.02
+                1      50         100      0.1
+            """)
+        )
+
     grr = (
         a_grr()
-        .with_resource(
-            "old_one", a_fragment_score().with_resource_type(
-                LEGACY_RESOURCE_TYPE))
-        .with_resource(
-            "old_two", a_fragment_score().with_resource_type(
-                LEGACY_RESOURCE_TYPE))
-        .with_resource(
-            "current", a_fragment_score().with_resource_type(
-                PREFERRED_RESOURCE_TYPE))
+        .with_resource("old_one", a_typed_fragment_score(
+            LEGACY_RESOURCE_TYPE))
+        .with_resource("old_two", a_typed_fragment_score(
+            LEGACY_RESOURCE_TYPE))
+        .with_resource("current", a_typed_fragment_score(
+            PREFERRED_RESOURCE_TYPE))
         .build_repo(tmp_path)
     )
 
+    task_count = 0
     with caplog.at_level(logging.WARNING):
         for resource in grr.get_all_resources():
-            build_resource_implementation(resource)
+            impl = build_resource_implementation(resource)
+            tasks = impl.create_statistics_build_tasks(region_size=25)
+            task_count += len(tasks)
+            graph = TaskGraph()
+            graph.add_tasks(tasks)
+            task_graph_run(graph, SequentialExecutor())
 
+    # Each task re-opens its resource, so a per-open warning would show up
+    # once per task.  Without several tasks per resource this test could
+    # not tell the two volumes apart.
+    assert task_count > 3
+
+    # Sorted, not compared in order: `get_all_resources` walks the
+    # repository in filesystem order, which is not the order they were
+    # declared in.
     messages = deprecation_warnings(
         caplog, "resource type", LEGACY_RESOURCE_TYPE)
-    assert len(messages) == 2
-    assert {"old_one", "old_two"} == {
-        resource_id
-        for resource_id in ("old_one", "old_two", "current")
-        if any(f"'{resource_id}'" in message for message in messages)
-    }
+    assert sorted(messages) == [
+        deprecated_spelling_message(
+            "resource type",
+            LEGACY_RESOURCE_TYPE, PREFERRED_RESOURCE_TYPE,
+            found_in=f"Resource '{resource_id}'")
+        for resource_id in ("old_one", "old_two")
+    ]
 
 
 def test_legacy_resource_type_still_dispatches_in_build_score(
@@ -289,12 +329,13 @@ def test_legacy_annotator_name_annotates_identically_to_its_replacement(
     def annotate(annotator_name: str) -> dict:
         pipeline = load_pipeline_from_yaml(
             f"- {annotator_name}: fragments", modern_grr)
-        # Bound and returned outside the `with`: the pipeline's `__exit__`
-        # is typed as able to suppress, so a `return` in the body does not
-        # read as the function's only exit.
+        # Bound and returned outside the `with`, which ruff reads as a
+        # redundant temporary and mypy requires: the pipeline's `__exit__`
+        # is typed as able to suppress, so a `return` inside the body leaves
+        # a path that falls off the end of the function.
         with pipeline.open() as open_pipeline:
             annotated = open_pipeline.annotate(Region("1", 15, 60))
-        return annotated
+        return annotated  # noqa: RET504
 
     assert annotate(legacy_name) == annotate(preferred_name)
 
