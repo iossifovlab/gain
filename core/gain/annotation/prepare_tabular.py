@@ -16,7 +16,8 @@ import os
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
@@ -453,6 +454,40 @@ def _stream_input_to_bgzip(
         )
 
 
+@dataclass(frozen=True)
+class _StagedOutput:
+    """The temporary paths a run writes to before publishing them."""
+    data_path: str
+    index_path: str
+
+
+@contextmanager
+def _staged_output(
+    output_path: str, output_dir: str,
+) -> Iterator[_StagedOutput]:
+    """Stage the output and its index, publishing both only on success.
+
+    Both temporaries live in a private directory inside ``output_dir``,
+    which keeps the publishing renames on the destination filesystem.
+    The destination is not touched until the body of the ``with`` block
+    completes, so a failure anywhere in it — streaming, sort or tabix
+    indexing — leaves a previously written output/index pair intact and
+    a fresh destination empty. The staging directory is removed either
+    way.
+    """
+    index_path = f"{output_path}.tbi"
+    with tempfile.TemporaryDirectory(
+            prefix=".prepare_tabular_staging_", dir=output_dir) as staging:
+        name = os.path.basename(output_path)
+        staged = _StagedOutput(
+            data_path=os.path.join(staging, name),
+            index_path=os.path.join(staging, f"{name}.tbi"),
+        )
+        yield staged
+        os.replace(staged.data_path, output_path)
+        os.replace(staged.index_path, index_path)
+
+
 def _default_output_path(input_path: str) -> str:
     """Map ``FFF.<ext>[.gz|.bgz]`` to ``FFF.sorted.tsv.bgz``."""
     p = Path(input_path)
@@ -603,12 +638,15 @@ def cli(argv: list[str] | None = None) -> None:
             plan = _build_indirect_sort_plan(r2a, header, first_row)
 
         provided_work_dir = args.get("work_dir")
-        with tempfile.TemporaryDirectory(
+        with (
+            tempfile.TemporaryDirectory(
                 prefix="prepare_tabular_",
-                dir=provided_work_dir or output_dir) as work_dir:
+                dir=provided_work_dir or output_dir) as work_dir,
+            _staged_output(output_path, output_dir) as staged,
+        ):
             _stream_input_to_bgzip(
                 input_path=input_path,
-                output_path=output_path,
+                output_path=staged.data_path,
                 plan=plan,
                 input_separator=input_separator,
                 chrom_rank=chrom_rank,
@@ -623,11 +661,12 @@ def cli(argv: list[str] | None = None) -> None:
                 output_path,
                 plan.tabix_seq_col, plan.tabix_start_col, plan.tabix_end_col)
             tabix_index(
-                output_path,
+                staged.data_path,
                 seq_col=plan.tabix_seq_col,
                 start_col=plan.tabix_start_col,
                 end_col=plan.tabix_end_col,
                 line_skip=1,
+                index=staged.index_path,
                 force=True,
             )
     finally:
