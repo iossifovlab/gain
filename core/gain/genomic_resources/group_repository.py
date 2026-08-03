@@ -30,6 +30,16 @@ class GenomicResourceGroupRepo(GenomicResourceRepo):
             self, resource_id: str, version_constraint: str | None = None,
             repository_id: str | None = None) -> GenomicResource | None:
 
+        # This group *is* the requested repository: naming a repository by
+        # its own id selects it, it does not filter it out. Below this point
+        # there is nothing left to filter, exactly as when a child is
+        # matched by id -- a group used to compare the filter only against
+        # its children's ids, so naming the group a caller was holding
+        # selected nothing at all. A leaf protocol repo has always
+        # self-named; #447 made the rule the same at every layer.
+        if repository_id and repository_id == self.repo_id:
+            repository_id = None
+
         for child_repo in self.children:
             # Truthiness, not `is not None`: GenomicResourceProtocolRepo
             # ignores a falsy repository_id, so treating "" as a real filter

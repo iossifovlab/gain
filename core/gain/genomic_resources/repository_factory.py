@@ -304,11 +304,13 @@ class GroupRepoDefinition(_RepoDefinitionBase):
 
     The uniqueness check covers *children*, not the definition root: the
     walk starts at ``self.children``, so the root's own id (explicit or
-    synthesised) is not compared against any descendant's and a root may
-    share an id with one. Benign today -- a group root's id is never handed
-    to a protocol as a ``proto_id``, so it names no cache directory, and a
-    ``repository_id`` naming the root selects nothing at all (a group
-    matches the filter against its children's ids, never its own).
+    synthesised) is not compared against any descendant's here. It is not
+    exempt -- a ``repository_id`` naming the root selects it, like any other
+    repository (#447), so a root sharing an id with a descendant shadows
+    it. That pair is refused by ``_check_root_id_is_not_a_descendant_id``
+    in the top-level builder instead, which is the only place the root's
+    path through the definition tree is genuinely empty and its id can
+    therefore be resolved as its parent would.
 
     Spelling ``id`` on a child is optional. A child that omits it gets a
     deterministic id synthesised from its own identity -- its ``url`` or
@@ -491,16 +493,14 @@ def _resolve_repo_id(
     repository, root or child, is ever built with ``None`` or ``""`` for an
     id.
 
-    It does NOT make every built id unique. ``check_child_ids_are_unique``
-    walks ``self.children`` only, so the ids the *children* resolve to are
-    the ids validation reasons about, and the root's resolved id is never
-    compared against them -- a root and a descendant may share an id, and
-    the descendant wins a ``repository_id`` lookup.
-
-    That is presently benign, which is why extending the walk is left to a
-    follow-up rather than done here: a group root's id never becomes a
-    ``proto_id``, so it cannot reach the cache-path join that #461 is about,
-    and a leaf root has no children to collide with in the first place.
+    It does NOT make every built id unique on its own.
+    ``check_child_ids_are_unique`` walks ``self.children`` only, so the ids
+    the *children* resolve to are the ids that validator reasons about. The
+    root's resolved id is compared against them separately, by
+    ``_check_root_id_is_not_a_descendant_id`` in the top-level builder: a
+    root and a descendant sharing an id leave the descendant unreachable,
+    since a ``repository_id`` naming the root selects the root and stops
+    filtering below it (#447).
 
     ``path`` is the repository's position in the definition tree: the empty
     tuple for the root, the chain of ``children`` indices for a child.
@@ -530,6 +530,42 @@ def _walk_resolved_child_ids(
             path)
         if isinstance(child, GroupRepoDefinition):
             yield from _walk_resolved_child_ids(child.children, path)
+
+
+def _check_root_id_is_not_a_descendant_id(
+    repo_id: str, root_definition: GroupRepoDefinition,
+) -> None:
+    """Refuse a definition whose root shares an id with a descendant.
+
+    The root is in the same id namespace as everything below it: a
+    ``repository_id`` naming a repository selects it, the root included
+    (#447). A root and a descendant sharing an id therefore leave the
+    descendant unreachable -- the root matches first and resolves the
+    lookup with no further filtering below that point -- which is exactly
+    what ``GroupRepoDefinition.check_child_ids_are_unique`` refuses among
+    the descendants themselves.
+
+    Checked here rather than in that validator because the ids a group
+    resolves depend on the path from the *definition root*: a nested group
+    asked to resolve its own id would have to do it with an empty path,
+    computing a different name than the one its parent gives it, and
+    compare that wrong name against its children. The root's path is
+    genuinely empty only at this top-level builder, which is where the root
+    id is resolved.
+
+    Runs before any repository is constructed, for the same reason the
+    ``cache_dir`` and ``id`` checks do (#473): a refused definition must
+    not leave a directory on disk.
+    """
+    for path, child_id in _walk_resolved_child_ids(root_definition.children):
+        if child_id == repo_id:
+            raise ValueError(
+                f"the root repository id <{repo_id}> is also the id of a "
+                f"descendant repository (child at position "
+                f"{_format_definition_path(path)}); every repository in a "
+                f"group must have its own unique 'id' -- a repository is "
+                f"selectable by its own id, so the root would shadow the "
+                f"descendant")
 
 
 def redact_definition(definition: Any) -> Any:
@@ -760,8 +796,9 @@ def build_genomic_resource_repository(
     # leaky ``.errors()``/``.json()`` input. ``from None`` alone would only
     # clear ``__cause__``, leaving the secret on ``__context__``.
     validation_error_msg: str | None = None
+    root_definition: RepoDefinition | None = None
     try:
-        _REPO_DEFINITION_ADAPTER.validate_python(definition)
+        root_definition = _REPO_DEFINITION_ADAPTER.validate_python(definition)
     except ValidationError as exc:
         validation_error_msg = str(exc)
     if validation_error_msg is not None:
@@ -782,6 +819,8 @@ def build_genomic_resource_repository(
     repo_id = _resolve_repo_id(
         definition_copy.pop("id", None), repo_type,
         definition_copy.get("url"), definition_copy.get("directory"), ())
+    if isinstance(root_definition, GroupRepoDefinition):
+        _check_root_id_is_not_a_descendant_id(repo_id, root_definition)
 
     if repo_type == "group":
         # ``validate_python`` above rejects a group whose ``children`` is

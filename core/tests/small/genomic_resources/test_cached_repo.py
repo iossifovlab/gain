@@ -31,6 +31,7 @@ from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GenomicResource,
     GenomicResourceProtocolRepo,
+    GenomicResourceRepo,
 )
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
@@ -1830,14 +1831,121 @@ def test_repository_id_reaches_a_repo_nested_in_a_subgroup(
     assert found.version == (1, 0)
 
 
+def _a_repository_shape(
+    shape: str, tmp_path: pathlib.Path,
+) -> GenomicResourceRepo:
+    """Build one of the repository shapes a caller can hold.
+
+    Every shape serves ``one`` at version 1.0 from its first (or only) leaf,
+    and the composite shapes carry a second leaf holding version 2.0 -- so a
+    lookup that reached the wrong child is visible in the version.
+    """
+    leaf = _proto_repo(tmp_path / "leaf", "leaf_repo", {
+        "one(1.0)": {GR_CONF_FILE_NAME: "", "data.txt": "leaf"},
+    })
+    if shape == "leaf":
+        return leaf
+    if shape == "cached_leaf":
+        return GenomicResourceCachedRepo(leaf, f"file://{tmp_path}/cache")
+
+    other = _proto_repo(tmp_path / "other", "other_repo", {
+        "one(2.0)": {GR_CONF_FILE_NAME: "", "data.txt": "other"},
+    })
+    group = GenomicResourceGroupRepo([leaf, other], "outer_group")
+    if shape == "group":
+        return group
+    if shape == "cached_group":
+        return GenomicResourceCachedRepo(group, f"file://{tmp_path}/cache")
+    raise ValueError(f"unknown repository shape {shape}")
+
+
+@pytest.mark.parametrize("shape", [
+    "leaf", "group", "cached_leaf", "cached_group",
+])
+def test_a_repository_answers_to_its_own_repository_id(
+    shape: str, tmp_path: pathlib.Path,
+) -> None:
+    """One self-naming rule for every layer (#447).
+
+    ``repo.find_resource(x, repository_id=repo.repo_id)`` must be equivalent
+    to ``repo.find_resource(x)`` for any repository object a caller can
+    hold. A leaf protocol repo always was; a group and a caching wrapper
+    matched the filter only against their *children's* ids, so naming the
+    repository the caller was holding selected nothing at all.
+    """
+    repo = _a_repository_shape(shape, tmp_path)
+
+    unfiltered = repo.find_resource("one")
+    assert unfiltered is not None
+    assert unfiltered.version == (1, 0)
+
+    assert repo.find_resource("one", repository_id=repo.repo_id) == unfiltered
+    assert repo.get_resource("one", repository_id=repo.repo_id) == unfiltered
+
+
+def test_a_cached_group_child_is_named_by_the_id_in_the_definition(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A ``cache_dir`` must not rename a child of a GRR definition (#447).
+
+    The id an operator spells for a child is the id that selects it,
+    whether or not that child also carries a ``cache_dir`` -- and there is
+    no second, suffixed spelling that selects it as well. The suffix used to
+    be applied after the definition was validated, so the ids
+    ``check_child_ids_are_unique`` reasoned about were not the ids built.
+    """
+    repo = build_genomic_resource_repository(
+        {"type": "group", "children": [
+            {"id": "cached_child", "type": "embedded",
+             "cache_dir": str(tmp_path / "cache"),
+             "content": {"one": {GR_CONF_FILE_NAME: "type: position_score",
+                                 "data.txt": "AAAA-from-cached"}}},
+        ]})
+
+    found = repo.find_resource("one", repository_id="cached_child")
+    assert found is not None
+    assert isinstance(found.proto, CachingProtocol)
+
+    assert repo.find_resource(
+        "one", repository_id="cached_child.caching_repo") is None
+
+
+def test_a_cached_repository_keeps_the_wrapped_repository_id(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Wrapping a repository in a cache must not rename it (#447).
+
+    A cache changes how a repository's resources are served, not what the
+    repository is called. This is the treatment the caching layer already
+    gives its other identities -- ``CachingProtocol.get_url()`` and
+    ``get_public_url()`` both report the remote's.
+
+    The id used to be ``f"{child.repo_id}.caching_repo"``, so adding a
+    ``cache_dir`` renamed a repository the operator had already named. Worse,
+    the rename happened *after* the definition was validated, so the ids
+    ``check_child_ids_are_unique`` reasoned about were not the ids the built
+    repositories carried.
+    """
+    leaf = _proto_repo(tmp_path / "leaf", "leaf_repo", {
+        "one(1.0)": {GR_CONF_FILE_NAME: "", "data.txt": "leaf"},
+    })
+
+    cached = GenomicResourceCachedRepo(leaf, f"file://{tmp_path}/cache")
+
+    assert cached.repo_id == "leaf_repo"
+
+
 def test_repository_id_names_a_cached_child_of_a_group(
     tmp_path: pathlib.Path,
 ) -> None:
-    """A cached child answers to its own id, filter not re-applied inside.
+    """A cached child answers to the id it was given, and to nothing else.
 
-    Same branch as naming a sub-group: GenomicResourceCachedRepo.repo_id is
-    "<child>.caching_repo", and forwarding that id into it would compare it
-    against the wrapped child's id and find nothing.
+    The semantics changed deliberately in #447: this test used to assert
+    that the suffixed spelling ``"leaf_repo.caching_repo"`` selected the
+    child, which was the only id the caching wrapper carried. A cache no
+    longer renames what it wraps, so the child is selected by its own id --
+    the one a GRR definition spells -- and the suffixed spelling names no
+    repository at all.
     """
     leaf = _proto_repo(tmp_path / "leaf", "leaf_repo", {
         "one(1.0)": {GR_CONF_FILE_NAME: "", "data.txt": "leaf"},
@@ -1849,11 +1957,32 @@ def test_repository_id_names_a_cached_child_of_a_group(
         leaf, f"file://{tmp_path}/cache")
     outer = GenomicResourceGroupRepo([other, cached_leaf], "outer_group")
 
-    found = outer.find_resource(
-        "one", repository_id="leaf_repo.caching_repo")
+    found = outer.find_resource("one", repository_id="leaf_repo")
     assert found is not None
     assert found.version == (1, 0)
     assert isinstance(found.proto, CachingProtocol)
+
+    assert outer.find_resource(
+        "one", repository_id="leaf_repo.caching_repo") is None
+
+
+@pytest.mark.parametrize("shape", [
+    "leaf", "group", "cached_leaf", "cached_group",
+])
+def test_an_unknown_repository_id_still_selects_nothing(
+    shape: str, tmp_path: pathlib.Path,
+) -> None:
+    """Self-naming must not turn every filter into a no-op (#447).
+
+    An id that names no repository in the tree keeps its meaning at every
+    layer: ``find_resource`` returns None and ``get_resource`` raises.
+    """
+    repo = _a_repository_shape(shape, tmp_path)
+
+    assert repo.find_resource("one", repository_id="no_such_repo") is None
+
+    with pytest.raises(ValueError, match="no_such_repo"):
+        repo.get_resource("one", repository_id="no_such_repo")
 
 
 def test_empty_repository_id_is_not_a_filter(
