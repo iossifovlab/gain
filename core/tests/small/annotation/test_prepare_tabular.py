@@ -269,6 +269,91 @@ def test_cli_unknown_chromosome_sorts_to_end_with_warning(
                for r in caplog.records)
 
 
+def _chrom_runs(text: str) -> list[str]:
+    """Run-length-encode the chrom column of an output body."""
+    runs: list[str] = []
+    for line in text.rstrip("\n").split("\n")[1:]:  # skip header
+        chrom = line.split("\t")[0]
+        if not runs or runs[-1] != chrom:
+            runs.append(chrom)
+    return runs
+
+
+def test_cli_multiple_unknown_chromosomes_stay_contiguous(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Two or more chromosomes missing from the reference genome must
+    still each form a single block, so the output tabix-indexes."""
+    grr_root = _setup_foobar_grr(tmp_path)
+    in_file = tmp_path / "in.tsv"
+    setup_denovo(in_file, """
+        chrom pos score
+        zzz   5   0.1
+        foo   3   0.2
+        bar   20  0.3
+        yyy   7   0.4
+        zzz   20  0.5
+        yyy   30  0.6
+        foo   17  0.7
+    """)
+    out_file = tmp_path / "out.tsv.gz"
+    with caplog.at_level(logging.WARNING, logger="prepare_tabular"):
+        cli([
+            str(in_file), "-o", str(out_file),
+            "--grr-directory", str(grr_root),
+            "-R", "foobar_genome",
+        ])
+
+    body = _read_gz_text(out_file)
+    # Known chromosomes in reference-genome order, then the unknown ones
+    # grouped and ordered deterministically.
+    assert _chrom_runs(body) == ["foo", "bar", "yyy", "zzz"]
+    assert body == textwrap.dedent("""\
+        chrom\tpos\tscore
+        foo\t3\t0.2
+        foo\t17\t0.7
+        bar\t20\t0.3
+        yyy\t7\t0.4
+        yyy\t30\t0.6
+        zzz\t5\t0.1
+        zzz\t20\t0.5
+        """)
+    with TabixFile(str(out_file)) as tf:
+        assert set(tf.contigs) == {"foo", "bar", "yyy", "zzz"}
+        assert list(tf.fetch("zzz", 0, 100)) == [
+            "zzz\t5\t0.1", "zzz\t20\t0.5",
+        ]
+    assert any("yyy" in r.message and "zzz" in r.message
+               and "not found" in r.message
+               for r in caplog.records)
+
+
+def test_cli_unknown_chromosome_order_ignores_input_row_order(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Permuting the input rows produces byte-identical output."""
+    grr_root = _setup_foobar_grr(tmp_path)
+    rows = [
+        "yyy\t7\t0.4", "zzz\t5\t0.1", "www\t9\t0.8",
+        "foo\t3\t0.2", "bar\t20\t0.3", "zzz\t20\t0.5",
+    ]
+    outputs = []
+    for run, permuted in enumerate([rows, [*rows[3:], *reversed(rows[:3])]]):
+        in_file = tmp_path / f"in_{run}.tsv"
+        in_file.write_text(
+            "chrom\tpos\tscore\n" + "".join(f"{r}\n" for r in permuted))
+        out_file = tmp_path / f"out_{run}.tsv.gz"
+        cli([
+            str(in_file), "-o", str(out_file),
+            "--grr-directory", str(grr_root),
+            "-R", "foobar_genome",
+        ])
+        outputs.append(_read_gz_text(out_file))
+
+    assert outputs[0] == outputs[1]
+    assert _chrom_runs(outputs[0]) == ["foo", "bar", "www", "yyy", "zzz"]
+
+
 def test_cli_region_sort(tmp_path: pathlib.Path) -> None:
     in_file = tmp_path / "in.tsv"
     setup_denovo(in_file, """
