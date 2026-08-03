@@ -1,0 +1,4 @@
+chrom,pos,ref,alt,Gene,Feature,Feature_type,Consequence,worst_consequence,highest_impact,gene_consequence
+chr14,21415880,G,A,CHD8,ENST00000646647.2,Transcript,stop_gained,stop_gained,HIGH,CHD8:stop_gained
+chr17,7674904,TCT,T,TP53,ENST00000269305.9,Transcript,frameshift_variant,frameshift_variant,HIGH,TP53:frameshift_variant
+chr7,117587806,G,A,CFTR,ENST00000003084.11,Transcript,missense_variant,missense_variant,MODERATE,CFTR:missense_variant

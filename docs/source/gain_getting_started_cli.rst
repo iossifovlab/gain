@@ -163,6 +163,50 @@ This command applies the local ``custom_pipeline.yaml`` file to the variants in 
 This approach is convenient for small tests and for developing custom pipelines. However, when annotation uses resources directly from the public GRR, it is practical only for small inputs. For larger inputs, input files should be sorted by genomic coordinates for more efficient processing. Users can also configure local resource caching and parallel execution, as described in the next sections.
 
 
+Using the VEP effect annotator
+------------------------------
+GAIn has an extensible annotation infrastructure. In addition to the annotators included with GAIn, specialized annotators can be added through separately installed packages. In this example, we use ``vep_effect_annotator`` to predict variant consequences with the Ensembl Variant Effect Predictor (VEP). This annotator is available through the separately installed ``gain-vep-annotator`` package. Whereas ``vep_full_annotator`` requires a separately downloaded local VEP cache, ``vep_effect_annotator`` uses reference genome and gene models resources from a GAIn GRR. For a more detailed description of both VEP annotators and their configuration options, see the `VEP annotators <https://iossifovlab.com/gaindocs/annotation_infrastructure.html#vep-annotators>`_ section of the Annotation infrastructure page.
+
+Before continuing, install the `gain-vep-annotator` package in your current GAIn environment:
+
+.. code-block:: bash
+
+    mamba install \
+        -c conda-forge \
+        -c bioconda \
+        -c iossifovlab \
+        -c defaults \
+        gain-vep-annotator
+
+The VEP annotators run VEP inside Docker containers. On macOS, install Docker Desktop by following the `official Docker Desktop installation instructions <https://docs.docker.com/desktop/setup/install/mac-install/>`_. After installation, open Docker Desktop and wait for Docker to finish starting.
+
+To verify that Docker is installed, running, and accessible from the command line, run:
+
+.. code-block:: bash
+
+    docker run hello-world
+
+The command should print a confirmation message beginning with ``Hello from Docker!``. If it reports that it cannot connect to the Docker daemon, make sure Docker Desktop is open and running.
+
+VEP annotators can be run only in batch mode. Therefore, the example below uses ``annotate_tabular`` with the ``--batch-size`` option.
+
+Download the example VEP annotation pipeline file (:download:`vep_annotation.yaml <files/vep_annotation.yaml>`), whose content is shown below:
+
+.. literalinclude:: files/vep_annotation.yaml
+    :language: yaml
+
+Run the pipeline on :download:`small_input.csv <files/small_input.csv>`, which was also used above:
+
+.. code-block:: bash
+
+    annotate_tabular small_input.csv vep_annotation.yaml -o small_input_vep.annotated.csv --batch-size 10
+
+This command applies the ``vep_annotation.yaml`` pipeline to the variants in ``small_input.csv`` in batches of up to 10 and writes the results to ``small_input_vep.annotated.csv``, whose contents are shown below.
+
+.. csv-table::
+    :file: files/small_input_vep.annotated.csv
+    :header-rows: 1
+
 Caching resources
 -----------------
 
