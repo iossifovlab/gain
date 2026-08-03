@@ -44,7 +44,25 @@ pipelineJob('gain-core-integration') {
                     remote {
                         url('https://github.com/iossifovlab/gain.git')
                     }
-                    branch('master')
+                    // Single-quoted Groovy string so `${BRANCH_NAME}` is
+                    // stored literally in the SCM config XML; Jenkins's git
+                    // plugin expands it at checkout time from the
+                    // BRANCH_NAME build parameter declared above. A branch
+                    // trigger therefore loads Jenkinsfile.integration from
+                    // the same branch it tests, not from master -- without
+                    // which a change to that Jenkinsfile silently no-ops on
+                    // the branch introducing it and only takes effect once
+                    // merged (#598; #272 fixed the same defect for
+                    // gain-web-e2e).
+                    //
+                    // Note the COMMIT_SHA interaction: the workspace
+                    // Checkout stage prefers COMMIT_SHA over BRANCH_NAME,
+                    // while cpsScm here resolves ${BRANCH_NAME} to that
+                    // branch's HEAD. A build triggered for an older
+                    // COMMIT_SHA can thus load a newer pipeline script than
+                    // the tree under test; accepted in practice, flagged
+                    // here for the next reader.
+                    branch('${BRANCH_NAME}')
                 }
             }
             scriptPath('core/Jenkinsfile.integration')
