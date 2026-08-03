@@ -2,6 +2,7 @@
 import gzip
 import logging
 import pathlib
+import stat
 import textwrap
 
 import pytest
@@ -586,6 +587,31 @@ def test_cli_sort_failure_preserves_a_previously_good_output(
 
     assert out_file.read_bytes() == good_output
     assert index_file.read_bytes() == good_index
+
+
+def test_cli_rerun_keeps_the_destination_permission_bits(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A restricted output must not be widened by rerunning the tool.
+
+    Publishing installs new inodes, which carry the process umask rather
+    than whatever the destination was deliberately chmod'ed to.
+    """
+    in_file = tmp_path / "in.tsv"
+    setup_denovo(in_file, """
+        chrom pos score
+        1     100 9.9
+    """)
+    out_file = tmp_path / "out.tsv.gz"
+    index_file = tmp_path / "out.tsv.gz.tbi"
+    cli([str(in_file), "-o", str(out_file)])
+    out_file.chmod(0o600)
+    index_file.chmod(0o640)
+
+    cli([str(in_file), "-o", str(out_file)])
+
+    assert stat.S_IMODE(out_file.stat().st_mode) == 0o600
+    assert stat.S_IMODE(index_file.stat().st_mode) == 0o640
 
 
 # --- input separator handling --------------------------------------------

@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -484,8 +485,20 @@ def _staged_output(
             index_path=os.path.join(staging, f"{name}.tbi"),
         )
         yield staged
-        os.replace(staged.data_path, output_path)
-        os.replace(staged.index_path, index_path)
+        _publish(staged.data_path, output_path)
+        _publish(staged.index_path, index_path)
+
+
+def _publish(staged_path: str, dest_path: str) -> None:
+    """Move a staged file onto its destination, keeping the latter's mode.
+
+    Publishing installs a new inode, which would otherwise carry the
+    process umask instead of whatever the destination was deliberately
+    set to — silently widening a restricted output on a rerun.
+    """
+    if os.path.exists(dest_path):
+        os.chmod(staged_path, stat.S_IMODE(os.stat(dest_path).st_mode))
+    os.replace(staged_path, dest_path)
 
 
 def _default_output_path(input_path: str) -> str:
