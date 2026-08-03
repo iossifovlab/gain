@@ -1,4 +1,4 @@
-"""Provides the ``data_frame`` resource implementation."""
+"""Provides the ``ann_data`` resource implementation."""
 
 from __future__ import annotations
 
@@ -45,18 +45,28 @@ class AnnDataResourceImplementation(
 
     @property
     def _input_files(self) -> set[str]:
-        """Return the declared table -- the input to the statistics."""
+        """Return the declared data -- the input to the statistics."""
         file_name = self.config.get("file")
-        assert file_name is not None and isinstance(file_name, str) # TODO: FIX
+        if not isinstance(file_name, str):
+            # A config with no ``file:`` contributes a ``None``.  The loader
+            # is where that gets reported; this property is also reached from
+            # the info page, so it degrades to an empty set rather than
+            # raising -- the same way data_frame_resource_impl does.
+            return set()
+
+        # The 10x matrix-market form is a triple of files: the config names
+        # the matrix member, and the two sidecars share its prefix.  All
+        # three are statistics inputs, so editing the barcodes has to
+        # invalidate the build the same way editing the matrix does.
         wanted = {file_name}
         if file_name.endswith("matrix.mtx.gz"):
-            pref = file_name[:-13]
+            pref = file_name[:-len("matrix.mtx.gz")]
             wanted |= {pref + "barcodes.tsv.gz", pref + "features.tsv.gz"}
         elif file_name.endswith("matrix.mtx"):
-            pref = file_name[:-10]
+            pref = file_name[:-len("matrix.mtx")]
             wanted |= {pref + "barcodes.tsv", pref + "features.tsv"}
 
-        return self._manifest_names({self.config.get("file")})
+        return self._manifest_names(wanted)
 
     @property
     def files(self) -> set[str]:
@@ -105,7 +115,7 @@ class AnnDataResourceImplementation(
         manifest = self.resource.get_manifest()
         return json.dumps({
             "config": {
-                "format": self.config.get("format", "csv"),
+                "format": self.config.get("format", "h5ad"),
                 "parameters": self.config.get("parameters", {}),
             },
             "files_md5": {
@@ -115,30 +125,47 @@ class AnnDataResourceImplementation(
         }, sort_keys=True, indent=2).encode()
 
     @staticmethod
+    def _describe_annotations(annotations: Any) -> pd.DataFrame | None:
+        """Summarise an ``obs``/``var`` annotation table.
+
+        A ``backed="r"`` AnnData hands these out as pandas frames, but the
+        attribute is typed ``DataFrame | Dataset2D`` because a lazily read
+        one yields the xarray-backed form, which has no ``describe`` --
+        ``to_memory`` is its pandas conversion.  Returns ``None`` for a
+        table with no columns: ``describe`` of nothing is an empty frame,
+        and writing it would put an unreadable statistic in the manifest.
+        """
+        frame: pd.DataFrame = (
+            annotations if isinstance(annotations, pd.DataFrame)
+            else annotations.to_memory()
+        )
+        if len(frame.columns) == 0:
+            return None
+
+        return frame.describe(include="all")
+
+    @staticmethod
     def _stats_for_ann_data(resource: GenomicResource) -> None:
         ann_data = load_ann_data_from_resource(resource)
 
-        if len(ann_data.obs.columns) > 0:
-            dsk = ann_data.obs.describe(include="all")
+        for table, statistic in (
+            (ann_data.obs, _DESCRIBE_OBS_STATISTIC),
+            (ann_data.var, _DESCRIBE_VAR_STATISTIC),
+        ):
+            described = AnnDataResourceImplementation._describe_annotations(
+                table)
+            if described is None:
+                continue
 
             with resource.proto.open_raw_file(
-                resource, _DESCRIBE_OBS_STATISTIC, mode="wt",
+                resource, statistic, mode="wt",
             ) as outfile:
-                dsk.to_csv(outfile)
-
-        if len(ann_data.var.columns) > 0:
-            dsk = ann_data.var.describe(include="all")
-
-            with resource.proto.open_raw_file(
-                resource, _DESCRIBE_VAR_STATISTIC, mode="wt",
-            ) as outfile:
-                dsk.to_csv(outfile)
+                described.to_csv(outfile)
 
         with resource.proto.open_raw_file(
             resource, _DESCRIBE_ANN_DATA_STATISTIC, mode="wt",
         ) as outfile:
             print(str(ann_data), file=outfile)
-
 
     def create_statistics_build_tasks(
         self, **kwargs: Any,  # noqa: ARG002

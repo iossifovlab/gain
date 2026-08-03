@@ -1119,7 +1119,6 @@ class FsspecReadOnlyProtocol(
             index_filename = resolve_tabix_index_filename_for_read(
                 resource, filename)
         index_url = self._get_file_url(resource, index_filename)
-        print("BBBBBBBBB", index_filename, index_url)
 
         return pysam.TabixFile(  # pylint: disable=no-member
             file_url, index=index_url, encoding="utf-8",

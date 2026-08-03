@@ -18,6 +18,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
+    "anndata>=0.13",
     "apsw>=3.52",
     "cerberus>=1.3",
     "dask>=2026.1",
@@ -47,6 +48,16 @@ dependencies = [
     "tqdm>=4.66",
 ]
 dynamic = ["version"]
+
+[project.optional-dependencies]
+# The two 10x formats of an ``ann_data`` resource are read through scanpy,
+# which pulls in a large scientific stack for a reader that most GRRs never
+# reach.  It stays an extra so an ``h5ad`` resource -- the common case --
+# loads with anndata alone; ann_data_resource imports it lazily and reports
+# its absence as a config error.
+ann_data_10x = [
+    "scanpy>=1.11",
+]
 
 [project.urls]
 Homepage = "https://github.com/IossifovLab/gain"

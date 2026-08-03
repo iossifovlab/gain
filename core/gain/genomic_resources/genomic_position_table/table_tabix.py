@@ -121,7 +121,6 @@ class TabixGenomicPositionTable(GenomicPositionTable):
 
     def open(self) -> TabixGenomicPositionTable:
         index_file_name = self.definition.get("index_filename", None)
-        print("IIIIIIIIII: ", self.definition.filename, index_file_name)
         self.pysam_file = self.genomic_resource.open_tabix_file(
             self.definition.filename, index_file_name)
         if self.header_mode == "file":
