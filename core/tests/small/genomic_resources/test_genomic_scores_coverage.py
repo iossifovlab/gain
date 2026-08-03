@@ -433,11 +433,14 @@ def test_fragment_score_fetch_fragments() -> None:
     assert (records[0][CHROM], records[0][POS_BEGIN], records[0][POS_END]) \
         == ("1", 100, 200)
 
+    # A region no fragment overlaps is empty ...
     fragments = fragment_score.fetch_fragment_scores("1", 1000, 2000)
     assert len(fragments) == 0
 
-    fragments = fragment_score.fetch_fragment_scores("chr99", 1, 100)
-    assert len(fragments) == 0
+    # ... but a contig the resource does not have is refused, so the two
+    # cannot be confused for each other.
+    with pytest.raises(ValueError, match="not among the available"):
+        fragment_score.fetch_fragment_scores("chr99", 1, 100)
 
 
 def test_fragment_score_not_open() -> None:
