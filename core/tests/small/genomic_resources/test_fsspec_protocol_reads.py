@@ -314,13 +314,20 @@ def vcf_proto_with_csi_index(
     tmp_path: pathlib.Path,
     grr_scheme: str,
     mocker: pytest_mock.MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> Generator[RepositoryProtocol, None, None]:
     """Protocol where the VCF's ONLY index is a ``.csi``.
 
     Parametrized over the schemes like its ``.tbi`` siblings above: the
     resolution is protocol-independent, and the remote schemes are where a
     wrongly-named index costs a round trip rather than a local stat.
+
+    The ``chdir`` keeps the run's cwd clean: on the remote schemes htslib
+    caches the index it downloads under its BASENAME in the current
+    directory, so without this a run from ``core/`` drops a stray
+    ``data.vcf.gz.csi`` into the source tree.
     """
+    monkeypatch.chdir(tmp_path)
     setup_directories(tmp_path, {"res": {GR_CONF_FILE_NAME: ""}})
     setup_vcf(tmp_path / "res" / "data.vcf.gz", VCF_CONTENT, csi=True)
 

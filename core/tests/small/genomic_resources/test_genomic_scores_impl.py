@@ -2,6 +2,7 @@
 
 import json
 import pathlib
+import re
 import textwrap
 from collections.abc import Iterable
 from typing import cast
@@ -1459,3 +1460,35 @@ def test_files_names_the_configured_index_of_a_vcf_score(
 
     assert files == {"data.vcf.gz", "data.custom.tbi"}
     assert caplog.text == ""
+
+
+def test_a_vcf_score_missing_its_configured_index_warns_then_fails_to_open(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The two halves of a broken ``index_filename``, pinned together.
+
+    ``files`` reports the name and drops it, so the statistics hash can
+    still be computed over the files the manifest does carry (gain#595);
+    opening the score refuses outright, naming that same configured path
+    rather than reading on through the adjacent index htslib would have
+    probed for (gain#596).  Warn-and-continue at the metadata seam and
+    fail-loudly at the read seam are deliberately different answers, and
+    nothing else exercises them on one resource.
+    """
+    res = (
+        a_vcf_info_score()
+        .with_data(VCF_INDEX_DATA)
+        .with_missing_index_filename("data.custom.tbi")
+        .build_resource(tmp_path)
+    )
+    impl = build_score_implementation_from_resource(res)
+
+    with caplog.at_level("WARNING"):
+        files = impl.files
+
+    assert files == {"data.vcf.gz"}
+    assert "data.custom.tbi" in caplog.text
+
+    with pytest.raises(OSError, match=re.escape("data.custom.tbi")):
+        build_score_from_resource(res).open()
