@@ -1,6 +1,6 @@
+import hashlib
 import os
 import re
-import uuid
 from typing import Any
 
 from gain import logging
@@ -77,8 +77,24 @@ _RE_TASK_ID = re.compile(r"[\. /,()\-:;]")
 
 
 def safe_task_id(task_id: str) -> str:
+    """Sanitize a task id into a string usable as a file name.
+
+    Must be a pure function of ``task_id``: the forked executor computes
+    the ``.result`` file name in the child and recomputes it in the parent,
+    so a non-deterministic result makes the parent read a path that does
+    not exist and silently yield ``None`` (gain#573).
+    """
     result = _RE_TASK_ID.sub("_", task_id)
+    # Coupled to the 200 char truncation in ``TaskGraph.make_task``, which
+    # runs before a Task is ever built. Sanitization above is length
+    # preserving, so ids coming from there always return here -- the branch
+    # below is defence in depth for callers that bypass ``make_task``.
+    # Raising or removing make_task's limit arms it.
     if len(result) <= 200:
         return result
-    result = result[:150]
-    return f"{result}_{uuid.uuid1()}"
+    # Digest the RAW id, never the truncated one: ids derived from GRR
+    # resource paths share long prefixes and differ only in their tail,
+    # so a digest of ``result[:150]`` would collide for exactly those.
+    # 150 + 1 + 40 == 191 keeps the result under the 200 char budget.
+    digest = hashlib.sha256(task_id.encode()).hexdigest()[:40]
+    return f"{result[:150]}_{digest}"

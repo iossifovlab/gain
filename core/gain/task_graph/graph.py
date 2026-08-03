@@ -264,6 +264,12 @@ class TaskGraph:
         intermediate_output_files: Sequence[str] | None = None,
     ) -> TaskDesc:
         """Build a task with the given id and function."""
+        # Coupled to the 200 char threshold in
+        # ``gain.task_graph.logging.safe_task_id``: this truncation is what
+        # keeps that function's shortening branch unreachable for every id
+        # built through here. Raise or remove this limit and long ids start
+        # taking that branch -- it is deterministic (gain#573), but the
+        # names it produces are digest suffixed rather than the plain id.
         if len(task_id) > 200:
             logger.warning("task id is too long %s: %s", len(task_id), task_id)
             logger.warning("truncating task id to 200 symbols")
