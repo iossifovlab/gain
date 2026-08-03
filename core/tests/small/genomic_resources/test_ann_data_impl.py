@@ -198,8 +198,8 @@ def test_get_info_escapes_the_ann_data_description(
 ) -> None:
     # The description is ``str(ann_data)``, which lists the obs and var
     # column names -- data the resource carries, not anything gain wrote.
-    # The Jinja environment runs without autoescape, so a column name
-    # carrying markup would reach grr_browse as markup.
+    # The template escapes it explicitly; the environment autoescapes on
+    # top of that, and neither double-escapes the other.
     # h5py rejects a forward slash in a key, so the column name carries an
     # opening tag only -- still enough to reach the browser as an element
     # rather than as text.  The tag name is a distinctive one because the

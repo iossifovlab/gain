@@ -10,10 +10,11 @@
 
 <h1> AnnData description </h1>
 
-{# Escaped: the description is str(ann_data), which lists the obs and var
-   column names the resource itself supplies, and the environment runs
-   without autoescape.  The two describe tables below are pandas to_html
-   output, which escapes its own cell content, so they stay raw. #}
+{# The description is str(ann_data), which lists the obs and var column
+   names the resource itself supplies, so it is escaped -- the explicit
+   filter yields Markup, which the environment's autoescape leaves alone.
+   The two describe tables below are pandas to_html output, which escapes
+   its own cell content, so they are marked safe instead. #}
 <pre><code style="font-family: monospace;">
 {{ ann_data_description | e }}
 </code></pre>
@@ -24,13 +25,13 @@
 
 {% if obs_description %}
 <h1> obs description </h1>
-{{ obs_description }}
+{{ obs_description|safe }}
 
 {% endif %}
 
 {% if var_description %}
 <h1> var description </h1>
-{{ var_description }}
+{{ var_description|safe }}
 {% endif %}
 
 

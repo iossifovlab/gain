@@ -9,6 +9,18 @@ Provides a singleton Environment that resolves templates in two stages:
    All provider dictionaries are merged lazily on first miss.
 
 Raises ``jinja2.TemplateNotFound`` if a name is not found in either stage.
+
+The environment autoescapes, so a template interpolating a value that is
+already markup -- a nested render, ``markdown2`` output, a pandas
+``to_html`` table -- has to say so with ``|safe``.  Autoescaping is HTML
+escaping, which is wrong for the few templates in MARKDOWN_TEMPLATES:
+they emit Markdown that GPF renders downstream, and escaping there
+mangles the Markdown syntax and the ``&`` in histogram image URLs.  The
+decision is by template name rather than by extension because every
+template here is named ``*.jinja``, HTML and Markdown alike.
+
+Templates supplied by an out-of-tree provider load through this same
+environment and are autoescaped along with the rest.
 """
 from __future__ import annotations
 
@@ -36,6 +48,12 @@ class _TemplateCache:
 
 
 _state = _TemplateCache()
+
+MARKDOWN_TEMPLATES = frozenset({
+    "gene_score_help.jinja",
+    "genomic_score_help.jinja",
+    "score_histogram.jinja",
+})
 
 
 def _get_provider_templates() -> dict[str, str]:
@@ -67,14 +85,20 @@ class _ProviderLoader(BaseLoader):
         return source, None, lambda: True
 
 
+def _autoescape(template_name: str | None) -> bool:
+    """Autoescape every template but the Markdown-emitting ones."""
+    return template_name not in MARKDOWN_TEMPLATES
+
+
 def get_jinja_env() -> Environment:
     """Return the singleton GAIn Jinja2 Environment."""
     if _state.env is None:
-        _state.env = Environment(  # noqa: S701
+        _state.env = Environment(
             loader=ChoiceLoader([
                 PackageLoader("gain.templates", "template_files"),
                 _ProviderLoader(),
             ]),
+            autoescape=_autoescape,
         )
     return _state.env
 

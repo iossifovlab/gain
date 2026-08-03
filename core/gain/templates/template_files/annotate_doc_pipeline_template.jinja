@@ -211,7 +211,7 @@
                 <div class="attribute-type">Type: {{attribute_info.type}} {{'(Internal)' if attribute_info.internal else ''}}</div>
               </div>
               <div class="attribute-description">
-                {{ markdown(attribute_info.documentation) }}
+                {{ markdown(attribute_info.documentation)|safe }}
                 {% if annotator.score %}
                   <img src="{{hist_url(annotator.score, attribute_info.source)}}" alt="HISTOGRAM">
                 {% endif %}
@@ -228,7 +228,7 @@
 
           {% if annotator._info.documentation %}
             <div class="annotator-description">
-              {{ markdown(annotator._info.documentation) }}
+              {{ markdown(annotator._info.documentation)|safe }}
             </div>
           {% else %}
             <div class="no-description">

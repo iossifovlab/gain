@@ -64,7 +64,8 @@
           <a href="./">← Back to main page</a>
         </nav>
         <div id="section-about">
-        {{about_contents}}
+        {# about.md, already rendered to HTML by markdown2. #}
+        {{about_contents|safe}}
         </div>
     </body>
 </html>
