@@ -7,8 +7,10 @@ from gain.genomic_resources.implementations.data_frame_resource_impl import (
     DataFrameResourceImplementation,
 )
 from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.testing import build_filesystem_test_repository
 from gain.genomic_resources.testing.builders import a_grr
 from gain.genomic_resources.testing.data_frame_builder import a_data_frame
+from gain.task_graph.cache import FileTaskCache
 from gain.task_graph.cli_tools import task_graph_run
 from gain.task_graph.graph import TaskGraph
 from gain.task_graph.sequential_executor import SequentialExecutor
@@ -40,6 +42,17 @@ def build_statistics(resource: GenomicResource) -> None:
     task_graph_run(graph, SequentialExecutor())
 
 
+def build_statistics_through(
+    resource: GenomicResource, cache_dir: pathlib.Path,
+) -> None:
+    """Run the statistics tasks through a persistent task cache."""
+    impl = DataFrameResourceImplementation(resource)
+    graph = TaskGraph()
+    graph.add_tasks(impl.create_statistics_build_tasks())
+    task_graph_run(
+        graph, SequentialExecutor(FileTaskCache(cache_dir=str(cache_dir))))
+
+
 def refresh_manifest(resource: GenomicResource) -> None:
     """Rewrite the stored manifest, as grr_manage does after a stats run."""
     proto = resource.proto
@@ -58,6 +71,82 @@ def test_statistics_task_writes_a_describe_table(
     describe = resource.get_file_content(DESCRIBE)
     assert "gene" in describe
     assert "score" in describe
+
+
+def test_statistics_task_id_names_the_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The task id is the FileTaskCache flag-file key (and neither statistics
+    # task declares input or output files, so the flag is the ONLY path by
+    # which they can be seen as cached).  Interpolating the resource OBJECT
+    # rendered its default repr -- a memory address -- so every run minted a
+    # fresh id, the flag from the previous run was never found and the
+    # statistics were rebuilt unconditionally.
+    resource = (
+        a_grr()
+        .with_resource("tables/genes", a_data_frame().with_data(DATA))
+        .build_repo(tmp_path)
+        .get_resource("tables/genes")
+    )
+
+    tasks = DataFrameResourceImplementation(
+        resource).create_statistics_build_tasks()
+
+    assert [task.task.task_id for task in tasks] == [
+        "tables/genes_data_frame_statistics"]
+
+
+def test_statistics_task_id_separates_two_versions_of_one_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Hence get_full_id() rather than the version-less resource_id: the two
+    # versions are separate cache entries, and a shared id would also trip
+    # TaskGraph's duplicate-id guard when a repo sweep walks both.
+    repo = (
+        a_grr()
+        .with_resource("tables/genes(1.0)", a_data_frame().with_data(DATA))
+        .with_resource("tables/genes(2.0)", a_data_frame().with_data(DATA))
+        .build_repo(tmp_path)
+    )
+
+    older = DataFrameResourceImplementation(
+        repo.get_resource("tables/genes(1.0)"),
+    ).create_statistics_build_tasks()[0]
+    newer = DataFrameResourceImplementation(
+        repo.get_resource("tables/genes(2.0)"),
+    ).create_statistics_build_tasks()[0]
+
+    assert older.task.task_id == "tables/genes(1.0)_data_frame_statistics"
+    assert newer.task.task_id == "tables/genes(2.0)_data_frame_statistics"
+
+
+def test_a_second_run_over_an_unchanged_resource_reuses_the_cache(
+    tmp_path: pathlib.Path,
+) -> None:
+    # What the unstable id cost in practice: grr_manage rebuilt describe.csv
+    # on every run, because the flag file it wrote was keyed on an id that
+    # no later run could ever ask for again.  The second run therefore reads
+    # the repository afresh, as a second grr_manage process would -- an id
+    # derived from the resource OBJECT is stable only within one process.
+    grr_dir = tmp_path / "grr"
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    first_run = (
+        a_grr()
+        .with_resource("tables/genes", a_data_frame().with_data(DATA))
+        .build_repo(grr_dir)
+        .get_resource("tables/genes")
+    )
+    build_statistics_through(first_run, cache_dir)
+    # Removing the output is what makes the second run speak: only a task
+    # that actually executes can put describe.csv back.
+    (grr_dir / "tables" / "genes" / DESCRIBE).unlink()
+
+    second_run = build_filesystem_test_repository(
+        grr_dir).get_resource("tables/genes")
+    build_statistics_through(second_run, cache_dir)
+
+    assert not second_run.file_exists(DESCRIBE)
 
 
 def test_files_lists_the_declared_table(resource: GenomicResource) -> None:

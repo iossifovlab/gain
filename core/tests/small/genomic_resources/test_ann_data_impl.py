@@ -69,6 +69,53 @@ def test_statistics_task_skips_an_annotation_table_with_no_columns(
     assert resource.file_exists(DESCRIBE_VAR)
 
 
+def test_statistics_task_id_names_the_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The task id is the FileTaskCache flag-file key (and this task declares
+    # neither input nor output files, so the flag is the ONLY path by which
+    # it can be seen as cached).  Interpolating the resource OBJECT rendered
+    # its default repr -- a memory address -- so every run minted a fresh
+    # id, the flag from the previous run was never found and the statistics
+    # were rebuilt unconditionally.
+    resource = (
+        a_grr()
+        .with_resource("single_cell/atlas", an_ann_data())
+        .build_repo(tmp_path)
+        .get_resource("single_cell/atlas")
+    )
+
+    tasks = AnnDataResourceImplementation(
+        resource).create_statistics_build_tasks()
+
+    assert [task.task.task_id for task in tasks] == [
+        "single_cell/atlas_ann_data_statistics"]
+
+
+def test_statistics_task_id_separates_two_versions_of_one_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Hence get_full_id() rather than the version-less resource_id: the two
+    # versions are separate cache entries, and a shared id would also trip
+    # TaskGraph's duplicate-id guard when a repo sweep walks both.
+    repo = (
+        a_grr()
+        .with_resource("single_cell/atlas(1.0)", an_ann_data())
+        .with_resource("single_cell/atlas(2.0)", an_ann_data())
+        .build_repo(tmp_path)
+    )
+
+    older = AnnDataResourceImplementation(
+        repo.get_resource("single_cell/atlas(1.0)"),
+    ).create_statistics_build_tasks()[0]
+    newer = AnnDataResourceImplementation(
+        repo.get_resource("single_cell/atlas(2.0)"),
+    ).create_statistics_build_tasks()[0]
+
+    assert older.task.task_id == "single_cell/atlas(1.0)_ann_data_statistics"
+    assert newer.task.task_id == "single_cell/atlas(2.0)_ann_data_statistics"
+
+
 def test_files_lists_the_declared_file(resource: GenomicResource) -> None:
     assert AnnDataResourceImplementation(resource).files == {"data.h5ad"}
 
