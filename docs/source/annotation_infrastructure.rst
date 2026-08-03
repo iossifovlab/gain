@@ -677,7 +677,7 @@ To install the plugin, run:
         -c conda-forge \
         -c bioconda \
         -c iossifovlab \
-        gpf_spliceai_annotator
+        gain-spliceai-annotator
 
 
 A typical configuration is shown below:
@@ -701,16 +701,50 @@ The configuration fields are:
      - Description
    * - ``genome``
      - Reference genome resource ID used for the annotation.
+
+       Optional. If omitted, the annotator falls back to the reference genome declared by the gene
+       models resource, then to the pipeline preamble's ``input_reference_genome``, then to the
+       genomic context. Annotator creation fails if none of these resolves a genome.
    * - ``gene_models``
      - Gene models resource ID used for the annotation.
+
+       Optional. If omitted, the gene models are taken from the genomic context; annotator
+       creation fails if the context has none.
    * - ``distance``
      - Maximum distance, in base pairs, between the variant and a gained or lost splice site.
 
+       Must be between ``0`` and ``5000``. A value outside that range is not an error: the
+       annotator logs a warning and falls back to the default.
+
        Default: ``50``.
+   * - ``max_insertion_length``
+     - Maximum length, in base pairs, of an insertion's alternative allele. Longer insertions are
+       skipped and left unannotated.
+
+       Must be between ``1`` and ``2000``. A value outside that range is not an error: the
+       annotator logs a warning and falls back to the default.
+
+       Default: ``200``.
    * - ``mask``
-     - Masks scores representing annotated acceptor or donor gain and unannotated acceptor or donor loss.
+     - Intended to mask scores representing annotated acceptor or donor gain and unannotated
+       acceptor or donor loss.
+
+       **Currently has no effect.** The value is read and validated (it must be ``0``/``false`` or
+       ``1``/``true``, and anything else logs a warning and falls back to ``0``), but it is never
+       applied to the scores. Do not rely on it to suppress any score. See
+       `issue 322 <https://github.com/iossifovlab/gain/issues/322>`_.
 
        Default: ``false``.
+
+Not every variant can be scored. The annotator skips the records below, logging a warning for
+each and leaving them unannotated rather than failing the run:
+
+* anything that is not a simple VCF-style allele;
+* an alternative allele containing ``.``, ``-``, ``*``, ``>`` or ``<``;
+* a complex substitution — both the reference and the alternative allele longer than one base;
+* a deletion whose reference allele is more than ``distance`` bases longer than a single base,
+  which cannot be padded faithfully into the model window;
+* an insertion whose alternative allele is longer than ``max_insertion_length``.
 
 
 The SpliceAI models can be executed by either of two runtimes. The runtime is a
@@ -735,64 +769,94 @@ Both runtimes produce the same annotations: they agree to about ``2.4e-7`` at
 every window the annotator builds, against delta scores reported at two decimal
 places. An unrecognized value is an error rather than a silent fallback.
 
+``SPLICEAI_BACKEND`` is read once, when the plugin is imported. Set it in the environment before
+starting the annotation; changing it afterwards from inside the same process has no effect and is
+not reported.
 
-The annotator produces the following attributes, along with their default aggregators for
-batch annotations that span multiple predictions:
+
+The annotator can produce the attributes below, along with their default aggregators for
+batch annotations that span multiple predictions.
+
+Only the seven attributes marked *default* are emitted when the pipeline configuration selects
+no attributes explicitly. The rest are available but must be requested by name — and selecting
+any attribute explicitly replaces the default set entirely, so list ``gene`` and the delta scores
+alongside anything you add if you still want them.
+
+The four probability attributes are ``internal`` by default: even when selected they are
+computed for downstream annotators rather than written to the output. Set ``internal: false``
+on the attribute to emit one.
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 20 50
+   :widths: 24 14 12 50
 
    * - Attribute
      - Aggregator
+     - Default
      - Description
    * - ``gene``
      - ``join(,)``
+     - yes
      - Gene symbol.
    * - ``transcript_ids``
      - ``join(,)``
+     - yes
      - Comma-separated list of transcript IDs.
    * - ``DS_AG``
      - ``max``
+     - yes
      - Delta score for acceptor gain.
    * - ``DS_AL``
      - ``max``
+     - yes
      - Delta score for acceptor loss.
    * - ``DS_DG``
      - ``max``
+     - yes
      - Delta score for donor gain.
    * - ``DS_DL``
      - ``max``
+     - yes
      - Delta score for donor loss.
    * - ``DS_MAX``
      - ``max``
+     - yes
      - Maximum delta score.
    * - ``DP_AG``
      - ``join(;)``
+     - no
      - Delta position for acceptor gain.
    * - ``DP_AL``
      - ``join(;)``
+     - no
      - Delta position for acceptor loss.
    * - ``DP_DG``
      - ``join(;)``
+     - no
      - Delta position for donor gain.
    * - ``DP_DL``
      - ``join(;)``
+     - no
      - Delta position for donor loss.
    * - ``ref_A_p``
      - ``join(;)``
+     - no, internal
      - Reference acceptor probabilities.
    * - ``ref_D_p``
      - ``join(;)``
+     - no, internal
      - Reference donor probabilities.
    * - ``alt_A_p``
      - ``join(;)``
+     - no, internal
      - Alternative acceptor probabilities.
    * - ``alt_D_p``
      - ``join(;)``
+     - no, internal
      - Alternative donor probabilities.
    * - ``delta_score``
      - ``join(;)``
+     - no
      - Compact SpliceAI annotation containing the DS and DP values.
 
        The fields are ordered as follows: ``ALLELE``, ``SYMBOL``, ``DS_AG``,
