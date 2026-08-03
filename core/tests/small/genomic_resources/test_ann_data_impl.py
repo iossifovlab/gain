@@ -200,13 +200,15 @@ def test_get_info_escapes_the_ann_data_description(
     # column names -- data the resource carries, not anything gain wrote.
     # The Jinja environment runs without autoescape, so a column name
     # carrying markup would reach grr_browse as markup.
-    # h5py rejects a forward slash in a key, so the column name carries
-    # markup without a closing tag -- enough to reach the browser as an
-    # element rather than as text.
+    # h5py rejects a forward slash in a key, so the column name carries an
+    # opening tag only -- still enough to reach the browser as an element
+    # rather than as text.  The tag name is a distinctive one because the
+    # surrounding page legitimately contains script and style elements of
+    # its own, and a bare `<script>` assertion would match those instead.
     resource = (
         an_ann_data()
         .with_obs("""
-            cell     <script>
+            cell     <gainxss>
             CELL_1   7
             CELL_2   9
         """)
@@ -217,8 +219,8 @@ def test_get_info_escapes_the_ann_data_description(
 
     info = AnnDataResourceImplementation(resource).get_info()
 
-    assert "<script>" not in info
-    assert "&lt;script&gt;" in info
+    assert "<gainxss>" not in info
+    assert "&lt;gainxss&gt;" in info
 
 
 def test_statistics_hash_changes_when_the_data_file_changes(

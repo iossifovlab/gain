@@ -44,6 +44,24 @@ COPY core/ ./core/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --package gain-core --group dev --frozen
 
+# Optional gain-core extras, as uv flags -- e.g.
+# `--build-arg UV_SYNC_EXTRAS="--extra ann-data-10x"`. Empty by default, so
+# the main CI image is unchanged: scanpy is the ann_data_10x extra and pulls
+# in numba, llvmlite, scikit-learn and statsmodels for two readers most GRRs
+# never touch. Only the integration image asks for it, to run the test that
+# pins scanpy's 10x layout rule against the real reader.
+#
+# `--directory core` because the extra is declared on the gain-core member,
+# and `--extra` resolves against the project uv is pointed at rather than
+# against `--package`: run from the workspace root it fails with "Extra
+# `ann-data-10x` is not defined in the project's optional-dependencies".
+ARG UV_SYNC_EXTRAS=""
+RUN --mount=type=cache,target=/root/.cache/uv \
+    if [ -n "${UV_SYNC_EXTRAS}" ]; then \
+        uv sync --directory core --package gain-core --group dev --frozen \
+            ${UV_SYNC_EXTRAS}; \
+    fi
+
 ENV PATH="/workspace/.venv/bin:$PATH"
 WORKDIR /workspace/core
 

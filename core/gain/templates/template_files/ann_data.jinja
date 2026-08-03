@@ -10,8 +10,12 @@
 
 <h1> AnnData description </h1>
 
+{# Escaped: the description is str(ann_data), which lists the obs and var
+   column names the resource itself supplies, and the environment runs
+   without autoescape.  The two describe tables below are pandas to_html
+   output, which escapes its own cell content, so they stay raw. #}
 <pre><code style="font-family: monospace;">
-{{ ann_data_description }}
+{{ ann_data_description | e }}
 </code></pre>
 
 {% else %}

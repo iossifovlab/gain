@@ -181,7 +181,17 @@ pipeline {
             steps {
                 // Build from the repo root so the workspace manifests and
                 // uv.lock are in the build context (see core/Dockerfile).
-                sh 'docker build -f core/Dockerfile -t ${IMAGE_TAG} .'
+                // --extra ann-data-10x: the integration tier is the only
+                // place scanpy is installed. tests/integration pins the
+                // 10x layout rule (v2 ships genes.tsv, v3
+                // features.tsv.gz) that the sidecar resolution mirrors;
+                // getting it wrong is silent -- scanpy still loads, only
+                // our hash and prefetch go stale -- so it needs the real
+                // reader to be falsifiable at all. The main CI image
+                // builds without the arg and stays scanpy-free.
+                sh 'docker build -f core/Dockerfile \
+                        --build-arg UV_SYNC_EXTRAS="--extra ann-data-10x" \
+                        -t ${IMAGE_TAG} .'
             }
         }
 

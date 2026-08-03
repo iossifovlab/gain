@@ -11,7 +11,9 @@ from markdown2 import markdown
 
 from gain import logging
 from gain.genomic_resources.ann_data_resource import (
-    load_ann_data_from_resource,
+    is_10x_matrix_name,
+    open_ann_data_from_resource,
+    resolve_10x_sidecars,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_implementation import (
@@ -57,14 +59,13 @@ class AnnDataResourceImplementation(
         # The 10x matrix-market form is a triple of files: the config names
         # the matrix member, and the two sidecars share its prefix.  All
         # three are statistics inputs, so editing the barcodes has to
-        # invalidate the build the same way editing the matrix does.
+        # invalidate the build the same way editing the matrix does.  Which
+        # two sidecars depends on the layout, and that call is made once,
+        # in the loader, so this and the read path cannot drift apart.
         wanted = {file_name}
-        if file_name.endswith("matrix.mtx.gz"):
-            pref = file_name[:-len("matrix.mtx.gz")]
-            wanted |= {pref + "barcodes.tsv.gz", pref + "features.tsv.gz"}
-        elif file_name.endswith("matrix.mtx"):
-            pref = file_name[:-len("matrix.mtx")]
-            wanted |= {pref + "barcodes.tsv", pref + "features.tsv"}
+        if is_10x_matrix_name(file_name):
+            wanted |= resolve_10x_sidecars(
+                self.resource.get_manifest(), file_name)
 
         return self._manifest_names(wanted)
 
@@ -146,26 +147,28 @@ class AnnDataResourceImplementation(
 
     @staticmethod
     def _stats_for_ann_data(resource: GenomicResource) -> None:
-        ann_data = load_ann_data_from_resource(resource)
+        # Through the context manager, not the bare loader: a backed read
+        # holds an open h5py file, and a repo sweep builds one of these per
+        # resource.
+        with open_ann_data_from_resource(resource) as ann_data:
+            for table, statistic in (
+                (ann_data.obs, _DESCRIBE_OBS_STATISTIC),
+                (ann_data.var, _DESCRIBE_VAR_STATISTIC),
+            ):
+                described = \
+                    AnnDataResourceImplementation._describe_annotations(table)
+                if described is None:
+                    continue
 
-        for table, statistic in (
-            (ann_data.obs, _DESCRIBE_OBS_STATISTIC),
-            (ann_data.var, _DESCRIBE_VAR_STATISTIC),
-        ):
-            described = AnnDataResourceImplementation._describe_annotations(
-                table)
-            if described is None:
-                continue
+                with resource.proto.open_raw_file(
+                    resource, statistic, mode="wt",
+                ) as outfile:
+                    described.to_csv(outfile)
 
             with resource.proto.open_raw_file(
-                resource, statistic, mode="wt",
+                resource, _DESCRIBE_ANN_DATA_STATISTIC, mode="wt",
             ) as outfile:
-                described.to_csv(outfile)
-
-        with resource.proto.open_raw_file(
-            resource, _DESCRIBE_ANN_DATA_STATISTIC, mode="wt",
-        ) as outfile:
-            print(str(ann_data), file=outfile)
+                print(str(ann_data), file=outfile)
 
     def create_statistics_build_tasks(
         self, **kwargs: Any,  # noqa: ARG002
