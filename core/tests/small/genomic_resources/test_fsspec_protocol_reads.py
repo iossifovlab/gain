@@ -4,6 +4,7 @@ import pathlib
 from collections.abc import Generator
 from typing import Any
 
+import pysam
 import pytest
 import pytest_mock
 from gain.genomic_resources.repository import (
@@ -17,6 +18,10 @@ from gain.genomic_resources.testing import (
     setup_directories,
     setup_tabix,
     setup_vcf,
+)
+from gain.genomic_resources.testing.builders import (
+    a_grr,
+    a_vcf_info_score,
 )
 
 pytestmark = [pytest.mark.grr_full, pytest.mark.grr_http]
@@ -447,3 +452,38 @@ def test_open_vcf_file_refuses_an_explicit_index_that_does_not_exist(
         proto.open_vcf_file(res, "data.vcf.gz", "no-such.tbi")
 
     assert "no-such.tbi" in str(excinfo.value)
+
+
+@pytest.fixture
+def vcf_proto_with_both_indexes(tmp_path: pathlib.Path) -> RepositoryProtocol:
+    """Filesystem protocol where the VCF carries both a ``.csi`` and a ``.tbi``.
+
+    The builder realizes the ``.csi``; the extra ``tabix_index`` call adds a
+    ``.tbi`` next to it without disturbing it.
+    """
+    (
+        a_grr()
+        .with_resource(
+            "res", a_vcf_info_score().with_csi_index().with_data(VCF_CONTENT))
+        .build_repo(tmp_path)
+    )
+    pysam.tabix_index(  # pylint: disable=no-member
+        str(tmp_path / "res" / "data.vcf.gz"), preset="vcf", force=True)
+    return build_filesystem_test_protocol(tmp_path)
+
+
+@pytest.mark.grr_tabix
+def test_open_vcf_file_prefers_the_tbi_index_when_both_exist(
+        vcf_proto_with_both_indexes: RepositoryProtocol,
+        mocker: pytest_mock.MockerFixture) -> None:
+    """gain#556: resolution order stays ``.tbi`` before ``.csi``."""
+    proto = vcf_proto_with_both_indexes
+    res = proto.get_resource("res")
+
+    spy = mocker.spy(proto, "_get_file_url")
+    with proto.open_vcf_file(res, "data.vcf.gz"):
+        pass
+
+    called_filenames = [call.args[1] for call in spy.call_args_list]
+    assert "data.vcf.gz.tbi" in called_filenames
+    assert "data.vcf.gz.csi" not in called_filenames
