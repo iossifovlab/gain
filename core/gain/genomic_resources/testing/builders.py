@@ -32,6 +32,9 @@ Example::
         score = PositionScore(repo.get_resource("scores/pos")).open()
         assert score.fetch_position_scores("1", 10) == [0.1]
 """
+# One module on purpose: the builders share the resource-realize helpers
+# and the ``with_*`` idiom, and a test imports several of them together.
+# pylint: disable=too-many-lines
 from __future__ import annotations
 
 import contextlib
@@ -140,6 +143,9 @@ class _TableScoreBuilder(MetaMixin):
     rows: tuple[tuple[tuple[str, str], ...], ...] = ()
     tabix: bool = False
     csi: bool = False  # only meaningful with ``tabix``
+    # A non-conventional index name, declared as ``index_filename:`` in the
+    # table config and realized at that name; only meaningful with ``tabix``.
+    index_filename: str | None = None
     chrom_mapping: dict[str, Any] | None = None
     zero_based: bool = False
     header_mode: str | None = None
@@ -341,7 +347,9 @@ class _TableScoreBuilder(MetaMixin):
         row = tuple((str(key), str(value)) for key, value in columns.items())
         return dataclasses.replace(self, rows=(*self.rows, row))
 
-    def with_tabix(self, *, csi: bool = False) -> Self:
+    def with_tabix(
+        self, *, csi: bool = False, index_filename: str | None = None,
+    ) -> Self:
         """Realize the score table as tabix (``.txt.gz`` + ``.tbi``).
 
         The default is a plain ``.txt`` table; ``with_tabix`` switches the
@@ -351,13 +359,23 @@ class _TableScoreBuilder(MetaMixin):
         ``.csi`` -- the flavour a contig beyond tabix's ~512 Mbp limit
         requires -- rather than the default ``.tbi``.
 
+        ``index_filename`` realizes the index under a name of the caller's
+        choosing and declares it as ``index_filename:`` in the table
+        config, instead of leaving it at the conventional
+        ``<data-filename>.tbi`` / ``.csi``.  Pass a NON-adjacent name (e.g.
+        ``data.custom.tbi``) whenever the test is about index resolution:
+        on a local filesystem htslib auto-probes for an adjacent index, so
+        an index left at its conventional name proves nothing about which
+        name the code resolved.
+
         Precondition: the authored rows (via :meth:`with_data` or
         :meth:`with_score_line`) must be position-sorted -- ascending by
         chrom then pos_begin -- when ``with_tabix`` is used, because
         ``pysam.tabix_index`` requires sorted input and otherwise fails
         loudly with an ``OSError`` un-annotated by the resource id.
         """
-        return dataclasses.replace(self, tabix=True, csi=csi)
+        return dataclasses.replace(
+            self, tabix=True, csi=csi, index_filename=index_filename)
 
     def realize_into(self, resource_dir: pathlib.Path) -> None:
         """Write this table-score resource into ``resource_dir``.
@@ -384,7 +402,8 @@ class _TableScoreBuilder(MetaMixin):
                     scores, _TABIX_FILENAME, data)})
             _realize_tabix_table(
                 resource_dir / _TABIX_FILENAME, data,
-                write_header=write_header, csi=self.csi)
+                write_header=write_header, csi=self.csi,
+                index_filename=self.index_filename)
         else:
             file_data = data if write_header else _strip_header(data)
             setup_directories(resource_dir, {
@@ -485,6 +504,8 @@ class _TableScoreBuilder(MetaMixin):
         ]
         if self.tabix:
             lines.append("    format: tabix")
+        if self.index_filename is not None:
+            lines.append(f"    index_filename: {self.index_filename}")
         if self.header_mode is not None and not self.omit_header_mode:
             lines.append(f"    header_mode: {self.header_mode}")
         if self.header_mode == "list":
@@ -836,6 +857,7 @@ class VcfInfoScoreBuilder(MetaMixin):
     data: str | None = None
     zero_based: bool = False
     csi: bool = False
+    index_filename: str | None = None
 
     def with_data(self, data: str) -> Self:
         """Author the whole VCF, ``##`` header lines included."""
@@ -844,6 +866,18 @@ class VcfInfoScoreBuilder(MetaMixin):
     def with_csi_index(self) -> Self:
         """Index the bgzipped VCF as ``.csi``, not the default ``.tbi``."""
         return dataclasses.replace(self, csi=True)
+
+    def with_index_filename(self, index_filename: str) -> Self:
+        """Realize and declare the index under a name of your choosing.
+
+        Emits ``index_filename:`` in the table config and MOVES the index
+        pysam wrote to that name, leaving no index at the conventional
+        ``data.vcf.gz.tbi`` / ``.csi``.  Pass a NON-adjacent name whenever
+        the test is about index resolution: on a local filesystem htslib
+        auto-probes for an adjacent index, so an index left at its
+        conventional name proves nothing about which name was resolved.
+        """
+        return dataclasses.replace(self, index_filename=index_filename)
 
     def with_zero_based(self) -> Self:
         """Emit ``zero_based: true`` in the ``table:`` config.
@@ -863,6 +897,10 @@ class VcfInfoScoreBuilder(MetaMixin):
         setup_directories(
             resource_dir, {GR_CONF_FILE_NAME: self._render_config()})
         setup_vcf(resource_dir / _VCF_FILENAME, data, csi=self.csi)
+        if self.index_filename is not None:
+            suffix = ".csi" if self.csi else ".tbi"
+            (resource_dir / f"{_VCF_FILENAME}{suffix}").rename(
+                resource_dir / self.index_filename)
 
     def build_resource(self, tmp_path: pathlib.Path) -> GenomicResource:
         """Realize this single resource (repo id ``""``) into ``tmp_path``."""
@@ -890,10 +928,14 @@ class VcfInfoScoreBuilder(MetaMixin):
     def _render_config(self) -> str:
         zero_based_line = (
             "    zero_based: true\n" if self.zero_based else "")
+        index_line = (
+            f"    index_filename: {self.index_filename}\n"
+            if self.index_filename is not None else "")
         return (
             "type: allele_score\n"
             "table:\n"
             f"    filename: {_VCF_FILENAME}\n"
+            f"{index_line}"
             f"{zero_based_line}"
             f"{self.render_meta()}"
         )
@@ -1079,7 +1121,8 @@ def _build_single_resource(
 
 def _realize_tabix_table(
     tabix_path: pathlib.Path, data: str, *,
-    write_header: bool = True, csi: bool = False) -> None:
+    write_header: bool = True, csi: bool = False,
+    index_filename: str | None = None) -> None:
     """Realize ``data`` as a tabix table (``.txt.gz`` + its index).
 
     With ``write_header`` (the default, the ``header_mode: file`` path) the
@@ -1092,15 +1135,23 @@ def _realize_tabix_table(
     Either way the seq/start/end column indices are derived from the SAME
     authored header the config is rendered from, so an arbitrary column
     order still indexes correctly and the two cannot drift.
+
+    With ``index_filename`` the index pysam wrote at its conventional name
+    is MOVED to that name, so the resource carries the index only under the
+    non-conventional name -- no adjacent sidecar is left behind for
+    htslib's auto-probe to find.
     """
     header = _parse_header(data)
     chrom_col = header.index("chrom")
     start_col = header.index("pos_begin")
     end_col = header.index("pos_end") if "pos_end" in header else start_col
     content = _comment_header(data) if write_header else _strip_header(data)
-    setup_tabix(
+    _, written_index = setup_tabix(
         tabix_path, content,
         seq_col=chrom_col, start_col=start_col, end_col=end_col, csi=csi)
+    if index_filename is not None:
+        pathlib.Path(written_index).rename(
+            tabix_path.parent / index_filename)
 
 
 def _strip_header(data: str) -> str:

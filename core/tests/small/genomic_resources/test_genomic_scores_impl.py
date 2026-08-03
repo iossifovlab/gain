@@ -1249,6 +1249,103 @@ def test_files_prefers_tbi_when_the_manifest_records_both_indexes(
     assert impl.files == {"data.txt.gz", "data.txt.gz.tbi"}
 
 
+# --- configured ``index_filename`` (gain#595) --------------------------
+#
+# A table definition may name its index explicitly.  The file set must take
+# that name rather than re-deriving one from the data filename.  The name
+# used here is deliberately NON-adjacent to the data file: on a local
+# filesystem htslib auto-probes for an adjacent ``data.txt.gz.tbi``, so an
+# index left at its conventional name would prove nothing.
+
+CUSTOM_INDEX_FILENAME = "data.custom.tbi"
+
+
+def a_custom_indexed_tabix_position_score() -> PositionScoreBuilder:
+    """A tabix score whose index is declared, and realized, off-convention."""
+    return (
+        a_position_score()
+        .with_tabix(index_filename=CUSTOM_INDEX_FILENAME)
+        .with_zero_based()
+        .with_score("value", "float")
+        .with_data(TABIX_INDEX_DATA)
+    )
+
+
+def test_files_names_the_index_the_table_definition_configures(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    res = a_custom_indexed_tabix_position_score().build_resource(tmp_path)
+    # Guards the test itself: with a conventional sidecar present the
+    # manifest probe would find it and the assertion below would pass
+    # whether or not ``index_filename`` was ever consulted.
+    assert "data.txt.gz.tbi" not in res.get_manifest()
+    assert "data.txt.gz.csi" not in res.get_manifest()
+    impl = build_score_implementation_from_resource(res)
+
+    with caplog.at_level("WARNING"):
+        files = impl.files
+
+    assert files == {"data.txt.gz", CUSTOM_INDEX_FILENAME}
+    assert caplog.text == ""
+
+
+def test_statistics_hash_of_a_custom_indexed_score_carries_its_index_md5(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = a_custom_indexed_tabix_position_score().build_resource(tmp_path)
+    impl = build_score_implementation_from_resource(res)
+
+    files_md5 = json.loads(
+        impl.calc_statistics_hash(),
+    )["config"]["table"]["files_md5"]
+
+    assert files_md5 == {
+        "data.txt.gz": res.get_manifest()["data.txt.gz"].md5,
+        CUSTOM_INDEX_FILENAME: res.get_manifest()[CUSTOM_INDEX_FILENAME].md5,
+    }
+
+
+def test_files_warns_and_omits_a_configured_index_absent_from_the_manifest(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    a_grr().with_resource(
+        "misconfigured_score", a_custom_indexed_tabix_position_score(),
+    ).build_repo(tmp_path)
+    (tmp_path / "misconfigured_score" / CUSTOM_INDEX_FILENAME).unlink()
+    res = build_filesystem_test_repository(tmp_path).get_resource(
+        "misconfigured_score")
+    impl = build_score_implementation_from_resource(res)
+
+    with caplog.at_level("WARNING"):
+        files = impl.files
+
+    assert files == {"data.txt.gz"}
+    assert "misconfigured_score" in caplog.text
+    assert CUSTOM_INDEX_FILENAME in caplog.text
+
+
+def test_statistics_hash_survives_a_configured_index_absent_from_manifest(
+    tmp_path: pathlib.Path,
+) -> None:
+    a_grr().with_resource(
+        "misconfigured_score", a_custom_indexed_tabix_position_score(),
+    ).build_repo(tmp_path)
+    (tmp_path / "misconfigured_score" / CUSTOM_INDEX_FILENAME).unlink()
+    res = build_filesystem_test_repository(tmp_path).get_resource(
+        "misconfigured_score")
+    impl = build_score_implementation_from_resource(res)
+
+    files_md5 = json.loads(
+        impl.calc_statistics_hash(),
+    )["config"]["table"]["files_md5"]
+
+    assert files_md5 == {
+        "data.txt.gz": res.get_manifest()["data.txt.gz"].md5,
+    }
+
+
 # ``VCFGenomicPositionTable`` subclasses ``TabixGenomicPositionTable``, and
 # its chromosome listing routes through ``open_tabix_file`` -- so a
 # .csi-indexed VCF score exercises the same resolution.
@@ -1288,3 +1385,22 @@ def test_csi_indexed_vcf_score_reads_back_like_its_tbi_twin(
     assert impl.files == {"data.vcf.gz", "data.vcf.gz.csi"}
     assert read("csi_vcf")[0] == ["chr1"]
     assert read("csi_vcf") == read("tbi_vcf")
+
+
+def test_files_names_the_configured_index_of_a_vcf_score(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    res = (
+        a_vcf_info_score()
+        .with_data(VCF_INDEX_DATA)
+        .with_index_filename("data.custom.tbi")
+        .build_resource(tmp_path)
+    )
+    impl = build_score_implementation_from_resource(res)
+
+    with caplog.at_level("WARNING"):
+        files = impl.files
+
+    assert files == {"data.vcf.gz", "data.custom.tbi"}
+    assert caplog.text == ""
