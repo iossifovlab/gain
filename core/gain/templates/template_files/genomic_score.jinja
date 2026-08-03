@@ -59,7 +59,7 @@
                 {% set hist_image_file = impl.score.get_histogram_image_filename(score_id) %}
                 <img src="{{ hist_image_file }}"
                     alt="{{ "HISTOGRAM FOR " + score_id }}"
-                    title={{ score_id | replace(" ", "_") }}
+                    title="{{ score_id | replace(" ", "_") }}"
                     class="histogram-thumbnail"
                     data-modal-trigger="modal-{{ score_id | replace(" ", "_") }}">
                 {%- else -%}
@@ -78,10 +78,10 @@
     {%- for score_id in scores.score_definitions.keys() -%}
         <div id="modal-{{score_id | replace(" ", "_")}}" class="modal">
             <div class="modal-content">
-                <span title={{score_id | replace(" ", "_")}} class="close">&times;</span>
+                <span title="{{score_id | replace(" ", "_")}}" class="close">&times;</span>
                 <img src="{{ impl.score.get_histogram_image_filename(score_id) }}"
                     alt="{{ "HISTOGRAM FOR " + score_id }}"
-                    title={{ score_id | replace(" ", "_")}}
+                    title="{{ score_id | replace(" ", "_")}}"
                     style="max-width: min(100%, 800px);">
             </div>
         </div>
