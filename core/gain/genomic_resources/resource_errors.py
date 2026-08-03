@@ -12,6 +12,8 @@ without any of them acquiring a dependency on another.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 
 class MalformedResourceError(ValueError):
     """A resource refused because of its own records or configuration.
@@ -37,3 +39,45 @@ def overlapping_records_error(
         f"{chrom}:{pos}, which overlaps the preceding record ending at "
         f"{chrom}:{prev_end}; a position score allows at most one record "
         f"per position")
+
+
+def index_column_mismatch_error(
+    resource_id: str,
+    index_filename: str,
+    mismatches: Sequence[tuple[str, int, int]],
+    *,
+    end_is_implied: bool = False,
+) -> MalformedResourceError:
+    """Refuse a tabix table whose index was built over other columns.
+
+    Each entry of ``mismatches`` is a field, the column its index was built
+    over, and the column its table *resolves* to -- resolves, not states: a
+    coordinate no configuration and no header names is read through a
+    hardcoded fallback, and a fallback the index disagrees with splits the
+    read from the filter exactly as a contradictory config entry does.  Both
+    columns are named because the remedy is a one-line edit and a reader
+    cannot write it from either number alone.  ``end_is_implied`` says the
+    index records no end column at all, so its end column is its begin column
+    by definition rather than by anyone's choice.
+
+    Built here rather than at the raise site for the same reason
+    :func:`overlapping_records_error` is: the rule is one rule, and it must
+    read identically wherever it is reported.
+    """
+    fields = "; ".join(
+        f"{field} is indexed on column {indexed} but the configuration "
+        f"resolves it to column {configured}"
+        for field, indexed, configured in mismatches
+    )
+    implied_note = (
+        " The index records no end column, so every record ends where it "
+        "begins as far as the index is concerned."
+    ) if end_is_implied else ""
+    return MalformedResourceError(
+        f"<{resource_id}> is malformed: its table is configured over columns "
+        f"its index {index_filename} was not built from: {fields}."
+        f"{implied_note} A region query is filtered by the indexed columns "
+        f"and read through the configured ones, so a record the index returns "
+        f"is dropped without a trace, and a record the configured span "
+        f"reaches over is never fetched at all. Rebuild the index over the "
+        f"configured columns, or configure the table with the indexed ones.")

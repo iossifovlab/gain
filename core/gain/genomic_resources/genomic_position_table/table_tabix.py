@@ -9,9 +9,19 @@ import numpy as np
 import pysam
 
 from gain import logging
-from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository import (
+    GenomicResource,
+    resolve_tabix_index_filename_for_read,
+)
+from gain.genomic_resources.resource_errors import (
+    index_column_mismatch_error,
+)
 from gain.utils.regions import get_chromosome_length_tabix
 
+from .index_columns import (
+    INDEX_HEADER_SIZE,
+    parse_index_columns,
+)
 from .line import LineBuffer
 from .record import (
     CHROM,
@@ -133,12 +143,101 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         """
         return cast("str | None", self.definition.get("index_filename", None))
 
+    def _opened_index_filename(self) -> str:
+        """Name the index the handle was opened against.
+
+        ``index_filename`` is what the definition configures and what
+        ``open_tabix_file`` was handed: where it is set, that is the index the
+        handle uses, and only where it is ``None`` does the protocol resolve
+        one from the sibling suffixes -- which this repeats, on the same
+        resource.  Re-deriving a name from the data file instead would
+        validate a different index, or one that is not there.
+        """
+        configured = self.index_filename
+        if configured is not None:
+            return configured
+        return resolve_tabix_index_filename_for_read(
+            self.genomic_resource, self.definition.filename)
+
+    def _validate_index_columns(self) -> None:
+        """Refuse the table when its index was built over other columns.
+
+        The index is what a region query is *filtered* by; the resolved column
+        keys are what the records it returns are *read* through.  Where the two
+        disagree the disagreement is invisible at read time -- a record the
+        index says overlaps the query is fetched and then dropped by the score
+        layer, with no warning, no error and no count -- and a statistics scan
+        over such a table reports success for a region it never covered
+        (gain#553).  So it is refused here, before a record is read, rather
+        than being left to a reader to notice.
+
+        The comparison is against the *resolved* column keys and not against
+        the raw configuration: a ``pos_end`` that was never configured still
+        resolves to a column (see ``_set_core_column_keys``), and can still
+        disagree with the index.  Which is also why the message says the
+        configuration *resolves to* a column rather than that it *states* one:
+        the resolution mixes explicit config, deprecated spellings, a header
+        lookup and hardcoded defaults, and a coordinate nothing states is read
+        through a hardcoded fallback just as surely as one that is spelled
+        out.  A fallback that disagrees with the index is the same read-time
+        split as a contradiction is -- the index filters on one column, the
+        table reads another -- so it is refused on the same terms.
+
+        Both directions of disagreement are refused, not just the one that
+        loses records.  An index spanning MORE than the configured record only
+        over-fetches, but it is the same resource defect, it is as cheap to
+        detect, and under ADR 0008 a scan that completes over such a table is
+        what vouches for it.
+        """
+        index_filename = self._opened_index_filename()
+        with self.genomic_resource.open_raw_file(
+                index_filename, mode="rb", compression="gzip") as infile:
+            header = infile.read(INDEX_HEADER_SIZE)
+        columns = parse_index_columns(header)
+        if columns is None:
+            # Declined rather than passed: an index this decoder cannot read
+            # is not an index it has checked, and a resource that goes
+            # unchecked must say so.
+            logger.warning(
+                "the columns of index %s of resource <%s> could not be read, "
+                "so the table's configured columns are NOT validated against "
+                "them",
+                index_filename, self.genomic_resource.get_full_id())
+            return
+
+        mismatches = [
+            (name, indexed, configured)
+            for name, indexed, configured in (
+                (self.CHROM, columns.chrom, self.chrom_key),
+                (self.POS_BEGIN, columns.pos_begin, self.pos_begin_key),
+                (self.POS_END, columns.pos_end, self.pos_end_key),
+            )
+            if indexed != configured
+        ]
+        if mismatches:
+            # The "no end column" note belongs to ``pos_end`` alone; a
+            # ``chrom`` disagreement on such an index says nothing about it.
+            end_is_implied = columns.end_is_implied and any(
+                name == self.POS_END for name, _, _ in mismatches)
+            raise index_column_mismatch_error(
+                self.genomic_resource.get_full_id(), index_filename,
+                mismatches, end_is_implied=end_is_implied)
+
     def open(self) -> TabixGenomicPositionTable:
         self.pysam_file = self.genomic_resource.open_tabix_file(
             self.definition.filename, self.index_filename)
-        if self.header_mode == "file":
-            self.header = self._load_header()
-        self._set_core_column_keys()
+        try:
+            if self.header_mode == "file":
+                self.header = self._load_header()
+            self._set_core_column_keys()
+            self._validate_index_columns()
+        except Exception:
+            # The handle is this method's to release: nothing above has been
+            # told the table is open -- ``close()`` would not be called on it
+            # -- so a raise from here without this would leak the file, and on
+            # the http and s3 protocols the connection under it.
+            self.close()
+            raise
         self._build_chrom_mapping()
         # The parser fuses record construction with the zero-based and
         # chromosome-mapping transforms, specialised once here rather than

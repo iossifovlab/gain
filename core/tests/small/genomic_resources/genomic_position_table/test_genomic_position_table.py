@@ -940,11 +940,16 @@ def test_invalid_chrom_mapping_file_with_tabix(tmp_path: pathlib.Path) -> None:
             """)})
     setup_tabix(
         tmp_path / "data.txt.gz",
+        # The end column is named ``pos_end`` so that the table resolves it to
+        # the column the index was built over.  Under any other name it
+        # resolves to the ``pos_begin`` column instead, and the table is
+        # refused for disagreeing with its index (gain#553) before it ever
+        # reaches the chromosome mapping this test is about.
         """
-        #chrom   pos_begin  pos2   c2
-        chr1     10         12     3.14
-        chr22    11         11     4.14
-        chrX     12         14     5.14
+        #chrom   pos_begin  pos_end   c2
+        chr1     10         12        3.14
+        chr22    11         11        4.14
+        chrX     12         14        5.14
         """,
         seq_col=0, start_col=1, end_col=2)
     res = build_filesystem_test_resource(tmp_path)

@@ -417,6 +417,23 @@ into one ``except ValueError`` -- is what this shape exists to prevent, because
 it silently drops records from a scan whose ``stats_hash`` then claims the
 resource was scanned (gain#509).
 
+**Opening a tabix table can now REFUSE the resource** (gain#553).
+``TabixGenomicPositionTable.open()`` reads the coordinate columns off the index
+it opened the file with and compares them against the column keys the table
+resolves; where they disagree it raises ``MalformedResourceError``, before a
+record is read.  Recorded here because every caller of a tabix-backed score
+inherits the new failure -- and because the exception is a ``ValueError``, so a
+caller already catching one around ``open()`` keeps catching this, and
+``grr_manage`` reports it as the resource's fault rather than as an internal
+error (ADR 0008).
+
+A table configured over the columns its index was built from opens exactly as
+before, at the cost of one fixed-size header read per open.  The refusal is
+uniform: it is not a mode, and there is no flag to turn it off -- a resource
+whose index filters on one span while its records are read through another
+returns records that are fetched and then dropped without a trace, and no
+caller has any use for that.
+
 ``ValueError`` keeps its old meaning and gains a sharper edge: it now marks the
 QUESTION as bad rather than the answer as absent -- a table that is not open, or
 a contig outside ``get_chromosomes()``.  Note this splits one case the in-memory
