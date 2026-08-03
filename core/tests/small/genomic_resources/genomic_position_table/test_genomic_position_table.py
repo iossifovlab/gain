@@ -3054,6 +3054,74 @@ def test_resolving_a_column_leaves_the_definition_alone(
         assert table.definition == definition
 
 
+def test_pos_begin_configured_at_the_first_column_is_honoured() -> None:
+    """Column index 0 is a position, not a missing configuration (#240).
+
+    ``get_column_key`` answers with an index or with ``None``; the defaults
+    used to be applied with ``or``, which cannot tell the index 0 from the
+    ``None``.  A ``pos_begin`` resolved to the FIRST column was therefore
+    thrown away and replaced by the default of 1 -- so the table read its
+    start positions out of whatever column happened to sit at index 1, with
+    no error and no warning.
+    """
+    res = build_inmemory_test_resource({
+        "genomic_resource.yaml": """
+            table:
+                filename: data.mem
+                header_mode: none
+                pos_begin:
+                    column_index: 0
+                chrom:
+                    column_index: 1
+            """,
+        "data.mem": convert_to_tab_separated(
+            """
+            10    1    0.1
+            11    1    0.2
+            """)})
+    assert res.config is not None
+
+    with build_genomic_position_table(res, res.config["table"]) as table:
+        assert table.pos_begin_key == 0
+        records = list(table.get_all_records())
+
+    assert [record[POS_BEGIN] for record in records] == [10, 11]
+    assert [record[CHROM] for record in records] == ["1", "1"]
+
+
+def test_chrom_configured_at_the_first_column_is_honoured() -> None:
+    """Companion pin for ``chrom`` at index 0 (#240).
+
+    Unlike ``pos_begin`` this one never misbehaved -- ``chrom``'s default is
+    itself 0, so the ``or`` fell back onto the very index it discarded.  It is
+    pinned because the two keys are now resolved the same way, and a return to
+    the ``or`` idiom here would be invisible until the default changes.
+    """
+    res = build_inmemory_test_resource({
+        "genomic_resource.yaml": """
+            table:
+                filename: data.mem
+                header_mode: none
+                chrom:
+                    column_index: 0
+                pos_begin:
+                    column_index: 2
+            """,
+        "data.mem": convert_to_tab_separated(
+            """
+            1    0.1    10
+            1    0.2    11
+            """)})
+    assert res.config is not None
+
+    with build_genomic_position_table(res, res.config["table"]) as table:
+        assert table.chrom_key == 0
+        records = list(table.get_all_records())
+
+    assert [record[CHROM] for record in records] == ["1", "1"]
+    assert [record[POS_BEGIN] for record in records] == [10, 11]
+
+
 def test_tabix_get_records_in_region_without_chrom(
     tabix_table: GenomicPositionTable,
 ) -> None:

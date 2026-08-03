@@ -291,16 +291,29 @@ class GenomicPositionTable(abc.ABC):
         return None
 
     def _set_core_column_keys(self) -> None:
+        # A resolved key of 0 is a column, not a missing one: ``or`` cannot
+        # tell the FIRST column from ``get_column_key``'s ``None``, and used
+        # to discard a pos_begin configured at index 0 in favour of the
+        # default 1 -- silently reading start positions out of the wrong
+        # column (#240).  Only ``is None`` asks the question these defaults
+        # mean to ask.
+
         # chrom is the first column by default (index 0)
-        self.chrom_key = self.get_column_key(self.CHROM) or 0
+        key = self.get_column_key(self.CHROM)
+        self.chrom_key = key if key is not None else 0
 
         # pos_begin is the second column by default (index 1)
-        self.pos_begin_key = self.get_column_key(self.POS_BEGIN) or 1
+        key = self.get_column_key(self.POS_BEGIN)
+        self.pos_begin_key = key if key is not None else 1
 
         key = self.get_column_key(self.POS_END)
         if key is not None:
             self.pos_end_key = key
         else:
+            # Reachable, though it reads as dead: a null-valued 'index:' /
+            # 'column_index:' (an empty YAML value) is returned AS the key,
+            # so get_column_key can answer None with pos_end named in the
+            # header -- which is the one way past the check above.
             if self.header and self.POS_END in self.header:
                 self.pos_end_key = 2
             else:
