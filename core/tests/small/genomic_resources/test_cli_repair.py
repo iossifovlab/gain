@@ -613,3 +613,115 @@ def test_resource_info_renders_only_the_selected_resource(
     assert (path / "one" / "index.html").is_file()
     assert (path / "one" / "statistics" / "index.html").is_file()
     assert not (path / "two" / "index.html").exists()
+
+
+# ---------------------------------------------------------------------------
+# gain#587: a resource the scan refuses is reported WITH its reason
+# ---------------------------------------------------------------------------
+
+def _healthy_position_score() -> Any:
+    return (
+        a_position_score()
+        .with_score("phastCons", "float")
+        .with_histogram({"type": "number", "number_of_bins": 10})
+        .with_tabix()
+        .with_data("""
+            chrom  pos_begin  pos_end  phastCons
+            chr1   10         15       0.02
+            chr1   17         19       0.03
+        """)
+    )
+
+
+@pytest.fixture
+def malformed_between_healthy_grr(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> pathlib.Path:
+    """A GRR whose middle resource overlaps its own records.
+
+    Resources are repaired in id order, so ``a_healthy`` is discovered
+    before the malformed one and ``z_healthy`` after it: a layout that puts
+    the malformed resource last would prove nothing about the resources the
+    sweep had yet to reach.
+    """
+    path = tmp_path_factory.mktemp("cli_repair_malformed_grr")
+    (
+        a_grr()
+        .with_resource("a_healthy", _healthy_position_score())
+        .with_resource(
+            "m_malformed",
+            a_position_score()
+            .with_score("phastCons", "float")
+            .with_histogram({"type": "number", "number_of_bins": 10})
+            .with_tabix()
+            .with_data("""
+                chrom  pos_begin  pos_end  phastCons
+                chr1   10         15       0.02
+                chr1   13         19       0.03
+            """))
+        .with_resource("z_healthy", _healthy_position_score())
+        .build_repo(path)
+    )
+    return path
+
+
+def test_repo_repair_reports_a_malformed_resource_with_its_reason(
+    malformed_between_healthy_grr: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The reason has to travel WITH the id, on one record.  Asserting that
+    # some ERROR record mentions the resource is vacuous: the summary line
+    # "statistics of <m_malformed> were not built" says that much for any
+    # failure whatsoever, including one that reported nothing at all.
+    path = malformed_between_healthy_grr
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"), \
+            pytest.raises(SystemExit) as excinfo:
+        cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
+
+    assert excinfo.value.code != 0
+    assert any(
+        record.name == "grr_manage"
+        and record.levelno == logging.ERROR
+        and "<m_malformed>" in record.getMessage()
+        and "at most one record per position" in record.getMessage()
+        for record in caplog.records)
+    # ... and the refusal is attributed as a failure, with no fresh hash.
+    assert any(
+        record.levelno == logging.ERROR
+        and "failed" in record.getMessage()
+        and "m_malformed" in record.getMessage()
+        for record in caplog.records)
+    assert not (path / "m_malformed" / "statistics" / "stats_hash").exists()
+    assert "is consistent" not in caplog.text
+
+
+def test_a_malformed_resource_is_never_an_unexpected_internal_error(
+    malformed_between_healthy_grr: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A resource whose own records break its kind's rule is the RESOURCE's
+    # fault; reporting it as a GAIn defect sends the reader to the wrong
+    # repository.
+    path = malformed_between_healthy_grr
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"), \
+            pytest.raises(SystemExit):
+        cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
+
+    assert "unexpected internal error" not in caplog.text
+
+
+def test_repo_repair_repairs_the_healthy_resources_around_a_malformed_one(
+    malformed_between_healthy_grr: pathlib.Path,
+) -> None:
+    path = malformed_between_healthy_grr
+
+    with pytest.raises(SystemExit):
+        cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
+
+    for healthy in ("a_healthy", "z_healthy"):
+        assert (path / healthy / "statistics"
+                / "histogram_phastCons.json").is_file()
+        assert (path / healthy / "statistics" / "stats_hash").is_file()
+        assert (path / healthy / "index.html").is_file()

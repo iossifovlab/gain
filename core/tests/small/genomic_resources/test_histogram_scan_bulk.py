@@ -1,4 +1,5 @@
 # pylint: disable=C0114,C0116,W0212,W0621
+import logging
 import pathlib
 
 import numpy as np
@@ -14,8 +15,10 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
 )
 from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.resource_errors import MalformedResourceError
 from gain.genomic_resources.testing.builders import (
     a_bigwig_score,
+    a_grr,
     a_np_score,
     a_position_score,
 )
@@ -648,3 +651,106 @@ def test_bulk_histogram_overlap_guard_rejects_adjacency_within_one_batch(
     with pytest.raises(ValueError, match="multiple values for positions"):
         GenomicScoreImplementation._do_histogram(
             resource, confs, "chr1", 1, 10)
+
+
+# ---------------------------------------------------------------------------
+# gain#587: the vectorized guard names the resource and the offending record
+# ---------------------------------------------------------------------------
+
+def _overlapping_repo(
+    tmp_path: pathlib.Path, data: str,
+) -> GenomicResource:
+    repo = (
+        a_grr()
+        .with_resource(
+            "overlapping",
+            a_position_score()
+            .with_score("s", "float")
+            .with_tabix()
+            .with_data(data))
+        .build_repo(tmp_path)
+    )
+    return repo.get_resource("overlapping")
+
+
+def test_the_bulk_guard_names_the_offender_within_one_batch(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _overlapping_repo(tmp_path, """
+        chrom  pos_begin  pos_end  s
+        chr1   1          5        0.1
+        chr1   3          8        0.2
+    """)
+    confs: dict = {"s": _hist_conf()}
+
+    with pytest.raises(MalformedResourceError) as excinfo:
+        GenomicScoreImplementation._do_histogram_bulk(
+            resource, confs, "chr1", 1, 10)
+
+    message = str(excinfo.value)
+    assert "<overlapping>" in message
+    # The offending record, not merely the contig it sits on.
+    assert "chr1:3" in message
+    assert "chr1:5" in message
+    assert "at most one record per position" in message
+
+
+def test_the_bulk_guard_names_the_offender_across_a_batch_boundary(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The carry case: the offender is the FIRST record of its batch and its
+    # partner is the last record of the one before, so neither comparison
+    # array holds both of them.
+    resource = _overlapping_repo(tmp_path, """
+        chrom  pos_begin  pos_end  s
+        chr1   1          5        0.2
+        chr1   3          7        0.8
+    """)
+    confs: dict = {"s": _hist_conf()}
+    monkeypatch.setattr(
+        GenomicScoreImplementation, "_SCAN_BATCH_SIZE", 1)
+
+    with pytest.raises(MalformedResourceError) as excinfo:
+        GenomicScoreImplementation._do_histogram_bulk(
+            resource, confs, "chr1", 1, 10)
+
+    message = str(excinfo.value)
+    assert "<overlapping>" in message
+    assert "chr1:3" in message
+    assert "chr1:5" in message
+    assert "at most one record per position" in message
+
+
+@pytest.mark.parametrize("task,args", [
+    ("_do_min_max_task", ["s"]),
+    ("_do_histogram_task", {"s": None}),
+])
+def test_a_statistics_task_reports_the_malformed_resource_and_re_raises(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    task: str,
+    args: object,
+) -> None:
+    # The two task seams are the only entry points into region scanning, so
+    # they are where a refusal acquires the resource it belongs to.  The
+    # refusal is re-raised, not swallowed: the executor turns it into the
+    # task's failure, which is what fails the run.
+    resource = _overlapping_repo(tmp_path, """
+        chrom  pos_begin  pos_end  s
+        chr1   1          5        0.1
+        chr1   3          8        0.2
+    """)
+    payload = {"s": _hist_conf()} if isinstance(args, dict) else args
+
+    with caplog.at_level(logging.ERROR, logger="grr_manage"), \
+            pytest.raises(MalformedResourceError):
+        getattr(GenomicScoreImplementation, task)(
+            resource, payload, "chr1", 1, 10)
+
+    assert any(
+        record.name == "grr_manage"
+        and record.levelno == logging.ERROR
+        and "<overlapping>" in record.getMessage()
+        and "at most one record per position" in record.getMessage()
+        for record in caplog.records)

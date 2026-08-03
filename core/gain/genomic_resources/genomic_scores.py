@@ -48,6 +48,10 @@ from gain.genomic_resources.repository import (
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
+from gain.genomic_resources.resource_errors import (
+    MalformedResourceError,
+    overlapping_records_error,
+)
 from gain.genomic_resources.resource_implementation import (
     get_base_resource_schema,
 )
@@ -1332,12 +1336,8 @@ class PositionScore(GenomicScore):
             prev_end = returned_region[2]
 
             if prev_end and left <= prev_end:
-                logger.warning(
-                    "multiple values for positions %s:%s-%s",
-                    chrom, left, right)
-                raise ValueError(
-                    f"multiple values for positions "
-                    f"{chrom}:{left}-{right}")
+                raise overlapping_records_error(
+                    self.resource_id, chrom, left, prev_end)
             returned_region = (lchrom, left, right, val)
             yield (left, right, val)
 
@@ -1382,12 +1382,10 @@ class PositionScore(GenomicScore):
             return None
 
         if len(records) > 1:
-            logger.warning(
-                "multiple values for positions %s:%s",
-                chrom, position)
-            raise ValueError(
-                f"multiple values ({len(records)}) for positions "
-                f"{chrom}:{position}")
+            raise MalformedResourceError(
+                f"<{self.resource_id}> is malformed: multiple values "
+                f"({len(records)}) for positions {chrom}:{position}; "
+                f"a position score allows at most one record per position")
 
         return self.get_score_values_from_record(records[0], score_defs)
 
@@ -1637,8 +1635,11 @@ class AlleleScore(GenomicScore):
             if lchrom != prev_chrom:
                 prev_pos = None
             if prev_pos is not None and pos < prev_pos:
-                raise ValueError(
-                    f"multiple values for positions [{pos}, {prev_pos}]")
+                raise MalformedResourceError(
+                    f"<{self.resource_id}> is malformed: the record at "
+                    f"{lchrom}:{pos} follows the record at "
+                    f"{lchrom}:{prev_pos}; an allele score's records must "
+                    f"not move backwards")
             prev_chrom, prev_pos, seen_alleles = lchrom, pos, {alleles}
             yield pos, pos, val
 
