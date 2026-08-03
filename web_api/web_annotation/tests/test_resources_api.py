@@ -102,6 +102,43 @@ from web_annotation.resources.views import SearchResources
                  },
             },
         ),
+        # The two request shapes below answer out of the FTS index --
+        # every filtered request does -- and both are sensitive to
+        # whether `scores/allele1` is in it. The committed index was
+        # stale: `scores/allele1` and `pipeline/allele_pipeline` had been
+        # on the fixture filesystem for some time without ever having
+        # been indexed, so a `search`/`type` request could not see them
+        # while an unfiltered one (which short-circuits to
+        # `get_all_resources()`) could. Rebuilding the index to carry the
+        # label columns the query language needs also corrected that, and
+        # these two cases pin the corrected answers so the next rebuild
+        # cannot move them unnoticed.
+        (
+            None, "scores",
+            {
+                 "page": 0,
+                 "pages": 1,
+                 "total_resources": 5,
+                 "resources": {
+                    "scores/allele1",
+                    "scores/pos1",
+                    "scores/pos2",
+                    "t4c8/gene_scores/t4c8_score",
+                    "t4c8/genomic_scores/score_one",
+                 },
+            },
+        ),
+        (
+            "allele_score", None,
+            {
+                 "page": 0,
+                 "pages": 1,
+                 "total_resources": 1,
+                 "resources": {
+                    "scores/allele1",
+                 },
+            },
+        ),
     ],
 )
 def test_get_resources(
