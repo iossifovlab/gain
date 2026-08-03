@@ -157,6 +157,65 @@ def test_every_core_column_is_compared_against_the_index(
     ) in str(excinfo.value)
 
 
+def test_every_disagreeing_field_is_named_not_just_the_first(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The remedy is a per-field config edit, so a refusal that named only the
+    # first disagreement would send a reader back for another open to find
+    # the next one.  Two fields are put out of step at once -- ``chrom`` and
+    # ``pos_end``, with ``pos_begin`` left agreeing -- and BOTH clauses have
+    # to be present.  Without this, truncating the mismatch list to its first
+    # entry goes undetected.
+    resource = build_resource(
+        tmp_path,
+        a_config("""    chrom:
+              column_index: 3
+            pos_end:
+              column_index: 3"""),
+        seq_col=0, start_col=1, end_col=2)
+    table = build_genomic_position_table(resource, resource.config["table"])
+
+    with pytest.raises(MalformedResourceError) as excinfo:
+        table.open()
+
+    message = str(excinfo.value)
+    assert (
+        "chrom is indexed on column 0 but the configuration resolves it "
+        "to column 3"
+    ) in message
+    assert (
+        "pos_end is indexed on column 2 but the configuration resolves it "
+        "to column 3"
+    ) in message
+
+
+def test_no_end_column_note_is_absent_when_pos_end_agrees(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The "no end column" note is about ``pos_end`` alone.  Here the index
+    # records no end column (``col_end == 0``) but the table's ``pos_end``
+    # resolves to the same implied column, so the only disagreement is
+    # ``chrom`` -- and a note about the end column would be telling a reader
+    # to go and look at a field that is not what is wrong.  Without this, a
+    # refusal that always carried the note goes undetected.
+    resource = build_resource(
+        tmp_path,
+        a_config("""    chrom:
+              column_index: 3"""),
+        preset="vcf")
+    table = build_genomic_position_table(resource, resource.config["table"])
+
+    with pytest.raises(MalformedResourceError) as excinfo:
+        table.open()
+
+    message = str(excinfo.value)
+    assert (
+        "chrom is indexed on column 0 but the configuration resolves it "
+        "to column 3"
+    ) in message
+    assert "The index records no end column" not in message
+
+
 def test_an_index_with_no_end_column_is_compared_by_its_begin_column(
     tmp_path: pathlib.Path,
 ) -> None:
