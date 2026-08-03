@@ -86,10 +86,10 @@ class _SortPlan:
 
     ``sort_keys`` describes how to sort the *output* body rows: a list of
     ``(1-based column index in output, kind)`` tuples, where kind is
-    ``"n"`` for numeric and ``""`` for lex. The chrom column is encoded
-    via ``chrom_col_idx`` (0-based in output) — when a chromosome-order
-    rank prefix is in use, ``sort_keys`` excludes the chrom entry
-    (the rank already encodes it).
+    ``"n"`` for numeric and ``""`` for lex. The chrom column is not
+    listed in ``sort_keys``; it is encoded via ``chrom_col_idx``
+    (0-based in output) and turned into a sort key by
+    ``_build_sort_cmd``.
 
     ``tabix_seq_col``, ``tabix_start_col``, ``tabix_end_col`` are 0-based
     column indexes in the produced file (pysam's tabix_index expects 0-based).
@@ -281,8 +281,11 @@ def _build_sort_cmd(
 
     Column indexes in plan.sort_keys are 1-based in the *output* layout.
     When ``rank_prefix`` is on, every line passed to sort has an extra
-    leading column (the rank), so we shift sort_keys by +1 and add the
-    rank as the primary numeric key.
+    leading column (the rank), so we shift sort_keys by +1 and put the
+    rank first as the primary numeric key, followed by the chrom column
+    as a tiebreaker. Every chromosome missing from the reference genome
+    shares one rank, so the chrom key is what keeps each of them in a
+    single contiguous block, as tabix requires.
     """
     cmd = ["sort", "-t", separator, "-T", work_dir]
     if threads is not None:
@@ -292,6 +295,9 @@ def _build_sort_cmd(
 
     if rank_prefix:
         cmd.append("-k1,1n")
+        # +1 to make it 1-based, +1 for the leading rank column
+        chrom_col_1b = plan.chrom_col_idx + 2
+        cmd.append(f"-k{chrom_col_1b},{chrom_col_1b}")
         for col, kind in plan.sort_keys:
             shifted = col + 1
             cmd.append(f"-k{shifted},{shifted}{kind}")
