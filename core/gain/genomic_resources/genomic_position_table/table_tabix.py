@@ -3,7 +3,7 @@ from __future__ import annotations
 import itertools
 from collections import Counter
 from collections.abc import Generator, Iterable
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 import numpy as np
 import pysam
@@ -119,10 +119,23 @@ class TabixGenomicPositionTable(GenomicPositionTable):
                 f"the table definition and address the columns by index")
         return tuple(header_lines[-1].strip("#\n").split("\t"))
 
+    @property
+    def index_filename(self) -> str | None:
+        """The index this table's definition configures, if any.
+
+        ``None`` means "not configured" -- the protocol then resolves the
+        index of ``filename`` itself (manifest first, probe second; see
+        ``resolve_tabix_index_filename_for_read``).  A table opens its file
+        at more than one site (the VCF backend opens it a second time to
+        read the file's contigs off the index), and every one of them must
+        use the SAME index, so the key is read here rather than at each
+        open (gain#596).
+        """
+        return cast("str | None", self.definition.get("index_filename", None))
+
     def open(self) -> TabixGenomicPositionTable:
-        index_file_name = self.definition.get("index_filename", None)
         self.pysam_file = self.genomic_resource.open_tabix_file(
-            self.definition.filename, index_file_name)
+            self.definition.filename, self.index_filename)
         if self.header_mode == "file":
             self.header = self._load_header()
         self._set_core_column_keys()

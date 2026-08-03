@@ -214,7 +214,7 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
 
     def open(self) -> VCFGenomicPositionTable:
         self.pysam_file = self.genomic_resource.open_vcf_file(
-            self.definition.filename)
+            self.definition.filename, self.index_filename)
         self._set_core_column_keys()
         self._build_chrom_mapping()
         # Like the tabix parser, this cannot be built any earlier: the reverse
@@ -236,7 +236,10 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
         header's ``##contig`` lines are a declaration and may name contigs with
         no records (or none at all).  So this opens the file a second time, as a
         tabix file -- ``self.pysam_file`` is a ``VariantFile`` and cannot answer
-        it.
+        it.  It is the SAME file, so it is opened with the same index the
+        definition configures: this open, not the one in :meth:`open`, is where
+        a dropped ``index_filename`` surfaced, as an ``OSError`` naming an
+        index path the config never mentions (gain#596).
 
         Which is why the open table is a **precondition** here, rather than
         something this can quietly do without.  Unlike its three siblings, an
@@ -256,7 +259,8 @@ class VCFGenomicPositionTable(TabixGenomicPositionTable):
                 f"{self.genomic_resource.resource_id}: "
                 f"{self.definition}")
         with self.genomic_resource.open_tabix_file(
-                self.definition.filename) as pysam_file_tabix:
+                self.definition.filename,
+                self.index_filename) as pysam_file_tabix:
             contigs = pysam_file_tabix.contigs
         return list(map(str, contigs))
 

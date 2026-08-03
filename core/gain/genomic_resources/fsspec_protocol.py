@@ -77,6 +77,33 @@ pysam.set_verbosity(1)
 logger = logging.getLogger(__name__)
 
 
+def _declare_index_contigs(vcf_file: pysam.VariantFile) -> None:
+    """Add the index's contigs to a header that does not declare them.
+
+    htslib does this itself -- but only for an index it found by ITSELF,
+    probing next to the data file: ``vcf_hdr_read`` loads an adjacent
+    ``.tbi``/``.csi`` and folds the names it lists into the header.  An
+    index opened by an explicit path (every remote open, and every open of
+    a table whose ``index_filename`` names a non-adjacent file) misses that
+    step, and a VCF with no ``##contig`` lines then has an EMPTY header
+    contig list -- so ``fetch("chr1")`` raises ``ValueError: invalid contig
+    chr1`` although the index knows the contig perfectly well.
+
+    Declaring them here is what makes an explicitly-indexed open behave
+    exactly like an auto-probed one, which is the whole point of honouring a
+    configured index (gain#596).  A contig the header already declares is
+    left alone.
+    """
+    index = vcf_file.index
+    if index is None:
+        return
+    contigs = vcf_file.header.contigs
+    for indexed in index:
+        contig = str(indexed)
+        if contig not in contigs:
+            contigs.add(contig)
+
+
 class FileCacheVerdict(NamedTuple):
     """The lock-free classification of a single resource file.
 
@@ -1135,16 +1162,35 @@ class FsspecReadOnlyProtocol(
 
         file_url = self._get_file_url(resource, filename)
 
-        if index_filename is None:
-            index_filename = f"{filename}.tbi"
-
-        if not resource.file_exists(index_filename):
-            return pysam.VariantFile(file_url)  # pylint: disable=no-member
+        if index_filename is not None:
+            # Asked for BY NAME -- a table's ``index_filename``, or the
+            # index the caching protocol just refreshed.  Refuse a name that
+            # names nothing rather than dropping it and opening unindexed:
+            # htslib would then auto-probe its way to the adjacent index and
+            # read on, and a configuration that does nothing would stay
+            # invisible (gain#596).
+            if not resource.file_exists(index_filename):
+                raise OSError(
+                    f"index '{index_filename}' of '{filename}' not found in "
+                    f"resource '{resource.resource_id}'")
+        else:
+            # The index may be a ``.tbi`` or a ``.csi``; ask the manifest
+            # which one this resource actually carries, exactly as
+            # ``open_tabix_file`` above does -- do NOT assume ``.tbi``
+            # (gain#430, gain#596).
+            index_filename = resolve_tabix_index_filename_for_read(
+                resource, filename)
+            if not resource.file_exists(index_filename):
+                # Nothing resolved: a file that ships no index at all -- a
+                # VCF header sidecar, say -- still opens, unindexed.
+                return pysam.VariantFile(file_url)  # pylint: disable=no-member
 
         index_url = self._get_file_url(resource, index_filename)
 
-        return pysam.VariantFile(  # pylint: disable=no-member
+        vcf_file = pysam.VariantFile(  # pylint: disable=no-member
             file_url, index_filename=index_url)
+        _declare_index_contigs(vcf_file)
+        return vcf_file
 
     def open_fasta_file(
             self, resource: GenomicResource,

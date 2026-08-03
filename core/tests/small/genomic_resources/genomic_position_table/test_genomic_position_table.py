@@ -3311,3 +3311,118 @@ def test_zero_based_authored_in_bigwig_config_warns_through_schema(
     ]
     assert any(
         "zero_based" in m and "scores/bw_zb" in m for m in warnings), warnings
+
+
+# ---------------------------------------------------------------------------
+# index_filename resolution (gain#596)
+#
+# Every test here places the index at a NON-ADJACENT name.  htslib
+# auto-probes for an index next to the data file, so a resource whose index
+# keeps its default name opens fine even when GAIn passes no index at all --
+# such a test passes against the unfixed code and proves nothing.
+# ---------------------------------------------------------------------------
+
+
+def test_a_vcf_table_reads_through_its_configured_index_filename(
+    tmp_path: pathlib.Path,
+) -> None:
+    res = (
+        a_grr()
+        .with_resource(
+            "scores/vcf_idx",
+            a_vcf_info_score().with_index_filename("data.idx.tbi"))
+        .build_repo(tmp_path)
+        .get_resource("scores/vcf_idx")
+    )
+    assert res.config is not None
+
+    with build_genomic_position_table(res, res.config["table"]) as tab:
+        assert isinstance(tab, VCFGenomicPositionTable)
+        assert tab.get_chromosomes() == ["chr1"]
+        records = list(tab.get_records_in_region("chr1", 10, 11))
+
+    assert [record[POS_BEGIN] for record in records] == [10, 11]
+
+
+def test_a_vcf_table_reads_through_a_non_adjacent_csi_index(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The .csi flavour of the test above: index_filename must be honoured
+    # whichever index flavour it names.
+    res = (
+        a_grr()
+        .with_resource(
+            "scores/vcf_csi",
+            a_vcf_info_score()
+            .with_csi_index()
+            .with_index_filename("data.idx.csi"))
+        .build_repo(tmp_path)
+        .get_resource("scores/vcf_csi")
+    )
+    assert res.config is not None
+
+    with build_genomic_position_table(res, res.config["table"]) as tab:
+        assert isinstance(tab, VCFGenomicPositionTable)
+        assert tab.get_chromosomes() == ["chr1"]
+        records = list(tab.get_records_in_region("chr1", 10, 11))
+
+    assert [record[POS_BEGIN] for record in records] == [10, 11]
+
+
+def test_a_vcf_table_refuses_a_configured_index_that_does_not_exist(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The index sits at its default adjacent name, so htslib could probe its
+    # way to a working file -- and must not: an index_filename that names
+    # nothing is a broken config, and reading happily through some other
+    # index is what kept it invisible.  The error has to name the CONFIGURED
+    # path, not the one the reader guessed for itself.
+    res = (
+        a_grr()
+        .with_resource(
+            "scores/vcf_no_idx",
+            a_vcf_info_score().with_missing_index_filename("data.idx.tbi"))
+        .build_repo(tmp_path)
+        .get_resource("scores/vcf_no_idx")
+    )
+    assert res.config is not None
+    table = build_genomic_position_table(res, res.config["table"])
+
+    with pytest.raises(OSError) as excinfo:
+        table.open()
+
+    message = str(excinfo.value)
+    assert "data.idx.tbi" in message
+    assert "data.vcf.gz.tbi" not in message
+
+
+def test_a_tabix_table_reads_through_its_configured_index_filename(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The tabix control for the VCF tests above -- and the regression test
+    # gain#580 shipped without: the tabix open has honoured index_filename
+    # since then, but nothing pinned it at a name htslib could not have
+    # found on its own.
+    res = (
+        a_grr()
+        .with_resource(
+            "scores/tabix_idx",
+            a_position_score()
+            .with_tabix(index_filename="data.idx.tbi")
+            .with_score("value", "float")
+            .with_data("""
+                chrom  pos_begin  value
+                chr1   10         0.1
+                chr1   11         0.2
+            """))
+        .build_repo(tmp_path)
+        .get_resource("scores/tabix_idx")
+    )
+    assert res.config is not None
+
+    with build_genomic_position_table(res, res.config["table"]) as tab:
+        assert isinstance(tab, TabixGenomicPositionTable)
+        assert tab.get_chromosomes() == ["chr1"]
+        records = list(tab.get_records_in_region("chr1", 10, 11))
+
+    assert [record[POS_BEGIN] for record in records] == [10, 11]

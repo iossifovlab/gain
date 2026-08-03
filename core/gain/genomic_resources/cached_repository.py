@@ -260,9 +260,21 @@ class CachingProtocol(ReadOnlyRepositoryProtocol):
             index_filename: str | None = None) -> pysam.VariantFile:
         self.refresh_cached_resource_file(resource, filename)
         if index_filename is None:
-            index_filename = resolve_tabix_index_filename_for_read(
+            # The index may be a ``.tbi`` or a ``.csi``; refresh the one the
+            # manifest actually records, not an assumed name (gain#430).
+            resolved = resolve_tabix_index_filename_for_read(
                 resource, filename)
-        self.refresh_cached_resource_file(resource, index_filename)
+            # ``file_exists`` on this protocol refreshes the file first, so
+            # this both caches the index and decides whether there is one.
+            # A file that carries NO index -- a VCF header sidecar -- must
+            # keep reaching the local open with no index name at all: that
+            # open refuses an index it is asked for by name and cannot find
+            # (gain#596), and a resolved guess is not a request.
+            if not self.file_exists(resource, resolved):
+                return self.local_protocol.open_vcf_file(resource, filename)
+            index_filename = resolved
+        else:
+            self.refresh_cached_resource_file(resource, index_filename)
 
         return self.local_protocol.open_vcf_file(
             resource, filename, index_filename)

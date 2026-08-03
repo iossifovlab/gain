@@ -2097,3 +2097,28 @@ def test_cached_open_vcf_file_fetches_the_csi_index_on_a_cold_cache(
 
     assert "data.vcf.gz.csi" in \
         cache_repo.get_resource_cached_files("csi_vcf_score")
+
+
+def test_cached_open_vcf_file_opens_a_file_that_ships_no_index(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A file with NO index must still open through the cache (gain#596).
+
+    This protocol resolves the index it refreshes and hands the name down to
+    the local open, which refuses an index it is asked for by name and
+    cannot find.  A VCF header sidecar -- the shape real score resources
+    ship, unindexed -- has no index to hand down, and passing the resolved
+    guess anyway would turn "there is no index" into a hard failure.
+    """
+    source_dir = tmp_path / "grr_source"
+    (
+        a_grr()
+        .with_resource(
+            "vcf_score", a_vcf_info_score().without_header_index())
+        .build_repo(source_dir)
+    )
+    cache_repo = _build_cache_repo(source_dir, tmp_path / "cache")
+
+    resource = cache_repo.get_resource("vcf_score")
+    with resource.open_vcf_file("data.header.vcf.gz") as vcf:
+        assert "score" in set(vcf.header.info.keys())

@@ -847,6 +847,10 @@ class BigWigScoreBuilder(MetaMixin):
 
 _VCF_FILENAME = "data.vcf.gz"
 
+# ``setup_vcf`` derives the header sidecar from the data filename and indexes
+# it alongside; ``without_header_index`` drops that index again.
+_VCF_HEADER_INDEX_FILENAME = "data.header.vcf.gz.tbi"
+
 _VCF_DEFAULT_DATA = """
 ##fileformat=VCFv4.1
 ##INFO=<ID=score,Number=1,Type=Float,Description="a float">
@@ -871,6 +875,8 @@ class VcfInfoScoreBuilder(MetaMixin):
     zero_based: bool = False
     csi: bool = False
     index_filename: str | None = None
+    realize_index_filename: bool = True
+    header_index: bool = True
 
     def with_data(self, data: str) -> Self:
         """Author the whole VCF, ``##`` header lines included."""
@@ -881,16 +887,44 @@ class VcfInfoScoreBuilder(MetaMixin):
         return dataclasses.replace(self, csi=True)
 
     def with_index_filename(self, index_filename: str) -> Self:
-        """Realize and declare the index under a name of your choosing.
+        """Realize the index at ``index_filename`` and declare it in config.
 
-        Emits ``index_filename:`` in the table config and MOVES the index
-        pysam wrote to that name, leaving no index at the conventional
-        ``data.vcf.gz.tbi`` / ``.csi``.  Pass a NON-adjacent name whenever
-        the test is about index resolution: on a local filesystem htslib
-        auto-probes for an adjacent index, so an index left at its
-        conventional name proves nothing about which name was resolved.
+        The index htslib writes next to the data file is MOVED to
+        ``index_filename`` -- so no adjacent ``data.vcf.gz.tbi`` /
+        ``data.vcf.gz.csi`` is left behind -- and the table config declares
+        ``index_filename:`` pointing at it.
+
+        Moving it is the whole point: htslib auto-probes for an adjacent
+        index and opens happily without being told about it, so a resource
+        whose index sits at its default name proves nothing about whether
+        the configured ``index_filename`` was honoured (gain#596).
         """
-        return dataclasses.replace(self, index_filename=index_filename)
+        return dataclasses.replace(
+            self, index_filename=index_filename, realize_index_filename=True)
+
+    def with_missing_index_filename(self, index_filename: str) -> Self:
+        """Declare ``index_filename:`` in the config with no such file.
+
+        The realized index stays at its default adjacent name, so htslib
+        could still auto-probe its way to a working file -- which is
+        exactly what an open must NOT do here: an explicitly configured
+        index that does not exist has to fail, naming the configured path
+        rather than quietly reading through some other one (gain#596).
+        """
+        return dataclasses.replace(
+            self, index_filename=index_filename, realize_index_filename=False)
+
+    def without_header_index(self) -> Self:
+        """Ship the ``*.header.vcf.gz`` sidecar with no index of its own.
+
+        The realize path indexes the sidecar because it bgzips it the same
+        way as the data file; real score resources (dbSNP is the canonical
+        one) ship it unindexed, and the table reads its INFO metadata
+        without ever needing an index.  Use this to realize that shape --
+        a file whose index resolution must resolve to NOTHING and still
+        open.
+        """
+        return dataclasses.replace(self, header_index=False)
 
     def with_zero_based(self) -> Self:
         """Emit ``zero_based: true`` in the ``table:`` config.
@@ -910,7 +944,9 @@ class VcfInfoScoreBuilder(MetaMixin):
         setup_directories(
             resource_dir, {GR_CONF_FILE_NAME: self._render_config()})
         setup_vcf(resource_dir / _VCF_FILENAME, data, csi=self.csi)
-        if self.index_filename is not None:
+        if not self.header_index:
+            (resource_dir / _VCF_HEADER_INDEX_FILENAME).unlink()
+        if self.index_filename is not None and self.realize_index_filename:
             suffix = ".csi" if self.csi else ".tbi"
             (resource_dir / f"{_VCF_FILENAME}{suffix}").rename(
                 resource_dir / self.index_filename)

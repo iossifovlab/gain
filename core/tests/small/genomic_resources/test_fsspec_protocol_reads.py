@@ -309,6 +309,72 @@ def vcf_proto_without_index(tmp_path: pathlib.Path) -> RepositoryProtocol:
     return build_filesystem_test_protocol(tmp_path)
 
 
+@pytest.fixture
+def vcf_proto_with_csi_index(
+    tmp_path: pathlib.Path,
+    grr_scheme: str,
+    mocker: pytest_mock.MockerFixture,
+) -> Generator[RepositoryProtocol, None, None]:
+    """Protocol where the VCF's ONLY index is a ``.csi``.
+
+    Parametrized over the schemes like its ``.tbi`` siblings above: the
+    resolution is protocol-independent, and the remote schemes are where a
+    wrongly-named index costs a round trip rather than a local stat.
+    """
+    setup_directories(tmp_path, {"res": {GR_CONF_FILE_NAME: ""}})
+    setup_vcf(tmp_path / "res" / "data.vcf.gz", VCF_CONTENT, csi=True)
+
+    if grr_scheme == "file":
+        yield build_filesystem_test_protocol(tmp_path)
+        return
+    if grr_scheme == "http":
+        with build_http_test_protocol(tmp_path) as proto:
+            yield proto
+        return
+    if grr_scheme == "s3":
+        mocker.patch.dict(os.environ, {
+            "AWS_SECRET_ACCESS_KEY": "minioadmin",
+            "AWS_ACCESS_KEY_ID": "minioadmin",
+        })
+        with build_s3_test_protocol(tmp_path) as proto:
+            yield proto
+        return
+
+    raise ValueError(f"unexpected protocol scheme: <{grr_scheme}>")
+
+
+@pytest.mark.grr_tabix
+def test_open_vcf_file_resolves_a_csi_index_it_was_not_told_about(
+        vcf_proto_with_csi_index: RepositoryProtocol,
+        mocker: pytest_mock.MockerFixture) -> None:
+    """With no index argument the open must find the ``.csi`` (gain#596).
+
+    Assuming ``{filename}.tbi`` and then opening unindexed because that name
+    does not exist is what the tabix sibling stopped doing in gain#430; this
+    is the same resolution on the VCF open.
+
+    Observed at the URL seam, deliberately -- and NOT by reading records
+    back.  htslib probes for an adjacent index whenever it is handed none,
+    and that probe reaches over http and s3 as well as on local disk
+    (measured against the docker fixtures): the read succeeds either way, so
+    it cannot tell a resolved index from a guessed one.  What the caller
+    passes still matters -- the caching protocol fetches the index this
+    resolution names, and only that one, into the cache.
+    """
+    proto = vcf_proto_with_csi_index
+    res = proto.get_resource("res")
+    spy = mocker.spy(proto, "_get_file_url")
+
+    with proto.open_vcf_file(res, "data.vcf.gz") as vcf:
+        assert [record.pos for record in vcf.fetch("1", 9, 10)] == [10]
+
+    index_filenames = [
+        call.args[1] for call in spy.call_args_list
+        if call.args[1] != "data.vcf.gz"
+    ]
+    assert index_filenames == ["data.vcf.gz.csi"]
+
+
 @pytest.mark.grr_tabix
 def test_open_vcf_file_with_index_reads_contigs(
         vcf_proto_with_index: RepositoryProtocol) -> None:
@@ -356,3 +422,21 @@ def test_open_vcf_file_without_index_does_not_build_index_url(
     called_filenames = [call.args[1] for call in spy.call_args_list]
     assert "data.vcf.gz" in called_filenames
     assert "data.vcf.gz.tbi" not in called_filenames
+
+
+def test_open_vcf_file_refuses_an_explicit_index_that_does_not_exist(
+        vcf_proto_with_index: RepositoryProtocol) -> None:
+    """An index asked for BY NAME must not silently degrade (gain#596).
+
+    The resource carries its default adjacent ``data.vcf.gz.tbi``, so
+    dropping the requested index and opening unindexed would leave htslib to
+    auto-probe its way to a working file -- and a caller that asked for a
+    particular index would never learn that its request did nothing.
+    """
+    proto = vcf_proto_with_index
+    res = proto.get_resource("res")
+
+    with pytest.raises(OSError) as excinfo:
+        proto.open_vcf_file(res, "data.vcf.gz", "no-such.tbi")
+
+    assert "no-such.tbi" in str(excinfo.value)
