@@ -7,7 +7,7 @@
 
 {{ data.resource_summary }}
 
-{{ data.histogram }}
+{{ data.histogram|safe }}
 
 Genomic resource:
 <a href={{data.resource_url}} target="_blank">{{ data.resource_id }}</a>

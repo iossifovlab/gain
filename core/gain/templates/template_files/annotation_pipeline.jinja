@@ -1,4 +1,5 @@
 {% extends base %}
 {% block content %}
-{{data["content"]}}
+{# The rendered annotate_doc_pipeline_template document. #}
+{{data["content"]|safe}}
 {% endblock %}

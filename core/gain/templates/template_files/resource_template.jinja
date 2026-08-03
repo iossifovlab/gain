@@ -156,8 +156,9 @@
                               }
                             </style>
                             {%- set description = resource.get_description() -%}
+                            {# markdown2 output; a plain str, so mark it safe. #}
                             {{
-                                markdown(description, extras=["tables"]) if description else "N/A"
+                                (markdown(description, extras=["tables"]) if description else "N/A")|safe
                             }}
                         </template>
                     </div>

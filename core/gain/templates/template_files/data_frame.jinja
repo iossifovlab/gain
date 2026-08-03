@@ -4,7 +4,8 @@
 {% set description = data.df_description %}
 
 {% if description %}
-{{ description }}
+{# pandas DataFrame.to_html output, which escapes its own cells. #}
+{{ description|safe }}
 {% else %}
 <p>Statistics have not been built for this resource.</p>
 {% endif %}
