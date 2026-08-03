@@ -132,7 +132,7 @@ class DataFrameResourceImplementation(
     ) -> list[TaskDesc]:
         return [
             TaskGraph.make_task(
-                f"data_frame_{self.resource}",
+                f"{self.resource.get_full_id()}_data_frame_statistics",
                 self._stats_for_data_frame,
                 args=[self.resource]),
         ]

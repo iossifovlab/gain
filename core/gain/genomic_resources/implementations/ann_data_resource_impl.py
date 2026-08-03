@@ -175,7 +175,7 @@ class AnnDataResourceImplementation(
     ) -> list[TaskDesc]:
         return [
             TaskGraph.make_task(
-                f"ann_data_{self.resource}",
+                f"{self.resource.get_full_id()}_ann_data_statistics",
                 self._stats_for_ann_data,
                 args=[self.resource]),
         ]
