@@ -1,11 +1,17 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 
+import pathlib
+
 from gain.genomic_resources import GenomicResource
+from gain.genomic_resources.genomic_position_table import (
+    TabixGenomicPositionTable,
+)
 from gain.genomic_resources.genomic_scores import (
     PositionScore,
 )
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import build_inmemory_test_resource
+from gain.genomic_resources.testing.builders import a_grr, a_position_score
 
 
 def test_the_simplest_position_score() -> None:
@@ -188,3 +194,37 @@ def test_position_score_chrom_prefix() -> None:
 
     assert score.table is not None
     assert set(score.table.get_chromosomes()) == {"chr1", "chr2"}
+
+
+def test_a_walk_of_point_reads_leaves_the_tabix_buffer_pruned(
+    tmp_path: pathlib.Path,
+) -> None:
+    # ``fetch_position_scores`` DRAINS the region generator it opens.  An
+    # abandoned one leaves ``TabixGenomicPositionTable.get_records_in_region``
+    # suspended short of the ``buffer.prune()`` that ends its buffered walk,
+    # and abandoning a generator does not tear down what it was iterating --
+    # the eviction would wait on a garbage collection that may never come.
+    # Annotation reads position after position through here, so the
+    # ``LineBuffer`` would grow for the length of a run.
+    data = "chrom  pos_begin  pos_end  s\n" + "\n".join(
+        f"chr1  {pos}  {pos}  0.1" for pos in range(1, 201))
+    resource = (
+        a_grr()
+        .with_resource(
+            "walked",
+            a_position_score()
+            .with_score("s", "float")
+            .with_tabix()
+            .with_data(data))
+        .build_repo(tmp_path)
+        .get_resource("walked")
+    )
+    score = PositionScore(resource)
+    score.open()
+    table = score.table
+    assert isinstance(table, TabixGenomicPositionTable)
+
+    for pos in range(1, 201):
+        assert score.fetch_position_scores("chr1", pos) == [0.1]
+
+    assert len(table.buffer) <= 2

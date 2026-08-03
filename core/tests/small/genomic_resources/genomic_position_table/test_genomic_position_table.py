@@ -3494,3 +3494,50 @@ def test_a_tabix_table_reads_through_its_configured_index_filename(
         records = list(tab.get_records_in_region("chr1", 10, 11))
 
     assert [record[POS_BEGIN] for record in records] == [10, 11]
+
+
+def test_a_tabix_region_query_never_yields_a_record_ending_before_it(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The score layer used to re-check this on every record it read, and
+    # gain#588 deleted the check: excluding a record that does not overlap
+    # the queried region is the backend's guarantee, and ``LineBuffer.fetch``
+    # applies exactly this condition (line.py, ``record[POS_END] <
+    # pos_begin``).  The tabix backend is the one that could plausibly
+    # over-return, because between walks it knowingly holds records that
+    # already died (gain#287).  Pinned so the assumption the score layer now
+    # rests on is asserted somewhere rather than believed.
+    resource = (
+        a_grr()
+        .with_resource(
+            "wide",
+            a_position_score()
+            .with_score("s", "float")
+            .with_tabix()
+            .with_data("""
+                chrom  pos_begin  pos_end  s
+                chr1   1          100      0.1
+                chr1   101        200      0.2
+                chr1   201        300      0.3
+            """))
+        .build_repo(tmp_path)
+        .get_resource("wide")
+    )
+    score = PositionScore(resource)
+    score.open()
+
+    # A forward walk, so each query is served off the buffer the one before
+    # it filled -- which is where a dead record would survive to be yielded.
+    walk = [(1, 10), (50, 60), (150, 160), (210, 220), (290, 300)]
+    read = [
+        (begin, record)
+        for begin, end in walk
+        for record in score.fetch_records("chr1", begin, end)
+    ]
+
+    assert len(read) == len(walk)
+    assert [
+        (begin, record[POS_END])
+        for begin, record in read
+        if record[POS_END] < begin
+    ] == []

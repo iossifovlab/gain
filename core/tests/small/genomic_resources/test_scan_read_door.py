@@ -1,11 +1,13 @@
-"""The statistics scan's own read door (gain#588, ADR 0008).
+"""The statistics scan's own way in to a region (gain#588, ADR 0008).
 
-The scan reads through :meth:`GenomicScore.scan_records`, which validates;
-every other read -- ``fetch_records``, ``fetch_region_values``,
-``fetch_region_weighted_values``, ``fetch_position_scores`` -- does not.
-These tests pin both halves of that split, because either half alone is
-quietly undoable: a door that stops validating still serves every read, and
-a read path that starts validating again still passes the scan's tests.
+The scan reads a region as ``region_values_from_records`` over
+``validate_records(fetch_records(...))``; every plain read -- ``fetch_records``,
+``fetch_region_values``, ``fetch_region_weighted_values``,
+``fetch_position_scores`` -- is the same transform over the same records with
+that middle link left out, and checks nothing.  These tests pin both halves of
+the split, because either half alone is quietly undoable: a scan that stops
+composing the validator still serves every read, and a read that starts
+validating again still passes the scan's tests.
 """
 # pylint: disable=C0116,W0212,W0621
 import pathlib
@@ -75,13 +77,33 @@ def _position_score(
     return score
 
 
-def test_the_scan_door_refuses_a_position_score_whose_records_touch(
+def test_the_region_read_is_the_transform_over_the_record_stream(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The identity the split rests on: reading a region IS extracting the
+    # kind's score values from that region's records.  The scan reads the
+    # same way with one extra link -- ``validate_records`` -- composed in
+    # front, which is only possible while the transform is a function OF a
+    # record stream rather than something wrapped around the fetch.
+    score = _position_score(tmp_path, "well_formed", """
+        chrom  pos_begin  pos_end  s
+        chr1   1          10       0.1
+        chr1   11         20       0.2
+        chr1   21         30       0.3
+    """)
+
+    assert list(score.fetch_region_values("chr1", 5, 25)) == list(
+        score.region_values_from_records(
+            score.fetch_records("chr1", 5, 25), "chr1", 5, 25))
+
+
+def test_the_scan_refuses_a_position_score_whose_records_touch(
     tmp_path: pathlib.Path,
 ) -> None:
     score = _position_score(tmp_path, "touching", TOUCHING_RECORDS)
 
     with pytest.raises(MalformedResourceError) as excinfo:
-        list(score.scan_records("chr1", 1, 10))
+        list(score.validate_records(score.fetch_records("chr1", 1, 10)))
 
     message = str(excinfo.value)
     assert "<touching>" in message
@@ -155,8 +177,8 @@ def test_both_per_record_passes_refuse_a_malformed_position_score(
     statistics_pass: str,
     payload: object,
 ) -> None:
-    # Both passes, because each reads the region for itself: a door only one
-    # of them goes through leaves the other scanning unvalidated data.
+    # Both passes, because each reads the region for itself: a helper only
+    # one of them reads through leaves the other scanning unvalidated data.
     resource = _position_score_resource(tmp_path, "touching", TOUCHING_RECORDS)
 
     with pytest.raises(MalformedResourceError) as excinfo:
@@ -201,7 +223,7 @@ def _fragment_score_reading_backwards(
     return score
 
 
-def test_the_door_still_validates_a_fragment_score(
+def test_the_scan_still_validates_a_fragment_score(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -211,7 +233,7 @@ def test_the_door_still_validates_a_fragment_score(
     score = _fragment_score_reading_backwards(tmp_path, monkeypatch)
 
     with pytest.raises(MalformedResourceError) as excinfo:
-        list(score.scan_records("chr1", 1, 30, ["s"]))
+        list(score.validate_records(score.fetch_records("chr1", 1, 30)))
 
     message = str(excinfo.value)
     assert "<backwards>" in message
@@ -235,7 +257,8 @@ def test_the_region_size_zero_path_refuses_a_malformed_position_score(
 ) -> None:
     # ``--region-size 0`` is a task of its own, and it reaches the per-record
     # passes with both bounds None -- the shape no bulk scan serves.  Routing
-    # the two passes is EXPECTED to cover it; this is the check that it does.
+    # the two passes through one helper is EXPECTED to cover it; this is the
+    # check that it does.
     resource = _position_score_resource(tmp_path, "touching", TOUCHING_RECORDS)
 
     with pytest.raises(MalformedResourceError) as excinfo:
@@ -244,12 +267,13 @@ def test_the_region_size_zero_path_refuses_a_malformed_position_score(
     assert "at most one record per position" in str(excinfo.value)
 
 
-def test_the_door_yields_exactly_what_the_read_yields(
+def test_a_region_read_clips_every_record_to_the_query(
     tmp_path: pathlib.Path,
 ) -> None:
     # Clipping is preserved to the base pair: a record straddling either edge
     # of the queried region reaches the scan trimmed exactly as it reaches a
-    # reader, so no histogram weight and no min/max range moves with gain#588.
+    # reader -- one transform serves both -- so no histogram weight and no
+    # min/max range moves with gain#588.
     score = _position_score(tmp_path, "well_formed", """
         chrom  pos_begin  pos_end  s
         chr1   1          10       0.1
@@ -257,22 +281,38 @@ def test_the_door_yields_exactly_what_the_read_yields(
         chr1   21         30       0.3
     """)
 
-    assert list(score.scan_records("chr1", 5, 25)) == \
-        list(score.fetch_region_values("chr1", 5, 25))
-    assert list(score.scan_records("chr1", 5, 25)) == [
+    assert list(score.fetch_region_values("chr1", 5, 25)) == [
         (5, 10, [0.1]),
         (11, 20, [0.2]),
         (21, 25, [0.3]),
     ]
 
 
-def test_the_door_yields_what_an_allele_score_reads_back(
+def test_the_scan_measures_a_well_formed_region_exactly_as_a_reader_reads_it(
     tmp_path: pathlib.Path,
 ) -> None:
-    # Each kind normalizes its records its own way -- an allele score
-    # collapses a record to the point it sits at -- and the door yields that,
-    # not some shape of its own.  Otherwise what the scan measures would
-    # depend on which door it came through.
+    # The extra link refuses or it passes the records straight on: it is not
+    # allowed to change the spans, because a histogram weight and a min/max
+    # range are computed from them.
+    score = _position_score(tmp_path, "well_formed", """
+        chrom  pos_begin  pos_end  s
+        chr1   1          10       0.1
+        chr1   11         20       0.2
+        chr1   21         30       0.3
+    """)
+
+    assert list(GenomicScoreImplementation._scan_region(
+        score, "chr1", 5, 25, ["s"])) == \
+        list(score.fetch_region_values("chr1", 5, 25, ["s"]))
+
+
+def test_an_allele_score_reads_each_record_as_the_point_it_sits_at(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Each kind reads its records its own way -- an allele score collapses a
+    # record to the point it sits at -- and states that ONCE, in
+    # ``region_values_from_records``.  So the scan and a reader cannot
+    # measure different things.
     resource = (
         a_grr()
         .with_resource(
@@ -291,11 +331,12 @@ def test_the_door_yields_what_an_allele_score_reads_back(
     score = build_allele_score_from_resource(resource)
     score.open()
 
-    assert list(score.scan_records("chr1", 1, 20, ["s"])) == \
+    assert list(score.region_values_from_records(
+        score.fetch_records("chr1", 1, 20), "chr1", 1, 20, ["s"])) == \
         list(score.fetch_region_values("chr1", 1, 20, ["s"]))
     # Two records share position 10 -- which is what an allele score IS --
     # and the in-memory backend hands them back ordered by their alleles.
-    assert list(score.scan_records("chr1", 1, 20, ["s"])) == [
+    assert list(score.fetch_region_values("chr1", 1, 20, ["s"])) == [
         (10, 10, [0.2]),
         (10, 10, [0.1]),
         (16, 16, [0.3]),
@@ -306,10 +347,11 @@ def test_the_position_rule_compares_raw_spans_not_clipped_ones(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Two records overlapping at 50..100, queried from 120: the region read
-    # drops the first one entirely (it ends before the query) and clips the
-    # second, so nothing survives for a clipped comparison to reject.  The
-    # raw spans still hold the overlap, and the door refuses on them.
+    # Two records overlapping at 50..100, queried from 120: a clipped
+    # comparison sees the first one pulled back to the query's start and the
+    # second clipped too, so the overlap it would have to reject is not in
+    # what the read yields.  The raw spans still hold it, and the validator
+    # sits in front of the transform, where they still exist.
     score = _position_score(tmp_path, "overlapping", """
         chrom  pos_begin  pos_end  s
         chr1   1          10       0.1
@@ -321,9 +363,9 @@ def test_the_position_rule_compares_raw_spans_not_clipped_ones(
 
     monkeypatch.setattr(score, "fetch_records", overlapping)
 
-    assert len(list(score.fetch_region_values("chr1", 120, 200, ["s"]))) == 1
+    assert len(list(score.fetch_region_values("chr1", 120, 200, ["s"]))) == 2
     with pytest.raises(MalformedResourceError) as excinfo:
-        list(score.scan_records("chr1", 120, 200, ["s"]))
+        list(score.validate_records(score.fetch_records("chr1", 120, 200)))
 
     assert "chr1:50" in str(excinfo.value)
 
@@ -346,25 +388,30 @@ def test_the_validator_hands_back_every_record_it_was_given(
     assert list(score.validate_records(iter(records))) == records
 
 
-def test_the_door_reads_the_region_once(
+def test_a_statistics_pass_reads_the_region_once(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Validation rides the scan's read rather than paying for one of its own.
-    # A door that validated by re-reading would pass every test above.
-    score = _position_score(tmp_path, "well_formed", """
+    # Validation rides the scan's read rather than paying for one of its own:
+    # the validator is a transducer over the very stream the transform
+    # consumes.  A scan that validated by re-reading the region would pass
+    # every test above.
+    resource = _position_score_resource(tmp_path, "well_formed", """
         chrom  pos_begin  pos_end  s
         chr1   1          10       0.1
         chr1   11         20       0.2
     """)
     reads = []
-    fetch_records = score.fetch_records
+    fetch_records = PositionScore.fetch_records
 
-    def counted(*args: object, **kwargs: object) -> Iterator[Record]:
+    def counted(
+        self: PositionScore, *args: object, **kwargs: object,
+    ) -> Iterator[Record]:
         reads.append(args)
-        return fetch_records(*args, **kwargs)  # type: ignore[arg-type]
+        return fetch_records(self, *args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(score, "fetch_records", counted)
+    monkeypatch.setattr(PositionScore, "fetch_records", counted)
 
-    assert len(list(score.scan_records("chr1", 1, 20))) == 2
+    assert GenomicScoreImplementation._do_min_max(
+        resource, ["s"], "chr1", 1, 20)["s"].max == 0.2
     assert len(reads) == 1

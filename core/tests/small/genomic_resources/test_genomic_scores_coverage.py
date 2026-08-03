@@ -255,7 +255,7 @@ def test_position_score_multiple_values_for_position() -> None:
         (12, 18, [0.2]),
     ]
     with pytest.raises(ValueError, match="multiple values"):
-        list(score.scan_records("1", 10, 20, ["score"]))
+        list(score.validate_records(score.fetch_records("1", 10, 20)))
 
 
 def test_position_score_fetch_scores_multiple_lines() -> None:
@@ -282,7 +282,7 @@ def test_position_score_fetch_scores_multiple_lines() -> None:
 
     assert score.fetch_position_scores("1", 10) == [0.1]
     with pytest.raises(ValueError, match="multiple values"):
-        list(score.scan_records("1", 10, 10, ["score"]))
+        list(score.validate_records(score.fetch_records("1", 10, 10)))
 
 
 def test_allele_score_invalid_resource_type() -> None:

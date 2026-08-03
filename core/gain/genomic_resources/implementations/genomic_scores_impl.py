@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from typing import Any, ClassVar, TypeVar, cast
 
 import numpy as np
@@ -50,6 +50,7 @@ from gain.genomic_resources.resource_types import (
     FRAGMENT_SCORE_TYPES,
     equivalent_resource_types,
 )
+from gain.genomic_resources.score_def import ScoreValue
 from gain.genomic_resources.score_implementation import (
     ScoreImplementationBase,
 )
@@ -421,6 +422,31 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         return self.score.resource_id
 
     @staticmethod
+    def _scan_region(
+        score: GenomicScore,
+        chrom: str,
+        start: int | None,
+        end: int | None,
+        score_ids: list[str],
+    ) -> Generator[
+            tuple[int, int, list[ScoreValue] | None], None, None]:
+        """Read a region the way the statistics scan reads it.
+
+        Every per-record pass reads here, so validation is composed in the
+        open -- one visible extra link over the record stream -- rather than
+        each pass being trusted to remember it (ADR 0008).  What the pass
+        then sees is exactly what a reader sees: the same transform, over the
+        same records, in the same order.
+
+        One read.  ``validate_records`` is a transducer over the very stream
+        the transform consumes, not a second pass over the region.
+        """
+        records = score.validate_records(
+            score.fetch_records(chrom, start, end))
+        yield from score.region_values_from_records(
+            records, chrom, start, end, score_ids)
+
+    @staticmethod
     def _do_min_max(
         resource: GenomicResource,
         score_ids: list[str],
@@ -434,12 +460,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             for scr_id in score_ids
         }
         with impl.score.open() as score:
-            # Through the scan's door, not the read path: the scan validates
-            # what it reads, and does so in one place so that this pass, the
-            # histogram pass and any pass added later are covered by
-            # construction (ADR 0008).
-            for _left, _right, rec in score.scan_records(
-                    chrom, start, end, score_ids):
+            for _left, _right, rec in GenomicScoreImplementation._scan_region(
+                    score, chrom, start, end, score_ids):
                 for score_index, score_id in enumerate(score_ids):
                     result[score_id].add_value(
                         rec[score_index],  # type: ignore
@@ -511,9 +533,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             # One statement of the rule, read by this path and by the bulk
             # one: only a position score weighs a record by its span.
             weight_is_span = score.RECORD_WEIGHT_IS_SPAN
-            # The scan's door -- see :meth:`_do_min_max`.
-            for left, right, rec in score.scan_records(
-                    chrom, start, end, score_ids):
+            for left, right, rec in GenomicScoreImplementation._scan_region(
+                    score, chrom, start, end, score_ids):
                 weight = right - left + 1 if weight_is_span else 1
                 for scr_index, scr_id in enumerate(score_ids):
 
@@ -625,7 +646,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
         ``arrays`` is one ``(pos_begin, pos_end, {score_id: cells})`` batch as
         produced by :meth:`_region_value_arrays`.  Clips each record to
-        ``[start, end]`` exactly as ``_fetch_region_records`` does (dropping
+        ``[start, end]`` exactly as the per-record read does (and drops
         records ending before ``start``), weights it as ``score``'s kind
         weights it, enforces whatever overlap rule that kind states across the
         batch boundary, and adds each score's values vectorized.
@@ -674,9 +695,12 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         """Clip a batch to the region, per ``score``'s record semantics.
 
         Returns ``(keep, weights, prev_right)``: the mask of records surviving
-        the ``pos_end >= start`` skip (``_fetch_region_records`` drops records
-        ending before the query, for EVERY resource kind), their weights, and
-        the carry for the next batch's overlap check.
+        the ``pos_end >= start`` skip, their weights, and the carry for the
+        next batch's overlap check.  The per-record path has no counterpart
+        to that skip -- a backend that answers a region query with a record
+        outside it is malformed, and gain#588 stopped the read swallowing
+        one -- so what is enforced here is this path's own, and gain#591
+        owns whether it stays.
 
         Both the weight and the guard are read off the score class, which
         states them once for this path and for the per-record one:
