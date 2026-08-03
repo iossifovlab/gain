@@ -41,19 +41,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 COPY core/ ./core/
 
-# Jenkins job DSLs. Not gain-core source, and not imported by anything:
-# core/tests/test_jenkins_job_dsl.py pins a repo-wide invariant across
-# every seeded job (a job taking a BRANCH_NAME parameter must load its
-# pipeline from that branch -- #272, #598), and the gain-core suite is
-# where it runs. Without these the guard cannot see the sibling projects'
-# DSLs and fails, so it fails loudly rather than checking fewer files;
-# EXPECTED_JOB_DSLS in that module is the list this must satisfy. A new
-# project with a jenkins-jobs/ directory needs a line here too.
-COPY jenkins-jobs/ ./jenkins-jobs/
-COPY spliceai_annotator/jenkins-jobs/ ./spliceai_annotator/jenkins-jobs/
-COPY vep_annotator/jenkins-jobs/ ./vep_annotator/jenkins-jobs/
-COPY web_e2e/jenkins-jobs/ ./web_e2e/jenkins-jobs/
-
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --package gain-core --group dev --frozen
 
