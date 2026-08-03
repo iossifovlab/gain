@@ -11,3 +11,7 @@ scores:
       type: float
       desc: "allele frequency"
       column_name: freq
+
+meta:
+  labels:
+    phenotype: autism

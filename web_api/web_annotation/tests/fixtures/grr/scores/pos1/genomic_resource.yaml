@@ -14,3 +14,7 @@ scores:
       view_range:
         min: 0.0
         max: 1.0
+
+meta:
+  labels:
+    phenotype: autism
