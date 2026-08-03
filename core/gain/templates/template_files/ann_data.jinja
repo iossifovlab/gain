@@ -1,0 +1,37 @@
+{% extends base %}
+{% block content %}
+
+{% set obs_description = data.describe_obs %}
+{% set var_description = data.describe_var %}
+{% set ann_data_description = data.describe_ann_data %}
+
+
+{% if ann_data_description %}
+
+<h1> AnnData description </h1>
+
+{# Escaped: the description is str(ann_data), which lists the obs and var
+   column names the resource itself supplies, and the environment runs
+   without autoescape.  The two describe tables below are pandas to_html
+   output, which escapes its own cell content, so they stay raw. #}
+<pre><code style="font-family: monospace;">
+{{ ann_data_description | e }}
+</code></pre>
+
+{% else %}
+<p>Statistics have not been built for this resource.</p>
+{% endif %}
+
+{% if obs_description %}
+<h1> obs description </h1>
+{{ obs_description }}
+
+{% endif %}
+
+{% if var_description %}
+<h1> var description </h1>
+{{ var_description }}
+{% endif %}
+
+
+{% endblock %}

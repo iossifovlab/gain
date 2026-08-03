@@ -120,8 +120,9 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         return tuple(header_lines[-1].strip("#\n").split("\t"))
 
     def open(self) -> TabixGenomicPositionTable:
+        index_file_name = self.definition.get("index_filename", None)
         self.pysam_file = self.genomic_resource.open_tabix_file(
-            self.definition.filename)
+            self.definition.filename, index_file_name)
         if self.header_mode == "file":
             self.header = self._load_header()
         self._set_core_column_keys()
