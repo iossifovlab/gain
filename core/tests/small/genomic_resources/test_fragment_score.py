@@ -169,10 +169,14 @@ def test_fragment_score_no_open(fragments: FragmentScore) -> None:
 
 
 def test_fragment_score_bad_chrom(fragments: FragmentScore) -> None:
-    score = fragments.open()
-    res = score.fetch_fragment_scores("3", 5, 15)
+    """A contig the resource does not have is refused, not answered ``[]``.
 
-    assert len(res) == 0
+    ``[]`` would make "no fragments here" and "no such contig" the same
+    answer, and the per-position reads refuse it too.
+    """
+    score = fragments.open()
+    with pytest.raises(ValueError, match="not among the available"):
+        score.fetch_fragment_scores("3", 5, 15)
 
 
 @pytest.fixture
