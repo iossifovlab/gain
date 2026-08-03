@@ -28,6 +28,11 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_errors import MalformedResourceError
+from gain.genomic_resources.testing import (
+    build_filesystem_test_resource,
+    setup_directories,
+    setup_tabix,
+)
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
     a_grr,
@@ -288,6 +293,62 @@ def test_a_region_read_clips_every_record_to_the_query(
     ]
 
 
+def _end_column_mismatch_resource(tmp_path: pathlib.Path) -> GenomicResource:
+    """A position score whose INDEXED end is wider than its configured one.
+
+    The tabix index is built over column 2 while ``pos_end`` reads column 3,
+    which is the gain#553 config/index mismatch -- unfixed on master, and not
+    expressible through the builders.  A region query is answered by the
+    index, so the record at ``chr1:1`` (indexed end 1000) comes back for a
+    query far past its configured end of 10.
+    """
+    setup_directories(tmp_path, {
+        "genomic_resource.yaml": """
+            type: position_score
+            table:
+                filename: data.txt.gz
+                format: tabix
+                header_mode: none
+                chrom:
+                  index: 0
+                pos_begin:
+                  index: 1
+                pos_end:
+                  index: 3
+            scores:
+            - id: s
+              index: 4
+              type: float
+        """,
+    })
+    setup_tabix(
+        tmp_path / "data.txt.gz",
+        """
+        chr1  1    1000  10   0.1
+        chr1  500  600   600  0.9
+        """,
+        seq_col=0, start_col=1, end_col=2)
+    return build_filesystem_test_resource(tmp_path)
+
+
+def test_the_histogram_pass_skips_a_record_the_query_clips_to_nothing(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A record that reaches the score layer without overlapping the region it
+    # was asked for clips to an inverted span, and its weight -- right - left
+    # + 1 -- is then NEGATIVE.  Folding that into a histogram writes negative
+    # bar counts into the resource's saved statistics, so this pass skips a
+    # non-positive weight exactly as ``fetch_region_weighted_values`` and the
+    # bulk pass already do.  Reachable today: the record below is delivered by
+    # the tabix index, which does not know the configured end.
+    resource = _end_column_mismatch_resource(tmp_path)
+
+    histograms = GenomicScoreImplementation._do_histogram(
+        resource, {"s": _hist_conf()}, "chr1", 100, 200)
+
+    assert list(histograms["s"].bars) == [0] * 10
+
+
 def test_the_scan_measures_a_well_formed_region_exactly_as_a_reader_reads_it(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -363,7 +424,16 @@ def test_the_position_rule_compares_raw_spans_not_clipped_ones(
 
     monkeypatch.setattr(score, "fetch_records", overlapping)
 
-    assert len(list(score.fetch_region_values("chr1", 120, 200, ["s"]))) == 2
+    # The spans in full, because the first record's is INVERTED: the read
+    # clips a record it was handed without checking that it overlaps, so a
+    # record arriving from outside the region reads back as right < left.
+    # Nothing on the read path hides that; the statistics passes refuse to
+    # weigh it (test_the_histogram_pass_skips_a_record_the_query_clips_to_
+    # nothing).
+    assert list(score.fetch_region_values("chr1", 120, 200, ["s"])) == [
+        (120, 100, [0.1]),
+        (120, 150, [0.2]),
+    ]
     with pytest.raises(MalformedResourceError) as excinfo:
         list(score.validate_records(score.fetch_records("chr1", 120, 200)))
 

@@ -536,6 +536,17 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             for left, right, rec in GenomicScoreImplementation._scan_region(
                     score, chrom, start, end, score_ids):
                 weight = right - left + 1 if weight_is_span else 1
+                if weight <= 0:
+                    # A record that reaches this layer without overlapping the
+                    # region it was asked for clips to an inverted span, and
+                    # counting it would write NEGATIVE bar counts into the
+                    # resource's statistics.  ``fetch_region_weighted_values``
+                    # and the bulk pass both refuse such a record already;
+                    # this is the same refusal, so no reader and no scan folds
+                    # a span it cannot mean.  Reachable while a table's
+                    # configured ``pos_end`` may be narrower than the end its
+                    # index answers region queries by (gain#553).
+                    continue
                 for scr_index, scr_id in enumerate(score_ids):
 
                     try:
@@ -696,11 +707,12 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
         Returns ``(keep, weights, prev_right)``: the mask of records surviving
         the ``pos_end >= start`` skip, their weights, and the carry for the
-        next batch's overlap check.  The per-record path has no counterpart
-        to that skip -- a backend that answers a region query with a record
-        outside it is malformed, and gain#588 stopped the read swallowing
-        one -- so what is enforced here is this path's own, and gain#591
-        owns whether it stays.
+        next batch's overlap check.  The per-record path drops such a record
+        one step later instead, at its non-positive weight: gain#588 stopped
+        the READ swallowing a record that arrives outside the region it was
+        asked for -- that is a malformed backend, not something a reader
+        hides -- while :meth:`_do_histogram` still refuses to WEIGH one.
+        gain#591 owns whether the skip here stays.
 
         Both the weight and the guard are read off the score class, which
         states them once for this path and for the per-record one:
