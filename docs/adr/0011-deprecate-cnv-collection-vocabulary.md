@@ -151,6 +151,27 @@ The set is process-global state, which is a real cost: it makes a test's
 outcome depend on what ran before it. `core/tests/conftest.py` pays it with
 an autouse fixture calling `reset_deprecation_notices()` before every test.
 
+### The suite must not become a source of the warning
+
+A warning nobody can act on is the failure mode this whole decision is
+trying to avoid, and the largest producer of un-actionable notices is our
+own test suite: dozens of fixtures declared `type: cnv_collection` simply
+because they were written before gain#470, and each one now names a
+resource that exists for a few milliseconds inside a `tmp_path`.
+
+So the suite carries the rule as a second autouse fixture in
+`core/tests/conftest.py`, `deprecation_notices_are_owned`: a test that
+emits a notice fails unless it is marked `legacy_vocabulary`. The marker is
+on `test_fragment_score_config_surface` as a whole, and on the individual
+cross-vocabulary cases elsewhere that have to write a legacy spelling to
+pin how the two interact. Everything else was modernised to the preferred
+spelling — which is also the honest statement of what those tests were ever
+about, since none of them is about the vocabulary.
+
+The guard is what makes "the preferred spellings are silent" checkable
+across the whole suite rather than only inside the two modules that assert
+it directly.
+
 ### What the web API advertises does not change
 
 The resource-types endpoint still reports both spellings — it advertises
@@ -173,10 +194,13 @@ this ships in a `2026.8.x` release and `2027.1.0` carries gain#539.
 
 **`test_fragment_score_config_surface` now pins two things per surface** —
 what the legacy spelling still does, and the warning it emits. Its
-companion, `test_fragment_score_vocabulary`, pins the preferred half and
-must stay silent. If a later change makes the preferred spelling warn, the
-silence assertions there and in `test_preferred_spellings_emit_no_deprecation_warning`
-are what catch it.
+companion, `test_fragment_score_vocabulary`, pins the preferred half; the
+few cross-vocabulary cases it keeps are marked `legacy_vocabulary`, and
+nothing else in it — no fixture in particular — may warn. If a later change
+makes a preferred spelling warn, the silence assertions in
+`test_preferred_spellings_emit_no_deprecation_warning` and
+`test_querying_resources_by_type_emits_no_warning` catch it directly, and
+`deprecation_notices_are_owned` catches it everywhere else.
 
 **The published documentation now asserts the opposite of what it did.**
 Two notes — in `docs/source/grr.rst` and

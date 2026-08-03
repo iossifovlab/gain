@@ -28,6 +28,7 @@ from gain.annotation.annotatable import Region
 from gain.annotation.annotation_config import AnnotationConfigParser
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources import get_resource_implementation_builder
+from gain.genomic_resources.cli import _create_contents_db, cli_manage
 from gain.genomic_resources.genomic_scores import (
     FragmentScore,
     build_score_from_resource,
@@ -35,13 +36,21 @@ from gain.genomic_resources.genomic_scores import (
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     FragmentScoreImplementation,
 )
-from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.repository import (
+    GenomicResourceProtocolRepo,
+    GenomicResourceRepo,
+)
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
 from gain.genomic_resources.resource_types import (
     deprecated_spelling_message,
     equivalent_resource_types,
+)
+from gain.genomic_resources.testing import (
+    build_filesystem_test_protocol,
+    convert_to_tab_separated,
+    setup_directories,
 )
 from gain.genomic_resources.testing.builders import (
     FragmentScoreBuilder,
@@ -51,6 +60,14 @@ from gain.genomic_resources.testing.builders import (
 from gain.task_graph.cli_tools import task_graph_run
 from gain.task_graph.graph import TaskGraph
 from gain.task_graph.sequential_executor import SequentialExecutor
+
+#: This module IS the legacy half, so its tests are expected to provoke the
+#: deprecation notice; ``deprecation_notices_are_owned`` in
+#: ``core/tests/conftest.py`` fails any unmarked test that emits one, which
+#: is what keeps the rest of the suite from drifting back onto the old
+#: spellings.  The few tests below that pin the preferred half stay silent
+#: on their own -- the marker permits a notice, it does not require one.
+pytestmark = pytest.mark.legacy_vocabulary
 
 LEGACY_RESOURCE_TYPE = "cnv_collection"
 PREFERRED_RESOURCE_TYPE = "fragment_score"
@@ -452,6 +469,64 @@ def test_querying_resources_by_type_emits_no_warning(
             "fragment_score", "*", legacy_grr) == ["fragments"]
 
     assert all_deprecation_warnings(caplog) == []
+
+
+@pytest.fixture
+def indexed_legacy_grr(
+    tmp_path: pathlib.Path,
+) -> GenomicResourceProtocolRepo:
+    """A searchable GRR holding one LEGACY-typed fragment score.
+
+    Indexed, because ``search_resources`` answers from the FTS index rather
+    than by scanning -- and the index is where the type predicate is
+    applied, in SQL, which no Python-level alias expansion can reach.
+    Building the index opens the resource, so the setup announces the
+    deprecation; that is why this lives here and not beside its
+    preferred-typed mirror in ``test_fragment_score_vocabulary``.
+    """
+    setup_directories(
+        tmp_path,
+        {
+            "fragments/legacy": {
+                "genomic_resource.yaml": textwrap.dedent("""
+                    type: cnv_collection
+                    table:
+                        filename: data.txt
+                    scores:
+                        - id: frequency
+                          type: float
+                          name: frequency
+                """),
+                "data.txt": convert_to_tab_separated("""
+                    chrom  pos_begin  pos_end  frequency
+                    1      10         20       0.02
+                """),
+            },
+        },
+    )
+    cli_manage(["repo-manifest", "-R", str(tmp_path)])
+    proto = build_filesystem_test_protocol(tmp_path, repair=False)
+    _create_contents_db(proto)
+    return GenomicResourceProtocolRepo(proto)
+
+
+@pytest.mark.parametrize(
+    "requested_type", [PREFERRED_RESOURCE_TYPE, LEGACY_RESOURCE_TYPE])
+def test_searching_finds_a_legacy_typed_resource_under_either_spelling(
+    indexed_legacy_grr: GenomicResourceProtocolRepo,
+    requested_type: str,
+) -> None:
+    """The direction that was actually broken: stored old, asked new.
+
+    A repository that has not migrated stores ``cnv_collection``; a user on
+    a current GAIn asks for ``fragment_score``.  An exact ``type = ?``
+    answers "none" rather than failing, which is a wrong answer rather than
+    an error -- and stays wrong until the last legacy resource is gone.
+    """
+    resources = list(
+        indexed_legacy_grr.search_resources(resource_type=requested_type))
+
+    assert [r.get_id() for r in resources] == ["fragments/legacy"]
 
 
 @pytest.mark.parametrize("annotator_name", [

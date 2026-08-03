@@ -196,18 +196,22 @@ def _fragment_tabix(
     )
 
 
+@pytest.mark.legacy_vocabulary
 @pytest.mark.parametrize("resource_type", FRAGMENT_SCORE_TYPES)
 def test_fragment_score_is_bulk_scan_eligible_in_both_spellings(
     tmp_path: pathlib.Path, resource_type: str,
 ) -> None:
-    # ``fragment_score`` and ``cnv_collection`` are both permanent spellings of
-    # one kind (gain#471).  A gate that named only one would send the other
-    # back to the per-record path silently -- no error, no failing test.
+    # ``fragment_score`` and the deprecated ``cnv_collection`` (gain#471,
+    # deprecated by gain#538) are both spellings of one kind.  A gate that
+    # named only one would send the other back to the per-record path
+    # silently -- no error, no failing test.  Marked ``legacy_vocabulary``:
+    # the legacy case declares the old spelling, so it announces it.
     resource = _fragment_tabix(tmp_path, resource_type)
     assert resource.get_type() == resource_type
     assert G._bulk_scan_eligible(resource, ["s"])
 
 
+@pytest.mark.legacy_vocabulary
 @pytest.mark.parametrize("resource_type", FRAGMENT_SCORE_TYPES)
 def test_bulk_histogram_matches_per_record_fragment(
     tmp_path: pathlib.Path, resource_type: str,

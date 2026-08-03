@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-from collections.abc import Iterable
+import logging
+from collections.abc import Generator, Iterable
 
 import pytest
 import pytest_mock
@@ -7,7 +8,10 @@ from gain.genomic_resources.genomic_context import (
     get_genomic_context,
 )
 from gain.genomic_resources.genomic_context_base import GenomicContext
-from gain.genomic_resources.resource_types import reset_deprecation_notices
+from gain.genomic_resources.resource_types import (
+    LEGACY_VOCABULARY_REMOVAL_RELEASE,
+    reset_deprecation_notices,
+)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -122,6 +126,65 @@ def clean_deprecation_notices() -> None:
     would pass or fail differently under ``-p no:randomly`` or ``-n``.
     """
     reset_deprecation_notices()
+
+
+LEGACY_VOCABULARY_MARKER = "legacy_vocabulary"
+
+
+class _DeprecationNoticeRecorder(logging.Handler):
+    """Collect the legacy-vocabulary deprecation notices of one test.
+
+    Recognises a notice by the removal release it names, which every one of
+    them carries by construction -- ``warn_deprecated_spelling`` renders it
+    into the message, and a notice that did not say when the spelling stops
+    being accepted would be a defect in its own right.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.notices: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        message = record.getMessage()
+        if LEGACY_VOCABULARY_REMOVAL_RELEASE in message:
+            self.notices.append(message)
+
+
+@pytest.fixture(autouse=True)
+def deprecation_notices_are_owned(
+    request: pytest.FixtureRequest,
+) -> Generator[None, None, None]:
+    """Fail a test that emits a deprecation notice without owning one.
+
+    The point of gain#538 is that a legacy spelling is announced to the
+    person who wrote it.  A suite whose own fixtures declare the legacy
+    spelling out of habit turns that announcement into background noise:
+    the notices scroll past in CI naming resources nobody can migrate,
+    because they exist only inside a test.
+
+    So a test that provokes a notice must say so, with
+    ``@pytest.mark.legacy_vocabulary``.  Everything else must use the
+    preferred spellings; if this fixture fails a test, the fix is almost
+    always to modernise that test's fixture, not to add the marker.
+    """
+    recorder = _DeprecationNoticeRecorder()
+    root_logger = logging.getLogger()
+    root_logger.addHandler(recorder)
+    try:
+        yield
+    finally:
+        root_logger.removeHandler(recorder)
+
+    if not recorder.notices:
+        return
+    if request.node.get_closest_marker(LEGACY_VOCABULARY_MARKER) is not None:
+        return
+    pytest.fail(
+        "emitted a legacy-vocabulary deprecation notice without being "
+        f"marked '{LEGACY_VOCABULARY_MARKER}'; use the preferred spelling "
+        "in this test's configuration, or mark the test if it exists to "
+        "exercise the legacy half:\n  "
+        + "\n  ".join(recorder.notices))
 
 
 @pytest.fixture
