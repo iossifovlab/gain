@@ -452,6 +452,142 @@ def test_cli_default_output_path(tmp_path: pathlib.Path) -> None:
     assert (tmp_path / "in.sorted.tsv.bgz.tbi").exists()
 
 
+# --- atomic output + index ------------------------------------------------
+
+
+def _setup_unindexable_input(path: pathlib.Path) -> None:
+    """Write input whose chromosomes are interleaved, not grouped.
+
+    Combined with ``--skip-sort`` no reordering happens, so tabix refuses
+    to index the produced file ("chromosome blocks not continuous").
+    """
+    path.write_text(
+        "chrom\tpos\tscore\n"
+        "1\t100\t0.1\n"
+        "2\t100\t0.2\n"
+        "1\t200\t0.3\n"
+        "2\t200\t0.4\n",
+    )
+
+
+def test_cli_index_failure_leaves_nothing_at_a_fresh_destination(
+    tmp_path: pathlib.Path,
+) -> None:
+    in_file = tmp_path / "in.tsv"
+    _setup_unindexable_input(in_file)
+    out_file = tmp_path / "out.tsv.gz"
+
+    with pytest.raises(OSError, match="building of index"):
+        cli([str(in_file), "-o", str(out_file), "--skip-sort"])
+
+    assert not out_file.exists()
+    assert not (tmp_path / "out.tsv.gz.tbi").exists()
+
+
+def test_cli_index_failure_preserves_a_previously_good_output(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A failed rerun must not replace good data with an unindexed file,
+    nor pair new data with the previous run's index."""
+    good_in = tmp_path / "good.tsv"
+    setup_denovo(good_in, """
+        chrom pos score
+        1     100 9.9
+        1     200 8.8
+    """)
+    out_file = tmp_path / "out.tsv.gz"
+    index_file = tmp_path / "out.tsv.gz.tbi"
+    cli([str(good_in), "-o", str(out_file)])
+    good_output = out_file.read_bytes()
+    good_index = index_file.read_bytes()
+
+    bad_in = tmp_path / "bad.tsv"
+    _setup_unindexable_input(bad_in)
+    with pytest.raises(OSError, match="building of index"):
+        cli([str(bad_in), "-o", str(out_file), "--skip-sort"])
+
+    assert out_file.read_bytes() == good_output
+    assert index_file.read_bytes() == good_index
+    with TabixFile(str(out_file)) as tf:
+        assert list(tf.fetch("1", 0, 300)) == ["1\t100\t9.9", "1\t200\t8.8"]
+
+
+def test_cli_successful_run_leaves_only_the_output_and_its_index(
+    tmp_path: pathlib.Path,
+) -> None:
+    in_file = tmp_path / "in.tsv"
+    setup_denovo(in_file, """
+        chrom pos
+        1     10
+    """)
+
+    cli([str(in_file)])
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "in.sorted.tsv.bgz", "in.sorted.tsv.bgz.tbi", "in.tsv",
+    ]
+
+
+def test_cli_index_failure_on_the_default_output_path_leaves_nothing(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The derived .bgz destination is covered too, temporaries included."""
+    in_file = tmp_path / "in.tsv"
+    _setup_unindexable_input(in_file)
+
+    with pytest.raises(OSError, match="building of index"):
+        cli([str(in_file), "--skip-sort"])
+
+    assert [p.name for p in tmp_path.iterdir()] == ["in.tsv"]
+
+
+def test_cli_streaming_failure_preserves_a_previously_good_output(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The destination survives a failure before indexing is even reached."""
+    good_in = tmp_path / "good.tsv"
+    setup_denovo(good_in, """
+        chrom pos score
+        1     100 9.9
+    """)
+    out_file = tmp_path / "out.tsv.gz"
+    index_file = tmp_path / "out.tsv.gz.tbi"
+    cli([str(good_in), "-o", str(out_file)])
+    good_output = out_file.read_bytes()
+    good_index = index_file.read_bytes()
+
+    bad_in = tmp_path / "bad.csv"  # a tab in a cell aborts the streaming
+    bad_in.write_text("chrom,pos\n1,10\n1,2\t3\n")
+    with pytest.raises(ValueError, match="tab character"):
+        cli([str(bad_in), "-o", str(out_file)])
+
+    assert out_file.read_bytes() == good_output
+    assert index_file.read_bytes() == good_index
+
+
+def test_cli_sort_failure_preserves_a_previously_good_output(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The destination survives a native-sort failure too."""
+    in_file = tmp_path / "in.tsv"
+    setup_denovo(in_file, """
+        chrom pos score
+        1     100 9.9
+    """)
+    out_file = tmp_path / "out.tsv.gz"
+    index_file = tmp_path / "out.tsv.gz.tbi"
+    cli([str(in_file), "-o", str(out_file)])
+    good_output = out_file.read_bytes()
+    good_index = index_file.read_bytes()
+
+    # an unparsable buffer size makes the native sort exit non-zero
+    with pytest.raises((RuntimeError, BrokenPipeError)):
+        cli([str(in_file), "-o", str(out_file), "--sort-buffer", "notasize"])
+
+    assert out_file.read_bytes() == good_output
+    assert index_file.read_bytes() == good_index
+
+
 # --- input separator handling --------------------------------------------
 
 
