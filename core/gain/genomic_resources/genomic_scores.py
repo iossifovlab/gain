@@ -1877,11 +1877,15 @@ class FragmentScore(GenomicScore):
             # logged outright because construction is NOT once per resource:
             # the statistics scan rebuilds the score inside every min/max
             # and histogram task, so a repo-repair over an hg38-scale
-            # resource passes here once per region.
+            # resource passes here once per region.  Named by full id: a
+            # repository may hold several versions of one resource id, each
+            # its own directory with its own config to migrate, and the
+            # announce-once-per-message rule would otherwise print one line
+            # for all of them and name none of them precisely.
             warn_deprecated_spelling(
                 logger, "resource type",
                 LEGACY_FRAGMENT_SCORE_TYPE, PREFERRED_FRAGMENT_SCORE_TYPE,
-                found_in=f"Resource '{resource.get_id()}'")
+                found_in=f"Resource '{resource.get_full_id()}'")
         super().__init__(resource)
 
     @staticmethod

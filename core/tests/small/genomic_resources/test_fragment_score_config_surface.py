@@ -240,6 +240,54 @@ def test_repository_sweep_warns_once_per_legacy_resource(
     ]
 
 
+def test_sweep_names_each_version_of_one_legacy_resource(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Two versions of one id are two offenders, and are named apart.
+
+    A repository legitimately carries several versions of the same
+    ``resource_id`` -- that is what ``find_resource``'s "newest matching
+    version" resolution exists for -- and each of them is a separate
+    directory with its own config to migrate.  Naming them by the
+    version-less id would collapse both into one warning under the
+    announce-once-per-message rule, so the operator would see one line for
+    two offenders and, after migrating one of them, a byte-identical line
+    with nothing to distinguish what is left.
+    """
+    def a_legacy_fragment_score() -> FragmentScoreBuilder:
+        return (
+            a_fragment_score()
+            .with_resource_type(LEGACY_RESOURCE_TYPE)
+            .with_score("frequency", "float")
+            .with_data("""
+                chrom  pos_begin  pos_end  frequency
+                1      10         20       0.02
+            """)
+        )
+
+    grr = (
+        a_grr()
+        .with_resource("fragments(1.0)", a_legacy_fragment_score())
+        .with_resource("fragments(2.0)", a_legacy_fragment_score())
+        .build_repo(tmp_path)
+    )
+
+    with caplog.at_level(logging.WARNING):
+        for resource in grr.get_all_resources():
+            FragmentScore(resource)
+
+    messages = deprecation_warnings(
+        caplog, "resource type", LEGACY_RESOURCE_TYPE)
+    assert sorted(messages) == [
+        deprecated_spelling_message(
+            "resource type",
+            LEGACY_RESOURCE_TYPE, PREFERRED_RESOURCE_TYPE,
+            found_in=f"Resource '{full_id}'")
+        for full_id in ("fragments(1.0)", "fragments(2.0)")
+    ]
+
+
 def test_legacy_resource_type_still_dispatches_in_build_score(
     legacy_grr: GenomicResourceRepo,
 ) -> None:
