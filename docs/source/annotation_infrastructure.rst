@@ -806,19 +806,19 @@ Each attribute's aggregator can be overridden via the ``aggregator`` attribute p
 VEP annotators
 ^^^^^^^^^^^^^^^^^^^^^
 
-GAIn provides two annotators that run the Ensembl Variant Effect Predictor (VEP) 
-via Docker to produce VEP-based consequence annotations. Both annotators are designed 
-to be run in batch mode and expose VEP outputs as annotation attributes. The two annotators 
-differ primarily in how VEP is configured: ``vep_full_annotator`` uses a local VEP cache, 
-while ``external_vep_gtf_annotator`` runs VEP against GAIn-provided genome and gene models 
+GAIn provides two annotators that run the Ensembl Variant Effect Predictor (VEP)
+via Docker to produce VEP-based consequence annotations. Both annotators are designed
+to be run in batch mode and expose VEP outputs as annotation attributes. The two annotators
+differ primarily in how VEP is configured: ``vep_full_annotator`` uses a local VEP cache,
+while ``vep_effect_annotator`` runs VEP against GAIn-provided genome and gene models
 from a GRR.
 
-Use the VEP Full Annotator when you have (or want) a local VEP cache and need access to the 
-broadest set of VEP output fields. Use the VEP Effect Annotator when you want VEP to run against 
-the genome and gene models already available in your GRR (for example MANE), so the results align 
+Use the VEP Full Annotator when you have (or want) a local VEP cache and need access to the
+broadest set of VEP output fields. Use the VEP Effect Annotator when you want VEP to run against
+the genome and gene models already available in your GRR (for example MANE), so the results align
 with the resources used elsewhere in the pipeline.
 
-Using the VEP annotators requires the gpf_vep_annotator conda package and a working Docker 
+Using the VEP annotators requires the gain-vep-annotator conda package and a working Docker
 installation.
 
 .. code:: bash
@@ -828,9 +828,17 @@ installation.
       -c bioconda \
       -c iossifovlab \
       -c defaults \
-      gpf_vep_annotator
+      gain-vep-annotator
 
 The VEP annotators can be run only in batch mode.
+
+Both annotators pull the ``ensemblorg/ensembl-vep`` Docker image and start a container per
+batch, so the user running the pipeline must be able to talk to the Docker daemon.
+
+By default — that is, when the pipeline configuration selects no attributes explicitly — both
+annotators produce the same seven attributes: ``Gene``, ``Feature``, ``Feature_type``,
+``Consequence``, ``worst_consequence``, ``highest_impact``, and ``gene_consequence``.
+Selecting any attribute in the pipeline configuration replaces that default set entirely.
 
 
 
@@ -839,12 +847,20 @@ vep_full_annotator
 
 The ``vep_full_annotator`` runs Ensembl VEP using a local VEP cache directory, allowing access to the broadest set of VEP output fields. This annotator is typically used when you want standard VEP annotations directly from the Ensembl cache and plan to select a subset of VEP fields as pipeline attributes.
 
-The full VEP annotator requires a VEP cache to be accessible on the local file system. You can download the cache using the vep_install tool provided by the ensembl-vep conda package (installed as part of gpf_vep_annotator). For example, to download the cache for hg38:
+The full VEP annotator requires a VEP cache to be accessible on the local file system. The
+``gain-vep-annotator`` package ships an ``install_vep_cache`` tool that downloads and unpacks the
+homo sapiens GRCh38 (hg38) cache for VEP 113:
 
 .. code:: bash
 
-    vep_install -a cf -s homo_sapiens -y GRCh38 -c /output/path/to/cache --convert
+    install_vep_cache /output/path/to/cache
 
+The tool refuses to write into a non-empty directory; pass ``--force`` to override that check and
+``--continue`` to resume an interrupted download.
+
+The cache and the ``vep_version`` below must agree — a VEP container reads only the cache built
+for its own release. Since ``install_vep_cache`` fetches the VEP 113 cache, pair it with a
+``113.x`` ``vep_version``.
 
 The annotator configuration looks like this:
 
@@ -857,13 +873,14 @@ The annotator configuration looks like this:
 
 ..
 
-  | **cache_dir**: path to the VEP cache directory (the same directory passed as -c to vep_install).
-  | **vep_version**: VEP version to use. If not specified, the annotator uses the latest available Docker image from ensemblorg/ensembl-vep. Versions may be given with or without a minor version (for example, 113, 113.0, 113.3).
+  | **cache_dir**: path to the VEP cache directory (the directory passed to ``install_vep_cache``). Required.
+  | **vep_version**: VEP version to use. The value is used verbatim to select the Docker image tag ``ensemblorg/ensembl-vep:release_<vep_version>``, so it has to match a tag published for that image — in practice a full ``major.minor`` version such as ``113.4``. If not specified, the annotator uses ``ensemblorg/ensembl-vep:release_latest``.
 
 
-By default, the annotator produces only the following attributes: ``SYMBOL``, ``Feature``, ``Feature_type``, ``Consequence``, ``worst_consequence``, ``highest_impact``, and ``gene_consequence``.
-
-The full VEP annotator can optionally emit many additional VEP fields (listed below) by selecting them as pipeline attributes. VEP annotators are run via ``annotate_tabular`` in batch mode. See the example command at the end of the VEP Effect Annotator section.
+The full VEP annotator can emit many additional VEP fields (listed below) by selecting them as
+pipeline attributes; it runs VEP with ``--everything``, so all of them are populated. VEP
+annotators are run via ``annotate_tabular`` in batch mode. See the example command at the end of
+the VEP Effect Annotator section.
 
 **Core consequence and feature attributes**
 
@@ -873,6 +890,10 @@ The full VEP annotator can optionally emit many additional VEP fields (listed be
 
    * - Attribute
      - Description
+   * - ``Location``
+     - Variant location in standard coordinate format: ``chr:start`` or ``chr:start-end``.
+   * - ``Allele``
+     - Variant allele used to calculate the consequence.
    * - ``Gene``
      - Stable ID of the affected gene.
    * - ``Feature``
@@ -1081,16 +1102,19 @@ The full VEP annotator can optionally emit many additional VEP fields (listed be
 
 
 
-external_vep_gtf_annotator
+vep_effect_annotator
 *************************
 
-The ``external_vep_gtf_annotator`` (VEP Effect Annotator) runs Ensembl VEP via Docker using the genome and gene models available in your GRR. This is useful when you want VEP consequences and related fields while keeping the annotation aligned with the same genome and gene models used elsewhere in GAIn pipelines. The VEP annotators can be run only in batch mode.
+The ``vep_effect_annotator`` (VEP Effect Annotator) runs Ensembl VEP via Docker using the genome and gene models available in your GRR. This is useful when you want VEP consequences and related fields while keeping the annotation aligned with the same genome and gene models used elsewhere in GAIn pipelines. The VEP annotators can be run only in batch mode.
+
+The annotator converts the configured gene models resource into a GTF file and passes it to VEP
+together with the reference genome FASTA, instead of using a VEP cache.
 
 The annotator configuration looks like this:
 
 .. code:: yaml
 
-    - external_vep_gtf_annotator:
+    - vep_effect_annotator:
         genome: hg38/genomes/GRCh38-hg38
         gene_models: hg38/gene_models/MANE/1.5
         vep_version: <VEP version to use>
@@ -1104,21 +1128,25 @@ The annotator configuration looks like this:
      - Description
    * - ``genome``
      - Reference genome resource ID used for the annotation.
+
+       Optional. If omitted, the annotator falls back to the reference genome declared by the gene
+       models resource, then to the pipeline preamble's ``input_reference_genome``, then to the
+       genomic context. Annotator creation fails if none of these resolves a genome.
    * - ``gene_models``
      - Gene models resource ID used for the annotation.
+
+       Optional. If omitted, the gene models are taken from the genomic context; annotator
+       creation fails if the context has none.
    * - ``vep_version``
      - VEP version to use.
 
-       If not specified, the annotator uses the latest available Docker image from ``ensemblorg/ensembl-vep``.
+       The value is used verbatim to select the Docker image tag
+       ``ensemblorg/ensembl-vep:release_<vep_version>``, so it has to match a tag published for
+       that image — in practice a full ``major.minor`` version such as ``113.4``.
 
-       Versions may be specified with or without a minor version, for example ``113``, ``113.0``, or ``113.3``.
+       If not specified, the annotator uses ``ensemblorg/ensembl-vep:release_latest``.
 
-       A major version given without a minor version, such as ``113``, is interpreted as ``113.0``.
-
-By default, only the following are produced: ``SYMBOL``, ``Feature``, ``Feature_type``, ``Consequence``, ``worst_consequence``, ``highest_impact``, ``gene_consequence``, 
-and the value from the provided gene models.
-
-The VEP effect annotator can optionally emit additional VEP fields (listed below) by selecting them as pipeline attributes.
+The VEP effect annotator can emit the additional VEP fields listed below by selecting them as pipeline attributes. It runs VEP without ``--everything``, so it exposes a narrower set of fields than ``vep_full_annotator``.
 
 All available output attributes:
 
@@ -1174,8 +1202,6 @@ All available output attributes:
      - Highest impact reported by VEP.
    * - ``gene_consequence``
      - List of gene-consequence pairs reported by VEP.
-   * - ``<gene model filename>``
-     - Value obtained from the provided gene models.
 
 With a prepared variants file and an ``annotation.yaml`` pipeline configuration, VEP-based annotation can be run via ``annotate_tabular`` in batch mode using the --batch-mode flag. For example:
 
