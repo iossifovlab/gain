@@ -279,6 +279,10 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_THROTTLE_RATES": {
         "user": "10/minute",
+        # The pipeline editor validates as the user edits, so this bucket is
+        # sized for a keystroke cadence, not for expensive work -- see
+        # web_annotation.pipelines.throttling.
+        "pipeline_validate": "300/minute",
     },
 }
 

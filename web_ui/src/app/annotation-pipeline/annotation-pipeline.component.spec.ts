@@ -1,5 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { AnnotationPipelineComponent } from './annotation-pipeline.component';
+import { AnnotationPipelineComponent, VALIDATE_DEBOUNCE_MS } from './annotation-pipeline.component';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { BehaviorSubject, Observable, of, Subject, throwError } from 'rxjs';
@@ -436,6 +436,50 @@ describe('AnnotationPipelineComponent', () => {
     expect(configValidationSpy).toHaveBeenCalledWith('config content');
     expect(component.configError).toBe('');
     expect(pipelineStateService.isConfigValid()).toBe(true);
+  });
+
+  // The editor is bound to onConfigChanged, not to isConfigValid: a keystroke
+  // used to be a POST to /api/pipelines/validate, which both floods the
+  // endpoint and makes it impossible to rate-limit (iossifovlab/gain#635).
+  it('should validate once for a burst of edits, not once per keystroke', () => {
+    jest.useFakeTimers();
+    const configValidationSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig');
+    component.pipelinesLoaded = true;
+
+    component.currentPipelineText = 'a';
+    component.onConfigChanged();
+    component.currentPipelineText = 'ab';
+    component.onConfigChanged();
+    component.currentPipelineText = 'abc';
+    component.onConfigChanged();
+
+    expect(configValidationSpy).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+
+    expect(configValidationSpy).toHaveBeenCalledTimes(1);
+    // The last edit wins -- validating an intermediate state would report
+    // errors about text the user has already moved past.
+    expect(configValidationSpy).toHaveBeenCalledWith('abc');
+    jest.useRealTimers();
+  });
+
+  it('should validate again after a later burst', () => {
+    jest.useFakeTimers();
+    const configValidationSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig');
+    component.pipelinesLoaded = true;
+
+    component.currentPipelineText = 'first';
+    component.onConfigChanged();
+    jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+
+    component.currentPipelineText = 'second';
+    component.onConfigChanged();
+    jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+
+    expect(configValidationSpy).toHaveBeenCalledTimes(2);
+    expect(configValidationSpy).toHaveBeenLastCalledWith('second');
+    jest.useRealTimers();
   });
 
   it('should fail config validation', () => {

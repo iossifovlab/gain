@@ -31,6 +31,7 @@ from web_annotation.models import (
     WebAnnotationAnonymousUser,
 )
 from web_annotation.pipeline_cache import ThreadSafePipeline
+from web_annotation.pipelines.throttling import PipelineValidationRateThrottle
 
 logger = logging.getLogger(__name__)
 
@@ -414,8 +415,57 @@ class PipelineDoc(AsyncAnnotationBaseView):
         )
 
 
+def _count_annotators(content: str) -> int | None:
+    """Count the annotators ``content`` declares, without resolving any.
+
+    Returns ``None`` when the config is not countable -- unparsable YAML, or
+    a shape that is not a pipeline. Those are configuration errors, and
+    reporting them is the job of the parser proper, whose messages callers
+    already depend on; this function must not pre-empt them with a message
+    of its own.
+
+    A ``yaml.safe_load`` here duplicates the one the parser does moments
+    later. That is deliberate: it is linear in the (already bounded) body,
+    it touches no GRR, and it is what lets the annotator count be refused
+    before any resource is resolved.
+    """
+    try:
+        parsed = yaml.safe_load(content)
+    except yaml.YAMLError:
+        return None
+
+    if isinstance(parsed, dict):
+        parsed = parsed.get("annotators")
+    if not isinstance(parsed, list):
+        return None
+    return len(parsed)
+
+
 class PipelineValidation(AnnotationBaseView):
-    """Validate annotation config."""
+    """Validate annotation config.
+
+    Anonymous and unauthenticated by design -- the pipeline editor validates
+    for users who have not signed in. That makes the config body the widest
+    piece of untrusted input the API accepts, so it is bounded twice before
+    any parsing happens (iossifovlab/gain#635): once on its size, once on
+    the number of annotators it declares. Both are request-level refusals
+    (400). A config that is merely *invalid* keeps the endpoint's 200 +
+    ``errors`` contract, which the deferred-load path (#155) shares.
+    """
+
+    throttle_classes: ClassVar = [PipelineValidationRateThrottle]
+
+    # Django's default request-body limit is 2.5 MB, four orders of
+    # magnitude past anything a pipeline config needs -- the largest config
+    # in this repo is ~3 KB (32 annotators). 64 KiB leaves twenty times that
+    # headroom while keeping the parser's input small.
+    MAX_CONFIG_LENGTH: ClassVar[int] = 64 * 1024
+
+    # A size bound alone does not bound the *work*: each wildcard annotator
+    # scans every resource in the GRR, so a body of many short, individually
+    # legal wildcards costs the same as one long query. Cap the count too.
+    # Six times the largest config in this repo.
+    MAX_ANNOTATORS: ClassVar[int] = 200
 
     def post(self, request: Request) -> Response:
         """Validate annotation config."""
@@ -424,7 +474,35 @@ class PipelineValidation(AnnotationBaseView):
         assert isinstance(request.data, dict)
 
         content = request.data.get("config")
-        assert isinstance(content, str)
+        if not isinstance(content, str):
+            # Previously an `assert`, which made a request with no `config`
+            # an AssertionError -- a 500 on an anonymous endpoint.
+            return Response(
+                {"error": "config is required and must be a string"},
+                status=views.status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(content) > self.MAX_CONFIG_LENGTH:
+            return Response(
+                {"error": (
+                    f"annotation config is too long: {len(content)} "
+                    f"characters, at most {self.MAX_CONFIG_LENGTH} "
+                    f"are accepted"
+                )},
+                status=views.status.HTTP_400_BAD_REQUEST,
+            )
+
+        annotator_count = _count_annotators(content)
+        if annotator_count is not None \
+                and annotator_count > self.MAX_ANNOTATORS:
+            return Response(
+                {"error": (
+                    f"annotation config declares too many annotators: "
+                    f"{annotator_count}, at most {self.MAX_ANNOTATORS} "
+                    f"are accepted"
+                )},
+                status=views.status.HTTP_400_BAD_REQUEST,
+            )
 
         result = {"errors": ""}
 
