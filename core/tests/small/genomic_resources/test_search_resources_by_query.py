@@ -2,6 +2,7 @@
 """``search_resources(resource_query=...)`` across the repository layers."""
 import gzip
 import pathlib
+from typing import Any
 
 import apsw
 import pytest
@@ -19,6 +20,7 @@ from gain.genomic_resources.resource_query import ResourceQueryParseError
 from gain.genomic_resources.resource_types import equivalent_resource_types
 from gain.genomic_resources.testing import build_filesystem_test_protocol
 from gain.genomic_resources.testing.builders import (
+    GRRBuilder,
     a_grr,
     a_position_score,
     a_reference_genome,
@@ -51,9 +53,18 @@ def unindexed_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
     )
 
 
-@pytest.fixture
-def labelled_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
-    """An indexed repository carrying the labels that tell paths apart.
+# The labels of ``scores/res_a``, named so a fixture can restate them with
+# one added. ``with_labels`` replaces rather than accumulates, so a variant
+# has to pass the whole mapping.
+_RES_A_LABELS: dict[str, Any] = {
+    "domain": "alpha", "note": "", "target": "TF1",
+    # Free-form YAML: not every label value is a string.
+    "perturbed": False, "year": 2019,
+}
+
+
+def _labelled_repository(res_a_labels: dict[str, Any]) -> GRRBuilder:
+    """The resource set the indexed fixtures below are built from.
 
     ``note`` is genuinely empty on one resource and absent from another;
     ``target`` is absent from two. The index stores ``""`` for both
@@ -65,14 +76,11 @@ def labelled_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
     repository of scores alone never exercises what a clause naming one
     means for a resource that contributes none (gain#542).
     """
-    repo = (
+    return (
         a_grr()
         .with_resource(
             "scores/res_a",
-            a_position_score().with_labels(
-                domain="alpha", note="", target="TF1",
-                # Free-form YAML: not every label value is a string.
-                perturbed=False, year=2019),
+            a_position_score().with_labels(**res_a_labels),
         )
         .with_resource(
             "scores/res_b",
@@ -86,10 +94,70 @@ def labelled_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
             "genomes/res_g",
             a_reference_genome().with_labels(domain="alpha", note="noted"),
         )
-        .build_repo(tmp_path)
     )
+
+
+@pytest.fixture
+def labelled_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
+    """An indexed repository whose index describes the resources it has."""
+    repo = _labelled_repository(_RES_A_LABELS).build_repo(tmp_path)
     _create_contents_db(build_filesystem_test_protocol(tmp_path))
     return repo
+
+
+@pytest.fixture
+def index_predating_a_label(
+    tmp_path: pathlib.Path,
+) -> GenomicResourceProtocolRepo:
+    """A repository whose published index predates one of its labels.
+
+    The index is built first and ``newlabel`` added afterwards with no
+    rebuild -- the shape a GRR has between a curator's edit and the next
+    ``grr_manage`` run, and the one case ``labelled_grr`` cannot express:
+    an index built from the very resources it is compared against always
+    agrees with them.
+
+    The repository is rebuilt rather than edited in place so the label is
+    added in the same vocabulary the rest of the file builds resources in;
+    only ``.CONTENTS.sqlite3.gz`` is left behind, which is the point.
+
+    Same resources as ``labelled_grr`` otherwise, so the query corpus
+    means the same thing against both.
+    """
+    _labelled_repository(_RES_A_LABELS).build_repo(tmp_path)
+    _create_contents_db(build_filesystem_test_protocol(tmp_path))
+    return _labelled_repository(
+        {**_RES_A_LABELS, "newlabel": "fresh"}).build_repo(tmp_path)
+
+
+def test_a_label_added_after_the_index_means_the_same_on_both_routes(
+    index_predating_a_label: GenomicResourceProtocolRepo,
+) -> None:
+    """A clause the index cannot answer must not settle the search.
+
+    The index has no column for ``newlabel``, but the resource serves the
+    label from its ``meta.labels`` either way. Settling the clause for
+    every resource at once reads "no column" as "no resource carries the
+    key", which a published index older than the label makes false --
+    and the narrower search then returns strictly fewer resources than
+    the broader one, silently (gain#634).
+    """
+    without_index = {
+        r.resource_id
+        for r in index_predating_a_label.search_resources(
+            resource_query='scores/*[newlabel="fresh"]')
+    }
+    through_index = {
+        r.resource_id
+        for r in index_predating_a_label.search_resources(
+            resource_query='scores/*[newlabel="fresh"]',
+            resource_type="position_score")
+    }
+
+    # Pinned as well as compared: the resource really does carry the label
+    # now, so this cannot pass on two routes that agree and are both empty.
+    assert without_index == {"scores/res_a"}
+    assert through_index == without_index
 
 
 # Every shape the query language can take, over labels that are present,
@@ -172,6 +240,50 @@ def test_the_query_means_the_same_with_and_without_the_index(
     through_index = {
         r.resource_id
         for r in labelled_grr.search_resources(
+            resource_query=query, resource_type=resource_type)
+    }
+
+    assert without_index == through_index
+
+
+# The clauses that only a stale index can be asked. ``newlabel`` is a key
+# the published index has no column for, in every shape that decides a
+# clause: rejecting the empty string, accepting it, and containment.
+_STALE_INDEX_QUERIES = [
+    '*[newlabel="fresh"]',
+    '*[newlabel="fre*"]',
+    '*["res" in newlabel]',
+    '*[newlabel="*"]',
+    '*[newlabel="stale"]',
+    'scores/*[newlabel="fresh"]',
+    '*[domain="alpha" and newlabel="fresh"]',
+]
+
+
+@pytest.mark.parametrize("resource_type", ["position_score", "genome"])
+@pytest.mark.parametrize("query", [*QUERY_CORPUS, *_STALE_INDEX_QUERIES])
+def test_a_stale_index_does_not_change_what_a_query_means(
+    index_predating_a_label: GenomicResourceProtocolRepo,
+    query: str, resource_type: str,
+) -> None:
+    """The same differential, over an index that has fallen behind.
+
+    ``labelled_grr`` builds its index from the very resources it is
+    compared against, so index and resources agree by construction and a
+    whole class of divergence is invisible to it (gain#634). Here the
+    index is one label out of date, which is the ordinary state of a GRR
+    between a curator's edit and the next ``grr_manage`` run.
+    """
+    accepted = equivalent_resource_types(resource_type)
+    without_index = {
+        r.resource_id
+        for r in index_predating_a_label.search_resources(
+            resource_query=query)
+        if r.get_type() in accepted
+    }
+    through_index = {
+        r.resource_id
+        for r in index_predating_a_label.search_resources(
             resource_query=query, resource_type=resource_type)
     }
 
