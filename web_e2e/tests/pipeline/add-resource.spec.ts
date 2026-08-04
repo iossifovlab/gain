@@ -42,7 +42,7 @@ test.describe('Add resource to pipeline tests', () => {
     const resourceModal = new ResourceDialog(page);
     await resourceModal.open();
 
-    // An invalid search value returns a 500 and surfaces an error.
+    // An invalid search value returns a 400 and surfaces an error.
     await resourceModal.searchResource('"unclosed');
     await expect(resourceModal.resourceSearchError).toHaveText('Invalid search value');
 

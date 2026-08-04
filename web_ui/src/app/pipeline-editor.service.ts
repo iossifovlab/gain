@@ -191,7 +191,13 @@ export class PipelineEditorService {
         map((response) => ResourcePage.fromJson(response)),
         catchError((err: HttpErrorResponse) => {
           switch (err.status) {
-            case 500: return throwError(() => new Error('Invalid search value'));
+            // A search term the endpoint cannot read is a 400 (gain#632).
+            // It used to be a 500 -- the request crashed on the term -- and
+            // this mapped that crash to the message. A 500 now means the
+            // repository's search index is broken, which is not something
+            // the user can fix by retyping, so it falls through to the
+            // generic message rather than being blamed on the search.
+            case 400: return throwError(() => new Error('Invalid search value'));
             default: return throwError(() => new Error('Error occurred!'));
           }
         }
