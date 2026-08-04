@@ -576,6 +576,166 @@ async def test_the_build_also_runs_on_a_validation_worker(
 
 
 # ---------------------------------------------------------------------------
+# ...nor does the declared-annotator bound, whose yaml parse is not cheap
+# ---------------------------------------------------------------------------
+# The second bound counts what the config *declares*, which needs a
+# ``yaml.safe_load`` of the whole (bounded) body. On the sync view that was a
+# per-request ``thread_sensitive`` worker thread, where pure-Python yaml
+# releases the GIL every switch interval and the rest of the process kept
+# running. On this async view "inline" is the event loop, and the parse is not
+# cheap at the size the *first* bound permits: measured in this worktree with
+# the repo's venv, worst of several legal 64 KiB shapes,
+#
+#   ``- [1,2,3,4,5]\n`` x 4681        (65 534 chars)   555 ms
+#   ``annotators: [{a: 1, b: 2}, ...]`` (62 413 chars)  473 ms
+#   an alias-heavy mapping             (65 536 chars)  208 ms
+#
+# against 6 ms for a config at ``MAX_ANNOTATORS`` written the way a human
+# writes one. Half a second of un-preemptible loop time, for a request that is
+# then *refused*, at 120/min per IP (the ``pipeline_validate`` scope) is one
+# anonymous client saturating the loop -- so the count goes to the same
+# bounded pool. It still refuses before the expansion parse and the build.
+
+@pytest.fixture
+def slow_annotator_count(mocker: pytest_mock.MockerFixture) -> float:
+    """Make the declared-annotator count take ~``SLOW_BUILD_SECONDS``.
+
+    Wraps the module-level ``_count_annotators`` -- the point whose real cost
+    is a ``yaml.safe_load`` of up to ``MAX_CONFIG_LENGTH`` -- so the delay
+    lands wherever the count runs, on the loop or on a worker.
+    """
+    real_count = views._count_annotators
+
+    def slow_count(content: str) -> int | None:
+        time.sleep(SLOW_BUILD_SECONDS)
+        return real_count(content)
+
+    mocker.patch(
+        "web_annotation.pipelines.views._count_annotators", slow_count)
+    return SLOW_BUILD_SECONDS
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_slow_annotator_count_does_not_park_the_event_loop(
+    slow_annotator_count: float,
+) -> None:
+    """A slow declared-annotator count must leave the event loop ticking.
+
+    Same idiom as the expansion-gate proof above (#433/#454): a heartbeat
+    coroutine ticks while one validation request waits on a count of
+    ``SLOW_BUILD_SECONDS``. A count left inline in the handler coroutine
+    parks the loop for that whole time.
+    """
+    heartbeats: list[float] = []
+    stop = asyncio.Event()
+
+    async def heartbeat() -> None:
+        while not stop.is_set():
+            heartbeats.append(time.monotonic())
+            await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
+
+    hb_task = asyncio.ensure_future(heartbeat())
+    status = await _fire_validate()
+    stop.set()
+    await hb_task
+
+    assert status == 200
+    assert len(heartbeats) >= 2, (
+        f"heartbeat coroutine barely ran ({len(heartbeats)} ticks) -- "
+        f"no gap to measure"
+    )
+    worst_gap = max_gap(heartbeats)
+    assert worst_gap < STALL_THRESHOLD_SECONDS, (
+        f"event loop stalled for {worst_gap:.3f}s (>= threshold "
+        f"{STALL_THRESHOLD_SECONDS:.3f}s, injected count latency "
+        f"{slow_annotator_count:.3f}s) -- the declared-annotator count ran "
+        f"ON the loop"
+    )
+    assert len(heartbeats) >= 5, len(heartbeats)
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_annotator_count_runs_on_a_validation_worker(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """The declared-annotator count must execute on the bounded pool.
+
+    Thread identity rather than a stopwatch, for the same reason as the
+    expansion-gate proof: it is the property, and it holds on a loaded host
+    where a timing bound would wobble.
+    """
+    threads: list[str] = []
+    real_count = views._count_annotators
+
+    def recording_count(content: str) -> int | None:
+        threads.append(threading.current_thread().name)
+        return real_count(content)
+
+    mocker.patch(
+        "web_annotation.pipelines.views._count_annotators", recording_count)
+
+    assert await _fire_validate() == 200
+    assert threads, "the declared-annotator count never ran"
+    assert all(
+        name.startswith(VALIDATE_THREAD_PREFIX) for name in threads
+    ), threads
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_annotator_count_stall_proof_is_discriminating(
+    slow_annotator_count: float,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Sabotage check: counting on the loop FAILS the proof above.
+
+    Reproduces the placement the proof rules out -- the count called
+    straight from the handler coroutine, i.e. on the event loop, which is
+    where it sat between the async conversion and this fix -- and requires
+    the loop to park for ``SABOTAGED_STALL_FLOOR_SECONDS``, above
+    ``STALL_THRESHOLD_SECONDS``. Without this the proof could pass for want
+    of anything slow to detect.
+    """
+    async def count_on_the_event_loop(  # noqa: RUF029
+        self: PipelineValidation, content: str,
+    ) -> int | None:
+        # Awaits nothing on purpose -- that IS the sabotage. It must stay a
+        # coroutine to stand in for the method it replaces.
+        # WRONG (deliberately): a yaml.safe_load of an up-to-64 KiB body
+        # called inline from the handler runs on the loop and cannot be
+        # preempted.
+        return views._count_annotators(content)
+
+    mocker.patch.object(
+        PipelineValidation, "_acount_annotators", count_on_the_event_loop)
+
+    heartbeats: list[float] = []
+    stop = asyncio.Event()
+
+    async def heartbeat() -> None:
+        while not stop.is_set():
+            heartbeats.append(time.monotonic())
+            await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
+
+    hb_task = asyncio.ensure_future(heartbeat())
+    status = await _fire_validate()
+    stop.set()
+    await hb_task
+
+    assert status == 200
+    worst_gap = max_gap(heartbeats)
+    assert worst_gap >= SABOTAGED_STALL_FLOOR_SECONDS, (
+        f"expected the loop to park for >= "
+        f"{SABOTAGED_STALL_FLOOR_SECONDS:.3f}s with the declared-annotator "
+        f"count called on it (injected count latency "
+        f"{slow_annotator_count:.3f}s), got {worst_gap:.3f}s -- the sabotage "
+        f"may have stopped biting, which would make the proof above vacuous"
+    )
+
+
+# ---------------------------------------------------------------------------
 # The load-test build-delay hook, on THIS endpoint's direct-build path
 # ---------------------------------------------------------------------------
 # The #164 hook lives in the pipeline cache's loader, and this endpoint never

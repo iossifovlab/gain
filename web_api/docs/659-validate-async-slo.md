@@ -5,12 +5,14 @@
 
 `POST /api/pipelines/validate` is anonymous and used to resolve resources and
 build every annotator inline, in a synchronous DRF view. This change makes the
-view async (adrf) and submits its two repository-touching costs — the
-expansion-gate parse and the build — to a dedicated bounded pool
-(`AnnotationMixin.VALIDATE_EXECUTOR`, 8 workers), each awaited via
-`await_build`. The two GRR-free bounds from #635 (body size, declared-annotator
-count) still run inline, before anything reaches a pool, so a refusal stays
-cheap, and the expansion gate still refuses before the build is submitted.
+view async (adrf) and submits every cost that is not O(1) — the
+declared-annotator count, the expansion-gate parse and the build — to a
+dedicated bounded pool (`AnnotationMixin.VALIDATE_EXECUTOR`, 8 workers), each
+awaited via `await_build`. Only the body-size bound from #635 still runs
+inline, before anything reaches a pool, so an oversized body is refused without
+occupying a worker at all. The order of the bounds is unchanged: each still
+refuses before the work it bounds, and the expansion gate still refuses before
+the build is submitted.
 
 The build path also grew the same env-gated `GPFWA_BUILD_DELAY_SECONDS` hook the
 pipeline cache's loader has (#164) — this endpoint never goes through the
@@ -38,10 +40,97 @@ resources — with `AnnotationConfigParser.parse_str`, best of three:
 So a single anonymous request at the declared-annotator bound would have parked
 the loop for ~1.6 s. It is now awaited on the same bounded pool as the build.
 
-For contrast, the bound that *does* stay inline — `_count_annotators`'
-`yaml.safe_load` on a worst-case 64 KiB body — measures **126 ms**, touches no
-GRR, and is what makes the refusal cheap. That is the trade recorded here, not
-an oversight.
+## ...and so did the declared-annotator count
+
+The first recorded run kept `_count_annotators` inline on the strength of a
+**126 ms** worst-case measurement. That number was measured on a body shaped
+the way a *pipeline* is; it is not the worst case, because yaml's cost per byte
+depends on the shape and `MAX_CONFIG_LENGTH` is the only thing bounding the
+shape. Re-measured with the repo's venv, best of three, all bodies legal (under
+64 KiB, so the size bound does not refuse them):
+
+| 64 KiB body | `yaml.safe_load` |
+|---|---|
+| `- [1,2,3,4,5]\n` × 4681 (65 534 chars) | **555 ms** |
+| `annotators: [{a: 1, b: 2}, …]` × 4800 (62 413 chars) | **473 ms** |
+| alias-heavy mapping, 8 000 aliases (65 536 chars) | **208 ms** |
+| 100 annotators (= `MAX_ANNOTATORS`), written by hand (2 828 chars) | 6 ms |
+
+Half a second of un-preemptible loop time, for a request that is then *refused*
+400, at the 120/min per-IP `pipeline_validate` rate — one anonymous client
+inside its own budget. So the count goes to the same bounded pool; a refused
+request now costs a worker slot for the length of one parse, which is the price
+of not paying it out of the loop.
+
+### What that buys, measured with real yaml (no injected sleeps)
+
+K concurrent `POST /api/pipelines/validate` of the 65 534-char body above,
+through the real endpoint under Django's `AsyncClient`, with a 20 ms heartbeat
+coroutine ticking on the loop. "Loop unavailable" is the share of the burst
+spent inside heartbeat gaps longer than 100 ms. Median of three runs:
+
+| K | inline ticks | inline unavailable | pool ticks | pool unavailable |
+|---:|---:|---:|---:|---:|
+| 1  | 3  | 94.7% | 23 | 16.2% |
+| 4  | 5  | 96.6% | 25 | 66.8% |
+| 8  | 9  | 96.5% | 35 | 81.0% |
+| 16 | 17 | 96.6% | 47 | 83.9% |
+
+Inline, the loop gets one turn per request and is dead ~96% of the burst at
+every K. On the pool it gets 4–8× as many turns, and at K=1 — one anonymous
+client, which is what the throttle actually permits per IP — it is available
+84% of the time instead of 5%.
+
+**The residual, stated plainly:** this is pure-Python yaml, so at pool
+saturation the loop thread still competes for the GIL against 8 CPU-bound
+workers, and the *worst single gap* can then exceed the inline one (K=16
+worst-gap ranged 1.09–1.87 s on the pool against 0.64–1.18 s inline, over the
+same three runs). Threads make the loop *runnable*, not *scheduled*. Removing
+that residual means bounding the parse's input rather than relocating it —
+i.e. a smaller `MAX_CONFIG_LENGTH`, which #635 set deliberately and this issue
+does not reopen — or a parser that releases the GIL. Recorded here so the next
+person does not have to rediscover it.
+
+### The same thing through daphne, three ways
+
+Three daphne servers on this host from this one checkout — the pre-#659
+**sync** view (port 21097), this branch with the count **inline on the loop**
+(21098), and this branch with the count **on the pool** (21099) — no injected
+build delay, driven by the #164 harness with `--target validate
+--validate-config <the 65 534-char body>`, logged in as the unlimited
+load-test user. Every request is refused `400` in all three, so the attacker
+pays nothing in any of them. Cheap endpoint is `GET /api/version`:
+
+| K | variant | cheap p50 (ms) | cheap **p95** (ms) | cheap max (ms) | samples | burst wall |
+|---:|---|---:|---:|---:|---:|---:|
+| 8  | sync (pre-#659) | 3.33 | 3028 | 4855  | 9  | 5.26 s |
+| 8  | async, inline   | 3.27 | 3239 | 4981  | 8  | 5.00 s |
+| 8  | async, pool     | 3.26 | 2930 | 4658  | 9  | 5.11 s |
+| 16 | sync (pre-#659) | 3.25 | 6170 | 10280 | 9  | 10.37 s |
+| 16 | async, inline   | 3.26 | 6089 | 9367  | 8  | 9.39 s |
+| 16 | async, pool     | 3.15 | 5129 | 6036  | 10 | 10.24 s |
+
+Two things to read off this, both worth saying out loud:
+
+1. **The pool is the best of the three**, and the only variant that improves
+   the tail (K=16 max 6.0 s against 9.4–10.3 s) — but by ~15%, not by an order
+   of magnitude, and at K=8 the three are within noise of each other. With
+   8–10 cheap samples per burst the p95 is nearly the max; treat the column as
+   an indication, not a percentile.
+2. **The pre-#659 synchronous view was no better.** The premise that a
+   `thread_sensitive` worker thread kept the process responsive under this
+   load does not survive measurement: a 0.55 s pure-Python parse holds the GIL
+   whether it runs on the loop, on a `thread_sensitive` thread, or on a pool
+   worker, and at K≥8 the process is GIL-bound in every variant. What the loop
+   placement adds on top of that is a *hard* block rather than contention —
+   which is what the in-process table above isolates, and why the fix is still
+   the right one — but the dominant cost here is the parse itself.
+
+The lever that would actually fix the adversarial case is the size bound, not
+the placement: `MAX_CONFIG_LENGTH` is what decides how much yaml an anonymous
+request can buy. #635 set it at 64 KiB with reasoning recorded in the code, and
+this issue explicitly does not reopen it; #666 is where "does this endpoint
+need to parse this at all" belongs.
 
 ## Harness
 

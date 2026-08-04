@@ -520,21 +520,33 @@ class PipelineValidation(AsyncAnnotationBaseView):
     async def post(self, request: Request) -> Response:
         """Validate annotation config.
 
-        The two GRR-free bounds -- body size and declared-annotator count --
-        run inline, before anything is submitted to a pool: they are what
-        makes a refusal cheap, and submitting them would give an anonymous
-        caller a worker slot for a request that is about to be refused
-        anyway. Both are linear in an already-bounded body and touch no
-        resources (a 64 KiB worst-case ``yaml.safe_load`` measures ~126 ms).
+        Only the body-size bound runs inline. It is O(1) on an
+        already-materialised string, and it is what keeps a refusal cheap:
+        an oversized body is turned away without occupying a worker at all.
+        Reading ``request.data`` to get that string is inline for the same
+        reason -- measured at Django's 2.5 MB body cap it costs ~3 ms
+        (~0.06 ms at ``MAX_CONFIG_LENGTH``), and a multipart file part,
+        which the parser spools to disk, ~1.1 ms per MB uploaded, so its
+        loop cost is bounded by the client's upload bandwidth rather than
+        amplified by the body.
 
-        The two costs that scan or resolve the GRR -- the expansion-gate
-        parse and the build -- are each submitted to the bounded validation
-        pool and awaited. Inline is not free on an async view: this
-        coroutine runs ON the event loop, where a wildcard expansion is not
-        a slow request but a stalled server. Measured against a
-        production-scale GRR (grr_encode, 7922 position scores), the
-        expansion parse of a config at ``MAX_ANNOTATORS`` costs 1.59 s of
-        uninterruptible CPU, and one wildcard costs 27 ms.
+        Everything after it is awaited on the bounded validation pool,
+        because inline is not free on an async view: this coroutine runs ON
+        the event loop, where slow work is not a slow request but a stalled
+        server, and unlike a busy thread the loop cannot be preempted.
+
+        - The declared-annotator count needs a ``yaml.safe_load`` of the
+          whole body, and at the size the first bound permits that is not
+          cheap: 555 ms for ``"- [1,2,3,4,5]\\n"`` x 4681 (65 534 chars),
+          473 ms for a 62 KiB flow sequence of mappings, against 6 ms for a
+          hand-written config at ``MAX_ANNOTATORS``. The refusal it
+          produces is therefore worth a worker slot -- it is far cheaper
+          than half a second of the whole process.
+        - The expansion-gate parse resolves nothing but scans the whole
+          repository once per wildcard: measured against a production-scale
+          GRR (grr_encode, 7922 position scores), 27 ms for one wildcard and
+          1.59 s for a config at ``MAX_ANNOTATORS``.
+        - The build resolves every resource and builds every annotator.
 
         The ordering is unchanged: every bound and the expansion gate still
         refuse *before* the build is submitted.
@@ -561,7 +573,7 @@ class PipelineValidation(AsyncAnnotationBaseView):
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
 
-        annotator_count = _count_annotators(content)
+        annotator_count = await self._acount_annotators(content)
         if annotator_count is not None \
                 and annotator_count > self.MAX_ANNOTATORS:
             return Response(
@@ -613,6 +625,30 @@ class PipelineValidation(AsyncAnnotationBaseView):
             result = {"errors": format_config_error(e)}
 
         return Response(result, status=views.status.HTTP_200_OK)
+
+    async def _acount_annotators(self, content: str) -> int | None:
+        """Await the declared-annotator count on the bounded validation pool.
+
+        The count itself is trivial; the ``yaml.safe_load`` under it is not,
+        because it runs on input bounded only by ``MAX_CONFIG_LENGTH`` and
+        yaml's cost per byte depends on the shape, not just the size (see
+        the numbers on ``post``). It resolves no resource, so unlike the
+        expansion parse it does not scale with the repository -- but half a
+        second is half a second, and on the event loop it is half a second
+        of the whole process.
+
+        Submitted rather than run inline even though it gates a *refusal*:
+        a refused request now costs a worker slot for the length of one
+        parse, which is the price of not paying it out of the loop.
+
+        What moving it cannot buy back is the GIL the parse holds while it
+        runs; only a smaller body bound would (#635 set that deliberately,
+        and this is not where it is reopened). The measured residual is
+        recorded in ``docs/659-validate-async-slo.md``.
+        """
+        return await await_build(
+            self.VALIDATE_EXECUTOR.execute(_count_annotators, content=content),
+        )
 
     async def _aparse_config(
         self, content: str,
