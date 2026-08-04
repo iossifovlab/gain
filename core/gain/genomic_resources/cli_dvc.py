@@ -21,6 +21,7 @@ from gain.genomic_resources.dvc import (
 from gain.genomic_resources.repository import (
     GenomicResource,
     ReadWriteRepositoryProtocol,
+    escape_unsafe_characters,
 )
 
 logger = logging.getLogger("grr_manage")
@@ -43,7 +44,14 @@ def dvc_directory_output_message(
     One text for both gates -- the pre-flight and the manifest builder --
     so what the user is told cannot depend on which of them saw the
     sidecar first (#284).
+
+    Every name here is untrusted GRR content and this message is a refusal
+    report, so the names are escaped for the same reason the sibling
+    warnings in ``cli.collect_dvc_entries`` are (gain#642).
     """
+    resource_id = escape_unsafe_characters(resource_id)
+    entry_name = escape_unsafe_characters(entry_name)
+    filename = escape_unsafe_characters(filename)
     return (
         f"resource <{resource_id}> has a 'dvc add <dir>' output: "
         f"the '.dvc' file <{entry_name}> describes the directory "

@@ -14,11 +14,17 @@ import logging
 import pathlib
 from typing import Any
 
+import apsw
 import pytest
 from gain.genomic_resources.cached_repository import (
     GenomicResourceCachedRepo,
+    cache_resources,
 )
-from gain.genomic_resources.cli import _create_contents_db, cli_manage
+from gain.genomic_resources.cli import (
+    _create_contents_db,
+    cli_manage,
+    collect_dvc_entries,
+)
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
 )
@@ -26,10 +32,12 @@ from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
     GR_MANIFEST_FILE_NAME,
+    GR_SQLITE_META_FILE_NAME,
     GenomicResource,
     GenomicResourceProtocolRepo,
     Manifest,
     ResourceFileState,
+    escape_unsafe_characters,
     report_uncontained_manifest_entries,
     validate_resource_id,
 )
@@ -752,6 +760,16 @@ def test_fts_search_survives_a_dropped_poisoned_id(
 # is refused at the same boundary that already refuses a traversal.
 # ---------------------------------------------------------------------------
 
+# Slash-free, so it can be a real single-segment file name on disk.
+_FORGING_NAME = (
+    "data.txt\n2026-08-03 10:00:00 INFO gain.genomic_resources.cli: "
+    "repository verified clean, 0 resources skipped\n"
+)
+
+
+def _md5(content: str) -> str:
+    return hashlib.md5(content.encode()).hexdigest()  # noqa: S324
+
 
 _FORGING_ID = (
     "hg38/x\n2026-08-03 10:00:00 INFO gain.genomic_resources.cli: "
@@ -774,6 +792,27 @@ def test_get_resource_file_url_rejects_a_control_character_id(
     The whole C0/C1 range goes, not the newline that bites today: a list
     tuned to one terminal's or one url parser's current quirks is one
     change away from a hole.
+    """
+    poisoned = GenomicResource(resource_id, (0,), fs_proto)
+
+    with pytest.raises(ValueError):
+        fs_proto.get_resource_file_url(poisoned, "data.txt")
+
+
+@pytest.mark.parametrize("resource_id", [
+    "hg38/x\u2028FORGED",
+    "hg38/x\u2029FORGED",
+    "hg38/x\u0085FORGED",
+])
+def test_unicode_line_separators_are_rejected_too(
+    fs_proto: FsspecReadWriteProtocol, resource_id: str,
+) -> None:
+    """A line break is not only ``\\n``.
+
+    ``str.splitlines`` -- and therefore anything downstream that splits a
+    captured log -- breaks on U+2028, U+2029 and U+0085 as well. Only
+    U+0085 is a C1 control; the other two would otherwise reach every
+    unescaped call site and still span two lines.
     """
     poisoned = GenomicResource(resource_id, (0,), fs_proto)
 
@@ -825,7 +864,7 @@ def test_a_dropped_control_character_id_cannot_forge_a_log_line(
 
     assert caplog.records
     for record in caplog.records:
-        assert "\n" not in record.getMessage()
+        assert len(record.getMessage().splitlines()) == 1
 
 
 def test_a_control_character_manifest_entry_cannot_forge_a_log_line(
@@ -843,7 +882,7 @@ def test_a_control_character_manifest_entry_cannot_forge_a_log_line(
 
     assert caplog.records
     for record in caplog.records:
-        assert "\n" not in record.getMessage()
+        assert len(record.getMessage().splitlines()) == 1
 
 
 def test_a_control_character_entry_name_still_fails_on_access(
@@ -855,11 +894,156 @@ def test_a_control_character_entry_name_still_fails_on_access(
     with pytest.raises(ValueError) as excinfo:
         res.open_raw_file(_FORGING_ID)
 
-    assert "\n" not in str(excinfo.value)
+    assert len(str(excinfo.value).splitlines()) == 1
+
+
+def test_a_poisoned_dvc_sidecar_cannot_forge_a_log_line(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The ``.dvc`` reader CATCHES the refusal and names the file again.
+
+    ``ValueError`` here is precisely the guard's own refusal, so this
+    handler fires on exactly the names the guard is meant to contain.
+    """
+    root_path = tmp_path / "grr"
+    setup_directories(root_path, {
+        "one": {
+            GR_CONF_FILE_NAME: "type: basic\n",
+            "data.txt": "alabala",
+        },
+    })
+    # A real on-disk sidecar whose NAME carries the forged line.
+    (root_path / "one" / f"{_FORGING_NAME}.dvc").write_text("outs:\n- md5: x\n")
+    proto = build_filesystem_test_protocol(root_path, repair=False)
+    res = proto.get_resource("one")
+
+    with caplog.at_level(logging.WARNING):
+        collect_dvc_entries(proto, res)
+
+    assert caplog.records
+    for record in caplog.records:
+        assert len(record.getMessage().splitlines()) == 1
+
+
+def test_caching_a_poisoned_manifest_entry_cannot_forge_a_log_line(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The main ``grr_cache_repo`` path, where the refusal is CAUGHT.
+
+    The classify loop collects the ``ValueError`` the guard now raises and
+    logs it as one concise line per failure -- but it names the file again
+    itself, next to the already-escaped message. The raw half is what
+    forges the line.
+    """
+    # An UNKNOWN resource type is what makes the caching run consider every
+    # manifest entry rather than an implementation's fixed file list -- so
+    # it is the shape in which a poisoned entry name reaches classify.
+    config = "type: mystery\n"
+    payload = "alabala"
+    remote_root = tmp_path / "area" / "remote"
+    setup_directories(remote_root, {
+        "one": {
+            GR_CONF_FILE_NAME: config,
+            "data.txt": payload,
+            GR_MANIFEST_FILE_NAME: (
+                f"- name: {GR_CONF_FILE_NAME}\n"
+                f"  size: {len(config)}\n"
+                f"  md5: {_md5(config)}\n"
+                "- name: data.txt\n"
+                f"  size: {len(payload)}\n"
+                f"  md5: {_md5(payload)}\n"
+                f"- name: {json.dumps(_FORGING_ID)}\n"
+                f"  size: {len(payload)}\n"
+                f"  md5: {_md5(payload)}\n"
+            ),
+        },
+    })
+    remote_repo = GenomicResourceProtocolRepo(
+        build_filesystem_test_protocol(remote_root, repair=False))
+    cached_repo = GenomicResourceCachedRepo(
+        remote_repo, str(tmp_path / "cache"))
+
+    with caplog.at_level(logging.WARNING), \
+            pytest.raises(RuntimeError) as excinfo:
+        cache_resources(cached_repo, ["one"], progress=False)
+
+    assert caplog.records
+    for record in caplog.records:
+        assert len(record.getMessage().splitlines()) == 1
+
+    # The end-of-run summary is deliberately multi-line -- one bullet per
+    # failed file -- so the property is one physical line PER FAILURE, not
+    # one line overall. A forged name adds lines the bullet count cannot
+    # account for.
+    assert len(str(excinfo.value).splitlines()) == 2
+
+
+def test_a_poisoned_search_index_cannot_forge_a_log_line(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The FTS index is a separate untrusted artefact of the same GRR.
+
+    It can name a resource the ``.CONTENTS`` loader refused to build, and
+    the warning that says so interpolates the id the INDEX carries -- so
+    poisoning the index reaches a reporting site the ``.CONTENTS`` guard
+    never sees.
+    """
+    root_path = tmp_path / "grr"
+    setup_directories(root_path, {
+        "good_one": {GR_CONF_FILE_NAME: "type: basic\n", "d.txt": "alabala"},
+        "evil": {GR_CONF_FILE_NAME: "type: basic\n", "d.txt": "alabala"},
+    })
+    _create_contents_db(build_filesystem_test_protocol(root_path))
+
+    index_path = root_path / GR_SQLITE_META_FILE_NAME
+    conn = apsw.Connection(":memory:")
+    conn.deserialize("main", gzip.decompress(index_path.read_bytes()))
+    conn.execute(
+        "UPDATE contents SET full_id = ? WHERE full_id = ?",
+        (_FORGING_ID, "evil"))
+    index_path.write_bytes(gzip.compress(conn.serialize("main")))
+
+    proto = build_filesystem_test_protocol(
+        root_path, repair=False, read_only=True)
+
+    with caplog.at_level(logging.WARNING):
+        found = [res.resource_id for res in proto.search_resources("basic")]
+
+    assert found == ["good_one"]
+    assert caplog.records
+    for record in caplog.records:
+        assert len(record.getMessage().splitlines()) == 1
+
+
+@pytest.mark.parametrize(("name", "expected"), [
+    ("data\ntxt", "data\\x0atxt"),
+    ("data\rtxt", "data\\x0dtxt"),
+    ("data\x1b[2Ktxt", "data\\x1b[2Ktxt"),
+    ("data\x00txt", "data\\x00txt"),
+    ("data\u2028txt", "data\\u2028txt"),
+    ("data\u2029txt", "data\\u2029txt"),
+    ("data\x85txt", "data\\x85txt"),
+    ("ordinary name.txt", "ordinary name.txt"),
+    ("statistics/histogram.json", "statistics/histogram.json"),
+    ("café.txt", "café.txt"),
+    ("日本語.txt", "日本語.txt"),
+])
+def test_escape_unsafe_characters_makes_the_invisible_visible(
+    name: str, expected: str,
+) -> None:
+    """Escaped, not deleted -- and the two widths are not interchangeable.
+
+    Deleting the character would satisfy every "stays on one line" test in
+    this file while destroying the one thing the operator needs: which name
+    was actually refused. ``\\x2028`` would read as ``\\x20`` followed by a
+    literal ``28``, i.e. a different and legitimate name, so a codepoint
+    above 0xff takes the ``\\uNNNN`` form.
+    """
+    assert escape_unsafe_characters(name) == expected
 
 
 def test_validate_resource_id_reports_a_forging_id_on_one_line() -> None:
     with pytest.raises(ValueError) as excinfo:
         validate_resource_id(_FORGING_ID)
 
-    assert "\n" not in str(excinfo.value)
+    assert len(str(excinfo.value).splitlines()) == 1

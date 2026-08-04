@@ -26,6 +26,7 @@ from gain.genomic_resources.repository import (
     GenomicResourceRepo,
     Manifest,
     ReadOnlyRepositoryProtocol,
+    escape_unsafe_characters,
     is_safe_repo_id,
     resolve_tabix_index_filename_for_read,
 )
@@ -956,14 +957,19 @@ def _build_cache_worklist(
                 # embeds the credential-bearing fetch url; strip any url
                 # userinfo before it reaches the failure summary or the logs.
                 redacted = _strip_url_userinfo(str(error))
-                failures.append(
-                    f"{resource.resource_id}: {filename} ({redacted})")
+                # The name is untrusted GRR content and this is one of the
+                # sites that REPORTS a refused one, so it is escaped here
+                # too -- ``redacted`` already is, and leaving the bare name
+                # next to it would forge the line anyway (gain#642).
+                safe_label = (
+                    f"{escape_unsafe_characters(resource.resource_id)}: "
+                    f"{escape_unsafe_characters(filename)}")
+                failures.append(f"{safe_label} ({redacted})")
                 # One concise line per failure; a stack trace per failed file
                 # would swamp a large run (see the gain#43 rationale in the
                 # download loop), so logger.error not logger.exception.
                 logger.error(  # noqa: TRY400
-                    "failed to classify (%s: %s): %s",
-                    resource.resource_id, filename, redacted)
+                    "failed to classify (%s): %s", safe_label, redacted)
                 continue
             if verdict.needs_download:
                 worklist.append((resource, filename, verdict.size))
@@ -1053,7 +1059,9 @@ def cache_resources(
             resource,
             filename,
             on_bytes=reporter.on_bytes,
-        )] = (f"{resource.resource_id}: {filename}", size)
+        )] = (
+            f"{escape_unsafe_characters(resource.resource_id)}: "
+            f"{escape_unsafe_characters(filename)}", size)
 
     failures: list[str] = list(classify_failures)
     try:

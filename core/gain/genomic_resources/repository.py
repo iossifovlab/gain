@@ -176,10 +176,23 @@ def is_generated_info_page(name: str) -> bool:
 # The whole C0/C1 range goes rather than the handful that bite today: none
 # of them belongs in a resource name, and a list tuned to one url parser's
 # or one terminal's current quirks is one change away from a hole.
-_CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+#
+# U+2028 and U+2029 join them because a line break is not only ``\\n``:
+# ``str.splitlines`` breaks on both, so anything that post-processes a
+# captured log splits there, and a UAX #14 consumer (an html log viewer)
+# renders them as mandatory breaks. U+0085 NEL is already in the C1 range.
+_UNSAFE_NAME_CHARACTER_RE = re.compile(
+    r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 
 
-def escape_control_characters(name: str) -> str:
+def _escape_one_character(match: re.Match[str]) -> str:
+    code = ord(match.group())
+    if code <= 0xFF:
+        return f"\\x{code:02x}"
+    return f"\\u{code:04x}"
+
+
+def escape_unsafe_characters(name: str) -> str:
     """Render an untrusted name safe to interpolate into ONE log line.
 
     Refusing a name that carries a control character is not by itself
@@ -194,12 +207,13 @@ def escape_control_characters(name: str) -> str:
     entry name in passing; this keeps the handful that report the refusal
     itself on one line.
 
-    ``\\xNN`` rather than ``repr``: it leaves every other character
-    untouched, so an operator still reads the name they wrote, with only
-    the invisible part made visible.
+    ``\\xNN``/``\\uNNNN`` rather than ``repr``: it leaves every other
+    character untouched, so an operator still reads the name they wrote,
+    with only the invisible part made visible. The two widths matter --
+    ``\\x2028`` for U+2028 would read as ``\\x20`` followed by the literal
+    text ``28``, which is a different (and legitimate) name.
     """
-    return _CONTROL_CHARACTER_RE.sub(
-        lambda match: f"\\x{ord(match.group()):02x}", name)
+    return _UNSAFE_NAME_CHARACTER_RE.sub(_escape_one_character, name)
 
 
 def _escaping_path_reason(candidate: str, container: str) -> str | None:
@@ -215,14 +229,15 @@ def _escaping_path_reason(candidate: str, container: str) -> str | None:
     does for ``/x``. Ignoring that while the ``..`` scan already treats a
     backslash as a separator would be incoherent.
 
-    No control character -- see :data:`_CONTROL_CHARACTER_RE`. This one is
+    No control or line-separator character -- see
+    :data:`_UNSAFE_NAME_CHARACTER_RE`. This one is
     not a containment property, and it lives here anyway because this is the
     single helper both untrusted names funnel through, in both their raw and
     their percent-decoded spelling; checking it in each caller instead would
     mean writing it four times and forgetting it in the fifth.
     """
-    if _CONTROL_CHARACTER_RE.search(candidate):
-        return "carries a control character"
+    if _UNSAFE_NAME_CHARACTER_RE.search(candidate):
+        return "carries a control or line-separator character"
     if candidate.startswith(("/", "\\")):
         return "is absolute"
     if ntpath.isabs(candidate) or _WINDOWS_DRIVE.match(candidate):
@@ -285,9 +300,9 @@ def validate_resource_file_name(resource_id: str, filename: str) -> None:
     reason = uncontained_resource_file_name_reason(filename)
     if reason is not None:
         raise ValueError(
-            f"resource file name <{escape_control_characters(filename)}> "
+            f"resource file name <{escape_unsafe_characters(filename)}> "
             f"{reason}; "
-            f"resource <{escape_control_characters(resource_id)}>")
+            f"resource <{escape_unsafe_characters(resource_id)}>")
 
 
 def uncontained_resource_id_reason(resource_id: str) -> str | None:
@@ -325,7 +340,7 @@ def validate_resource_id(resource_id: str) -> None:
     reason = uncontained_resource_id_reason(resource_id)
     if reason is not None:
         raise ValueError(
-            f"resource id <{escape_control_characters(resource_id)}> {reason}")
+            f"resource id <{escape_unsafe_characters(resource_id)}> {reason}")
 
 
 def report_uncontained_manifest_entries(
@@ -353,8 +368,8 @@ def report_uncontained_manifest_entries(
             logger.warning(
                 "resource <%s> has a manifest entry <%s> that %s; "
                 "any access to it will be refused",
-                escape_control_characters(resource_id),
-                escape_control_characters(entry.name), reason)
+                escape_unsafe_characters(resource_id),
+                escape_unsafe_characters(entry.name), reason)
 
 
 def is_gr_id_token(token: str) -> bool:
@@ -392,7 +407,7 @@ def is_safe_repo_id(repo_id: str) -> bool:
     the one absolute-ish prefix that has no separator in it, ``C:cache``,
     which ``os.path.join`` on Windows resolves against that drive's current
     directory; the control-character check covers the id that changes shape
-    when it is parsed as part of a url (see ``_CONTROL_CHARACTER_RE``); and
+    when it is parsed as part of a url (see ``_UNSAFE_NAME_CHARACTER_RE``); and
     ``.`` and ``..`` are spelled out because they are ordinary segments to
     every one of the checks above.
 
@@ -412,7 +427,7 @@ def is_safe_repo_id(repo_id: str) -> bool:
     """
     if not repo_id or repo_id in {".", ".."}:
         return False
-    if _CONTROL_CHARACTER_RE.search(repo_id):
+    if _UNSAFE_NAME_CHARACTER_RE.search(repo_id):
         return False
     if any(separator in repo_id for separator in _PATH_SEPARATORS):
         return False
@@ -1385,7 +1400,7 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
                     logger.warning(
                         "repo %s: index names resource <%s>, which the "
                         "repository contents do not; skipping it",
-                        self.proto_id, row[0])
+                        self.proto_id, escape_unsafe_characters(row[0]))
                     continue
                 yield resource
 
