@@ -48,6 +48,24 @@ no label column — because no resource carries it, or because the name belongs
 to a field of the resource rather than to a label — holds for every resource
 if the clause accepts the empty string and for none if it does not.
 
+*Amended by gain#634:* the enumeration above is not exhaustive. A key can also
+have no column because the published index **predates the label** — a curator
+added it and no `grr_manage` run has rebuilt the index since. The resource
+serves the label from its `meta.labels` regardless, so "no column" does not
+imply "no resource carries the key", and settling the clause for every
+resource at once was wrong in the direction that silently loses them: since
+supplying a `search_term` or a `resource_type` is what routes the search
+through the index, adding a filter that should only narrow the result set
+emptied it instead. Such a clause is now handed back to the caller and
+re-asked of each resource the statement yields, which the indexed path already
+materialises in full.
+
+The half of the decision that accepts the empty string stands, and needs no
+column: a clause that matches `""` is a tautology under this grammar — a value
+must be at least one character, so `in` can never accept `""`, and the only
+`=` values `fnmatch` accepts `""` for are globs of `*` alone, which accept
+every string. Dropping it is sound however stale the index is.
+
 ## Why this scope
 
 *Why not the guard.* It is not a near-miss; it is wrong in the direction
@@ -115,3 +133,17 @@ materialisation, which the side table above would enable.
   with no `.CONTENTS.sqlite3.gz`. A query-only search still never opens the
   index. The two are pinned against each other by a differential test rather
   than by inspection.
+
+  *Extended by gain#634:* that differential built its index from the very
+  resources it then compared against, so index and resources agreed by
+  construction and it could not see a divergence that only a stale index
+  produces. It now also runs against a repository whose index was published
+  before one of its labels.
+- **The routes agree only up to what the index knows.** A published index is
+  a separate artefact from the resources, and nothing forces it to be current.
+  A label *value* edited since the index was built is still answered out of
+  the recorded value on the indexed route and out of the resource on the
+  Python route — gain#646, open, and not closed by #634, which reaches only
+  the keys the index has no column for at all. A resource added since the
+  index was built is not returned by the indexed route at all; that one is
+  inherent, since only the index can answer a `search_term`.

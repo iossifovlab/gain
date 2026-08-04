@@ -1254,8 +1254,18 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
         A ``resource_query`` on its own never opens the index, and is
         matched in Python instead. That is what makes it work on a
         repository with no ``.CONTENTS.sqlite3.gz`` at all, where opening
-        the metadata db raises. Both routes evaluate the same parsed query,
-        so which one runs is not observable in the result.
+        the metadata db raises.
+
+        Both routes evaluate the same parsed query, and a clause the index
+        cannot answer is re-asked of the resources themselves rather than
+        settled out of the index -- but which route runs is still
+        observable on a repository whose published index has fallen behind
+        its resources. The index answers a label clause out of the value it
+        recorded, so a label edited since it was built is read as it was
+        then (gain#646), and a resource added since is not in the index to
+        be returned at all. The latter is inherent: only the index can
+        answer a ``search_term``. Rebuilding the index with ``grr_manage``
+        is what makes the two routes agree on every resource.
 
         An empty ``resource_query`` is an unset one: it is what a shell
         substitutes for a variable that was never set, and the useful
