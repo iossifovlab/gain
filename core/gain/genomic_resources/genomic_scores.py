@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import enum
+from abc import abstractmethod
 from collections.abc import Generator, Iterator
 from itertools import starmap
 from types import TracebackType
@@ -93,30 +94,11 @@ logger = logging.getLogger(__name__)
 # it replaces, small enough that one batch's arrays stay comfortably in cache.
 DEFAULT_VALUE_ARRAYS_BATCH_SIZE = 100_000
 
-
-class RecordOrdering(enum.Enum):
-    """How a resource kind's records may be laid out along a contig.
-
-    ``DISJOINT`` -- at most one record per position, so two records that
-    touch are a data error.  That is what a position score promises, and
-    what ``PositionScore.validate_records`` raises on.
-
-    ``SHARED`` -- several records may legitimately sit at one position.
-    That is what an allele score IS (one record per ref/alt pair at a site)
-    and what a fragment score is (overlapping intervals), so there is
-    nothing to reject.
-
-    There is deliberately NO third value for "records that run backwards".
-    The per-record allele fetch does raise on ``pos < prev_right``, but only
-    tabix- and bigWig-backed tables ever reach the vectorized scan, and
-    tabix refuses to index a file whose positions decrease
-    (``[E::hts_idx_push] Unsorted positions on sequence``).  Such a resource
-    therefore cannot be built, the branch could never run, and no test could
-    pin it -- so the bulk guard enforces only the shared-position rule.
-    """
-
-    DISJOINT = "disjoint"
-    SHARED = "shared"
+# One batch as :meth:`GenomicScore.fetch_region_value_arrays` produces it:
+# the RAW one-based begin and end columns, plus one parsed value array per
+# requested score id.  Named because the vectorized scan validators are
+# transducers over a stream of these.
+RecordArrays = tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]]
 
 
 class GenomicScore(ScoreResource[GenomicScoreDef]):
@@ -223,6 +205,12 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
           reading once and both consumers get it (ADR 0008).
         - validate_records(): the rule this kind's records must hold to,
           which only the statistics scan applies.
+        - validate_record_arrays(): the same rule over a batch's columns,
+          which only the statistics scan's vectorized path applies.
+
+        The last two have no default.  A kind that inherited one would be
+        validated by a rule nobody chose for it, which is the failure
+        ADR 0008 exists to undo.
 
     See Also:
         - PositionScore: For position-based genomic scores
@@ -231,15 +219,14 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         - GenomicPositionTable: Table format abstraction
     """
 
-    # How this resource kind's records read, stated ONCE here and consumed by
-    # BOTH statistics scan paths -- the per-record one and the vectorized bulk
-    # one.  Two statements of one rule is how the paths drift.
+    # How much one of this kind's records counts when a region is aggregated:
+    # the "one record, one count" rule that everything except a position score
+    # follows.  This is also where :meth:`_record_weight` -- the per-record
+    # weight the annotators' aggregation applies -- reads the rule from, so
+    # the two cannot disagree.
     #
-    # The defaults are the "one record, one count" rule that everything except
-    # a position score follows.  ``RECORD_WEIGHT_IS_SPAN`` is also where
-    # :meth:`_record_weight` -- the per-record weight the annotators'
-    # aggregation applies -- reads the rule from, so the two cannot disagree.
-    RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.SHARED
+    # It is a MEASURE, not a rule about what the records may be; the latter is
+    # each kind's own ``validate_records`` / ``validate_record_arrays`` body.
     RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
 
     # How a value is read off a record.  Installed by :meth:`open`, from the
@@ -901,9 +888,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         statistics scan also requires a bounded region and a resource kind it
         is exercised against, and it keeps asking that itself (see
         ``GenomicScoreImplementation._bulk_scan_eligible``).  What it does
-        NOT require is a particular record shape: the accumulators read the
-        kind's own ``RECORD_ORDERING`` and ``RECORD_WEIGHT_IS_SPAN``, so a
-        position, allele and fragment score are all served.
+        NOT require is a particular record shape: the accumulator reads the
+        kind's own ``RECORD_WEIGHT_IS_SPAN`` and the scan's door reads the
+        kind's own ``validate_record_arrays``, so a position, allele and
+        fragment score are all served.
 
         Answerable on an UNOPENED score: the table and the score definitions
         are both built in ``__init__``, so nothing here touches the file.
@@ -926,7 +914,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         *,
         batch_size: int = DEFAULT_VALUE_ARRAYS_BATCH_SIZE,
     ) -> Generator[
-            tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]], None, None]:
+            RecordArrays, None, None]:
         """Fetch a region as column arrays, without building a record per row.
 
         The bulk counterpart of :meth:`fetch_records`, for a caller that scans a
@@ -1007,7 +995,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         region: tuple[str, int | None, int | None],
         batch_size: int,
     ) -> Generator[
-            tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]], None, None]:
+            RecordArrays, None, None]:
         """Stream the batches for an already-validated request.
 
         Split out so :meth:`fetch_region_value_arrays` is a plain function and
@@ -1128,6 +1116,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             right = min(pos_end, rec_end) if pos_end is not None else rec_end
             yield (left, right, val)
 
+    @abstractmethod
     def validate_records(
         self, records: Iterator[Record],
     ) -> Generator[Record, None, None]:
@@ -1142,27 +1131,44 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         kind's normalization destroys the evidence: an allele score collapses
         a record to the point it sits at, discarding its end entirely.  Raw
         is also the only layer at which this and the vectorized validator
-        could ever state one rule (ADR 0008).
+        can state one rule (ADR 0008).
 
-        This base body carries the rule a fragment score's records hold to --
-        a record must not begin before the one before it -- so that every
-        kind stays validated during the scan while gain#590 is still to land.
-        That slice gives the kind a body of its own and deletes this default.
+        Every kind states this itself; there is deliberately no default to
+        inherit.  A kind that inherited one would be validated by a rule
+        nobody chose for it, and a rule stated once for kinds that mean
+        different things is what gain#585 is unwinding.
         """
-        prev_chrom: str | None = None
-        prev_begin: int | None = None
-        for record in records:
-            chrom, begin, _end = self._record_to_begin_end(record)
-            if chrom != prev_chrom:
-                prev_begin = None
-            if prev_begin is not None and begin < prev_begin:
-                raise MalformedResourceError(
-                    f"<{self.resource_id}> is malformed: the record at "
-                    f"{chrom}:{begin} follows the record at "
-                    f"{chrom}:{prev_begin}; this score's records must not "
-                    f"move backwards")
-            prev_chrom, prev_begin = chrom, begin
-            yield record
+        raise NotImplementedError
+
+    @abstractmethod
+    def validate_record_arrays(
+        self, batches: Iterator[RecordArrays], chrom: str,
+    ) -> Generator[RecordArrays, None, None]:
+        """Yield a stream of raw column batches through, refusing a bad one.
+
+        The vectorized counterpart of :meth:`validate_records`, and the same
+        transducer shape over the batches the bulk scan is already pulling.
+        It states the SAME ordering rule as its per-record twin -- both read
+        the raw begins and ends, which is the only layer at which they can --
+        so a resource whose records are out of order is refused identically
+        whichever path it was eligible for.  Divergence between the two is
+        what ADR 0008 records as the reason the shared class attribute was
+        removed.
+
+        The ordering rule is all it states.  The per-record path additionally
+        raises, from ``_record_to_begin_end``, on a record whose end precedes
+        its begin; there is no array counterpart, because no backend the bulk
+        path reads can produce one (tabix refuses to index such a row, and a
+        bigWig cannot express it).  If that ever stops being true, this is
+        where the check belongs.
+
+        ``chrom`` is what the batches were read for.  A bulk scan reads one
+        region, which lies within one contig, so the implementations carry
+        their ordering state across batches but never across contigs.
+
+        Every kind states this itself; there is deliberately no default.
+        """
+        raise NotImplementedError
 
     def fetch_region_values(
         self,
@@ -1392,9 +1398,10 @@ class PositionScore(GenomicScore):
             in a genomic region, for a caller that aggregates it
     """
 
-    # One value per position (an overlap is a data error) and a record counts
-    # once per base pair of the queried region it covers.
-    RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.DISJOINT
+    # A record counts once per base pair of the queried region it covers.
+    # That one value per position is what a position score PROMISES is not
+    # stated here but in ``validate_records`` / ``validate_record_arrays``,
+    # the only places that enforce it.
     RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = True
 
     # No ``_record_weight`` override: the base derives the per-record weight
@@ -1451,6 +1458,38 @@ class PositionScore(GenomicScore):
                     self.resource_id, chrom, begin, prev_end)
             prev_chrom, prev_end = chrom, end
             yield record
+
+    def validate_record_arrays(
+        self, batches: Iterator[RecordArrays], chrom: str,
+    ) -> Generator[RecordArrays, None, None]:
+        """Refuse two records that overlap -- or merely touch, vectorized.
+
+        The same rule as :meth:`validate_records`, stated over a batch's
+        columns instead of over records: a record beginning where its
+        predecessor has not yet ended claims a position already taken.  Both
+        read the RAW begin and end, which is the only layer at which the two
+        can say the same thing -- clipping a record to the scanned region
+        would make the verdict depend on how the contig was partitioned.
+
+        A violation straddling a batch boundary is caught on the carried end:
+        batches are a read-granularity artefact, and no rule may depend on
+        where one happens to break.
+        """
+        prev_end: int | None = None
+        for batch in batches:
+            pos_begin, pos_end, _cells = batch
+            if pos_begin.size:
+                if prev_end is not None and int(pos_begin[0]) <= prev_end:
+                    raise overlapping_records_error(
+                        self.resource_id, chrom, int(pos_begin[0]), prev_end)
+                touching = pos_begin[1:] <= pos_end[:-1]
+                if bool(touching.any()):
+                    first = int(np.argmax(touching))
+                    raise overlapping_records_error(
+                        self.resource_id, chrom,
+                        int(pos_begin[first + 1]), int(pos_end[first]))
+                prev_end = int(pos_end[-1])
+            yield batch
 
     def fetch_region_weighted_values(
         self,
@@ -1603,7 +1642,6 @@ class AlleleScore(GenomicScore):
     # ``(pos, pos, values)``, collapsing the record to a point however wide an
     # optional ``pos_end`` column reaches, so a span weight would not merely be
     # a different choice, it would disagree with the per-record read.
-    RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.SHARED
     RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
 
     class Mode(enum.Enum):
@@ -1740,6 +1778,43 @@ class AlleleScore(GenomicScore):
             prev_chrom, prev_pos = chrom, pos
             yield record
 
+    def validate_record_arrays(
+        self, batches: Iterator[RecordArrays], chrom: str,
+    ) -> Generator[RecordArrays, None, None]:
+        """Refuse a record beginning before the one before it, vectorized.
+
+        The same rule as :meth:`validate_records`, over a batch's columns.
+        The comparison is strict: several records at ONE position are what an
+        allele score is made of, and only a record that moves backwards is a
+        table read out of order.
+
+        Only the begins take part, and only the RAW ones -- the ends an
+        optional ``pos_end`` column carries are not what an allele record
+        means, and clipping would tie the verdict to the region partition.
+        A violation straddling a batch boundary is caught on the carried
+        begin.
+        """
+        prev_pos: int | None = None
+        for batch in batches:
+            pos_begin, _pos_end, _cells = batch
+            if pos_begin.size:
+                if prev_pos is not None and int(pos_begin[0]) < prev_pos:
+                    raise MalformedResourceError(
+                        f"<{self.resource_id}> is malformed: the record at "
+                        f"{chrom}:{int(pos_begin[0])} follows the record at "
+                        f"{chrom}:{prev_pos}; an allele score's records must "
+                        f"not move backwards")
+                backwards = pos_begin[1:] < pos_begin[:-1]
+                if bool(backwards.any()):
+                    first = int(np.argmax(backwards))
+                    raise MalformedResourceError(
+                        f"<{self.resource_id}> is malformed: the record at "
+                        f"{chrom}:{int(pos_begin[first + 1])} follows the "
+                        f"record at {chrom}:{int(pos_begin[first])}; an "
+                        f"allele score's records must not move backwards")
+                prev_pos = int(pos_begin[-1])
+            yield batch
+
     def region_values_from_records(
         self,
         records: Iterator[Record],
@@ -1844,8 +1919,7 @@ class FragmentScore(GenomicScore):
     deprecated one.
     """
 
-    # Fragments overlap freely and each weighs 1 however long it is.
-    RECORD_ORDERING: ClassVar[RecordOrdering] = RecordOrdering.SHARED
+    # A fragment weighs 1 however long it is.
     RECORD_WEIGHT_IS_SPAN: ClassVar[bool] = False
 
     # As AlleleScore, except that strings join rather than list -- a fragment
@@ -1899,9 +1973,8 @@ class FragmentScore(GenomicScore):
     ) -> Generator[Record, None, None]:
         """Refuse a fragment that begins before the one before it.
 
-        Fragments overlap freely and several may share a start -- that is
-        what :attr:`RECORD_ORDERING` says this kind is -- so only the BEGINS
-        are compared, and only against each other.  A fragment's own end
+        Fragments overlap freely and several may share a start, so only the
+        BEGINS are compared, and only against each other.  A fragment's own end
         takes no part: an interval reaching back over its predecessor is the
         normal case, not a data error.
 
@@ -1925,6 +1998,39 @@ class FragmentScore(GenomicScore):
                     f"not move backwards")
             prev_chrom, prev_begin = chrom, begin
             yield record
+
+    def validate_record_arrays(
+        self, batches: Iterator[RecordArrays], chrom: str,
+    ) -> Generator[RecordArrays, None, None]:
+        """Refuse a fragment beginning before the one before it, vectorized.
+
+        The same rule as :meth:`validate_records`, over a batch's columns:
+        only the RAW begins are compared, and only against each other.  A
+        fragment's own end takes no part -- an interval reaching back over
+        its predecessor is the normal case for this kind, not a data error.
+        A violation straddling a batch boundary is caught on the carried
+        begin.
+        """
+        prev_begin: int | None = None
+        for batch in batches:
+            pos_begin, _pos_end, _cells = batch
+            if pos_begin.size:
+                if prev_begin is not None and int(pos_begin[0]) < prev_begin:
+                    raise MalformedResourceError(
+                        f"<{self.resource_id}> is malformed: the record at "
+                        f"{chrom}:{int(pos_begin[0])} follows the record at "
+                        f"{chrom}:{prev_begin}; a fragment score's records "
+                        f"must not move backwards")
+                backwards = pos_begin[1:] < pos_begin[:-1]
+                if bool(backwards.any()):
+                    first = int(np.argmax(backwards))
+                    raise MalformedResourceError(
+                        f"<{self.resource_id}> is malformed: the record at "
+                        f"{chrom}:{int(pos_begin[first + 1])} follows the "
+                        f"record at {chrom}:{int(pos_begin[first])}; a "
+                        f"fragment score's records must not move backwards")
+                prev_begin = int(pos_begin[-1])
+            yield batch
 
     def fetch_fragment_scores(
         self, chrom: str,

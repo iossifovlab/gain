@@ -5,9 +5,11 @@
 - **Issues:** [gain#585](https://github.com/iossifovlab/gain/issues/585) (the epic this record belongs to), [gain#586](https://github.com/iossifovlab/gain/issues/586) (this record), [gain#553](https://github.com/iossifovlab/gain/issues/553) (the `open()`-time half), [gain#587](https://github.com/iossifovlab/gain/issues/587) / [gain#588](https://github.com/iossifovlab/gain/issues/588) / [gain#589](https://github.com/iossifovlab/gain/issues/589) / [gain#590](https://github.com/iossifovlab/gain/issues/590) / [gain#591](https://github.com/iossifovlab/gain/issues/591) / [gain#592](https://github.com/iossifovlab/gain/issues/592) (the implementation)
 - **Supersedes:** the approach in [gain#521](https://github.com/iossifovlab/gain/pull/521), which is not being landed
 
-> **Implementation status.** The decision is accepted; the code is not yet
-> written. This record is deliberately first, so that the seven changes carrying
-> it out can cite one decision instead of re-arguing it in seven review threads.
+> **Implementation status.** Carried out. This record was deliberately written
+> first, so that the changes carrying it out could cite one decision instead of
+> re-arguing it in seven review threads. gain#592 landed the last of them, with
+> gain#553 — the `open()`-time config refusal of decision 5 — landing
+> separately.
 
 ## Context
 
@@ -80,6 +82,23 @@ score *value*, which is why neither is named for one.
 
 **4. Each score kind states its own rule** in its own body. `RECORD_ORDERING` and
 the `RecordOrdering` enum are removed.
+
+Neither validator has a base-class default. A kind that inherited one would be
+validated by a rule nobody chose for it, which is the failure this record exists
+to undo — so `GenomicScore` declares both `@abstractmethod` over a
+`NotImplementedError` body, and a new kind cannot be scanned without stating
+what its records may look like.
+
+The enforcement is at *call* time rather than at construction, which is worth
+naming because it is the weaker of the two options. Making `GenomicScore` a real
+`ABC` was rejected: nothing in its MRO
+(`ScoreResource` → `ResourceConfigValidationMixin` → `Generic` → `object`) is an
+`ABC` today, so introducing `ABCMeta` would retroactively enforce the abstract
+`get_schema` that `ResourceConfigValidationMixin` already declares — a blast
+radius across every score kind and every third-party subclass, for a stricter
+failure time this epic has no need of. The chosen shape is also the one already
+used in that MRO: `@abstractmethod` paired with a raising body, where the body
+is what enforces.
 
 **5. Rules are split by detectability.** A *config* error — a tabix table whose
 index and `pos_end` disagree about which column ends a record — is refused when
@@ -157,6 +176,21 @@ both read paths, for the regions that were scanned.
   decision.
 - **Anything at all about a resource that was never repaired.** Which is the cost
   below.
+
+**On the vectorized path, the backwards-record rule is a rule no resource can
+break.** Only tabix- and bigWig-backed tables are ever bulk-eligible; tabix
+refuses to index a file whose positions decrease
+(`[E::hts_idx_push] Unsorted positions on sequence`), and a bigWig's intervals
+are sorted by its format. So `AlleleScore.validate_record_arrays` and
+`FragmentScore.validate_record_arrays` cannot fire on any resource that reaches
+them, and their tests reach them by substituting the backend. They are written
+anyway, because the alternative is a kind that states no rule on one of its two
+paths, and because "the backend happens to prevent it" is a property of today's
+backends rather than of the kind. What #591 genuinely changed on that path is
+the *position* rule: it moved from clipped spans to raw ones, and from the kept
+records to all of them, which is a verdict that really did differ between the
+two paths. Do not restate this as "the bulk scan used to certify backwards
+allele records" — it could not read one.
 
 ## Consequences
 

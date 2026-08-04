@@ -159,6 +159,12 @@ moved each kind's record semantics onto the score class as two facts, and made
 | `RECORD_ORDERING` | `DISJOINT` — two records touching is a data error | `SHARED` | `SHARED` |
 | `RECORD_WEIGHT_IS_SPAN` | `True` — one count per covered base pair | `False` | `False` |
 
+> **Superseded in part by [ADR 0008](0008-scan-owns-validation.md).** `RECORD_ORDERING`
+> no longer exists: its two readers turned out to enforce different subsets of the
+> rule, which is the drift this section hoped it would prevent. Each kind now states
+> its ordering rule in its own `validate_records` / `validate_record_arrays` body.
+> `RECORD_WEIGHT_IS_SPAN` is unchanged and still read by both paths.
+
 A third fact was drafted and then dropped. `FragmentScoreImplementation` also
 overrode the per-record min/max add to accrue a **record count**, which the bulk
 path returned as 0 — so the first draft declared `RECORDS_ARE_COUNTED` to make
