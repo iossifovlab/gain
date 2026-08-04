@@ -12,7 +12,9 @@ import {
   TemplateRef,
   ViewChild,
 } from '@angular/core';
-import { filter, map, Observable, of, startWith, Subscription, switchMap, take, tap } from 'rxjs';
+import {
+  debounceTime, filter, map, Observable, of, startWith, Subject, Subscription, switchMap, take, tap
+} from 'rxjs';
 import { JobsService } from '../job-creation/jobs.service';
 import { Pipeline } from '../job-creation/pipelines';
 import { FormControl, FormsModule, ReactiveFormsModule } from '@angular/forms';
@@ -32,6 +34,20 @@ import { MatTooltip } from '@angular/material/tooltip';
 import { OverlayModule } from '@angular/cdk/overlay';
 import { AnnotationPipelineStateService } from './annotation-pipeline-state.service';
 import { ViewportService } from '../viewport.service';
+
+/**
+ * How long the editor waits after the last keystroke before validating.
+ *
+ * The editor used to POST /api/pipelines/validate on every ngModelChange,
+ * i.e. once per character typed (iossifovlab/gain#635). That floods an
+ * anonymous endpoint and, more to the point, makes it impossible to put a
+ * rate limit on it at any value a real user would not trip.
+ *
+ * 400ms is below the threshold where validation feedback stops feeling
+ * immediate, and it bounds the request rate a human can produce to well
+ * under the endpoint's budget.
+ */
+export const VALIDATE_DEBOUNCE_MS = 400;
 
 @Component({
   selector: 'app-annotation-pipeline',
@@ -72,6 +88,11 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   public showMobileActions = false;
   public socketNotificationSubscription: Subscription = new Subscription();
   public pipelineValidationSubscription: Subscription = new Subscription();
+  private readonly configChanged = new Subject<void>();
+  private readonly configChangedSubscription: Subscription =
+    this.configChanged.pipe(
+      debounceTime(VALIDATE_DEBOUNCE_MS),
+    ).subscribe(() => this.isConfigValid());
   private reconnectionSubscription: Subscription = new Subscription();
   public pipelineInfo: PipelineInfo;
   public disableActions: boolean;
@@ -359,6 +380,17 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
 
   public resetState(): void {
     this.onPipelineClick(this.pipelines[0]);
+  }
+
+  /**
+   * Called by the editor on every change; validates once the typing settles.
+   *
+   * Kept separate from isConfigValid so that the callers who need to
+   * validate *now* -- loading a pipeline, switching pipelines -- are not
+   * delayed by a debounce meant for keystrokes.
+   */
+  public onConfigChanged(): void {
+    this.configChanged.next();
   }
 
   public isConfigValid(): void {
@@ -749,6 +781,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     }
     this.socketNotificationSubscription.unsubscribe();
     this.pipelineValidationSubscription.unsubscribe();
+    this.configChangedSubscription.unsubscribe();
     this.reconnectionSubscription.unsubscribe();
   }
 

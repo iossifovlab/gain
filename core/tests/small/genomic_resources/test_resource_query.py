@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pytest
 from gain.genomic_resources.resource_query import (
+    MAX_RESOURCE_QUERY_LENGTH,
     ResourceQuery,
     ResourceQueryParseError,
 )
@@ -36,6 +37,24 @@ def test_infix_star_matches() -> None:
 def test_an_unparsable_query_is_rejected() -> None:
     with pytest.raises(ResourceQueryParseError):
         ResourceQuery.parse('hg38/scores/*[unclosed="x"')
+
+
+def test_an_overlong_query_is_refused_before_the_grammar_runs() -> None:
+    """The grammar is ambiguous, so Earley costs ~O(n^3) in the query length.
+
+    A caller handing untrusted text to the parser must not be able to buy
+    minutes of CPU with a few kilobytes, so the length bound lives here --
+    on the parser -- rather than on any one of its callers.
+    """
+    clauses = " and ".join(['a="b"'] * 1000)
+    query = f"scores/*[{clauses}]"
+
+    with pytest.raises(ResourceQueryParseError) as excinfo:
+        ResourceQuery.parse(query)
+
+    message = str(excinfo.value)
+    assert str(len(query)) in message
+    assert str(MAX_RESOURCE_QUERY_LENGTH) in message
 
 
 @pytest.mark.parametrize(

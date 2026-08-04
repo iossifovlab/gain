@@ -87,7 +87,7 @@
       [options]="yamlEditorOptions"
       (onInit)="onEditorInit($event)"
       [(ngModel)]="currentPipelineText"
-      (ngModelChange)="isConfigValid()"></ngx-monaco-editor>
+      (ngModelChange)="onConfigChanged()"></ngx-monaco-editor>
     <div id="status-bar">
       <span class="status-item">
         <span class="material-symbols-outlined">menu</span>{{ pipelineInfo?.annotatorsCount || '0' }} annotators</span

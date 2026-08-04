@@ -70,6 +70,28 @@ RESOURCE_QUERY_GRAMMAR = """
 """
 
 
+# The longest query the parser will accept. The grammar above is ambiguous
+# -- `and_` recurses through `?operation` -- so Earley costs roughly O(n^3)
+# in the length of the query. Measured: 25 clauses (255 B) parse in 0.03s,
+# 50 (505 B) in 0.16s, 100 (1005 B) in 1.04s, and the curve keeps its shape,
+# so ~1000 clauses (10 KB, well inside a default HTTP body) is on the order
+# of 900s of CPU for one call.
+#
+# The bound lives on the parser rather than on any one caller because the
+# callers are the whole surface: the annotation config's wildcard
+# expansion, the repository search, the group repository, and the REST
+# search endpoint. Bounding one of them (iossifovlab/gain#443 bounded the
+# endpoint) leaves the parser reachable through the rest -- which is what
+# iossifovlab/gain#635 reported, via an anonymous config-validation POST.
+#
+# Note this is a bound on the *input*, not the policy-about-results this
+# module's docstring disclaims: it caps what the caller may ask, not what
+# the answer may contain. 256 characters is an order of magnitude more than
+# a real query -- `hg38/scores/*[phenotype="autism" and "UCSC" in
+# provenance]` is 57 -- and parses in ~20ms at its worst.
+MAX_RESOURCE_QUERY_LENGTH = 256
+
+
 @functools.cache
 def _get_parser() -> Lark:
     """Build the grammar once, on first use.
@@ -163,8 +185,17 @@ class ResourceQuery:
     def parse(query: str) -> ResourceQuery:
         """Parse ``query`` into a matcher.
 
-        Raises ``ResourceQueryParseError`` if the query is not well-formed.
+        Raises ``ResourceQueryParseError`` if the query is not well-formed,
+        or if it is longer than ``MAX_RESOURCE_QUERY_LENGTH``.
         """
+        if len(query) > MAX_RESOURCE_QUERY_LENGTH:
+            # Refused on the length alone, before the grammar sees it --
+            # the whole point is not to pay the parse.
+            raise ResourceQueryParseError(
+                f"Resource query is too long: {len(query)} characters, "
+                f"at most {MAX_RESOURCE_QUERY_LENGTH} are accepted",
+            )
+
         try:
             tree = _get_parser().parse(query)
         except LarkError as err:

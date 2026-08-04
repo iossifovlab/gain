@@ -396,6 +396,24 @@ def test_wildcard_label_in_matches_nothing(
         """, grr=labeled_grr)
 
 
+def test_an_overlong_wildcard_is_refused_as_a_configuration_error(
+    labeled_grr: GenomicResourceProtocolRepo,
+) -> None:
+    """The config path must inherit the parser's length bound.
+
+    This is the path an anonymous ``/api/pipelines/validate`` POST travels
+    (iossifovlab/gain#635), so an unbounded query here is minutes of CPU
+    per request. The refusal must arrive as a configuration error, like
+    every other bad wildcard, rather than as a raw parse error.
+    """
+    clauses = " and ".join(['a="b"'] * 1000)
+
+    with pytest.raises(AnnotationConfigurationError, match="too long"):
+        AnnotationConfigParser.parse_str(f"""
+            - position_score: '*[{clauses}]'
+        """, grr=labeled_grr)
+
+
 def test_wildcard_label_in_single_quotes(
     labeled_grr: GenomicResourceProtocolRepo,
 ) -> None:

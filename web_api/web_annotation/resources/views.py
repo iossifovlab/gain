@@ -3,6 +3,9 @@ from itertools import islice
 from typing import ClassVar
 
 from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.resource_query import (
+    MAX_RESOURCE_QUERY_LENGTH as MAX_RESOURCE_QUERY_LENGTH_CORE,
+)
 from gain.genomic_resources.resource_query import ResourceQueryParseError
 from gain.genomic_resources.resource_types import equivalent_resource_types
 from rest_framework import status
@@ -94,7 +97,16 @@ class SearchResources(ResourcesAPIView):
     # 256 characters is an order of magnitude more than a real query --
     # `hg38/scores/*[phenotype="autism" and "UCSC" in provenance]` is 57 --
     # and parses in ~20ms at its worst.
-    MAX_RESOURCE_QUERY_LENGTH: ClassVar[int] = 256
+    #
+    # This check is no longer the only thing standing between an untrusted
+    # query and the parser: `ResourceQuery.parse` enforces the same bound
+    # itself as of iossifovlab/gain#635, because bounding one endpoint left
+    # the parser reachable through every other caller. It is kept because
+    # the two refusals are not interchangeable -- this one answers a 400
+    # naming the parameter, which is the useful answer for a caller who got
+    # a query wrong, rather than surfacing a parse error from underneath.
+    # The value is deliberately the parser's own bound, not a stricter one.
+    MAX_RESOURCE_QUERY_LENGTH: ClassVar[int] = MAX_RESOURCE_QUERY_LENGTH_CORE
 
     def get(self, request: Request) -> Response:
         """Search for resources based on query parameters."""
