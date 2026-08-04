@@ -55,7 +55,7 @@ from gain.genomic_resources.repository import (
     ReadWriteRepositoryProtocol,
     ResourceFileState,
     ResourceScan,
-    escape_control_characters,
+    escape_unsafe_characters,
     is_generated_info_page,
     is_gr_id_token,
     parse_gr_id_version_token,
@@ -1018,7 +1018,7 @@ class FsspecReadOnlyProtocol(
                 logger.warning(
                     "repo %s: dropping resource <%s> from %s -- "
                     "its id %s",
-                    self.proto_id, escape_control_characters(entry["id"]),
+                    self.proto_id, escape_unsafe_characters(entry["id"]),
                     GR_CONTENTS_FILE_NAME, reason)
                 continue
             version = tuple(map(int, entry["version"].split(".")))

@@ -48,6 +48,7 @@ from gain.genomic_resources.repository import (
     ManifestEntry,
     ReadOnlyRepositoryProtocol,
     ReadWriteRepositoryProtocol,
+    escape_unsafe_characters,
     parse_gr_id_version_token,
     version_tuple_to_string,
 )
@@ -440,7 +441,8 @@ def collect_dvc_entries(
         except (OSError, ValueError):
             logger.warning(
                 "unable to read the '.dvc' file <%s> of <%s>; ignoring it",
-                entry.name, res.resource_id)
+                escape_unsafe_characters(entry.name),
+                escape_unsafe_characters(res.resource_id))
             continue
 
         out = parse_dvc_pointer_out(content, basename)
@@ -448,7 +450,9 @@ def collect_dvc_entries(
             logger.warning(
                 "the '.dvc' file <%s> of <%s> is not a dvc pointer for <%s>; "
                 "ignoring it",
-                entry.name, res.resource_id, filename)
+                escape_unsafe_characters(entry.name),
+                escape_unsafe_characters(res.resource_id),
+                escape_unsafe_characters(filename))
             continue
 
         if is_dvc_directory_out(out):
@@ -462,7 +466,9 @@ def collect_dvc_entries(
             logger.warning(
                 "the '.dvc' file <%s> of <%s> declares no usable md5 sum and "
                 "size for <%s>; ignoring it",
-                entry.name, res.resource_id, filename)
+                escape_unsafe_characters(entry.name),
+                escape_unsafe_characters(res.resource_id),
+                escape_unsafe_characters(filename))
             continue
 
         if filename not in manifest:

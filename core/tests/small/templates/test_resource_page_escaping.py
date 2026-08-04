@@ -139,9 +139,12 @@ def _build_position_score(
 
     Hand-rolled rather than built with ``PositionScoreBuilder``: the
     builder interpolates a score id into the config unquoted, so it
-    cannot express an id carrying a tab -- which is exactly the id this
-    test needs, the genomic score page passing its ids through
-    ``replace(" ", "_")`` and so surviving a space.
+    cannot express an id carrying the separators these tests need -- the
+    genomic score page passes its ids through ``replace(" ", "_")`` and so
+    survives a plain space.
+
+    ``score_id`` is spliced into a SINGLE-quoted YAML scalar, so it may
+    carry a double quote -- the vector for a quoted html attribute.
     """
     setup_directories(tmp_path, {"score": {
         "genomic_resource.yaml": textwrap.dedent(f"""
@@ -150,7 +153,7 @@ def _build_position_score(
               filename: data.txt
               zero_based: false
             scores:
-              - id: "{score_id}"
+              - id: '{score_id}'
                 type: float
                 name: sc
         """),
@@ -168,17 +171,45 @@ def _build_position_score(
 def test_genomic_score_id_cannot_add_an_event_handler(
     tmp_path: pathlib.Path,
 ) -> None:
-    """A tab in a genomic score id lands no handler on the page.
+    """A quote in a genomic score id lands no handler on the page.
 
-    The page underscores the spaces out of a score id before using it,
-    so a space-carrying id is already inert here -- a tab is not, and
-    ends an unquoted attribute just as well.
+    The page underscores the spaces out of a score id before using it, so
+    a space-carrying id is already inert here. This used to use a tab,
+    which ends an unquoted attribute just as well -- but a score id
+    becomes a statistics FILE NAME, and a control character in one is now
+    refused outright before any page is rendered (gain#642, pinned by
+    :func:`test_a_control_character_score_id_is_refused_before_rendering`).
+    A double quote is the vector that remains: it is not a control
+    character, so it reaches the template, and it is what would break out
+    of the quoted attribute the page actually emits.
     """
-    score_id = f"x\t{PAYLOAD}"
-    resource = _build_position_score(tmp_path, f"x\\t{PAYLOAD}")
+    score_id = f'x"{PAYLOAD}'
+    resource = _build_position_score(tmp_path, score_id)
     GenomicScoreImplementation._do_noregion_histograms(resource)
 
     page = GenomicScoreImplementation(resource).get_info()
 
     assert event_handler_attributes(page) == []
-    assert f'title="{score_id}"' in page
+    # The id survives as attribute CONTENT, with the quote escaped rather
+    # than closing the attribute early.
+    assert "&#34;" in page
+    assert f'title="{score_id}"' not in page
+
+
+def test_a_control_character_score_id_is_refused_before_rendering(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The tab vector is now cut off a layer earlier than the template.
+
+    A score id is interpolated into the name of the statistics file the
+    histogram is written to, so a tab in it produces a resource file name
+    carrying a control character -- which the containment guard refuses
+    (gain#642). Pinned here so that narrowing the guard cannot silently
+    hand the tab vector back to the template.
+    """
+    resource = _build_position_score(tmp_path, f"x\t{PAYLOAD}")
+
+    with pytest.raises(ValueError) as excinfo:
+        GenomicScoreImplementation._do_noregion_histograms(resource)
+
+    assert "control or line-separator character" in str(excinfo.value)
