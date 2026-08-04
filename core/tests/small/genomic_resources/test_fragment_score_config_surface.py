@@ -16,6 +16,7 @@ dropping them early.  Each legacy spelling must also ANNOUNCE itself: every
 surface below is pinned twice, once for what it still does and once for the
 warning it now emits.
 """
+import collections
 import importlib
 import importlib.util
 import logging
@@ -24,10 +25,15 @@ import textwrap
 import tomllib
 
 import pytest
+import pytest_mock
 from gain.annotation.annotatable import Region
 from gain.annotation.annotation_config import AnnotationConfigParser
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
-from gain.genomic_resources import get_resource_implementation_builder
+from gain.genomic_resources import (
+    genomic_scores,
+    get_resource_implementation_builder,
+    resource_types,
+)
 from gain.genomic_resources.cli import _create_contents_db, cli_manage
 from gain.genomic_resources.genomic_scores import (
     FragmentScore,
@@ -46,6 +52,7 @@ from gain.genomic_resources.repository_factory import (
 from gain.genomic_resources.resource_types import (
     deprecated_spelling_message,
     equivalent_resource_types,
+    reset_deprecation_notices,
 )
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
@@ -192,6 +199,7 @@ def test_legacy_resource_type_warns_once_naming_the_resource(
 def test_repository_sweep_warns_once_per_legacy_resource(
     tmp_path: pathlib.Path,
     caplog: pytest.LogCaptureFixture,
+    mocker: pytest_mock.MockerFixture,
 ) -> None:
     """Every offender is named exactly once, and only the offenders.
 
@@ -228,20 +236,43 @@ def test_repository_sweep_warns_once_per_legacy_resource(
         .build_repo(tmp_path)
     )
 
-    task_count = 0
+    # Counts how often the SEAM fires, not how many tasks ran.  The
+    # property this test rests on is that a legacy resource is recognised
+    # many times per sweep and announced once; a task count is only a proxy
+    # for that, and a proxy that goes quiet the moment score construction
+    # is memoised -- at which point the memo below could be deleted
+    # entirely and every assertion here would still pass.
+    recognitions: collections.Counter[str] = collections.Counter()
+    announce = genomic_scores.warn_deprecated_spelling
+
+    def counting_announce(*args: object, **kwargs: object) -> None:
+        recognitions[str(kwargs["found_in"])] += 1
+        announce(*args, **kwargs)  # type: ignore[arg-type]
+
+    mocker.patch.object(
+        genomic_scores, "warn_deprecated_spelling", counting_announce)
+
     with caplog.at_level(logging.WARNING):
         for resource in grr.get_all_resources():
             impl = build_resource_implementation(resource)
             tasks = impl.create_statistics_build_tasks(region_size=25)
-            task_count += len(tasks)
             graph = TaskGraph()
             graph.add_tasks(tasks)
             task_graph_run(graph, SequentialExecutor())
 
-    # Each task re-opens its resource, so a per-open warning would show up
-    # once per task.  Without several tasks per resource this test could
-    # not tell the two volumes apart.
-    assert task_count > 3
+    # Each legacy resource is recognised repeatedly -- once per statistics
+    # task that rebuilds its score -- so the single line each gets below is
+    # the memo doing its job, not an accident of the sweep being short.
+    assert all(
+        count > 1
+        for count in (
+            recognitions[f"Resource '{resource_id}'"]
+            for resource_id in ("old_one", "old_two")
+        )
+    ), dict(recognitions)
+
+    # ... and the preferred-typed resource is never recognised at all.
+    assert recognitions["Resource 'current'"] == 0
 
     # Sorted, not compared in order: `get_all_resources` walks the
     # repository in filesystem order, which is not the order they were
@@ -374,11 +405,53 @@ def test_legacy_annotator_name_warns_once_naming_its_replacement(
     with caplog.at_level(logging.WARNING):
         load_pipeline_from_yaml(f"- {annotator_name}: fragments", modern_grr)
 
-    (message,) = deprecation_warnings(
-        caplog, "annotator name", annotator_name)
-    assert "fragments" in message
-    assert f"write '{preferred_name}' instead" in message
-    assert REMOVAL_RELEASE in message
+    # Compared whole rather than by `in` checks: the resource id alone
+    # satisfies every substring assertion this could make, so dropping
+    # `annotator_id` from the message -- the one thing that says WHICH
+    # stanza to edit -- would not fail a test that only looked for
+    # "fragments".
+    assert deprecation_warnings(caplog, "annotator name", annotator_name) == [
+        deprecated_spelling_message(
+            "annotator name", annotator_name, preferred_name,
+            found_in="Annotator A0 on resource 'fragments'"),
+    ]
+
+
+def test_each_annotator_on_one_resource_is_named_apart(
+    modern_grr: GenomicResourceRepo,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Two legacy stanzas over one resource are two offenders.
+
+    The resource id cannot discriminate them -- it is the same resource --
+    so a message built without the annotator id would collapse both into
+    one line under the announce-once rule, and the reader of a 30-annotator
+    pipeline would be told to edit "fragments" with no way to find which
+    stanza still says it.
+    """
+    with caplog.at_level(logging.WARNING):
+        load_pipeline_from_yaml(
+            textwrap.dedent("""
+                - cnv_collection:
+                    resource_id: fragments
+                    attributes:
+                    - name: count_one
+                      source: count
+                - cnv_collection:
+                    resource_id: fragments
+                    attributes:
+                    - name: count_two
+                      source: count
+            """),
+            modern_grr)
+
+    assert deprecation_warnings(
+        caplog, "annotator name", "cnv_collection") == [
+        deprecated_spelling_message(
+            "annotator name", "cnv_collection", "fragment_score",
+            found_in=f"Annotator {annotator_id} on resource 'fragments'")
+        for annotator_id in ("A0", "A1")
+    ]
 
 
 @pytest.mark.parametrize("legacy_name,preferred_name", [
@@ -405,8 +478,25 @@ def test_legacy_annotator_name_annotates_identically_to_its_replacement(
     assert annotate(legacy_name) == annotate(preferred_name)
 
 
+def test_building_and_opening_a_legacy_pipeline_warns_once_each(
+    legacy_grr: GenomicResourceRepo,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Both offences in one pipeline are announced, once apiece."""
+    with caplog.at_level(logging.WARNING):
+        pipeline = load_pipeline_from_yaml(
+            "- cnv_collection: fragments", legacy_grr)
+        with pipeline.open():
+            pass
+
+    assert len(deprecation_warnings(
+        caplog, "annotator name", "cnv_collection")) == 1
+    assert len(deprecation_warnings(
+        caplog, "resource type", LEGACY_RESOURCE_TYPE)) == 1
+
+
 @pytest.mark.parametrize("record_count", [1, 25])
-def test_warning_count_does_not_grow_with_annotated_records(
+def test_annotating_a_record_never_announces(
     record_count: int,
     legacy_grr: GenomicResourceRepo,
     caplog: pytest.LogCaptureFixture,
@@ -415,18 +505,33 @@ def test_warning_count_does_not_grow_with_annotated_records(
 
     A per-record warning would out-volume the annotation output itself,
     which is the noise argument that kept this vocabulary silent until now.
+
+    Asserting SILENCE across the record loop rather than a stable total
+    across two record counts, because the announce-once memo would flatten
+    a per-record warning to one line either way: every record renders a
+    byte-identical message, so a total of 1 is what a seam in
+    ``_do_annotate`` produces too, and a test reading only the total passes
+    whether the recognition sits in the constructor or in the record path.
+    Forgetting what build and open announced makes the record loop the only
+    thing that can put a message in ``caplog`` -- so a seam that moved into
+    the loop shows up here as the first record announcing, no matter how
+    the memo would have collapsed the rest.
     """
-    with caplog.at_level(logging.WARNING):
-        pipeline = load_pipeline_from_yaml(
-            "- cnv_collection: fragments", legacy_grr)
-        with pipeline.open() as open_pipeline:
+    pipeline = load_pipeline_from_yaml(
+        "- cnv_collection: fragments", legacy_grr)
+
+    with pipeline.open() as open_pipeline:
+        # Both halves of "what came before does not count": `caplog`
+        # collects for the whole test regardless of where `at_level` is
+        # entered, and the memo would swallow a repeat of anything build
+        # and open already said.
+        caplog.clear()
+        reset_deprecation_notices()
+        with caplog.at_level(logging.WARNING):
             for _ in range(record_count):
                 open_pipeline.annotate(Region("1", 15, 60))
 
-    assert len(deprecation_warnings(
-        caplog, "annotator name", "cnv_collection")) == 1
-    assert len(deprecation_warnings(
-        caplog, "resource type", LEGACY_RESOURCE_TYPE)) == 1
+    assert all_deprecation_warnings(caplog) == []
 
 
 def test_preferred_spellings_emit_no_deprecation_warning(
@@ -618,3 +723,66 @@ def test_old_python_names_are_gone(module_name: str, symbol: str) -> None:
 def test_old_annotator_module_is_gone() -> None:
     assert importlib.util.find_spec(
         "gain.annotation.cnv_collection_annotator") is None
+
+
+def test_the_announcement_memory_is_bounded(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """What has been announced is remembered, but not without limit.
+
+    ``found_in`` is caller-supplied -- a resource id out of a repository,
+    or an annotator id derived from a posted pipeline -- and the memo is a
+    module global in a process that may serve requests for weeks.  Bounding
+    it costs a duplicate line only past the cap, which no real repository
+    reaches; leaving it unbounded would let whatever the process was asked
+    to parse accumulate in it forever.
+    """
+    overflow = 16
+
+    with caplog.at_level(logging.WARNING):
+        for offender in range(resource_types._ANNOUNCEMENT_MEMORY + overflow):
+            resource_types.warn_deprecated_spelling(
+                logging.getLogger(__name__),
+                "resource type", LEGACY_RESOURCE_TYPE,
+                PREFERRED_RESOURCE_TYPE,
+                found_in=f"Resource 'fragments{offender}'")
+
+    assert len(all_deprecation_warnings(caplog)) == (
+        resource_types._ANNOUNCEMENT_MEMORY + overflow)
+    assert (
+        len(resource_types._ANNOUNCED_DEPRECATIONS)
+        == resource_types._ANNOUNCEMENT_MEMORY)
+
+
+def test_an_evicted_offender_is_announced_again(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Eviction is what bounds the memo -- not a wholesale clear.
+
+    Pins the direction of the eviction too: the FIRST offender announced is
+    the first forgotten, so the memo keeps what it most recently said.
+    """
+    def announce(offender: str) -> None:
+        resource_types.warn_deprecated_spelling(
+            logging.getLogger(__name__),
+            "resource type", LEGACY_RESOURCE_TYPE, PREFERRED_RESOURCE_TYPE,
+            found_in=f"Resource '{offender}'")
+
+    announce("first")
+    for offender in range(resource_types._ANNOUNCEMENT_MEMORY):
+        announce(f"filler{offender}")
+
+    # "first" has been pushed out by now; the filler that arrived straight
+    # after it has not.  Probed in that order on purpose -- announcing
+    # "first" is itself an insertion, which evicts whatever is then oldest,
+    # so asking about the survivor afterwards would evict it first and
+    # report every entry as forgotten.
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        announce("filler0")
+        announce("first")
+
+    assert [
+        message.split(" uses ")[0] for message in
+        all_deprecation_warnings(caplog)
+    ] == ["Resource 'first'"]

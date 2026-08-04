@@ -73,7 +73,25 @@ def deprecated_spelling_message(
 #: Keyed by the message itself, so two announcements collapse exactly when
 #: they would have printed the same line -- a different resource id or a
 #: different surface is a different offender and is still announced.
-_ANNOUNCED_DEPRECATIONS: set[str] = set()
+#:
+#: A dict rather than a set because insertion order is what makes the cap
+#: below evictable; the values carry nothing.
+_ANNOUNCED_DEPRECATIONS: dict[str, None] = {}
+
+#: How many distinct announcements to remember before evicting the oldest.
+#:
+#: The set is process-wide and never goes out of scope, and what lands in it
+#: is caller-supplied: ``found_in`` carries a resource id read verbatim from
+#: a repository, or an annotator id derived from a posted pipeline.  A
+#: long-lived web worker builds pipelines from request bodies, so an
+#: unbounded set would let a caller ratchet the process's memory by naming
+#: many distinct offenders once each -- retained forever, because nothing
+#: here can know the pipeline was rejected or evicted.
+#:
+#: Chosen well above any real repository's count of legacy-typed resources,
+#: so eviction never costs a duplicate line in the case this exists for.
+#: Past the cap the notice is still correct, merely repeatable.
+_ANNOUNCEMENT_MEMORY = 4096
 
 
 def warn_deprecated_spelling(
@@ -97,6 +115,11 @@ def warn_deprecated_spelling(
     run announces once per worker, which is bounded by the worker count
     rather than by the task count.
 
+    What is remembered is capped at ``_ANNOUNCEMENT_MEMORY`` distinct
+    messages, oldest evicted first: ``found_in`` is caller-supplied, so an
+    uncapped memory would grow with what a long-lived process has been
+    asked to parse rather than with the repository it serves.
+
     Tests reset the set through :func:`reset_deprecation_notices`, so an
     assertion never depends on what ran before it.
     """
@@ -104,7 +127,12 @@ def warn_deprecated_spelling(
         surface, legacy, preferred, found_in=found_in)
     if message in _ANNOUNCED_DEPRECATIONS:
         return
-    _ANNOUNCED_DEPRECATIONS.add(message)
+    if len(_ANNOUNCED_DEPRECATIONS) >= _ANNOUNCEMENT_MEMORY:
+        # Oldest first: `dict` preserves insertion order, and the entry
+        # least recently *announced* is the one whose offender the reader
+        # is least likely to still be scrolling past.
+        del _ANNOUNCED_DEPRECATIONS[next(iter(_ANNOUNCED_DEPRECATIONS))]
+    _ANNOUNCED_DEPRECATIONS[message] = None
     logger.warning("%s", message)
 
 
