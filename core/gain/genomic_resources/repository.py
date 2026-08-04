@@ -70,7 +70,7 @@ import yaml
 
 from gain import logging
 from gain.genomic_resources.dvc import DvcContentDrift, DvcContentDriftError
-from gain.genomic_resources.resource_query import ResourceQuery
+from gain.genomic_resources.resource_query import LabelClause, ResourceQuery
 from gain.genomic_resources.resource_types import equivalent_resource_types
 
 logger = logging.getLogger(__name__)
@@ -1045,10 +1045,6 @@ class Mode(enum.Enum):
 _MATCH_ID_FUNCTION = "gain_query_match_id"
 _MATCH_LABEL_FUNCTION_PREFIX = "gain_query_match_label_"
 
-# A condition no row satisfies. Spelled ``0`` rather than ``FALSE`` so the
-# statement does not depend on the SQLite version that added the keyword.
-_NO_ROWS_CONDITION = "0"
-
 
 def _sql_matcher(match: Callable[[str], bool]) -> Callable[..., bool]:
     """Adapt a matcher to the values an index column hands back.
@@ -1069,7 +1065,7 @@ def _sql_matcher(match: Callable[[str], bool]) -> Callable[..., bool]:
 
 def _resource_query_conditions(
     conn: apsw.Connection, query: ResourceQuery,
-) -> list[str]:
+) -> tuple[list[str], list[LabelClause]]:
     """Express ``query`` as SQL conditions over the ``contents`` table.
 
     The comparisons are not restated in SQL. Each one is registered as a
@@ -1079,6 +1075,10 @@ def _resource_query_conditions(
     a second definition, free to drift from the first. What SQL
     contributes is the push-down: these conditions conjoin with the FTS
     ``MATCH`` in one statement instead of filtering its rows afterwards.
+
+    Returns the conditions, and the clauses this index cannot answer at
+    all. The caller must apply those to the resources the statement
+    yields; leaving them out of both places would widen the search.
     """
     cursor = conn.cursor()
     # A published index is an artefact of the repository, as untrusted as
@@ -1096,19 +1096,30 @@ def _resource_query_conditions(
         _MATCH_ID_FUNCTION, _sql_matcher(query.match_id), 1,
         deterministic=True)
     conditions = [f"{_MATCH_ID_FUNCTION}(id)"]
+    deferred: list[LabelClause] = []
 
     for position, clause in enumerate(query.label_clauses):
         if clause.key not in label_columns:
-            # The index has no label column of this name -- no resource
-            # carries the key, or the name belongs to a field of the
-            # resource rather than to a label. Either way every resource
-            # reads as ``""`` for it, which settles the clause for all of
-            # them at once, in whichever direction it falls. Matched by
-            # exact name on purpose: SQLite resolves a column name
-            # case-insensitively, where the Python path looks the key up
-            # in a dict.
+            # The index has no label column of this name. That is not the
+            # same as no resource carrying the key: a published index
+            # older than a label a curator added serves neither the column
+            # nor any hint that it is missing, while the resource serves
+            # the label from its ``meta.labels`` regardless (gain#634).
+            # So the index cannot settle a clause of this shape, and the
+            # caller re-asks it of the resources themselves.
+            #
+            # A clause that accepts an absent label needs no such care: it
+            # is a tautology, because the grammar requires at least one
+            # character in a value, so ``in`` can never accept ``""`` and
+            # the only ``=`` values ``fnmatch`` accepts ``""`` for are
+            # globs of ``*`` alone -- which accept every string. Dropping
+            # it is sound however stale the index is.
+            #
+            # Matched by exact name on purpose: SQLite resolves a column
+            # name case-insensitively, where the Python path looks the key
+            # up in a dict.
             if not clause.matches_an_absent_label():
-                return [_NO_ROWS_CONDITION]
+                deferred.append(clause)
             continue
         function_name = f"{_MATCH_LABEL_FUNCTION_PREFIX}{position}"
         conn.createscalarfunction(
@@ -1122,7 +1133,7 @@ def _resource_query_conditions(
         # published.
         conditions.append(f'{function_name}("{clause.key}")')
 
-    return conditions
+    return conditions, deferred
 
 
 class ReadOnlyRepositoryProtocol(abc.ABC):
@@ -1311,9 +1322,11 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
                 placeholders = ", ".join("?" * len(accepted))
                 conditions.append(f"type IN ({placeholders})")
                 params.extend(accepted)
+            deferred: list[LabelClause] = []
             if parsed_query is not None:
-                conditions.extend(
-                    _resource_query_conditions(conn, parsed_query))
+                query_conditions, deferred = _resource_query_conditions(
+                    conn, parsed_query)
+                conditions.extend(query_conditions)
             if conditions:
                 query += " WHERE "
                 query += " AND ".join(conditions)
@@ -1332,6 +1345,13 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
                         "repo %s: index names resource <%s>, which the "
                         "repository contents do not; skipping it",
                         self.proto_id, row[0])
+                    continue
+                # Re-asked of the resource rather than of the index, which
+                # published no column able to answer them.
+                if not all(
+                    clause.matches_in(resource.get_labels())
+                    for clause in deferred
+                ):
                     continue
                 yield resource
 

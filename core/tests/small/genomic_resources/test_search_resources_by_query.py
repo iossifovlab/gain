@@ -92,6 +92,73 @@ def labelled_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
     return repo
 
 
+@pytest.fixture
+def index_predating_a_label(
+    tmp_path: pathlib.Path,
+) -> GenomicResourceProtocolRepo:
+    """A repository whose published index predates one of its labels.
+
+    The index is built first and ``newlabel`` added afterwards with no
+    rebuild -- the shape a GRR has between a curator's edit and the next
+    ``grr_manage`` run, and the one case ``labelled_grr`` cannot express:
+    an index built from the very resources it is compared against always
+    agrees with them.
+
+    The repository is rebuilt rather than edited in place so the label is
+    added in the same vocabulary the rest of the file builds resources in;
+    only ``.CONTENTS.sqlite3.gz`` is left behind, which is the point.
+    """
+    (
+        a_grr()
+        .with_resource(
+            "scores/res_a", a_position_score().with_labels(domain="alpha"))
+        .with_resource(
+            "scores/res_b", a_position_score().with_labels(domain="beta"))
+        .build_repo(tmp_path)
+    )
+    _create_contents_db(build_filesystem_test_protocol(tmp_path))
+    return (
+        a_grr()
+        .with_resource(
+            "scores/res_a",
+            a_position_score().with_labels(
+                domain="alpha", newlabel="fresh"))
+        .with_resource(
+            "scores/res_b", a_position_score().with_labels(domain="beta"))
+        .build_repo(tmp_path)
+    )
+
+
+def test_a_label_added_after_the_index_means_the_same_on_both_routes(
+    index_predating_a_label: GenomicResourceProtocolRepo,
+) -> None:
+    """A clause the index cannot answer must not settle the search.
+
+    The index has no column for ``newlabel``, but the resource serves the
+    label from its ``meta.labels`` either way. Settling the clause for
+    every resource at once reads "no column" as "no resource carries the
+    key", which a published index older than the label makes false --
+    and the narrower search then returns strictly fewer resources than
+    the broader one, silently (gain#634).
+    """
+    without_index = {
+        r.resource_id
+        for r in index_predating_a_label.search_resources(
+            resource_query='scores/*[newlabel="fresh"]')
+    }
+    through_index = {
+        r.resource_id
+        for r in index_predating_a_label.search_resources(
+            resource_query='scores/*[newlabel="fresh"]',
+            resource_type="position_score")
+    }
+
+    # Pinned as well as compared: the resource really does carry the label
+    # now, so this cannot pass on two routes that agree and are both empty.
+    assert without_index == {"scores/res_a"}
+    assert through_index == without_index
+
+
 # Every shape the query language can take, over labels that are present,
 # empty, absent, and unknown to the repository altogether.
 QUERY_CORPUS = [

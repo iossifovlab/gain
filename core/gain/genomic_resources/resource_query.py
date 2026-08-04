@@ -109,6 +109,23 @@ class LabelClause:
             return self.value in label
         return label == self.value or fnmatch.fnmatch(label, self.value)
 
+    def matches_in(self, labels: Mapping[str, Any]) -> bool:
+        """Check whether ``labels`` satisfies this clause.
+
+        ``meta.labels`` is a free-form YAML mapping, so a label value is
+        whatever YAML made of it -- ``perturbed: False`` is a bool and
+        ``year: 2019`` an int, both of which the production GRRs carry in
+        bulk. The query language only ever spells values as text, so a
+        value is compared in its rendered form; without that both ``in``
+        and ``=`` raise a bare ``TypeError`` out of the predicate. A label
+        the resource does not carry is matched as ``""``.
+
+        Both rules live here rather than at the call sites so that a
+        caller evaluating one clause reads a label exactly as the caller
+        evaluating all of them does.
+        """
+        return self.matches(str(labels.get(self.key, "")))
+
     def matches_an_absent_label(self) -> bool:
         """Check whether this clause holds for a label that is not there.
 
@@ -194,21 +211,17 @@ class ResourceQuery:
     def match_labels(self, labels: Mapping[str, Any]) -> bool:
         """Check whether ``labels`` satisfies every one of the query's clauses.
 
-        ``meta.labels`` is a free-form YAML mapping, so a label value is
-        whatever YAML made of it -- ``perturbed: False`` is a bool and
-        ``year: 2019`` an int, both of which the production GRRs carry in
-        bulk. The query language only ever spells values as text, so every
-        label value is compared in its rendered form; without that both
-        ``in`` and ``=`` raise a bare ``TypeError`` out of the predicate.
-
-        A label the resource does not carry is matched as ``""``. The FTS
-        index cannot represent the difference -- it stores ``""`` for every
-        label column a resource does not carry -- so treating absence as a
-        distinct case would put this matcher permanently out of step with
-        the same query evaluated in SQL.
+        A label value is compared in its rendered form and a label the
+        resource does not carry is matched as ``""`` -- see
+        :meth:`LabelClause.matches_in`, which is where both rules live.
+        The FTS index cannot represent the difference between an absent
+        label and an empty one -- it stores ``""`` for every label column a
+        resource does not carry -- so treating absence as a distinct case
+        would put this matcher permanently out of step with the same query
+        evaluated in SQL.
         """
         return all(
-            clause.matches(str(labels.get(clause.key, "")))
+            clause.matches_in(labels)
             for clause in self.label_clauses
         )
 
