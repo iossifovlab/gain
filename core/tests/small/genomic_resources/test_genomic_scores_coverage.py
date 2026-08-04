@@ -345,12 +345,8 @@ def test_allele_score_fetch_region_spanning_record() -> None:
             for r in score.fetch_records("1", 10, 20)] == [(10, "A", "G")]
 
 
-def test_allele_score_fetch_region_overlapping_positions(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Test the region read with overlapping positions and alleles."""
-    caplog.set_level(logging.DEBUG)
-
+def test_allele_score_fetch_region_overlapping_positions() -> None:
+    """Test the region read with two records at one position."""
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
             type: allele_score
@@ -375,8 +371,8 @@ def test_allele_score_fetch_region_overlapping_positions(
     score = AlleleScore(res)
     score.open()
 
-    # Two records share position 10 with different ref/alt, so both are
-    # yielded rather than one being collapsed away.
+    # Two records share position 10 -- the same ref/alt at that -- and both
+    # are yielded rather than one being collapsed away.
     result = list(score.fetch_region_values("1", 10, 11, ["freq"]))
     assert len(result) == 2
 

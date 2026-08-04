@@ -385,10 +385,16 @@ def test_the_scan_still_validates_an_allele_score(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The other kind the base validator carries until gain#589 gives it one
-    # of its own.  An allele score also still guards its READ path, so the
-    # message is what says which one fired: the base's wording is generic
-    # ("this score's records"), the read guard's names the kind.
+    # An allele score states its own rule now (gain#589), and the wording is
+    # what says the scan reached THAT body rather than the base one it used
+    # to inherit: the base's is generic ("this score's records"), an allele
+    # score's names the kind.
+    #
+    # Driven through the scan's own composition rather than by calling
+    # ``validate_records`` by hand: what this claims is that the SCAN
+    # validates a non-position kind, and calling the validator directly would
+    # hold even if ``_scan_region`` had stopped composing it.  The rule
+    # itself is driven directly, in test_genomic_scores_fetch_region.py.
     score = _allele_score_reading_backwards(tmp_path, monkeypatch)
 
     with pytest.raises(MalformedResourceError) as excinfo:
@@ -397,7 +403,7 @@ def test_the_scan_still_validates_an_allele_score(
 
     message = str(excinfo.value)
     assert "<backwards_alleles>" in message
-    assert "this score's records must not move backwards" in message
+    assert "an allele score's records must not move backwards" in message
 
 
 def test_reading_that_same_fragment_score_raises_nothing(
