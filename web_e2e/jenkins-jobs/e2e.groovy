@@ -79,6 +79,14 @@ pipelineJob('gain-web-e2e') {
                     // master — important when the pipeline
                     // definition lives on a non-master branch.
                     //
+                    // Loading the definition from a branch runs
+                    // that branch's Groovy unsandboxed on the
+                    // controller — the accepted trust model, not
+                    // an oversight. Recorded, with the condition
+                    // that would force a revisit, in
+                    // docs/adr/0009-jenkins-pipeline-definition-trust.md
+                    // (#643).
+                    //
                     // Note the COMMIT_SHA interaction: the workspace
                     // Checkout stage prefers COMMIT_SHA over
                     // BRANCH_NAME, while cpsScm here resolves

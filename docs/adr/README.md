@@ -71,6 +71,7 @@ of one decision will drift.
 | [0006](0006-resource-value-identity.md) | A genomic resource's value identity excludes its manifest and its protocol | accepted |
 | [0007](0007-resource-query-pushdown.md) | The resource query is pushed into the FTS index, and absence reads as empty | accepted |
 | [0008](0008-scan-owns-validation.md) | The statistics scan owns validation; reads never validate | accepted |
+| [0009](0009-jenkins-pipeline-definition-trust.md) | Push access to `gain` is Jenkins controller access | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > Per the convention above numbers are never reused, so both keep the number
