@@ -591,35 +591,79 @@ def test_a_position_score_repeat_names_the_resource_locus_and_rule(
     assert "at most one record per position" in message
 
 
-def test_an_allele_score_going_backwards_names_the_resource_locus_and_rule(
+def _backwards_allele_score(
     tmp_path: pathlib.Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The records are handed in rather than read: no backend can deliver a
-    # contig's records out of order -- tabix refuses to index an unsorted
-    # file and the in-memory backend sorts each contig as it loads it -- so
-    # the guard is reachable only from a backend that has yet to exist.
-    resource = _score_repo(
+) -> AlleleScore:
+    return build_allele_score_from_resource(_score_repo(
         tmp_path, "backwards",
         an_allele_score().with_data("""
             chrom  pos_begin  reference  alternative  score
             chr1   10         A          G            0.1
             chr1   20         C          T            0.2
-        """))
-    score = build_allele_score_from_resource(resource)
-    score.open()
+        """))).open()
 
-    def out_of_order(*_args: Any, **_kwargs: Any) -> Any:
-        yield ("chr1", 20, 20, "C", "T", ("chr1", "20", "C", "T", "0.2"))
-        yield ("chr1", 10, 10, "A", "G", ("chr1", "10", "A", "G", "0.1"))
 
-    monkeypatch.setattr(score, "fetch_records", out_of_order)
+# A contig's records, out of order.  Written out rather than read from the
+# resource above, which no fixture can express: tabix refuses to index a file
+# whose positions decrease, the in-memory backend sorts each contig as it
+# loads it, bigWig intervals are ordered by construction and a VCF table is
+# tabix-backed -- so a fixture authored backwards comes back sorted and every
+# assertion below would hold without the rule existing at all.
+BACKWARDS_ALLELE_RECORDS: list[Any] = [
+    ("chr1", 20, 20, "C", "T", ("chr1", "20", "C", "T", "0.2")),
+    ("chr1", 10, 10, "A", "G", ("chr1", "10", "A", "G", "0.1")),
+]
+
+
+def test_an_allele_score_going_backwards_names_the_resource_locus_and_rule(
+    tmp_path: pathlib.Path,
+) -> None:
+    score = _backwards_allele_score(tmp_path)
 
     with pytest.raises(MalformedResourceError) as excinfo:
-        list(score.fetch_region_values("chr1", 1, 30))
+        list(score.validate_records(iter(BACKWARDS_ALLELE_RECORDS)))
 
     message = str(excinfo.value)
     assert "<backwards>" in message
     assert "chr1:10" in message
     assert "chr1:20" in message
-    assert "must not move backwards" in message
+    assert "an allele score's records must not move backwards" in message
+
+
+def test_the_allele_rule_passes_the_records_sharing_one_position(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The other side of the rule, and the reason it is ``<`` rather than the
+    # ``<=`` a position score uses: an allele score puts one record per
+    # ref/alt pair at a site, so records repeating a position are what the
+    # kind IS.  Driven at the validator directly for the same reason the
+    # refusal above is -- one rule, one seam.
+    score = _backwards_allele_score(tmp_path)
+    at_one_site: list[Any] = [
+        ("chr1", 10, 10, "A", "G", ("chr1", "10", "A", "G", "0.1")),
+        ("chr1", 10, 10, "A", "C", ("chr1", "10", "A", "C", "0.2")),
+        ("chr1", 10, 10, "A", "G", ("chr1", "10", "A", "G", "0.3")),
+        ("chr1", 20, 20, "C", "T", ("chr1", "20", "C", "T", "0.4")),
+    ]
+
+    assert list(score.validate_records(iter(at_one_site))) == at_one_site
+
+
+def test_reading_an_allele_score_going_backwards_raises_nothing(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The read half of the split: a plain read checks nothing at all, so the
+    # very stream the validator above refuses comes back whole, each record
+    # as the point it sits at, in the order the table handed it over.
+    score = _backwards_allele_score(tmp_path)
+
+    def out_of_order(*_args: Any, **_kwargs: Any) -> Any:
+        return iter(BACKWARDS_ALLELE_RECORDS)
+
+    monkeypatch.setattr(score, "fetch_records", out_of_order)
+
+    assert list(score.fetch_region_values("chr1", 1, 30)) == [
+        (20, 20, [0.2]),
+        (10, 10, [0.1]),
+    ]

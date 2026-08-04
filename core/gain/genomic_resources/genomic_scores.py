@@ -1144,11 +1144,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         is also the only layer at which this and the vectorized validator
         could ever state one rule (ADR 0008).
 
-        This base body carries the rule the allele and fragment reads enforce
-        today -- a record must not begin before the one before it -- so that
-        every kind stays validated during the scan while gain#589 and
-        gain#590 are still to land.  Those two give their kind a body of its
-        own and delete this default.
+        This base body carries the rule a fragment score's records hold to --
+        a record must not begin before the one before it -- so that every
+        kind stays validated during the scan while gain#590 is still to land.
+        That slice gives the kind a body of its own and deletes this default.
         """
         prev_chrom: str | None = None
         prev_begin: int | None = None
@@ -1710,6 +1709,37 @@ class AlleleScore(GenomicScore):
         scores_schema["aggregator"] = AGGREGATOR_SCHEMA
         return schema
 
+    def validate_records(
+        self, records: Iterator[Record],
+    ) -> Generator[Record, None, None]:
+        """Refuse a record beginning before the one before it.
+
+        Several records legitimately sit at one position -- one per ref/alt
+        pair -- so a record at the SAME position as its predecessor is what
+        an allele score IS, not an error.  Only a record that moves
+        BACKWARDS is one: no ordering of the alleles at a site can produce
+        it, so it is a table read out of order.
+
+        The comparison is against RAW spans, and it restarts at every contig:
+        where a record sits on one contig says nothing about the next, and
+        without the reset every resource whose second contig starts before
+        the first one ended would be refused.
+        """
+        prev_chrom: str | None = None
+        prev_pos: int | None = None
+        for record in records:
+            chrom, pos, _end = self._record_to_begin_end(record)
+            if chrom != prev_chrom:
+                prev_pos = None
+            if prev_pos is not None and pos < prev_pos:
+                raise MalformedResourceError(
+                    f"<{self.resource_id}> is malformed: the record at "
+                    f"{chrom}:{pos} follows the record at "
+                    f"{chrom}:{prev_pos}; an allele score's records must "
+                    f"not move backwards")
+            prev_chrom, prev_pos = chrom, pos
+            yield record
+
     def region_values_from_records(
         self,
         records: Iterator[Record],
@@ -1733,61 +1763,30 @@ class AlleleScore(GenomicScore):
         :meth:`GenomicScore.region_values_from_records` means by a region and
         this is one kind's answer to it.
 
-        Repeats at one position pass; a record whose position precedes the
-        previous one is a data error and raises.  That is the rule
-        :attr:`RECORD_ORDERING` states for this kind, and the rule the
-        vectorized statistics scan enforces on a whole batch at once.
-
-        This guard is the last read-path check left, and gain#589 removes it:
-        an allele score's rule then lives in its ``validate_records``, which
-        the statistics scan composes over the record stream it reads.
+        Nothing is checked either: every record is read, whatever its
+        position is next to the one before it.  The rule an allele score's
+        records hold to lives in :meth:`validate_records`, which the
+        statistics scan composes over the stream it reads and no reader
+        composes at all (ADR 0008).
         """
         score_defs = self._region_read_defs(chrom, scores)
-        return self._allele_point_values(records, chrom, score_defs)
+        return self._allele_point_values(records, score_defs)
 
     def _allele_point_values(
         self,
         records: Iterator[Record],
-        chrom: str,
         score_defs: list[GenomicScoreDef],
     ) -> Generator[
             tuple[int, int, list[ScoreValue] | None], None, None]:
         """Stream one point per allele record, for a checked request."""
-        # The position last yielded and the ref/alt pairs already seen AT it.
-        # A repeat of one is worth a note but not a refusal: it is the shape
-        # of a duplicated row, not of a table read out of order.
-        prev_chrom: str | None = None
-        prev_pos: int | None = None
-        seen_alleles: set[tuple[str | None, str | None]] = set()
-
         for record in records:
-            # Through ``_record_to_begin_end`` rather than the two slots it
-            # reads: the point comes from POS_BEGIN either way, and the
-            # record's own span is still checked on the way past.
-            lchrom, pos, _end = self._record_to_begin_end(record)
-            alleles = (record[REF], record[ALT])
-            val = self.get_score_values_from_record(record, score_defs)
-
-            if pos == prev_pos:
-                if alleles in seen_alleles:
-                    logger.debug(
-                        "multiple values for positions %s:%s "
-                        "and nucleotides %s",
-                        chrom, pos, alleles)
-                seen_alleles.add(alleles)
-                yield pos, pos, val
-                continue
-
-            if lchrom != prev_chrom:
-                prev_pos = None
-            if prev_pos is not None and pos < prev_pos:
-                raise MalformedResourceError(
-                    f"<{self.resource_id}> is malformed: the record at "
-                    f"{lchrom}:{pos} follows the record at "
-                    f"{lchrom}:{prev_pos}; an allele score's records must "
-                    f"not move backwards")
-            prev_chrom, prev_pos, seen_alleles = lchrom, pos, {alleles}
-            yield pos, pos, val
+            # Through ``_record_to_begin_end`` rather than the POS_BEGIN slot
+            # it reads: the point is the same either way, and this raises on
+            # a record whose end precedes its begin -- a different rule from
+            # anything the scan validates, and one no reader can proceed past.
+            _chrom, pos, _end = self._record_to_begin_end(record)
+            yield pos, pos, self.get_score_values_from_record(
+                record, score_defs)
 
     def fetch_allele_record(
         self, chrom: str, pos: int, ref: str, alt: str,
