@@ -208,12 +208,26 @@ pipeline {
                                                     -p "${composeProject}" \\
                                                     run --rm minio-client
                                             """
+                                            // --ignore=tests/integration to
+                                            // match the per-branch
+                                            // Jenkinsfile's core cell (#222).
+                                            // That tier belongs to
+                                            // gain-core-integration, which
+                                            // gives it a warm GRR cache dir,
+                                            // CURL_CA_BUNDLE for pysam against
+                                            // grr-seqpipe, a single-threaded
+                                            // run so workers don't race to
+                                            // populate that cache, and the
+                                            // ann-data-10x extra its scanpy
+                                            // test imports. None of that is
+                                            // here, and none of it is a
+                                            // Python-version signal.
                                             runCellPytest(
                                                 project: 'core',
                                                 pkg: 'gain',
                                                 tests: 'tests',
                                                 py: env.PY,
-                                                pytestArgs: '-n 5 --enable-http-testing --enable-s3-testing',
+                                                pytestArgs: '-n 5 --enable-http-testing --enable-s3-testing --ignore=tests/integration',
                                                 dockerRunExtra:
                                                     "--network ${composeNetwork} " +
                                                     '-e HTTP_HOST=apache:80 ' +
