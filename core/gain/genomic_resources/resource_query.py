@@ -129,9 +129,16 @@ class LabelClause:
     def matches_an_absent_label(self) -> bool:
         """Check whether this clause holds for a label that is not there.
 
-        An absent label is matched as ``""``; a repository that can tell
-        nothing else about a key -- because no resource in it carries the
-        key at all -- can settle the whole clause with this.
+        An absent label is matched as ``""``, and under this grammar a
+        clause that holds for ``""`` holds for every string: a value must
+        be at least one character, so ``in`` can never accept ``""``, and
+        the only ``=`` values ``fnmatch`` accepts ``""`` for are globs of
+        ``*`` alone. A caller with no other way to evaluate the clause can
+        therefore drop it outright.
+
+        The converse says nothing. A clause that fails here still holds
+        for whichever resources carry the key, so a false answer is not a
+        licence to settle the clause for all of them.
         """
         return self.matches("")
 
