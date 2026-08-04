@@ -5,6 +5,9 @@ from pathlib import Path
 from subprocess import CalledProcessError
 
 import pytest
+from django.http import HttpRequest
+from django.test import RequestFactory
+from pytest_django.fixtures import SettingsWrapper
 from pytest_mock import MockerFixture
 
 from web_annotation.utils import (
@@ -131,28 +134,48 @@ def test_validate_vcf_file_invalid_header(
     assert "does not have valid header" in str(err.value.stderr)
 
 
+def _request(x_forwarded_for: str | None, remote_addr: str) -> HttpRequest:
+    """Build a request carrying the given forwarding headers."""
+    request = RequestFactory().get("/")
+    request.META["REMOTE_ADDR"] = remote_addr
+    if x_forwarded_for is not None:
+        request.META["HTTP_X_FORWARDED_FOR"] = x_forwarded_for
+    return request
+
+
 @pytest.mark.parametrize(
-    "x_forwarded_for, remote_addr, expected_ip",
+    "num_proxies, x_forwarded_for, remote_addr, expected_ip",
     [
-        ("192.168.1.100, 10.0.0.1", None, "192.168.1.100"),
-        ("203.0.113.45, 198.51.100.20, 192.0.2.1", None, "203.0.113.45"),
-        (None, "192.168.1.50", "192.168.1.50"),
-        ("", "10.0.0.5", "10.0.0.5"),
+        # One trusted hop -> the entry the trusted proxy appended, i.e. the
+        # rightmost one. The client-supplied prefix cannot influence it.
+        (1, "192.168.1.100, 10.0.0.1", "127.0.0.1", "10.0.0.1"),
+        (1, "spoofed, 10.0.0.1", "127.0.0.1", "10.0.0.1"),
+        # Two trusted hops -> the second entry counted from the right.
+        (2, "203.0.113.45, 198.51.100.20, 192.0.2.1", "127.0.0.1",
+         "198.51.100.20"),
+        (2, "a, b, 198.51.100.20, 192.0.2.1", "127.0.0.1", "198.51.100.20"),
+        # Fewer entries than trusted hops -> the leftmost entry there is.
+        (3, "198.51.100.20, 192.0.2.1", "127.0.0.1", "198.51.100.20"),
+        # No header at all -> REMOTE_ADDR, whatever the hop count.
+        (1, None, "192.168.1.50", "192.168.1.50"),
+        (2, None, "192.168.1.50", "192.168.1.50"),
+        # Zero trusted hops -> the header is ignored entirely.
+        (0, "192.168.1.100, 10.0.0.1", "10.0.0.5", "10.0.0.5"),
+        (0, None, "10.0.0.5", "10.0.0.5"),
     ],
 )
-def test_get_ip_from_request(
-    mocker: MockerFixture,
+def test_get_ip_from_request_uses_configured_hop_count(
+    settings: SettingsWrapper,
+    num_proxies: int,
     x_forwarded_for: str | None,
-    remote_addr: str | None,
+    remote_addr: str,
     expected_ip: str,
 ) -> None:
-    mock_request = mocker.MagicMock()
-    mock_request.META = {
-        "HTTP_X_FORWARDED_FOR": x_forwarded_for,
-        "REMOTE_ADDR": remote_addr,
-    }
+    settings.REST_FRAMEWORK = {
+        **settings.REST_FRAMEWORK, "NUM_PROXIES": num_proxies}
+    request = _request(x_forwarded_for, remote_addr)
 
-    assert get_ip_from_request(mock_request) == expected_ip
+    assert get_ip_from_request(request) == expected_ip
 
 
 def test_calculate_used_disk_space_with_jobs(

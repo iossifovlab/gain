@@ -9,10 +9,12 @@ https://docs.djangoproject.com/en/5.2/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
+import logging
 import os
 import pathlib
 from typing import Any
 
+from django.core.exceptions import ImproperlyConfigured
 from gain.genomic_resources.repository_factory import (
     get_default_grr_definition_path,
 )
@@ -99,6 +101,52 @@ def _parse_ttl_hours(raw: str, default: int = 24) -> int:
 
 ANONYMOUS_JOB_TTL_HOURS = _parse_ttl_hours(
     os.environ.get("GPFWA_ANONYMOUS_JOB_TTL_HOURS", "24"))
+
+
+# Number of reverse proxies in front of this application, i.e. how many
+# trailing entries of ``X-Forwarded-For`` were appended by infrastructure we
+# trust. It is the ONE knob deciding which entry of the header is the client
+# (iossifovlab/gain#667) -- it governs both DRF's throttle bucket (DRF reads
+# it as ``NUM_PROXIES``) and ``web_annotation.utils.get_ip_from_request``,
+# which keys the anonymous quota. Semantics are DRF's, verbatim:
+#
+#   unset -- pre-#667 behaviour, unchanged: the throttle keys on the whole
+#            header and the quota on its leftmost (client-supplied) entry.
+#   0     -- ``REMOTE_ADDR`` only; ``X-Forwarded-For`` is ignored.
+#   N > 0 -- the Nth entry counted from the RIGHT of the header.
+#
+# Deliberately left unset by default: #660 owns choosing the deployed value
+# (it needs the proxy chain in front of gain.iossifovlab.com confirmed) and
+# wiring it through gain-infra. Until then this is a no-op knob.
+#
+# Unparseable values fail HERE, at startup. Unlike
+# GPFWA_ANONYMOUS_JOB_TTL_HOURS above -- where only a janitor cares and a
+# silent default is the safer failure -- a wrong hop count silently mis-keys
+# every rate limit and every anonymous quota, so a typo must not boot.
+def _parse_num_proxies(raw: str | None) -> int | None:
+    """Parse the trusted-proxy count; refuse anything not a natural number."""
+    if raw is None or not raw.strip():
+        logging.getLogger(__name__).warning(
+            "GPFWA_NUM_PROXIES is not set: the client IP is taken from the "
+            "client-supplied part of X-Forwarded-For (leftmost entry) and the "
+            "throttle bucket keys on the whole header. See "
+            "iossifovlab/gain#667 and iossifovlab/gain#660.",
+        )
+        return None
+    try:
+        num_proxies = int(raw)
+    except ValueError:
+        raise ImproperlyConfigured(
+            f"GPFWA_NUM_PROXIES must be a non-negative integer, got {raw!r}",
+        ) from None
+    if num_proxies < 0:
+        raise ImproperlyConfigured(
+            f"GPFWA_NUM_PROXIES must be a non-negative integer, got {raw!r}",
+        )
+    return num_proxies
+
+
+NUM_PROXIES = _parse_num_proxies(os.environ.get("GPFWA_NUM_PROXIES"))
 
 GRR_DEFINITION_PATH = get_default_grr_definition_path()
 
@@ -277,6 +325,10 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework.authentication.BasicAuthentication",
     ),
+    # See the GPFWA_NUM_PROXIES block above: the same value governs
+    # web_annotation.utils.get_ip_from_request, so the throttle bucket and the
+    # anonymous quota key cannot drift apart (iossifovlab/gain#667).
+    "NUM_PROXIES": NUM_PROXIES,
     "DEFAULT_THROTTLE_RATES": {
         "user": "10/minute",
         # The pipeline editor validates as the user edits, so this bucket is
