@@ -2698,24 +2698,87 @@ def test_keep_conventional_index_rejection_names_the_resource(
     assert "scores/two-index" in str(excinfo.value)
 
 
-def test_index_filename_at_the_conventional_name_realizes_one_index(
+def test_keep_conventional_index_at_the_conventional_name_raises(
     tmp_path: pathlib.Path,
 ) -> None:
-    # Declaring the index at the name it would have taken anyway is a
-    # plausible way to write "conventional name, stated explicitly".  The
-    # configured and conventional names coincide, so there is one index to
-    # realize, not two -- and asking to keep the conventional one is
-    # already satisfied.
-    res = (
+    # Naming the conventional path IS a name, but it is not a SECOND one:
+    # the configured and conventional names coincide, so the two-index
+    # shape is as unrepresentable as it is with no name at all.  Realizing
+    # the single index instead would reintroduce the very footgun the
+    # no-index_filename rejection closes.
+    builder = (
         a_position_score()
         .with_score("sc", "float")
         .with_tabix(
             index_filename="data.txt.gz.tbi", keep_conventional_index=True)
         .with_data(INDEX_OPTION_DATA)
+    )
+    with pytest.raises(
+            ResourceValidationError,
+            match="keep_conventional_index") as excinfo:
+        builder.build_resource(tmp_path)
+    assert "data.txt.gz.tbi" in str(excinfo.value)
+
+
+def test_keep_conventional_index_at_the_conventional_csi_name_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The conventional name differs by flavour (.csi, not .tbi); the
+    # contract does not.  Naming the .csi as the configured index makes the
+    # two names coincide exactly as the .tbi case does.
+    builder = (
+        a_position_score()
+        .with_score("sc", "float")
+        .with_tabix(
+            csi=True, index_filename="data.txt.gz.csi",
+            keep_conventional_index=True)
+        .with_data(INDEX_OPTION_DATA)
+    )
+    with pytest.raises(
+            ResourceValidationError,
+            match="keep_conventional_index") as excinfo:
+        builder.build_resource(tmp_path)
+    assert "data.txt.gz.csi" in str(excinfo.value)
+
+
+def test_keep_conventional_index_rejects_a_renamed_spelling_of_one_file(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The names are compared by identity, not spelling: this one reaches the
+    # index pysam wrote by a different route.  It must be refused for the
+    # same reason as the plain spelling -- and, crucially, with the
+    # builder's own error rather than a shutil.SameFileError escaping the
+    # copy.
+    builder = (
+        a_position_score()
+        .with_score("sc", "float")
+        .with_tabix(
+            index_filename=f"../{tmp_path.name}/data.txt.gz.tbi",
+            keep_conventional_index=True)
+        .with_data(INDEX_OPTION_DATA)
+    )
+    with pytest.raises(
+            ResourceValidationError, match="keep_conventional_index"):
+        builder.build_resource(tmp_path)
+
+
+def test_index_filename_at_the_conventional_name_realizes_one_index(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Declaring the index at the name it would have taken anyway -- WITHOUT
+    # asking for a second copy -- is a plausible way to write "conventional
+    # name, stated explicitly".  It is accepted and yields the one-index
+    # shape, as the move branch always did.
+    res = (
+        a_position_score()
+        .with_score("sc", "float")
+        .with_tabix(index_filename="data.txt.gz.tbi")
+        .with_data(INDEX_OPTION_DATA)
         .build_resource(tmp_path)
     )
 
-    assert (tmp_path / "data.txt.gz.tbi").is_file()
+    assert sorted(p.name for p in tmp_path.glob("*.tbi")) == [
+        "data.txt.gz.tbi"]
     assert PositionScore(res).open().fetch_position_scores(
         "1", 10) == pytest.approx([0.1])
 
@@ -2723,19 +2786,16 @@ def test_index_filename_at_the_conventional_name_realizes_one_index(
 def test_index_filename_at_the_conventional_csi_name_realizes_one_index(
     tmp_path: pathlib.Path,
 ) -> None:
-    # The conventional name differs by flavour (.csi, not .tbi); the
-    # collision contract does not.
     res = (
         a_position_score()
         .with_score("sc", "float")
-        .with_tabix(
-            csi=True, index_filename="data.txt.gz.csi",
-            keep_conventional_index=True)
+        .with_tabix(csi=True, index_filename="data.txt.gz.csi")
         .with_data(INDEX_OPTION_DATA)
         .build_resource(tmp_path)
     )
 
-    assert (tmp_path / "data.txt.gz.csi").is_file()
+    assert sorted(p.name for p in tmp_path.glob("*.csi")) == [
+        "data.txt.gz.csi"]
     assert not (tmp_path / "data.txt.gz.tbi").exists()
     assert PositionScore(res).open().fetch_position_scores(
         "1", 10) == pytest.approx([0.1])

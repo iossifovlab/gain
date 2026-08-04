@@ -144,12 +144,13 @@ class _TableScoreBuilder(MetaMixin):
     rows: tuple[tuple[tuple[str, str], ...], ...] = ()
     tabix: bool = False
     csi: bool = False  # only meaningful with ``tabix``
-    # A non-conventional index name, declared as ``index_filename:`` in the
-    # table config and realized at that name; only meaningful with ``tabix``.
+    # The index name to declare as ``index_filename:`` in the table config
+    # and realize under -- conventional or not; only meaningful with
+    # ``tabix``.
     index_filename: str | None = None
-    # Leaves a copy of the index at its conventional name too; REQUIRES
-    # ``index_filename`` (rejected without it -- see
-    # ``_validate_index_options``).
+    # Leaves a copy of the index at its conventional name too; REQUIRES an
+    # ``index_filename`` that is not itself the conventional name, since it
+    # is the SECOND name that makes two indices possible.
     keep_conventional_index: bool = False
     chrom_mapping: dict[str, Any] | None = None
     zero_based: bool = False
@@ -378,11 +379,14 @@ class _TableScoreBuilder(MetaMixin):
         at the conventional name, so the resource carries BOTH.  That is the
         shape that tells "the configured name wins" apart from "the
         conventional probe happened to find the only index there was".  It
-        REQUIRES ``index_filename`` -- the second index needs a name to be
-        realized under -- and is rejected without one rather than quietly
-        realizing the one-index shape.  Passing an ``index_filename`` that
-        IS the conventional name is accepted and yields a single index,
-        with or without the flag.
+        REQUIRES a SECOND name to realize the configured index under, so it
+        is rejected both without an ``index_filename`` and with one that
+        names the conventional index itself -- neither can carry two
+        indices, and quietly realizing one instead is what makes a test
+        assert the two-index shape while exercising the one-index shape.
+
+        An ``index_filename`` that IS the conventional name, without the
+        flag, is accepted and yields that single index.
 
         Precondition: the authored rows (via :meth:`with_data` or
         :meth:`with_score_line`) must be position-sorted -- ascending by
@@ -454,7 +458,7 @@ class _TableScoreBuilder(MetaMixin):
                 f"with column_index")
 
     def _validate_index_options(self) -> None:
-        """Reject a keep-the-conventional-index request that cannot hold.
+        """Reject a keep-the-conventional-index request with no second name.
 
         ``keep_conventional_index`` asks for BOTH index names to be present,
         which needs a second name -- ``index_filename`` -- to realize the
@@ -462,6 +466,11 @@ class _TableScoreBuilder(MetaMixin):
         second index, so honouring it would silently realize the one-index
         shape and leave a test asserting the two-index shape passing for
         the wrong reason.
+
+        The companion case -- an ``index_filename`` that names the
+        conventional index itself, which is a name but not a second one --
+        is caught during realize, where the name pysam actually wrote is
+        known and the two can be compared by identity rather than spelling.
         """
         if self.keep_conventional_index and self.index_filename is None:
             raise ResourceValidationError(
@@ -1213,9 +1222,10 @@ def _realize_tabix_table(
     is MOVED to that name, so the resource carries the index only under the
     non-conventional name -- no adjacent sidecar is left behind for
     htslib's auto-probe to find.  ``keep_conventional_index`` copies it
-    instead, leaving the conventional sidecar in place as well.  When
-    ``index_filename`` names the conventional path the index is already
-    where it was asked to be, so neither happens.
+    instead, leaving the conventional sidecar in place as well -- and is
+    refused when ``index_filename`` names that very index, because one file
+    cannot be two.  Without the flag such a name is simply already where it
+    was asked to be, so nothing is moved.
     """
     header = _parse_header(data)
     chrom_col = header.index("chrom")
@@ -1226,16 +1236,29 @@ def _realize_tabix_table(
         tabix_path, content,
         seq_col=chrom_col, start_col=start_col, end_col=end_col, csi=csi)
     if index_filename is not None:
+        written = pathlib.Path(written_index)
         target = tabix_path.parent / index_filename
-        # A configured name that IS the conventional one leaves nothing to
-        # do: the index pysam wrote is already at the requested name.  Both
-        # branches would otherwise act on one path as source and
-        # destination -- a no-op for rename, but a SameFileError for copy.
-        if target != pathlib.Path(written_index):
-            if keep_conventional_index:
-                shutil.copyfile(written_index, target)
-            else:
-                pathlib.Path(written_index).rename(target)
+        # Compare by identity, not by spelling: ``./data.txt.gz.tbi`` and
+        # ``../<dir>/data.txt.gz.tbi`` name the file pysam already wrote
+        # while comparing unequal to it, and acting on one path as both
+        # source and destination is a no-op for rename but a
+        # SameFileError for copy.
+        same_file = target == written or (
+            target.exists() and target.samefile(written))
+        if same_file and keep_conventional_index:
+            raise ResourceValidationError(
+                f"keep_conventional_index needs a SECOND name to realize "
+                f"the configured index under, but index_filename "
+                f"{index_filename!r} already names the conventional index "
+                f"{written.name!r}; pass a non-conventional "
+                f"index_filename or drop the flag")
+        if same_file:
+            # Already exactly where it was asked to be.
+            return
+        if keep_conventional_index:
+            shutil.copyfile(written, target)
+        else:
+            written.rename(target)
 
 
 def _strip_header(data: str) -> str:
