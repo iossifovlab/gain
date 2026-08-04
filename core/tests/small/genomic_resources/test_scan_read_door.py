@@ -17,13 +17,17 @@ from collections.abc import Iterator
 import pytest
 from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_scores import (
+    AlleleScore,
     FragmentScore,
     PositionScore,
     build_allele_score_from_resource,
     build_fragment_score_from_resource,
     build_position_score_from_resource,
 )
-from gain.genomic_resources.histogram import NumberHistogramConfig
+from gain.genomic_resources.histogram import (
+    NumberHistogram,
+    NumberHistogramConfig,
+)
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
 )
@@ -174,6 +178,31 @@ def test_the_point_read_of_a_repeated_position_answers_from_the_first_record(
     assert score.fetch_position_scores("chr1", 10) == [0.1]
 
 
+def test_a_region_split_between_two_touching_records_still_refuses_them(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The scan cuts a contig into regions, so the pair that breaks the rule
+    # can be handed to the passes in two pieces.  A record straddling the cut
+    # is served to the later region too -- that is what makes the verdict a
+    # property of the resource rather than of ``--region-size``.
+    #
+    # Driven at the per-record pass directly: the region-size parametrisation
+    # in test_cli_repair.py goes through the CLI, where a float score is
+    # bulk-eligible and the vectorized guard answers instead, so it does not
+    # reach the rule this slice added.
+    resource = _position_score_resource(tmp_path, "touching", TOUCHING_RECORDS)
+
+    # The first region holds only the first record: nothing to compare it to.
+    assert GenomicScoreImplementation._do_min_max(
+        resource, ["s"], "chr1", 1, 4)["s"].max == pytest.approx(0.1)
+
+    # The second is where they meet -- the straddling record arrives with it.
+    with pytest.raises(MalformedResourceError) as excinfo:
+        GenomicScoreImplementation._do_min_max(resource, ["s"], "chr1", 5, 9)
+
+    assert "at most one record per position" in str(excinfo.value)
+
+
 @pytest.mark.parametrize("statistics_pass,payload", [
     ("_do_min_max", ["s"]),
     ("_do_histogram", {"s": _hist_conf()}),
@@ -229,6 +258,39 @@ def _fragment_score_reading_backwards(
     return score
 
 
+def _allele_score_reading_backwards(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> AlleleScore:
+    """An allele score whose contig's records arrive out of order.
+
+    Handed in for the same reason as the fragment one: no backend delivers a
+    contig backwards, so the rule is reachable only this way.
+    """
+    resource = (
+        a_grr()
+        .with_resource(
+            "backwards_alleles",
+            an_allele_score()
+            .with_score("s", "float")
+            .with_data("""
+                chrom  pos_begin  reference  alternative  s
+                chr1   10         A          G            0.1
+                chr1   20         C          T            0.2
+            """))
+        .build_repo(tmp_path)
+        .get_resource("backwards_alleles")
+    )
+    score = build_allele_score_from_resource(resource)
+    score.open()
+
+    def out_of_order(*_args: object, **_kwargs: object) -> Iterator[Record]:
+        yield ("chr1", 20, 20, "C", "T", ("chr1", "20", "C", "T", "0.2"))
+        yield ("chr1", 10, 10, "A", "G", ("chr1", "10", "A", "G", "0.1"))
+
+    monkeypatch.setattr(score, "fetch_records", out_of_order)
+    return score
+
+
 def test_the_scan_still_validates_a_fragment_score(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -236,16 +298,41 @@ def test_the_scan_still_validates_a_fragment_score(
     # A fragment score has no validator of its own yet (gain#590), so the
     # base rule -- a record must not begin before the one before it -- is
     # what keeps it validated during the scan.
+    #
+    # Driven through the scan's own composition rather than by calling
+    # ``validate_records`` by hand: what criterion 11 claims is that the SCAN
+    # validates a non-position kind, and calling the validator directly would
+    # hold even if ``_scan_region`` had stopped composing it.
     score = _fragment_score_reading_backwards(tmp_path, monkeypatch)
 
     with pytest.raises(MalformedResourceError) as excinfo:
-        list(score.validate_records(score.fetch_records("chr1", 1, 30)))
+        list(GenomicScoreImplementation._scan_region(
+            score, "chr1", 1, 30, ["s"]))
 
     message = str(excinfo.value)
     assert "<backwards>" in message
     assert "chr1:10" in message
     assert "chr1:20" in message
     assert "must not move backwards" in message
+
+
+def test_the_scan_still_validates_an_allele_score(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The other kind the base validator carries until gain#589 gives it one
+    # of its own.  An allele score also still guards its READ path, so the
+    # message is what says which one fired: the base's wording is generic
+    # ("this score's records"), the read guard's names the kind.
+    score = _allele_score_reading_backwards(tmp_path, monkeypatch)
+
+    with pytest.raises(MalformedResourceError) as excinfo:
+        list(GenomicScoreImplementation._scan_region(
+            score, "chr1", 1, 30, ["s"]))
+
+    message = str(excinfo.value)
+    assert "<backwards_alleles>" in message
+    assert "this score's records must not move backwards" in message
 
 
 def test_reading_that_same_fragment_score_raises_nothing(
@@ -357,10 +444,15 @@ def test_both_scan_paths_measure_an_out_of_region_record_alike(
     bulk_mm = GenomicScoreImplementation._do_min_max_bulk(
         resource, ["s"], "chr1", 100, 200)
 
-    assert list(per_record_hist["s"].bars) == list(bulk_hist["s"].bars)
+    per_record_bars = per_record_hist["s"]
+    bulk_bars = bulk_hist["s"]
+    assert isinstance(per_record_bars, NumberHistogram)
+    assert isinstance(bulk_bars, NumberHistogram)
+
+    assert list(per_record_bars.bars) == list(bulk_bars.bars)
     # Nothing overlapped the region, so nothing was counted -- and no bar is
     # negative, which is what counting an inverted span would produce.
-    assert list(per_record_hist["s"].bars) == [0] * 10
+    assert list(per_record_bars.bars) == [0] * 10
 
     assert math.isnan(per_record_mm["s"].min) is math.isnan(bulk_mm["s"].min)
     assert math.isnan(per_record_mm["s"].max) is math.isnan(bulk_mm["s"].max)
@@ -456,6 +548,57 @@ def test_the_position_rule_compares_raw_spans_not_clipped_ones(
         list(score.validate_records(score.fetch_records("chr1", 120, 200)))
 
     assert "chr1:50" in str(excinfo.value)
+
+
+def test_the_position_rule_carries_a_zero_end_rather_than_dropping_it(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The carry is tested with ``prev_end is not None``, not for truthiness.
+    # Master's guard read ``if prev_end and left <= prev_end``, which skips
+    # the whole check whenever the previous record ended at 0 -- so a pair of
+    # records claiming position 0 walked past a rule that exists to refuse
+    # exactly that.  Regressing to the truthiness form makes this the one
+    # test that fails.
+    score = _position_score(tmp_path, "at_zero", """
+        chrom  pos_begin  pos_end  s
+        chr1   1          5        0.1
+    """)
+
+    def at_zero(*_args: object, **_kwargs: object) -> Iterator[Record]:
+        yield ("chr1", 0, 0, None, None, ("chr1", "0", "0", "0.1"))
+        yield ("chr1", 0, 0, None, None, ("chr1", "0", "0", "0.2"))
+
+    monkeypatch.setattr(score, "fetch_records", at_zero)
+
+    with pytest.raises(MalformedResourceError) as excinfo:
+        list(score.validate_records(score.fetch_records("chr1", 0, 10)))
+
+    assert "at most one record per position" in str(excinfo.value)
+
+
+def test_the_base_rule_starts_each_contig_afresh(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # "Must not begin before the one before it" is a claim about ONE contig.
+    # Without the reset, the first record of a new contig is compared against
+    # the last of the previous one, and every resource whose second contig
+    # starts at a lower position than the first ended at -- which is most of
+    # them -- is refused as malformed.
+    #
+    # A fragment score, because the base validator is what covers it; a
+    # position score would take its own override instead.
+    score = _fragment_score_reading_backwards(tmp_path, monkeypatch)
+
+    def across_contigs(*_args: object, **_kwargs: object) -> Iterator[Record]:
+        yield ("chr1", 100, 109, None, None, ("chr1", "100", "109", "0.1"))
+        yield ("chr2", 5, 14, None, None, ("chr2", "5", "14", "0.2"))
+
+    monkeypatch.setattr(score, "fetch_records", across_contigs)
+
+    assert len(list(score.validate_records(
+        score.fetch_records("chr1", 1, 200)))) == 2
 
 
 def test_the_validator_hands_back_every_record_it_was_given(
