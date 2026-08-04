@@ -815,14 +815,28 @@ describe('PipelineEditorService', () => {
     );
   });
 
-  it('should throw invalid search value error for 500 status when searching resources', async() => {
-    const httpError = new HttpErrorResponse({status: 500});
+  it('should throw invalid search value error for 400 status when searching resources', async() => {
+    const httpError = new HttpErrorResponse({status: 400});
     jest.spyOn(HttpClient.prototype, 'get').mockReturnValue(throwError(() => httpError));
 
     const result = service.getResourcesBySearch('cadd', 'allele_score');
 
     await expect(() => lastValueFrom(result.pipe(take(1))))
       .rejects.toThrow('Invalid search value');
+  });
+
+  it('should throw default error for a 500 when searching resources', async() => {
+    // The search endpoint answers 400 for a term it cannot read, so a 500
+    // is the repository failing rather than the term being wrong -- telling
+    // the user their search is invalid would send them to fix the one thing
+    // that is not broken.
+    const httpError = new HttpErrorResponse({status: 500});
+    jest.spyOn(HttpClient.prototype, 'get').mockReturnValue(throwError(() => httpError));
+
+    const result = service.getResourcesBySearch('cadd', 'allele_score');
+
+    await expect(() => lastValueFrom(result.pipe(take(1))))
+      .rejects.toThrow('Error occurred!');
   });
 
   it('should throw default error for other errors when searching resources', async() => {

@@ -801,6 +801,36 @@ class UnreadableResourceFilesError(ValueError):
         )
 
 
+class SearchTermError(ValueError):
+    """A search term that SQLite's FTS5 could not parse as a match expression.
+
+    The term is bound, never interpolated, so this is not a failure to
+    contain it -- it is that FTS5 reads a bound term as an *expression*,
+    with a grammar of its own: quotes, ``AND``/``OR``/``NOT``, ``NEAR``,
+    ``column : value``. A term that does not parse is the caller's
+    mistake, and ``apsw.SQLError`` reports it as neither -- it names no
+    term, no argument, and reads like the database broke (gain#632).
+
+    A ``ValueError``, like ``ResourceQueryParseError``, so the two bad
+    arguments this search can be given are handled the same way by the
+    endpoint and the CLI that take them.
+
+    The column filter is why the term is not simply quoted into a literal
+    before it reaches ``MATCH``: label keys are index columns, and
+    ``ref_genome : hg38`` is a supported search. Quoting would make that a
+    search for the text.
+    """
+
+    def __init__(self, search_term: str, cause: Exception) -> None:
+        # The cause is not kept: `raise ... from err` records it as
+        # `__cause__` already, and the message carries what it said.
+        self.search_term = search_term
+        super().__init__(
+            f"cannot search for <{search_term}>: it is not a valid "
+            f"full-text search expression ({cause})",
+        )
+
+
 class GenomicResource:
     """Represents a single genomic resource with metadata and file access.
 
@@ -1205,6 +1235,82 @@ def _resource_query_conditions(
     return conditions, deferred
 
 
+def _reject_unparsable_search_term(
+    conn: apsw.Connection, search_term: str,
+) -> None:
+    """Raise ``SearchTermError`` if FTS5 cannot read the term.
+
+    Checked against a throwaway index carrying the same column names,
+    rather than by translating whatever the repository's own index
+    raises. The two are not the same test, and the difference is the
+    whole point:
+
+    * A corrupt, truncated or unreadable index fails the *same*
+      ``MATCH`` statement a bad term fails -- ``vtable constructor
+      failed``, ``no such tokenizer``, a ``contents`` that is not an FTS
+      table. Blaming those on the term would answer 400, with "your
+      search is malformed", to every caller of a repository that needs
+      repairing, and would hide the breakage from anything watching for
+      500s. None of them is caught here: the ones that survive being
+      read far enough to name the columns go on to fail the real
+      statement, and the ones that do not -- a damaged index cannot even
+      be described -- come straight out of the ``pragma`` below. Either
+      way the repository's failure is what the caller is told about.
+    * A term is checked even when the planner never asks FTS5 to read
+      it. A resource query that can match nothing folds the whole
+      ``WHERE`` away, and a term validated only by being executed would
+      pass unexamined -- the same request answering 400 or 200 depending
+      on an unrelated parameter.
+
+    The column names come from the index because a column filter
+    (``ref_genome : hg38``) is a term that is valid only against an index
+    that has the column. Every column is mirrored, including any name
+    gain's own index build would have refused: this stands in for the
+    index, so a name it does not carry is a column filter wrongly called
+    malformed -- a working search turned into a 400, which is the one
+    direction of this check that costs a caller something. The names are
+    quoted rather than vetted, which is what makes that safe: a published
+    index is an artefact of the repository and no more trusted than its
+    manifest, and a quoted identifier carries nothing out of the
+    statement it is spliced into.
+    """
+    columns = []
+    for row in conn.execute("pragma table_info('contents')"):
+        # Doubling is what keeps a name that contains a quote inside its
+        # own quotes rather than ending them.
+        quoted = row[1].replace('"', '""')
+        columns.append(f'"{quoted}"')
+    if not columns:
+        # Nothing to build a probe out of. An index shaped like this
+        # cannot answer a search at all; let the real statement say so.
+        return
+
+    probe = apsw.Connection(":memory:")
+    try:
+        try:
+            probe.execute(
+                "CREATE VIRTUAL TABLE contents "
+                f"USING fts5({', '.join(columns)})",
+            )
+        except apsw.SQLError:
+            # This index cannot be stood in for. Checking the term
+            # against a different set of columns would refuse searches
+            # the repository can answer, so it is not checked at all --
+            # the real statement is left to accept or reject it.
+            return
+        try:
+            # Stepped, not merely prepared: FTS5 parses the term when the
+            # query runs. The table is empty, so this reads no rows -- it
+            # only asks FTS5 whether the term is an expression.
+            list(probe.execute(
+                "SELECT 1 FROM contents WHERE contents MATCH ?",
+                (search_term,)))
+        except apsw.SQLError as err:
+            raise SearchTermError(search_term, err) from err
+    finally:
+        probe.close()
+
+
 class ReadOnlyRepositoryProtocol(abc.ABC):
     """Abstract base class for read-only repository storage protocols.
 
@@ -1339,7 +1445,27 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
         An empty ``resource_query`` is an unset one: it is what a shell
         substitutes for a variable that was never set, and the useful
         reading of ``-q "$SELECTOR"`` with no selector is the one that
-        behaves like omitting the flag.
+        behaves like omitting the flag. A blank ``search_term`` is unset
+        for the same reason (gain#633), and normalising it here -- ahead of
+        the branch below that decides whether to open the index at all --
+        is what keeps ``-s ""`` from demanding an index it has no filter to
+        apply: ``""`` is not ``None``, so it used to reach ``MATCH`` and be
+        rejected by FTS5, or, on a repository with no index, be reported as
+        a search that cannot be run.
+
+        Whitespace counts as blank: ``-s "$VAR "`` is the same accident
+        as ``-s "$VAR"``. What FTS5 would otherwise make of it depends on
+        which space was typed, and neither answer is worth keeping -- a
+        run of ASCII spaces is the empty expression it rejects, while a
+        non-breaking space is a term it accepts and nothing contains, so
+        the one accident was an error or a silently empty result. A term
+        that has content is passed on untouched, spaces and all --
+        ``ref_genome : hg38`` is one term.
+
+        ``resource_type`` is normalised the same way, for the same reason
+        (gain#653): blank, it selected nothing where it was meant to
+        select everything, and asked an index-less repository for an
+        index to apply a filter nobody set.
 
         Raises ``ResourceQueryParseError`` for a malformed
         ``resource_query`` -- eagerly, when called, rather than on the
@@ -1352,8 +1478,12 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
         parsed_query = (
             ResourceQuery.parse(resource_query) if resource_query else None
         )
+        # The term keeps its spaces and the type does not: a term is an
+        # expression whose parts spaces separate, a type is one token.
         return self._search_resources(
-            search_term, resource_type, parsed_query)
+            search_term if search_term and search_term.strip() else None,
+            resource_type.strip() or None if resource_type else None,
+            parsed_query)
 
     def _search_resources(
             self,
@@ -1389,6 +1519,10 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
             conditions = []
             params: list[Any] = []
             if search_term is not None:
+                # Ahead of the statement below, and independent of
+                # whether that statement ends up asking FTS5 to read the
+                # term at all.
+                _reject_unparsable_search_term(conn, search_term)
                 conditions.append("contents MATCH ?")
                 params.append(search_term)
             if resource_type is not None:

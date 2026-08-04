@@ -292,6 +292,18 @@ def test_an_empty_resource_query_is_an_unset_one(
     assert with_empty_query.json() == without_query.json()
 
 
+def test_an_empty_search_term_is_an_unset_one(
+    clients: dict[str, Client],
+) -> None:
+    """``search=`` is the same client mistake as ``query=`` (gain#633)."""
+    without_search = clients["user"].get("/api/resources/search")
+    with_empty_search = clients["user"].get(
+        "/api/resources/search", query_params={"search": ""})
+
+    assert with_empty_search.status_code == 200
+    assert with_empty_search.json() == without_search.json()
+
+
 def test_a_resource_record_says_nothing_about_its_labels(
     clients: dict[str, Client],
 ) -> None:
@@ -332,6 +344,34 @@ def test_malformed_resource_query_is_a_bad_request(
     # leaves the caller guessing which of its parameters was rejected.
     assert 'scores/*[phenotype ~ "autism"]' in message
     assert "~" in message
+
+
+@pytest.mark.parametrize("search_term", [
+    '"',       # unterminated string
+    "a AND",   # a binary operator with nothing on its right
+    "(",       # unbalanced parenthesis
+    "*",       # not a term at all
+    "a:b",     # a column filter naming a column the index has not got
+    "NEAR/",   # a truncated NEAR
+])
+def test_a_malformed_search_term_is_a_bad_request(
+    clients: dict[str, Client],
+    search_term: str,
+) -> None:
+    """A term FTS5 rejects is a bad request, not a 500 (gain#632).
+
+    Asked as the anonymous caller because the endpoint has neither an
+    authentication nor a throttle class of its own: an unauthenticated
+    caller is exactly who reaches this. The view has no per-caller
+    branch, so the other two clients would only repeat the case.
+    """
+    response = clients["anonymous"].get(
+        "/api/resources/search", query_params={"search": search_term})
+
+    assert response.status_code == 400
+    # Same contract as the malformed `query` above: the message names the
+    # term, so a caller with several parameters knows which was rejected.
+    assert search_term in response.json()["error"]
 
 
 def test_an_over_long_resource_query_is_a_bad_request(
