@@ -15,6 +15,14 @@
       "min": 0.0
     }
   },
+  "fragment_score/statistics/histogram_frg_val.json": {
+    "max_value": 0.9,
+    "min_value": 0.1,
+    "view_range": {
+      "max": 1.0,
+      "min": 0.0
+    }
+  },
   "mem_score/statistics/histogram_mem_auto.json": {
     "max_value": 8.0,
     "min_value": 0.0,

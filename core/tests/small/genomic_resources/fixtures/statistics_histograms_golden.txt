@@ -66,6 +66,40 @@
   "max_value": 4.0
 }
 
+# fragment_score/statistics/histogram_frg_val.json
+{
+  "config": {
+    "type": "number",
+    "view_range": {
+      "min": 0.0,
+      "max": 1.0
+    },
+    "number_of_bins": 4,
+    "x_log_scale": false,
+    "y_log_scale": false,
+    "x_min_log": null
+  },
+  "bins": [
+    0.0,
+    0.25,
+    0.5,
+    0.75,
+    1.0
+  ],
+  "bars": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "out_of_range_bins": [
+    0,
+    0
+  ],
+  "min_value": 0.1,
+  "max_value": 0.9
+}
+
 # mem_score/statistics/histogram_mem_auto.json
 {
   "config": {

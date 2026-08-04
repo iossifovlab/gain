@@ -22,6 +22,11 @@ break:
 * the allele score puts **several records at one position** -- one per ref/alt
   pair -- and each weighs 1 however wide its ``pos_end`` reaches, so both
   halves of what an allele score means by a region are pinned in a bar;
+* the fragment score is **tabix-backed**, so it is the one resource here that
+  reaches the vectorized (column-array) scan as a non-position kind -- its
+  fragments overlap and two share a start, and each counts 1 however wide it
+  is, so a weight or an ordering rule that treated a fragment like a position
+  score would move a bar;
 * the in-memory float and both VCF float scores are configured **without** an
   explicit view range, forcing the two-pass min/max-then-histogram scan
   (auto-ranging); the tabix and bigWig scores pin an explicit range, so they
@@ -47,6 +52,7 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 from gain.genomic_resources.testing.builders import (
     GRRBuilder,
     a_bigwig_score,
+    a_fragment_score,
     a_grr,
     a_position_score,
     a_vcf_info_score,
@@ -111,6 +117,21 @@ ALLELE_DATA = """
     chr1   20         29       C          T            0.25
 """
 
+# Tabix fragment score.  Fragments overlap freely and several may share a
+# start -- both ordinary data for this kind -- and each weighs 1 however wide
+# it is, so the four rows contribute four counts and not 91+11+181+6 of them.
+# Tabix-backed deliberately: an in-memory table serves no column arrays, so a
+# fragment score authored that way would never reach the VECTORIZED scan, and
+# the statistics this file pins would say nothing about the path the fragment
+# kind's weights and record rule are actually measured on.
+FRAGMENT_DATA = """
+    chrom  pos_begin  pos_end  frg_val
+    chr1   10         100      0.1
+    chr1   20         30       0.9
+    chr1   20         200      0.5
+    chr1   40         45       0.25
+"""
+
 # VCF: vcf_af is Number=A (one value per ALT allele); vcf_ar is Number=R (a ref
 # value followed by one per ALT -- the read path drops the ref and keeps the
 # per-ALT values).  The ref values (5.0) differ from every ALT value so a
@@ -171,6 +192,16 @@ def _golden_grr_builder() -> GRRBuilder:
                 "type": "number", "number_of_bins": 4,
                 "view_range": {"min": 0.0, "max": 1.0}})
             .with_data(ALLELE_DATA),
+        )
+        .with_resource(
+            "fragment_score",
+            a_fragment_score()
+            .with_tabix()
+            .with_score("frg_val", "float")
+            .with_histogram({
+                "type": "number", "number_of_bins": 4,
+                "view_range": {"min": 0.0, "max": 1.0}})
+            .with_data(FRAGMENT_DATA),
         )
         .with_resource(
             "vcf_score",
