@@ -216,7 +216,10 @@ def test_cli_list_rejects_a_malformed_search_term(
 
     assert excinfo.value.code == 1
     assert '"' in caplog.text
-    assert "apsw" not in caplog.text
+    # The traceback is the thing being replaced, so its absence is the
+    # assertion worth making -- the FTS complaint itself is carried into
+    # the message on purpose.
+    assert "Traceback" not in caplog.text
 
 
 def test_cli_list_with_an_empty_search_term_lists_everything(

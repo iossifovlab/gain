@@ -354,18 +354,18 @@ def test_malformed_resource_query_is_a_bad_request(
     "a:b",     # a column filter naming a column the index has not got
     "NEAR/",   # a truncated NEAR
 ])
-@pytest.mark.parametrize("current_client", ["admin", "user", "anonymous"])
 def test_a_malformed_search_term_is_a_bad_request(
     clients: dict[str, Client],
-    current_client: str,
     search_term: str,
 ) -> None:
     """A term FTS5 rejects is a bad request, not a 500 (gain#632).
 
-    Parametrised over the callers because the endpoint is anonymous and
-    unthrottled: an unauthenticated caller is exactly who reaches this.
+    Asked as the anonymous caller because the endpoint has neither an
+    authentication nor a throttle class of its own: an unauthenticated
+    caller is exactly who reaches this. The view has no per-caller
+    branch, so the other two clients would only repeat the case.
     """
-    response = clients[current_client].get(
+    response = clients["anonymous"].get(
         "/api/resources/search", query_params={"search": search_term})
 
     assert response.status_code == 400
