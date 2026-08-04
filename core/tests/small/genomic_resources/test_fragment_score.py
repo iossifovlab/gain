@@ -52,7 +52,7 @@ def test_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
             "grr": {
                 "score_one": {
                     "genomic_resource.yaml": textwrap.dedent("""
-                        type: cnv_collection
+                        type: fragment_score
                         table:
                             filename: data.txt
                         scores:
@@ -293,12 +293,12 @@ def named_columns_grr(tmp_path: pathlib.Path) -> pathlib.Path:
     an index to resolve only when the config names a column, so a table that
     leaves chrom/pos_begin/pos_end to their defaults never reaches the
     resolution these tests are about.  Naming them is the shape of a
-    typical ``cnv_collection`` resource (#502).
+    typical fragment-score resource (#502).
     """
     setup_directories(tmp_path, {
         "score_one": {
             "genomic_resource.yaml": textwrap.dedent("""
-                type: cnv_collection
+                type: fragment_score
                 table:
                     filename: data.txt
                     chrom:

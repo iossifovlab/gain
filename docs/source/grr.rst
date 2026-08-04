@@ -1068,9 +1068,11 @@ position score resources, except that the resource type is set to ``fragment_sco
 
 .. note::
 
-    This resource type was previously called ``cnv_collection``, and
-    ``type: cnv_collection`` is still accepted and **not deprecated**.
-    Prefer ``fragment_score`` for new resources.
+    This resource type was previously called ``cnv_collection``.
+    ``type: cnv_collection`` is still accepted but is **deprecated**: it stops
+    being accepted in GAIn ``2027.1.0``, and until then every resource
+    declaring it logs a warning naming that resource. Declare
+    ``type: fragment_score`` instead.
 
 Fragment scores are coordinate-based, like position scores: they are queried by chromosome and interval and do not model allele changes.
 A fragment is simply an interval carrying attributes; copy-number variants are the most common

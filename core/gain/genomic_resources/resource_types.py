@@ -8,24 +8,143 @@ in the score layer could not be reached from the layer that needs it most.
 That is not a detail: the review of gain#471 found that the SQL-side
 predicate had been missed precisely because the helper was out of reach.
 
-See ``docs/adr/0003-fragment-score-vocabulary.md``.
+See ``docs/adr/0003-fragment-score-vocabulary.md``, superseded by
+``docs/adr/0011-deprecate-cnv-collection-vocabulary.md``.
 """
+# `from gain import logging`, not the stdlib module: the shim bootstraps the
+# TRACE / USER_INFO levels and is what every gain module is required to use
+# (gain#373, pinned by `test_no_gain_module_uses_stdlib_logging_directly`).
+# It is the only import here, and it imports nothing from this layer.
+from gain import logging
+
+#: The preferred resource ``type:`` for a fragment score.
+PREFERRED_FRAGMENT_SCORE_TYPE = "fragment_score"
+
+#: The deprecated resource ``type:`` for a fragment score.  Still accepted,
+#: and still declared by repositories that have not migrated.
+LEGACY_FRAGMENT_SCORE_TYPE = "cnv_collection"
+
+#: The GAIn release in which every legacy fragment-score spelling stops
+#: being accepted (gain#539).  Named in every deprecation warning: a notice
+#: that does not say when it bites cannot be scheduled against.
+LEGACY_VOCABULARY_REMOVAL_RELEASE = "2027.1.0"
 
 #: The resource ``type:`` values that name a fragment score.
 #:
-#: Two spellings, both permanent.  ``fragment_score`` is what a resource
-#: should declare, and what the public GRR declares since the migration;
-#: ``cnv_collection`` is what a repository that has not migrated declares
-#: and is therefore NOT deprecated.  Any first-party resources still on it
-#: are tracked in ``iossifovlab/grr``#19, and third-party repositories
-#: answer to no migration at all, so the legacy spelling outlives this
-#: module's memory of why.
+#: Two spellings.  ``fragment_score`` is what a resource should declare, and
+#: what the public GRR declares since the migration; ``cnv_collection`` is
+#: what a repository that has not migrated declares.  It is deprecated and
+#: stops being accepted in ``LEGACY_VOCABULARY_REMOVAL_RELEASE``; consuming
+#: it warns, at the places that open a resource rather than here.
 #:
 #: A tuple rather than a set: it is used for membership, but also rendered
 #: into user-facing messages and into SQL placeholders, and a set would
 #: order them arbitrarily.  Preferred spelling first, so a message reads as
 #: a recommendation.
-FRAGMENT_SCORE_TYPES = ("fragment_score", "cnv_collection")
+FRAGMENT_SCORE_TYPES = (
+    PREFERRED_FRAGMENT_SCORE_TYPE, LEGACY_FRAGMENT_SCORE_TYPE)
+
+
+def deprecated_spelling_message(
+    surface: str, legacy: str, preferred: str, *, found_in: str,
+) -> str:
+    """Return the warning text for one use of one legacy spelling.
+
+    ``surface`` names the kind of configuration the spelling was written as
+    (``"resource type"``, ``"annotator name"``, ``"parameter"``),
+    ``found_in`` names where it was written -- a resource id, or an
+    annotator within a pipeline.  Both are required because the stack at the
+    point of the warning points into GAIn's own config parsing rather than
+    at the YAML the reader has to edit, so the message must carry the
+    location itself.
+
+    A plain string rather than a logging call: the module that recognised
+    the spelling logs it, so the record carries that module's logger name.
+    """
+    return (
+        f"{found_in} uses deprecated {surface} '{legacy}'; "
+        f"write '{preferred}' instead -- '{legacy}' stops being accepted "
+        f"in GAIn {LEGACY_VOCABULARY_REMOVAL_RELEASE}"
+    )
+
+
+#: Every deprecation message already announced by this process.
+#:
+#: Keyed by the message itself, so two announcements collapse exactly when
+#: they would have printed the same line -- a different resource id or a
+#: different surface is a different offender and is still announced.
+#:
+#: A dict rather than a set because insertion order is what makes the cap
+#: below evictable; the values carry nothing.
+_ANNOUNCED_DEPRECATIONS: dict[str, None] = {}
+
+#: How many distinct announcements to remember before evicting the oldest.
+#:
+#: The set is process-wide and never goes out of scope, and what lands in it
+#: is caller-supplied: ``found_in`` carries a resource id read verbatim from
+#: a repository, or an annotator id derived from a posted pipeline.  A
+#: long-lived web worker builds pipelines from request bodies, so an
+#: unbounded set would let a caller ratchet the process's memory by naming
+#: many distinct offenders once each -- retained forever, because nothing
+#: here can know the pipeline was rejected or evicted.
+#:
+#: Chosen well above any real repository's count of legacy-typed resources,
+#: so eviction never costs a duplicate line in the case this exists for.
+#: Past the cap the notice is still correct, merely repeatable.
+_ANNOUNCEMENT_MEMORY = 4096
+
+
+def warn_deprecated_spelling(
+    logger: logging.Logger,
+    surface: str, legacy: str, preferred: str, *, found_in: str,
+) -> None:
+    """Announce one legacy spelling once per offender, per process.
+
+    The seams that recognise a legacy spelling are not once-per-offender on
+    their own.  ``FragmentScore.__init__`` looked like it was -- until the
+    statistics scan, which rebuilds the score inside every min/max and
+    histogram task: ``grr_manage repo-repair`` over an hg38-scale resource
+    re-opens it once per region, so an unguarded warning there prints
+    thousands of identical lines for a single offender.  That is the noise
+    the deprecation was supposed to avoid, and it hides the other offenders
+    behind it.
+
+    Deduplicating on the rendered message keeps the property that matters
+    -- every distinct offender is named -- without asking each call site to
+    know how often it runs.  The scope is the process: a multiprocess task
+    run announces once per worker, which is bounded by the worker count
+    rather than by the task count.
+
+    What is remembered is capped at ``_ANNOUNCEMENT_MEMORY`` distinct
+    messages, oldest evicted first: ``found_in`` is caller-supplied, so an
+    uncapped memory would grow with what a long-lived process has been
+    asked to parse rather than with the repository it serves.
+
+    Tests reset the set through :func:`reset_deprecation_notices`, so an
+    assertion never depends on what ran before it.
+    """
+    message = deprecated_spelling_message(
+        surface, legacy, preferred, found_in=found_in)
+    if message in _ANNOUNCED_DEPRECATIONS:
+        return
+    if len(_ANNOUNCED_DEPRECATIONS) >= _ANNOUNCEMENT_MEMORY:
+        # Oldest first: `dict` preserves insertion order, and the entry
+        # least recently *announced* is the one whose offender the reader
+        # is least likely to still be scrolling past.
+        del _ANNOUNCED_DEPRECATIONS[next(iter(_ANNOUNCED_DEPRECATIONS))]
+    _ANNOUNCED_DEPRECATIONS[message] = None
+    logger.warning("%s", message)
+
+
+def reset_deprecation_notices() -> None:
+    """Forget what this process has already announced.
+
+    Exists for tests: the announced-set is process-wide, and a test that
+    asserts a warning fired must not depend on whether an earlier test in
+    the same worker already consumed it.  ``core/tests/conftest.py`` calls
+    this before every test.
+    """
+    _ANNOUNCED_DEPRECATIONS.clear()
 
 
 def equivalent_resource_types(resource_type: str) -> tuple[str, ...]:

@@ -150,7 +150,7 @@ def test_a_fragment_counts_once_however_long_it_is(
 ) -> None:
     calls: list[tuple[Any, int]] = []
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
-        - cnv_collection:
+        - fragment_score:
             resource_id: fragments
             attributes:
             - source: frequency

@@ -1,4 +1,4 @@
-# 3. Resource file names are contained by construction
+# 10. Resource file names are contained by construction
 
 - **Status:** accepted
 - **Date:** 2026-07-29

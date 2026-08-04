@@ -19,7 +19,7 @@ def grr() -> GenomicResourceRepo:
     return build_inmemory_test_repository({
         "fragments": {
             "genomic_resource.yaml": textwrap.dedent("""
-                type: cnv_collection
+                type: fragment_score
                 table:
                   filename: data.mem
                 scores:
@@ -56,7 +56,7 @@ def larger_grr() -> GenomicResourceRepo:
     return build_inmemory_test_repository({
         "fragments": {
             "genomic_resource.yaml": textwrap.dedent("""
-                type: cnv_collection
+                type: fragment_score
                 table:
                   filename: data.mem
                 scores:
@@ -105,7 +105,7 @@ def test_basic(
         fragment_count: int, grr: GenomicResourceRepo) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
-            - cnv_collection: fragments
+            - fragment_score: fragments
             """),
         grr)
 
@@ -123,9 +123,9 @@ def test_fragment_filter(
         grr: GenomicResourceRepo) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
-            - cnv_collection:
+            - fragment_score:
                 resource_id: fragments
-                cnv_filter: frequency < 0.05 or collection == "SSC"
+                fragment_filter: frequency < 0.05 or collection == "SSC"
             """),
         grr)
 
@@ -143,9 +143,9 @@ def test_fragment_filter_in(
         grr: GenomicResourceRepo) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
-            - cnv_collection:
+            - fragment_score:
                 resource_id: fragments
-                cnv_filter: '"SSC" in collection'
+                fragment_filter: '"SSC" in collection'
             """),
         grr)
 
@@ -163,9 +163,9 @@ def test_fragment_filter_on_newline(
         grr: GenomicResourceRepo) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
-            - cnv_collection:
+            - fragment_score:
                 resource_id: fragments
-                cnv_filter: >
+                fragment_filter: >
                     frequency < 0.05 or collection == "SSC"
             """),
         grr)
@@ -188,9 +188,9 @@ def test_fragment_filter_and_attribute(
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
-            - cnv_collection:
+            - fragment_score:
                 resource_id: fragments
-                cnv_filter: frequency < 0.05 or collection == "AGRE"
+                fragment_filter: frequency < 0.05 or collection == "AGRE"
                 attributes:
                 - count
                 - name: status
@@ -229,7 +229,7 @@ def test_fragment_aggregators(
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
-            - cnv_collection:
+            - fragment_score:
                 resource_id: fragments
                 attributes:
                 - count

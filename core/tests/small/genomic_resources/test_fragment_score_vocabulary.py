@@ -2,11 +2,20 @@
 """The ``fragment_score`` configuration vocabulary, accepted beside the old.
 
 gain#470 renamed the Python surface and deliberately left every
-configuration string alone.  gain#471 adds the new spellings *beside* the
-old ones -- nothing is replaced, and nothing is deprecated.
+configuration string alone.  gain#471 added the new spellings *beside* the
+old ones; gain#538 then deprecated the old ones, for removal in ``2027.1.0``.
 
-The legacy half is pinned in ``test_fragment_score_config_surface``.  The
-two modules are complementary and both must pass: this one would go green
+Everything pinned here is the PREFERRED half --
+``test_fragment_score_config_surface`` owns the legacy half and the
+warnings it now carries.  A few cases here are unavoidably CROSS-vocabulary
+(how the two spellings of one parameter interact, which annotator names
+match which resource types); where such a case actually provokes a
+deprecation notice it carries ``@pytest.mark.legacy_vocabulary``, and the
+guard in ``core/tests/conftest.py`` fails anything else here that warns.
+No fixture in this module may warn: fixture noise names a resource that
+exists only inside a test, which is exactly the un-actionable warning the
+deprecation was designed to avoid.  The two modules are
+complementary and both must pass until the removal: this one would go green
 if the old spellings were dropped, and that one would go green if the new
 ones were never added.
 """
@@ -154,10 +163,14 @@ def test_fragment_filter_parameter_is_honoured(
     assert attributes["count"] == 1
 
 
+@pytest.mark.legacy_vocabulary
 def test_configuring_both_filter_spellings_is_refused(
     modern_grr: GenomicResourceRepo,
 ) -> None:
     """Refused, not silently resolved.
+
+    Marked ``legacy_vocabulary``: writing ``cnv_filter`` at all announces
+    it, and this case has to write it to provoke the conflict.
 
     Both spellings mean the same parameter, so honouring one and dropping
     the other would apply a filter the config did not ask for -- and a
@@ -238,18 +251,25 @@ def test_every_annotator_name_wildcard_matches_either_resource_type(
 
 @pytest.fixture
 def indexed_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
-    """A searchable GRR holding one LEGACY-typed fragment score.
+    """A searchable GRR holding one PREFERRED-typed fragment score.
 
     Indexed, because ``search_resources`` answers from the FTS index rather
     than by scanning -- and the index is where the type predicate is
     applied, in SQL, which no Python-level alias expansion can reach.
+
+    Declares the preferred type: building the index opens the resource, so
+    a legacy-typed fixture here would announce a deprecation nobody can
+    act on every time this module runs.  The mirror image -- a stored
+    LEGACY type found by a request for the preferred one, which is the
+    direction that was actually broken -- is pinned in
+    ``test_fragment_score_config_surface``, where a notice is expected.
     """
     setup_directories(
         tmp_path,
         {
-            "fragments/legacy": {
+            "fragments/indexed": {
                 "genomic_resource.yaml": textwrap.dedent("""
-                    type: cnv_collection
+                    type: fragment_score
                     table:
                         filename: data.txt
                     scores:
@@ -282,11 +302,17 @@ def test_search_resources_finds_a_fragment_score_under_either_spelling(
     requested spelling differs from the stored one -- and an empty result
     is indistinguishable from "this repository has none", so the failure
     is silent in exactly the way a wrong answer is worse than an error.
+
+    Asking by the legacy spelling is a QUERY, not a configuration: nothing
+    was authored with it, so it announces nothing.  That is why this test
+    carries no ``legacy_vocabulary`` marker -- and the guard in
+    ``core/tests/conftest.py`` would fail it if the query path ever started
+    warning.
     """
     resources = list(
         indexed_grr.search_resources(resource_type=requested_type))
 
-    assert [r.get_id() for r in resources] == ["fragments/legacy"]
+    assert [r.get_id() for r in resources] == ["fragments/indexed"]
 
 
 def test_new_implementation_entry_point_key_resolves() -> None:

@@ -209,7 +209,7 @@ def test_a_fragment_counts_once_however_long_it_is(
     """
     res = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
-            type: cnv_collection
+            type: fragment_score
             table:
                 filename: data.mem
             scores:

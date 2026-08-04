@@ -1,8 +1,9 @@
 # DELIBERATELY on the legacy `cnv_collection` spelling -- do NOT modernise
 # this to `fragment_score`.
 #
-# The spelling is permanently accepted, because repositories we do not
-# control may declare it at any time.  A fixture that still says it keeps
+# The spelling is deprecated (gain#538) but accepted until 2027.1.0, and
+# repositories we do not control may declare it at any time.  A fixture
+# that still says it keeps
 # the whole editor/resources API stack continuously proving that a legacy
 # resource works -- through the real request path, not only in the tests
 # written to check the aliases.

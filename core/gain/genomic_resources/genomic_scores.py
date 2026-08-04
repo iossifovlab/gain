@@ -56,6 +56,9 @@ from gain.genomic_resources.resource_implementation import (
 )
 from gain.genomic_resources.resource_types import (
     FRAGMENT_SCORE_TYPES,
+    LEGACY_FRAGMENT_SCORE_TYPE,
+    PREFERRED_FRAGMENT_SCORE_TYPE,
+    warn_deprecated_spelling,
 )
 from gain.genomic_resources.score_def import (
     BULK_PARSEABLE_VALUE_TYPES,
@@ -1838,7 +1841,8 @@ class FragmentScore(GenomicScore):
 
     Nothing here is copy-number specific; a CNV collection is one
     application of it.  Accepts either resource type in
-    :data:`FRAGMENT_SCORE_TYPES`.
+    :data:`FRAGMENT_SCORE_TYPES`, warning once per resource on the
+    deprecated one.
     """
 
     # Fragments overlap freely and each weighs 1 however long it is.
@@ -1856,12 +1860,32 @@ class FragmentScore(GenomicScore):
     }
 
     def __init__(self, resource: GenomicResource):
-        if resource.get_type() not in FRAGMENT_SCORE_TYPES:
+        resource_type = resource.get_type()
+        if resource_type not in FRAGMENT_SCORE_TYPES:
             accepted = " or ".join(
                 f"'{score_type}'" for score_type in FRAGMENT_SCORE_TYPES)
             raise ValueError(
                 "The resource provided to FragmentScore should be of "
-                f"{accepted} type, not a '{resource.get_type()}'")
+                f"{accepted} type, not a '{resource_type}'")
+        if resource_type == LEGACY_FRAGMENT_SCORE_TYPE:
+            # Warned here, not from the `in FRAGMENT_SCORE_TYPES` membership
+            # tests: those also run inside the repository layer's SQL
+            # predicate, which would fire the warning on every query rather
+            # than on every open.
+            #
+            # Announced through `warn_deprecated_spelling` rather than
+            # logged outright because construction is NOT once per resource:
+            # the statistics scan rebuilds the score inside every min/max
+            # and histogram task, so a repo-repair over an hg38-scale
+            # resource passes here once per region.  Named by full id: a
+            # repository may hold several versions of one resource id, each
+            # its own directory with its own config to migrate, and the
+            # announce-once-per-message rule would otherwise print one line
+            # for all of them and name none of them precisely.
+            warn_deprecated_spelling(
+                logger, "resource type",
+                LEGACY_FRAGMENT_SCORE_TYPE, PREFERRED_FRAGMENT_SCORE_TYPE,
+                found_in=f"Resource '{resource.get_full_id()}'")
         super().__init__(resource)
 
     @staticmethod

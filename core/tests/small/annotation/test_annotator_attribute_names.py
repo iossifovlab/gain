@@ -152,7 +152,7 @@ def fragment_grr() -> GenomicResourceRepo:
     return build_inmemory_test_repository({
         "fragments": {
             "genomic_resource.yaml": textwrap.dedent("""
-                type: cnv_collection
+                type: fragment_score
                 table:
                   filename: data.mem
                 scores:
@@ -483,12 +483,12 @@ def test_gene_set_renamed_attribute(gene_set_grr: GenomicResourceRepo) -> None:
 
 
 # ---------------------------------------------------------------------------
-# cnv_collection_annotator
+# fragment_score_annotator
 # ---------------------------------------------------------------------------
 
 def test_fragment_score_default_name(fragment_grr: GenomicResourceRepo) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
-        - cnv_collection: fragments
+        - fragment_score: fragments
     """), fragment_grr)
     with pipeline.open() as p:
         result = p.annotate(Position("chr1", 10))
@@ -499,7 +499,7 @@ def test_fragment_score_renamed_attribute(
     fragment_grr: GenomicResourceRepo,
 ) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
-        - cnv_collection:
+        - fragment_score:
             resource_id: fragments
             attributes:
             - source: count

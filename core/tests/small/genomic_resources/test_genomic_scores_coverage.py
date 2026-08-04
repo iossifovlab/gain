@@ -407,7 +407,7 @@ def test_fragment_score_fetch_fragments() -> None:
     """Test FragmentScore.fetch_fragment_scores method."""
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
-            type: cnv_collection
+            type: fragment_score
             table:
                 filename: data.mem
             scores:
@@ -452,7 +452,7 @@ def test_fragment_score_not_open() -> None:
     """Test FragmentScore.fetch_fragment_scores when not opened."""
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
-            type: cnv_collection
+            type: fragment_score
             table:
                 filename: data.mem
             scores:
@@ -618,10 +618,10 @@ def test_allele_score_invalid_mode_config() -> None:
 
 
 def test_build_score_from_resource_fragment_score() -> None:
-    """Test build_score_from_resource with cnv_collection type."""
+    """Test build_score_from_resource with fragment_score type."""
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
-            type: cnv_collection
+            type: fragment_score
             table:
                 filename: data.mem
             scores:
