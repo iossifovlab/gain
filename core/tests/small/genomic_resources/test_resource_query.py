@@ -45,9 +45,13 @@ def test_an_overlong_query_is_refused_before_the_grammar_runs() -> None:
     A caller handing untrusted text to the parser must not be able to buy
     minutes of CPU with a few kilobytes, so the length bound lives here --
     on the parser -- rather than on any one of its callers.
+
+    One character over the bound, not the kilobytes an attacker would
+    actually send: a query long enough to be interesting is also long
+    enough that, if this bound were removed, the test would hang for
+    minutes instead of failing.
     """
-    clauses = " and ".join(['a="b"'] * 1000)
-    query = f"scores/*[{clauses}]"
+    query = "a" * (MAX_RESOURCE_QUERY_LENGTH + 1)
 
     with pytest.raises(ResourceQueryParseError) as excinfo:
         ResourceQuery.parse(query)
@@ -55,6 +59,13 @@ def test_an_overlong_query_is_refused_before_the_grammar_runs() -> None:
     message = str(excinfo.value)
     assert str(len(query)) in message
     assert str(MAX_RESOURCE_QUERY_LENGTH) in message
+
+
+def test_a_query_exactly_at_the_bound_is_accepted() -> None:
+    """The bound refuses what is *over* it, so a maximal query still parses."""
+    query = "a" * MAX_RESOURCE_QUERY_LENGTH
+
+    assert ResourceQuery.parse(query).match_id(query)
 
 
 @pytest.mark.parametrize(

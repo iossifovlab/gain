@@ -99,7 +99,7 @@ class SearchResources(ResourcesAPIView):
     # id globs that accumulate in `fnmatch`'s module-level pattern cache.
     # 256 characters is an order of magnitude more than a real query --
     # `hg38/scores/*[phenotype="autism" and "UCSC" in provenance]` is 57 --
-    # and parses in ~20ms at its worst.
+    # and parses in tens of milliseconds at the bound, depending on shape.
     #
     # This check is no longer the only thing standing between an untrusted
     # query and the parser: `ResourceQuery.parse` enforces the same bound

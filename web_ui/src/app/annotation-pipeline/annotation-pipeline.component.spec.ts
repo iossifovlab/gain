@@ -464,6 +464,54 @@ describe('AnnotationPipelineComponent', () => {
     jest.useRealTimers();
   });
 
+  // Debouncing the request must not debounce the *invalidation*. Consumers
+  // gate on isConfigValid (the Annotate/Create buttons, autoSavePipeline);
+  // if it stayed true while the user typed, a click landing inside the
+  // debounce window would act on text nothing had validated.
+  it('should mark the config invalid immediately on edit, before validating', () => {
+    jest.useFakeTimers();
+    component.pipelinesLoaded = true;
+    pipelineStateService.isConfigValid.set(true);
+
+    component.currentPipelineText = 'edited';
+    component.onConfigChanged();
+
+    expect(pipelineStateService.isConfigValid()).toBe(false);
+    jest.useRealTimers();
+  });
+
+  it('should publish the edited text immediately on edit', () => {
+    jest.useFakeTimers();
+    component.pipelinesLoaded = true;
+
+    component.currentPipelineText = 'edited';
+    component.onConfigChanged();
+
+    expect(pipelineStateService.currentPipelineText()).toBe('edited');
+    jest.useRealTimers();
+  });
+
+  // Without this, the whole debounce is bypassable by a one-word edit to the
+  // template: binding (ngModelChange) straight back to isConfigValid leaves
+  // every other spec in this file green, because they drive the component
+  // API rather than the DOM.
+  it('should route editor changes through the debounced handler', () => {
+    jest.useFakeTimers();
+    component.pipelines = mockPipelines;
+    component.pipelinesLoaded = true;
+    const configValidationSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig');
+
+    const monacoEditor = fixture.debugElement.query(By.css('ngx-monaco-editor'));
+    monacoEditor.triggerEventHandler('ngModelChange', 'edited');
+
+    expect(configValidationSpy).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+
+    expect(configValidationSpy).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
+  });
+
   it('should validate again after a later burst', () => {
     jest.useFakeTimers();
     const configValidationSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig');
