@@ -19,6 +19,9 @@ break:
   **add_prefix** rule;
 * the VCF has a **multi-allelic** record and INFO fields of Number=A and
   Number=R, so the allele-indexed and ref-offset INFO paths are both hit;
+* the allele score puts **several records at one position** -- one per ref/alt
+  pair -- and each weighs 1 however wide its ``pos_end`` reaches, so both
+  halves of what an allele score means by a region are pinned in a bar;
 * the in-memory float and both VCF float scores are configured **without** an
   explicit view range, forcing the two-pass min/max-then-histogram scan
   (auto-ranging); the tabix and bigWig scores pin an explicit range, so they
@@ -47,6 +50,7 @@ from gain.genomic_resources.testing.builders import (
     a_grr,
     a_position_score,
     a_vcf_info_score,
+    an_allele_score,
 )
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
@@ -91,6 +95,20 @@ BIGWIG_DATA = """
     chr1  0  2  0.0
     chr1  2  4  2.0
     chr1  4  6  4.0
+"""
+
+# In-memory allele score, 1-based.  An allele score's records legitimately
+# share a position -- one per ref/alt pair -- and each weighs 1 however wide an
+# optional ``pos_end`` column reaches, so the three rows at chr1:10 contribute
+# three counts and the row spanning 20..29 contributes one.  Both facts are
+# visible in the histogram: a weight rule that span-weighted an allele record
+# would move the 0.25 bar by nine.  An explicit view range keeps the bins exact.
+ALLELE_DATA = """
+    chrom  pos_begin  pos_end  reference  alternative  all_val
+    chr1   10         10       A          G            0.25
+    chr1   10         10       A          C            0.75
+    chr1   10         10       A          T            0.25
+    chr1   20         29       C          T            0.25
 """
 
 # VCF: vcf_af is Number=A (one value per ALT allele); vcf_ar is Number=R (a ref
@@ -144,6 +162,15 @@ def _golden_grr_builder() -> GRRBuilder:
                 "view_range": {"min": 0.0, "max": 4.0}})
             .with_data(BIGWIG_DATA)
             .with_chrom_lens({"chr1": 100}),
+        )
+        .with_resource(
+            "allele_score",
+            an_allele_score()
+            .with_score("all_val", "float")
+            .with_histogram({
+                "type": "number", "number_of_bins": 4,
+                "view_range": {"min": 0.0, "max": 1.0}})
+            .with_data(ALLELE_DATA),
         )
         .with_resource(
             "vcf_score",
