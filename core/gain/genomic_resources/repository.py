@@ -1274,10 +1274,12 @@ def _reject_unparsable_search_term(
     manifest, and a quoted identifier carries nothing out of the
     statement it is spliced into.
     """
-    columns = [
-        '"{}"'.format(row[1].replace('"', '""'))
-        for row in conn.execute("pragma table_info('contents')")
-    ]
+    columns = []
+    for row in conn.execute("pragma table_info('contents')"):
+        # Doubling is what keeps a name that contains a quote inside its
+        # own quotes rather than ending them.
+        quoted = row[1].replace('"', '""')
+        columns.append(f'"{quoted}"')
     if not columns:
         # Nothing to build a probe out of. An index shaped like this
         # cannot answer a search at all; let the real statement say so.
