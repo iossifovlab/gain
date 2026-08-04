@@ -1,9 +1,11 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pathlib
 import textwrap
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
+from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     PositionScore,
@@ -591,11 +593,15 @@ def test_a_position_score_repeat_names_the_resource_locus_and_rule(
     assert "at most one record per position" in message
 
 
-def _backwards_allele_score(
-    tmp_path: pathlib.Path,
-) -> AlleleScore:
+def _an_allele_score(tmp_path: pathlib.Path) -> AlleleScore:
+    """An opened, well-formed allele score to drive records at.
+
+    Its own two records are in order: the streams below are handed in, so
+    what the resource holds only has to make the score openable and name it
+    in a refusal.
+    """
     return build_allele_score_from_resource(_score_repo(
-        tmp_path, "backwards",
+        tmp_path, "alleles",
         an_allele_score().with_data("""
             chrom  pos_begin  reference  alternative  score
             chr1   10         A          G            0.1
@@ -603,13 +609,13 @@ def _backwards_allele_score(
         """))).open()
 
 
-# A contig's records, out of order.  Written out rather than read from the
-# resource above, which no fixture can express: tabix refuses to index a file
-# whose positions decrease, the in-memory backend sorts each contig as it
-# loads it, bigWig intervals are ordered by construction and a VCF table is
-# tabix-backed -- so a fixture authored backwards comes back sorted and every
-# assertion below would hold without the rule existing at all.
-BACKWARDS_ALLELE_RECORDS: list[Any] = [
+# A contig's records, out of order.  Written out rather than read from a
+# resource, which no fixture can express: tabix refuses to index a file whose
+# positions decrease, the in-memory backend sorts each contig as it loads it,
+# bigWig intervals are ordered by construction and a VCF table is tabix-backed
+# -- so a fixture authored backwards comes back sorted and every assertion
+# below would hold without the rule existing at all.
+BACKWARDS_ALLELE_RECORDS: list[Record] = [
     ("chr1", 20, 20, "C", "T", ("chr1", "20", "C", "T", "0.2")),
     ("chr1", 10, 10, "A", "G", ("chr1", "10", "A", "G", "0.1")),
 ]
@@ -618,13 +624,13 @@ BACKWARDS_ALLELE_RECORDS: list[Any] = [
 def test_an_allele_score_going_backwards_names_the_resource_locus_and_rule(
     tmp_path: pathlib.Path,
 ) -> None:
-    score = _backwards_allele_score(tmp_path)
+    score = _an_allele_score(tmp_path)
 
     with pytest.raises(MalformedResourceError) as excinfo:
         list(score.validate_records(iter(BACKWARDS_ALLELE_RECORDS)))
 
     message = str(excinfo.value)
-    assert "<backwards>" in message
+    assert "<alleles>" in message
     assert "chr1:10" in message
     assert "chr1:20" in message
     assert "an allele score's records must not move backwards" in message
@@ -638,8 +644,8 @@ def test_the_allele_rule_passes_the_records_sharing_one_position(
     # ref/alt pair at a site, so records repeating a position are what the
     # kind IS.  Driven at the validator directly for the same reason the
     # refusal above is -- one rule, one seam.
-    score = _backwards_allele_score(tmp_path)
-    at_one_site: list[Any] = [
+    score = _an_allele_score(tmp_path)
+    at_one_site: list[Record] = [
         ("chr1", 10, 10, "A", "G", ("chr1", "10", "A", "G", "0.1")),
         ("chr1", 10, 10, "A", "C", ("chr1", "10", "A", "C", "0.2")),
         ("chr1", 10, 10, "A", "G", ("chr1", "10", "A", "G", "0.3")),
@@ -656,9 +662,9 @@ def test_reading_an_allele_score_going_backwards_raises_nothing(
     # The read half of the split: a plain read checks nothing at all, so the
     # very stream the validator above refuses comes back whole, each record
     # as the point it sits at, in the order the table handed it over.
-    score = _backwards_allele_score(tmp_path)
+    score = _an_allele_score(tmp_path)
 
-    def out_of_order(*_args: Any, **_kwargs: Any) -> Any:
+    def out_of_order(*_args: object, **_kwargs: object) -> Iterator[Record]:
         return iter(BACKWARDS_ALLELE_RECORDS)
 
     monkeypatch.setattr(score, "fetch_records", out_of_order)
