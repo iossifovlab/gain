@@ -669,6 +669,31 @@ def test_the_fragment_rule_starts_each_contig_afresh(
         score.fetch_records("chr1", 1, 200)))) == 2
 
 
+def test_an_allele_scores_rule_starts_each_contig_afresh(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The same claim for the other kind that crosses contigs, and it needs its
+    # own test rather than riding the fragment one: the two are only served by
+    # the same body while the base default still stands.  Asserted against
+    # what an ALLELE score does, not against which body does it, so it keeps
+    # its meaning when that kind gets a validator of its own.
+    #
+    # Without a test here the reset is unpinned for allele scores -- dropping
+    # it leaves the whole suite green while every multi-contig allele resource
+    # is refused mid-scan.
+    score = _allele_score_reading_backwards(tmp_path, monkeypatch)
+
+    def across_contigs(*_args: object, **_kwargs: object) -> Iterator[Record]:
+        yield ("chr1", 100, 100, "A", "G", ("chr1", "100", "A", "G", "0.1"))
+        yield ("chr2", 5, 5, "C", "T", ("chr2", "5", "C", "T", "0.2"))
+
+    monkeypatch.setattr(score, "fetch_records", across_contigs)
+
+    assert len(list(score.validate_records(
+        score.fetch_records("chr1", 1, 200)))) == 2
+
+
 def test_the_validator_hands_back_every_record_it_was_given(
     tmp_path: pathlib.Path,
 ) -> None:
