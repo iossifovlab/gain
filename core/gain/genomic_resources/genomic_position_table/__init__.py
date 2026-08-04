@@ -436,6 +436,23 @@ thing the old diagnostic carried that the new one does not is which *file*
 contig the probe was looking for -- recoverable from the table's
 ``chrom_mapping``.  The type is unchanged, so an ``except ValueError`` is
 unaffected; only a caller matching on the text is.
+
+**Opening a tabix table can now REFUSE the resource** (gain#553).
+``TabixGenomicPositionTable.open()`` reads the coordinate columns off the index
+it opened the file with and compares them against the column keys the table
+resolves; where they disagree it raises ``MalformedResourceError``, before a
+record is read.  Recorded here because every caller of a tabix-backed score
+inherits the new failure -- and because the exception is a ``ValueError``, so a
+caller already catching one around ``open()`` keeps catching this, and
+``grr_manage`` reports it as the resource's fault rather than as an internal
+error (ADR 0008).
+
+A table configured over the columns its index was built from opens exactly as
+before, at the cost of one fixed-size header read per open.  The refusal is
+uniform: it is not a mode, and there is no flag to turn it off -- a resource
+whose index filters on one span while its records are read through another
+returns records that are fetched and then dropped without a trace, and no
+caller has any use for that.
 """
 from .line import LineBuffer
 from .table import ContigExtent
