@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import asyncio
+import logging
 import threading
 import time
 from typing import Any
@@ -979,3 +980,72 @@ async def test_validate_build_delay_is_a_no_op_when_unset(
         f"validate took {elapsed:.3f}s with no delay configured -- the hook "
         f"is not a no-op when GPFWA_BUILD_DELAY_SECONDS is unset"
     )
+
+
+# ---------------------------------------------------------------------------
+# The untrusted body must never be written to the log
+# ---------------------------------------------------------------------------
+# Awaiting the body parse on the pool means an executor now *carries the parsed
+# body as a task result*, and the pool's done-callback used to render every
+# result into a DEBUG record. The shipped ``LOGGING`` puts the root logger at
+# DEBUG behind a console handler and a file handler, so on this anonymous,
+# size-unbounded endpoint that turned every refused request into a write of
+# the whole attacker-supplied body -- to disk and to stdout -- *before* the
+# ``MAX_CONFIG_LENGTH`` refusal ran. The pool must describe what it finished,
+# never render what it produced.
+
+#: Distinctive enough that finding it in a log record cannot be a coincidence.
+BODY_CANARY = "cAnArY-payload-that-must-not-be-logged"
+
+
+def _canary_records(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Every captured log message that carries the canary."""
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if BODY_CANARY in record.getMessage()
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_a_refused_oversized_body_is_never_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The body of a 400-refused request must not reach any log record.
+
+    This is the amplification that matters: the request is *rejected*, so a
+    client paying nothing but bandwidth would otherwise buy a log write the
+    size of whatever it sent, at the endpoint's full throttle allowance.
+    """
+    oversized = BODY_CANARY + "#" * PipelineValidation.MAX_CONFIG_LENGTH
+    client = AsyncClient()
+
+    with caplog.at_level(logging.DEBUG):
+        response = await client.post(VALIDATE_URL, {"config": oversized})
+
+    assert response.status_code == 400, response.content
+    assert _canary_records(caplog) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_an_accepted_body_is_never_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Nor does a config that passes every bound get rendered into the log.
+
+    The editor posts on a debounce, so even benign traffic would otherwise
+    cost a multiple of the config's size in log volume per keystroke.
+    """
+    client = AsyncClient()
+
+    with caplog.at_level(logging.DEBUG):
+        response = await client.post(
+            VALIDATE_URL,
+            {"config": f"# {BODY_CANARY}\n{VALID_CONFIG}"},
+        )
+
+    assert response.status_code == 200, response.content
+    assert response.json() == {"errors": ""}
+    assert _canary_records(caplog) == []

@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import logging
 import threading
 import time
 from unittest.mock import MagicMock
@@ -728,3 +729,103 @@ def test_fake_future_cancel() -> None:
     future = FakeFuture("result")
     future.cancel()
     assert future.cancelled() is False
+
+
+# ---------------------------------------------------------------------------
+# A task's result is never rendered into a log record
+# ---------------------------------------------------------------------------
+# Executors run functions whose results are, or derive from, untrusted request
+# input: PipelineValidation awaits the DRF body parse and the expansion-gate
+# parse on a pool (#659), so a result in flight can be the whole parsed body of
+# an anonymous, size-unbounded request. The completion record used to %s that
+# result, which -- with the shipped root-logger-at-DEBUG configuration, a
+# console handler and a file handler -- made every completed task a log write
+# the size of whatever the client sent, twice over, before any size bound had
+# run. The record may say what shape a task returned; it may not say what.
+
+#: Long enough that a truncating renderer would still leak it, and
+#: distinctive enough that a match cannot be coincidence.
+RESULT_CANARY = "cAnArY-task-result-that-must-not-be-logged"
+
+
+def _canary_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if RESULT_CANARY in record.getMessage()
+    ]
+
+
+def _drain(executor: ThreadedTaskExecutor, timeout: float = 10.0) -> None:
+    """Wait until the pool's done-callback has run for every task.
+
+    ``Future.result()`` can return before the done-callbacks fire -- waiters
+    are notified inside the condition, callbacks invoked after it is released
+    -- so the callback's own bookkeeping (``size()``) is the sync point, not
+    the result.
+    """
+    deadline = time.time() + timeout
+    while executor.size() > 0 and time.time() < deadline:
+        time.sleep(0.01)
+    assert executor.size() == 0, "tasks still pending"
+
+
+def test_threaded_executor_does_not_log_the_task_result(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A completed task's result must not appear in any log record."""
+    executor = ThreadedTaskExecutor(max_workers=1)
+    try:
+        with caplog.at_level(logging.DEBUG):
+            future = executor.execute(lambda: RESULT_CANARY)
+            assert future.result(timeout=10) == RESULT_CANARY
+            _drain(executor)
+
+        assert _canary_messages(caplog) == []
+    finally:
+        executor.shutdown()
+
+
+def test_sequential_executor_does_not_log_the_task_result(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The sequential twin must not leak it either.
+
+    It is behaviorally interchangeable with the threaded pool (#154) and is
+    what the tests and the cache's sequential mode run on, so a fix applied
+    to only one of them would be reintroduced by a configuration change.
+    """
+    executor = SequentialTaskExecutor()
+
+    with caplog.at_level(logging.DEBUG):
+        future = executor.execute(
+            lambda: RESULT_CANARY, callback_success=MagicMock())
+        assert future.result() == RESULT_CANARY
+
+    assert _canary_messages(caplog) == []
+
+
+def test_threaded_executor_still_reports_task_completion(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Withholding the value must not cost the diagnostic.
+
+    The completion record still fires and still says what shape the task
+    returned -- a bounded description that no request can grow.
+    """
+    executor = ThreadedTaskExecutor(max_workers=1)
+    try:
+        with caplog.at_level(logging.DEBUG):
+            future = executor.execute(lambda: RESULT_CANARY)
+            assert future.result(timeout=10) == RESULT_CANARY
+            _drain(executor)
+
+        completions = [
+            record.getMessage()
+            for record in caplog.records
+            if "Task completed" in record.getMessage()
+        ]
+        assert len(completions) == 1, caplog.records
+        assert "str" in completions[0]
+    finally:
+        executor.shutdown()

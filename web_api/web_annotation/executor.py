@@ -12,6 +12,35 @@ from gain import logging
 logger = logging.getLogger(__name__)
 
 
+def _result_type_name(result: Any) -> str:
+    """Describe a completed task's result without rendering it.
+
+    The completion log must never ``%s`` a task result. Executors run
+    functions whose results are, or are derived from, untrusted request
+    input -- ``PipelineValidation`` awaits the DRF body parse and the
+    expansion-gate parse on a pool (#659), so the results in flight are the
+    whole parsed request body and the whole expanded annotator list, on an
+    endpoint that is anonymous and whose body is size-unbounded (DRF's
+    parsers do not consult ``DATA_UPLOAD_MAX_MEMORY_SIZE``).
+
+    Rendering those turned every completed task into a log write the size of
+    whatever the client sent, doubled -- once to the console handler, once to
+    the ``WatchedFileHandler`` on ``gpfwa-debug.log`` -- because the shipped
+    ``LOGGING`` runs the root logger at DEBUG and ``settings_daphne``
+    inherits it unchanged. It happened *before* ``MAX_CONFIG_LENGTH`` could
+    refuse the request, so a refusal cost the server more than it cost the
+    client: at the endpoint's throttle allowance one unauthenticated IP could
+    drive gigabytes a minute onto the volume that also holds job results and
+    uploads.
+
+    The type name is what the record was worth diagnostically anyway ("did
+    this task return something, and what shape"), and it is bounded and not
+    attacker-controlled. Anything wanting a task's actual value should log it
+    at the call site, where its size is known.
+    """
+    return type(result).__name__
+
+
 class TaskExecutor(abc.ABC):
     """Abstract base class for job executors."""
 
@@ -106,7 +135,10 @@ class SequentialTaskExecutor(TaskExecutor):
             result = fn(**kwargs)
             future.set_result(result)
             if callback_success is not None:
-                logger.debug("Task completed with result: %s", result)
+                logger.debug(
+                    "Task completed with a result of type: %s",
+                    _result_type_name(result),
+                )
                 callback_success()
         except BaseException as e:
             logger.exception("Task failed with exception")
@@ -159,7 +191,10 @@ class ThreadedTaskExecutor(TaskExecutor):
             if callback_failure is not None:
                 callback_failure(exception)
         else:
-            logger.debug("Task completed with result: %s", future.result())
+            logger.debug(
+                "Task completed with a result of type: %s",
+                _result_type_name(future.result()),
+            )
         with self._lock:
             self._futures.remove((start_time, future))
             logger.debug("Remaining tasks: %d", len(self._futures))
