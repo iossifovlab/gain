@@ -112,6 +112,21 @@ def test_an_empty_resource_type_is_an_unset_one(
     assert found == {"scores/res_a", "other/res_b"}
 
 
+def test_a_padded_resource_type_still_selects(
+    indexed_grr: GenomicResourceProtocolRepo,
+) -> None:
+    """A type name has no use for the spaces around it.
+
+    Unlike a search term, where a space separates the parts of an
+    expression, a resource type is one token: ``-t " position_score "``
+    can only have meant the type, and matched nothing instead.
+    """
+    found = {res.resource_id for res in indexed_grr.search_resources(
+        resource_type=" position_score ")}
+
+    assert found == {"scores/res_a", "other/res_b"}
+
+
 @pytest.mark.parametrize("blank", [" ", "\t", "   \n "])
 def test_a_whitespace_only_search_term_is_an_unset_one(
     unindexed_grr: GenomicResourceProtocolRepo,
@@ -143,6 +158,48 @@ def test_a_malformed_term_is_refused_even_when_nothing_could_match(
     with pytest.raises(SearchTermError):
         list(indexed_grr.search_resources(
             search_term='"', resource_query='*[nosuchkey="x"]'))
+
+
+def _republish_index_with_an_odd_column(grr_path: pathlib.Path) -> None:
+    """Rebuild the index carrying a column gain would not have created.
+
+    SQLite accepts a quoted identifier that gain's own index build
+    refuses, so a repository published by other hands can have one --
+    and the search that names it is a search this repository can answer.
+    """
+    index_path = grr_path / GR_SQLITE_META_FILE_NAME
+    conn = apsw.Connection(":memory:")
+    conn.deserialize("main", gzip.decompress(index_path.read_bytes()))
+    rows = list(conn.execute("SELECT full_id, type FROM contents"))
+    conn.execute("DROP TABLE contents")
+    conn.execute(
+        'CREATE VIRTUAL TABLE contents USING fts5(full_id, type, "ref-genome")',
+    )
+    for full_id, res_type in rows:
+        conn.execute(
+            'INSERT INTO contents (full_id, type, "ref-genome") '
+            "VALUES (?, ?, ?)",
+            (full_id, res_type, "hg38"))
+    index_path.write_bytes(gzip.compress(conn.serialize("main")))
+
+
+def test_a_column_filter_on_an_unconventional_column_is_not_refused(
+    indexed_grr: GenomicResourceProtocolRepo,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The check must not be stricter than the index it stands in for.
+
+    A term is validated against a stand-in built from the real index's
+    columns; a stand-in missing some of them rejects a column filter the
+    repository would have answered -- the one direction of error that
+    turns a working search into a 400.
+    """
+    _republish_index_with_an_odd_column(tmp_path)
+
+    found = {res.resource_id for res in indexed_grr.search_resources(
+        search_term='"ref-genome" : hg38')}
+
+    assert found == {"scores/res_a", "other/res_b"}
 
 
 def _break_the_index(grr_path: pathlib.Path) -> None:

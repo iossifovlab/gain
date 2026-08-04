@@ -1251,8 +1251,11 @@ def _reject_unparsable_search_term(
       table. Blaming those on the term would answer 400, with "your
       search is malformed", to every caller of a repository that needs
       repairing, and would hide the breakage from anything watching for
-      500s. Here they are not caught: the probe parses the term
-      successfully, and the real failure is left to speak for itself.
+      500s. None of them is caught here: the ones that survive being
+      read far enough to name the columns go on to fail the real
+      statement, and the ones that do not -- a damaged index cannot even
+      be described -- come straight out of the ``pragma`` below. Either
+      way the repository's failure is what the caller is told about.
     * A term is checked even when the planner never asks FTS5 to read
       it. A resource query that can match nothing folds the whole
       ``WHERE`` away, and a term validated only by being executed would
@@ -1261,13 +1264,19 @@ def _reject_unparsable_search_term(
 
     The column names come from the index because a column filter
     (``ref_genome : hg38``) is a term that is valid only against an index
-    that has the column. They are vetted the way
-    ``_resource_query_conditions`` vets them: a published index is an
-    artefact of the repository and no more trusted than its manifest.
+    that has the column. Every column is mirrored, including any name
+    gain's own index build would have refused: this stands in for the
+    index, so a name it does not carry is a column filter wrongly called
+    malformed -- a working search turned into a 400, which is the one
+    direction of this check that costs a caller something. The names are
+    quoted rather than vetted, which is what makes that safe: a published
+    index is an artefact of the repository and no more trusted than its
+    manifest, and a quoted identifier carries nothing out of the
+    statement it is spliced into.
     """
     columns = [
-        row[1] for row in conn.execute("pragma table_info('contents')")
-        if INDEX_COLUMN_RE.match(row[1])
+        '"{}"'.format(row[1].replace('"', '""'))
+        for row in conn.execute("pragma table_info('contents')")
     ]
     if not columns:
         # Nothing to build a probe out of. An index shaped like this
@@ -1276,9 +1285,17 @@ def _reject_unparsable_search_term(
 
     probe = apsw.Connection(":memory:")
     try:
-        probe.execute(
-            f"CREATE VIRTUAL TABLE contents USING fts5({', '.join(columns)})",
-        )
+        try:
+            probe.execute(
+                "CREATE VIRTUAL TABLE contents "
+                f"USING fts5({', '.join(columns)})",
+            )
+        except apsw.SQLError:
+            # This index cannot be stood in for. Checking the term
+            # against a different set of columns would refuse searches
+            # the repository can answer, so it is not checked at all --
+            # the real statement is left to accept or reject it.
+            return
         try:
             # Stepped, not merely prepared: FTS5 parses the term when the
             # query runs. The table is empty, so this reads no rows -- it
@@ -1434,10 +1451,14 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
         rejected by FTS5, or, on a repository with no index, be reported as
         a search that cannot be run.
 
-        Whitespace counts as blank: ``-s "$VAR "`` is the same accident as
-        ``-s "$VAR"``, and FTS5 reads a run of spaces as the empty
-        expression it rejects. A term that has content is passed on
-        untouched, spaces and all -- ``ref_genome : hg38`` is one term.
+        Whitespace counts as blank: ``-s "$VAR "`` is the same accident
+        as ``-s "$VAR"``. What FTS5 would otherwise make of it depends on
+        which space was typed, and neither answer is worth keeping -- a
+        run of ASCII spaces is the empty expression it rejects, while a
+        non-breaking space is a term it accepts and nothing contains, so
+        the one accident was an error or a silently empty result. A term
+        that has content is passed on untouched, spaces and all --
+        ``ref_genome : hg38`` is one term.
 
         ``resource_type`` is normalised the same way, for the same reason
         (gain#653): blank, it selected nothing where it was meant to
@@ -1455,9 +1476,11 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
         parsed_query = (
             ResourceQuery.parse(resource_query) if resource_query else None
         )
+        # The term keeps its spaces and the type does not: a term is an
+        # expression whose parts spaces separate, a type is one token.
         return self._search_resources(
             search_term if search_term and search_term.strip() else None,
-            resource_type if resource_type and resource_type.strip() else None,
+            resource_type.strip() or None if resource_type else None,
             parsed_query)
 
     def _search_resources(
