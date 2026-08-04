@@ -10,6 +10,7 @@ resource's own directory.
 import gzip
 import hashlib
 import json
+import logging
 import pathlib
 from typing import Any
 
@@ -29,6 +30,8 @@ from gain.genomic_resources.repository import (
     GenomicResourceProtocolRepo,
     Manifest,
     ResourceFileState,
+    report_uncontained_manifest_entries,
+    validate_resource_id,
 )
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
@@ -736,3 +739,127 @@ def test_fts_search_survives_a_dropped_poisoned_id(
     assert [res.resource_id for res in proto.search_resources("basic")] == [
         "good_one",
     ]
+
+
+# ---------------------------------------------------------------------------
+# Control characters in an untrusted name (gain#642).
+#
+# A resource id and a manifest entry name are both read verbatim out of
+# remote GRR content and are both rendered into log messages unescaped, at
+# ~86 call sites. A name carrying a newline therefore emits a SECOND,
+# fully-formed-looking log line -- one that can assert the opposite of what
+# the run found. Escaping at every call site is not a strategy, so the name
+# is refused at the same boundary that already refuses a traversal.
+# ---------------------------------------------------------------------------
+
+
+_FORGING_ID = (
+    "hg38/x\n2026-08-03 10:00:00 INFO gain.genomic_resources.cli: "
+    "repository verified clean, 0 resources skipped\n"
+)
+
+
+@pytest.mark.parametrize("resource_id", [
+    _FORGING_ID,
+    "hg38/x\rFORGED",
+    "hg38/x\x1b[2KFORGED",
+    "hg38/x\x00y",
+    "hg38/x\x9by",
+])
+def test_get_resource_file_url_rejects_a_control_character_id(
+    fs_proto: FsspecReadWriteProtocol, resource_id: str,
+) -> None:
+    """An id that can forge a log line is not a legitimate id.
+
+    The whole C0/C1 range goes, not the newline that bites today: a list
+    tuned to one terminal's or one url parser's current quirks is one
+    change away from a hole.
+    """
+    poisoned = GenomicResource(resource_id, (0,), fs_proto)
+
+    with pytest.raises(ValueError):
+        fs_proto.get_resource_file_url(poisoned, "data.txt")
+
+
+@pytest.mark.parametrize("resource_id", [
+    "hg38/x%0aFORGED",
+    "hg38/x%0dFORGED",
+    "hg38/x%1b[2KFORGED",
+])
+def test_percent_encoded_control_characters_are_rejected_too(
+    fs_proto: FsspecReadWriteProtocol, resource_id: str,
+) -> None:
+    """A url path is decoded before it is resolved, so both spellings go."""
+    poisoned = GenomicResource(resource_id, (0,), fs_proto)
+
+    with pytest.raises(ValueError):
+        fs_proto.get_resource_file_url(poisoned, "data.txt")
+
+
+def test_a_dropped_control_character_id_cannot_forge_a_log_line(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Refusing the id is not enough -- the refusal NAMES it.
+
+    This is the acceptance criterion the issue actually states: no single
+    emitted record may span more than one physical line. Dropping the
+    resource satisfies containment but not this, because the drop warning
+    interpolates the very id that carries the newline.
+    """
+    remote_root = tmp_path / "area" / "remote"
+    remote_root.mkdir(parents=True)
+    entries = [
+        _poisoned_contents_entry(_FORGING_ID, "pwned\n"),
+        _poisoned_contents_entry("good_one", "alabala"),
+    ]
+    with gzip.open(remote_root / GR_CONTENTS_FILE_NAME, "wt") as outfile:
+        json.dump(entries, outfile)
+
+    proto = build_filesystem_test_protocol(
+        remote_root, repair=False, read_only=True)
+
+    with caplog.at_level(logging.WARNING):
+        assert [res.resource_id for res in proto.get_all_resources()] == [
+            "good_one",
+        ]
+
+    assert caplog.records
+    for record in caplog.records:
+        assert "\n" not in record.getMessage()
+
+
+def test_a_control_character_manifest_entry_cannot_forge_a_log_line(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The entry-name half of the same hazard, reported the same way."""
+    # ``json.dumps`` so the newline survives as an ESCAPE: a literal one
+    # inside a double-quoted YAML scalar is folded to a space, which would
+    # quietly test a name that carries no control character at all.
+    manifest = Manifest.from_file_content(
+        f"- name: {json.dumps(_FORGING_ID)}\n  size: 5\n  md5: abc\n")
+
+    with caplog.at_level(logging.WARNING):
+        report_uncontained_manifest_entries("one", manifest)
+
+    assert caplog.records
+    for record in caplog.records:
+        assert "\n" not in record.getMessage()
+
+
+def test_a_control_character_entry_name_still_fails_on_access(
+    fs_proto: FsspecReadWriteProtocol,
+) -> None:
+    """The choke point refuses it, and says so on one line."""
+    res = fs_proto.get_resource("one")
+
+    with pytest.raises(ValueError) as excinfo:
+        res.open_raw_file(_FORGING_ID)
+
+    assert "\n" not in str(excinfo.value)
+
+
+def test_validate_resource_id_reports_a_forging_id_on_one_line() -> None:
+    with pytest.raises(ValueError) as excinfo:
+        validate_resource_id(_FORGING_ID)
+
+    assert "\n" not in str(excinfo.value)
