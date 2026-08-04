@@ -60,6 +60,12 @@ pipelineJob('gain-spliceai-integration') {
                     // it at checkout time from the BRANCH_NAME build parameter,
                     // so a branch trigger loads Jenkinsfile.integration from the
                     // same branch it tests (not master).
+                    //
+                    // Loading the definition from a branch runs that branch's
+                    // Groovy unsandboxed on the controller; that is the accepted
+                    // trust model, not an oversight. Recorded, with the condition
+                    // that would force a revisit, in
+                    // docs/adr/0009-jenkins-pipeline-definition-trust.md (#643).
                     branch('${BRANCH_NAME}')
                 }
             }

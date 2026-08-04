@@ -55,6 +55,15 @@ pipelineJob('gain-core-integration') {
                     // merged (#598; #272 fixed the same defect for
                     // gain-web-e2e).
                     //
+                    // Loading the definition from a branch runs that
+                    // branch's Groovy unsandboxed on the controller. That
+                    // is the accepted trust model rather than an oversight
+                    // -- push access to this repo is controller access, and
+                    // master takes direct pushes anyway. Recorded, with the
+                    // condition that would force a revisit, in
+                    // docs/adr/0009-jenkins-pipeline-definition-trust.md
+                    // (#643).
+                    //
                     // Note the COMMIT_SHA interaction: the workspace
                     // Checkout stage prefers COMMIT_SHA over BRANCH_NAME,
                     // while cpsScm here resolves ${BRANCH_NAME} to that
