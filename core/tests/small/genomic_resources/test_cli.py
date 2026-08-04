@@ -197,6 +197,47 @@ def test_cli_list_with_an_empty_query_lists_everything(
     assert "manage sub/two" in out
 
 
+def test_cli_list_rejects_a_malformed_search_term(
+    repo_fixture: tuple[pathlib.Path, GenomicResourceProtocolRepo],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A bad ``-s`` is a usage error, like a bad ``-q`` (gain#632).
+
+    The index has to exist for the term to reach FTS5 at all -- without
+    one, ``-s`` fails earlier, on the missing index, and would not
+    exercise this.
+    """
+    path, _repo = repo_fixture
+    cli_manage(["repo-manifest", "-R", str(path)])
+    _create_contents_db(build_filesystem_test_protocol(path, repair=False))
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_manage(["list", "-R", str(path), "-s", '"'])
+
+    assert excinfo.value.code == 1
+    assert '"' in caplog.text
+    assert "apsw" not in caplog.text
+
+
+def test_cli_list_with_an_empty_search_term_lists_everything(
+    repo_fixture: tuple[pathlib.Path, GenomicResourceProtocolRepo],
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """``-s ""`` is an unset filter, not a search for nothing (gain#633).
+
+    This fixture has no FTS index, which is the point: an empty term must
+    not be the one filter that demands one.
+    """
+    path, _repo = repo_fixture
+
+    cli_manage(["list", "-R", str(path), "-s", ""])
+    out, err = capsys.readouterr()
+
+    assert err == ""
+    assert "manage one" in out
+    assert "manage sub/two" in out
+
+
 def test_cli_list_by_type_without_an_index_says_so(
     repo_fixture: tuple[pathlib.Path, GenomicResourceProtocolRepo],
     caplog: pytest.LogCaptureFixture,

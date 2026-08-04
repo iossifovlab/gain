@@ -801,6 +801,35 @@ class UnreadableResourceFilesError(ValueError):
         )
 
 
+class SearchTermError(ValueError):
+    """A search term that SQLite's FTS5 could not parse as a match expression.
+
+    The term is bound, never interpolated, so this is not a failure to
+    contain it -- it is that FTS5 reads a bound term as an *expression*,
+    with a grammar of its own: quotes, ``AND``/``OR``/``NOT``, ``NEAR``,
+    ``column : value``. A term that does not parse is the caller's
+    mistake, and ``apsw.SQLError`` reports it as neither -- it names no
+    term, no argument, and reads like the database broke (gain#632).
+
+    A ``ValueError``, like ``ResourceQueryParseError``, so the two bad
+    arguments this search can be given are handled the same way by the
+    endpoint and the CLI that take them.
+
+    The column filter is why the term is not simply quoted into a literal
+    before it reaches ``MATCH``: label keys are index columns, and
+    ``ref_genome : hg38`` is a supported search. Quoting would make that a
+    search for the text.
+    """
+
+    def __init__(self, search_term: str, cause: Exception) -> None:
+        self.search_term = search_term
+        self.cause = cause
+        super().__init__(
+            f"cannot search for <{search_term}>: it is not a valid "
+            f"full-text search expression ({cause})",
+        )
+
+
 class GenomicResource:
     """Represents a single genomic resource with metadata and file access.
 
@@ -1339,7 +1368,13 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
         An empty ``resource_query`` is an unset one: it is what a shell
         substitutes for a variable that was never set, and the useful
         reading of ``-q "$SELECTOR"`` with no selector is the one that
-        behaves like omitting the flag.
+        behaves like omitting the flag. An empty ``search_term`` is unset
+        for the same reason (gain#633), and normalising it here -- ahead of
+        the branch below that decides whether to open the index at all --
+        is what keeps ``-s ""`` from demanding an index it has no filter to
+        apply: ``""`` is not ``None``, so it used to reach ``MATCH`` and be
+        rejected by FTS5, or, on a repository with no index, be reported as
+        a search that cannot be run.
 
         Raises ``ResourceQueryParseError`` for a malformed
         ``resource_query`` -- eagerly, when called, rather than on the
@@ -1353,7 +1388,7 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
             ResourceQuery.parse(resource_query) if resource_query else None
         )
         return self._search_resources(
-            search_term, resource_type, parsed_query)
+            search_term or None, resource_type, parsed_query)
 
     def _search_resources(
             self,
@@ -1409,7 +1444,17 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
             if conditions:
                 query += " WHERE "
                 query += " AND ".join(conditions)
-            rows = cursor.execute(query, params)
+            try:
+                rows = cursor.execute(query, params)
+            except apsw.SQLError as err:
+                # FTS5 parses the bound term when the statement is
+                # stepped, so a term it cannot read fails HERE rather
+                # than on some later row -- which is what makes it safe
+                # to translate only this call and leave the iteration
+                # below to report a genuine database failure as one.
+                if search_term is None:
+                    raise
+                raise SearchTermError(search_term, err) from err
             all_resources = self.get_all_resources_dict()
             for row in rows:
                 resource = all_resources.get(row[0])

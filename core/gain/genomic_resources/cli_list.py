@@ -24,6 +24,7 @@ from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
     ReadOnlyRepositoryProtocol,
+    SearchTermError,
 )
 from gain.genomic_resources.resource_query import ResourceQueryParseError
 from gain.utils.helpers import convert_size
@@ -39,24 +40,29 @@ def _search(
 ) -> Generator[GenomicResource, None, None]:
     """Run the search, turning a caller's mistake into a usage error.
 
-    The two failures reachable from the command line are both about the
-    arguments rather than about the repository, and neither deserves a
-    traceback: a query the grammar cannot parse, and a `-s`/`-t` filter on
-    a repository that has no search index to apply it to. The latter is the
-    normal shape of a checked-out GRR -- `.CONTENTS.json` and no
-    `.CONTENTS.sqlite3.gz` -- so it is worth naming the way out.
+    The three failures reachable from the command line are all about the
+    arguments rather than about the repository, and none deserves a
+    traceback: a query the grammar cannot parse, a term FTS5 cannot read
+    as a search expression, and a `-s`/`-t` filter on a repository that
+    has no search index to apply it to. The last is the normal shape of a
+    checked-out GRR -- `.CONTENTS.json` and no `.CONTENTS.sqlite3.gz` --
+    so it is worth naming the way out.
     """
     try:
         # Iterated inside the guard, not merely started: the query is
-        # parsed when the call is made, but the index is opened on the
-        # first item, so only one of the two failures would be caught by
-        # guarding the call alone.
+        # parsed when the call is made, but the index is opened -- and the
+        # search term handed to FTS5 -- on the first item, so only one of
+        # the three failures would be caught by guarding the call alone.
         yield from repo.search_resources(
             search_term, resource_type, resource_query)
-    except ResourceQueryParseError as err:
+    except (ResourceQueryParseError, SearchTermError) as err:
         # `error`, not `exception`: the traceback is the thing being
-        # replaced. The message already names the query and what the
-        # grammar expected, which is all a user can act on.
+        # replaced. The message already names the argument and what was
+        # wrong with it, which is all a user can act on.
+        #
+        # Ahead of the `ValueError` arm below, which it would otherwise
+        # fall into: `SearchTermError` is a `ValueError` too, and that arm
+        # re-raises anything it does not recognise.
         logger.error("%s", err)  # noqa: TRY400
         sys.exit(1)
     except ValueError as err:

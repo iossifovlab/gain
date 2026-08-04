@@ -2,7 +2,10 @@ from collections.abc import Iterable
 from itertools import islice
 from typing import ClassVar
 
-from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository import (
+    GenomicResource,
+    SearchTermError,
+)
 from gain.genomic_resources.resource_query import (
     MAX_RESOURCE_QUERY_LENGTH as MAX_RESOURCE_QUERY_LENGTH_CORE,
 )
@@ -164,16 +167,20 @@ class SearchResources(ResourcesAPIView):
                 resource_type=resource_type,
                 resource_query=resource_query,
             )
-        except ResourceQueryParseError as err:
+            # Drained inside the guard, not after it: `search_term` is the
+            # other half of the story above. FTS5 reads it when the
+            # statement is first stepped, which is here rather than at the
+            # call, so a malformed term raises out of this `list` -- and
+            # used to leave the endpoint with an unhandled 500 (gain#632).
+            resources = list(filter(
+                lambda r: r.get_type() in self.SUPPORTED_RESOURCE_TYPES,
+                found,
+            ))
+        except (ResourceQueryParseError, SearchTermError) as err:
             return Response(
                 {"error": str(err)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        resources = list(filter(
-            lambda r: r.get_type() in self.SUPPORTED_RESOURCE_TYPES,
-            found,
-        ))
 
         resource_page = islice(
             resources,
