@@ -1,7 +1,7 @@
 """Views for pipeline creation and manipulation."""
 import time
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import yaml
 from asgiref.sync import sync_to_async
@@ -457,6 +457,16 @@ def _count_annotators(content: str) -> int | None:
     return len(parsed)
 
 
+def _read_request_data(request: Request) -> Any:
+    """Parse the request body, off whatever thread the caller submits from.
+
+    ``Request.data`` is a property that parses on first access, so touching
+    it *is* the parse. Wrapping it in a named function is what lets it be
+    submitted to an executor.
+    """
+    return request.data
+
+
 class PipelineValidation(AsyncAnnotationBaseView):
     """Validate annotation config.
 
@@ -520,21 +530,31 @@ class PipelineValidation(AsyncAnnotationBaseView):
     async def post(self, request: Request) -> Response:
         """Validate annotation config.
 
-        Only the body-size bound runs inline. It is O(1) on an
-        already-materialised string, and it is what keeps a refusal cheap:
-        an oversized body is turned away without occupying a worker at all.
-        Reading ``request.data`` to get that string is inline for the same
-        reason -- measured at Django's 2.5 MB body cap it costs ~3 ms
-        (~0.06 ms at ``MAX_CONFIG_LENGTH``), and a multipart file part,
-        which the parser spools to disk, ~1.1 ms per MB uploaded, so its
-        loop cost is bounded by the client's upload bandwidth rather than
-        amplified by the body.
+        Nothing here runs inline except the body-size bound, which is O(1)
+        on an already-materialised string. Everything else is awaited on the
+        bounded validation pool, because inline is not free on an async
+        view: this coroutine runs ON the event loop, where slow work is not
+        a slow request but a stalled server, and unlike a busy thread the
+        loop cannot be preempted.
 
-        Everything after it is awaited on the bounded validation pool,
-        because inline is not free on an async view: this coroutine runs ON
-        the event loop, where slow work is not a slow request but a stalled
-        server, and unlike a busy thread the loop cannot be preempted.
-
+        - Reading ``request.data`` is the parse of the widest untrusted
+          input the API accepts, and nothing on this path bounds it.
+          ``DATA_UPLOAD_MAX_MEMORY_SIZE`` is consulted only by
+          ``HttpRequest.body``/``.POST``, neither of which DRF's parsers
+          use, and for multipart Django bounds only non-file field bytes and
+          the file *count* (100) -- never a part's size. Nor does the
+          client's upload speed bound it: Django's ASGI handler buffers the
+          whole body into a spooled file *before* dispatch, so the parse
+          runs at disk speed and lands as one contiguous burst. Measured
+          through this endpoint: a multipart file part costs 0.019 s at
+          16 MB, 0.147 s at 128 MB and 0.586 s at 512 MB (~1.15 ms/MB),
+          and a JSON body ~3 ms/MB -- so ~1-3 s per GB, per anonymous
+          request, with the throttle allowing 120 a minute from one IP.
+          On the sync view this was a busy worker thread; on the
+          loop it would be the whole process going quiet, so it is awaited
+          like every other long pole. This is also why the ``MAX_CONFIG_
+          LENGTH`` bound cannot be the first thing that runs: the string it
+          bounds does not exist until the body is parsed.
         - The declared-annotator count needs a ``yaml.safe_load`` of the
           whole body, and at the size the first bound permits that is not
           cheap: 555 ms for ``"- [1,2,3,4,5]\\n"`` x 4681 (65 534 chars),
@@ -552,8 +572,9 @@ class PipelineValidation(AsyncAnnotationBaseView):
         refuse *before* the build is submitted.
         """
 
-        content = request.data.get("config") \
-            if isinstance(request.data, dict) else None
+        request_data = await self._aread_body(request)
+        content = request_data.get("config") \
+            if isinstance(request_data, dict) else None
         if not isinstance(content, str):
             # Both of these were `assert`s, so a body that was not a JSON
             # object, or was one without a `config`, raised AssertionError
@@ -625,6 +646,39 @@ class PipelineValidation(AsyncAnnotationBaseView):
             result = {"errors": format_config_error(e)}
 
         return Response(result, status=views.status.HTTP_200_OK)
+
+    async def _aread_body(self, request: Request) -> Any:
+        """Await the request-body parse on the bounded validation pool.
+
+        The pool rather than ``sync_to_async``'s default
+        ``thread_sensitive=True`` thread, for the reason this issue exists:
+        that thread is shared by every synchronous view, and this parse is
+        anonymous and size-unbounded (see ``post``). Moving an unbounded
+        anonymous parse from the event loop onto the one thread every other
+        sync view needs would only relocate the occupancy. The pool is where
+        this endpoint's other unbounded work already goes, and it is bounded.
+
+        The parse touches no ORM and no async context -- it reads the
+        already-buffered request body -- so it is safe off the
+        ``thread_sensitive`` thread.
+
+        Costs a worker slot before the ``MAX_CONFIG_LENGTH`` refusal, which
+        is unavoidable: that bound is on a string that does not exist until
+        the body is parsed. The refusal is still cheap in the sense that
+        matters -- it happens before the count, the expansion gate and the
+        build.
+
+        Raises whatever the parse raises (``ParseError``,
+        ``UnsupportedMediaType``) from the worker thread through the future,
+        i.e. from this ``await``, still inside the handler -- so DRF's
+        exception handler renders it exactly as it did when the parse ran
+        inline.
+        """
+        return await await_build(
+            self.VALIDATE_EXECUTOR.execute(
+                _read_request_data, request=request,
+            ),
+        )
 
     async def _acount_annotators(self, content: str) -> int | None:
         """Await the declared-annotator count on the bounded validation pool.

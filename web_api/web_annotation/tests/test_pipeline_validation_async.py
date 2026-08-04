@@ -8,6 +8,7 @@ import pytest
 import pytest_mock
 from asgiref.sync import sync_to_async
 from django.test import AsyncClient
+from rest_framework.request import Request
 
 from web_annotation.annotation_base_view import (
     AnnotationBaseView,
@@ -256,6 +257,24 @@ def slow_config_parse(mocker: pytest_mock.MockerFixture) -> float:
 
     mocker.patch.object(
         views.AnnotationConfigParser, "parse_str", staticmethod(slow_parse))
+    return SLOW_BUILD_SECONDS
+
+
+@pytest.fixture
+def slow_body_parse(mocker: pytest_mock.MockerFixture) -> float:
+    """Make the DRF request-body parse take ~``SLOW_BUILD_SECONDS``.
+
+    Wraps ``Request._parse`` -- the call whose real cost is ~0.9 ms per MB of
+    an unbounded anonymous body -- so the delay lands wherever the parse
+    runs, on the loop or on a worker.
+    """
+    real_parse = Request._parse
+
+    def slow_parse(self: Request) -> Any:
+        time.sleep(SLOW_BUILD_SECONDS)
+        return real_parse(self)
+
+    mocker.patch.object(Request, "_parse", slow_parse)
     return SLOW_BUILD_SECONDS
 
 
@@ -733,6 +752,171 @@ async def test_annotator_count_stall_proof_is_discriminating(
         f"{slow_annotator_count:.3f}s), got {worst_gap:.3f}s -- the sabotage "
         f"may have stopped biting, which would make the proof above vacuous"
     )
+
+
+# ---------------------------------------------------------------------------
+# ...and neither does reading the request body, which is the widest untrusted
+# input on the whole API
+# ---------------------------------------------------------------------------
+# Everything above bounds work that happens *after* the config string exists.
+# Producing that string is itself a parse of an anonymous, unauthenticated
+# body, and nothing on this path caps its size: Django's
+# ``DATA_UPLOAD_MAX_MEMORY_SIZE`` is consulted only by ``HttpRequest.body`` /
+# ``.POST``, neither of which DRF uses, and for multipart Django bounds only
+# non-file field bytes and the file *count* -- never a file part's size.
+# Django's ASGI handler has already buffered the whole body before the view
+# runs, so the parse proceeds at disk speed rather than at the client's upload
+# speed: it lands as one contiguous, un-preemptible burst. Measured through
+# this endpoint: ~0.9 ms per MB, i.e. ~1 s per GB of body. On the shared
+# sync-view thread that was a busy thread; on the event loop it is the whole
+# process -- every other HTTP request, every websocket frame -- going quiet.
+# So ``request.data`` is awaited off the loop like every other long pole here.
+
+def _record_body_parse_threads(mocker: pytest_mock.MockerFixture) -> list[str]:
+    """Record the thread each DRF request-body parse runs on.
+
+    Patched at ``Request._parse`` rather than at a concrete parser class so
+    the proof covers whichever parser content negotiation selects -- JSON and
+    multipart are both reachable here, and both are unbounded.
+    """
+    threads: list[str] = []
+    real_parse = Request._parse
+
+    def recording_parse(self: Request) -> Any:
+        threads.append(threading.current_thread().name)
+        return real_parse(self)
+
+    mocker.patch.object(Request, "_parse", recording_parse)
+    return threads
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_request_body_parse_runs_on_a_validation_worker(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """The body parse must execute on the bounded pool, not the loop thread.
+
+    Thread identity rather than a stopwatch, for the same reason as the
+    sibling proofs. The bounded pool rather than the shared
+    ``thread_sensitive`` thread for the reason this issue exists: the parse
+    is unauthenticated and unbounded, so the shared sync-view thread is the
+    one place it must not go either.
+    """
+    threads = _record_body_parse_threads(mocker)
+
+    assert await _fire_validate() == 200
+    assert threads, "the request body was never parsed"
+    assert all(
+        name.startswith(VALIDATE_THREAD_PREFIX) for name in threads
+    ), threads
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_slow_body_parse_does_not_park_the_event_loop(
+    slow_body_parse: float,
+) -> None:
+    """A slow body parse must leave the event loop ticking.
+
+    The consequence of the test above, in the stall idiom (#433/#454): a
+    heartbeat coroutine ticks while one validation request waits on a parse
+    of ``SLOW_BUILD_SECONDS``, standing in for the ~1 s per GB a real
+    oversized body costs.
+    """
+    heartbeats: list[float] = []
+    stop = asyncio.Event()
+
+    async def heartbeat() -> None:
+        while not stop.is_set():
+            heartbeats.append(time.monotonic())
+            await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
+
+    hb_task = asyncio.ensure_future(heartbeat())
+    status = await _fire_validate()
+    stop.set()
+    await hb_task
+
+    assert status == 200
+    assert len(heartbeats) >= 2, (
+        f"heartbeat coroutine barely ran ({len(heartbeats)} ticks) -- "
+        f"no gap to measure"
+    )
+    worst_gap = max_gap(heartbeats)
+    assert worst_gap < STALL_THRESHOLD_SECONDS, (
+        f"event loop stalled for {worst_gap:.3f}s (>= threshold "
+        f"{STALL_THRESHOLD_SECONDS:.3f}s, injected parse latency "
+        f"{slow_body_parse:.3f}s) -- the request body was parsed ON the loop"
+    )
+    assert len(heartbeats) >= 5, len(heartbeats)
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_body_parse_stall_proof_is_discriminating(
+    slow_body_parse: float,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Sabotage check: parsing the body on the loop FAILS the proof above.
+
+    Reproduces the placement the proof rules out -- ``request.data`` touched
+    straight from the handler coroutine, which is where it sat between the
+    async conversion and this fix -- and requires the loop to park for
+    ``SABOTAGED_STALL_FLOOR_SECONDS``, above ``STALL_THRESHOLD_SECONDS``.
+    """
+    async def read_body_on_the_event_loop(  # noqa: RUF029
+        self: PipelineValidation,
+        request: Request,
+    ) -> Any:
+        # Awaits nothing on purpose -- that IS the sabotage. It must stay a
+        # coroutine to stand in for the method it replaces.
+        # WRONG (deliberately): touching request.data inline from the handler
+        # runs an unbounded parse of an anonymous body on the loop.
+        return request.data
+
+    mocker.patch.object(
+        PipelineValidation, "_aread_body", read_body_on_the_event_loop)
+
+    heartbeats: list[float] = []
+    stop = asyncio.Event()
+
+    async def heartbeat() -> None:
+        while not stop.is_set():
+            heartbeats.append(time.monotonic())
+            await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
+
+    hb_task = asyncio.ensure_future(heartbeat())
+    status = await _fire_validate()
+    stop.set()
+    await hb_task
+
+    assert status == 200
+    worst_gap = max_gap(heartbeats)
+    assert worst_gap >= SABOTAGED_STALL_FLOOR_SECONDS, (
+        f"expected the loop to park for >= "
+        f"{SABOTAGED_STALL_FLOOR_SECONDS:.3f}s with the body parsed on it "
+        f"(injected parse latency {slow_body_parse:.3f}s), got "
+        f"{worst_gap:.3f}s -- the sabotage may have stopped biting, which "
+        f"would make the proof above vacuous"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_a_malformed_json_body_is_still_a_400() -> None:
+    """A parse error raised on a worker still renders as DRF's 400.
+
+    ``ParseError`` used to be raised inside the handler coroutine, where
+    DRF's exception handler caught it directly. Awaiting the parse re-raises
+    it through the future, from the ``await`` -- still inside the handler, so
+    the response is unchanged.
+    """
+    client = AsyncClient()
+    response = await client.post(
+        VALIDATE_URL, "{not json", content_type="application/json")
+
+    assert response.status_code == 400, response.content
+    assert "detail" in response.json(), response.json()
 
 
 # ---------------------------------------------------------------------------

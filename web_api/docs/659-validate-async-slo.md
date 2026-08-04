@@ -5,14 +5,13 @@
 
 `POST /api/pipelines/validate` is anonymous and used to resolve resources and
 build every annotator inline, in a synchronous DRF view. This change makes the
-view async (adrf) and submits every cost that is not O(1) — the
-declared-annotator count, the expansion-gate parse and the build — to a
-dedicated bounded pool (`AnnotationMixin.VALIDATE_EXECUTOR`, 8 workers), each
-awaited via `await_build`. Only the body-size bound from #635 still runs
-inline, before anything reaches a pool, so an oversized body is refused without
-occupying a worker at all. The order of the bounds is unchanged: each still
-refuses before the work it bounds, and the expansion gate still refuses before
-the build is submitted.
+view async (adrf) and submits every cost that is not O(1) — the request-body
+parse, the declared-annotator count, the expansion-gate parse and the build —
+to a dedicated bounded pool (`AnnotationMixin.VALIDATE_EXECUTOR`, 8 workers),
+each awaited via `await_build`. Only the body-size bound from #635 still runs
+inline: it is O(1) on an already-materialised string. The order of the bounds
+is unchanged: each still refuses before the work it bounds, and the expansion
+gate still refuses before the build is submitted.
 
 The build path also grew the same env-gated `GPFWA_BUILD_DELAY_SECONDS` hook the
 pipeline cache's loader has (#164) — this endpoint never goes through the
@@ -131,6 +130,52 @@ the placement: `MAX_CONFIG_LENGTH` is what decides how much yaml an anonymous
 request can buy. #635 set it at 64 KiB with reasoning recorded in the code, and
 this issue explicitly does not reopen it; #666 is where "does this endpoint
 need to parse this at all" belongs.
+
+## ...and so did reading the request body
+
+`MAX_CONFIG_LENGTH` bounds the config *string*. It does not bound the body the
+string is parsed out of, and nothing else on this path does either:
+
+- `DATA_UPLOAD_MAX_MEMORY_SIZE` (2.5 MB) is consulted by `HttpRequest.body`
+  and `HttpRequest.POST`. DRF uses neither — `Request.data` hands the raw
+  stream to the negotiated parser, and `JSONParser` calls `json.load(stream)`
+  with no size check.
+- For multipart, Django bounds non-file field bytes and the file *count*
+  (`DATA_UPLOAD_MAX_NUMBER_FILES`, 100). A file *part's* size is bounded by
+  nothing; `FILE_UPLOAD_MAX_MEMORY_SIZE` only chooses memory-vs-disk.
+  `web_api` overrides none of these, and `DEFAULT_PARSER_CLASSES` is not
+  overridden either, so `MultiPartParser` is enabled on this route.
+- Under ASGI the client's upload speed does not bound it either: Django 5.2's
+  `ASGIHandler.read_body` buffers the whole body into a `SpooledTemporaryFile`
+  *before* dispatch, so by the time `post` runs the parse proceeds at disk
+  speed and lands as one contiguous, un-preemptible burst.
+
+Measured on this host through the real endpoint (timing `Request._parse` from
+inside a patched handler), all answering the usual `200`:
+
+| body | parse |
+|---|---|
+| multipart file part, 16 MB | **0.019 s** (1.17 ms/MB) |
+| multipart file part, 128 MB | **0.147 s** (1.15 ms/MB) |
+| multipart file part, 512 MB | **0.586 s** (1.15 ms/MB) |
+| JSON, 16 MB | **0.045 s** (2.82 ms/MB) |
+| JSON, 128 MB | **0.393 s** (3.07 ms/MB) |
+
+So ~1.2 s per GB of multipart and ~3 s per GB of JSON, per anonymous request,
+at the 120/min per-IP `pipeline_validate` rate. On the loop that is the whole
+process — every other HTTP request, every websocket frame — going quiet for
+the duration. It is now awaited on the same bounded pool as the rest.
+
+The pool rather than `sync_to_async`'s default `thread_sensitive=True` thread:
+that thread is shared by every synchronous view, so putting an unbounded
+anonymous parse there would relocate the occupancy this issue exists to
+remove, not end it. The parse touches no ORM and no async context, so it is
+safe off it.
+
+The one thing this costs: a worker slot is now taken before the
+`MAX_CONFIG_LENGTH` refusal, because the string that bound applies to does not
+exist until the body is parsed. The refusal still happens before the count,
+the expansion gate and the build.
 
 ## Harness
 
