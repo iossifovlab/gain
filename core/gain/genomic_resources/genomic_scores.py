@@ -1099,13 +1099,24 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             tuple[int, int, list[ScoreValue] | None], None, None]:
         """Stream the clipped spans of an already-checked region request.
 
-        Nothing here re-checks that a record overlaps the region it was
-        asked for: every backend already drops a record ending before the
-        query, and a record arriving that does not overlap is a malformed
-        resource rather than something a read should silently swallow.
+        A record ending before the query is dropped rather than clipped.
+        Clipping one would put its begin at the query's start and its end
+        behind it -- an inverted span, whose width as a weight is negative.
+        The vectorized scan masks the same records on the same edge
+        (``pos_end >= start``), so the two paths measure a region alike; a
+        histogram must not depend on which of them a resource was eligible
+        for.
+
+        This does not refuse the record, because a backend answering a
+        region query with a record outside it is misconfigured rather than
+        holding bad data -- a table whose index and ``pos_end`` name
+        different columns (gain#553), which ADR 0008 refuses at ``open()``
+        and deliberately not here.
         """
         for record in records:
             _chrom, rec_begin, rec_end = self._record_to_begin_end(record)
+            if pos_begin is not None and rec_end < pos_begin:
+                continue
 
             val = self.get_score_values_from_record(record, score_defs)
 

@@ -10,6 +10,7 @@ composing the validator still serves every read, and a read that starts
 validating again still passes the scan's tests.
 """
 # pylint: disable=C0116,W0212,W0621
+import math
 import pathlib
 from collections.abc import Iterator
 
@@ -331,22 +332,41 @@ def _end_column_mismatch_resource(tmp_path: pathlib.Path) -> GenomicResource:
     return build_filesystem_test_resource(tmp_path)
 
 
-def test_the_histogram_pass_skips_a_record_the_query_clips_to_nothing(
+def test_both_scan_paths_measure_an_out_of_region_record_alike(
     tmp_path: pathlib.Path,
 ) -> None:
-    # A record that reaches the score layer without overlapping the region it
-    # was asked for clips to an inverted span, and its weight -- right - left
-    # + 1 -- is then NEGATIVE.  Folding that into a histogram writes negative
-    # bar counts into the resource's saved statistics, so this pass skips a
-    # non-positive weight exactly as ``fetch_region_weighted_values`` and the
-    # bulk pass already do.  Reachable today: the record below is delivered by
-    # the tabix index, which does not know the configured end.
+    # A record can reach the score layer without overlapping the region it was
+    # asked for: the tabix index answers the query and does not know the
+    # configured end (gain#553).  Both scan paths drop it on the same edge --
+    # the per-record one in ``_clipped_score_values``, the vectorized one in
+    # ``_clip_keep_guard``'s ``pos_end >= start`` mask -- so what a resource
+    # measures cannot depend on which path it was eligible for.
+    #
+    # This is the pin for that equivalence, and it discriminates: with the
+    # per-record skip removed, ``_do_min_max`` folds 0.1 into the range while
+    # the bulk pass reports nan, and ``_do_histogram`` counts an INVERTED
+    # span, whose width as a weight is negative, into a bar.
     resource = _end_column_mismatch_resource(tmp_path)
 
-    histograms = GenomicScoreImplementation._do_histogram(
+    per_record_hist = GenomicScoreImplementation._do_histogram(
         resource, {"s": _hist_conf()}, "chr1", 100, 200)
+    bulk_hist = GenomicScoreImplementation._do_histogram_bulk(
+        resource, {"s": _hist_conf()}, "chr1", 100, 200)
+    per_record_mm = GenomicScoreImplementation._do_min_max(
+        resource, ["s"], "chr1", 100, 200)
+    bulk_mm = GenomicScoreImplementation._do_min_max_bulk(
+        resource, ["s"], "chr1", 100, 200)
 
-    assert list(histograms["s"].bars) == [0] * 10
+    assert list(per_record_hist["s"].bars) == list(bulk_hist["s"].bars)
+    # Nothing overlapped the region, so nothing was counted -- and no bar is
+    # negative, which is what counting an inverted span would produce.
+    assert list(per_record_hist["s"].bars) == [0] * 10
+
+    assert math.isnan(per_record_mm["s"].min) is math.isnan(bulk_mm["s"].min)
+    assert math.isnan(per_record_mm["s"].max) is math.isnan(bulk_mm["s"].max)
+    # Both report "no value seen" rather than one of them reporting 0.1.
+    assert math.isnan(per_record_mm["s"].min)
+    assert math.isnan(per_record_mm["s"].max)
 
 
 def test_the_scan_measures_a_well_formed_region_exactly_as_a_reader_reads_it(
@@ -424,14 +444,12 @@ def test_the_position_rule_compares_raw_spans_not_clipped_ones(
 
     monkeypatch.setattr(score, "fetch_records", overlapping)
 
-    # The spans in full, because the first record's is INVERTED: the read
-    # clips a record it was handed without checking that it overlaps, so a
-    # record arriving from outside the region reads back as right < left.
-    # Nothing on the read path hides that; the statistics passes refuse to
-    # weigh it (test_the_histogram_pass_skips_a_record_the_query_clips_to_
-    # nothing).
+    # The read yields ONE record: the first ends at 100, before the query
+    # begins, and is dropped rather than clipped to an inverted span.  So
+    # what the read hands on holds no overlap at all -- a rule reading these
+    # spans could not find one, which is the whole reason the validator sits
+    # in front of the transform rather than behind it.
     assert list(score.fetch_region_values("chr1", 120, 200, ["s"])) == [
-        (120, 100, [0.1]),
         (120, 150, [0.2]),
     ]
     with pytest.raises(MalformedResourceError) as excinfo:
