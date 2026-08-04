@@ -221,6 +221,24 @@ def test_both_per_record_passes_refuse_a_malformed_position_score(
     assert "at most one record per position" in str(excinfo.value)
 
 
+def _fragment_score(
+    tmp_path: pathlib.Path, resource_id: str, data: str,
+) -> FragmentScore:
+    resource = (
+        a_grr()
+        .with_resource(
+            resource_id,
+            a_fragment_score()
+            .with_score("s", "float")
+            .with_data(data))
+        .build_repo(tmp_path)
+        .get_resource(resource_id)
+    )
+    score = build_fragment_score_from_resource(resource)
+    score.open()
+    return score
+
+
 def _fragment_score_reading_backwards(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
 ) -> FragmentScore:
@@ -231,48 +249,17 @@ def _fragment_score_reading_backwards(
     in-memory backend sorts each contig as it loads it -- so the rule is
     reachable only from a backend that has yet to exist.
     """
-    resource = (
-        a_grr()
-        .with_resource(
-            "backwards",
-            a_fragment_score()
-            .with_score("s", "float")
-            .with_data("""
-                chrom  pos_begin  pos_end  s
-                chr1   10         19       0.1
-                chr1   20         29       0.2
-            """))
-        .build_repo(tmp_path)
-        .get_resource("backwards")
-    )
-    score = build_fragment_score_from_resource(resource)
-    score.open()
+    score = _fragment_score(tmp_path, "backwards", """
+        chrom  pos_begin  pos_end  s
+        chr1   10         19       0.1
+        chr1   20         29       0.2
+    """)
 
     def out_of_order(*_args: object, **_kwargs: object) -> Iterator[Record]:
         yield ("chr1", 20, 29, None, None, ("chr1", "20", "29", "0.1"))
         yield ("chr1", 10, 19, None, None, ("chr1", "10", "19", "0.2"))
 
     monkeypatch.setattr(score, "fetch_records", out_of_order)
-    return score
-
-
-def _fragment_score(tmp_path: pathlib.Path) -> FragmentScore:
-    """A well-formed fragment score, to call the kind's own rule on."""
-    resource = (
-        a_grr()
-        .with_resource(
-            "fragments",
-            a_fragment_score()
-            .with_score("s", "float")
-            .with_data("""
-                chrom  pos_begin  pos_end  s
-                chr1   10         19       0.1
-            """))
-        .build_repo(tmp_path)
-        .get_resource("fragments")
-    )
-    score = build_fragment_score_from_resource(resource)
-    score.open()
     return score
 
 
@@ -305,7 +292,10 @@ def test_the_fragment_rule_passes_overlapping_fragments_through(
     # Overlapping intervals are what a fragment score IS, so only the begins
     # are compared and a fragment reaching back over its predecessor's end is
     # handed straight on.
-    score = _fragment_score(tmp_path)
+    score = _fragment_score(tmp_path, "overlapping", """
+        chrom  pos_begin  pos_end  s
+        chr1   10         19       0.1
+    """)
     records: list[Record] = [
         ("chr1", 10, 100, None, None, ("chr1", "10", "100", "0.1")),
         ("chr1", 50, 150, None, None, ("chr1", "50", "150", "0.2")),
@@ -320,7 +310,10 @@ def test_the_fragment_rule_passes_fragments_sharing_a_start_through(
     # ``begin < prev_begin`` and not ``<=``: two fragments starting at one
     # position is ordinary data, unlike the position score next door, where
     # sharing a single base pair is the error.
-    score = _fragment_score(tmp_path)
+    score = _fragment_score(tmp_path, "sharing_a_start", """
+        chrom  pos_begin  pos_end  s
+        chr1   10         19       0.1
+    """)
     records: list[Record] = [
         ("chr1", 10, 19, None, None, ("chr1", "10", "19", "0.1")),
         ("chr1", 10, 99, None, None, ("chr1", "10", "99", "0.2")),
