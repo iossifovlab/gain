@@ -155,17 +155,74 @@ def is_generated_info_page(name: str) -> bool:
     return name in GR_GENERATED_INFO_PAGES
 
 
-def _escaping_path_reason(candidate: str, container: str) -> str | None:
-    """Return why one already-decoded path leaves ``container``, or ``None``.
+# Serves three consumers, so the range is drawn for the widest of them.
+#
+# A cache path: ``urllib.parse.urlsplit`` DELETES ASCII tab, CR and LF from
+# anywhere in a url, and a repository id is joined onto a url that is then
+# re-parsed to derive the cache path. An id carrying one of them therefore
+# reads as a single segment while resolving to a DIFFERENT one: ``"..\\n"``
+# becomes ``..`` (one level above the cache directory) and ``"a\\nb"``
+# becomes ``ab``, silently sharing the cache directory of a genuinely
+# different id. A NUL is not a url problem but a filesystem one -- it
+# reaches the ``mkdir`` call and dies there with a message about nothing
+# the operator wrote.
+#
+# A log line: a resource id and a manifest entry name are read verbatim out
+# of remote GRR content and rendered into log messages unescaped, so a
+# newline in one emits a second, fully-formed-looking record that can
+# assert the opposite of what the run found (gain#642). An ANSI escape
+# reaches the operator's terminal the same way.
+#
+# The whole C0/C1 range goes rather than the handful that bite today: none
+# of them belongs in a resource name, and a list tuned to one url parser's
+# or one terminal's current quirks is one change away from a hole.
+_CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
-    The containment property proper, shared by a resource file name and a
-    resource id: the path must be relative and name no ``..`` segment.
-    Absoluteness is tested the Windows way as well as the POSIX way --
-    ``ntpath.join`` discards the base for a drive-letter path, a UNC share
-    and even the drive-RELATIVE ``x:y``, exactly as ``posixpath.join`` does
-    for ``/x``. Ignoring that while the ``..`` scan already treats a
-    backslash as a separator would be incoherent.
+
+def escape_control_characters(name: str) -> str:
+    """Render an untrusted name safe to interpolate into ONE log line.
+
+    Refusing a name that carries a control character is not by itself
+    enough, because the refusal *names* it: the drop warning, the two
+    ``validate_*`` messages and the manifest-entry warning all interpolate
+    the very name they are rejecting. A newline in it then emits the second
+    record the refusal exists to prevent -- and the refusal path is the one
+    place a crafted name is still guaranteed to be rendered.
+
+    So the two halves are complementary, not alternatives. Refusal keeps
+    the name away from the many call sites that log a resource id or an
+    entry name in passing; this keeps the handful that report the refusal
+    itself on one line.
+
+    ``\\xNN`` rather than ``repr``: it leaves every other character
+    untouched, so an operator still reads the name they wrote, with only
+    the invisible part made visible.
     """
+    return _CONTROL_CHARACTER_RE.sub(
+        lambda match: f"\\x{ord(match.group()):02x}", name)
+
+
+def _escaping_path_reason(candidate: str, container: str) -> str | None:
+    """Return why one already-decoded path is not usable in ``container``.
+
+    Shared by a resource file name and a resource id. Two properties, both
+    of which make the name unusable rather than merely odd:
+
+    Containment proper -- the path must be relative and name no ``..``
+    segment. Absoluteness is tested the Windows way as well as the POSIX
+    way -- ``ntpath.join`` discards the base for a drive-letter path, a UNC
+    share and even the drive-RELATIVE ``x:y``, exactly as ``posixpath.join``
+    does for ``/x``. Ignoring that while the ``..`` scan already treats a
+    backslash as a separator would be incoherent.
+
+    No control character -- see :data:`_CONTROL_CHARACTER_RE`. This one is
+    not a containment property, and it lives here anyway because this is the
+    single helper both untrusted names funnel through, in both their raw and
+    their percent-decoded spelling; checking it in each caller instead would
+    mean writing it four times and forgetting it in the fifth.
+    """
+    if _CONTROL_CHARACTER_RE.search(candidate):
+        return "carries a control character"
     if candidate.startswith(("/", "\\")):
         return "is absolute"
     if ntpath.isabs(candidate) or _WINDOWS_DRIVE.match(candidate):
@@ -204,6 +261,10 @@ def uncontained_resource_file_name_reason(filename: str) -> str | None:
     -- is refused too: ``open_raw_file("")`` addressed the resource
     DIRECTORY, and no resource file is legitimately spelled that way. See
     gain#467.
+
+    A name carrying a control character is refused as well -- not a
+    containment failure but a reporting one, since the name is logged
+    unescaped. See gain#642.
     """
     if not filename.strip():
         return "is empty"
@@ -224,8 +285,9 @@ def validate_resource_file_name(resource_id: str, filename: str) -> None:
     reason = uncontained_resource_file_name_reason(filename)
     if reason is not None:
         raise ValueError(
-            f"resource file name <{filename}> {reason}; "
-            f"resource <{resource_id}>")
+            f"resource file name <{escape_control_characters(filename)}> "
+            f"{reason}; "
+            f"resource <{escape_control_characters(resource_id)}>")
 
 
 def uncontained_resource_id_reason(resource_id: str) -> str | None:
@@ -244,6 +306,10 @@ def uncontained_resource_id_reason(resource_id: str) -> str | None:
     itself is refused here, not the degenerate spellings a file name is
     also held to: an id is joined once, at the root, so a ``.`` segment in
     it is a no-op rather than a way to address something else.
+
+    An id carrying a control character is refused, which is a reporting
+    concern rather than a containment one -- the id is logged unescaped at
+    many call sites, and a newline in it forges a log line. See gain#642.
     """
     if resource_id in {"", "."}:
         return None
@@ -259,7 +325,7 @@ def validate_resource_id(resource_id: str) -> None:
     reason = uncontained_resource_id_reason(resource_id)
     if reason is not None:
         raise ValueError(
-            f"resource id <{resource_id}> {reason}")
+            f"resource id <{escape_control_characters(resource_id)}> {reason}")
 
 
 def report_uncontained_manifest_entries(
@@ -287,7 +353,8 @@ def report_uncontained_manifest_entries(
             logger.warning(
                 "resource <%s> has a manifest entry <%s> that %s; "
                 "any access to it will be refused",
-                resource_id, entry.name, reason)
+                escape_control_characters(resource_id),
+                escape_control_characters(entry.name), reason)
 
 
 def is_gr_id_token(token: str) -> bool:
@@ -304,19 +371,6 @@ def is_gr_id_token(token: str) -> bool:
 # may be written on either platform, and the id it carries must be a single
 # segment under either reading.
 _PATH_SEPARATORS = ("/", "\\")
-
-# ``urllib.parse.urlsplit`` DELETES ASCII tab, CR and LF from anywhere in a
-# url -- and the id is joined onto a url that is then re-parsed to derive the
-# cache path. An id carrying one of them therefore reads as a single segment
-# here while resolving to a DIFFERENT one: ``"..\\n"`` becomes ``..`` (one
-# level above the cache directory) and ``"a\\nb"`` becomes ``ab``, silently
-# sharing the cache directory of a genuinely different id. A NUL is not a
-# url problem but a filesystem one -- it reaches the ``mkdir`` call and dies
-# there with a message about nothing the operator wrote. The whole C0/C1
-# range goes rather than the four characters that bite today: none of them
-# belongs in a directory name, and a list tuned to one url parser's current
-# quirks is one parser change away from a hole.
-_CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
 def is_safe_repo_id(repo_id: str) -> bool:
