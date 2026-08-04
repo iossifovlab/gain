@@ -3,6 +3,7 @@ from itertools import islice
 from typing import ClassVar
 
 from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.resource_query import ResourceQueryParseError
 from gain.genomic_resources.resource_types import equivalent_resource_types
 from rest_framework import status
 from rest_framework.views import Request, Response
@@ -81,6 +82,20 @@ class ResourceTypes(ResourcesAPIView):
 class SearchResources(ResourcesAPIView):
     """Endpoint for resource FTS search."""
 
+    # The longest `query` this endpoint will hand to the parser. The
+    # grammar is ambiguous -- `and_` recurses through `?operation` -- so
+    # Earley costs roughly O(n^3) in the length of the query: 200 clauses
+    # (2000 characters) parse in ~18s and 500 (5000 characters, still
+    # inside Apache's 8190-byte request line) in ~95s, all of it CPU in a
+    # worker. The endpoint is anonymous and unthrottled, so that is a
+    # denial of service a single GET can buy. Length is the cheap bound:
+    # it caps the clause count that drives the exponent, and it caps the
+    # id globs that accumulate in `fnmatch`'s module-level pattern cache.
+    # 256 characters is an order of magnitude more than a real query --
+    # `hg38/scores/*[phenotype="autism" and "UCSC" in provenance]` is 57 --
+    # and parses in ~20ms at its worst.
+    MAX_RESOURCE_QUERY_LENGTH: ClassVar[int] = 256
+
     def get(self, request: Request) -> Response:
         """Search for resources based on query parameters."""
         query_params = request.query_params
@@ -90,6 +105,20 @@ class SearchResources(ResourcesAPIView):
 
         # Filter by name if provided
         search = query_params.get("search")
+
+        # Filter by the annotator wildcard query if provided
+        resource_query = query_params.get("query")
+
+        if resource_query is not None and \
+                len(resource_query) > self.MAX_RESOURCE_QUERY_LENGTH:
+            return Response(
+                {"error": (
+                    f"resource query is too long: "
+                    f"{len(resource_query)} characters, at most "
+                    f"{self.MAX_RESOURCE_QUERY_LENGTH} are accepted"
+                )},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         page = query_params.get("page", 0)
 
@@ -110,12 +139,25 @@ class SearchResources(ResourcesAPIView):
         # query short-circuits to `get_all_resources()` and never opens the
         # FTS index, so paging and index-skip warnings differed between
         # fragment and non-fragment filters.
-        resources = list(filter(
-            lambda r: r.get_type() in self.SUPPORTED_RESOURCE_TYPES,
-            self._grr.search_resources(
+        try:
+            # `search_resources` parses `resource_query` eagerly, when
+            # called rather than on the first row, so a malformed query is
+            # a bad request here -- not an exception escaping halfway
+            # through a response that has already begun.
+            found = self._grr.search_resources(
                 search_term=search,
                 resource_type=resource_type,
-            ),
+                resource_query=resource_query,
+            )
+        except ResourceQueryParseError as err:
+            return Response(
+                {"error": str(err)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        resources = list(filter(
+            lambda r: r.get_type() in self.SUPPORTED_RESOURCE_TYPES,
+            found,
         ))
 
         resource_page = islice(
