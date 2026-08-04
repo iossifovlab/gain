@@ -431,7 +431,11 @@ def _count_annotators(content: str) -> int | None:
     """
     try:
         parsed = yaml.safe_load(content)
-    except yaml.YAMLError:
+    except (yaml.YAMLError, RecursionError):
+        # RecursionError is not a YAMLError: deeply nested input exhausts
+        # the stack inside the composer. It reaches here rather than the
+        # view's own error handling because this runs before it, so leaving
+        # it uncaught would turn an invalid config into a 500.
         return None
 
     if isinstance(parsed, dict):
@@ -446,11 +450,21 @@ class PipelineValidation(AnnotationBaseView):
 
     Anonymous and unauthenticated by design -- the pipeline editor validates
     for users who have not signed in. That makes the config body the widest
-    piece of untrusted input the API accepts, so it is bounded twice before
-    any parsing happens (iossifovlab/gain#635): once on its size, once on
-    the number of annotators it declares. Both are request-level refusals
-    (400). A config that is merely *invalid* keeps the endpoint's 200 +
-    ``errors`` contract, which the deferred-load path (#155) shares.
+    piece of untrusted input the API accepts, so it is bounded three times
+    on the way in (iossifovlab/gain#635): on its size, on the number of
+    annotators it declares, and on the number those annotators expand to
+    before any of them is built. Each is a request-level refusal (400), and
+    each happens before the work it bounds. A config that is merely
+    *invalid* keeps the endpoint's 200 + ``errors`` contract, which the
+    deferred-load path (#155) shares.
+
+    What is deliberately NOT bounded here is the cost of building the
+    annotators that survive all three. This endpoint resolves resources and
+    builds the pipeline synchronously, on the request thread, which the
+    sibling save-pipeline path avoids by deferring to a background loader
+    (the #150 H1 comment on ``UserPipeline``). Moving this one likewise is
+    the real fix for the residual cost and is tracked separately; the
+    bounds here keep the residual small rather than remove it.
     """
 
     throttle_classes: ClassVar = [PipelineValidationRateThrottle]
@@ -463,20 +477,32 @@ class PipelineValidation(AnnotationBaseView):
 
     # A size bound alone does not bound the *work*: each wildcard annotator
     # scans every resource in the GRR, so a body of many short, individually
-    # legal wildcards costs the same as one long query. Cap the count too.
-    # Six times the largest config in this repo.
-    MAX_ANNOTATORS: ClassVar[int] = 200
+    # legal wildcards costs the same as one long query. This caps how many
+    # such scans one request can ask for. Three times the largest config in
+    # this repo (32 annotators).
+    MAX_ANNOTATORS: ClassVar[int] = 100
+
+    # ...and a *declared* count does not bound the work either, because a
+    # wildcard is one declaration that becomes up to ``WILDCARD_LIMIT``
+    # (500) annotators, every one of which then gets built against the GRR.
+    # 100 declared wildcards against a production GRR is therefore up to
+    # 50 000 annotator builds from a 3 KB body. Bound what the config
+    # expands to, not what it says.
+    #
+    # The limit is WILDCARD_LIMIT itself: a single maximal wildcard is a
+    # legitimate pipeline and must still validate, and nothing larger than
+    # one of those is a pipeline anyone edits by hand.
+    MAX_EXPANDED_ANNOTATORS: ClassVar[int] = 500
 
     def post(self, request: Request) -> Response:
         """Validate annotation config."""
 
-        assert request.data is not None
-        assert isinstance(request.data, dict)
-
-        content = request.data.get("config")
+        content = request.data.get("config") \
+            if isinstance(request.data, dict) else None
         if not isinstance(content, str):
-            # Previously an `assert`, which made a request with no `config`
-            # an AssertionError -- a 500 on an anonymous endpoint.
+            # Both of these were `assert`s, so a body that was not a JSON
+            # object, or was one without a `config`, raised AssertionError
+            # -- a 500 on an anonymous endpoint, buyable with three bytes.
             return Response(
                 {"error": "config is required and must be a string"},
                 status=views.status.HTTP_400_BAD_REQUEST,
@@ -504,14 +530,37 @@ class PipelineValidation(AnnotationBaseView):
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
 
-        result = {"errors": ""}
-
         try:
-            AnnotationConfigParser.parse_str(content, grr=self.grr)
-            load_pipeline_from_yaml(content, self.grr)
+            # Parsing expands the wildcards but builds nothing, so the
+            # expanded count is knowable before paying for it. This is why
+            # the parse is kept separate from `load_pipeline_from_yaml`
+            # rather than letting the latter's own parse do the work twice:
+            # it is the gate on the build that follows.
+            _, expanded = AnnotationConfigParser.parse_str(
+                content, grr=self.grr)
         except Exception as e:  # noqa: BLE001
             # Same formatter as the deferred-load failure path (#155) so the
             # synchronous and background error messages stay identical.
+            return Response(
+                {"errors": format_config_error(e)},
+                status=views.status.HTTP_200_OK,
+            )
+
+        if len(expanded) > self.MAX_EXPANDED_ANNOTATORS:
+            return Response(
+                {"error": (
+                    f"annotation config expands to too many annotators: "
+                    f"{len(expanded)}, at most "
+                    f"{self.MAX_EXPANDED_ANNOTATORS} are accepted"
+                )},
+                status=views.status.HTTP_400_BAD_REQUEST,
+            )
+
+        result = {"errors": ""}
+
+        try:
+            load_pipeline_from_yaml(content, self.grr)
+        except Exception as e:  # noqa: BLE001
             result = {"errors": format_config_error(e)}
 
         return Response(result, status=views.status.HTTP_200_OK)

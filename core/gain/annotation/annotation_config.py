@@ -516,6 +516,17 @@ class AnnotationConfigParser:
 
         if isinstance(pipeline_raw_config, dict):
             annotators = pipeline_raw_config["annotators"]
+            # Insist on a list. Every other iterable shape YAML can put here
+            # is iterated into nonsense rather than refused -- a string most
+            # of all, which yields one attempted annotator per character, so
+            # a few kilobytes of quoted text become tens of thousands of
+            # them. That also walks straight past a caller counting the
+            # declared annotators to bound the work (iossifovlab/gain#635).
+            if not isinstance(annotators, list):
+                raise AnnotationConfigurationError(
+                    "The 'annotators' section of a pipeline configuration "
+                    f"must be a list, not {type(annotators).__name__}.",
+                )
             preamble = AnnotationConfigParser._parse_preamble(
                 pipeline_raw_config["preamble"], grr,
             )

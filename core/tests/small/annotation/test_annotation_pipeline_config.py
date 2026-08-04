@@ -20,6 +20,7 @@ from gain.genomic_resources.repository import (
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
+from gain.genomic_resources.resource_query import MAX_RESOURCE_QUERY_LENGTH
 from gain.genomic_resources.testing import (
     convert_to_tab_separated,
     setup_directories,
@@ -396,6 +397,23 @@ def test_wildcard_label_in_matches_nothing(
         """, grr=labeled_grr)
 
 
+def test_a_scalar_annotators_key_is_refused_rather_than_iterated() -> None:
+    """``annotators: "abc"`` must not mean three annotators named a, b, c.
+
+    A string is iterable, so a scalar here used to be walked character by
+    character, one attempted annotator per character. That turns a few
+    kilobytes of quoted text into tens of thousands of parse attempts --
+    and it slips past any bound that counts a config's declared annotators
+    by taking the length of a list.
+    """
+    with pytest.raises(AnnotationConfigurationError, match="annotators"):
+        AnnotationConfigParser.parse_str("""
+            preamble:
+              summary: x
+            annotators: "aaaa"
+        """)
+
+
 def test_an_overlong_wildcard_is_refused_as_a_configuration_error(
     labeled_grr: GenomicResourceProtocolRepo,
 ) -> None:
@@ -406,11 +424,16 @@ def test_an_overlong_wildcard_is_refused_as_a_configuration_error(
     per request. The refusal must arrive as a configuration error, like
     every other bad wildcard, rather than as a raw parse error.
     """
-    clauses = " and ".join(['a="b"'] * 1000)
+    # One character over the bound, rather than the kilobytes an attacker
+    # would send: without the bound the latter would hang this test for
+    # minutes instead of failing it. It has to lead with a `*` -- that is
+    # what makes the config layer treat it as a query rather than as a
+    # plain resource id, and only a query reaches the parser at all.
+    wildcard = "*" + "a" * MAX_RESOURCE_QUERY_LENGTH
 
     with pytest.raises(AnnotationConfigurationError, match="too long"):
         AnnotationConfigParser.parse_str(f"""
-            - position_score: '*[{clauses}]'
+            - position_score: '{wildcard}'
         """, grr=labeled_grr)
 
 

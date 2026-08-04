@@ -388,12 +388,19 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
    * Kept separate from isConfigValid so that the callers who need to
    * validate *now* -- loading a pipeline, switching pipelines -- are not
    * delayed by a debounce meant for keystrokes.
+   *
+   * Only the *request* is debounced. Everything that tells the rest of the
+   * app "this text is not known to be valid" happens on the keystroke: the
+   * Annotate and Create buttons, and autoSavePipeline, gate on
+   * isConfigValid, so leaving it true for the length of the debounce would
+   * let a click inside that window act on text nothing had validated.
    */
   public onConfigChanged(): void {
+    this.markConfigDirty();
     this.configChanged.next();
   }
 
-  public isConfigValid(): void {
+  private markConfigDirty(): void {
     if (!this.pipelinesLoaded) {
       return;
     }
@@ -402,6 +409,13 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
 
     this.pipelineStateService.currentPipelineText.set(this.currentPipelineText);
     this.pipelineStateService.isConfigValid.set(false);
+  }
+
+  public isConfigValid(): void {
+    if (!this.pipelinesLoaded) {
+      return;
+    }
+    this.markConfigDirty();
 
     this.pipelineValidationSubscription.unsubscribe();
     this.pipelineValidationSubscription = this.jobsService.validatePipelineConfig(this.currentPipelineText).pipe(

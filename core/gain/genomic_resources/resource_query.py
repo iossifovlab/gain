@@ -88,7 +88,14 @@ RESOURCE_QUERY_GRAMMAR = """
 # module's docstring disclaims: it caps what the caller may ask, not what
 # the answer may contain. 256 characters is an order of magnitude more than
 # a real query -- `hg38/scores/*[phenotype="autism" and "UCSC" in
-# provenance]` is 57 -- and parses in ~20ms at its worst.
+# provenance]` is 57.
+#
+# Cost at the bound is shape-dependent, not length-dependent alone: 250
+# characters of juxtaposed clauses parse in ~12ms, the same length as an
+# and-chain in ~30ms, and pathological groupings have been measured over
+# 100ms on a loaded machine. Tens of milliseconds, in other words -- cheap
+# enough for one request, and the reason a caller must not be able to ask
+# for hundreds of them either (see the pipeline-validation endpoint).
 MAX_RESOURCE_QUERY_LENGTH = 256
 
 

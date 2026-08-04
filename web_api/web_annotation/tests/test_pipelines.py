@@ -10,6 +10,7 @@ from django.conf import settings
 from django.core.files.base import ContentFile
 from django.test import Client
 from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.resource_query import MAX_RESOURCE_QUERY_LENGTH
 from rest_framework.exceptions import NotFound, ValidationError
 
 from web_annotation.annotation_base_view import (
@@ -22,6 +23,9 @@ from web_annotation.models import Pipeline, User
 from web_annotation.pipeline_cache import LRUPipelineCache, PipelineNotCached
 from web_annotation.pipelines.throttling import PipelineValidationRateThrottle
 from web_annotation.pipelines.views import PipelineValidation
+from web_annotation.single_allele_annotation.throttling import (
+    AnnotateUserRateThrottle,
+)
 
 
 # ``PipelineDoc.get`` is async as of #167; the async-native round-trip is
@@ -609,12 +613,16 @@ def test_validate_refuses_an_overlong_resource_query(
     A too-long query is an invalid *config*, not a malformed *request*, so
     it keeps the endpoint's 200 + ``errors`` contract -- the same shape the
     deferred-load failure path reports.
+
+    One character over the bound rather than the kilobytes that made the
+    original report: without the bound, those would hang this test for
+    minutes rather than fail it.
     """
-    clauses = " and ".join(['a="b"'] * 1000)
+    wildcard = "*" + "a" * MAX_RESOURCE_QUERY_LENGTH
 
     response = anonymous_client.post(
         "/api/pipelines/validate",
-        {"config": f"- position_score: '*[{clauses}]'"},
+        {"config": f"- position_score: '{wildcard}'"},
     )
 
     assert response.status_code == 200
@@ -630,7 +638,7 @@ def test_validate_refuses_an_oversized_config_body(
     Unlike a bad query, an oversized body is a malformed *request*: it is
     refused with 400 before the config is parsed at all.
     """
-    oversized = "# padding\n" * (PipelineValidation.MAX_CONFIG_LENGTH // 5)
+    oversized = "#" * (PipelineValidation.MAX_CONFIG_LENGTH + 1)
 
     response = anonymous_client.post(
         "/api/pipelines/validate",
@@ -639,6 +647,21 @@ def test_validate_refuses_an_oversized_config_body(
 
     assert response.status_code == 400
     assert str(PipelineValidation.MAX_CONFIG_LENGTH) in response.json()["error"]
+
+
+@pytest.mark.django_db
+def test_validate_accepts_a_config_exactly_at_the_size_limit(
+    anonymous_client: Client,
+) -> None:
+    """The refusal is for bodies *over* the limit, so one at it still runs."""
+    at_limit = "#" * PipelineValidation.MAX_CONFIG_LENGTH
+
+    response = anonymous_client.post(
+        "/api/pipelines/validate",
+        {"config": at_limit},
+    )
+
+    assert response.status_code == 200
 
 
 @pytest.mark.django_db
@@ -673,6 +696,10 @@ def test_validate_accepts_a_config_at_the_annotator_limit(
     The largest config in this repo declares 32 annotators; the limit sits
     well above that, and a config sitting exactly on it is still validated
     rather than refused.
+
+    A bare ``200`` would not say much -- this endpoint answers 200 for
+    invalid configs too, and this one is invalid (repeated attributes). What
+    is asserted is that whatever it objects to, it is not the cap.
     """
     config = "- position_score: 'score_one'\n" * (
         PipelineValidation.MAX_ANNOTATORS)
@@ -683,6 +710,7 @@ def test_validate_accepts_a_config_at_the_annotator_limit(
     )
 
     assert response.status_code == 200
+    assert "too many annotators" not in response.json().get("errors", "")
 
 
 @pytest.mark.django_db
@@ -722,19 +750,46 @@ def test_validate_is_rate_limited(
 @pytest.mark.django_db
 def test_validate_does_not_share_the_annotate_budget(
     anonymous_client: Client,
+    mocker: pytest_mock.MockerFixture,
 ) -> None:
-    """The editor must not be able to exhaust the annotate quota, or vice
-    versa. Annotate is budgeted at 10/minute; a user editing a pipeline
-    would trip that in seconds if the two shared one bucket.
+    """The two endpoints must not draw on one bucket.
+
+    Annotate is budgeted for expensive work; the editor validates at a
+    keystroke cadence. Sharing a bucket means whichever runs first starves
+    the other -- a user editing a pipeline would exhaust the annotate quota
+    in seconds.
+
+    Both rates are driven to their floor and the annotate bucket is then
+    emptied, so that a shared bucket would be visibly empty by the time
+    validate is called. Asserting that validate merely answers 200 some
+    number of times would not discriminate: it does that with no throttle
+    at all.
     """
-    config = {"config": "- position_score: scores/pos1"}
+    mocker.patch.dict(
+        AnnotateUserRateThrottle.THROTTLE_RATES,
+        {"user": "1/minute", "pipeline_validate": "1/minute"},
+    )
 
-    responses = [
-        anonymous_client.post("/api/pipelines/validate", config).status_code
-        for _ in range(12)
-    ]
+    # Exhaust the annotate bucket.
+    annotate = {
+        "pipeline_id": "pipeline/test_pipeline",
+        "annotatable": {"chrom": "chr1", "pos": 1, "ref": "C", "alt": "A"},
+    }
+    first_annotate = anonymous_client.post(
+        "/api/single_allele/annotate", annotate,
+        content_type="application/json")
+    second_annotate = anonymous_client.post(
+        "/api/single_allele/annotate", annotate,
+        content_type="application/json")
 
-    assert responses == [200] * 12
+    validate = anonymous_client.post(
+        "/api/pipelines/validate",
+        {"config": "- position_score: scores/pos1"},
+    )
+
+    assert first_annotate.status_code != 429
+    assert second_annotate.status_code == 429
+    assert validate.status_code != 429
 
 
 @pytest.mark.django_db
@@ -751,3 +806,78 @@ def test_validate_refuses_a_request_with_no_config(
     response = anonymous_client.post("/api/pipelines/validate", {})
 
     assert response.status_code == 400
+
+
+@pytest.mark.django_db
+def test_validate_survives_deeply_nested_yaml(
+    anonymous_client: Client,
+) -> None:
+    """Nesting deep enough to exhaust the stack is an invalid config, not a
+    server fault. ``yaml.safe_load`` signals it with ``RecursionError``,
+    which is not a ``YAMLError``, so counting annotators before the view's
+    own error handling has to catch it too.
+    """
+    response = anonymous_client.post(
+        "/api/pipelines/validate",
+        {"config": "[" * 2000 + "]" * 2000},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["errors"]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("body", ["[]", '"x"', "3"])
+def test_validate_refuses_a_non_object_json_body(
+    anonymous_client: Client,
+    body: str,
+) -> None:
+    """A JSON body that is not an object is a bad request, not a 500.
+
+    The handler asserted its way through ``request.data`` being a dict;
+    a three-byte body was enough to raise AssertionError on an anonymous
+    endpoint.
+    """
+    response = anonymous_client.post(
+        "/api/pipelines/validate",
+        body,
+        content_type="application/json",
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+def test_validate_refuses_a_config_that_expands_past_the_build_limit(
+    anonymous_client: Client,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Counting *declared* annotators does not bound the work.
+
+    Every declared wildcard expands to as many annotators as it matches --
+    up to WILDCARD_LIMIT (500) each -- and each expanded annotator is then
+    built against the GRR. So a config well inside the declared cap can
+    still ask for orders of magnitude more work than it looks like. The
+    expansion is what has to be bounded, and it has to be bounded before
+    the build.
+
+    The limit is lowered here because the test GRR is too small to reach
+    the configured one; what matters is that expansion, not declaration,
+    is what the refusal counts.
+    """
+    mocker.patch.object(PipelineValidation, "MAX_EXPANDED_ANNOTATORS", 4)
+    build = mocker.patch(
+        "web_annotation.pipelines.views.load_pipeline_from_yaml")
+
+    # Three declared annotators, each a wildcard matching every score in
+    # the fixture GRR -- well inside MAX_ANNOTATORS, far past the expansion
+    # limit set above.
+    response = anonymous_client.post(
+        "/api/pipelines/validate",
+        {"config": "- position_score: '*'\n" * 3},
+    )
+
+    assert response.status_code == 400
+    assert "4" in response.json()["error"]
+    # Refused before the expensive half: nothing was built.
+    build.assert_not_called()
