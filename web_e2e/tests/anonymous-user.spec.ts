@@ -112,9 +112,9 @@ test.describe('Anonymous user tests', () => {
     const editor = new PipelineEditor(page);
     const singleAnnotation = new SingleAnnotation(page);
     await editor.pipelineInput.click();
-    await page.locator('mat-option').getByText('pipeline/hs1_clinical_annotation').click();
+    await page.locator('mat-option').getByText('pipeline/hg19_clinical_annotation').click();
 
-    await singleAnnotation.annotate('chr1 1265232 G A');
+    await singleAnnotation.annotate('chr1 11856378 G A');
     await expect(singleAnnotation.report).toBeVisible();
   });
 
@@ -123,9 +123,9 @@ test.describe('Anonymous user tests', () => {
     const singleAnnotation = new SingleAnnotation(page);
     await PipelineEditor.waitForLoaded(page);
     await editor.dropdownIcon.click();
-    await page.locator('mat-option').getByText('pipeline/hs1_clinical_annotation').click();
+    await page.locator('mat-option').getByText('pipeline/hg19_clinical_annotation').click();
 
-    await singleAnnotation.annotate('chr1 1265232 G A');
+    await singleAnnotation.annotate('chr1 11856378 G A');
     await expect(singleAnnotation.downloadReportButton).toBeVisible();
 
     const downloadPromise = page.waitForEvent('download');
@@ -133,7 +133,7 @@ test.describe('Anonymous user tests', () => {
     const downloadedFile = await downloadPromise;
 
     const fixtureData = scanCSV(await downloadedFile.path(), {truncateRaggedLines: true, sep: '\t'});
-    const downloadData = scanCSV('./fixtures/chr1_1265232_G_A_report.tsv', {truncateRaggedLines: true, sep: '\t'});
+    const downloadData = scanCSV('./fixtures/chr1_11856378_G_A_report.tsv', {truncateRaggedLines: true, sep: '\t'});
     const fixtureFrame = (await fixtureData.collect()).sort('Attribute name');
     const downloadFrame = (await downloadData.collect()).sort('Attribute name');
     expect(fixtureFrame.toString()).toEqual(downloadFrame.toString());

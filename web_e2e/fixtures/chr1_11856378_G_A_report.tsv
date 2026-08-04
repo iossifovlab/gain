@@ -1,0 +1,24 @@
+Attribute name	Value	Description
+chromosome	chr1
+position	11856378
+reference	G
+alternative	A
+worst_effect_MANE_1.5	missense	Worst effect across all transcripts.
+effect_details_MANE_1.5	ENST00000376590.9:MTHFR:missense:222/656(Ala->Val)	Effect details for each affected transcript. Format: `< transcript 1 >:<gene 1>:<effect 1>:<details 1>|...`
+gene_effects_MANE_1.5	MTHFR:missense	`<gene_1>:<effect_1>|...` A gene can be repeated.
+dbSNP_rs_number	1801133	dbSNP ID (i.e. rs number)
+gnomad_v4_exome_ALL_af	0.32269200682640076	Alternate allele frequency
+gnomad_v4_genome_ALL_af	0.2751699984073639	Alternate allele frequency
+clinical_significance	drug_response	Aggregate germline classification for this single variant; multiple values are separated by a vertical bar
+clinical_disease_name	Thrombophilia_due_to_thrombin_defect|methotrexate_response_-_Toxicity|not_specified|not_provided|Homocystinuria_due_to_methylene_tetrahydrofolate_reductase_deficiency|Gastrointestinal_stromal_tumor|Neural_tube_defects|_folate-sensitive|MTHFR_THERMOLABILE_POLYMORPHISM|See_cases	ClinVar's preferred disease name for the concept specified by disease identifiers in CLNDISDB
+phyloP7way	0.9169999957084656	The score is a number that reflects the conservation at a position.
+AlphaMissense_pathogenicity	0.6324	AlphaMissense Pathogenicity score is a deleteriousness score for missense variants
+AlphaMissense_class	likely_pathogenic	AlphaMissense Class is a deleteriousness category for missense variants
+mpc	0.928649804324	Missense badness, PolyPhen-2, and Constraint. A deleteriousness prediction score for missense variants"
+worst_effect_GENCODE_49	missense	Worst effect across all transcripts.
+effect_details_GENCODE_49	ENST00000911084.1:MTHFR:missense:222/606(Ala->Val)|ENST00000970342.1:MTHFR:missense:222/663(Ala->Val)|ENST00000376583.7:MTHFR:missense:263/697(Ala->Val)|ENST00000376592.6:MTHFR:missense:222/656(Ala->Val)|ENST00000641407.1:MTHFR:missense:222/642(Ala->Val)|ENST00000911086.1:MTHFR:missense:222/606(Ala->Val)|ENST00000911085.1:MTHFR:missense:222/656(Ala->Val)|ENST00000970341.1:MTHFR:missense:222/606(Ala->Val)|ENST00000911087.1:MTHFR:missense:222/606(Ala->Val)|ENST00000376585.6:MTHFR:missense:263/697(Ala->Val)|ENST00000423400.7:MTHFR:missense:262/696(Ala->Val)|ENST00000641820.1:MTHFR:5'UTR:71|ENST00000970343.1:MTHFR:missense:222/595(Ala->Val)|ENST00000376590.9:MTHFR:missense:222/656(Ala->Val)	Effect details for each affected transcript. Format: `< transcript 1 >:<gene 1>:<effect 1>:<details 1>|...`
+gene_effects_GENCODE_49	MTHFR:missense|MTHFR:5'UTR	`<gene_1>:<effect_1>|...` A gene can be repeated.
+pLI_rank_all	MTHFR:15455	Gene rank after sorting by pLI intolerance score
+pLI_rank_min	15455	Gene rank after sorting by pLI intolerance score
+LOEUF_rank_all	MTHFR:9736	Gene ranks after sorting by LOEUF scores
+LOEUF_rank_min	9736	Gene ranks after sorting by LOEUF scores
