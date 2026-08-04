@@ -721,6 +721,44 @@ def test_a_malformed_resource_is_reported_under_region_size_zero(
     assert "unexpected internal error" not in caplog.text
 
 
+@pytest.mark.parametrize("region_size", ["0", "5", "3000000000"])
+def test_the_verdict_on_a_malformed_resource_survives_any_region_size(
+    malformed_between_healthy_grr: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    region_size: str,
+) -> None:
+    # gain#588 moved the position score's rule off the clipped span onto the
+    # raw one.  Whether the two offending records land in one region, in two
+    # adjacent ones or in a single unsplit contig, and whether the region is
+    # served by the vectorized scan or the per-record one, the resource is
+    # refused for the same reason.
+    #
+    # Note which code each parameter reaches: this resource's score is a
+    # float, so it is bulk-eligible, and only ``0`` -- which has no bounded
+    # region for the vectorized scan to serve -- takes the per-record path
+    # this slice changed.  The other two are answered by ``_clip_keep_guard``.
+    # That is the point of the parametrisation (one verdict whichever path
+    # answers), not an oversight; the per-record rule is exercised across a
+    # split by test_a_region_split_between_two_touching_records_still_
+    # refuses_them.
+    path = malformed_between_healthy_grr
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"), \
+            pytest.raises(SystemExit) as excinfo:
+        cli_manage([
+            "repo-repair", "-R", str(path), "-j", "1",
+            "--region-size", region_size])
+
+    assert excinfo.value.code != 0
+    assert any(
+        record.name == "grr_manage"
+        and record.levelno == logging.ERROR
+        and "<m_malformed>" in record.getMessage()
+        and "at most one record per position" in record.getMessage()
+        for record in caplog.records)
+    assert not (path / "m_malformed" / "statistics" / "stats_hash").exists()
+
+
 def test_a_malformed_resource_is_never_an_unexpected_internal_error(
     malformed_between_healthy_grr: pathlib.Path,
     caplog: pytest.LogCaptureFixture,

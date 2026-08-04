@@ -3494,3 +3494,65 @@ def test_a_tabix_table_reads_through_its_configured_index_filename(
         records = list(tab.get_records_in_region("chr1", 10, 11))
 
     assert [record[POS_BEGIN] for record in records] == [10, 11]
+
+
+def test_a_buffered_tabix_query_drops_a_record_that_died_before_it(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The score layer used to re-check this on every record it read, and
+    # gain#588 deleted the check: dropping a record that ends before the
+    # queried region is ``LineBuffer.fetch``'s job, and it applies exactly
+    # this condition (line.py, ``record[POS_END] < pos_begin``).  The tabix
+    # backend is the one that could plausibly over-return, because between
+    # walks it knowingly holds records that already died (gain#287).
+    #
+    # The spans NEST, and that is the whole point of the fixture: with
+    # disjoint records the buffer's ``find_index`` lands directly on the
+    # overlapping one and the skip is never reached, so a disjoint fixture
+    # asserts nothing.  Here the query at 100..110 is served off a buffer
+    # holding chr1:10-20, and only the skip keeps it out of the answer.
+    #
+    # This pins ``LineBuffer.fetch``, NOT a universal backend guarantee.  A
+    # tabix table whose configured ``pos_end`` is narrower than the end its
+    # index answers region queries by (gain#553) still hands the score layer
+    # a record it did not ask for; what keeps that out of a resource's saved
+    # statistics is the score layer's own skip, applied per record in
+    # ``GenomicScore._clipped_score_values`` and as a mask in
+    # ``_clip_keep_guard``, pinned by
+    # test_both_scan_paths_measure_an_out_of_region_record_alike.
+    resource = (
+        a_grr()
+        .with_resource(
+            "nested",
+            a_position_score()
+            .with_score("s", "float")
+            .with_tabix()
+            .with_data("""
+                chrom  pos_begin  pos_end  s
+                chr1   1          1000     0.1
+                chr1   10         20       0.2
+                chr1   500        600      0.3
+            """))
+        .build_repo(tmp_path)
+        .get_resource("nested")
+    )
+    score = PositionScore(resource)
+    score.open()
+
+    # A forward walk, so each query is served off the buffer the one before
+    # it filled -- which is where a dead record would survive to be yielded.
+    walk = [(1, 5), (15, 18), (100, 110), (550, 560)]
+    read = [
+        (begin, record)
+        for begin, end in walk
+        for record in score.fetch_records("chr1", begin, end)
+    ]
+
+    assert [
+        (begin, record[POS_BEGIN], record[POS_END]) for begin, record in read
+    ] == [
+        (1, 1, 1000),
+        (15, 1, 1000), (15, 10, 20),
+        (100, 1, 1000),
+        (550, 1, 1000), (550, 500, 600),
+    ]

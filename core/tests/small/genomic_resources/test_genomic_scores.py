@@ -1473,20 +1473,19 @@ def test_get_histogram_image_public_url() -> None:
     assert url != score.get_histogram_image_url("score")
 
 
-def test_fetch_region_records_requires_open() -> None:
+def test_fetch_region_values_requires_open() -> None:
     score = build_score_from_resource(build_simple_position_score_resource())
 
-    region_iter = score._fetch_region_records("1", 10, 10)
     with pytest.raises(ValueError, match="is not open"):
-        next(region_iter)
+        score.fetch_region_values("1", 10, 10)
 
 
-def test_fetch_region_records_checks_available_chromosomes() -> None:
+def test_fetch_region_values_checks_available_chromosomes() -> None:
     score = build_score_from_resource(build_simple_position_score_resource())
     score.open()
 
     with pytest.raises(ValueError, match="not among the available"):
-        next(score._fetch_region_records("2", 10, 10))
+        score.fetch_region_values("2", 10, 10)
 
 
 def test_record_to_begin_end_validates_order() -> None:

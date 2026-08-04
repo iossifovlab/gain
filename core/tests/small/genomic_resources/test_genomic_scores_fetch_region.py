@@ -116,15 +116,36 @@ def test_position_score_fetch_region(
     ("chr2", 60, 120),
     ("chr3", 60, 120),
 ])
-def test_position_score_fetch_region_consistency(
+def test_position_score_fetch_region_does_not_check_consistency(
     position_score: PositionScore,
     chrom: str,
     begin: int | None,
     end: int | None,
 ) -> None:
+    # chr2 holds two overlapping records and chr3 two touching ones.  The
+    # read yields both without a word: since gain#588 the consistency of a
+    # position score's records is the statistics scan's question, and the
+    # test below asks it of the same two regions.
+    assert len(list(position_score.fetch_region_values(chrom, begin, end))) \
+        == 2
 
-    with pytest.raises(ValueError, match="multiple values for positions"):
-        list(position_score.fetch_region_values(chrom, begin, end))
+
+@pytest.mark.parametrize("chrom,begin,end", [
+    ("chr2", 60, 120),
+    ("chr3", 60, 120),
+])
+def test_position_score_scan_consistency(
+    position_score: PositionScore,
+    chrom: str,
+    begin: int | None,
+    end: int | None,
+) -> None:
+    # ... and the scan refuses what the read above handed back, which is
+    # where that check went rather than what happened to it.
+    with pytest.raises(MalformedResourceError,
+                       match="multiple values for positions"):
+        list(position_score.validate_records(
+            position_score.fetch_records(chrom, begin, end)))
 
 
 @pytest.fixture(scope="module")
@@ -531,8 +552,11 @@ def test_a_position_score_overlap_names_the_resource_locus_and_rule(
     score = build_position_score_from_resource(resource)
     score.open()
 
+    # On the validator the scan composes over its records: since gain#588
+    # that is where the refusal lives, and the message it carries is what
+    # gain#587 pinned.
     with pytest.raises(MalformedResourceError) as excinfo:
-        list(score.fetch_region_values("chr1", 1, 10))
+        list(score.validate_records(score.fetch_records("chr1", 1, 10)))
 
     message = str(excinfo.value)
     assert "<overlapping>" in message
@@ -556,8 +580,10 @@ def test_a_position_score_repeat_names_the_resource_locus_and_rule(
     score = build_position_score_from_resource(resource)
     score.open()
 
+    # The point read stopped refusing this with gain#588 -- one rule, one
+    # path -- so the repeat is named by the validator that now owns the rule.
     with pytest.raises(MalformedResourceError) as excinfo:
-        score.fetch_position_scores("chr1", 10)
+        list(score.validate_records(score.fetch_records("chr1", 1, 20)))
 
     message = str(excinfo.value)
     assert "<repeated>" in message
@@ -574,15 +600,20 @@ def test_an_allele_score_going_backwards_names_the_resource_locus_and_rule(
     # file and the in-memory backend sorts each contig as it loads it -- so
     # the guard is reachable only from a backend that has yet to exist.
     resource = _score_repo(
-        tmp_path, "backwards", an_allele_score())
+        tmp_path, "backwards",
+        an_allele_score().with_data("""
+            chrom  pos_begin  reference  alternative  score
+            chr1   10         A          G            0.1
+            chr1   20         C          T            0.2
+        """))
     score = build_allele_score_from_resource(resource)
     score.open()
 
     def out_of_order(*_args: Any, **_kwargs: Any) -> Any:
-        yield ("chr1", 20, 20, [0.1], ("chr1", 20, 20, "A", "G", ()))
-        yield ("chr1", 10, 10, [0.2], ("chr1", 10, 10, "C", "T", ()))
+        yield ("chr1", 20, 20, "C", "T", ("chr1", "20", "C", "T", "0.2"))
+        yield ("chr1", 10, 10, "A", "G", ("chr1", "10", "A", "G", "0.1"))
 
-    monkeypatch.setattr(score, "_fetch_region_records", out_of_order)
+    monkeypatch.setattr(score, "fetch_records", out_of_order)
 
     with pytest.raises(MalformedResourceError) as excinfo:
         list(score.fetch_region_values("chr1", 1, 30))

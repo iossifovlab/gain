@@ -229,7 +229,7 @@ def test_genomic_score_context_manager_with_exception(
 
 
 def test_position_score_multiple_values_for_position() -> None:
-    """Test error when multiple values exist for same position."""
+    """Overlapping records read back; the scan is what refuses them."""
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
             type: position_score
@@ -250,12 +250,16 @@ def test_position_score_multiple_values_for_position() -> None:
     score = PositionScore(res)
     score.open()
 
+    assert list(score.fetch_region_values("1", 10, 20, ["score"])) == [
+        (10, 15, [0.1]),
+        (12, 18, [0.2]),
+    ]
     with pytest.raises(ValueError, match="multiple values"):
-        list(score.fetch_region_values("1", 10, 20, ["score"]))
+        list(score.validate_records(score.fetch_records("1", 10, 20)))
 
 
 def test_position_score_fetch_scores_multiple_lines() -> None:
-    """Test error when fetch_position_scores returns multiple lines."""
+    """fetch_position_scores answers from the first of several lines."""
     res: GenomicResource = build_inmemory_test_resource({
         GR_CONF_FILE_NAME: """
             type: position_score
@@ -276,8 +280,9 @@ def test_position_score_fetch_scores_multiple_lines() -> None:
     score = PositionScore(res)
     score.open()
 
+    assert score.fetch_position_scores("1", 10) == [0.1]
     with pytest.raises(ValueError, match="multiple values"):
-        score.fetch_position_scores("1", 10)
+        list(score.validate_records(score.fetch_records("1", 10, 10)))
 
 
 def test_allele_score_invalid_resource_type() -> None:
