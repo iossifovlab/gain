@@ -9,7 +9,11 @@ from django.conf import settings
 from django.core.files.uploadedfile import UploadedFile
 from django.http import HttpResponse, QueryDict
 from gain import logging
-from gain.annotation.annotation_config import AnnotationConfigParser
+from gain.annotation.annotation_config import (
+    AnnotationConfigParser,
+    AnnotationPreamble,
+    AnnotatorInfo,
+)
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.genomic_scores import GenomicScore
 from gain.genomic_resources.repository import (
@@ -469,9 +473,11 @@ class PipelineValidation(AsyncAnnotationBaseView):
     What the bounds do NOT bound is the cost of building the annotators that
     survive all three, and this endpoint builds them itself rather than
     deferring to the background loader the sibling save-pipeline path uses
-    (the #150 H1 comment on ``UserPipeline``). Async (#659): the build is
-    submitted to a dedicated bounded pool and awaited, so it no longer runs
-    on a ``thread_sensitive`` sync-view thread at all. That thread is shared
+    (the #150 H1 comment on ``UserPipeline``). Async (#659): the build --
+    and the wildcard expansion that gates it, whose cost scales with the
+    repository -- are submitted to a dedicated bounded pool and awaited, so
+    neither runs on a ``thread_sensitive`` sync-view thread nor on the event
+    loop this async view is dispatched on. That thread is shared
     by every synchronous view of a caller that shares one
     ``ThreadSensitiveContext``; under daphne Django gives each HTTP request
     its own instead (measured in ``docs/164-async-read-views-slo.md``), which
@@ -514,12 +520,24 @@ class PipelineValidation(AsyncAnnotationBaseView):
     async def post(self, request: Request) -> Response:
         """Validate annotation config.
 
-        Everything up to the build -- the three bounds and the expansion
-        gate -- runs inline, before anything is submitted to a pool: they
-        are what makes a refusal cheap, and submitting them would give an
-        anonymous caller a worker slot for a request that is about to be
-        refused anyway. Only the build itself, the one unbounded cost, is
-        handed to the bounded validation pool and awaited (#659).
+        The two GRR-free bounds -- body size and declared-annotator count --
+        run inline, before anything is submitted to a pool: they are what
+        makes a refusal cheap, and submitting them would give an anonymous
+        caller a worker slot for a request that is about to be refused
+        anyway. Both are linear in an already-bounded body and touch no
+        resources (a 64 KiB worst-case ``yaml.safe_load`` measures ~126 ms).
+
+        The two costs that scan or resolve the GRR -- the expansion-gate
+        parse and the build -- are each submitted to the bounded validation
+        pool and awaited. Inline is not free on an async view: this
+        coroutine runs ON the event loop, where a wildcard expansion is not
+        a slow request but a stalled server. Measured against a
+        production-scale GRR (grr_encode, 7922 position scores), the
+        expansion parse of a config at ``MAX_ANNOTATORS`` costs 1.59 s of
+        uninterruptible CPU, and one wildcard costs 27 ms.
+
+        The ordering is unchanged: every bound and the expansion gate still
+        refuse *before* the build is submitted.
         """
 
         content = request.data.get("config") \
@@ -561,8 +579,7 @@ class PipelineValidation(AsyncAnnotationBaseView):
             # the parse is kept separate from `load_pipeline_from_yaml`
             # rather than letting the latter's own parse do the work twice:
             # it is the gate on the build that follows.
-            _, expanded = AnnotationConfigParser.parse_str(
-                content, grr=self.grr)
+            _, expanded = await self._aparse_config(content)
         except Exception as e:  # noqa: BLE001
             # Same formatter as the deferred-load failure path (#155) so the
             # synchronous and background error messages stay identical.
@@ -585,9 +602,9 @@ class PipelineValidation(AsyncAnnotationBaseView):
 
         try:
             # The long pole: resolving every resource and building every
-            # annotator. Awaited off the request thread, so the shared
-            # thread_sensitive sync-view thread stays free for other
-            # requests while it runs.
+            # annotator. Awaited off the request thread, so neither the
+            # shared thread_sensitive sync-view thread nor the event loop
+            # is occupied while it runs.
             await self._abuild_pipeline(content)
         except Exception as e:  # noqa: BLE001
             # Failures arrive from the worker thread through the future, so
@@ -596,6 +613,27 @@ class PipelineValidation(AsyncAnnotationBaseView):
             result = {"errors": format_config_error(e)}
 
         return Response(result, status=views.status.HTTP_200_OK)
+
+    async def _aparse_config(
+        self, content: str,
+    ) -> tuple[AnnotationPreamble | None, list[AnnotatorInfo]]:
+        """Await the expansion-gate parse on the bounded validation pool.
+
+        The parse resolves no resource, but every wildcard it expands scans
+        the whole repository, so its cost is the repository's size times the
+        number of wildcards the body declares -- work that must not run on
+        the event loop this coroutine is scheduled on.
+
+        Raises whatever the parse raises, from the worker thread through the
+        future, so the caller's ``format_config_error`` sees the same
+        exception it saw when the parse ran inline.
+        """
+        return await await_build(
+            self.VALIDATE_EXECUTOR.execute(
+                AnnotationConfigParser.parse_str,
+                content=content, grr=self.grr,
+            ),
+        )
 
     async def _abuild_pipeline(self, content: str) -> None:
         """Await the validation build on the bounded validation pool.

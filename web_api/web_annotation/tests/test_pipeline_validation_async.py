@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import asyncio
+import threading
 import time
 from typing import Any
 
@@ -19,6 +20,7 @@ from web_annotation.tests.loop_stall import (
     SABOTAGED_STALL_FLOOR_SECONDS,
     SLOW_BUILD_SECONDS,
     STALL_THRESHOLD_SECONDS,
+    max_gap,
 )
 
 VALIDATE_URL = "/api/pipelines/validate"
@@ -37,6 +39,11 @@ INVALID_CONFIG_ERRORS = (
     "Invalid configuration, reason: The A0 annotator configuration is "
     "incorrect:  resource <scores/does_not_exist> (None) not found"
 )
+
+#: ``ThreadedTaskExecutor`` names its workers after this, which is how a test
+#: can tell the validation pool's threads from the loop thread and from the
+#: ``thread_sensitive`` sync-view thread by name alone.
+VALIDATE_THREAD_PREFIX = "pipeline-validate"
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +240,40 @@ def slow_validate_build(mocker: pytest_mock.MockerFixture) -> float:
     return SLOW_BUILD_SECONDS
 
 
+@pytest.fixture
+def slow_config_parse(mocker: pytest_mock.MockerFixture) -> float:
+    """Make the expansion-gate parse take ~``SLOW_BUILD_SECONDS``.
+
+    Wraps ``AnnotationConfigParser.parse_str`` -- the call whose real cost
+    is the repository scan behind each wildcard -- so the delay lands
+    wherever the parse runs, on the loop or on a worker.
+    """
+    real_parse = views.AnnotationConfigParser.parse_str
+
+    def slow_parse(content: str, *args: Any, **kwargs: Any) -> Any:
+        time.sleep(SLOW_BUILD_SECONDS)
+        return real_parse(content, *args, **kwargs)
+
+    mocker.patch.object(
+        views.AnnotationConfigParser, "parse_str", staticmethod(slow_parse))
+    return SLOW_BUILD_SECONDS
+
+
+def _record_parse_threads(mocker: pytest_mock.MockerFixture) -> list[str]:
+    """Record the thread each ``parse_str`` call runs on."""
+    threads: list[str] = []
+    real_parse = views.AnnotationConfigParser.parse_str
+
+    def recording_parse(content: str, *args: Any, **kwargs: Any) -> Any:
+        threads.append(threading.current_thread().name)
+        return real_parse(content, *args, **kwargs)
+
+    mocker.patch.object(
+        views.AnnotationConfigParser, "parse_str",
+        staticmethod(recording_parse))
+    return threads
+
+
 async def _fire_validate(config: str = VALID_CONFIG) -> int:
     """POST one validation request; return its status code."""
     client = AsyncClient()
@@ -369,6 +410,169 @@ async def test_sync_thread_proof_is_discriminating(
         f"got {worst:.3f}s -- the sabotage may have stopped biting, which "
         f"would make the proof above vacuous"
     )
+
+
+# ---------------------------------------------------------------------------
+# ...and neither does the expansion-gate parse, which scans the repository
+# ---------------------------------------------------------------------------
+# The gate parse resolves no resource, but every wildcard it expands is a scan
+# of the whole repository (``AnnotationConfigParser.query_resources`` iterates
+# ``grr.get_all_resources()`` once per wildcard). Measured against the
+# production-scale ENCODE GRR (7922 position scores): 27 ms for one wildcard,
+# 1.59 s for a config at ``MAX_ANNOTATORS``. On a *sync* view that was a busy
+# worker thread; on this async view "inline" means the event loop, where the
+# same second and a half is the whole server going quiet -- and unlike a busy
+# thread it cannot be preempted. So the gate keeps its place in the order (it
+# still refuses before the build is submitted) but is itself awaited off the
+# loop, on the same bounded pool.
+
+def test_validation_pool_threads_carry_the_expected_name() -> None:
+    """Anchor for the two thread-identity proofs below.
+
+    They read a thread name and compare it to ``VALIDATE_THREAD_PREFIX``;
+    that only means anything while the pool really names its workers so. A
+    renamed pool must fail here, not silently make both proofs vacuous.
+    """
+    future = PipelineValidation.VALIDATE_EXECUTOR.execute(
+        threading.current_thread)
+    name = future.result(timeout=10).name
+
+    assert name.startswith(VALIDATE_THREAD_PREFIX), name
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_expansion_gate_parse_runs_on_a_validation_worker(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """The gate parse must execute on the bounded pool, not the loop thread.
+
+    Thread identity rather than a stopwatch: this is the property, and it
+    holds on a loaded host where a timing bound would wobble. The loop-stall
+    proof below covers the consequence.
+    """
+    threads = _record_parse_threads(mocker)
+
+    assert await _fire_validate() == 200
+    assert threads, "the gate parse never ran"
+    assert all(
+        name.startswith(VALIDATE_THREAD_PREFIX) for name in threads
+    ), threads
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_slow_expansion_parse_does_not_park_the_event_loop(
+    slow_config_parse: float,
+) -> None:
+    """A slow gate parse must leave the event loop ticking.
+
+    The consequence of the test above, in the idiom the sibling stall proofs
+    use (#433/#454): a heartbeat coroutine ticks on the loop while a
+    validation request waits on a parse of ``SLOW_BUILD_SECONDS``. A parse
+    left on the loop parks it for that whole time -- as the sabotage test
+    below demonstrates it would.
+    """
+    heartbeats: list[float] = []
+    stop = asyncio.Event()
+
+    async def heartbeat() -> None:
+        while not stop.is_set():
+            heartbeats.append(time.monotonic())
+            await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
+
+    hb_task = asyncio.ensure_future(heartbeat())
+    status = await _fire_validate()
+    stop.set()
+    await hb_task
+
+    assert status == 200
+    assert len(heartbeats) >= 2, (
+        f"heartbeat coroutine barely ran ({len(heartbeats)} ticks) -- "
+        f"no gap to measure"
+    )
+    worst_gap = max_gap(heartbeats)
+    assert worst_gap < STALL_THRESHOLD_SECONDS, (
+        f"event loop stalled for {worst_gap:.3f}s (>= threshold "
+        f"{STALL_THRESHOLD_SECONDS:.3f}s, injected parse latency "
+        f"{slow_config_parse:.3f}s) -- the expansion-gate parse ran ON the "
+        f"loop"
+    )
+    assert len(heartbeats) >= 5, len(heartbeats)
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_loop_stall_proof_is_discriminating(
+    slow_config_parse: float,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Sabotage check: parsing on the loop FAILS the proof above.
+
+    Reproduces the placement the proof rules out -- the gate parse called
+    straight from the handler coroutine, i.e. on the event loop -- and
+    requires the loop to park for ``SABOTAGED_STALL_FLOOR_SECONDS``, which
+    is above ``STALL_THRESHOLD_SECONDS``. Without this the proof could pass
+    for want of anything slow to detect.
+    """
+    async def parse_on_the_event_loop(  # noqa: RUF029
+        self: PipelineValidation, content: str,
+    ) -> Any:
+        # Awaits nothing on purpose -- that IS the sabotage. It must stay a
+        # coroutine to stand in for the method it replaces.
+        # WRONG (deliberately): a repository-scanning parse called inline
+        # from the handler runs on the loop and cannot be preempted.
+        return views.AnnotationConfigParser.parse_str(content, grr=self.grr)
+
+    mocker.patch.object(
+        PipelineValidation, "_aparse_config", parse_on_the_event_loop)
+
+    heartbeats: list[float] = []
+    stop = asyncio.Event()
+
+    async def heartbeat() -> None:
+        while not stop.is_set():
+            heartbeats.append(time.monotonic())
+            await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
+
+    hb_task = asyncio.ensure_future(heartbeat())
+    status = await _fire_validate()
+    stop.set()
+    await hb_task
+
+    assert status == 200
+    worst_gap = max_gap(heartbeats)
+    assert worst_gap >= SABOTAGED_STALL_FLOOR_SECONDS, (
+        f"expected the loop to park for >= "
+        f"{SABOTAGED_STALL_FLOOR_SECONDS:.3f}s with the gate parse called on "
+        f"it (injected parse latency {slow_config_parse:.3f}s), got "
+        f"{worst_gap:.3f}s -- the sabotage may have stopped biting, which "
+        f"would make the proof above vacuous"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_the_build_also_runs_on_a_validation_worker(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """The build's own thread identity, for the same reason as the parse."""
+    threads: list[str] = []
+    real_build = views.load_pipeline_from_yaml
+
+    def recording_build(content: str, grr: Any, **kwargs: Any) -> Any:
+        threads.append(threading.current_thread().name)
+        return real_build(content, grr, **kwargs)
+
+    mocker.patch(
+        "web_annotation.pipelines.views.load_pipeline_from_yaml",
+        recording_build)
+
+    assert await _fire_validate() == 200
+    assert threads, "the build never ran"
+    assert all(
+        name.startswith(VALIDATE_THREAD_PREFIX) for name in threads
+    ), threads
 
 
 # ---------------------------------------------------------------------------
