@@ -336,17 +336,10 @@ def get_ip_from_request(request: HttpRequest | Request) -> str:
     or a client can be budgeted under one address and rate-limited under
     another.
 
-    The interpretation is governed by ``REST_FRAMEWORK["NUM_PROXIES"]``, i.e.
-    the number of reverse proxies in front of the app (``GPFWA_NUM_PROXIES``):
-
-    * ``0`` -- ``REMOTE_ADDR`` only; ``X-Forwarded-For`` is ignored.
-    * ``N > 0`` -- the Nth entry counted from the RIGHT of the header, so the
-      entries further left (the client-supplied ones -- Apache appends, it
-      never rewrites the prefix) cannot steer the result.
-
-    Both configured branches are DRF's own ``BaseThrottle.get_ident``, called
-    here rather than reimplemented, so the quota key and the throttle bucket
-    cannot drift apart.
+    A configured hop count defers to DRF's own ``BaseThrottle.get_ident``
+    rather than reimplementing it, which is what keeps the two consumers on
+    the same address. See the ``GPFWA_NUM_PROXIES`` block in
+    ``settings_default`` for what each value of the hop count means.
 
     ``NUM_PROXIES`` unset keeps the pre-#667 behaviour verbatim -- the LEFTMOST
     entry, which is client-controlled. That is deliberate: #667 only makes the
