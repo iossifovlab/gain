@@ -14,11 +14,22 @@ FROM ${PYTHON_IMAGE}
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.3 /uv /uvx /usr/local/bin/
 
-# System deps for building wheels that have no prebuilt Python 3.12 binaries
-# (notably pyBigWig: needs gcc + libcurl).
+# System deps for building wheels that have no prebuilt binaries for the
+# interpreter this image is built on (notably pyBigWig: needs gcc + libcurl).
+#
+# libhdf5-dev + pkg-config are for h5py, which `gain-core` pulls in through
+# `anndata`. h5py ships no cp314 wheel before 3.15.0, and `uv.lock` cannot
+# move past 3.14.0 while `spliceai_annotator` holds tensorflow 2.21.0, which
+# requires `h5py>=3.11.0,<3.15.0` -- one lock resolves the whole workspace,
+# so the cap binds `gain-core` too. On python:3.14-slim uv therefore builds
+# h5py from its sdist, and that needs the HDF5 headers. The 3.12 and 3.13
+# images resolve to a wheel and never compile it. Droppable once #295/#299
+# take tensorflow out and the lock can go to h5py>=3.15.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         libcurl4-openssl-dev \
+        libhdf5-dev \
+        pkg-config \
         git \
     && rm -rf /var/lib/apt/lists/*
 
