@@ -2644,3 +2644,140 @@ def test_plain_reference_genome_carries_meta(
     assert resource.get_summary() == "a plain genome"
     assert build_reference_genome_from_resource(
         resource).open().get_sequence("1", 1, 4) == "ACGT"
+
+
+# ---------------------------------------------------------------------------
+# gain#641: keep_conventional_index preconditions and index name collision
+# ---------------------------------------------------------------------------
+
+INDEX_OPTION_DATA = """
+    chrom  pos_begin  pos_end  sc
+    1      10         12       0.1
+    1      20         22       0.2
+"""
+
+
+def test_keep_conventional_index_without_index_filename_raises(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The two-index shape the flag exists to produce needs a SECOND name to
+    # realize the configured index under; without index_filename there is
+    # none.  Accepting the flag here would realize a single conventional
+    # index, leaving a test that believes it exercises the two-index shape
+    # while exercising the one-index shape.
+    builder = (
+        a_position_score()
+        .with_score("sc", "float")
+        .with_tabix(keep_conventional_index=True)
+        .with_data(INDEX_OPTION_DATA)
+    )
+    with pytest.raises(
+            ResourceValidationError,
+            match="keep_conventional_index") as excinfo:
+        builder.build_resource(tmp_path)
+    assert "index_filename" in str(excinfo.value)
+
+
+def test_keep_conventional_index_rejection_names_the_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Raised from the realize-time validation seam, so the GRR builder
+    # annotates it with the id of the offending resource -- a bare raise at
+    # with_tabix() call time could not, the builder has no id yet.
+    grr = a_grr().with_resource(
+        "scores/two-index",
+        a_position_score()
+        .with_score("sc", "float")
+        .with_tabix(keep_conventional_index=True)
+        .with_data(INDEX_OPTION_DATA),
+    )
+    with pytest.raises(
+            ResourceValidationError,
+            match="keep_conventional_index") as excinfo:
+        grr.build_repo(tmp_path)
+    assert "scores/two-index" in str(excinfo.value)
+
+
+def test_index_filename_at_the_conventional_name_realizes_one_index(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Declaring the index at the name it would have taken anyway is a
+    # plausible way to write "conventional name, stated explicitly".  The
+    # configured and conventional names coincide, so there is one index to
+    # realize, not two -- and asking to keep the conventional one is
+    # already satisfied.
+    res = (
+        a_position_score()
+        .with_score("sc", "float")
+        .with_tabix(
+            index_filename="data.txt.gz.tbi", keep_conventional_index=True)
+        .with_data(INDEX_OPTION_DATA)
+        .build_resource(tmp_path)
+    )
+
+    assert (tmp_path / "data.txt.gz.tbi").is_file()
+    assert PositionScore(res).open().fetch_position_scores(
+        "1", 10) == pytest.approx([0.1])
+
+
+def test_index_filename_at_the_conventional_csi_name_realizes_one_index(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The conventional name differs by flavour (.csi, not .tbi); the
+    # collision contract does not.
+    res = (
+        a_position_score()
+        .with_score("sc", "float")
+        .with_tabix(
+            csi=True, index_filename="data.txt.gz.csi",
+            keep_conventional_index=True)
+        .with_data(INDEX_OPTION_DATA)
+        .build_resource(tmp_path)
+    )
+
+    assert (tmp_path / "data.txt.gz.csi").is_file()
+    assert not (tmp_path / "data.txt.gz.tbi").exists()
+    assert PositionScore(res).open().fetch_position_scores(
+        "1", 10) == pytest.approx([0.1])
+
+
+def test_keep_conventional_index_realizes_both_index_names(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The shape the flag exists for: a NON-conventional configured name
+    # plus a copy left at the conventional one, so "the configured name
+    # wins" is distinguishable from "the conventional probe found the only
+    # index there was".
+    res = (
+        a_position_score()
+        .with_score("sc", "float")
+        .with_tabix(
+            index_filename="data.custom.tbi", keep_conventional_index=True)
+        .with_data(INDEX_OPTION_DATA)
+        .build_resource(tmp_path)
+    )
+
+    assert (tmp_path / "data.custom.tbi").is_file()
+    assert (tmp_path / "data.txt.gz.tbi").is_file()
+    assert PositionScore(res).open().fetch_position_scores(
+        "1", 10) == pytest.approx([0.1])
+
+
+def test_index_filename_alone_leaves_no_conventional_sidecar(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Without the flag the index is MOVED, so no adjacent sidecar is left
+    # for htslib's auto-probe to find -- the property that makes an
+    # index-resolution test prove which name the code actually resolved.
+    res = (
+        a_position_score()
+        .with_score("sc", "float")
+        .with_tabix(index_filename="data.custom.tbi")
+        .with_data(INDEX_OPTION_DATA)
+        .build_resource(tmp_path)
+    )
+
+    assert (tmp_path / "data.custom.tbi").is_file()
+    assert not (tmp_path / "data.txt.gz.tbi").exists()
+    assert PositionScore(res).open().fetch_position_scores(
+        "1", 10) == pytest.approx([0.1])

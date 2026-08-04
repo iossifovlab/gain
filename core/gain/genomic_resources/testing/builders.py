@@ -147,8 +147,9 @@ class _TableScoreBuilder(MetaMixin):
     # A non-conventional index name, declared as ``index_filename:`` in the
     # table config and realized at that name; only meaningful with ``tabix``.
     index_filename: str | None = None
-    # Leaves a copy of the index at its conventional name too; only
-    # meaningful together with ``index_filename``.
+    # Leaves a copy of the index at its conventional name too; REQUIRES
+    # ``index_filename`` (rejected without it -- see
+    # ``_validate_index_options``).
     keep_conventional_index: bool = False
     chrom_mapping: dict[str, Any] | None = None
     zero_based: bool = False
@@ -373,11 +374,15 @@ class _TableScoreBuilder(MetaMixin):
         an index left at its conventional name proves nothing about which
         name the code resolved.
 
-        ``keep_conventional_index`` (meaningful only alongside
-        ``index_filename``) additionally leaves a copy of the index at the
-        conventional name, so the resource carries BOTH.  That is the shape
-        that tells "the configured name wins" apart from "the conventional
-        probe happened to find the only index there was".
+        ``keep_conventional_index`` additionally leaves a copy of the index
+        at the conventional name, so the resource carries BOTH.  That is the
+        shape that tells "the configured name wins" apart from "the
+        conventional probe happened to find the only index there was".  It
+        REQUIRES ``index_filename`` -- the second index needs a name to be
+        realized under -- and is rejected without one rather than quietly
+        realizing the one-index shape.  Passing an ``index_filename`` that
+        IS the conventional name is accepted and yields a single index,
+        with or without the flag.
 
         Precondition: the authored rows (via :meth:`with_data` or
         :meth:`with_score_line`) must be position-sorted -- ascending by
@@ -403,6 +408,7 @@ class _TableScoreBuilder(MetaMixin):
             base_required=self.LEADING_COLUMNS + self.TRAILING_COLUMNS,
             base_optional=self.OPTIONAL_COLUMNS)
         self._validate_header_mode(scores)
+        self._validate_index_options()
         # The authored header is the single column declaration; the modes
         # that do not write it into the file still resolve their indices
         # from it.
@@ -446,6 +452,23 @@ class _TableScoreBuilder(MetaMixin):
                 f"header_mode 'none' leaves no header to resolve a column "
                 f"name against; score(s) {sorted(named)} must be declared "
                 f"with column_index")
+
+    def _validate_index_options(self) -> None:
+        """Reject a keep-the-conventional-index request that cannot hold.
+
+        ``keep_conventional_index`` asks for BOTH index names to be present,
+        which needs a second name -- ``index_filename`` -- to realize the
+        configured index under.  Alone the flag has nowhere to put that
+        second index, so honouring it would silently realize the one-index
+        shape and leave a test asserting the two-index shape passing for
+        the wrong reason.
+        """
+        if self.keep_conventional_index and self.index_filename is None:
+            raise ResourceValidationError(
+                "keep_conventional_index asks for the index at BOTH the "
+                "configured and the conventional name, so it requires an "
+                "index_filename to realize the configured one under; "
+                "pass index_filename= or drop the flag")
 
     def build_resource(
         self, tmp_path: pathlib.Path,
@@ -1190,7 +1213,9 @@ def _realize_tabix_table(
     is MOVED to that name, so the resource carries the index only under the
     non-conventional name -- no adjacent sidecar is left behind for
     htslib's auto-probe to find.  ``keep_conventional_index`` copies it
-    instead, leaving the conventional sidecar in place as well.
+    instead, leaving the conventional sidecar in place as well.  When
+    ``index_filename`` names the conventional path the index is already
+    where it was asked to be, so neither happens.
     """
     header = _parse_header(data)
     chrom_col = header.index("chrom")
@@ -1202,10 +1227,15 @@ def _realize_tabix_table(
         seq_col=chrom_col, start_col=start_col, end_col=end_col, csi=csi)
     if index_filename is not None:
         target = tabix_path.parent / index_filename
-        if keep_conventional_index:
-            shutil.copyfile(written_index, target)
-        else:
-            pathlib.Path(written_index).rename(target)
+        # A configured name that IS the conventional one leaves nothing to
+        # do: the index pysam wrote is already at the requested name.  Both
+        # branches would otherwise act on one path as source and
+        # destination -- a no-op for rename, but a SameFileError for copy.
+        if target != pathlib.Path(written_index):
+            if keep_conventional_index:
+                shutil.copyfile(written_index, target)
+            else:
+                pathlib.Path(written_index).rename(target)
 
 
 def _strip_header(data: str) -> str:
