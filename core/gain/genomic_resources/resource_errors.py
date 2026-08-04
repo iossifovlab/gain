@@ -41,6 +41,29 @@ def overlapping_records_error(
         f"per position")
 
 
+def backwards_records_error(
+    resource_id: str, chrom: str, pos: int, prev_pos: int, kind: str,
+) -> MalformedResourceError:
+    """Refuse a score whose records move backwards along a contig.
+
+    The sibling of :func:`overlapping_records_error`, and here for the same
+    reason.  The position rule has been built from one helper since it was
+    detected on two paths; this rule is detected on two paths for each of TWO
+    kinds, and was written out at all four sites -- six copies of one
+    sentence, agreeing only for as long as nobody edited one of them.
+
+    ``kind`` is the possessive naming the kind whose promise was broken
+    ("a fragment score's"), so the message still says which validator fired.
+    It is passed by each raise site rather than read off a shared class
+    attribute: an attribute two validators interpret for themselves is what
+    ADR 0008 unwound, and a *message* fragment is not a rule.
+    """
+    return MalformedResourceError(
+        f"<{resource_id}> is malformed: the record at {chrom}:{pos} follows "
+        f"the record at {chrom}:{prev_pos}; {kind} records must not move "
+        f"backwards")
+
+
 def index_column_mismatch_error(
     resource_id: str,
     index_filename: str,
