@@ -256,6 +256,79 @@ def _fragment_score_reading_backwards(
     return score
 
 
+def _fragment_score(tmp_path: pathlib.Path) -> FragmentScore:
+    """A well-formed fragment score, to call the kind's own rule on."""
+    resource = (
+        a_grr()
+        .with_resource(
+            "fragments",
+            a_fragment_score()
+            .with_score("s", "float")
+            .with_data("""
+                chrom  pos_begin  pos_end  s
+                chr1   10         19       0.1
+            """))
+        .build_repo(tmp_path)
+        .get_resource("fragments")
+    )
+    score = build_fragment_score_from_resource(resource)
+    score.open()
+    return score
+
+
+def test_a_fragment_score_refuses_a_fragment_that_begins_too_early(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The kind's own rule, called directly.  No fixture can express it: tabix
+    # refuses to index decreasing positions, the in-memory backend sorts each
+    # contig as it loads it, bigWig intervals are ordered by construction and
+    # a VCF table is tabix-backed -- so the records are handed in.
+    #
+    # The message names the kind, not merely "this score", so a reader meeting
+    # it knows which validator fired.
+    score = _fragment_score_reading_backwards(tmp_path, monkeypatch)
+
+    with pytest.raises(MalformedResourceError) as excinfo:
+        list(score.validate_records(score.fetch_records("chr1", 1, 30)))
+
+    message = str(excinfo.value)
+    assert "<backwards>" in message
+    assert "chr1:10" in message
+    assert "chr1:20" in message
+    assert "a fragment score's records must not move backwards" in message
+
+
+def test_the_fragment_rule_passes_overlapping_fragments_through(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Overlapping intervals are what a fragment score IS, so only the begins
+    # are compared and a fragment reaching back over its predecessor's end is
+    # handed straight on.
+    score = _fragment_score(tmp_path)
+    records: list[Record] = [
+        ("chr1", 10, 100, None, None, ("chr1", "10", "100", "0.1")),
+        ("chr1", 50, 150, None, None, ("chr1", "50", "150", "0.2")),
+    ]
+
+    assert list(score.validate_records(iter(records))) == records
+
+
+def test_the_fragment_rule_passes_fragments_sharing_a_start_through(
+    tmp_path: pathlib.Path,
+) -> None:
+    # ``begin < prev_begin`` and not ``<=``: two fragments starting at one
+    # position is ordinary data, unlike the position score next door, where
+    # sharing a single base pair is the error.
+    score = _fragment_score(tmp_path)
+    records: list[Record] = [
+        ("chr1", 10, 19, None, None, ("chr1", "10", "19", "0.1")),
+        ("chr1", 10, 99, None, None, ("chr1", "10", "99", "0.2")),
+    ]
+
+    assert list(score.validate_records(iter(records))) == records
+
+
 def _allele_score_reading_backwards(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
 ) -> AlleleScore:
@@ -289,16 +362,17 @@ def _allele_score_reading_backwards(
     return score
 
 
-def test_the_scan_still_validates_a_fragment_score(
+def test_the_scan_validates_a_fragment_score_with_the_kinds_own_rule(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A fragment score has no validator of its own yet (gain#590), so the
-    # base rule -- a record must not begin before the one before it -- is
-    # what keeps it validated during the scan.
+    # The scan dispatches to ``FragmentScore.validate_records``: the message
+    # names the kind, which the base default's generic wording does not, so
+    # this fails if the kind's body is deleted and the inherited one takes
+    # over again.
     #
     # Driven through the scan's own composition rather than by calling
-    # ``validate_records`` by hand: what criterion 11 claims is that the SCAN
+    # ``validate_records`` by hand: what this claims is that the SCAN
     # validates a non-position kind, and calling the validator directly would
     # hold even if ``_scan_region`` had stopped composing it.
     score = _fragment_score_reading_backwards(tmp_path, monkeypatch)
@@ -311,7 +385,7 @@ def test_the_scan_still_validates_a_fragment_score(
     assert "<backwards>" in message
     assert "chr1:10" in message
     assert "chr1:20" in message
-    assert "must not move backwards" in message
+    assert "a fragment score's records must not move backwards" in message
 
 
 def test_the_scan_still_validates_an_allele_score(
@@ -337,10 +411,26 @@ def test_reading_that_same_fragment_score_raises_nothing(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The other half of the split, for the kind the BASE validator covers.
+    # The other half of the split: the kind now has a rule of its own, and
+    # the region read still does not use it -- every record comes back.
     score = _fragment_score_reading_backwards(tmp_path, monkeypatch)
 
     assert len(list(score.fetch_region_values("chr1", 1, 30, ["s"]))) == 2
+
+
+def test_the_fragment_read_of_that_same_score_raises_nothing(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The kind's own read, which goes straight to ``fetch_records`` rather
+    # than through the region transform -- so a guard reintroduced on either
+    # of the two would be invisible to the other's test.
+    score = _fragment_score_reading_backwards(tmp_path, monkeypatch)
+
+    assert score.fetch_fragment_scores("chr1", 1, 30) == [
+        {"s": 0.1},
+        {"s": 0.2},
+    ]
 
 
 def test_the_region_size_zero_path_refuses_a_malformed_position_score(
@@ -565,7 +655,7 @@ def test_the_position_rule_carries_a_zero_end_rather_than_dropping_it(
     assert "at most one record per position" in str(excinfo.value)
 
 
-def test_the_base_rule_starts_each_contig_afresh(
+def test_the_fragment_rule_starts_each_contig_afresh(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -574,9 +664,6 @@ def test_the_base_rule_starts_each_contig_afresh(
     # the last of the previous one, and every resource whose second contig
     # starts at a lower position than the first ended at -- which is most of
     # them -- is refused as malformed.
-    #
-    # A fragment score, because the base validator is what covers it; a
-    # position score would take its own override instead.
     score = _fragment_score_reading_backwards(tmp_path, monkeypatch)
 
     def across_contigs(*_args: object, **_kwargs: object) -> Iterator[Record]:
