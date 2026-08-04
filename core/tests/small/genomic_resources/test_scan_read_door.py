@@ -10,7 +10,6 @@ composing the validator still serves every read, and a read that starts
 validating again still passes the scan's tests.
 """
 # pylint: disable=C0116,W0212,W0621
-import math
 import pathlib
 from collections.abc import Iterator
 
@@ -25,7 +24,6 @@ from gain.genomic_resources.genomic_scores import (
     build_position_score_from_resource,
 )
 from gain.genomic_resources.histogram import (
-    NumberHistogram,
     NumberHistogramConfig,
 )
 from gain.genomic_resources.implementations.genomic_scores_impl import (
@@ -384,11 +382,10 @@ def test_a_region_read_clips_every_record_to_the_query(
 def _end_column_mismatch_resource(tmp_path: pathlib.Path) -> GenomicResource:
     """A position score whose INDEXED end is wider than its configured one.
 
-    The tabix index is built over column 2 while ``pos_end`` reads column 3,
-    which is the gain#553 config/index mismatch -- unfixed on master, and not
-    expressible through the builders.  A region query is answered by the
-    index, so the record at ``chr1:1`` (indexed end 1000) comes back for a
-    query far past its configured end of 10.
+    The tabix index is built over column 2 while ``pos_end`` reads column 3 --
+    the gain#553 config/index mismatch, which is not expressible through the
+    builders because they derive the index columns from the same header the
+    config is rendered from.
     """
     setup_directories(tmp_path, {
         "genomic_resource.yaml": """
@@ -419,46 +416,37 @@ def _end_column_mismatch_resource(tmp_path: pathlib.Path) -> GenomicResource:
     return build_filesystem_test_resource(tmp_path)
 
 
-def test_both_scan_paths_measure_an_out_of_region_record_alike(
+def test_both_scan_paths_refuse_an_index_column_mismatch_alike(
     tmp_path: pathlib.Path,
 ) -> None:
-    # A record can reach the score layer without overlapping the region it was
-    # asked for: the tabix index answers the query and does not know the
-    # configured end (gain#553).  Both scan paths drop it on the same edge --
-    # the per-record one in ``_clipped_score_values``, the vectorized one in
-    # ``_clip_keep_guard``'s ``pos_end >= start`` mask -- so what a resource
-    # measures cannot depend on which path it was eligible for.
+    # This resource no longer reaches either scan path.  A config/index column
+    # mismatch is a CONFIG error, and under ADR 0008 those are refused when the
+    # resource is opened rather than carried into the scan -- so the table
+    # raises before a record is read (gain#553), and the scan validators are
+    # left holding only the rules that genuinely need every record.
     #
-    # This is the pin for that equivalence, and it discriminates: with the
-    # per-record skip removed, ``_do_min_max`` folds 0.1 into the range while
-    # the bulk pass reports nan, and ``_do_histogram`` counts an INVERTED
-    # span, whose width as a weight is negative, into a bar.
+    # The equivalence this pins is therefore no longer "both paths measure it
+    # alike" but "both paths refuse it alike": neither can be the one that
+    # quietly proceeds, because a resource a scan cannot cover must not end up
+    # with a fresh stats_hash saying it did.
     resource = _end_column_mismatch_resource(tmp_path)
 
-    per_record_hist = GenomicScoreImplementation._do_histogram(
-        resource, {"s": _hist_conf()}, "chr1", 100, 200)
-    bulk_hist = GenomicScoreImplementation._do_histogram_bulk(
-        resource, {"s": _hist_conf()}, "chr1", 100, 200)
-    per_record_mm = GenomicScoreImplementation._do_min_max(
-        resource, ["s"], "chr1", 100, 200)
-    bulk_mm = GenomicScoreImplementation._do_min_max_bulk(
-        resource, ["s"], "chr1", 100, 200)
+    scans = [
+        lambda: GenomicScoreImplementation._do_histogram(
+            resource, {"s": _hist_conf()}, "chr1", 100, 200),
+        lambda: GenomicScoreImplementation._do_histogram_bulk(
+            resource, {"s": _hist_conf()}, "chr1", 100, 200),
+        lambda: GenomicScoreImplementation._do_min_max(
+            resource, ["s"], "chr1", 100, 200),
+        lambda: GenomicScoreImplementation._do_min_max_bulk(
+            resource, ["s"], "chr1", 100, 200),
+    ]
 
-    per_record_bars = per_record_hist["s"]
-    bulk_bars = bulk_hist["s"]
-    assert isinstance(per_record_bars, NumberHistogram)
-    assert isinstance(bulk_bars, NumberHistogram)
-
-    assert list(per_record_bars.bars) == list(bulk_bars.bars)
-    # Nothing overlapped the region, so nothing was counted -- and no bar is
-    # negative, which is what counting an inverted span would produce.
-    assert list(per_record_bars.bars) == [0] * 10
-
-    assert math.isnan(per_record_mm["s"].min) is math.isnan(bulk_mm["s"].min)
-    assert math.isnan(per_record_mm["s"].max) is math.isnan(bulk_mm["s"].max)
-    # Both report "no value seen" rather than one of them reporting 0.1.
-    assert math.isnan(per_record_mm["s"].min)
-    assert math.isnan(per_record_mm["s"].max)
+    for scan in scans:
+        with pytest.raises(MalformedResourceError) as excinfo:
+            scan()
+        assert "pos_end is indexed on column 2" in str(excinfo.value)
+        assert "resolves it to column 3" in str(excinfo.value)
 
 
 def test_the_scan_measures_a_well_formed_region_exactly_as_a_reader_reads_it(
