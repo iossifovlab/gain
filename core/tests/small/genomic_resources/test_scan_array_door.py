@@ -371,3 +371,41 @@ def test_a_malformed_resource_is_refused_the_same_way_down_both_paths(
             resource, confs, "chr1", 1, 9)
 
     assert str(bulk.value) == str(per_record.value)
+
+
+@pytest.mark.parametrize("kind,builder,possessive", [
+    ("fragment", _fragment_score, "a fragment score's"),
+    ("allele", _allele_score, "an allele score's"),
+])
+def test_the_backwards_rule_is_refused_the_same_way_down_both_paths(
+    tmp_path: pathlib.Path,
+    kind: str,
+    builder: object,
+    possessive: str,
+) -> None:
+    # ``test_a_malformed_resource_is_refused_the_same_way_down_both_paths``
+    # makes this claim for the POSITION kind, where both validators have
+    # always built the refusal from ``overlapping_records_error`` and so
+    # cannot drift.  The backwards rule is the one that could: it is stated
+    # twice per kind, for two kinds, and was written out longhand at all four
+    # sites until ``backwards_records_error`` collapsed them.  Six copies of
+    # one sentence agree only for as long as nobody edits one of them, and
+    # nothing compared them.
+    #
+    # Both refusals are driven off the SAME violation -- one record at 10
+    # following one at 20 -- so the comparison is of the two code paths and
+    # not of two fixtures.
+    score = builder(tmp_path, f"backwards_{kind}")  # type: ignore[operator]
+    records = [
+        ("chr1", 20, 29, None, None, ("chr1", "20", "29", "0.2")),
+        ("chr1", 10, 19, None, None, ("chr1", "10", "19", "0.1")),
+    ]
+
+    with pytest.raises(MalformedResourceError) as per_record:
+        list(score.validate_records(iter(records)))
+    with pytest.raises(MalformedResourceError) as arrays:
+        list(score.validate_record_arrays(
+            iter([_batch([20, 10], [29, 19])]), "chr1"))
+
+    assert str(arrays.value) == str(per_record.value)
+    assert f"{possessive} records must not move backwards" in str(arrays.value)

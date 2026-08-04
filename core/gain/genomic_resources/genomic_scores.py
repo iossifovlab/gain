@@ -49,7 +49,7 @@ from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
 from gain.genomic_resources.resource_errors import (
-    MalformedResourceError,
+    backwards_records_error,
     overlapping_records_error,
 )
 from gain.genomic_resources.resource_implementation import (
@@ -1123,7 +1123,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """Yield a raw record stream through, refusing a malformed one.
 
         A **transducer**: it hands back exactly what it was given, in order,
-        and raises :class:`MalformedResourceError` at the first record its
+        and raises
+        :class:`~gain.genomic_resources.resource_errors.MalformedResourceError`
+        at the first record its
         kind cannot mean.  It never re-reads and never materialises the
         region -- the statistics scan pays for one read, and this rides it.
 
@@ -1446,6 +1448,14 @@ class PositionScore(GenomicScore):
         on how the scan happened to partition the contig -- clipping a record
         to a queried region can only shrink it, and two records a region
         boundary pulled apart still claim one position between them.
+
+        Adjacent pairs only, as :meth:`validate_record_arrays` also compares
+        them: each record is measured against the one before it, not against
+        the widest end seen so far.  A record whose own end precedes its own
+        begin can therefore hide an overlap between its two neighbours.
+        gain#668 carries that, with the data survey it needs -- widening
+        either validator to a running maximum refuses strictly more than
+        ``repo-stats`` accepts today.
         """
         prev_chrom: str | None = None
         prev_end: int | None = None
@@ -1474,6 +1484,10 @@ class PositionScore(GenomicScore):
         A violation straddling a batch boundary is caught on the carried end:
         batches are a read-granularity artefact, and no rule may depend on
         where one happens to break.
+
+        Adjacent pairs only, exactly as :meth:`validate_records` compares
+        them -- the two agree on this limitation as they agree on the rule.
+        See that method, and gain#668.
         """
         prev_end: int | None = None
         for batch in batches:
@@ -1770,11 +1784,9 @@ class AlleleScore(GenomicScore):
             if chrom != prev_chrom:
                 prev_pos = None
             if prev_pos is not None and pos < prev_pos:
-                raise MalformedResourceError(
-                    f"<{self.resource_id}> is malformed: the record at "
-                    f"{chrom}:{pos} follows the record at "
-                    f"{chrom}:{prev_pos}; an allele score's records must "
-                    f"not move backwards")
+                raise backwards_records_error(
+                    self.resource_id, chrom, pos, prev_pos,
+                    "an allele score's")
             prev_chrom, prev_pos = chrom, pos
             yield record
 
@@ -1799,19 +1811,15 @@ class AlleleScore(GenomicScore):
             pos_begin, _pos_end, _cells = batch
             if pos_begin.size:
                 if prev_pos is not None and int(pos_begin[0]) < prev_pos:
-                    raise MalformedResourceError(
-                        f"<{self.resource_id}> is malformed: the record at "
-                        f"{chrom}:{int(pos_begin[0])} follows the record at "
-                        f"{chrom}:{prev_pos}; an allele score's records must "
-                        f"not move backwards")
+                    raise backwards_records_error(
+                        self.resource_id, chrom, int(pos_begin[0]), prev_pos,
+                        "an allele score's")
                 backwards = pos_begin[1:] < pos_begin[:-1]
                 if bool(backwards.any()):
                     first = int(np.argmax(backwards))
-                    raise MalformedResourceError(
-                        f"<{self.resource_id}> is malformed: the record at "
-                        f"{chrom}:{int(pos_begin[first + 1])} follows the "
-                        f"record at {chrom}:{int(pos_begin[first])}; an "
-                        f"allele score's records must not move backwards")
+                    raise backwards_records_error(
+                        self.resource_id, chrom, int(pos_begin[first + 1]),
+                        int(pos_begin[first]), "an allele score's")
                 prev_pos = int(pos_begin[-1])
             yield batch
 
@@ -1991,11 +1999,9 @@ class FragmentScore(GenomicScore):
             if chrom != prev_chrom:
                 prev_begin = None
             if prev_begin is not None and begin < prev_begin:
-                raise MalformedResourceError(
-                    f"<{self.resource_id}> is malformed: the record at "
-                    f"{chrom}:{begin} follows the record at "
-                    f"{chrom}:{prev_begin}; a fragment score's records must "
-                    f"not move backwards")
+                raise backwards_records_error(
+                    self.resource_id, chrom, begin, prev_begin,
+                    "a fragment score's")
             prev_chrom, prev_begin = chrom, begin
             yield record
 
@@ -2016,19 +2022,15 @@ class FragmentScore(GenomicScore):
             pos_begin, _pos_end, _cells = batch
             if pos_begin.size:
                 if prev_begin is not None and int(pos_begin[0]) < prev_begin:
-                    raise MalformedResourceError(
-                        f"<{self.resource_id}> is malformed: the record at "
-                        f"{chrom}:{int(pos_begin[0])} follows the record at "
-                        f"{chrom}:{prev_begin}; a fragment score's records "
-                        f"must not move backwards")
+                    raise backwards_records_error(
+                        self.resource_id, chrom, int(pos_begin[0]),
+                        prev_begin, "a fragment score's")
                 backwards = pos_begin[1:] < pos_begin[:-1]
                 if bool(backwards.any()):
                     first = int(np.argmax(backwards))
-                    raise MalformedResourceError(
-                        f"<{self.resource_id}> is malformed: the record at "
-                        f"{chrom}:{int(pos_begin[first + 1])} follows the "
-                        f"record at {chrom}:{int(pos_begin[first])}; a "
-                        f"fragment score's records must not move backwards")
+                    raise backwards_records_error(
+                        self.resource_id, chrom, int(pos_begin[first + 1]),
+                        int(pos_begin[first]), "a fragment score's")
                 prev_begin = int(pos_begin[-1])
             yield batch
 
