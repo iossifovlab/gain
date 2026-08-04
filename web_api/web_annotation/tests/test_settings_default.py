@@ -3,6 +3,7 @@ import importlib
 from collections.abc import Generator
 
 import pytest
+from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
 from web_annotation import settings_default
@@ -56,6 +57,19 @@ def test_num_proxies_blank_is_treated_as_unset(
     importlib.reload(settings_default)
 
     assert settings_default.REST_FRAMEWORK["NUM_PROXIES"] is None
+
+
+def test_num_proxies_is_not_also_a_bare_django_setting() -> None:
+    # The hop count must be readable exactly one way. A bare
+    # ``settings.NUM_PROXIES`` next to ``REST_FRAMEWORK["NUM_PROXIES"]`` would
+    # be a second source of truth that ALSO bypasses DRF's setting_changed
+    # reload -- overriding one would move one reader and not the other, which
+    # is the drift #667 exists to remove. Every settings module pulls this one
+    # in by wildcard import, which skips underscore-prefixed names.
+    assert not hasattr(settings, "NUM_PROXIES")
+    assert "NUM_PROXIES" not in [
+        name for name in dir(settings_default) if not name.startswith("_")
+    ]
 
 
 @pytest.mark.parametrize("raw", ["two", "-1", "1.5", "1,2"])

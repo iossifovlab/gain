@@ -146,7 +146,13 @@ def _parse_num_proxies(raw: str | None) -> int | None:
     return num_proxies
 
 
-NUM_PROXIES = _parse_num_proxies(os.environ.get("GPFWA_NUM_PROXIES"))
+# Underscore-prefixed so `from .settings_default import *` does NOT re-export
+# it: the hop count must be readable in exactly one way, as
+# ``REST_FRAMEWORK["NUM_PROXIES"]``. A bare ``settings.NUM_PROXIES`` alongside
+# it would be a second source of truth that also bypasses DRF's
+# setting_changed reload, so an override in a test would move one reader and
+# not the other -- precisely the drift #667 exists to remove.
+_NUM_PROXIES = _parse_num_proxies(os.environ.get("GPFWA_NUM_PROXIES"))
 
 GRR_DEFINITION_PATH = get_default_grr_definition_path()
 
@@ -328,7 +334,7 @@ REST_FRAMEWORK = {
     # See the GPFWA_NUM_PROXIES block above: the same value governs
     # web_annotation.utils.get_ip_from_request, so the throttle bucket and the
     # anonymous quota key cannot drift apart (iossifovlab/gain#667).
-    "NUM_PROXIES": NUM_PROXIES,
+    "NUM_PROXIES": _NUM_PROXIES,
     "DEFAULT_THROTTLE_RATES": {
         "user": "10/minute",
         # The pipeline editor validates as the user edits, so this bucket is
