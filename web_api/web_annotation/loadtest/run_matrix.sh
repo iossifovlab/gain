@@ -10,6 +10,8 @@
 # Usage:
 #   DELAY=0.4 KS="8 16 32" LABEL=async \
 #     bash web_annotation/loadtest/run_matrix.sh
+#   TARGET=validate DELAY=0.4 KS="8 16 32" LABEL=validate-async \
+#     bash web_annotation/loadtest/run_matrix.sh
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,6 +27,8 @@ fi
 DELAY="${DELAY:-0.4}"
 KS="${KS:-8 16 32}"
 LABEL="${LABEL:-run}"
+# Which slow endpoint to drive: annotate (#164, default) or validate (#659).
+TARGET="${TARGET:-annotate}"
 TIMEOUT="${TIMEOUT:-30}"
 PORT="${PORT:-21011}"
 EMAIL="${EMAIL:-loadtest@example.com}"
@@ -32,7 +36,7 @@ OUT="${OUT:-${HERE}/matrix-${LABEL}.json}"
 
 records=()
 for K in ${KS}; do
-  echo "[run_matrix] === ${LABEL} K=${K} delay=${DELAY}s (fresh cold server) ===" >&2
+  echo "[run_matrix] === ${LABEL} target=${TARGET} K=${K} delay=${DELAY}s (fresh cold server) ===" >&2
   pkill -f "daphne.*:${PORT}\b" 2>/dev/null || true
   pkill -f "daphne -b 127.0.0.1 -p ${PORT}" 2>/dev/null || true
   sleep 1
@@ -46,7 +50,7 @@ for K in ${KS}; do
     sleep 0.5
   done
   rec="$(python -m web_annotation.loadtest.cheap_endpoint_slo \
-      --base-url "http://127.0.0.1:${PORT}" \
+      --base-url "http://127.0.0.1:${PORT}" --target "${TARGET}" \
       --concurrency "${K}" --timeout "${TIMEOUT}" \
       --delay "${DELAY}" --label "${LABEL}-K${K}" \
       --email "${EMAIL}" --compact)"

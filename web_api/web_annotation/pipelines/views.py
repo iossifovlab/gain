@@ -1,4 +1,5 @@
 """Views for pipeline creation and manipulation."""
+import time
 from pathlib import Path
 from typing import ClassVar
 
@@ -11,7 +12,10 @@ from gain import logging
 from gain.annotation.annotation_config import AnnotationConfigParser
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.genomic_scores import GenomicScore
-from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository import (
+    GenomicResource,
+    GenomicResourceRepo,
+)
 from gain.templates import get_template
 from markdown2 import markdown
 from rest_framework import views
@@ -30,7 +34,11 @@ from web_annotation.models import (
     TemporaryPipeline,
     WebAnnotationAnonymousUser,
 )
-from web_annotation.pipeline_cache import ThreadSafePipeline
+from web_annotation.pipeline_cache import (
+    ThreadSafePipeline,
+    _load_test_build_delay,
+    await_build,
+)
 from web_annotation.pipelines.throttling import PipelineValidationRateThrottle
 
 logger = logging.getLogger(__name__)
@@ -445,7 +453,7 @@ def _count_annotators(content: str) -> int | None:
     return len(parsed)
 
 
-class PipelineValidation(AnnotationBaseView):
+class PipelineValidation(AsyncAnnotationBaseView):
     """Validate annotation config.
 
     Anonymous and unauthenticated by design -- the pipeline editor validates
@@ -458,13 +466,22 @@ class PipelineValidation(AnnotationBaseView):
     *invalid* keeps the endpoint's 200 + ``errors`` contract, which the
     deferred-load path (#155) shares.
 
-    What is deliberately NOT bounded here is the cost of building the
-    annotators that survive all three. This endpoint resolves resources and
-    builds the pipeline synchronously, on the request thread, which the
-    sibling save-pipeline path avoids by deferring to a background loader
-    (the #150 H1 comment on ``UserPipeline``). Moving this one likewise is
-    the real fix for the residual cost and is tracked separately; the
-    bounds here keep the residual small rather than remove it.
+    What the bounds do NOT bound is the cost of building the annotators that
+    survive all three, and this endpoint builds them itself rather than
+    deferring to the background loader the sibling save-pipeline path uses
+    (the #150 H1 comment on ``UserPipeline``). Async (#659): the build is
+    submitted to a dedicated bounded pool and awaited, so it no longer runs
+    on a ``thread_sensitive`` sync-view thread at all. That thread is shared
+    by every synchronous view of a caller that shares one
+    ``ThreadSensitiveContext``; under daphne Django gives each HTTP request
+    its own instead (measured in ``docs/164-async-read-views-slo.md``), which
+    turns the same build into an *unbudgeted thread per anonymous request*.
+    Either way it is occupancy an anonymous caller could buy, and the pool
+    replaces it with a bound. The HTTP contract is unchanged: the same
+    statuses and the same message bodies as before.
+
+    Whether the endpoint needs a resource-resolving build at all, and
+    whether its results should be memoised, is #666 -- not decided here.
     """
 
     throttle_classes: ClassVar = [PipelineValidationRateThrottle]
@@ -494,8 +511,16 @@ class PipelineValidation(AnnotationBaseView):
     # one of those is a pipeline anyone edits by hand.
     MAX_EXPANDED_ANNOTATORS: ClassVar[int] = 500
 
-    def post(self, request: Request) -> Response:
-        """Validate annotation config."""
+    async def post(self, request: Request) -> Response:
+        """Validate annotation config.
+
+        Everything up to the build -- the three bounds and the expansion
+        gate -- runs inline, before anything is submitted to a pool: they
+        are what makes a refusal cheap, and submitting them would give an
+        anonymous caller a worker slot for a request that is about to be
+        refused anyway. Only the build itself, the one unbounded cost, is
+        handed to the bounded validation pool and awaited (#659).
+        """
 
         content = request.data.get("config") \
             if isinstance(request.data, dict) else None
@@ -559,11 +584,52 @@ class PipelineValidation(AnnotationBaseView):
         result = {"errors": ""}
 
         try:
-            load_pipeline_from_yaml(content, self.grr)
+            # The long pole: resolving every resource and building every
+            # annotator. Awaited off the request thread, so the shared
+            # thread_sensitive sync-view thread stays free for other
+            # requests while it runs.
+            await self._abuild_pipeline(content)
         except Exception as e:  # noqa: BLE001
+            # Failures arrive from the worker thread through the future, so
+            # the same formatter as the deferred-load path (#155) still
+            # renders them -- identical text to the synchronous build.
             result = {"errors": format_config_error(e)}
 
         return Response(result, status=views.status.HTTP_200_OK)
+
+    async def _abuild_pipeline(self, content: str) -> None:
+        """Await the validation build on the bounded validation pool.
+
+        ``await_build`` rather than ``asyncio.wrap_future``: it settles a
+        per-request waiter from the submitted future, so cancelling this
+        request (a client that navigated away mid-keystroke, which the
+        editor's debounce makes routine) cancels only the waiter and leaves
+        the running build to finish on its worker.
+        """
+        await await_build(
+            self.VALIDATE_EXECUTOR.execute(
+                self._build_pipeline, content=content, grr=self.grr,
+            ),
+        )
+
+    @staticmethod
+    def _build_pipeline(content: str, grr: GenomicResourceRepo) -> None:
+        """Build the pipeline for validation, on a worker thread.
+
+        The built pipeline is deliberately dropped: validation only cares
+        whether the build raises. (Whether the build is needed at all, and
+        whether its verdict should be memoised, is #666.)
+        """
+        # LOAD-TEST AID (iossifovlab/gain#164, extended here by #659): the
+        # same env-gated, defaults-to-0.0 delay the cache's loader applies.
+        # This endpoint never goes through the cache, so without it the
+        # harness has no way to induce a slow *validation* build. A true
+        # no-op unless GPFWA_BUILD_DELAY_SECONDS is set, and applied on the
+        # worker thread -- where a slow real GRR build would block.
+        build_delay = _load_test_build_delay()
+        if build_delay > 0.0:
+            time.sleep(build_delay)
+        load_pipeline_from_yaml(content, grr)
 
 
 class LoadPipeline(AnnotationBaseView):

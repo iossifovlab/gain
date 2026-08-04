@@ -136,6 +136,30 @@ class AnnotationMixin:
             job_timeout=settings.ANNOTATION_TASK_TIMEOUT,
             thread_name_prefix="interactive-annotate")
 
+    #: Dedicated bounded pool for the *anonymous* pipeline-validation builds
+    #: (#659). Deliberately NOT ``ANNOTATE_EXECUTOR``: ``/api/pipelines/
+    #: validate`` sets no ``authentication_classes`` and is reachable without
+    #: a session, while the interactive-annotate pool serves an authenticated,
+    #: quota'd endpoint. Sharing one pool would let unauthenticated traffic
+    #: fill every worker and starve the endpoint that costs a user quota --
+    #: precisely the shared-resource occupancy this issue removes from the
+    #: sync-view thread, re-created one level down.
+    #:
+    #: The bound is the point: the synchronous view it replaces got a thread
+    #: per concurrent request (Django's ASGI handler gives each request its
+    #: own ``ThreadSensitiveContext``), so concurrency was whatever arrived.
+    #: Eight workers measured (#164 harness, ``--target validate``, 2 s
+    #: injected build): at K=128 the cheap sync endpoint's p95 is 28 ms here
+    #: against 261 ms on the unbounded synchronous path, and every request
+    #: still completes. Four was tried first and queued deeply enough to trip
+    #: a 30 s client timeout at K=64. What one client can ask for is capped
+    #: by the per-request bounds and the ``pipeline_validate`` throttle scope
+    #: (#635); this caps what all of them together can occupy.
+    VALIDATE_EXECUTOR: TaskExecutor = ThreadedTaskExecutor(
+            max_workers=8,
+            job_timeout=settings.ANNOTATION_TASK_TIMEOUT,
+            thread_name_prefix="pipeline-validate")
+
     tool_columns: ClassVar = [
         "col_chrom",
         "col_pos",
