@@ -252,6 +252,41 @@ Note the burst column scales directly with the injected 2 s delay, which is a
 stand-in, not a measured production build. Read it as `K / workers x build
 cost`, not as an absolute latency.
 
+### The trade was accepted deliberately
+
+Recorded so it is not re-litigated from the table alone. Stated as "11x better
+p95 against 8x worse burst" it reads like a coin flip, and on those terms it
+would be a poor one -- 140 ms of bystander latency is not worth 21 s of
+queueing.
+
+That framing measures the symptom. The synchronous path put **no ceiling on
+threads**: 96 concurrent anonymous requests bought 96 threads, and nothing
+would have stopped ten thousand. The p95 column is only where that becomes
+visible at the concurrency one host can generate. What the pool buys is a hard
+bound on what an unauthenticated route can occupy, and burst time is the
+visible price of having a bound at all.
+
+Three things keep that price small in practice:
+
+- **It is invisible below the pool width.** At K=8 the two are within noise
+  (2.46 s vs 2.42 s); queueing starts only above eight concurrent validations.
+  One editor session -- 400 ms debounce, each request superseding the last --
+  never approaches that, so the burst column describes many clients or an
+  attacker, not normal use.
+- **Superseded work no longer queues.** A cancelled request cancels its queued
+  pool tasks, so the requests a debounced editor abandons stop consuming
+  workers.
+- **The queue is bounded.** Admission is capped at `3 x
+  VALIDATE_POOL_WORKERS`; past that a request is shed with `503` +
+  `Retry-After` rather than queued behind a wait it cannot predict. The worst
+  case stops being "the 96th client waits 24 s" and becomes "the 25th is
+  refused in milliseconds".
+
+The lever that would shrink the remaining cost is the per-task cost, not the
+width -- the sweep above shows the width cannot be raised without paying in
+p95. That is #666: whether this endpoint needs a resource-resolving build at
+all, or whether its verdict can be memoised.
+
 ## Pool width: why 8
 
 Same K=96 burst, same 2 s injected build, one fresh server per width (the
