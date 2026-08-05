@@ -107,7 +107,7 @@ def test_unset_hop_count_keeps_todays_throttle_and_quota_keys(
     throttle_key = AnnotateUserRateThrottle().get_cache_key(request, view=None)
     user = _authenticate(request)
 
-    assert throttle_key == "throttle_user_203.0.113.45,10.0.0.1"
+    assert throttle_key == "throttle_annotate_203.0.113.45,10.0.0.1"
     assert user.ip == "203.0.113.45"
 
 
@@ -148,7 +148,7 @@ def test_throttle_bucket_and_quota_key_are_the_same_address(
     user = _authenticate(request)
 
     assert user.ip == expected_ip
-    assert throttle_key == f"throttle_user_{expected_ip}"
+    assert throttle_key == f"throttle_annotate_{expected_ip}"
 
 
 @pytest.mark.django_db

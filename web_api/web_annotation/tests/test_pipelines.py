@@ -853,7 +853,7 @@ def test_validate_does_not_share_the_annotate_budget(
     """
     mocker.patch.dict(
         AnnotateUserRateThrottle.THROTTLE_RATES,
-        {"user": "1/minute", "pipeline_validate": "1/minute"},
+        {"annotate": "1/minute", "pipeline_validate": "1/minute"},
     )
 
     # Exhaust the annotate bucket.
