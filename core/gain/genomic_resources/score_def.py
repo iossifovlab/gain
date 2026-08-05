@@ -233,6 +233,19 @@ class GenomicScoreDef(ScoreDef):
     # defines.
     number_mismatch_warned: bool = field(
         init=False, default=False, repr=False, compare=False)  # internal
+    # Whether an EMPTY element of a multi-valued INFO field has already been
+    # reported for this field (#630).  A row like ``ORIGIN=1,`` claims a value
+    # it does not carry; pysam decodes the element as ``None``, the read drops
+    # it, and the drop is worth exactly one warning -- same reasoning, same
+    # scoping and same ``compare=False`` as ``number_mismatch_warned`` above.
+    #
+    # A flag of its OWN rather than a share of that one, because the two
+    # report different defects of the same field: reusing one flag would let
+    # whichever malformed row came first silence the other for the rest of the
+    # table, and an author fixing the reported one would never learn of the
+    # other.
+    empty_element_warned: bool = field(
+        init=False, default=False, repr=False, compare=False)  # internal
 
     def __post_init__(self) -> None:
         # The aggregator default is deliberately NOT resolved here.  It

@@ -1,0 +1,394 @@
+"""An EMPTY element inside a multi-valued VCF INFO field.
+
+``ORIGIN=1,`` (or ``a,,b``, or ``,b``) is a malformed row: the field claims a
+value it does not carry, and pysam decodes that element as ``None``.  Two
+places join such a tuple on '|' -- :func:`extract_vcf_value` for
+``Number=.``/``Type=String``, and the ``converter`` installed as
+``value_parser`` for every other unbounded shape -- and neither used to
+tolerate it, so the SAME malformed row failed in two different ways depending
+only on the field's declared ``Type``: a ``TypeError`` that took the whole
+fetch down for ``String``, and a silent ``'3|None'`` annotated into the output
+for ``Integer``.
+
+These tests pin the one rule both now follow (#630), which is the rule #256
+and #289 already settled for the per-allele shapes -- no applicable value, no
+score:
+
+* an empty element contributes nothing to the join, and a tuple of nothing
+  but empty elements is a null score rather than an empty string;
+* a ``.`` element is NOT an empty element in a ``String`` field: pysam
+  decodes it as the literal ``'.'``, dbSNP's ``CAF``/``TOPMED`` rely on it,
+  and it stays;
+* the malformed row is reported -- once per field per table, not per row --
+  because only the resource's author can fix the data.
+"""
+from __future__ import annotations
+
+import logging
+import pathlib
+
+import pytest
+from gain.genomic_resources.genomic_scores import AlleleScore
+from gain.genomic_resources.testing.builders import (
+    a_grr,
+    a_vcf_info_score,
+)
+
+
+def _open_vcf_score(tmp_path: pathlib.Path, data: str) -> AlleleScore:
+    """Realize a one-resource GRR from VCF text and open its allele score."""
+    repo = (
+        a_grr()
+        .with_resource("vcf", a_vcf_info_score().with_data(data))
+        .build_repo(tmp_path)
+    )
+    return AlleleScore(repo.get_resource("vcf")).open()
+
+
+def _score_value(
+    tmp_path: pathlib.Path, data: str, score_id: str,
+) -> object:
+    """Read ``score_id`` off the single record of a one-row VCF."""
+    score = _open_vcf_score(tmp_path, data)
+    with score:
+        values = [
+            score.get_score_value_from_record(record, score_id)
+            for record in score.fetch_records("chr1", 5, 5)
+        ]
+    assert len(values) == 1
+    return values[0]
+
+
+def test_a_trailing_empty_element_of_a_string_field_is_dropped(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``ORIGIN=1,`` reads ``'1'`` -- the empty element adds no value.
+
+    This is the row from the report, and the ``Number=.``/``Type=String``
+    half of the bug: the bare ``"|".join(value)`` raised ``TypeError`` on the
+    ``None`` pysam decodes the empty element to, and that call sits outside
+    the narrow ``try`` in ``parse_value`` (deliberately -- #256's crash guard
+    depends on the placement), so the error escaped the read and took the
+    whole fetch with it.
+    """
+    value = _score_value(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=ORIGIN,Number=.,Type=String,Description="allele origin">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      ORIGIN=1,
+""", "ORIGIN")
+
+    assert value == "1"
+
+
+def test_a_mid_value_empty_element_of_a_string_field_is_dropped(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``ORIGIN=a,,b`` reads ``'a|b'``: the trigger is not a trailing comma.
+
+    An empty element is an empty element wherever it sits, so the fix cannot
+    be "strip a trailing comma" -- the values around it are well-formed and
+    keep their places and their order.
+    """
+    value = _score_value(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=ORIGIN,Number=.,Type=String,Description="allele origin">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      ORIGIN=a,,b
+""", "ORIGIN")
+
+    assert value == "a|b"
+
+
+def test_a_leading_empty_element_of_a_string_field_is_dropped(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``ORIGIN=,b`` reads ``'b'`` -- the leading position is no different."""
+    value = _score_value(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=ORIGIN,Number=.,Type=String,Description="allele origin">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      ORIGIN=,b
+""", "ORIGIN")
+
+    assert value == "b"
+
+
+def test_an_empty_element_of_an_integer_field_is_dropped_not_stringified(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``NUM=3,`` reads ``'3'``, not ``'3|None'`` -- the silent half.
+
+    Nothing but the declared ``Type`` separates this row from the ``String``
+    one above, and it used to decide between a crash and a corruption: this
+    tuple never reaches ``extract_vcf_value``'s join, it is handed to the
+    ``converter`` installed as ``value_parser``, whose ``"|".join(map(str,
+    val))`` renders the empty element as the four-character STRING ``None``.
+    No exception, no warning -- the text ``3|None`` straight into the
+    annotated output, which is worse than the crash because nothing reports
+    it.
+    """
+    value = _score_value(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=NUM,Number=.,Type=Integer,Description="unbounded ints">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      NUM=3,
+""", "NUM")
+
+    assert value == "3"
+
+
+def test_an_empty_element_of_a_float_field_is_dropped_not_stringified(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``FL=0.5,`` reads ``'0.5'``: every non-``String`` type, one rule.
+
+    ``Float`` takes the same ``converter`` path as ``Integer`` and corrupted
+    the same way (``'0.5|None'``).  Pinned separately because the two are
+    reached through different pysam decodings, and a fix that filtered inside
+    one type's parse would leave the other.
+    """
+    value = _score_value(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=FL,Number=.,Type=Float,Description="unbounded floats">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      FL=0.5,
+""", "FL")
+
+    assert value == "0.5"
+
+
+def test_a_string_field_of_nothing_but_empty_elements_reads_null(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``ORIGIN=,,`` is a null score, not the empty string.
+
+    Dropping every element leaves nothing to join, and what a join of
+    nothing produces -- ``''`` -- is a VALUE: it aggregates, it bins into a
+    histogram, it lands in an annotated column as a present-but-blank cell.
+    A field that carries no value at all reads the same ``None`` an absent
+    INFO key does.
+    """
+    value = _score_value(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=ORIGIN,Number=.,Type=String,Description="allele origin">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      ORIGIN=,,
+""", "ORIGIN")
+
+    assert value is None
+
+
+def test_an_integer_field_of_nothing_but_empty_elements_reads_null(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``NUM=,`` is a null score too: the other path answers the same.
+
+    The whole point of #630 is that the declared ``Type`` stops deciding the
+    outcome, so the all-empty tuple cannot read ``None`` down one path and
+    ``''`` down the other.
+    """
+    value = _score_value(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=NUM,Number=.,Type=Integer,Description="unbounded ints">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      NUM=,
+""", "NUM")
+
+    assert value is None
+
+
+def test_a_malformed_row_warns_once_per_table_not_once_per_record(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The dropped element is reported -- once for the table, not per row.
+
+    Silently dropping it would trade a crash for a quiet loss of data: the
+    row says a value is there and the annotation says it is not, and only the
+    resource's author can reconcile the two.  So it is logged, naming the
+    field and the locus -- the offending row of the offending file, which is
+    what an author has to open.
+
+    ONCE, on the model of #289's arity report: this is the per-record score
+    read (#237), and a field malformed on one row is normally malformed on
+    many, so per-row logging would bury a run in identical lines.
+    """
+    score = _open_vcf_score(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=ORIGIN,Number=.,Type=String,Description="allele origin">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      ORIGIN=1
+chr1   6   .  A   T   .    .      ORIGIN=1,
+chr1   7   .  A   T   .    .      ORIGIN=2,
+""")
+    with caplog.at_level(logging.WARNING), score:
+        values = [
+            score.get_score_value_from_record(record, "ORIGIN")
+            for record in score.fetch_records("chr1", 5, 7)
+        ]
+
+    assert values == ["1", "1", "2"]
+    warnings = [
+        record for record in caplog.records
+        if record.levelno == logging.WARNING
+    ]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    # Actionable on its own: which field, and which row to open.
+    assert "INFO field ORIGIN" in message
+    assert "chr1:6" in message
+
+
+def test_two_malformed_fields_of_one_table_are_each_reported(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """"Once" is per FIELD per table -- one silenced field cannot hide another.
+
+    The flag lives on the score DEFINITION, one per INFO field per resource,
+    so a table with two broken fields says so twice.  A per-table flag would
+    report whichever field happened to be read first and leave the author
+    fixing one of two defects.
+    """
+    score = _open_vcf_score(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=ORIGIN,Number=.,Type=String,Description="allele origin">
+##INFO=<ID=NUM,Number=.,Type=Integer,Description="unbounded ints">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      ORIGIN=1,;NUM=3,
+chr1   6   .  A   T   .    .      ORIGIN=2,;NUM=4,
+""")
+    with caplog.at_level(logging.WARNING), score:
+        for record in score.fetch_records("chr1", 5, 6):
+            score.get_score_value_from_record(record, "ORIGIN")
+            score.get_score_value_from_record(record, "NUM")
+
+    reported = sorted(
+        record.getMessage().split()[2] for record in caplog.records
+        if record.levelno == logging.WARNING
+    )
+    assert reported == ["NUM", "ORIGIN"]
+
+
+def test_an_arity_warning_and_an_empty_element_warning_coexist(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The two malformations of one field are reported independently.
+
+    ``S`` is broken twice over -- a ``Number=A`` field with fewer values than
+    ALT alleles (#289) AND an empty element among them (#630) -- and the two
+    reports run off SEPARATE flags.  Sharing one would let whichever row came
+    first silence the other defect for the rest of the table, so an author
+    who fixed the reported one would never learn of the second.
+    """
+    score = _open_vcf_score(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=S,Number=A,Type=String,Description="one value per ALT">
+##INFO=<ID=ORIGIN,Number=.,Type=String,Description="allele origin">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T,G  .    .      S=d11;ORIGIN=1,
+""")
+    with caplog.at_level(logging.WARNING), score:
+        for record in score.fetch_records("chr1", 5, 5):
+            score.get_score_value_from_record(record, "S")
+            score.get_score_value_from_record(record, "ORIGIN")
+
+    messages = [
+        record.getMessage() for record in caplog.records
+        if record.levelno == logging.WARNING
+    ]
+    assert len(messages) == 2
+    assert any("INFO field S (Number=A)" in message for message in messages)
+    assert any("INFO field ORIGIN" in message and "empty element" in message
+               for message in messages)
+
+
+def test_a_dot_element_is_a_value_and_is_neither_dropped_nor_reported(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``CAF=.,1`` still reads ``'.|1'``: ``.`` is not an empty element.
+
+    pysam decodes ``.`` in a ``String`` field as the literal one-character
+    string, not as ``None``, and dbSNP's ``CAF``/``TOPMED`` mean something by
+    it -- "this allele's frequency is not reported" is data, and the position
+    of the value that follows depends on it being kept.  This is why the drop
+    tests ``is None`` and not falsiness: ``'.'``, ``'0'`` and ``''`` are all
+    values, and a blanket falsy-filter would silently rewrite this field.
+    """
+    score = _open_vcf_score(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=CAF,Number=.,Type=String,Description="allele frequencies">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      CAF=.,1
+""")
+    with caplog.at_level(logging.WARNING), score:
+        values = [
+            score.get_score_value_from_record(record, "CAF")
+            for record in score.fetch_records("chr1", 5, 5)
+        ]
+
+    assert values == [".|1"]
+    assert [
+        record for record in caplog.records
+        if record.levelno == logging.WARNING
+    ] == []
+
+
+def test_a_well_formed_table_reads_unchanged_and_says_nothing(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The check must not touch, or cry wolf over, well-formed fields.
+
+    Multi-valued fields of every shape the drop passes through -- the
+    ``String`` join, the ``converter``'s join for ``Integer``, and a
+    single-valued field that never becomes a tuple at all -- come back
+    exactly as they did before #630, with nothing logged.  A check that fired
+    here would put a warning on every legitimate multi-valued VCF in the
+    tree.
+    """
+    score = _open_vcf_score(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=ORIGIN,Number=.,Type=String,Description="allele origin">
+##INFO=<ID=NUM,Number=.,Type=Integer,Description="unbounded ints">
+##INFO=<ID=ONE,Number=1,Type=Integer,Description="a single value">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      ORIGIN=a,b;NUM=3,4;ONE=7
+chr1   6   .  A   T   .    .      ORIGIN=c;NUM=5;ONE=8
+""")
+    with caplog.at_level(logging.WARNING), score:
+        results = [
+            (score.get_score_value_from_record(record, "ORIGIN"),
+             score.get_score_value_from_record(record, "NUM"),
+             score.get_score_value_from_record(record, "ONE"))
+            for record in score.fetch_records("chr1", 5, 6)
+        ]
+
+    assert results == [("a|b", "3|4", 7), ("c", "5", 8)]
+    assert [
+        record for record in caplog.records
+        if record.levelno == logging.WARNING
+    ] == []
+
+
+def test_a_malformed_row_costs_only_its_own_cell_in_a_region_scan(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A scan over the malformed row still returns every well-formed row.
+
+    The reported shape of the bug: ``fetch_region_values`` yielded the first
+    row and then died on the second, so the well-formed row AFTER it was
+    never reached -- one bad cell cost the whole fetch, and a caller that saw
+    two rows where three exist had no way to tell.  (The generator has to be
+    consumed for that to show, which is what ``list`` here is for.)
+    """
+    score = _open_vcf_score(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=ORIGIN,Number=.,Type=String,Description="allele origin">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      ORIGIN=1
+chr1   6   .  A   T   .    .      ORIGIN=1,
+chr1   7   .  A   T   .    .      ORIGIN=2
+""")
+    with score:
+        values = list(score.fetch_region_values("chr1", 1, 100, ["ORIGIN"]))
+
+    assert values == [(5, 5, ["1"]), (6, 6, ["1"]), (7, 7, ["2"])]

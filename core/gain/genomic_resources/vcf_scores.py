@@ -103,6 +103,53 @@ def _check_allele_arity(
         count, expected)
 
 
+def _drop_empty_elements(
+    record: Record, score_def: GenomicScoreDef, value: tuple,
+) -> tuple:
+    """Return ``value`` without its empty elements, reporting the first row.
+
+    An element of a multi-valued INFO field is EMPTY when the row declares it
+    and supplies nothing -- ``ORIGIN=1,``, ``ORIGIN=a,,b``, ``ORIGIN=,b`` --
+    and pysam decodes such an element as ``None``.  That is malformed under
+    the VCF spec, and nothing rejects it: not pysam, not resource load.  The
+    read answers it by the rule #256 and #289 settled for the per-allele
+    shapes -- no value, no score -- so the element contributes nothing to the
+    joined value.  (A tuple left with no elements at all is turned into a
+    null by the caller, the only place that knows what the join would
+    otherwise have produced.)
+
+    ``None`` is the whole test, deliberately: this is NOT a falsy filter.  A
+    ``String`` field's ``.`` decodes as the literal string ``'.'`` and is a
+    value dbSNP's ``CAF``/``TOPMED`` carry meaningfully, ``'0'`` is a value,
+    and ``''`` is a value; only an element pysam decoded as absent is one.
+    (In a numeric field ``.`` IS the spec's missing value and pysam decodes it
+    to ``None`` too -- the same nothing, dropped for the same reason.)
+
+    **Reported once per field per table**, through
+    ``score_def.empty_element_warned`` -- its own flag, not the arity check's,
+    so the two cannot silence each other.  Why once, and why the message
+    names the field and the locus, is #289's reasoning unchanged: see
+    :func:`_check_allele_arity`.
+
+    The membership test comes FIRST, before the flag -- the reverse of that
+    check's order.  It is the only work a WELL-FORMED table pays here (one
+    C-level scan of a tuple that has to be walked to be joined anyway) and it
+    returns the tuple itself, so the common shape allocates nothing; testing
+    the flag first would put an attribute read in front of every well-formed
+    record to save one on the malformed ones.
+    """
+    if None not in value:
+        return value
+    if not score_def.empty_element_warned:
+        score_def.empty_element_warned = True
+        logger.warning(
+            "INFO field %s of %s:%s carries an empty element; the VCF row is "
+            "malformed and an element with no value of its own contributes "
+            "nothing to the value read. Reported once per table.",
+            score_def.score_id, record[CHROM], record[POS_BEGIN])
+    return tuple(element for element in value if element is not None)
+
+
 def extract_vcf_value(
     record: Record, score_def: GenomicScoreDef,
 ) -> ScoreValue:
@@ -131,7 +178,19 @@ def extract_vcf_value(
       record with no ALT reads the **reference** value at offset 0.
     * **Number=. and Type=String** -- an unbounded string field, joined on
       '|' into a single value (a VCF-local convention).
-    * anything else -- handed to ``parse_value`` as pysam decoded it.
+    * anything else -- handed to ``parse_value``, which joins it on '|'
+      through the ``converter`` ``parse_vcf_scoredefs`` installed.
+
+    **Every shape that is not per-allele has its EMPTY elements dropped
+    first** (#630), by :func:`_drop_empty_elements`.  ``ORIGIN=1,`` declares a
+    value it does not carry; pysam decodes that element as ``None``, and
+    joining it was the one operation whose outcome depended on nothing but
+    the field's declared ``Type`` -- ``"|".join`` raised ``TypeError`` here
+    and took the whole fetch, while the ``converter``'s ``map(str, ...)``
+    silently annotated the text ``'3|None'`` for every other type.  The drop
+    is done HERE, once, for both -- this is the layer that still has the
+    record, so it is the only one that can name the row it reports, and it
+    leaves the ``converter`` a tuple that cannot contain a ``None``.
 
     **Neither per-allele selection trusts the tuple to be the right length**
     (#289).  Nothing rejects a row whose value count does not match its ALT
@@ -195,8 +254,20 @@ def extract_vcf_value(
             if index >= len(value):
                 return None
             value = value[index]
-        elif number == "." and meta.type == "String":
-            value = "|".join(value)
+        else:
+            # Not per-allele: every element of this tuple contributes to one
+            # joined value, so an empty one has to go before either join sees
+            # it.  (The per-allele branches above need no drop -- an empty
+            # element they select is already the null they give an allele
+            # with no value of its own.)
+            value = _drop_empty_elements(record, score_def, value)
+            if not value:
+                # Nothing left to join, and a join of nothing is ``''`` --
+                # a present, aggregatable, bin-able value.  A field carrying
+                # no value at all reads as the null an absent key does.
+                return None
+            if number == "." and meta.type == "String":
+                value = "|".join(value)
     return score_def.parse_value(value)
 
 
@@ -229,6 +300,14 @@ def parse_vcf_scoredefs(
     :func:`extract_vcf_value` indexes by allele).  Every other shape keeps
     ``converter``, which joins a tuple on '|' -- the VCF-local convention for
     a field whose arity the header does not fix.
+
+    ``converter`` joins with ``str`` -- a ``Number=.``/``Type=Integer`` field
+    therefore reads as text, a separate question -- which is what made it the
+    SILENT half of #630: an empty element would render as the four-character
+    string ``'None'``.  It is not guarded here.  The tuples that reach it have
+    already had their empty elements dropped by :func:`extract_vcf_value`, the
+    only route to it and the only layer holding the record a report has to
+    name; this parser sees a value, not a row.
 
     ``config_scoredefs`` is what the resource's own ``scores:`` block declared,
     and overrides the header for the fields it names: value type, description,
