@@ -12,6 +12,7 @@ from django.test import Client
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.resource_query import MAX_RESOURCE_QUERY_LENGTH
 from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.request import Request
 
 from web_annotation.annotation_base_view import (
     AnnotationBaseView,
@@ -662,6 +663,91 @@ def test_validate_accepts_a_config_exactly_at_the_size_limit(
     )
 
     assert response.status_code == 200
+
+
+@pytest.mark.django_db
+def test_validate_refuses_an_oversized_body_without_parsing_it(
+    anonymous_client: Client,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """The parse is the work being bounded, so it must not run (#676).
+
+    ``MAX_CONFIG_LENGTH`` bounds the config *string*, which does not exist
+    until the body has been parsed -- so it cannot be what refuses an
+    oversized body. Asserting the status alone would not show the
+    difference, because a 400 comes back either way; what is pinned here is
+    that DRF never parsed the body at all. ``Request.data`` is the only
+    route to ``_load_data_and_files``, so a call to it means the parse ran.
+    """
+    parse = mocker.patch.object(
+        Request, "_load_data_and_files",
+        side_effect=AssertionError("the body was parsed"),
+    )
+    oversized = "#" * (PipelineValidation.MAX_BODY_LENGTH + 1)
+
+    response = anonymous_client.post(
+        "/api/pipelines/validate",
+        {"config": oversized},
+    )
+
+    assert response.status_code == 400
+    assert str(PipelineValidation.MAX_BODY_LENGTH) in response.json()["error"]
+    parse.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_validate_accepts_a_config_at_the_config_limit_through_the_body_bound(
+    anonymous_client: Client,
+) -> None:
+    """The body bound must not clip a config the config bound still allows.
+
+    The two limits are in different units -- one counts characters of
+    ``config``, the other bytes of the encoded request -- so the body bound
+    has to leave room for whatever the encoding adds around a config sitting
+    exactly at ``MAX_CONFIG_LENGTH``. If it does not, the config bound
+    becomes unreachable and its at-limit case starts answering the wrong
+    refusal.
+    """
+    at_limit = "#" * PipelineValidation.MAX_CONFIG_LENGTH
+
+    response = anonymous_client.post(
+        "/api/pipelines/validate",
+        {"config": at_limit},
+    )
+
+    assert response.status_code == 200
+    assert "too large" not in response.json().get("error", "")
+
+
+@pytest.mark.django_db
+def test_validate_refuses_a_body_that_declares_no_length(
+    anonymous_client: Client,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """An undeclared size is refused rather than waved through (#676).
+
+    A bound read off ``CONTENT_LENGTH`` is only a bound if a request cannot
+    opt out of it by omitting the header -- chunked transfer encoding sends
+    no ``Content-Length``, and this route is anonymous, so waving those
+    through would leave the parse reachable unbounded by exactly the client
+    that meant to. No caller of this endpoint streams: the editor posts a
+    small JSON body with a length. Refusing is therefore the cheap side of
+    the trade, and it keeps the refusal ahead of the parse.
+    """
+    parse = mocker.patch.object(
+        Request, "_load_data_and_files",
+        side_effect=AssertionError("the body was parsed"),
+    )
+
+    response = anonymous_client.post(
+        "/api/pipelines/validate",
+        {"config": "- position_score: scores/pos1"},
+        CONTENT_LENGTH=None,
+    )
+
+    assert response.status_code == 400
+    assert "length" in response.json()["error"].lower()
+    parse.assert_not_called()
 
 
 @pytest.mark.django_db

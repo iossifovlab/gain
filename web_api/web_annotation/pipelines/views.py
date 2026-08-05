@@ -450,13 +450,19 @@ class PipelineValidation(AnnotationBaseView):
 
     Anonymous and unauthenticated by design -- the pipeline editor validates
     for users who have not signed in. That makes the config body the widest
-    piece of untrusted input the API accepts, so it is bounded three times
-    on the way in (iossifovlab/gain#635): on its size, on the number of
-    annotators it declares, and on the number those annotators expand to
-    before any of them is built. Each is a request-level refusal (400), and
-    each happens before the work it bounds. A config that is merely
-    *invalid* keeps the endpoint's 200 + ``errors`` contract, which the
-    deferred-load path (#155) shares.
+    piece of untrusted input the API accepts, so it is bounded four times
+    on the way in: on the size of the request body (iossifovlab/gain#676),
+    then on the size of the config it carries, on the number of annotators
+    that config declares, and on the number those annotators expand to
+    before any of them is built (the last three iossifovlab/gain#635). Each
+    is a request-level refusal (400), and each happens before the work it
+    bounds. A config that is merely *invalid* keeps the endpoint's 200 +
+    ``errors`` contract, which the deferred-load path (#155) shares.
+
+    The body bound is first because it is the only one that can be: the
+    three #635 bounds all read ``request.data``, and reading it parses the
+    body, so none of them can refuse the parse that produced their own
+    input.
 
     What is deliberately NOT bounded here is the cost of building the
     annotators that survive all three. This endpoint resolves resources and
@@ -468,6 +474,23 @@ class PipelineValidation(AnnotationBaseView):
     """
 
     throttle_classes: ClassVar = [PipelineValidationRateThrottle]
+
+    # Nothing on this path bounds the body Django hands to DRF's parsers.
+    # ``DATA_UPLOAD_MAX_MEMORY_SIZE`` is consulted by ``HttpRequest.body``
+    # and ``.POST``, and DRF's parsers use neither; for multipart, Django
+    # bounds non-file field bytes and the file *count* (100), never a
+    # part's size. Nor does the client's upload speed bound it: Django's
+    # ASGI handler buffers the whole body before dispatch, so the parse
+    # runs at disk speed as one contiguous burst. Measured through this
+    # endpoint, a multipart part costs ~1.15 ms/MB and a JSON body ~3 ms/MB
+    # -- seconds of CPU per GB, per anonymous request, at 120 a minute.
+    #
+    # Eight times MAX_CONFIG_LENGTH. The two are in different units, and
+    # the encoding sits between them: a config at its limit can arrive
+    # percent-encoded (3x worst case) or JSON-escaped (6x, ``\uXXXX``), so
+    # a tighter bound here would make the config bound unreachable and
+    # answer the wrong refusal for a config that is legal.
+    MAX_BODY_LENGTH: ClassVar[int] = 8 * 64 * 1024
 
     # Django's default request-body limit is 2.5 MB, four orders of
     # magnitude past anything a pipeline config needs -- the largest config
@@ -494,8 +517,51 @@ class PipelineValidation(AnnotationBaseView):
     # one of those is a pipeline anyone edits by hand.
     MAX_EXPANDED_ANNOTATORS: ClassVar[int] = 500
 
+    @classmethod
+    def _refuse_unbounded_body(cls, request: Request) -> Response | None:
+        """Refuse on the declared body size, before the body is parsed.
+
+        Reads ``CONTENT_LENGTH`` rather than the body itself, which is what
+        makes this the one refusal on the endpoint that costs nothing: it
+        decides from a header, without materialising or parsing anything.
+
+        A missing or unparseable length is refused too. The header is the
+        only thing being trusted here, so a request that omits it -- as
+        chunked transfer encoding does -- would otherwise opt out of the
+        bound entirely, on the one route that is anonymous. Nothing that
+        calls this endpoint streams: the editor posts a small body with a
+        length, and so does every test. Refusing is the cheap side of that
+        trade.
+
+        Returns the refusal, or ``None`` to continue.
+        """
+        declared = request.META.get("CONTENT_LENGTH")
+        try:
+            length = int(declared)
+        except (TypeError, ValueError):
+            return Response(
+                {"error": "request body must declare its length"},
+                status=views.status.HTTP_400_BAD_REQUEST,
+            )
+
+        if length > cls.MAX_BODY_LENGTH:
+            return Response(
+                {"error": (
+                    f"request body is too large: {length} bytes, at most "
+                    f"{cls.MAX_BODY_LENGTH} are accepted"
+                )},
+                status=views.status.HTTP_400_BAD_REQUEST,
+            )
+        return None
+
     def post(self, request: Request) -> Response:
         """Validate annotation config."""
+
+        # Ahead of `request.data` on purpose -- reading it is the parse
+        # this refuses (#676).
+        oversized = self._refuse_unbounded_body(request)
+        if oversized is not None:
+            return oversized
 
         content = request.data.get("config") \
             if isinstance(request.data, dict) else None
