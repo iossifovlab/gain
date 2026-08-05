@@ -252,21 +252,23 @@ def test_two_malformed_fields_of_one_table_are_each_reported(
     score = _open_vcf_score(tmp_path, """
 ##fileformat=VCFv4.1
 ##INFO=<ID=ORIGIN,Number=.,Type=String,Description="allele origin">
-##INFO=<ID=NUM,Number=.,Type=Integer,Description="unbounded ints">
+##INFO=<ID=NOTE,Number=.,Type=String,Description="unbounded strings">
 #CHROM POS ID REF ALT QUAL FILTER INFO
-chr1   5   .  A   T   .    .      ORIGIN=1,;NUM=3,
-chr1   6   .  A   T   .    .      ORIGIN=2,;NUM=4,
+chr1   5   .  A   T   .    .      ORIGIN=1,;NOTE=a,
+chr1   6   .  A   T   .    .      ORIGIN=2,;NOTE=b,
 """)
     with caplog.at_level(logging.WARNING), score:
         for record in score.fetch_records("chr1", 5, 6):
             score.get_score_value_from_record(record, "ORIGIN")
-            score.get_score_value_from_record(record, "NUM")
+            score.get_score_value_from_record(record, "NOTE")
 
-    reported = sorted(
-        record.getMessage().split()[2] for record in caplog.records
+    messages = [
+        record.getMessage() for record in caplog.records
         if record.levelno == logging.WARNING
-    )
-    assert reported == ["NUM", "ORIGIN"]
+    ]
+    assert len(messages) == 2
+    assert any("INFO field ORIGIN" in message for message in messages)
+    assert any("INFO field NOTE" in message for message in messages)
 
 
 def test_an_arity_warning_and_an_empty_element_warning_coexist(
@@ -297,7 +299,8 @@ chr1   5   .  A   T,G  .    .      S=d11;ORIGIN=1,
         if record.levelno == logging.WARNING
     ]
     assert len(messages) == 2
-    assert any("INFO field S (Number=A)" in message for message in messages)
+    assert any("INFO field S" in message and "allele(s)" in message
+               for message in messages)
     assert any("INFO field ORIGIN" in message and "empty element" in message
                for message in messages)
 
@@ -392,3 +395,174 @@ chr1   7   .  A   T   .    .      ORIGIN=2
         values = list(score.fetch_region_values("chr1", 1, 100, ["ORIGIN"]))
 
     assert values == [(5, 5, ["1"]), (6, 6, ["1"]), (7, 7, ["2"])]
+
+
+def _read_with_warnings(
+    score: AlleleScore, caplog: pytest.LogCaptureFixture,
+    score_id: str, begin: int = 5, end: int = 5,
+) -> tuple[list[object], list[str]]:
+    """Read ``score_id`` over a region, returning its values and warnings."""
+    with caplog.at_level(logging.WARNING), score:
+        values = [
+            score.get_score_value_from_record(record, score_id)
+            for record in score.fetch_records("chr1", begin, end)
+        ]
+    return values, [
+        record.getMessage() for record in caplog.records
+        if record.levelno == logging.WARNING
+    ]
+
+
+def test_a_dot_in_a_numeric_field_is_dropped_without_being_called_malformed(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``AF=0.5,.`` is spec-legal, so it is dropped in silence.
+
+    ``.`` is the VCF spec's own missing-value token and is legal in any
+    field, but only a ``String`` field survives the round trip as the literal
+    ``'.'``; in a numeric one pysam decodes it to the same ``None`` an absent
+    element gives.  The two cannot be told apart here, and this shape is
+    ordinary in real data -- it is what bcftools writes for an unknown
+    element of a vector -- so reporting it would put a warning claiming a
+    malformed row on files that are correct.
+    """
+    values, warnings = _read_with_warnings(_open_vcf_score(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=AF,Number=.,Type=Float,Description="allele frequencies">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      AF=0.5,.
+"""), caplog, "AF")
+
+    assert values == ["0.5"]
+    assert warnings == []
+
+
+def test_an_empty_element_of_a_numeric_field_is_dropped_without_a_report(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``NUM=3,`` IS malformed, and is still dropped in silence.
+
+    The cost of the line above: an empty element and a spec-legal ``.``
+    arrive at this layer as one value, so a numeric field cannot report the
+    malformed one without also crying wolf over the legal one.  Silence on
+    both is the side that does not send an author after a defect that is not
+    there.  The VALUE is corrected either way -- which is the half of #630
+    that changes what gets annotated.
+    """
+    values, warnings = _read_with_warnings(_open_vcf_score(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=NUM,Number=.,Type=Integer,Description="unbounded ints">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      NUM=3,
+"""), caplog, "NUM")
+
+    assert values == ["3"]
+    assert warnings == []
+
+
+def test_an_empty_element_of_a_number_a_field_is_reported(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``ALT=T,G  S=d1,`` reports, though its arity is right.
+
+    A per-allele field needs no drop -- the empty element IS the allele's
+    null -- but the row still declared a value it does not carry, and the
+    arity check cannot see it: one value per allele is exactly what
+    ``Number=A`` asks for, so nothing else in the read has anything to say
+    about it.  Without this the second allele reads null with no account of
+    why.
+    """
+    values, warnings = _read_with_warnings(_open_vcf_score(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=S,Number=A,Type=String,Description="one value per ALT">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T,G  .    .      S=d1,
+"""), caplog, "S")
+
+    assert values == ["d1", None]
+    assert len(warnings) == 1
+    assert "INFO field S" in warnings[0]
+    assert "empty element" in warnings[0]
+    assert "chr1:5" in warnings[0]
+
+
+def test_an_empty_element_of_a_number_r_field_is_reported(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``Number=R`` has the identical exposure and the identical answer."""
+    values, warnings = _read_with_warnings(_open_vcf_score(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=RV,Number=R,Type=String,Description="ref and each ALT">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      RV=ref,
+"""), caplog, "RV")
+
+    assert values == [None]
+    assert len(warnings) == 1
+    assert "INFO field RV" in warnings[0]
+    assert "empty element" in warnings[0]
+
+
+def test_a_dot_in_a_numeric_per_allele_field_is_not_reported(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The per-allele report answers to the same type test as the drop.
+
+    ``AF=0.5,.`` under ``Number=A`` is the legal shape again, one allele
+    deep: the second allele's frequency is simply not reported.  It reads
+    null, and says nothing.
+    """
+    values, warnings = _read_with_warnings(_open_vcf_score(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=AF,Number=A,Type=Float,Description="one frequency per ALT">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T,G  .    .      AF=0.5,.
+"""), caplog, "AF")
+
+    assert values == [0.5, None]
+    assert warnings == []
+
+
+def test_a_string_field_present_with_no_value_reads_null_and_is_reported(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``ORIGIN=`` names a key and supplies nothing, and is told so.
+
+    pysam decodes it to the EMPTY TUPLE rather than to a tuple of ``None``,
+    so there is no empty element to find and the drop never fires; the score
+    reads the null a field carrying no value should.  It is reported by its
+    own message, because "carries an empty element" is not what is wrong
+    with it.
+    """
+    values, warnings = _read_with_warnings(_open_vcf_score(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=ORIGIN,Number=.,Type=String,Description="allele origin">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      ORIGIN=
+"""), caplog, "ORIGIN")
+
+    assert values == [None]
+    assert len(warnings) == 1
+    assert "INFO field ORIGIN" in warnings[0]
+    assert "no value at all" in warnings[0]
+    assert "chr1:5" in warnings[0]
+
+
+def test_a_numeric_field_present_with_no_value_reads_null_without_a_report(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``AF=`` reads null in silence: pysam gives it as a whole-field ``.``.
+
+    A numeric field with nothing after the ``=`` decodes to ``(None,)`` --
+    the very tuple ``AF=.`` gives -- so it arrives as the legal
+    "value missing" and is answered like one.
+    """
+    values, warnings = _read_with_warnings(_open_vcf_score(tmp_path, """
+##fileformat=VCFv4.1
+##INFO=<ID=AF,Number=.,Type=Float,Description="allele frequencies">
+#CHROM POS ID REF ALT QUAL FILTER INFO
+chr1   5   .  A   T   .    .      AF=
+"""), caplog, "AF")
+
+    assert values == [None]
+    assert warnings == []
