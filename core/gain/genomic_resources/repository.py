@@ -1138,20 +1138,18 @@ class Mode(enum.Enum):
     READWRITE = 2
 
 
-# The names the resource-query push-down registers on a metadata
-# connection. The connection is deserialized fresh for every search, so
-# these never have to be unique across concurrent searches.
+# The name the resource-query push-down registers on a metadata
+# connection. The connection is deserialized fresh for every search, so it
+# never has to be unique across concurrent searches.
 _MATCH_ID_FUNCTION = "gain_query_match_id"
-_MATCH_LABEL_FUNCTION_PREFIX = "gain_query_match_label_"
 
 
 def _sql_matcher(match: Callable[[str], bool]) -> Callable[..., bool]:
     """Adapt a matcher to the values an index column hands back.
 
-    A column standing for a label the resource does not carry holds ``""``,
-    which is what makes absence and emptiness one case for the query
-    language. A column with no value at all is the same statement, so it is
-    rendered the same way rather than reaching the matcher as ``None``.
+    A column with no value at all reads as ``""`` rather than reaching the
+    matcher as ``None``: absence and emptiness are one case for the query
+    language, so an id the index left null is an empty id, not a crash.
 
     Typed with an open parameter list because that is the shape apsw
     accepts for a scalar function; each one registered here is declared
@@ -1162,77 +1160,46 @@ def _sql_matcher(match: Callable[[str], bool]) -> Callable[..., bool]:
     return matcher
 
 
-def _resource_query_conditions(
+def _resource_query_condition(
     conn: apsw.Connection, query: ResourceQuery,
-) -> tuple[list[str], list[LabelClause]]:
-    """Express ``query`` as SQL conditions over the ``contents`` table.
+) -> tuple[str, list[LabelClause]]:
+    """Express ``query`` as a SQL condition over the ``contents`` table.
 
-    The comparisons are not restated in SQL. Each one is registered as a
-    scalar function backed by the very matcher the Python path calls, so
-    what ``*`` and ``in`` mean is defined once no matter which path
-    evaluates the query -- rewriting them as ``GLOB`` and ``LIKE`` would be
-    a second definition, free to drift from the first. What SQL
-    contributes is the push-down: these conditions conjoin with the FTS
-    ``MATCH`` in one statement instead of filtering its rows afterwards.
+    Only the id glob becomes a condition, and it is not restated in SQL:
+    it is registered as a scalar function backed by the very matcher the
+    Python path calls, so what ``*`` means is defined once no matter which
+    path evaluates the query -- rewriting it as ``GLOB`` would be a second
+    definition, free to drift from the first.
 
-    Returns the conditions, and the clauses this index cannot answer at
-    all. The caller must apply those to the resources the statement
-    yields; leaving them out of both places would widen the search.
+    Every label clause is handed back instead. A label column records the
+    value the resource carried when the index was built, and nothing forces
+    a published index to be current: answering a clause out of the column
+    reads an edited label as it was then, which loses the resources that
+    now match and returns the ones that no longer do (gain#646). No
+    post-filter can repair the first of those, because it is a row the
+    statement never yields. The caller re-asks each clause of the
+    resources, whose labels the indexed path already materialises in full.
+
+    Returns the condition, and the clauses the caller must apply itself;
+    leaving those out of both places would widen the search.
     """
-    cursor = conn.cursor()
-    # A published index is an artefact of the repository, as untrusted as
-    # its manifest: this deserializes whatever `.CONTENTS.sqlite3.gz` was
-    # served, so the vetting the index *build* does is no guarantee here.
-    # A column gain would never have created is not treated as a label --
-    # which both keeps a crafted name out of the statement below and gives
-    # the honest answer, since no resource can carry such a label either.
-    label_columns = {
-        row[1] for row in cursor.execute("pragma table_info('contents')")
-        if INDEX_COLUMN_RE.match(row[1])
-    } - GR_INDEX_NON_LABEL_COLUMNS
-
     conn.createscalarfunction(
         _MATCH_ID_FUNCTION, _sql_matcher(query.match_id), 1,
         deterministic=True)
-    conditions = [f"{_MATCH_ID_FUNCTION}(id)"]
-    deferred: list[LabelClause] = []
 
-    for position, clause in enumerate(query.label_clauses):
-        if clause.key not in label_columns:
-            # The index has no label column of this name. That is not the
-            # same as no resource carrying the key: a published index
-            # older than a label a curator added serves neither the column
-            # nor any hint that it is missing, while the resource serves
-            # the label from its ``meta.labels`` regardless (gain#634).
-            # So the index cannot settle a clause of this shape, and the
-            # caller re-asks it of the resources themselves.
-            #
-            # A clause that accepts an absent label needs no such care: it
-            # is a tautology, because the grammar requires at least one
-            # character in a value, so ``in`` can never accept ``""`` and
-            # the only ``=`` values ``fnmatch`` accepts ``""`` for are
-            # globs of ``*`` alone -- which accept every string. Dropping
-            # it is sound however stale the index is.
-            #
-            # Matched by exact name on purpose: SQLite resolves a column
-            # name case-insensitively, where the Python path looks the key
-            # up in a dict.
-            if not clause.matches_an_absent_label():
-                deferred.append(clause)
-            continue
-        function_name = f"{_MATCH_LABEL_FUNCTION_PREFIX}{position}"
-        conn.createscalarfunction(
-            function_name, _sql_matcher(clause.matches), 1,
-            deterministic=True)
-        # The key is spliced rather than bound because SQL cannot
-        # parameterise an identifier. Two things make that safe: the name
-        # got past the bare-identifier check above, and it is quoted here
-        # anyway -- the query grammar admits no `"` in a label key, so a
-        # quoted identifier cannot be escaped out of whatever the index
-        # published.
-        conditions.append(f'{function_name}("{clause.key}")')
+    # A clause that accepts an absent label is dropped rather than
+    # deferred: it is a tautology, because the grammar requires at least
+    # one character in a value, so ``in`` can never accept ``""`` and the
+    # only ``=`` values ``fnmatch`` accepts ``""`` for are globs of ``*``
+    # alone -- which accept every string. That holds for every resource
+    # however stale the index is, so it is an optimisation rather than a
+    # decision the index takes part in.
+    deferred = [
+        clause for clause in query.label_clauses
+        if not clause.matches_an_absent_label()
+    ]
 
-    return conditions, deferred
+    return f"{_MATCH_ID_FUNCTION}(id)", deferred
 
 
 def _reject_unparsable_search_term(
@@ -1422,25 +1389,24 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
         The three filters conjoin: a resource must satisfy every one that is
         supplied. ``search_term`` and ``resource_type`` are matched against
         the FTS index; ``resource_query`` is the annotator wildcard language
-        -- an id glob plus an optional label query -- and joins them in the
-        same statement, so the index narrows once rather than handing rows
-        to a filter.
+        -- an id glob plus an optional label query -- whose id glob joins
+        them in the same statement, so the index narrows once rather than
+        handing rows to a filter.
 
         A ``resource_query`` on its own never opens the index, and is
         matched in Python instead. That is what makes it work on a
         repository with no ``.CONTENTS.sqlite3.gz`` at all, where opening
         the metadata db raises.
 
-        Both routes evaluate the same parsed query, and a clause the index
-        cannot answer is re-asked of the resources themselves rather than
-        settled out of the index -- but which route runs is still
-        observable on a repository whose published index has fallen behind
-        its resources. The index answers a label clause out of the value it
-        recorded, so a label edited since it was built is read as it was
-        then (gain#646), and a resource added since is not in the index to
-        be returned at all. The latter is inherent: only the index can
-        answer a ``search_term``. Rebuilding the index with ``grr_manage``
-        is what makes the two routes agree on every resource.
+        Both routes evaluate the same parsed query, and every label clause
+        is answered against the resource's own ``meta.labels`` rather than
+        out of the value the index recorded (gain#646) -- so the two agree
+        on every resource the index knows about, whatever a published index
+        that has fallen behind its resources says about their labels. What
+        an index too old to name a resource at all cannot do is return it,
+        and that much is inherent: only the index can answer a
+        ``search_term``. Rebuilding it with ``grr_manage`` is what makes a
+        newly added resource findable.
 
         An empty ``resource_query`` is an unset one: it is what a shell
         substitutes for a variable that was never set, and the useful
@@ -1537,9 +1503,9 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
                 params.extend(accepted)
             deferred: list[LabelClause] = []
             if parsed_query is not None:
-                query_conditions, deferred = _resource_query_conditions(
+                id_condition, deferred = _resource_query_condition(
                     conn, parsed_query)
-                conditions.extend(query_conditions)
+                conditions.append(id_condition)
             if conditions:
                 query += " WHERE "
                 query += " AND ".join(conditions)
@@ -1559,8 +1525,8 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
                         "repository contents do not; skipping it",
                         self.proto_id, escape_unsafe_characters(row[0]))
                     continue
-                # Re-asked of the resource rather than of the index, which
-                # published no column able to answer them.
+                # Asked of the resource rather than of the index, whose
+                # columns record what the labels were when it was built.
                 if not all(
                     clause.matches_in(resource.get_labels())
                     for clause in deferred

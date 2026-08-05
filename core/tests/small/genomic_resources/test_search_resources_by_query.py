@@ -160,6 +160,72 @@ def test_a_label_added_after_the_index_means_the_same_on_both_routes(
     assert through_index == without_index
 
 
+@pytest.fixture
+def index_predating_a_label_edit(
+    tmp_path: pathlib.Path,
+) -> GenomicResourceProtocolRepo:
+    """A repository whose published index predates a label *value*.
+
+    Built the same way as ``index_predating_a_label``, except that the
+    curator's edit changes the value of a label the index already has a
+    column for rather than adding a key it has never heard of. That is the
+    case ``index_predating_a_label`` cannot express: a key with no column
+    is the ``gain#634`` shape, and a clause on it is the only one that was
+    ever handed back to the caller. Here the column exists and holds
+    ``alpha`` while the resource says ``gamma`` (gain#646).
+
+    Same resources as ``labelled_grr`` otherwise, so the query corpus
+    means the same thing against all three fixtures.
+    """
+    _labelled_repository(_RES_A_LABELS).build_repo(tmp_path)
+    _create_contents_db(build_filesystem_test_protocol(tmp_path))
+    return _labelled_repository(
+        {**_RES_A_LABELS, "domain": "gamma"}).build_repo(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        # The value the resource carries now, which the index does not
+        # know. Answering the clause out of the recorded value drops the
+        # resource from the indexed route while the Python route returns
+        # it -- a false negative, and a row no post-filter is reached to
+        # restore.
+        ('scores/*[domain="gamma"]', {"scores/res_a"}),
+        # The value the index recorded, which the resource no longer
+        # carries. Answering the clause out of the column returns it
+        # anyway -- a resource that does not satisfy the query. Unlike
+        # gain#634 this direction is a false *positive*.
+        ('scores/*[domain="alpha"]', set()),
+    ],
+)
+def test_a_label_edited_after_the_index_is_matched_on_its_live_value(
+    index_predating_a_label_edit: GenomicResourceProtocolRepo,
+    query: str, expected: set[str],
+) -> None:
+    """A clause is answered out of the resource, not out of the column.
+
+    ``scores/res_a`` says ``domain: gamma`` now; the published index still
+    records ``alpha``. Both routes must read the live value, and they
+    diverge in both directions if either reads the column (gain#646).
+    """
+    without_index = {
+        r.resource_id
+        for r in index_predating_a_label_edit.search_resources(
+            resource_query=query)
+    }
+    through_index = {
+        r.resource_id
+        for r in index_predating_a_label_edit.search_resources(
+            resource_query=query, resource_type="position_score")
+    }
+
+    # Pinned as well as compared: the sets say what the live value is, so
+    # this cannot pass on two routes that agree and are both empty.
+    assert without_index == expected
+    assert through_index == without_index
+
+
 # Every shape the query language can take, over labels that are present,
 # empty, absent, and unknown to the repository altogether.
 QUERY_CORPUS = [
@@ -290,6 +356,54 @@ def test_a_stale_index_does_not_change_what_a_query_means(
     assert without_index == through_index
 
 
+# The clauses that only an index predating a label *edit* can be asked.
+# ``domain`` is a key the published index does have a column for, and the
+# resource carries a different value now than the one it recorded. These
+# name the value the resource carries now, which the index does not know;
+# the recorded value is asked about by ``QUERY_CORPUS``, which the test
+# below splats in alongside these, so a clause on ``alpha`` belongs there
+# rather than here.
+_EDITED_LABEL_QUERIES = [
+    '*[domain="gamma"]',
+    '*[domain="gam*"]',
+    '*["gamma" in domain]',
+    'scores/*[domain="gamma"]',
+    '*[domain="gamma" and note="*"]',
+    '*[domain="alpha" and target="TF1"]',
+]
+
+
+@pytest.mark.parametrize("resource_type", ["position_score", "genome"])
+@pytest.mark.parametrize("query", [*QUERY_CORPUS, *_EDITED_LABEL_QUERIES])
+def test_an_edited_label_does_not_change_what_a_query_means(
+    index_predating_a_label_edit: GenomicResourceProtocolRepo,
+    query: str, resource_type: str,
+) -> None:
+    """The same differential, over an index that recorded another value.
+
+    ``index_predating_a_label`` can only fall behind by a key the index
+    has no column for at all, which is the gain#634 shape. A column that
+    exists and disagrees with the resource is the other half, and it
+    diverges in both directions: the live value is a row the indexed route
+    never yields, and the recorded value is a row it yields that does not
+    satisfy the query (gain#646).
+    """
+    accepted = equivalent_resource_types(resource_type)
+    without_index = {
+        r.resource_id
+        for r in index_predating_a_label_edit.search_resources(
+            resource_query=query)
+        if r.get_type() in accepted
+    }
+    through_index = {
+        r.resource_id
+        for r in index_predating_a_label_edit.search_resources(
+            resource_query=query, resource_type=resource_type)
+    }
+
+    assert without_index == through_index
+
+
 @pytest.mark.parametrize(
     ("query", "expected"),
     [
@@ -408,6 +522,10 @@ def test_a_crafted_index_column_name_cannot_break_out_of_the_query(
     and the query language admits parentheses in a label key. A key naming
     a column crafted to close one call and open its own expression must
     not widen the search past the filters that were asked for.
+
+    Since gain#646 no label key reaches the statement at all, so such a
+    key is simply the name of a label no resource carries; this pins that
+    it stays that way.
     """
     repo = (
         a_grr()
