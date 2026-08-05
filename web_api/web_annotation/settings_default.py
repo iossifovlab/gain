@@ -136,13 +136,18 @@ def _parse_num_proxies(raw: str | None) -> int | None:
     invalid = ImproperlyConfigured(
         f"GPFWA_NUM_PROXIES must be a non-negative integer, got {raw!r}",
     )
-    try:
-        num_proxies = int(raw)
-    except ValueError:
-        raise invalid from None
-    if num_proxies < 0:
+    # Do not delegate the shape check to int(): it accepts PEP 515 underscore
+    # separators AND every Unicode digit, so `int("1_0")` is 10, and so is
+    # int() of the Arabic-Indic, fullwidth or Thai spelling of ten -- a typo
+    # would boot with ten trusted hops instead of failing. isdigit() alone is
+    # not enough either: it is true for those same Unicode digits. The count
+    # must be plain ASCII decimal.
+    # A separate `< 0` check would be dead code: the guard admits only
+    # [0-9]+, so a leading sign never reaches int().
+    candidate = raw.strip()
+    if not (candidate.isascii() and candidate.isdigit()):
         raise invalid
-    return num_proxies
+    return int(candidate)
 
 
 # Underscore-prefixed so `from .settings_default import *` does NOT re-export
