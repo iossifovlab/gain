@@ -44,6 +44,8 @@ from jinja2 import (
 )
 from markdown2 import markdown
 
+from gain.templates.sanitizer import sanitize_html
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -116,23 +118,28 @@ def get_template(name: str) -> Template:
 
 
 def render_untrusted_markdown(text: str) -> str:
-    """Render GRR-supplied Markdown, escaping any HTML embedded in it.
+    """Render documentation Markdown, keeping only harmless markup.
 
     A template interpolating Markdown has to mark the rendered result
     ``|safe`` -- it is markup by then, and autoescaping would show the
     tags Markdown just produced.  That makes the ``markdown`` callable
     the sink: whatever HTML the source text carried passes through
     ``markdown2`` untouched by default and lands in the page as markup.
-    Score descriptions and annotator documentation come from a resource's
-    own ``genomic_resource.yaml``, which this project does not author, so
+    Score descriptions come from a resource's own
+    ``genomic_resource.yaml``, which this project does not author, so
     that HTML is not ours to trust.
 
-    ``safe_mode="escape"`` escapes embedded HTML while leaving Markdown
-    syntax alone: emphasis, links, lists and code spans still render, a
-    ``<script>`` becomes visible text, and prose comparing values
-    (``p < 0.05``) survives instead of being eaten by the tokenizer.
+    The same string also carries HTML this project *did* author -- the
+    annotators concatenate their own documentation, ``More info`` anchor
+    included, onto the resource's prose -- so the rendered result is run
+    through :func:`~gain.templates.sanitizer.sanitize_html` rather than
+    escaped whole: emphasis, links, lists and code spans still render,
+    a ``<script>``, an ``on*`` handler and a ``javascript:`` URL become
+    visible text, and prose comparing values (``p < 0.05``) survives
+    instead of being eaten by the tokenizer.
+
     Bind this once into a template's render context rather than passing
     ``markdown2.markdown`` itself, so a call site added to the template
     later cannot reintroduce the hole.
     """
-    return cast(str, markdown(text, safe_mode="escape"))
+    return sanitize_html(cast("str", markdown(text)))

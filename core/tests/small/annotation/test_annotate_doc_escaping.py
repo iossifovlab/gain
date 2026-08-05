@@ -23,6 +23,7 @@ from html.parser import HTMLParser
 
 import pytest
 from gain.annotation.annotate_doc import cli
+from gain.annotation.annotation_pipeline import Annotator
 from gain.genomic_resources.testing import (
     setup_denovo,
     setup_directories,
@@ -66,6 +67,16 @@ def parse_page(page: str) -> _PageDom:
     dom = _PageDom()
     dom.feed(page)
     return dom
+
+
+def dangerous_url(value: str) -> bool:
+    """Does an attribute value run script when a browser follows it?
+
+    A browser ignores case and drops ASCII whitespace inside a scheme,
+    so both are removed before the value is judged.
+    """
+    collapsed = "".join(value.split()).casefold()
+    return collapsed.startswith(("javascript:", "vbscript:", "data:text/html"))
 
 
 def event_handler_attributes(page: str) -> list[str]:
@@ -221,6 +232,27 @@ def render_gene_set_doc_page(
     return output_file.read_text()
 
 
+def test_the_annotators_own_documentation_link_stays_a_link(
+    tmp_path: pathlib.Path,
+) -> None:
+    """In-tree annotator documentation is markup this project authored.
+
+    Every built-in annotator appends a ``More info`` anchor to its own
+    documentation, and the spliceai plugin puts ``<br/>``/``<em>`` in an
+    attribute description.  That HTML is not GRR-supplied, and a reader
+    must still get a working link -- escaping the whole documentation
+    string turns it into visible tag soup.
+    """
+    page = render_doc_page(tmp_path, "an ordinary description")
+
+    dom = parse_page(page)
+    assert (
+        "href",
+        f"{Annotator.BASE_DOC_URL}#position-score-annotator",
+    ) in dom.attributes
+    assert "More info" in "".join(dom.text)
+
+
 def test_a_script_in_a_score_desc_is_not_a_script_element(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -284,18 +316,31 @@ def test_a_comparison_in_a_score_desc_stays_visible(
     assert "significant when p < 0.05 holds" in "".join(parse_page(page).text)
 
 
+@pytest.mark.parametrize("payload", [
+    'DESC<a href="javascript:gainxss623desc()">click</a>',
+    "DESC[click](javascript:gainxss623desc())",
+    "DESC[click](javascript&#58;gainxss623desc())",
+    "DESC[click](javascript&colon;gainxss623desc())",
+    "DESC[click](JAVASCRIPT&#x3a;gainxss623desc())",
+    "DESC[click](java\tscript:gainxss623desc())",
+])
 def test_a_javascript_url_in_a_score_desc_lands_no_link(
     tmp_path: pathlib.Path,
+    payload: str,
 ) -> None:
-    """A javascript: anchor in a score desc is text, not a link."""
-    page = render_doc_page(
-        tmp_path,
-        'DESC<a href="javascript:gainxss623desc()">click</a>',
-    )
+    """A javascript: URL in a score desc is text, not a live link.
+
+    The scheme is checked the way a browser resolves it rather than by
+    the literal spelling: ``html.parser`` decodes a character reference
+    in an attribute value, so ``javascript&#58;`` and ``JAVASCRIPT&#x3a;``
+    reach the DOM as the same runnable URL that a plain ``javascript:``
+    would -- and a browser also drops whitespace inside the scheme.
+    """
+    page = render_doc_page(tmp_path, payload)
 
     dom = parse_page(page)
     assert [
-        value for name, value in dom.attributes
-        if value is not None and value.startswith("javascript:")
+        value for _, value in dom.attributes
+        if value is not None and dangerous_url(value)
     ] == []
     assert "gainxss623desc" in "".join(dom.text)
