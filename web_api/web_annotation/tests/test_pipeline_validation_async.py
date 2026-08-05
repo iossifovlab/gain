@@ -3,6 +3,7 @@ import asyncio
 import logging
 import threading
 import time
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -952,6 +953,175 @@ def test_a_cancelled_request_cancels_its_queued_pool_task() -> None:
         executor.shutdown()
 
     assert not ran, "a cancelled request's work still ran"
+
+
+# ---------------------------------------------------------------------------
+# Admission is bounded too: a saturated pool sheds instead of queueing
+# ---------------------------------------------------------------------------
+# The pool bounds its WORKERS, not its queue -- a stdlib ``ThreadPoolExecutor``
+# feeds from an unbounded ``SimpleQueue``, so everything that does not fit in
+# the eight workers simply waits, and under sustained aggregate load the wait
+# grows without limit until every request, the editor's included, hits its
+# client timeout. A bound on how much may be *admitted* is what turns that into
+# a fast, honest refusal.
+#
+# The refusal is HTTP-shaped and belongs to this endpoint, not to the executor:
+# ``VALIDATE_EXECUTOR`` is one of three pools built from the same shared class,
+# and whether work may be shed is a property of the caller (an anonymous,
+# retryable, debounced editor request) rather than of the pool.
+
+#: How long an occupying task holds its worker if the test never releases it.
+#: Long enough that no scheduling hiccup can release the saturation early,
+#: short enough that a regression -- a request that queues behind the
+#: occupancy instead of being shed -- reports a failure rather than hanging.
+OCCUPY_TIMEOUT_SECONDS = 10.0
+
+
+def _drain_validation_pool(timeout: float = 10.0) -> None:
+    """Wait until the shared validation pool reports no tasks."""
+    executor = PipelineValidation.VALIDATE_EXECUTOR
+    deadline = time.monotonic() + timeout
+    while executor.size() > 0 and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+
+@pytest.fixture
+def saturated_validation_pool() -> Iterator[None]:
+    """Occupy the shared validation pool right up to the admission bound.
+
+    The real pool rather than a patched ``size()``: the bound is about what
+    the executor is actually carrying, and a task that blocks a worker is the
+    only thing that reproduces that. Every occupying task is released on the
+    way out, and the pool is drained both before (so a straggler from an
+    earlier test cannot inflate the count) and after.
+    """
+    executor = PipelineValidation.VALIDATE_EXECUTOR
+    _drain_validation_pool()
+    release = threading.Event()
+
+    def occupy() -> None:
+        release.wait(timeout=OCCUPY_TIMEOUT_SECONDS)
+
+    for _ in range(PipelineValidation.MAX_VALIDATIONS_IN_FLIGHT):
+        executor.execute(occupy)
+    assert executor.size() == PipelineValidation.MAX_VALIDATIONS_IN_FLIGHT, (
+        "the pool is not saturated, so the test below would prove nothing"
+    )
+
+    try:
+        yield
+    finally:
+        release.set()
+        _drain_validation_pool()
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_a_saturated_pool_sheds_instead_of_queueing(
+    saturated_validation_pool: None,
+) -> None:
+    """At the admission bound the endpoint answers 503, not eventually.
+
+    ``Retry-After`` is what makes it a *shed* rather than an outage: the work
+    was never attempted, and the same request will succeed once the queue
+    drains. The body keeps the endpoint's ``{"error": ...}`` shape so the
+    client has one place to read a refusal from.
+    """
+    client = AsyncClient()
+    response = await client.post(VALIDATE_URL, {"config": VALID_CONFIG})
+
+    assert response.status_code == 503, response.content
+    assert response.json() == {
+        "error": "too many validations in flight; retry shortly"}
+    assert response.headers["Retry-After"] == str(
+        PipelineValidation.SHED_RETRY_AFTER_SECONDS)
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_below_the_bound_a_valid_config_still_validates(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """One task short of the bound, the endpoint behaves exactly as before.
+
+    The other side of the shed, and the side that decides whether it is worth
+    having: a bound that is felt below saturation is just a smaller pool.
+
+    The pool is *reported* one short of full rather than really occupied,
+    because a request admitted here has to run, and it cannot run on a pool
+    that is genuinely blocked. ``size()`` is the whole of what the admission
+    check reads, so standing it in reproduces the state under test exactly --
+    and it pins the boundary, which real occupancy at 23 tasks could not do
+    without deadlocking against the request it admits.
+    """
+    mocker.patch.object(
+        PipelineValidation.VALIDATE_EXECUTOR, "size",
+        return_value=PipelineValidation.MAX_VALIDATIONS_IN_FLIGHT - 1)
+    client = AsyncClient()
+
+    response = await client.post(VALIDATE_URL, {"config": VALID_CONFIG})
+
+    assert response.status_code == 200, response.content
+    assert response.json() == {"errors": ""}
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_a_shed_request_submits_no_work_to_the_pool(
+    saturated_validation_pool: None,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Nothing a shed request would have run reaches the pool.
+
+    The status alone cannot prove this. A check placed after the submissions
+    would answer 503 too -- having first queued the very work the bound
+    exists to keep out, and only refused once it came back. What makes the
+    shed worth anything is that the queue does not grow, so the three
+    submissions are what the test asserts on.
+    """
+    # Each stands in for the real thing well enough that a request which
+    # wrongly got past the shed would still complete -- so the assertions
+    # below fail on the submission itself, not on a stub's return value.
+    count = mocker.patch(
+        "web_annotation.pipelines.views._count_annotators", return_value=1)
+    parse = mocker.patch.object(
+        views.AnnotationConfigParser, "parse_str", return_value=(None, []))
+    build = mocker.patch(
+        "web_annotation.pipelines.views.load_pipeline_from_yaml",
+        return_value=None)
+    client = AsyncClient()
+
+    response = await client.post(VALIDATE_URL, {"config": VALID_CONFIG})
+
+    assert response.status_code == 503, response.content
+    count.assert_not_called()
+    parse.assert_not_called()
+    build.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_a_saturated_server_still_answers_a_bad_request_accurately(
+    saturated_validation_pool: None,
+) -> None:
+    """An oversized config gets its 400 even with the pool full.
+
+    The other half of where the shed sits. A 503 to this request would be a
+    lie the client cannot act on: retrying will not help, because the config
+    is too long and always will be. The cheap bounds cost a header read and a
+    ``len()``, so being busy is no reason to skip them -- and answering them
+    first is what keeps every refusal the true one.
+    """
+    oversized = "#" * (PipelineValidation.MAX_CONFIG_LENGTH + 1)
+    client = AsyncClient()
+
+    response = await client.post(VALIDATE_URL, {"config": oversized})
+
+    assert response.status_code == 400, response.content
+    assert response.json() == {"error": (
+        f"annotation config is too long: {len(oversized)} characters, "
+        f"at most {PipelineValidation.MAX_CONFIG_LENGTH} are accepted"
+    )}
 
 
 def test_the_validation_pool_width_is_pinned() -> None:

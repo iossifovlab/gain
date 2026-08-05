@@ -30,6 +30,7 @@ from rest_framework.views import Request, Response
 
 from web_annotation.annotation_base_view import (
     AnnotationBaseView,
+    AnnotationMixin,
     AsyncAnnotationBaseView,
     format_config_error,
 )
@@ -480,6 +481,14 @@ class PipelineValidation(AsyncAnnotationBaseView):
     body, so none of them can refuse the parse that produced their own
     input.
 
+    Those four are per-request, and per-request bounds cannot see aggregate
+    load: every caller can be within all of them while together they queue
+    more work than the validation pool will ever drain. A fifth refusal
+    covers that -- ``MAX_VALIDATIONS_IN_FLIGHT``, a 503 with ``Retry-After``
+    when the pool is already carrying its bound. It is not a bound on the
+    request but on admission, so it sits after the four that are, where a
+    request that has an accurate 400 coming still gets it.
+
     What the bounds do NOT bound is the cost of building the annotators that
     survive all three, and this endpoint builds them itself rather than
     deferring to the background loader the sibling save-pipeline path uses
@@ -544,6 +553,32 @@ class PipelineValidation(AsyncAnnotationBaseView):
     # one of those is a pipeline anyone edits by hand.
     MAX_EXPANDED_ANNOTATORS: ClassVar[int] = 500
 
+    # The bounds above are per-request; this one is aggregate. The validation
+    # pool bounds its WORKERS, not its queue -- a stdlib ``ThreadPoolExecutor``
+    # feeds from an unbounded ``SimpleQueue`` -- so work that does not fit in
+    # the eight workers simply waits, and under sustained load the wait grows
+    # without limit until every request, the editor's own included, hits its
+    # client timeout. A queue nobody will still be listening to when it drains
+    # is worse than a refusal, so refuse.
+    #
+    # ``VALIDATE_EXECUTOR.size()`` counts RUNNING + QUEUED tasks, and one
+    # request makes up to three trips through that queue (the declared-
+    # annotator count, the expansion parse, the build). So this is roughly
+    # eight requests in flight, not twenty-four -- three pool-widths of work,
+    # about two turns of the queue behind whatever is running.
+    #
+    # ``AnnotationMixin.VALIDATE_POOL_WORKERS`` is spelled out because a class
+    # body cannot see inherited names: ``VALIDATE_POOL_WORKERS`` alone is a
+    # NameError here, not an attribute lookup.
+    MAX_VALIDATIONS_IN_FLIGHT: ClassVar[int] = (
+        3 * AnnotationMixin.VALIDATE_POOL_WORKERS
+    )
+
+    # Advertised on the 503. The queue this sheds against is drained by
+    # validation builds, so a second is the order of the wait a client should
+    # expect -- and the editor's own retry is a keystroke away regardless.
+    SHED_RETRY_AFTER_SECONDS: ClassVar[int] = 1
+
     @classmethod
     def _refuse_unbounded_body(cls, request: Request) -> Response | None:
         """Refuse on the declared body size, before the body is parsed.
@@ -581,6 +616,32 @@ class PipelineValidation(AsyncAnnotationBaseView):
             )
         return None
 
+    @classmethod
+    def _shed_when_saturated(cls) -> Response | None:
+        """Refuse with 503 when the validation pool is already full.
+
+        Admission control, not a per-request bound: it refuses a *legal*
+        request because of what everyone else is asking for. The value it
+        adds over queueing is honesty -- the caller learns immediately that
+        the work was not attempted, and ``Retry-After`` says the same request
+        will be served once the backlog drains.
+
+        Returns the refusal, or ``None`` to continue.
+        """
+        in_flight = cls.VALIDATE_EXECUTOR.size()
+        if in_flight < cls.MAX_VALIDATIONS_IN_FLIGHT:
+            return None
+
+        logger.warning(
+            "shedding a validation request: %d tasks in flight, bound is %d",
+            in_flight, cls.MAX_VALIDATIONS_IN_FLIGHT,
+        )
+        return Response(
+            {"error": "too many validations in flight; retry shortly"},
+            status=views.status.HTTP_503_SERVICE_UNAVAILABLE,
+            headers={"Retry-After": str(cls.SHED_RETRY_AFTER_SECONDS)},
+        )
+
     async def post(self, request: Request) -> Response:
         """Validate annotation config.
 
@@ -602,6 +663,7 @@ class PipelineValidation(AsyncAnnotationBaseView):
           on the pool with the rest.
         - The ``MAX_CONFIG_LENGTH`` refusal, O(1) on an already-
           materialised string.
+        - The admission check, which reads one integer off the pool.
 
         Awaited on the pool:
 
@@ -648,6 +710,23 @@ class PipelineValidation(AsyncAnnotationBaseView):
                 )},
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
+
+        # Admission control, checked exactly once, here: after every bound
+        # that can refuse from the request alone, and immediately before the
+        # first pool submission. Earlier would answer 503 to a request that
+        # has its own accurate 400 waiting -- a malformed body deserves to be
+        # told it is malformed, however busy the server is, and that refusal
+        # costs nothing to produce. Later would be pointless: by then the
+        # queueing this exists to avoid has already happened.
+        #
+        # No lock. From the check to the submission below there is no `await`
+        # -- this is one synchronous block on a single event loop -- and
+        # VALIDATE_EXECUTOR has exactly one user, this view. Nothing can
+        # interleave between reading the size and adding to it, so a lock
+        # would guard against a race that cannot occur.
+        shed = self._shed_when_saturated()
+        if shed is not None:
+            return shed
 
         annotator_count = await self._acount_annotators(content)
         if annotator_count is not None \

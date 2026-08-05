@@ -540,6 +540,72 @@ describe('AnnotationPipelineComponent', () => {
     expect(pipelineStateService.isConfigValid()).toBe(false);
   });
 
+  // A failed validation request is not a verdict on the config. The server
+  // sheds validations when its bounded pool is full (iossifovlab/gain#659),
+  // and the editor must not report that as "your pipeline is wrong": the
+  // config was never looked at, and the same text will validate once the
+  // backlog drains. Without an error handler the observable simply errors
+  // out -- no message at all, and a disabled Annotate button that is
+  // indistinguishable from an invalid config.
+  it('should report a shed validation apart from an invalid config', () => {
+    jest.spyOn(jobsServiceMock, 'validatePipelineConfig')
+      .mockReturnValue(throwError(() => new Error('server is busy')));
+    component.currentPipelineText = 'config content';
+
+    component.isConfigValid();
+
+    expect(component.validationUnavailable).toBe('server is busy');
+    // Not an invalid config: configError is what says "your pipeline is
+    // wrong", and it also disables the editing actions.
+    expect(component.configError).toBe('');
+    // ...but nothing confirmed the config either, so it stays unvalidated.
+    expect(pipelineStateService.isConfigValid()).toBe(false);
+  });
+
+  it('should clear a shed-validation message once validation succeeds', () => {
+    jest.spyOn(jobsServiceMock, 'validatePipelineConfig')
+      .mockReturnValue(throwError(() => new Error('server is busy')));
+    component.currentPipelineText = 'config content';
+    component.isConfigValid();
+
+    jest.spyOn(jobsServiceMock, 'validatePipelineConfig').mockReturnValue(of(''));
+    component.isConfigValid();
+
+    expect(component.validationUnavailable).toBe('');
+    expect(pipelineStateService.isConfigValid()).toBe(true);
+  });
+
+  // Distinct in the DOM, not just in a field: the whole point is that the
+  // user can tell "the server is busy" from "your pipeline is wrong", and
+  // .error-message is what the latter looks like.
+  it('should render a shed validation in its own message element', () => {
+    jest.spyOn(jobsServiceMock, 'validatePipelineConfig')
+      .mockReturnValue(throwError(() => new Error('server is busy')));
+    component.pipelines = mockPipelines;
+    component.currentPipelineText = 'config content';
+
+    component.isConfigValid();
+    fixture.detectChanges();
+
+    const message = (fixture.nativeElement as HTMLElement).querySelector('.validation-unavailable-message');
+    expect(message.textContent).toContain('server is busy');
+    expect(fixture.debugElement.query(By.css('.error-message'))).toBeNull();
+  });
+
+  // The message belongs to the text that was being validated. Loading
+  // another pipeline replaces that text, so keeping it would report a stale
+  // failure about a config the user has moved away from.
+  it('should drop a shed-validation message when another pipeline is loaded', () => {
+    jest.spyOn(jobsServiceMock, 'validatePipelineConfig')
+      .mockReturnValue(throwError(() => new Error('server is busy')));
+    component.currentPipelineText = 'config content';
+    component.isConfigValid();
+
+    component.onPipelineClick(mockPipelines[1]);
+
+    expect(component.validationUnavailable).toBe('');
+  });
+
   it('should get pipeline status info after successful validation', () => {
     jest.spyOn(jobsServiceMock, 'validatePipelineConfig').mockReturnValue(of(''));
     jest.spyOn(component, 'isPipelineChanged').mockReturnValue(true);

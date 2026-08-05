@@ -73,6 +73,10 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   public currentTemporaryPipelineStatus: PipelineStatus;
   public selectedPipeline: Pipeline = null;
   public configError = '';
+  // Set when the validation request itself failed, which says nothing about
+  // the config -- kept apart from configError so the two never read as the
+  // same thing to the user.
+  public validationUnavailable = '';
   public currentTemporaryPipelineError: string | undefined;
   public filteredPipelines: Pipeline[] = null;
   public dropdownControl = new FormControl<string>('');
@@ -420,15 +424,31 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     this.pipelineValidationSubscription.unsubscribe();
     this.pipelineValidationSubscription = this.jobsService.validatePipelineConfig(this.currentPipelineText).pipe(
       take(1)
-    ).subscribe((errorReason: string) => {
-      this.configError = errorReason;
-      if (!this.configError) {
-        this.pipelineStateService.isConfigValid.set(true);
-        if (this.isPipelineChanged()) {
-          // For new temp pipeline: autoSave sets ID
-          this.autoSave().subscribe(() => this.getPipelineInfo());
+    ).subscribe({
+      next: (errorReason: string) => {
+        this.validationUnavailable = '';
+        this.configError = errorReason;
+        if (!this.configError) {
+          this.pipelineStateService.isConfigValid.set(true);
+          if (this.isPipelineChanged()) {
+            // For new temp pipeline: autoSave sets ID
+            this.autoSave().subscribe(() => this.getPipelineInfo());
+          }
+        } else {
+          this.pipelineStateService.isConfigValid.set(false);
         }
-      } else {
+      },
+      // A request that never got an answer is not an answer about the
+      // config. The server sheds validations when its bounded pool is full
+      // (iossifovlab/gain#659), so this is a statement about the server, and
+      // the same text will validate once the backlog drains. Reporting it
+      // through configError would say "your pipeline is wrong" -- the wrong
+      // thing to tell the user, and it would disable the editing actions
+      // that gate on it. isConfigValid still goes false, because nothing
+      // confirmed the config either.
+      error: (error: Error) => {
+        this.validationUnavailable = error.message;
+        this.configError = '';
         this.pipelineStateService.isConfigValid.set(false);
       }
     });
@@ -462,6 +482,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
       return;
     }
     this.configError = '';
+    this.validationUnavailable = '';
     this.pipelineStateService.isConfigValid.set(true);
     this.selectedPipeline = pipeline;
     this.pipelineStateService.selectedPipelineId.set(pipeline.id);

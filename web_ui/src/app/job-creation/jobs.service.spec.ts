@@ -559,6 +559,32 @@ describe('JobsService', () => {
     expect(res).toBe('');
   });
 
+  // The endpoint sheds validations once its bounded pool is full
+  // (iossifovlab/gain#659). The config was never looked at, so the failure
+  // must not reach the editor as an errors string -- that is the channel
+  // that says "your pipeline is wrong".
+  it('should catch error 503 when the server sheds a validation', async() => {
+    const httpError = new HttpErrorResponse({status: 503});
+    const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
+    httpPostSpy.mockReturnValue(throwError(() => httpError));
+
+    const postResult = service.validatePipelineConfig('- position_score:');
+
+    await expect(() => lastValueFrom(postResult.pipe(take(1))))
+      .rejects.toThrow('The server is busy; your pipeline was not validated. Try again in a moment.');
+  });
+
+  it('should throw default message for other validation error cases', async() => {
+    const httpError = new HttpErrorResponse({status: 500});
+    const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');
+    httpPostSpy.mockReturnValue(throwError(() => httpError));
+
+    const postResult = service.validatePipelineConfig('- position_score:');
+
+    await expect(() => lastValueFrom(postResult.pipe(take(1))))
+      .rejects.toThrow('The pipeline could not be validated. Try again in a moment.');
+  });
+
   it('should validate column specification and return annotatable type and errors', async() => {
     document.cookie = 'csrftoken=validateToken';
     const httpPostSpy = jest.spyOn(HttpClient.prototype, 'post');

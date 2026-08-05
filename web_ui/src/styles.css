@@ -42,6 +42,15 @@ body {
   word-break: break-word;
 }
 
+/* The validation request could not be answered -- transient, and about the
+   server rather than the pipeline, so amber rather than the error red. */
+.validation-unavailable-message {
+  font-size: 14px;
+  color: #a06a12;
+  font-weight: normal;
+  word-break: break-word;
+}
+
 .annotatable-message {
   font-size: 14px;
   font-weight: normal;
