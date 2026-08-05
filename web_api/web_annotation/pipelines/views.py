@@ -12,8 +12,7 @@ from gain.annotation.annotation_config import AnnotationConfigParser
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.genomic_scores import GenomicScore
 from gain.genomic_resources.repository import GenomicResource
-from gain.templates import get_template
-from markdown2 import markdown
+from gain.templates import get_template, render_untrusted_markdown
 from rest_framework import views
 from rest_framework.request import MultiValueDict
 from rest_framework.views import Request, Response
@@ -409,7 +408,7 @@ class PipelineDoc(AsyncAnnotationBaseView):
         return template.render(
             pipeline=pipeline,
             pipeline_path=None,
-            markdown=markdown,
+            markdown=render_untrusted_markdown,
             res_url=make_resource_url,
             hist_url=make_histogram_url,
         )

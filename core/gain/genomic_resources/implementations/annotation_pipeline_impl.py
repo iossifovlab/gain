@@ -3,8 +3,6 @@ from pathlib import Path
 from typing import Any, ClassVar
 from urllib.parse import quote
 
-from markdown2 import markdown
-
 from gain import logging
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
@@ -18,7 +16,7 @@ from gain.genomic_resources.resource_implementation import (
     InfoImplementationMixin,
 )
 from gain.task_graph.graph import TaskDesc
-from gain.templates import get_template
+from gain.templates import get_template, render_untrusted_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +128,7 @@ class AnnotationPipelineImplementation(
         return {
             "content": doc_template.render(
                 pipeline=self.pipeline,
-                markdown=markdown,
+                markdown=render_untrusted_markdown,
                 res_url=self._make_resource_url,
                 hist_url=self._make_histogram_url,
             ),

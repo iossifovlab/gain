@@ -21,12 +21,18 @@ template here is named ``*.jinja``, HTML and Markdown alike.
 
 Templates supplied by an out-of-tree provider load through this same
 environment and are autoescaped along with the rest.
+
+``|safe`` on a rendered Markdown string opts that string out of
+autoescaping, so the ``markdown`` callable a template renders with is a
+sink for whatever HTML the source text carried.  Render GRR-supplied
+text with :func:`render_untrusted_markdown` rather than with
+``markdown2.markdown`` itself.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from importlib.metadata import entry_points
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from jinja2 import (
     BaseLoader,
@@ -36,6 +42,9 @@ from jinja2 import (
     Template,
     TemplateNotFound,
 )
+from markdown2 import markdown
+
+from gain.templates.sanitizer import sanitize_html
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -106,3 +115,31 @@ def get_jinja_env() -> Environment:
 def get_template(name: str) -> Template:
     """Convenience wrapper — raises TemplateNotFound if name is absent."""
     return get_jinja_env().get_template(name)
+
+
+def render_untrusted_markdown(text: str) -> str:
+    """Render documentation Markdown, keeping only harmless markup.
+
+    A template interpolating Markdown has to mark the rendered result
+    ``|safe`` -- it is markup by then, and autoescaping would show the
+    tags Markdown just produced.  That makes the ``markdown`` callable
+    the sink: whatever HTML the source text carried passes through
+    ``markdown2`` untouched by default and lands in the page as markup.
+    Score descriptions come from a resource's own
+    ``genomic_resource.yaml``, which this project does not author, so
+    that HTML is not ours to trust.
+
+    The same string also carries HTML this project *did* author -- the
+    annotators concatenate their own documentation, ``More info`` anchor
+    included, onto the resource's prose -- so the rendered result is run
+    through :func:`~gain.templates.sanitizer.sanitize_html` rather than
+    escaped whole: emphasis, links, lists and code spans still render,
+    a ``<script>``, an ``on*`` handler and a ``javascript:`` URL become
+    visible text, and prose comparing values (``p < 0.05``) survives
+    instead of being eaten by the tokenizer.
+
+    Bind this once into a template's render context rather than passing
+    ``markdown2.markdown`` itself, so a call site added to the template
+    later cannot reintroduce the hole.
+    """
+    return sanitize_html(cast("str", markdown(text)))
