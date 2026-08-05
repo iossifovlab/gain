@@ -2,7 +2,7 @@
 
 import contextlib
 import os
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from typing import Any
 
 import anndata as ad
@@ -128,6 +128,33 @@ def resolve_10x_sidecars_for_read(
     return _sidecars_for_layout(prefix, legacy=legacy)
 
 
+def resolve_ann_data_format(config: Mapping[str, Any]) -> str:
+    """Return the format an ``ann_data`` config is read as.
+
+    A declared ``format:`` wins; otherwise the ``file:`` suffix decides, and
+    a name matching none of them falls back to ``h5ad``.  A config with no
+    ``file:`` gets the fallback too -- the missing key is the loader's error
+    to report, and this is also reached from the statistics hash, which
+    degrades rather than raising.
+
+    The loader and the statistics hash both resolve through here so that the
+    format a resource is *read* as and the format its hash *records* cannot
+    disagree.  They did: the hash used to state the ``h5ad`` fallback
+    outright, so an explicit ``format: h5ad`` added to a 10x config changed
+    the read without changing the hash, and the statistics never rebuilt.
+    """
+    if "format" in config:
+        return str(config["format"])
+
+    file_name = config.get("file")
+    if isinstance(file_name, str):
+        for suffix, file_format in _SUFFIX_TO_DEFAULT_FORMAT.items():
+            if file_name.endswith(suffix):
+                return file_format
+
+    return _FALLBACK_FORMAT
+
+
 def _import_scanpy() -> Any:
     """Import scanpy on demand, reporting its absence as a config error.
 
@@ -171,13 +198,7 @@ def load_ann_data_from_resource(
         raise ValueError(
             f"missing file parameter for: {resource.resource_id}") from exc
 
-    default_format = _FALLBACK_FORMAT
-    for sfx, dff in _SUFFIX_TO_DEFAULT_FORMAT.items():
-        if file_name.endswith(sfx):
-            default_format = dff
-            break
-
-    file_format = config.get("format", default_format)
+    file_format = resolve_ann_data_format(config)
     params = dict(config.get("parameters", {}))
 
     file_url = resource.get_file_url(file_name)

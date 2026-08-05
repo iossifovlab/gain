@@ -6,6 +6,7 @@ import copy
 import json
 from typing import Any, ClassVar
 
+import anndata as ad
 import pandas as pd
 from markdown2 import markdown
 
@@ -14,6 +15,7 @@ from gain.genomic_resources.ann_data_resource import (
     is_10x_matrix_name,
     open_ann_data_from_resource,
     resolve_10x_sidecars,
+    resolve_ann_data_format,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_implementation import (
@@ -116,7 +118,7 @@ class AnnDataResourceImplementation(
         manifest = self.resource.get_manifest()
         return json.dumps({
             "config": {
-                "format": self.config.get("format", "h5ad"),
+                "format": resolve_ann_data_format(self.config),
                 "parameters": self.config.get("parameters", {}),
             },
             "files_md5": {
@@ -146,6 +148,29 @@ class AnnDataResourceImplementation(
         return frame.describe(include="all")
 
     @staticmethod
+    def _describe_ann_data(ann_data: ad.AnnData) -> str:
+        """Render an AnnData's description, without the reader's own state.
+
+        ``AnnData._gen_repr`` appends ``backed at '<filename>'`` whenever the
+        read is backed, which the h5ad loader always is.  That names the
+        machine the statistics were built on rather than anything about the
+        resource, so the same resource describes itself differently
+        depending on where the build ran -- and the file is published from
+        the GRR.
+
+        It is removed by the exact string anndata composed, because the
+        filename is in hand.  Should that format ever change upstream, this
+        becomes a no-op that leaves the path in rather than a pattern that
+        mangles the line, and the test says so either way.
+        """
+        description = str(ann_data)
+        if not ann_data.isbacked:
+            return description
+
+        return description.replace(
+            f" backed at {str(ann_data.filename)!r}", "", 1)
+
+    @staticmethod
     def _stats_for_ann_data(resource: GenomicResource) -> None:
         # Through the context manager, not the bare loader: a backed read
         # holds an open h5py file, and a repo sweep builds one of these per
@@ -168,7 +193,10 @@ class AnnDataResourceImplementation(
             with resource.proto.open_raw_file(
                 resource, _DESCRIBE_ANN_DATA_STATISTIC, mode="wt",
             ) as outfile:
-                print(str(ann_data), file=outfile)
+                print(
+                    AnnDataResourceImplementation._describe_ann_data(
+                        ann_data),
+                    file=outfile)
 
     def create_statistics_build_tasks(
         self, **kwargs: Any,  # noqa: ARG002
