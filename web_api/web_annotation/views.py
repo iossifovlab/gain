@@ -8,7 +8,6 @@ from django import forms
 from django.conf import settings
 from django.contrib.auth import (
     authenticate,
-    get_user_model,
     login,
     logout,
 )
@@ -274,50 +273,30 @@ class ForgotPassword(views.APIView):
                 },
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
-        email = form.data["email"]
-        user_model = get_user_model()
+        email = form.cleaned_data["email"]
         message = (
             f"An e-mail has been sent to {email}"
             " containing the reset link"
         )
-        try:
-            user = user_model.objects.filter(email=email).first()
-            if user is None or not isinstance(user, User):
-                return render(
-                    request,  # pyright: ignore
-                    "forgotten-password.html",
-                    {
-                        "form": form,
-                        "message": "User is not a GPFWA User",
-                        "message_type": "warn",
-                        "show_form": True,
-                    },
-                    status=views.status.HTTP_400_BAD_REQUEST,
-                )
 
+        # The response must not depend on whether the address is
+        # registered - a differing status or message would let an
+        # anonymous caller enumerate the user base. Only the mail
+        # is conditional.
+        user = User.objects.filter(email=email).first()
+        if user is not None:
             reset_password(user)
 
-            return render(
-                request,  # pyright: ignore
-                "forgotten-password.html",
-                {
-                    "form": form,
-                    "message": message,
-                    "message_type": "success",
-                    "show_form": False,
-                },
-            )
-        except user_model.DoesNotExist:
-            return render(
-                request,  # pyright: ignore
-                "forgotten-password.html",
-                {
-                    "form": form,
-                    "message": message,
-                    "message_type": "success",
-                    "show_form": False,
-                },
-            )
+        return render(
+            cast(HttpRequest, request),
+            "forgotten-password.html",
+            {
+                "form": form,
+                "message": message,
+                "message_type": "success",
+                "show_form": False,
+            },
+        )
 
 
 class PasswordReset(views.APIView):

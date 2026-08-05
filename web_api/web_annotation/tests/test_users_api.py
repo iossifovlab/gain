@@ -217,12 +217,71 @@ def test_load_of_reset_password_form(
         {"email": "user@example.com"},
     )
     assert response.status_code == 200
+    assert b"An e-mail has been sent to user@example.com" in response.content
 
     response = user_client.post(
         "/api/forgotten_password",
         {"email": "random@example.com"},
     )
+    assert response.status_code == 200
+    assert b"An e-mail has been sent to random@example.com" in response.content
+
+
+def test_forgotten_password_with_malformed_email(
+    user_client: Client,
+) -> None:
+    response = user_client.post(
+        "/api/forgotten_password",
+        {"email": "not-an-email"},
+    )
     assert response.status_code == 400
+    assert b"Invalid email" in response.content
+
+
+@pytest.mark.django_db
+def test_forgotten_password_looks_up_the_cleaned_address(
+    client: Client,
+) -> None:
+    """A padded address must still reach its account.
+
+    The form's EmailField strips surrounding whitespace, so validation
+    passes but the raw value matches no user. Since every valid address
+    now answers with the success page, looking the raw value up would
+    tell a registered caller their mail was sent and send nothing.
+    """
+    mail.outbox.clear()
+    response = client.post(
+        "/api/forgotten_password",
+        {"email": "user@example.com "},
+    )
+
+    assert response.status_code == 200
+    assert len(mail.outbox) == 1
+
+
+@pytest.mark.django_db
+def test_forgotten_password_response_does_not_reveal_registration(
+    client: Client,
+) -> None:
+    """One address must answer identically once its account is gone."""
+    mail.outbox.clear()
+    registered_response = client.post(
+        "/api/forgotten_password",
+        {"email": "user@example.com"},
+    )
+    assert len(mail.outbox) == 1
+
+    User.objects.filter(email="user@example.com").delete()
+
+    mail.outbox.clear()
+    unregistered_response = client.post(
+        "/api/forgotten_password",
+        {"email": "user@example.com"},
+    )
+    assert len(mail.outbox) == 0
+
+    assert unregistered_response.status_code == registered_response.status_code
+    assert unregistered_response.content == registered_response.content
 
 
 @pytest.mark.django_db
