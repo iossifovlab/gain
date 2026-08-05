@@ -966,15 +966,56 @@ class GenomicResource:
         return f"{self.get_repo_url()}/{self.get_full_id()}"
 
     def get_labels(self) -> dict[str, Any]:
-        """Return resource labels."""
+        """Return resource labels.
+
+        ``meta`` and ``meta.labels`` are both free-form YAML, so what is
+        in either is whatever the curator wrote -- a scalar, a list and an
+        int are all things a resource can declare, and only the resource
+        types that run the base schema are refused for it.  Both levels
+        are narrowed rather than trusted: a non-mapping reads as no labels
+        and is reported, so that every caller sees a mapping whatever the
+        resource says (gain#654).
+
+        Reading never validates (ADR 0008) and never raises: this is on
+        the path of every repository-wide walk -- a label search, the
+        index build, ``grr_manage list`` -- and one malformed resource
+        must cost that walk only itself, the way a resource the index
+        cannot take does (gain#464, gain#503, ADR 0010).
+        """
         config = self.get_config()
         if config is None:
             raise ValueError(f"resource {self.resource_id} not configured")
-        if config.get("meta"):
-            meta: dict[str, Any] = config["meta"]
-            if meta.get("labels"):
-                return cast(dict[str, Any], meta["labels"])
-        return {}
+        meta = config.get("meta")
+        if meta is None:
+            return {}
+        if not isinstance(meta, dict):
+            # `meta` is as free-form as what it holds, so a non-mapping
+            # here reaches this read exactly the way a non-mapping
+            # `labels` does -- and used to crash it the same way.
+            self._warn_not_a_mapping("meta", meta)
+            return {}
+        labels = meta.get("labels")
+        if labels is None:
+            # Absent, or declared as an explicit YAML null.  Both say
+            # "no labels" and neither is a mistake, so neither is
+            # reported; the production GRRs carry the null spelling.
+            return {}
+        if not isinstance(labels, dict):
+            # Reported whatever its truthiness: `labels: []` and
+            # `labels: 0` are the same curator mistake as `labels: [a]`,
+            # and reading those two as no labels *silently* would leave
+            # the curator with nothing to act on.
+            self._warn_not_a_mapping("meta.labels", labels)
+            return {}
+        return labels
+
+    def _warn_not_a_mapping(self, what: str, value: Any) -> None:
+        """Report a ``meta`` level that is not the mapping it must be."""
+        logger.warning(
+            "resource <%s>: %s is a %s, not a mapping; reading it as no "
+            "labels -- fix the resource's 'genomic_resource.yaml'",
+            escape_unsafe_characters(self.resource_id),
+            what, type(value).__name__)
 
     def get_type(self) -> str:
         """Return resource type as defined in 'genomic_resource.yaml'."""

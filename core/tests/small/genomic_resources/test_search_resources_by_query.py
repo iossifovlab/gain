@@ -662,6 +662,84 @@ def test_a_query_only_label_search_needs_no_index(
         "scores/res_a", "other/res_c"}
 
 
+def _repository_labelling_its_middle_resource(labels: Any) -> GRRBuilder:
+    """A repository whose middle resource declares ``labels`` verbatim.
+
+    Two well-formed resources around that one: the resources are
+    walked in sorted order, so an isolation claim tested with the survivor
+    only ever before the offender passes without proving much.
+    """
+    return (
+        a_grr()
+        .with_resource(
+            "scores/aaa", a_position_score().with_labels(domain="alpha"))
+        .with_resource(
+            "scores/broken", a_position_score().with_raw_labels(labels))
+        .with_resource(
+            "scores/zzz", a_position_score().with_labels(domain="alpha"))
+    )
+
+
+@pytest.mark.parametrize("broken_labels", ["some text", ["a", "b"], 2019])
+def test_a_query_only_label_search_survives_a_non_mapping_labels(
+    tmp_path: pathlib.Path,
+    broken_labels: Any,
+) -> None:
+    """The route that opens no index reads the labels of every resource.
+
+    A ``meta.labels`` that is not a mapping used to reach
+    ``LabelClause.matches_in`` as whatever the curator wrote and take the
+    whole listing down with a bare ``AttributeError`` naming neither the
+    resource nor the misconfiguration (gain#654). The malformed resource
+    matches no label clause; the rest of the repository still answers.
+    """
+    repo = _repository_labelling_its_middle_resource(
+        broken_labels).build_repo(tmp_path)
+
+    resources = list(repo.search_resources(resource_query='*[domain="alpha"]'))
+
+    assert {r.resource_id for r in resources} == {"scores/aaa", "scores/zzz"}
+
+
+@pytest.fixture
+def index_predating_a_non_mapping_labels(
+    tmp_path: pathlib.Path,
+) -> GenomicResourceProtocolRepo:
+    """A repository whose index predates one resource's labels breaking.
+
+    The index build refuses a resource whose ``meta.labels`` is not a
+    mapping -- the position-score implementation runs the base schema --
+    so an index built after the edit simply does not name it, and the
+    indexed route never reads its labels. Indexing first and breaking the
+    labels afterwards is the shape a GRR really has between a curator's
+    edit and the next ``grr_manage`` run, and the only one that puts the
+    malformed resource in front of the deferred label clauses (gain#634).
+    """
+    _repository_labelling_its_middle_resource(
+        {"domain": "alpha"}).build_repo(tmp_path)
+    _create_contents_db(build_filesystem_test_protocol(tmp_path))
+    return _repository_labelling_its_middle_resource("some text").build_repo(
+        tmp_path)
+
+
+def test_the_indexed_route_survives_a_non_mapping_labels(
+    index_predating_a_non_mapping_labels: GenomicResourceProtocolRepo,
+) -> None:
+    """Every label clause is deferred to the resource's live labels.
+
+    Since gain#634 the indexed route asks the resource rather than the
+    index column, so it reaches the same read the query-only route does
+    and must survive the same malformed value.
+    """
+    resources = list(
+        index_predating_a_non_mapping_labels.search_resources(
+            resource_query='*[domain="alpha"]',
+            resource_type="position_score"),
+    )
+
+    assert {r.resource_id for r in resources} == {"scores/aaa", "scores/zzz"}
+
+
 def test_the_wildcard_limit_is_annotation_policy_not_repository_policy(
     unindexed_grr: GenomicResourceProtocolRepo,
     monkeypatch: pytest.MonkeyPatch,

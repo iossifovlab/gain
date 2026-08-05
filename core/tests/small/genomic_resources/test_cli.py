@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import argparse
+import logging
 import os
 import pathlib
 
@@ -21,6 +22,10 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
     build_filesystem_test_repository,
     setup_directories,
+)
+from gain.genomic_resources.testing.builders import (
+    a_grr,
+    a_position_score,
 )
 from gain.utils.fs_utils import find_directory_with_a_file
 
@@ -167,6 +172,45 @@ def test_cli_list_query_matching_nothing_lists_nothing(
 
     assert err == ""
     assert out == ""
+
+
+def test_cli_list_survives_a_resource_whose_labels_are_not_a_mapping(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One malformed ``meta.labels`` must not truncate the listing.
+
+    ``meta.labels`` is free-form YAML and a resource can declare it as a
+    scalar; the label clause used to reach that value and end the command
+    in an ``AttributeError`` naming neither the resource nor what was
+    wrong with it (gain#654). The listing reports it and goes on.
+    """
+    (
+        a_grr()
+        .with_resource(
+            "scores/aaa", a_position_score().with_labels(domain="alpha"))
+        .with_resource(
+            "scores/broken", a_position_score().with_raw_labels("some text"))
+        .with_resource(
+            "scores/zzz", a_position_score().with_labels(domain="alpha"))
+        .build_repo(tmp_path)
+    )
+    capsys.readouterr()
+
+    with caplog.at_level(logging.WARNING):
+        cli_manage(["list", "-R", str(tmp_path), "-q", '*[domain="alpha"]'])
+
+    out, err = capsys.readouterr()
+    assert err == ""
+    assert "scores/aaa" in out
+    assert "scores/zzz" in out
+    assert "scores/broken" not in out
+    assert any(
+        "scores/broken" in record.getMessage() and "str" in record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+    )
 
 
 def test_cli_list_rejects_a_malformed_query(

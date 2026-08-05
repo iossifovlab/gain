@@ -1,13 +1,21 @@
 # pylint: disable=redefined-outer-name,C0114,C0116,protected-access,fixme
 
+from typing import Any
+
 import pytest
+import yaml
 from gain.genomic_resources.liftover_chain import (
+    LiftoverChain,
     build_liftover_chain_from_resource,
 )
 from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
 )
-from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.repository import (
+    GenomicResource,
+    GenomicResourceRepo,
+)
+from gain.genomic_resources.testing import build_inmemory_test_resource
 
 
 @pytest.mark.parametrize("schrom, spos, expected", [
@@ -70,3 +78,43 @@ def test_liftover_chain_fixture(
         chrom, pos, _, _ = expected
         tseq = target_genome.get_sequence(chrom, pos, pos)
         assert sseq == tseq
+
+
+def _a_liftover_chain_resource(labels: Any) -> GenomicResource:
+    """A chain resource whose ``meta.labels`` is the value passed.
+
+    Only the config is read here -- constructing a ``LiftoverChain`` never
+    opens the chain file -- so the resource needs no chain in it.
+    """
+    return build_inmemory_test_resource({
+        "genomic_resource.yaml": yaml.safe_dump({
+            "type": "liftover_chain",
+            "filename": "liftover.chain.gz",
+            "meta": {"labels": labels},
+        }),
+    })
+
+
+def test_a_chain_takes_its_genome_ids_from_the_labels() -> None:
+    chain = LiftoverChain(_a_liftover_chain_resource(
+        {"source_genome": "hg19", "target_genome": "hg38"}))
+
+    assert chain.source_genome_id == "hg19"
+    assert chain.target_genome_id == "hg38"
+
+
+@pytest.mark.parametrize("labels", ["some text", ["a", "b"], 2019, None])
+def test_a_chain_whose_labels_are_not_a_mapping_still_builds(
+    labels: Any,
+) -> None:
+    """Constructing a chain must not raise on a malformed ``meta.labels``.
+
+    The chain used to index ``config["meta"]["labels"]`` itself instead of
+    reading the resource's labels, so a scalar there ended a *liftover
+    annotation* -- not merely a search -- in an ``AttributeError`` at
+    construction (gain#654). Both genome ids are simply left unset.
+    """
+    chain = LiftoverChain(_a_liftover_chain_resource(labels))
+
+    assert chain.source_genome_id is None
+    assert chain.target_genome_id is None

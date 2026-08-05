@@ -688,6 +688,9 @@ class ResourceAnnotators(EditorView):
                 resource.get_type() == "liftover_chain" and
                 annotator_type == "liftover_annotator"
             ):
+                # A mapping whatever the resource declared -- `get_labels`
+                # narrows it -- so `in` here asks for a KEY, and not for a
+                # substring of some string a curator wrote (gain#654).
                 labels = resource.get_labels()
                 if "source_genome" in labels:
                     config["source_genome"] = labels["source_genome"]

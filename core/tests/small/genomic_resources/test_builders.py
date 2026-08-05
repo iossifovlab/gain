@@ -1,6 +1,8 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import copy
 import pathlib
 import re
+from typing import Any
 
 import pytest
 import yaml
@@ -2595,6 +2597,147 @@ def test_meta_with_colons_and_newlines_renders_valid_yaml(
     assert resource.get_summary() == "phastCons: 100 vertebrates"
     assert resource.get_description() == "line one\nline two: with a colon\n"
     assert resource.get_labels() == {"reference_genome": "hg38: primary"}
+
+
+def test_with_raw_labels_declares_a_labels_block_that_is_not_a_mapping(
+    tmp_path: pathlib.Path,
+) -> None:
+    # `meta.labels` is free-form YAML, so a curator can write a scalar
+    # where a mapping belongs -- and the builder has to be able to say so
+    # (gain#654).
+    resource = (
+        a_position_score()
+        .with_raw_labels("some text")
+        .build_resource(tmp_path)
+    )
+
+    config = yaml.safe_load(
+        resource.get_file_content("genomic_resource.yaml"))
+    assert config["meta"]["labels"] == "some text"
+
+
+def test_with_raw_labels_none_declares_an_explicit_null_labels_block(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Ten resources in the published GRRs carry `labels:` with nothing
+    # after it, which is a declared label block, not an absent one.
+    resource = (
+        a_position_score()
+        .with_raw_labels(None)
+        .build_resource(tmp_path)
+    )
+
+    raw = resource.get_file_content("genomic_resource.yaml")
+    config = yaml.safe_load(raw)
+    assert "labels" in config["meta"]
+    assert config["meta"]["labels"] is None
+
+
+def test_omitting_labels_entirely_emits_no_labels_key(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        a_position_score()
+        .with_meta(summary="a summary")
+        .build_resource(tmp_path)
+    )
+
+    config = yaml.safe_load(
+        resource.get_file_content("genomic_resource.yaml"))
+    assert "labels" not in config["meta"]
+
+
+def test_with_raw_meta_replaces_the_whole_meta_block(
+    tmp_path: pathlib.Path,
+) -> None:
+    # `meta:` is as free-form as the `labels:` inside it, so a resource
+    # can declare it as a scalar too (gain#654).
+    resource = (
+        a_position_score()
+        .with_raw_meta("some text")
+        .build_resource(tmp_path)
+    )
+
+    config = yaml.safe_load(
+        resource.get_file_content("genomic_resource.yaml"))
+    assert config["meta"] == "some text"
+
+
+def test_with_raw_meta_none_declares_an_explicit_null_meta_block(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The same spelling `with_raw_labels(None)` gives the field, given to
+    # the block above it -- the two sibling methods say null the same way.
+    resource = (
+        a_position_score()
+        .with_raw_meta(None)
+        .build_resource(tmp_path)
+    )
+
+    raw = resource.get_file_content("genomic_resource.yaml")
+    config = yaml.safe_load(raw)
+    assert "meta" in config
+    assert config["meta"] is None
+
+
+def test_with_raw_meta_overrides_a_meta_declared_alongside_it(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        a_position_score()
+        .with_meta(summary="a summary")
+        .with_raw_meta(["not", "a", "mapping"])
+        .build_resource(tmp_path)
+    )
+
+    config = yaml.safe_load(
+        resource.get_file_content("genomic_resource.yaml"))
+    assert config["meta"] == ["not", "a", "mapping"]
+
+
+@pytest.mark.parametrize(("declare", "path"), [
+    (lambda builder, value: builder.with_raw_labels(value),
+     ("meta", "labels")),
+    (lambda builder, value: builder.with_raw_meta(value),
+     ("meta",)),
+])
+def test_the_raw_meta_declarations_defensively_copy_their_value(
+    tmp_path: pathlib.Path,
+    declare: Any,
+    path: tuple[str, ...],
+) -> None:
+    # The `with_labels` precedent: a mutable value handed to a builder
+    # must not stay shared with the caller, or mutating it afterwards
+    # rewrites a resource that was already declared.
+    declared: list[str] = ["a"]
+    builder = declare(a_position_score(), declared)
+
+    declared.append("b")
+
+    resource = builder.build_resource(tmp_path)
+    read_back: Any = yaml.safe_load(
+        resource.get_file_content("genomic_resource.yaml"))
+    for key in path:
+        read_back = read_back[key]
+    assert read_back == ["a"]
+
+
+@pytest.mark.parametrize("builder", [
+    a_position_score().with_raw_labels(None),
+    a_position_score().with_raw_labels("some text"),
+    a_position_score().with_raw_meta(None),
+    a_position_score().with_raw_meta({"labels": {"a": "b"}}),
+])
+def test_a_builder_declaring_raw_meta_survives_a_deep_copy(
+    builder: Any,
+) -> None:
+    # The builders are a public test DSL and are frozen dataclasses, so a
+    # copy must render what the original does and compare equal to it --
+    # which an identity marker stored in a field would not.
+    copied = copy.deepcopy(builder)
+
+    assert copied == builder
+    assert copied.render_meta() == builder.render_meta()
 
 
 def test_meta_carrying_resource_passes_config_validation(

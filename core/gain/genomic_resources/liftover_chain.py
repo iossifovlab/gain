@@ -49,14 +49,12 @@ class LiftoverChain(ResourceConfigValidationMixin):
 
         self.liftover: LiftOver | None = None
 
-        self.source_genome_id: str | None = None
-        self.target_genome_id: str | None = None
-
-        if config.get("meta") is not None \
-           and config["meta"].get("labels") is not None:
-            labels = config["meta"]["labels"]
-            self.source_genome_id = labels.get("source_genome")
-            self.target_genome_id = labels.get("target_genome")
+        # Asked of the resource rather than read off the raw config: the
+        # chain declares a schema but never runs it, and `get_labels` is
+        # where a free-form `meta.labels` gets narrowed (gain#654).
+        labels = resource.get_labels()
+        self.source_genome_id: str | None = labels.get("source_genome")
+        self.target_genome_id: str | None = labels.get("target_genome")
 
     def close(self) -> None:
         pass
