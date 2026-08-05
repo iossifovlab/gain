@@ -136,6 +136,35 @@ class AnnotationMixin:
             job_timeout=settings.ANNOTATION_TASK_TIMEOUT,
             thread_name_prefix="interactive-annotate")
 
+    #: Dedicated bounded pool for the *anonymous* pipeline-validation builds
+    #: (#659). Deliberately NOT ``ANNOTATE_EXECUTOR``: ``/api/pipelines/
+    #: validate`` sets no ``authentication_classes`` and is reachable without
+    #: a session, while the interactive-annotate pool serves an authenticated,
+    #: quota'd endpoint. Sharing one pool would let unauthenticated traffic
+    #: fill every worker and starve the endpoint that costs a user quota --
+    #: precisely the shared-resource occupancy this issue removes from the
+    #: sync-view thread, re-created one level down.
+    #:
+    #: The bound is the point: the synchronous view it replaces got a thread
+    #: per concurrent request (Django's ASGI handler gives each request its
+    #: own ``ThreadSensitiveContext``), so concurrency was whatever arrived.
+    #: What one client can ask for is capped by the per-request bounds and
+    #: the ``pipeline_validate`` throttle scope (#635); this caps what all of
+    #: them together can occupy.
+    #:
+    #: The WIDTH is not settled. Eight came from the #164 harness
+    #: (``--target validate``), but that run measured an earlier shape of
+    #: this change -- see the warning at the top of
+    #: ``docs/659-validate-async-slo.md``. Too narrow queues deeply enough to
+    #: trip a client timeout under a burst; too wide gives back the
+    #: unbudgeted occupancy the pool exists to remove. Re-measure and pin it.
+    #: (No test currently constrains this number: raising it to 512 leaves
+    #: every assertion in the suite green.)
+    VALIDATE_EXECUTOR: TaskExecutor = ThreadedTaskExecutor(
+            max_workers=8,
+            job_timeout=settings.ANNOTATION_TASK_TIMEOUT,
+            thread_name_prefix="pipeline-validate")
+
     tool_columns: ClassVar = [
         "col_chrom",
         "col_pos",

@@ -12,14 +12,28 @@ the async code the build is awaited OFF that thread, so the cheap endpoint
 stays flat. The win is responsiveness-under-contention, not single-request
 speed.
 
+Targets (``--target``)
+----------------------
+``annotate`` (default) is #163/#164's slow endpoint. ``validate`` drives
+``POST /api/pipelines/validate`` instead (iossifovlab/gain#659), which builds
+the posted config directly; its build reads the same
+``GPFWA_BUILD_DELAY_SECONDS`` hook, so contention is dialled the same way.
+That endpoint is anonymous, so its own ``pipeline_validate`` throttle (120/min)
+applies unless the run logs in with an ``--email`` whose user is *unlimited* --
+which is what ``run_daphne_server.sh`` sets up, and what keeps a K=32 burst
+from turning into 429s. Nothing caches a validation result, so every request
+pays its own build (no cold/warm distinction for this target).
+
 What it does
 ------------
 1. Sanity-pings ``GET /api/version`` so a misconfigured server fails fast.
 2. Concurrently:
-   * fires ``K`` ``POST /api/single_allele/annotate`` requests against a COLD
-     pipeline (each pays the injected build delay), and
+   * fires ``K`` slow requests at the target (each pays the injected build
+     delay; for ``annotate`` this is against a COLD pipeline), and
    * samples ``GET /api/version`` latency every ``--sample-interval`` seconds.
-3. Reports the cheap endpoint's p50/p95/p99 + timeout rate as JSON.
+3. Reports the cheap endpoint's p50/p95/p99 + timeout rate as JSON. The
+   slow-request block is keyed by the target name, so an ``annotate`` record
+   keeps exactly the #164 shape.
 
 Cold pipeline
 -------------
@@ -41,8 +55,14 @@ Usage
         --pipeline-id t4c8/t4c8_pipeline \
         --concurrency 16 --timeout 30 --sample-interval 0.1
 
-Parameterized: ``--concurrency`` (K), ``--timeout`` (per-request, also the SLO
-breach threshold), ``--sample-interval``, ``--pipeline-id``, and an optional
+    # ...or against the pipeline-validation endpoint (#659):
+    python -m web_annotation.loadtest.cheap_endpoint_slo \
+        --base-url http://127.0.0.1:21011 --target validate \
+        --concurrency 16 --timeout 30 --email loadtest@example.com
+
+Parameterized: ``--target``, ``--concurrency`` (K), ``--timeout``
+(per-request, also the SLO breach threshold), ``--sample-interval``,
+``--pipeline-id`` / ``--validate-config``, and an optional
 ``--label`` echoed into the JSON. The injected build delay is set on the SERVER
 via ``GPFWA_BUILD_DELAY_SECONDS`` and echoed here via ``--delay`` for the
 record.
@@ -62,7 +82,15 @@ import aiohttp
 
 VERSION_PATH = "/api/version"
 ANNOTATE_PATH = "/api/single_allele/annotate"
+VALIDATE_PATH = "/api/pipelines/validate"
 LOGIN_PATH = "/api/login"
+
+#: Slow endpoints this harness can drive. ``annotate`` is #163/#164's target
+#: and stays the default so recorded runs keep comparing like with like;
+#: ``validate`` is the anonymous pipeline-validation endpoint (#659), whose
+#: build got the same ``GPFWA_BUILD_DELAY_SECONDS`` hook so it can be made
+#: slow the same deterministic way.
+TARGETS = ("annotate", "validate")
 
 
 def _percentile(sorted_values: list[float], pct: float) -> float:
@@ -191,19 +219,31 @@ def _csrf_header(session: aiohttp.ClientSession) -> dict[str, str]:
     return {}
 
 
-async def _fire_annotate(
+def _slow_request_spec(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
+    """Return the (path, JSON payload) of one slow request for the target.
+
+    The two targets ask for the same thing -- a GRR pipeline build -- through
+    different bodies: annotate names a saved pipeline, validation hands over
+    the config text itself.
+    """
+    if args.target == "validate":
+        return VALIDATE_PATH, {"config": args.validate_config}
+    return ANNOTATE_PATH, {
+        "annotatable": {"chrom": "chr1", "pos": "3"},
+        "pipeline_id": args.pipeline_id,
+    }
+
+
+async def _fire_slow_request(
     session: aiohttp.ClientSession,
     base_url: str,
-    pipeline_id: str,
+    path: str,
+    payload: dict[str, Any],
     *,
     timeout: float,
 ) -> dict[str, Any]:
-    """Fire one POST annotate; return status + elapsed (build contention)."""
-    url = f"{base_url}{ANNOTATE_PATH}"
-    payload = {
-        "annotatable": {"chrom": "chr1", "pos": "3"},
-        "pipeline_id": pipeline_id,
-    }
+    """Fire one slow request; return status + elapsed (build contention)."""
+    url = f"{base_url}{path}"
     headers = _csrf_header(session)
     start = time.monotonic()
     try:
@@ -220,6 +260,42 @@ async def _fire_annotate(
         return {"status": "timeout", "elapsed_ms": round(timeout * 1000.0, 2)}
     except aiohttp.ClientError as exc:
         return {"status": f"error:{type(exc).__name__}", "elapsed_ms": None}
+
+
+def _build_record(
+    args: argparse.Namespace,
+    base_url: str,
+    slow_results: list[dict[str, Any]],
+    samples: CheapSamples,
+    *,
+    wall_elapsed: float,
+) -> dict[str, Any]:
+    """Assemble the JSON result record.
+
+    The slow-request block is keyed by the target, so an ``annotate`` record
+    is shape-identical to the ones recorded for #164 and the two targets never
+    get mistaken for each other in a combined matrix.
+    """
+    statuses = [r["status"] for r in slow_results]
+    return {
+        "label": args.label,
+        "params": {
+            "base_url": base_url,
+            "target": args.target,
+            "pipeline_id": args.pipeline_id,
+            "concurrency_K": args.concurrency,
+            "injected_build_delay_seconds": args.delay,
+            "request_timeout_seconds": args.timeout,
+            "sample_interval_seconds": args.sample_interval,
+        },
+        args.target: {
+            "count": len(slow_results),
+            "ok_200": sum(1 for s in statuses if s == 200),
+            "statuses": statuses,
+            "wall_seconds": round(wall_elapsed, 2),
+        },
+        "cheap_endpoint": samples.summary(),
+    }
 
 
 async def run(args: argparse.Namespace) -> dict[str, Any]:
@@ -247,10 +323,11 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         # Give the sampler a moment to record a cheap-baseline before the burst.
         await asyncio.sleep(args.warmup)
 
+        path, payload = _slow_request_spec(args)
         wall_start = time.monotonic()
-        annotate_results = await asyncio.gather(*[
-            _fire_annotate(
-                session, base_url, args.pipeline_id, timeout=args.timeout,
+        slow_results = await asyncio.gather(*[
+            _fire_slow_request(
+                session, base_url, path, payload, timeout=args.timeout,
             )
             for _ in range(args.concurrency)
         ])
@@ -261,25 +338,8 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         stop.set()
         await sampler
 
-    annotate_statuses = [r["status"] for r in annotate_results]
-    return {
-        "label": args.label,
-        "params": {
-            "base_url": base_url,
-            "pipeline_id": args.pipeline_id,
-            "concurrency_K": args.concurrency,
-            "injected_build_delay_seconds": args.delay,
-            "request_timeout_seconds": args.timeout,
-            "sample_interval_seconds": args.sample_interval,
-        },
-        "annotate": {
-            "count": len(annotate_results),
-            "ok_200": sum(1 for s in annotate_statuses if s == 200),
-            "statuses": annotate_statuses,
-            "wall_seconds": round(wall_elapsed, 2),
-        },
-        "cheap_endpoint": samples.summary(),
-    }
+    return _build_record(
+        args, base_url, slow_results, samples, wall_elapsed=wall_elapsed)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -289,11 +349,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--base-url", default="http://127.0.0.1:21011",
         help="Base URL of the running server.")
     parser.add_argument(
+        "--target", choices=TARGETS, default="annotate",
+        help="Which slow endpoint to drive under the cheap-endpoint sampler.")
+    parser.add_argument(
         "--pipeline-id", default="t4c8/t4c8_pipeline",
-        help="Global GRR pipeline id to build (cold).")
+        help="Global GRR pipeline id to build (cold). --target annotate only.")
+    parser.add_argument(
+        "--validate-config", default="- position_score: scores/pos1",
+        help=(
+            "Config body posted by --target validate. The default resolves "
+            "in the in-repo test GRR the load server uses; point it at "
+            "something real for another GRR."
+        ))
     parser.add_argument(
         "--concurrency", "-K", type=int, default=16,
-        help="Number of concurrent slow-build annotate requests.")
+        help="Number of concurrent slow-build requests against the target.")
     parser.add_argument(
         "--timeout", type=float, default=30.0,
         help="Per-request timeout (s); also the SLO breach threshold.")
