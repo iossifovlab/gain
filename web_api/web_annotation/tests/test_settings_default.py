@@ -84,6 +84,46 @@ def test_num_proxies_invalid_value_fails_at_startup(
         importlib.reload(settings_default)
 
 
+def test_num_proxies_rejects_pep515_underscore_separator(
+    restore_settings_default: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `int("1_0")` is 10, so delegating validation to int() lets a typo boot
+    # with TEN trusted hops. DRF selects with
+    # `addrs[-min(num_proxies, len(addrs))]` -- the min() clamps instead of
+    # erroring, so a count larger than the entries present walks all the way
+    # to addrs[0], the leftmost and entirely client-supplied entry. A
+    # mistyped hop count would therefore silently reinstate #660 rather than
+    # fail loudly.
+    monkeypatch.setenv("GPFWA_NUM_PROXIES", "1_0")
+
+    with pytest.raises(ImproperlyConfigured, match="GPFWA_NUM_PROXIES"):
+        importlib.reload(settings_default)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    # Escaped rather than written literally: these glyphs are visually
+    # confusable with ASCII, which is the whole reason they are a hazard.
+    ["\u0661\u0660", "\uff11\uff10", "\u0e51\u0e50"],
+    ids=["arabic-indic", "fullwidth", "thai"],
+)
+def test_num_proxies_rejects_non_ascii_digits(
+    restore_settings_default: None,
+    monkeypatch: pytest.MonkeyPatch,
+    raw: str,
+) -> None:
+    # str.isdigit() is NOT sufficient on its own: it is true for every Unicode
+    # digit, and int() converts them all -- each of these parses as 10.
+    # Guarding with isdigit() alone would close the underscore case above and
+    # leave this one wide open, with the same consequence (a hop count far
+    # larger than the header, so DRF selects the client-supplied entry).
+    monkeypatch.setenv("GPFWA_NUM_PROXIES", raw)
+
+    with pytest.raises(ImproperlyConfigured, match="GPFWA_NUM_PROXIES"):
+        importlib.reload(settings_default)
+
+
 def test_quota_reset_timezone_defaults_to_utc(
     monkeypatch: pytest.MonkeyPatch,
     restore_settings_default: None,
