@@ -1,6 +1,11 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pytest
+import pytest_mock
 from django.test import Client
+from gain.genomic_resources.repository import (
+    GenomicResourceRepo,
+    SearchIndexUnavailableError,
+)
 
 from web_annotation.resources.views import SearchResources
 
@@ -463,3 +468,54 @@ def test_get_resource_types(
         "fragment_score",
         "cnv_collection",
     }
+
+
+def test_a_repository_with_no_search_index_is_a_handled_server_error(
+    clients: dict[str, Client],
+    mocker: pytest_mock.MockFixture,
+) -> None:
+    """No index is the repository's problem, not the caller's (ADR 0012).
+
+    A filter nothing can be applied with must not be reported as a bad
+    request: the caller supplied nothing wrong and has no repair to make.
+    It must not escape as an unhandled exception either -- the answer
+    names the repositories and the repair instead of being a traceback.
+    """
+    # Patched where the view reads it: the base view copies the module
+    # global into `self._grr` when the request is constructed.
+    mocker.patch(
+        "web_annotation.annotation_base_view.GRR", _unsearchable_repo())
+
+    response = clients["anonymous"].get(
+        "/api/resources/search", query_params={"search": "anything"})
+
+    assert response.status_code == 500
+    assert "repo-repair" in response.json()["error"]
+
+
+def _unsearchable_repo() -> GenomicResourceRepo:
+    """A repository that cannot apply a search filter at all."""
+    class _NoIndex(GenomicResourceRepo):
+        def invalidate(self) -> None:
+            return
+
+        def get_all_resources(self):  # type: ignore[no-untyped-def]
+            return iter(())
+
+        def find_resource(  # type: ignore[no-untyped-def]
+            self, resource_id, version_constraint=None, repository_id=None,
+        ):
+            return None
+
+        def get_resource(  # type: ignore[no-untyped-def]
+            self, resource_id, version_constraint=None, repository_id=None,
+        ):
+            raise ValueError(resource_id)
+
+        def search_resources(  # type: ignore[no-untyped-def]
+            self, search_term=None, resource_type=None, resource_query=None,
+        ):
+            raise SearchIndexUnavailableError(
+                "unindexed", "no search index was published")
+
+    return _NoIndex("unindexed")

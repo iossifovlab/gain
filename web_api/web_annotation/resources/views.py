@@ -4,6 +4,7 @@ from typing import ClassVar
 
 from gain.genomic_resources.repository import (
     GenomicResource,
+    SearchIndexUnavailableError,
     SearchTermError,
 )
 from gain.genomic_resources.resource_query import (
@@ -176,6 +177,14 @@ class SearchResources(ResourcesAPIView):
                 lambda r: r.get_type() in self.SUPPORTED_RESOURCE_TYPES,
                 found,
             ))
+        except SearchIndexUnavailableError as err:
+            # Not a bad request: the caller supplied nothing wrong and has
+            # no repair to make. Ahead of the arm below, which it would
+            # otherwise fall into -- both are `ValueError`s (ADR 0012).
+            return Response(
+                {"error": str(err)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
         except (ResourceQueryParseError, SearchTermError) as err:
             return Response(
                 {"error": str(err)},

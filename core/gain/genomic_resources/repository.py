@@ -831,6 +831,36 @@ class SearchTermError(ValueError):
         )
 
 
+class SearchIndexUnavailableError(ValueError):
+    """A repository that cannot apply a search filter for want of an index.
+
+    Raised when the repository publishes no ``.CONTENTS.sqlite3.gz`` at all,
+    and when the one it publishes carries no ``contents`` table because no
+    resource could be indexed into it. Both are repository *health*: the
+    filter is unobjectionable and a ``grr_manage repo-repair`` would let it
+    be applied.
+
+    Typed rather than left as a bare ``ValueError`` because a group
+    repository absorbs this to skip the child and carry on (ADR 0012), and
+    the layers it absorbs it through raise ``ValueError`` of their own that
+    must keep propagating -- the cache layer resolving a resource it cannot
+    place, for one.
+
+    A ``ValueError`` still, so a caller that only ever distinguished bad
+    arguments from working ones is unaffected.
+    """
+
+    def __init__(self, repo_id: str, reason: str) -> None:
+        self.repo_id = repo_id
+        self.reason = reason
+        super().__init__(
+            f"repository <{repo_id}> cannot be searched: {reason}. "
+            f"Build a search index with `grr_manage repo-repair`, or "
+            f"select by id and labels with a resource query, which needs "
+            f"none",
+        )
+
+
 class GenomicResource:
     """Represents a single genomic resource with metadata and file access.
 
@@ -1472,15 +1502,17 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
             ).fetchone():
                 # The index has no contents table when it was built with no
                 # resource in it -- an empty repository, or one whose every
-                # resource the index build had to skip (gain#464).  Nothing
-                # can match, but that is worth saying: a search coming back
-                # empty here is about the index, not about the search.
-                logger.warning(
-                    "repository <%s> has no search index contents; "
-                    "no resource could be indexed -- repair the repository "
-                    "and check the report for the resources it skipped",
-                    self.get_id())
-                return
+                # resource the index build had to skip (gain#464).  Raised
+                # rather than answered with zero rows: this repository has
+                # not applied the filter, and yielding nothing would be
+                # indistinguishable from having applied it and matched
+                # nothing. A group needs that distinction to tell "nothing
+                # matched" from "nothing was searched" (ADR 0012).
+                raise SearchIndexUnavailableError(
+                    self.get_id(),
+                    "the search index holds no contents; no resource could "
+                    "be indexed -- check the repair report for the "
+                    "resources it skipped")
             query = "SELECT full_id FROM contents "
             conditions = []
             params: list[Any] = []
@@ -2335,6 +2367,29 @@ class GenomicResourceRepo(abc.ABC):
 
         All supplied filters conjoin.
         """
+
+    def search_resources_by_child(
+        self,
+        search_term: str | None = None,
+        resource_type: str | None = None,
+        resource_query: str | None = None,
+    ) -> Generator[
+        tuple[GenomicResourceRepo, GenomicResource], None, None,
+    ]:
+        """Search, pairing each hit with the repository that serves it.
+
+        For a repository that serves resources itself the answer is always
+        this one, which is what this implementation says. A group overrides
+        it to name the child the resource actually came from, so a caller
+        that has to label a hit -- ``grr_manage list`` prints the id beside
+        every row -- does not have to take a group apart to find out.
+
+        The filters mean exactly what they mean for
+        :meth:`search_resources`, which is the projection of this.
+        """
+        for res in self.search_resources(
+                search_term, resource_type, resource_query):
+            yield self, res
 
     @abc.abstractmethod
     def get_all_resources(self) -> Generator[GenomicResource, None, None]:

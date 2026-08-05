@@ -212,7 +212,12 @@ def _configure_list_subparser(subparsers: argparse._SubParsersAction) -> None:
     # of the same repository cannot be narrowed differently.
     parser.add_argument(
         "-s", "--search", type=str, default=None,
-        help="FTS search term to filter resources.")
+        help="FTS search term to filter resources. A term may name one "
+             "index column, e.g. 'assay_term_name: \"ATAC-seq\"', but the "
+             "columns are per-repository -- across a group, a repository "
+             "that does not index the column is skipped with a warning "
+             "rather than searched. Use -q to select on labels "
+             "independently of any index.")
     parser.add_argument(
         "-t", "--type", type=str, default=None,
         help="Filter resources by type.")
@@ -1414,7 +1419,12 @@ def cli_browse(cli_args: list[str] | None = None) -> None:
         help="path to GRR definition file.")
     group.add_argument(
         "-s", "--search", type=str, default=None,
-        help="FTS search term to filter resources.")
+        help="FTS search term to filter resources. A term may name one "
+             "index column, e.g. 'assay_term_name: \"ATAC-seq\"', but the "
+             "columns are per-repository -- across a group, a repository "
+             "that does not index the column is skipped with a warning "
+             "rather than searched. Use -q to select on labels "
+             "independently of any index.")
     group.add_argument(
         "-t", "--type", type=str, default=None,
         help="Filter resources by type.")
