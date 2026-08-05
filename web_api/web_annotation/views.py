@@ -26,6 +26,14 @@ from rest_framework.response import Response
 
 from web_annotation.authentication import WebAnnotationAuthentication
 from web_annotation.serializers import UserSerializer
+from web_annotation.throttling import (
+    AccountConfirmRateThrottle,
+    LoginIdentifierRateThrottle,
+    LoginRateThrottle,
+    PasswordResetIdentifierRateThrottle,
+    PasswordResetRateThrottle,
+    RegisterRateThrottle,
+)
 from web_annotation.utils import (
     PasswordForgottenForm,
     ResetPasswordForm,
@@ -133,6 +141,12 @@ class Login(views.APIView):
     parser_classes: ClassVar = [JSONParser]
 
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
+    # Both axes are checked, and exceeding either answers 429: one host
+    # spraying many accounts is stopped by the first, many hosts spraying one
+    # account by the second (gain#694).
+    throttle_classes: ClassVar = [
+        LoginRateThrottle, LoginIdentifierRateThrottle,
+    ]
 
     def post(self, request: Request) -> Response:
         """Log in a user."""
@@ -175,6 +189,7 @@ class Registration(views.APIView):
     """Registration related view."""
     parser_classes: ClassVar = [JSONParser]
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
+    throttle_classes: ClassVar = [RegisterRateThrottle]
 
     def post(self, request: Request) -> Response:
         """Register a new user."""
@@ -209,6 +224,7 @@ class Registration(views.APIView):
 
 class ConfirmAccount(views.APIView):  # USE
     """View for forgotten password."""
+    throttle_classes: ClassVar = [AccountConfirmRateThrottle]
     verification_code_model = cast(
         BaseVerificationCode, AccountConfirmationCode,
     )
@@ -246,6 +262,12 @@ class ForgotPassword(views.APIView):
     """View for forgotten password."""
 
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
+    # Dual-keyed like login, and for the same reason -- except that here every
+    # served request also sends a mail, so the per-IP bucket is the tightest
+    # of the five (gain#694).
+    throttle_classes: ClassVar = [
+        PasswordResetRateThrottle, PasswordResetIdentifierRateThrottle,
+    ]
 
     def get(self, request: Request) -> HttpResponse:
         form = PasswordForgottenForm()
@@ -301,6 +323,10 @@ class ForgotPassword(views.APIView):
 
 class PasswordReset(views.APIView):
     """Reset password view."""
+
+    # Shares the confirm_account bucket on purpose: same activity (redeeming
+    # a single-use code from a mail), same code space (gain#694).
+    throttle_classes: ClassVar = [AccountConfirmRateThrottle]
 
     verification_code_model = cast(BaseVerificationCode, ResetPasswordCode)
 
