@@ -12,8 +12,10 @@ from django.test import AsyncClient
 
 from web_annotation.annotation_base_view import (
     AnnotationBaseView,
+    AnnotationMixin,
     AsyncAnnotationBaseView,
 )
+from web_annotation.executor import ThreadedTaskExecutor
 from web_annotation.pipelines import views
 from web_annotation.pipelines.views import PipelineValidation
 from web_annotation.tests.loop_stall import (
@@ -885,3 +887,90 @@ async def test_an_accepted_body_is_never_logged(
     assert response.status_code == 200, response.content
     assert response.json() == {"errors": ""}
     assert _canary_records(caplog) == []
+
+
+# ---------------------------------------------------------------------------
+# A request that goes away takes its queued work with it
+# ---------------------------------------------------------------------------
+# The editor validates on a debounce, so superseded requests are the normal
+# case rather than an edge one: a user typing generates a stream of them, and
+# each is abandoned the moment the next keystroke lands. Every task this view
+# submits is per-request and unshared -- nothing else ever awaits one -- so a
+# task whose requester is gone has no consumer at all. Leaving those queued
+# would fill a bounded pool with work nobody will read, and the live request
+# behind them waits for it.
+#
+# Only a task that has not started can be stopped: Python cannot cancel a
+# running thread, so an in-flight build necessarily finishes. Queued-and-
+# superseded is the case that matters, and it is the one the debounce produces
+# in bulk.
+
+def test_a_cancelled_request_cancels_its_queued_pool_task() -> None:
+    """Cancelling the awaiting task must cancel the queued future too.
+
+    ``await_build`` deliberately does NOT do this: it exists for *shared*
+    builds, where several callers await one future and one caller going away
+    must not cancel the build the others still need. This view's tasks are
+    per-request and unshared, so that protection buys nothing here and costs
+    the pool slot.
+    """
+    executor = ThreadedTaskExecutor(
+        max_workers=1, thread_name_prefix="test-validate")
+    occupied = threading.Event()
+    release = threading.Event()
+    ran: list[bool] = []
+
+    def occupy() -> None:
+        occupied.set()
+        release.wait(timeout=10)
+
+    def should_not_run() -> None:
+        ran.append(True)
+
+    async def scenario() -> None:
+        executor.execute(occupy)
+        assert occupied.wait(timeout=10), "the pool never picked up the task"
+
+        # The single worker is busy, so this one can only be queued.
+        queued = executor.execute(should_not_run)
+        task = asyncio.create_task(
+            PipelineValidation._await_cancellable(queued))
+        await asyncio.sleep(0.05)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert queued.cancelled(), (
+            "the queued pool task outlived the request that wanted it"
+        )
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        release.set()
+        executor.shutdown()
+
+    assert not ran, "a cancelled request's work still ran"
+
+
+def test_the_validation_pool_width_is_pinned() -> None:
+    """The pool's width is the bound, so a change to it must be deliberate.
+
+    Every other assertion about this pool -- identity, thread names, the
+    latency proofs -- passes at any width, so without this one the number
+    could be raised to 512 and nothing would notice; the pool would still be
+    "bounded" while giving back the occupancy it exists to remove.
+
+    The value is measured (``docs/659-validate-async-slo.md``): eight is
+    where the cheap endpoint's p95 bottoms out, and past it a Python-bound
+    build starts taking GIL time from the loop thread. Changing it means
+    re-running that matrix, not editing this number.
+    """
+    assert AnnotationMixin.VALIDATE_POOL_WORKERS == 8
+
+    executor = PipelineValidation.VALIDATE_EXECUTOR
+    assert isinstance(executor, ThreadedTaskExecutor)
+    assert executor._executor._max_workers == (
+        AnnotationMixin.VALIDATE_POOL_WORKERS
+    ), "the pool is not built from the pinned width"

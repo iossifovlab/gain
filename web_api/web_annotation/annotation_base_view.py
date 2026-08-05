@@ -152,16 +152,23 @@ class AnnotationMixin:
     #: the ``pipeline_validate`` throttle scope (#635); this caps what all of
     #: them together can occupy.
     #:
-    #: The WIDTH is not settled. Eight came from the #164 harness
-    #: (``--target validate``), but that run measured an earlier shape of
-    #: this change -- see the warning at the top of
-    #: ``docs/659-validate-async-slo.md``. Too narrow queues deeply enough to
-    #: trip a client timeout under a burst; too wide gives back the
-    #: unbudgeted occupancy the pool exists to remove. Re-measure and pin it.
-    #: (No test currently constrains this number: raising it to 512 leaves
-    #: every assertion in the suite green.)
+    #: The width is measured, not guessed -- see
+    #: ``docs/659-validate-async-slo.md`` for the run. It sits at a knee, and
+    #: the knee is sharp in one direction: at a 96-request burst the cheap
+    #: endpoint's p95 is 6.1 ms at four workers, 5.6 ms at eight, 14.6 ms at
+    #: sixteen and 78 ms at thirty-two, while burst wall time halves with
+    #: each doubling (48.6 s / 24.4 s / 12.9 s / 7.2 s). Eight is where the
+    #: cheap endpoint is cheapest AND the burst has already halved from four.
+    #:
+    #: Past it the trade inverts, and not because of core count (the host has
+    #: 32): a validation build is Python-bound, so additional workers buy
+    #: burst throughput by taking GIL time from the loop thread that serves
+    #: every other request. Widening this pool spends the very thing the
+    #: async conversion was for.
+    VALIDATE_POOL_WORKERS: ClassVar[int] = 8
+
     VALIDATE_EXECUTOR: TaskExecutor = ThreadedTaskExecutor(
-            max_workers=8,
+            max_workers=VALIDATE_POOL_WORKERS,
             job_timeout=settings.ANNOTATION_TASK_TIMEOUT,
             thread_name_prefix="pipeline-validate")
 

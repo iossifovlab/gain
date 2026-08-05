@@ -3,19 +3,12 @@
 **Issue:** iossifovlab/gain#659.
 **Date:** 2026-08-04.
 
-> **⚠ These numbers were measured against an earlier shape of this change and
-> have NOT been re-measured since.** The run below submitted the *request-body
-> parse* to the pool as well, because at the time nothing bounded the body.
-> #676 has since added a declared-length refusal ahead of the parse, so the
-> body parse now runs inline on a bounded input and only the annotator count,
-> the expansion-gate parse and the build are submitted. That removes one
-> queue trip per request from the measured path.
->
-> The direction of the result is not in doubt — the pool converts unbounded
-> per-request thread growth into a bound — but the specific p50/p95/burst
-> figures below describe a design this PR no longer implements, and the
-> `max_workers=8` choice was calibrated against them. **Re-run before merge**,
-> and treat the pool width as unsettled until then. See the PR description.
+**Re-measured 2026-08-05** against the final shape of the change (body parse
+inline behind #676's declared-length bound; only the annotator count, the
+expansion-gate parse and the build on the pool). The earlier figures in this
+file's history described a shape that submitted the body parse too, and were
+partly measuring the `pipeline_validate` throttle at K=128 — every K here stays
+under the 120/min limit, so all requests are answered and nothing is throttled.
 
 `POST /api/pipelines/validate` is anonymous and used to resolve resources and
 build every annotator inline, in a synchronous DRF view. This change makes the
@@ -145,24 +138,22 @@ request can buy. #635 set it at 64 KiB with reasoning recorded in the code, and
 this issue explicitly does not reopen it; #666 is where "does this endpoint
 need to parse this at all" belongs.
 
-## ...and so did reading the request body
+## ...but reading the request body did NOT have to move
 
-`MAX_CONFIG_LENGTH` bounds the config *string*. It does not bound the body the
-string is parsed out of, and nothing else on this path does either:
+`MAX_CONFIG_LENGTH` bounds the config *string*, not the body the string is
+parsed out of, and on `master` nothing bounded that body either:
 
 - `DATA_UPLOAD_MAX_MEMORY_SIZE` (2.5 MB) is consulted by `HttpRequest.body`
-  and `HttpRequest.POST`. DRF uses neither — `Request.data` hands the raw
+  and `HttpRequest.POST`. DRF uses neither -- `Request.data` hands the raw
   stream to the negotiated parser, and `JSONParser` calls `json.load(stream)`
   with no size check.
 - For multipart, Django bounds non-file field bytes and the file *count*
   (`DATA_UPLOAD_MAX_NUMBER_FILES`, 100). A file *part's* size is bounded by
-  nothing; `FILE_UPLOAD_MAX_MEMORY_SIZE` only chooses memory-vs-disk.
-  `web_api` overrides none of these, and `DEFAULT_PARSER_CLASSES` is not
-  overridden either, so `MultiPartParser` is enabled on this route.
-- Under ASGI the client's upload speed does not bound it either: Django 5.2's
+  nothing.
+- Under ASGI the client's upload speed does not bound it either: Django's
   `ASGIHandler.read_body` buffers the whole body into a `SpooledTemporaryFile`
-  *before* dispatch, so by the time `post` runs the parse proceeds at disk
-  speed and lands as one contiguous, un-preemptible burst.
+  *before* dispatch, so the parse proceeds at disk speed and lands as one
+  contiguous, un-preemptible burst.
 
 Measured on this host through the real endpoint (timing `Request._parse` from
 inside a patched handler), all answering the usual `200`:
@@ -175,21 +166,17 @@ inside a patched handler), all answering the usual `200`:
 | JSON, 16 MB | **0.045 s** (2.82 ms/MB) |
 | JSON, 128 MB | **0.393 s** (3.07 ms/MB) |
 
-So ~1.2 s per GB of multipart and ~3 s per GB of JSON, per anonymous request,
-at the 120/min per-IP `pipeline_validate` rate. On the loop that is the whole
-process — every other HTTP request, every websocket frame — going quiet for
-the duration. It is now awaited on the same bounded pool as the rest.
+An early version of this change put that parse on the pool with everything
+else. #676 made that unnecessary by refusing on the declared `Content-Length`
+*before* the parser is reached, which caps the parse's input at
+`MAX_BODY_LENGTH` (512 KiB) -- about 1.5 ms of JSON at the rate above. A
+bounded parse is not a long pole, so it runs inline on the coroutine and the
+request makes one fewer trip through the queue.
 
-The pool rather than `sync_to_async`'s default `thread_sensitive=True` thread:
-that thread is shared by every synchronous view, so putting an unbounded
-anonymous parse there would relocate the occupancy this issue exists to
-remove, not end it. The parse touches no ORM and no async context, so it is
-safe off it.
-
-The one thing this costs: a worker slot is now taken before the
-`MAX_CONFIG_LENGTH` refusal, because the string that bound applies to does not
-exist until the body is parsed. The refusal still happens before the count,
-the expansion gate and the build.
+This is why the ordering question resolved the way it did. `MAX_CONFIG_LENGTH`
+cannot be the first thing that runs -- the string it bounds does not exist
+until the body is parsed -- but a *raw-bytes* bound can, and that is what #676
+added.
 
 ## Harness
 
@@ -212,32 +199,33 @@ python -m web_annotation.loadtest.cheap_endpoint_slo \
 
 Two daphne servers on one host, started from the same checkout: port 21099 with
 this branch's view, port 21098 with the same file reverted to the pre-change
-*synchronous* structure (sync `post`, parse and build called inline) but
-**keeping** the `GPFWA_BUILD_DELAY_SECONDS` hook — without the hook the baseline
-does no slow work at all and the comparison is meaningless. In-repo test GRR,
-injected build delay **2.0 s**, per-request timeout **60 s**, sample interval
-**0.1 s**, logged in as the unlimited load-test user. Runs interleaved
-sync/async at each K so both see the same host conditions.
+*synchronous* structure (sync `post`, count/parse/build called inline) but
+**keeping** the `GPFWA_BUILD_DELAY_SECONDS` hook -- without the hook the
+baseline does no slow work at all and the comparison is meaningless. (`master`
+cannot serve as the baseline for the same reason: it has the synchronous view
+but not the hook.) In-repo test GRR, injected build delay **2.0 s**,
+per-request timeout **60 s**, sample interval **0.1 s**. Runs are interleaved
+sync/async at each K, with a 65 s gap between runs so the `pipeline_validate`
+throttle window clears -- the bucket is cumulative per IP, and without the gap
+the later K values measure the rate limiter rather than the server.
 
-| K | sync p50 (ms) | sync **p95** (ms) | sync max (ms) | async p50 (ms) | async **p95** (ms) | async max (ms) |
+Every K stays under the 120/min limit: **all requests answered 200, no 429s,
+no timeouts, no errors** on either side in any run.
+
+| K | sync p50 | sync **p95** | sync max | async p50 | async **p95** | async max |
 |---:|---:|---:|---:|---:|---:|---:|
-| 8   | 3.45 | 4.19   | 7.09   | 3.34 | 3.90 | 11.24  |
-| 32  | 3.29 | 13.21  | 45.64  | 3.38 | 4.31 | 132.07 |
-| 64  | 3.21 | 66.87  | 96.89  | 3.53 | 5.53 | 105.59 |
-| 128 | 4.26 | 128.29 | 344.38 | 3.76 | 5.21 | 335.34 |
+| 8  | 8.03 | 61.49  | 248.19 | 7.96 | 35.30 | 51.75  |
+| 32 | 6.92 | 57.15  | 141.70 | 6.84 | 13.35 | 107.38 |
+| 64 | 5.98 | 96.66  | 226.13 | 6.59 | 16.20 | 383.13 |
+| 96 | 9.21 | 153.85 | 507.83 | 6.86 | 13.63 | 336.26 |
 
-Zero timeouts and zero errors on the cheap endpoint in every run. The cheap
-endpoint's p95 degrades ~30x with K on the synchronous path (4.2 → 128 ms) and
-stays flat on the async one (3.9 → 5.2 ms): **25x better at K=128**, parity at
-K=8 where there is no contention to speak of.
+(ms.)
 
-The sync runs also collect far fewer cheap samples (28-29 versus 86-296): the
-sampler is itself a synchronous view, so on the baseline it is competing for the
-same threads the builds occupy.
-
-At K=128 both servers answered 120/128 — the missing 8 are `429`s from the
-`pipeline_validate` throttle (120/min, #635), identical on both, i.e. the
-throttle doing its job rather than anything this change caused.
+The cheap endpoint's p95 **climbs with load on the synchronous path** (61 ->
+154 ms) and **stays flat on the pool** (35 -> 13.6 ms): about **11x better at
+K=96**. The async p95 *improves* as K rises, which is the giveaway -- the pool
+caps how much work is ever in flight, so additional load queues instead of
+landing on the server.
 
 ## The cost, stated plainly
 
@@ -246,16 +234,55 @@ burst of K validations:
 
 | K | sync | async (8 workers) |
 |---:|---:|---:|
-| 8   | 2.04 s | 2.05 s  |
-| 32  | 2.15 s | 8.21 s  |
-| 64  | 2.29 s | 16.18 s |
-| 128 | 2.86 s | 30.54 s |
+| 8  | 2.46 s | 2.42 s  |
+| 32 | 2.32 s | 8.23 s  |
+| 64 | 2.55 s | 16.66 s |
+| 96 | 3.11 s | 24.65 s |
 
-That is the trade being made on purpose. The synchronous path was fast at K=128
-because Django's ASGI handler gives every HTTP request its own
-`ThreadSensitiveContext` thread — so 128 anonymous requests bought 128 threads,
-and the rest of the API paid for them (the p95 column above). The pool converts
-that into queueing at a fixed cost.
+The async column is `K / workers * delay` almost to the decimal (96 / 8 * 2 s =
+24 s, measured 24.65 s). The sync column is flat at every K because the
+synchronous view simply ran every build at once, on its own thread each.
+
+**That is the trade, and it should be read as a trade rather than a win.** The
+synchronous path drained a burst faster *by being unbounded*, and everything
+else in the process paid for it -- that is the p95 column above. The pool
+converts that into queueing at a fixed, chosen cost.
+
+Note the burst column scales directly with the injected 2 s delay, which is a
+stand-in, not a measured production build. Read it as `K / workers x build
+cost`, not as an absolute latency.
+
+## Pool width: why 8
+
+Same K=96 burst, same 2 s injected build, one fresh server per width (the
+executor is built at import), 120 s timeout:
+
+| workers | cheap p50 | cheap **p95** | cheap max | burst wall |
+|---:|---:|---:|---:|---:|
+| 4  | 3.85 | 6.06  | 107.48  | 48.62 s |
+| 8  | 3.50 | **5.55**  | 122.21  | 24.36 s |
+| 16 | 3.98 | 14.55 | 1119.00 | 12.92 s |
+| 32 | 3.68 | 78.07 | 1098.71 | 7.16 s  |
+
+All 96 requests answered 200 at every width; no timeouts.
+
+**Eight is a knee, and the knee is sharp in one direction.** Going 4 -> 8 halves
+burst time *and* improves p95. Going 8 -> 16 -> 32 keeps halving burst time but
+costs p95 2.6x then 14x, and the max jumps by an order of magnitude.
+
+The limit is not core count -- the host has 32. A validation build is
+Python-bound, so past a handful of workers the extra parallelism buys burst
+throughput by taking GIL time from the loop thread that serves every other
+request. Widening this pool spends exactly what the async conversion was for.
+
+`AnnotationMixin.VALIDATE_POOL_WORKERS` holds the value and
+`test_the_validation_pool_width_is_pinned` fails if it changes, because every
+other assertion about the pool passes at any width.
+
+**Caveat on precision:** this host was not idle (load average 7-19 from other
+work during the runs), and each cell is a single run rather than a best-of-N.
+The ordering is stable and the effect sizes are large, but treat individual
+milliseconds as indicative.
 
 ## Note on #164's finding
 

@@ -1,7 +1,9 @@
 """Views for pipeline creation and manipulation."""
+import asyncio
 import time
+from concurrent.futures import Future
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, TypeVar
 
 import yaml
 from asgiref.sync import sync_to_async
@@ -46,6 +48,8 @@ from web_annotation.pipeline_cache import (
 from web_annotation.pipelines.throttling import PipelineValidationRateThrottle
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 
 class UserPipeline(AnnotationBaseView):
@@ -698,6 +702,33 @@ class PipelineValidation(AsyncAnnotationBaseView):
 
         return Response(result, status=views.status.HTTP_200_OK)
 
+    @staticmethod
+    async def _await_cancellable(future: Future[_T]) -> _T:
+        """Await a per-request pool task, cancelling it if the caller goes.
+
+        ``await_build`` on its own deliberately leaves the submitted future
+        running when the awaiting task is cancelled, because it is written
+        for *shared* builds: several callers can await one cached build, and
+        one of them navigating away must not cancel the build the others are
+        still waiting on.
+
+        Nothing this view submits is shared. Each task belongs to exactly one
+        request, so once that request is gone the task has no consumer at
+        all -- and the editor's debounce makes abandoned requests the normal
+        case, not an edge one. Left queued, they occupy a bounded pool with
+        work nobody will read while live requests wait behind them.
+
+        Only a task that has not started can be stopped -- ``cancel()`` is a
+        no-op once a worker has picked it up, and Python cannot interrupt a
+        running thread. Queued-and-superseded is the case this addresses, and
+        it is the one a debounced editor produces in bulk.
+        """
+        try:
+            return await await_build(future)
+        except asyncio.CancelledError:
+            future.cancel()
+            raise
+
     async def _acount_annotators(self, content: str) -> int | None:
         """Await the declared-annotator count on the bounded validation pool.
 
@@ -718,7 +749,7 @@ class PipelineValidation(AsyncAnnotationBaseView):
         and this is not where it is reopened). The measured residual is
         recorded in ``docs/659-validate-async-slo.md``.
         """
-        return await await_build(
+        return await self._await_cancellable(
             self.VALIDATE_EXECUTOR.execute(_count_annotators, content=content),
         )
 
@@ -736,7 +767,7 @@ class PipelineValidation(AsyncAnnotationBaseView):
         future, so the caller's ``format_config_error`` sees the same
         exception it saw when the parse ran inline.
         """
-        return await await_build(
+        return await self._await_cancellable(
             self.VALIDATE_EXECUTOR.execute(
                 AnnotationConfigParser.parse_str,
                 content=content, grr=self.grr,
@@ -746,13 +777,13 @@ class PipelineValidation(AsyncAnnotationBaseView):
     async def _abuild_pipeline(self, content: str) -> None:
         """Await the validation build on the bounded validation pool.
 
-        ``await_build`` rather than ``asyncio.wrap_future``: it settles a
-        per-request waiter from the submitted future, so cancelling this
-        request (a client that navigated away mid-keystroke, which the
-        editor's debounce makes routine) cancels only the waiter and leaves
-        the running build to finish on its worker.
+        The build belongs to one request and nothing else awaits it, so if
+        that request goes away the task is cancelled rather than left to
+        occupy a worker for a result no one will read -- see
+        ``_await_cancellable``. A build already running finishes; only a
+        queued one can be stopped.
         """
-        await await_build(
+        await self._await_cancellable(
             self.VALIDATE_EXECUTOR.execute(
                 self._build_pipeline, content=content, grr=self.grr,
             ),
