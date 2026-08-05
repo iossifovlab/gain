@@ -63,7 +63,37 @@ is found to carry genuinely contradictory rows for one allele, that is a content
 question for `iossifovlab/grr` about that resource, not a reason for gain to
 refuse the kind.
 
+## The knock-on: carrying `ref`/`alt` in the column-array read
+
+Refusing the duplicate rule also settles gain#665, which existed only to serve
+it. That issue asked for two things, and the rejection above removes the ground
+under both.
+
+It asked to carry `ref`/`alt` through `fetch_region_value_arrays`, so that
+`AlleleScore.validate_record_arrays` could see the key columns and state the
+duplicate rule on the vectorized path. With no duplicate rule, nothing on that
+path needs them: the ordering rule reads the begins and nothing else, so
+`validate_record_arrays` already states the whole of what an allele score
+promises, and already agrees with `validate_records` — which is what ADR 0008
+asks of a pair of validators. The batch shape therefore stays
+`(pos_begin, pos_end, {score_id: values})`.
+
+It also asked to "restore" `AlleleScore`'s bulk eligibility, which gain#663
+would have surrendered by returning `False` from `_bulk_scan_eligible` rather
+than let a completed scan mean two different things depending on which path
+ran. That trade was never made — gain#663 did not ship — so nothing was lost. A
+tabix-backed allele score is bulk-eligible on master today, pinned by
+`test_allele_score_is_bulk_scan_eligible`, and keeps the vectorized histogram
+and min/max win.
+
+This is not a standing refusal to ever carry the key columns. It says there is
+no consumer for them, so a future proposal has to arrive with its own
+motivation — and pay for itself against the cost gain#665 already identified:
+`ref`/`alt` are `str`, so they would ride as `object` arrays, which is the
+per-row memory the array path exists to avoid.
+
 ## Prior requests
 
 - iossifovlab/gain#663 — "AlleleScore.validate_records: refuse a duplicate (pos, ref, alt) key"
 - iossifovlab/grr#23 — "Duplicate (chrom, pos, ref, alt) keys in 7 published allele scores"
+- iossifovlab/gain#665 — "Carry ref/alt in the column-array read; restore AlleleScore bulk eligibility" (downstream of gain#663; see the knock-on section above)
