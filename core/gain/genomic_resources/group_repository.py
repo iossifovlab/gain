@@ -1,7 +1,8 @@
 """Provides group genomic resources repository."""
 
-import logging
 from collections.abc import Generator
+
+from gain import logging
 
 from .repository import (
     GenomicResource,
