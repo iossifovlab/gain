@@ -104,6 +104,14 @@ the command that reported this, and one landed only in the CLI would leave
 is what lets one definition serve both: the CLI consumes the pairs and keeps
 its per-row child, and the plain resource stream is the projection.
 
+*Why this is a generalization rather than a new posture.* One "cannot answer"
+case already behaves exactly this way. A repository whose index has no
+`contents` table — built with no resource in it, or one whose every resource
+the build had to skip — logs a warning naming the repository and the repair,
+and yields nothing (gain#464). A group already tolerates that child and moves
+on. This decision extends the same treatment to the two cases that raise
+instead, rather than inventing a tolerance the codebase did not have.
+
 *Why not simply steer `-s` users to `-q`.* `-q '*[assay_term_name="ATAC-seq"]'`
 returns the same 369 resources across the whole group with no error, so
 rejecting the `-s` spelling with a message naming the `-q` one was a real
