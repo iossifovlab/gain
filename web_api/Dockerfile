@@ -16,10 +16,17 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.3 /uv /uvx /usr/local/bin/
 
 # Build deps for transitive wheels (pyBigWig from gain-core needs gcc +
 # libcurl) plus libmagic1 at import-time for python-magic.
+#
+# libhdf5-dev + pkg-config are for h5py, which arrives through
+# `gain-core` -> `anndata` and ships no cp314 wheel before 3.15.0, so the
+# 3.14 cell builds it from its sdist. See core/Dockerfile for why the lock
+# cannot move past h5py 3.14.0, and when these can come back out.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         libcurl4-openssl-dev \
+        libhdf5-dev \
         libmagic1 \
+        pkg-config \
         git \
     && rm -rf /var/lib/apt/lists/*
 
