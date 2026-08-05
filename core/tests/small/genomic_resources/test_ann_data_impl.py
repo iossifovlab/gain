@@ -19,6 +19,11 @@ DESCRIBE_ANN_DATA = "statistics/describe_ann_data.txt"
 
 STATISTICS = {DESCRIBE_OBS, DESCRIBE_VAR, DESCRIBE_ANN_DATA}
 
+# anndata renders a shape with U+00D7 MULTIPLICATION SIGN rather than an
+# ASCII ``x``, and the statistic is that rendering verbatim.  Spelled as an
+# escape so the source carries no character a reader could mistake for ``x``.
+TIMES = "\u00d7"
+
 
 @pytest.fixture
 def resource(tmp_path: pathlib.Path) -> GenomicResource:
@@ -67,6 +72,36 @@ def test_statistics_task_skips_an_annotation_table_with_no_columns(
 
     assert not resource.file_exists(DESCRIBE_OBS)
     assert resource.file_exists(DESCRIBE_VAR)
+
+
+def test_ann_data_description_omits_the_backing_file_path(
+    resource: GenomicResource, tmp_path: pathlib.Path,
+) -> None:
+    # ``AnnData._gen_repr`` appends ``backed at '<filename>'`` whenever the
+    # read is backed, and the h5ad loader backs every read.  That is the
+    # reader's own state, not the resource's: it makes the statistic record
+    # where it happened to be built, so the same resource describes itself
+    # differently on two machines -- and the file is published from the GRR.
+    build_statistics(resource)
+
+    description = resource.get_file_content(DESCRIBE_ANN_DATA)
+
+    assert "backed at" not in description
+    assert str(tmp_path) not in description
+
+
+def test_ann_data_description_still_reports_the_shape_and_columns(
+    resource: GenomicResource,
+) -> None:
+    # Removing the backing clause must take nothing else with it: the shape
+    # and the axis-table columns are the whole content of this statistic.
+    build_statistics(resource)
+
+    description = resource.get_file_content(DESCRIBE_ANN_DATA)
+
+    assert f"n_obs {TIMES} n_vars = 3 {TIMES} 4" in description
+    assert "obs: 'cell_type', 'n_genes'" in description
+    assert "var: 'gene_name', 'highly_variable'" in description
 
 
 def test_statistics_task_id_names_the_resource(
@@ -350,7 +385,49 @@ def test_statistics_hash_defaults_the_format_to_h5ad(
     tmp_path: pathlib.Path,
 ) -> None:
     # The default the loader actually applies, not data_frame's ``csv``.
+    # This is the ``.h5ad`` suffix resolving to ``h5ad``; it cannot tell a
+    # suffix-derived answer from a hardcoded one, because here they agree --
+    # that is what let the drift ship.  The 10x case above discriminates.
     resource = an_ann_data().without_format_key().build_resource(tmp_path)
+
+    payload = json.loads(
+        AnnDataResourceImplementation(resource).calc_statistics_hash())
+
+    assert payload["config"]["format"] == "h5ad"
+
+
+def test_statistics_hash_records_the_suffix_derived_format(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A config that spells out no ``format:`` is read as whatever its suffix
+    # implies, so that is what the hash has to record.  Recording the h5ad
+    # fallback regardless makes an explicit ``format: h5ad`` a no-op on the
+    # hash -- the read changes and the statistics never rebuild.
+    resource = (
+        an_ann_data()
+        .with_format("10x_mtx")
+        .without_format_key()
+        .build_resource(tmp_path)
+    )
+
+    payload = json.loads(
+        AnnDataResourceImplementation(resource).calc_statistics_hash())
+
+    assert payload["config"]["format"] == "10x_mtx"
+
+
+def test_statistics_hash_records_a_declared_format_over_the_suffix(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The declaration is what the loader reads the resource as, so it is what
+    # the hash records -- deriving from the suffix regardless would put the
+    # two back out of step, in the other direction.
+    resource = (
+        an_ann_data()
+        .with_format("10x_mtx")
+        .with_declared_format("h5ad")
+        .build_resource(tmp_path)
+    )
 
     payload = json.loads(
         AnnDataResourceImplementation(resource).calc_statistics_hash())
