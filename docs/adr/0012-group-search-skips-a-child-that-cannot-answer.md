@@ -1,6 +1,6 @@
 # 12. A group repository skips a child that cannot answer a search, and fails only when none can
 
-**Status:** proposed
+**Status:** accepted
 **Date:** 2026-08-05
 **Issues:** iossifovlab/gain#680; the label-vocabulary half settled by ADR 0007
 
@@ -90,7 +90,10 @@ contents-less one — the failure is the index-unavailable error, because
 repairing that repository could change the answer and the caller has been told
 nothing wrong. Only when *every* child could read its index and every one of
 them rejected the filter is the failure a `SearchTermError`. The message names
-the group and lists each child with its own reason either way.
+the group and lists one reason per **leaf** either way: a nested group hands
+its own leaves' reasons up rather than nesting a summary of them, because an
+intermediate group has no index of its own to build, so naming it tells a
+reader nothing they can act on.
 
 **The rule lands once, as a per-child generator on the group.**
 `search_resources_by_child` yields `(holder, resource)` pairs, and

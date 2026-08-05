@@ -294,3 +294,54 @@ def test_grr_browse_lists_what_it_can_instead_of_exiting(
     assert err == ""
     assert "scores/a" in out
     assert "scores/b" not in out
+
+
+def test_a_type_filter_is_skipped_per_child_like_a_term(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The rule is about a filter, not only about a search term.
+
+    ``resource_type`` routes through the index too -- the search only
+    short-circuits to ``get_all_resources`` when the term and the type are
+    both unset -- so ``-t`` against a group with an unindexed child is the
+    same bug, and must be skipped the same way.
+    """
+    group = GenomicResourceGroupRepo([
+        _build_child(tmp_path / "one", "scores/a", {"assay": "atac"}),
+        _build_child(
+            tmp_path / "two", "scores/b", {"assay": "atac"}, indexed=False),
+    ])
+
+    found = {
+        res.resource_id
+        for res in group.search_resources(resource_type="position_score")
+    }
+
+    assert found == {"scores/a"}
+
+
+def test_a_nested_group_reports_the_leaves_not_the_group_between(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The reasons flatten: a reader repairs a leaf, never a group.
+
+    Naming the intermediate group would report a repository that has no
+    index of its own to build, and would bury the ones that do behind a
+    nested message.
+    """
+    inner_leaf = _build_child(
+        tmp_path / "one", "scores/a", {"assay": "atac"}, indexed=False)
+    outer_leaf = _build_child(
+        tmp_path / "two", "scores/b", {"assay": "atac"}, indexed=False)
+    group = GenomicResourceGroupRepo([
+        GenomicResourceGroupRepo([inner_leaf], repo_id="the_middle_group"),
+        outer_leaf,
+    ])
+
+    with pytest.raises(SearchIndexUnavailableError) as excinfo:
+        list(group.search_resources(search_term="scores"))
+
+    message = str(excinfo.value)
+    assert inner_leaf.repo_id in message
+    assert outer_leaf.repo_id in message
+    assert "the_middle_group" not in message

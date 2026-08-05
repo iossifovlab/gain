@@ -15,6 +15,62 @@ from .resource_query import ResourceQuery
 logger = logging.getLogger(__name__)
 
 
+def _render_reasons(leaf_reasons: list[tuple[str, str]]) -> str:
+    return "; ".join(f"{repo_id}: {reason}" for repo_id, reason in leaf_reasons)
+
+
+def _leaf_reasons(
+    repo_id: str, err: Exception,
+) -> list[tuple[str, str]]:
+    """Reduce a skipped child's failure to leaf-level reasons.
+
+    A child that is itself a group already carries one entry per leaf, and
+    those are what a reader acts on -- an intermediate group has no index of
+    its own to build, so naming it says nothing and buries the repositories
+    that do behind a nested message.
+    """
+    nested = getattr(err, "leaf_reasons", None)
+    if nested:
+        return list(nested)
+    return [(repo_id, str(err))]
+
+
+class _NoChildCouldApplyIt(SearchIndexUnavailableError):
+    """No child of a group had an index to apply the filter with.
+
+    Carries one reason per leaf so an enclosing group can splice them in
+    rather than nest them.
+    """
+
+    def __init__(
+        self, repo_id: str, leaf_reasons: list[tuple[str, str]],
+    ) -> None:
+        self.leaf_reasons = tuple(leaf_reasons)
+        super().__init__(
+            repo_id,
+            "no child repository could apply this search "
+            f"({_render_reasons(leaf_reasons)})")
+
+
+class _EveryChildRejectedIt(SearchTermError):
+    """Every child read its index and rejected the filter.
+
+    Carries one reason per leaf, for the same reason as
+    :class:`_NoChildCouldApplyIt`.
+    """
+
+    def __init__(
+        self, search_term: str, repo_id: str,
+        leaf_reasons: list[tuple[str, str]],
+    ) -> None:
+        self.leaf_reasons = tuple(leaf_reasons)
+        super().__init__(
+            search_term,
+            ValueError(
+                f"no child repository of <{repo_id}> could answer it "
+                f"({_render_reasons(leaf_reasons)})"))
+
+
 class GenomicResourceGroupRepo(GenomicResourceRepo):
     """Defines group genomic resources repository."""
 
@@ -127,7 +183,8 @@ class GenomicResourceGroupRepo(GenomicResourceRepo):
         resource_query: str | None,
     ) -> Generator[tuple[GenomicResourceRepo, GenomicResource], None, None]:
         answered = False
-        skipped: list[tuple[str, Exception]] = []
+        skipped: list[tuple[str, str]] = []
+        unreadable = False
         for child_repo in self.children:
             # Counted rather than `yield from`ed: absorption is bounded to
             # a child that failed before yielding anything. Both absorbed
@@ -157,7 +214,12 @@ class GenomicResourceGroupRepo(GenomicResourceRepo):
                 logger.warning(
                     "repository <%s> cannot answer this search, skipping "
                     "it: %s", child_repo.repo_id, err)
-                skipped.append((child_repo.repo_id, err))
+                # Flattened, not nested: a child that is itself a group
+                # hands back its own leaves' reasons, and it is a leaf that
+                # gets repaired.
+                skipped.extend(_leaf_reasons(child_repo.repo_id, err))
+                unreadable = unreadable or isinstance(
+                    err, SearchIndexUnavailableError)
                 continue
             # Answered, even if it matched nothing: only a skip leaves the
             # filter unevaluated against that child's resources.
@@ -167,11 +229,13 @@ class GenomicResourceGroupRepo(GenomicResourceRepo):
             # No child evaluated the filter at all, so an empty result would
             # be a lie -- it would read as "nothing matched" when nothing
             # was searched.
-            raise self._nothing_could_answer(search_term, skipped)
+            raise self._nothing_could_answer(
+                search_term, skipped, unreadable=unreadable)
 
     def _nothing_could_answer(
         self, search_term: str | None,
-        skipped: list[tuple[str, Exception]],
+        skipped: list[tuple[str, str]],
+        *, unreadable: bool,
     ) -> Exception:
         """Build the failure for a search no child could evaluate.
 
@@ -184,23 +248,13 @@ class GenomicResourceGroupRepo(GenomicResourceRepo):
         read its index and every one of them rejected the filter is the
         filter itself at fault.
         """
-        reasons = "; ".join(
-            f"{repo_id}: {err}" for repo_id, err in skipped)
-        if any(
-            isinstance(err, SearchIndexUnavailableError)
-            for _, err in skipped
-        ):
-            return SearchIndexUnavailableError(
-                self.repo_id,
-                f"no child repository could apply this search ({reasons})")
+        if unreadable:
+            return _NoChildCouldApplyIt(self.repo_id, skipped)
         # Every child read its index and rejected the filter, so the filter
         # names something no repository here publishes.
-        return SearchTermError(
+        return _EveryChildRejectedIt(
             search_term if search_term is not None else "",
-            ValueError(
-                f"no child repository of <{self.repo_id}> could answer it "
-                f"({reasons})"),
-        )
+            self.repo_id, skipped)
 
     def get_resource(
             self, resource_id: str, version_constraint: str | None = None,

@@ -73,7 +73,7 @@ of one decision will drift.
 | [0009](0009-jenkins-pipeline-definition-trust.md) | Push access to `gain` is Jenkins controller access | accepted |
 | [0010](0010-resource-file-name-containment.md) | Resource file names are contained by construction | accepted |
 | [0011](0011-deprecate-cnv-collection-vocabulary.md) | The `cnv_collection` configuration vocabulary is deprecated, removed in 2027.1.0 | accepted |
-| [0012](0012-group-search-skips-a-child-that-cannot-answer.md) | A group repository skips a child that cannot answer a search, and fails only when none can | proposed |
+| [0012](0012-group-search-skips-a-child-that-cannot-answer.md) | A group repository skips a child that cannot answer a search, and fails only when none can | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > "Numbers are never reused" is a rule about not re-issuing a *retired* number;
