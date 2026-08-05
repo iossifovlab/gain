@@ -10,10 +10,10 @@ A search carries two filters that can name a label, and only one of them is
 independent of any single repository's index.
 
 `resource_query` (`-q`) spells a label as a `LabelClause` evaluated against
-`meta.labels`. ADR 0007 and its gain#634 amendment made that **independent of
-any column vocabulary**: an absent label reads as `""`, and a clause the index
-has no column for is deferred and re-asked of the resources the statement
-yields.
+`meta.labels`, and is **independent of any column vocabulary**: an absent label
+reads as `""` (ADR 0007), and every clause is asked of the resource's own live
+labels rather than of the index — gain#634 for the keys with no column,
+gain#646 for the rest.
 
 `search_term` (`-s`) is handed to FTS5 as a `MATCH` expression, and FTS5's
 expression grammar includes a **column filter** — `assay_term_name: "ATAC-seq"`
@@ -173,9 +173,9 @@ return the same 369 resources on the measured group.
 *Why not make absence silent.* Matching ADR 0007's "an absent label reads as
 empty" exactly would mean skipping a child with no warning. That reads well
 until a label key is mistyped, at which point the search returns zero rows and
-says nothing. The asymmetry is deliberate: 0007 could be silent because a
-deferred clause is still evaluated against each resource the statement yields;
-here the child is not consulted at all.
+says nothing. The asymmetry is deliberate: 0007 could be silent because the
+clause is still evaluated against each resource the statement yields; here the
+child is not consulted at all.
 
 *Why `[key="*"]` is left alone.* In a group with disjoint vocabularies, 0007's
 tautology is sharper than 0007 anticipated — `-q '*[biosample_summary="*"]'`
@@ -199,13 +199,15 @@ buy the has-this-label test back.
   response schema the web UI consumes; carrying the skips in the payload is
   gain#686. The CLI has no such gap — its warning lands in the terminal beside
   the rows.
-- **A stale index loses resources here in a way `-q` does not.** gain#634 could
-  re-ask a deferred label clause of each resource the statement yields, because
-  a `LabelClause` is `fnmatch` over a rendered value, which Python can
-  reproduce exactly. A `search_term` has no such fallback — FTS5 tokenization
-  is not reproducible in Python — so a child whose published index predates a
-  label a curator added is skipped rather than deferred. Rebuilding the index
-  with `grr_manage repo-repair` is the only fix, which is what the warning says.
+- **A stale index loses resources here in a way `-q` does not.** gain#634 and
+  gain#646 could re-ask a label clause of each resource the statement yields,
+  because a `LabelClause` is `fnmatch` over a rendered value, which Python can
+  reproduce exactly — which is why `-q` now reads a label out of the resource
+  whatever the index recorded. A `search_term` has no such fallback: FTS5
+  tokenization is not reproducible in Python, so a child whose published index
+  predates a label a curator added is skipped rather than re-asked. Rebuilding
+  the index with `grr_manage repo-repair` is the only fix, which is what the
+  warning says.
 - **The no-index failure needs a typed exception.** It is currently a bare
   `ValueError` that `cli_list` recognises by string-matching `"SQLite metadata
   DB" not in str(err)`. Shared code cannot absorb it on that basis, and the
