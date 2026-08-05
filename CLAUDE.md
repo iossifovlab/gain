@@ -228,6 +228,19 @@ These are internal records and sit deliberately
 outside `docs/source/`, which is the published GAIn
 documentation site.
 
+### Domain language
+
+`CONTEXT.md` at the repo root records the terms this
+project uses for its own domain, and the ambiguities
+that have actually caused bugs — which of two things
+"searching by label" means, and what "the label is not
+present in this GRR" can each be. It is grown a term at
+a time as ambiguities are resolved, not maintained as a
+complete glossary. **Check it before naming a concept
+in an issue or a docstring**; an ADR explains why a
+decision was made, `CONTEXT.md` fixes what the words in
+it mean.
+
 ### Docstrings describe the present, not the past
 
 **A class or method docstring says what the code does
