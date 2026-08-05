@@ -136,6 +136,42 @@ class AnnotationMixin:
             job_timeout=settings.ANNOTATION_TASK_TIMEOUT,
             thread_name_prefix="interactive-annotate")
 
+    #: Dedicated bounded pool for the *anonymous* pipeline-validation builds
+    #: (#659). Deliberately NOT ``ANNOTATE_EXECUTOR``: ``/api/pipelines/
+    #: validate`` sets no ``authentication_classes`` and is reachable without
+    #: a session, while the interactive-annotate pool serves an authenticated,
+    #: quota'd endpoint. Sharing one pool would let unauthenticated traffic
+    #: fill every worker and starve the endpoint that costs a user quota --
+    #: precisely the shared-resource occupancy this issue removes from the
+    #: sync-view thread, re-created one level down.
+    #:
+    #: The bound is the point: the synchronous view it replaces got a thread
+    #: per concurrent request (Django's ASGI handler gives each request its
+    #: own ``ThreadSensitiveContext``), so concurrency was whatever arrived.
+    #: What one client can ask for is capped by the per-request bounds and
+    #: the ``pipeline_validate`` throttle scope (#635); this caps what all of
+    #: them together can occupy.
+    #:
+    #: The width is measured, not guessed -- see
+    #: ``docs/659-validate-async-slo.md`` for the run. It sits at a knee, and
+    #: the knee is sharp in one direction: at a 96-request burst the cheap
+    #: endpoint's p95 is 6.1 ms at four workers, 5.6 ms at eight, 14.6 ms at
+    #: sixteen and 78 ms at thirty-two, while burst wall time halves with
+    #: each doubling (48.6 s / 24.4 s / 12.9 s / 7.2 s). Eight is where the
+    #: cheap endpoint is cheapest AND the burst has already halved from four.
+    #:
+    #: Past it the trade inverts, and not because of core count (the host has
+    #: 32): a validation build is Python-bound, so additional workers buy
+    #: burst throughput by taking GIL time from the loop thread that serves
+    #: every other request. Widening this pool spends the very thing the
+    #: async conversion was for.
+    VALIDATE_POOL_WORKERS: ClassVar[int] = 8
+
+    VALIDATE_EXECUTOR: TaskExecutor = ThreadedTaskExecutor(
+            max_workers=VALIDATE_POOL_WORKERS,
+            job_timeout=settings.ANNOTATION_TASK_TIMEOUT,
+            thread_name_prefix="pipeline-validate")
+
     tool_columns: ClassVar = [
         "col_chrom",
         "col_pos",

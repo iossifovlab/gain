@@ -172,6 +172,21 @@ export class JobsService {
       map((response: object) => {
         return response['errors'] as string;
       }),
+      // A request that failed carries no verdict on the config, so it must
+      // not reach the caller through the errors string -- that channel means
+      // "your pipeline is wrong". Both messages are written to say that the
+      // config was not looked at and that trying again is worth it.
+      catchError((err: HttpErrorResponse) => {
+        switch (err.status) {
+          // The server shed the validation: its bounded validation pool is
+          // full (iossifovlab/gain#659). Nothing was attempted, and the same
+          // text will validate once the backlog drains.
+          case 503: return throwError(() => new Error(
+            'The server is busy; your pipeline was not validated. Try again in a moment.'));
+          default: return throwError(() => new Error(
+            'The pipeline could not be validated. Try again in a moment.'));
+        }
+      })
     );
   }
 

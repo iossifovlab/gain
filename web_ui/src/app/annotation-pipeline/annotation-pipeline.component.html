@@ -116,6 +116,12 @@
   @if(configError || loadError) {
   <div class="error-message">{{ configError || loadError }}</div>
   }
+  <!-- The validation request failed, which says nothing about the config.
+       Its own element and its own colour so it cannot be mistaken for the
+       error-message above. -->
+  @if(validationUnavailable) {
+  <div class="validation-unavailable-message">{{ validationUnavailable }}</div>
+  }
 </div>
 
 <div id="pipeline-actions">
