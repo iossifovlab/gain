@@ -151,21 +151,27 @@ class _Sanitizer(HTMLParser):
 
     def _emit_tag(
         self, tag: str, attrs: list[tuple[str, str | None]],
-        *, self_closing: bool,
     ) -> None:
+        """Write a start tag, self-closed only where HTML says it is.
+
+        Whether the source spelled the tag ``<tag>`` or ``<tag/>`` is
+        not an input here: HTML5 reads the slash on a non-void element
+        as nothing at all, so honouring it would emit a tag that opens
+        an element the sanitizer then never closes.
+        """
         rendered = [tag]
         rendered.extend(
             name if value is None else f'{name}="{escape(value)}"'
             for name, value in attrs
         )
-        closing = " />" if self_closing or tag in _VOID_TAGS else ">"
+        closing = " />" if tag in _VOID_TAGS else ">"
         self._parts.append(f"<{' '.join(rendered)}{closing}")
 
     def handle_starttag(
         self, tag: str, attrs: list[tuple[str, str | None]],
     ) -> None:
         if _is_allowed(tag, attrs):
-            self._emit_tag(tag, attrs, self_closing=False)
+            self._emit_tag(tag, attrs)
             if tag not in _VOID_TAGS:
                 self._open_tags.append(tag)
         else:
@@ -174,10 +180,19 @@ class _Sanitizer(HTMLParser):
     def handle_startendtag(
         self, tag: str, attrs: list[tuple[str, str | None]],
     ) -> None:
-        if _is_allowed(tag, attrs):
-            self._emit_tag(tag, attrs, self_closing=True)
-        else:
-            self._emit_as_text(self.get_starttag_text() or f"<{tag}/>")
+        """Read ``<tag/>`` as the start tag a browser reads it as.
+
+        HTML5 ignores the trailing slash on an element that is not void,
+        so ``<a href="..."/>`` opens an anchor exactly as ``<a
+        href="...">`` does -- and a formatting element a browser has
+        opened is carried across the markup that follows.  Emitting it
+        self-closed and not recording it would therefore hand the rest
+        of the page to whatever a resource wrote: the ``result``
+        invariant holds only if this form is tracked like any other
+        start tag.  A void tag is unaffected -- it has no end tag, and
+        :meth:`_emit_tag` still writes it self-closed.
+        """
+        self.handle_starttag(tag, attrs)
 
     def handle_endtag(self, tag: str) -> None:
         if tag in _VOID_TAGS:

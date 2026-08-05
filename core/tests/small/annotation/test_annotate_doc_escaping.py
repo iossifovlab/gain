@@ -17,6 +17,7 @@ markdown2 mangles an unquoted one and would test something weaker.
 """
 from __future__ import annotations
 
+import collections
 import pathlib
 import textwrap
 from html.parser import HTMLParser
@@ -67,6 +68,61 @@ def parse_page(page: str) -> _PageDom:
     dom = _PageDom()
     dom.feed(page)
     return dom
+
+
+#: Elements HTML gives no closing tag, so a reader never keeps them open.
+#: Every other element stays open until its end tag arrives -- HTML5
+#: ignores a trailing ``/`` on a start tag, so ``<a href="..."/>`` opens
+#: an anchor exactly as ``<a href="...">`` does.
+VOID_ELEMENTS = frozenset({
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+    "meta", "param", "source", "track", "wbr",
+})
+
+
+class _TagBalance(HTMLParser):
+    """Count the start and end tags a reader takes from the page.
+
+    A start tag with no end tag is not a cosmetic defect: ``a``, ``em``
+    and the rest of the formatting elements are carried across the
+    markup that follows -- a browser reopens them after the enclosing
+    ``</p>`` -- so an element a resource leaves open styles or links the
+    rest of the document.  Counting tokens rather than walking a stack
+    is deliberate: a stack repairs the nesting on the first end tag it
+    can match, which hides exactly the imbalance under test.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started: collections.Counter[str] = collections.Counter()
+        self.ended: collections.Counter[str] = collections.Counter()
+
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]],
+    ) -> None:
+        if tag not in VOID_ELEMENTS:
+            self.started[tag] += 1
+
+    def handle_startendtag(
+        self, tag: str, attrs: list[tuple[str, str | None]],
+    ) -> None:
+        # A browser ignores the `/`, so `<a .../>` is a start tag.
+        self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag not in VOID_ELEMENTS:
+            self.ended[tag] += 1
+
+
+def unclosed_elements(page: str) -> dict[str, int]:
+    """Elements the page opens more often than it closes."""
+    balance = _TagBalance()
+    balance.feed(page)
+    return {
+        tag: count - balance.ended[tag]
+        for tag, count in balance.started.items()
+        if count > balance.ended[tag]
+    }
 
 
 def dangerous_url(value: str) -> bool:
@@ -314,6 +370,53 @@ def test_a_comparison_in_a_score_desc_stays_visible(
     page = render_doc_page(tmp_path, "significant when p < 0.05 holds")
 
     assert "significant when p < 0.05 holds" in "".join(parse_page(page).text)
+
+
+def test_a_self_closing_link_in_a_score_desc_does_not_stay_open(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A link written ``<a .../>`` is closed like any other link.
+
+    HTML5 ignores the trailing slash on an element that is not void, so
+    the anchor a resource writes this way opens for real; a reader keeps
+    it open across the following markup until some later end tag closes
+    it.  Left unclosed it reaches past the documentation it was written
+    in -- the histogram image and the annotator sections that follow
+    become a live link to the address the resource chose.
+    """
+    page = render_doc_page(
+        tmp_path, 'DESC<a href="https://evil.example/gainxss623"/>')
+
+    assert "a" not in unclosed_elements(page)
+
+
+def test_a_self_closing_emphasis_in_a_score_desc_does_not_run_on(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Emphasis written ``<em/>`` is closed rather than left open.
+
+    The same rule that keeps ``<a .../>`` open keeps ``<em/>`` open, and
+    documentation is rendered *into* a page: an element a resource
+    leaves open styles the rest of the document.
+    """
+    page = render_doc_page(tmp_path, "DESC<em/>gainxss623tail")
+
+    assert "em" not in unclosed_elements(page)
+
+
+def test_a_line_break_in_a_score_desc_stays_a_line_break(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``<br/>`` is markup documentation legitimately writes.
+
+    A void element has no end tag, so writing it self-closed is the
+    correct spelling and it must keep working -- the spliceai plugin
+    writes ``<br/>`` in an attribute description.
+    """
+    page = render_doc_page(tmp_path, "before623<br/>after623")
+
+    assert "br" in parse_page(page).tags
+    assert "</br>" not in page
 
 
 @pytest.mark.parametrize("payload", [
