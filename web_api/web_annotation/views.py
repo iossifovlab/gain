@@ -28,6 +28,7 @@ from web_annotation.authentication import WebAnnotationAuthentication
 from web_annotation.serializers import UserSerializer
 from web_annotation.throttling import (
     AccountConfirmRateThrottle,
+    FirstRefusalThrottledAPIView,
     LoginIdentifierRateThrottle,
     LoginRateThrottle,
     PasswordResetIdentifierRateThrottle,
@@ -136,14 +137,17 @@ class Logout(views.APIView):
         return Response(views.status.HTTP_204_NO_CONTENT)
 
 
-class Login(views.APIView):
+class Login(FirstRefusalThrottledAPIView):
     """View for logging in."""
     parser_classes: ClassVar = [JSONParser]
 
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
     # Both axes are checked, and exceeding either answers 429: one host
     # spraying many accounts is stopped by the first, many hosts spraying one
-    # account by the second (gain#694).
+    # account by the second (gain#694). The per-IP axis is listed first and
+    # the check stops at the first refusal, so a request this host is already
+    # not allowed to make does not also spend the victim's per-address
+    # budget -- see FirstRefusalThrottledAPIView.
     throttle_classes: ClassVar = [
         LoginRateThrottle, LoginIdentifierRateThrottle,
     ]
@@ -258,13 +262,15 @@ class ConfirmAccount(views.APIView):  # USE
         return HttpResponseRedirect(redirect_uri)
 
 
-class ForgotPassword(views.APIView):
+class ForgotPassword(FirstRefusalThrottledAPIView):
     """View for forgotten password."""
 
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
     # Dual-keyed like login, and for the same reason -- except that here every
     # served request also sends a mail, so the per-IP bucket is the tightest
-    # of the five (gain#694).
+    # of the five (gain#694). Per-IP first, and the check stops there: an
+    # hourly per-address bucket charged by refused requests would lock a
+    # mailbox out of the reset for the rest of the hour.
     throttle_classes: ClassVar = [
         PasswordResetRateThrottle, PasswordResetIdentifierRateThrottle,
     ]
