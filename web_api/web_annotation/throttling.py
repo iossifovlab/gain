@@ -34,7 +34,9 @@ unset, so a view is limited only by listing a throttle in its
   exempt, because a three-an-hour budget spent on page renders locks a user
   out before a single mail is sent
 * ``auth_password_reset_identifier`` -- ``/api/forgotten_password``, per
-  submitted email
+  submitted email, on the POSTs only as well: both axes of one endpoint have
+  to exempt the same methods, or the exempt one becomes a free way to spend
+  the other (see ``SafeMethodExemptRateThrottle``)
 * ``auth_confirm`` -- ``/api/confirm_account`` and ``/api/reset_password``,
   per client IP
 
@@ -72,7 +74,11 @@ from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from rest_framework.exceptions import APIException
 from rest_framework.permissions import SAFE_METHODS
-from rest_framework.throttling import SimpleRateThrottle, UserRateThrottle
+from rest_framework.throttling import (
+    BaseThrottle,
+    SimpleRateThrottle,
+    UserRateThrottle,
+)
 from rest_framework.views import APIView
 
 from web_annotation.utils import get_ip_from_request
@@ -291,7 +297,34 @@ class RegisterRateThrottle(ClientIpRateThrottle):
     scope = "auth_register"
 
 
-class PasswordResetRateThrottle(ClientIpRateThrottle):
+class SafeMethodExemptRateThrottle(BaseThrottle):
+    """A mixin whose throttle neither refuses nor charges a safe method.
+
+    Not a throttle on its own: it keys nothing and must be mixed in ahead of
+    a real one, whose ``allow_request`` it short-circuits. The exemption is
+    decided before any bucket is keyed, so nothing is recorded -- and on the
+    identifier-keyed side ``request.data`` is never touched, so a safe method
+    no longer parses a body that only the POST path reads.
+
+    Every throttle on one endpoint has to agree about this, which is why the
+    exemption lives here rather than being written out twice. An endpoint
+    whose per-IP axis is exempt while its per-address axis is not is strictly
+    worse than one with no exemption: the safe method then charges someone
+    else's bucket while paying into none of its own, so an attacker can hold
+    a victim's per-address bucket full forever -- with GET, HEAD or OPTIONS,
+    since all three carry a body DRF will parse -- for free. That is the
+    lockout ``FirstRefusalThrottledAPIView`` exists to prevent, re-entered
+    through the exemption.
+    """
+
+    def allow_request(self, request: Any, view: Any) -> bool:
+        if request.method in SAFE_METHODS:
+            return True
+        return cast("bool", super().allow_request(request, view))
+
+
+class PasswordResetRateThrottle(SafeMethodExemptRateThrottle,
+                                ClientIpRateThrottle):
     """Per-IP cap on the ``/api/forgotten_password`` requests that send mail.
 
     A served POST here sends a mail through the production relay, so this is
@@ -304,27 +337,30 @@ class PasswordResetRateThrottle(ClientIpRateThrottle):
     would lock them out of resetting their password for an hour without a
     single mail having been sent.
 
-    So safe methods are exempt. This gives up nothing: the form render costs
-    one template and touches no user, no mail relay and no database, and every
-    path that can send a mail is a POST, still budgeted at the full rate. The
-    other four throttles have no such split -- login and register are POST
-    only, and on the code-redeeming endpoints the GET *is* the redemption, so
-    exempting it there would leave code guessing unthrottled.
+    So safe methods are exempt, on this axis and on the per-address one
+    alike -- see ``SafeMethodExemptRateThrottle`` for why they cannot differ.
+    This gives up nothing: the form render costs one template and touches no
+    user, no mail relay and no database, and every path that can send a mail
+    is a POST, still budgeted at the full rate. The other four throttles have
+    no such split -- login and register are POST only, and on the
+    code-redeeming endpoints the GET *is* the redemption, so exempting it
+    there would leave code guessing unthrottled.
     """
 
     scope = "auth_password_reset"
 
-    def allow_request(self, request: Any, view: Any) -> bool:
-        if request.method in SAFE_METHODS:
-            return True
-        return cast("bool", super().allow_request(request, view))
 
-
-class PasswordResetIdentifierRateThrottle(SubmittedEmailRateThrottle):
-    """Per-address cap on ``/api/forgotten_password``.
+class PasswordResetIdentifierRateThrottle(SafeMethodExemptRateThrottle,
+                                          SubmittedEmailRateThrottle):
+    """Per-address cap on the ``/api/forgotten_password`` POSTs.
 
     Bounds how many reset mails one mailbox can be made to receive, however
     many hosts ask for them.
+
+    Safe methods are exempt here for the same reason they are on the per-IP
+    axis, and it matters more: this bucket is not the requester's own. A
+    method the per-IP axis does not charge must not charge this one either,
+    or spending someone else's reset budget costs nothing.
     """
 
     scope = "auth_password_reset_identifier"
