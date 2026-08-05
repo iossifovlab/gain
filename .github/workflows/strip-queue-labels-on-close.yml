@@ -1,0 +1,51 @@
+# Queue-state labels describe pending work. A closed issue has none, so they
+# are removed on close -- otherwise they accumulate and the queries that drive
+# triage stop meaning anything (`ready-for-agent` was matching 100 finished
+# issues before this landed).
+#
+# Labels describing the CLOSURE itself are deliberately NOT touched:
+# `wontfix` and `out-of-scope` are how closed issues are found later.
+name: Strip queue labels on close
+
+on:
+  issues:
+    types: [closed]
+
+permissions:
+  issues: write
+
+jobs:
+  strip-queue-labels:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove queue-state labels
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+
+          # Read the labels off the event payload rather than interpolating
+          # ${{ github.event.* }} into this script: label and title text is
+          # attacker-controlled, and interpolation would splice it into the
+          # shell. NUMBER and REPO above are safe (integer, owner/repo).
+          queue='["in-progress","needs-triage","ready-for-agent",
+                  "ready-for-human","needs-info","blocked"]'
+
+          present=$(jq -r --argjson q "$(echo "$queue" | tr -d '\n ')" \
+            '.issue.labels[].name | select(. as $l | $q | index($l))' \
+            "$GITHUB_EVENT_PATH")
+
+          if [ -z "$present" ]; then
+            echo "No queue-state labels on #${NUMBER}; nothing to do."
+            exit 0
+          fi
+
+          while IFS= read -r label; do
+            echo "Removing '${label}' from #${NUMBER}"
+            encoded=$(jq -rn --arg l "$label" '$l|@uri')
+            gh api -X DELETE \
+              "repos/${REPO}/issues/${NUMBER}/labels/${encoded}" \
+              --silent
+          done <<< "$present"
