@@ -325,12 +325,22 @@ def test_a_script_in_a_score_desc_is_not_a_script_element(
 @pytest.mark.parametrize("payload", [
     '<img src="x" onerror="gainxss623desc()">',
     '<svg onload="gainxss623desc()"></svg>',
+    '<a href="#" onclick="gainxss623desc()">click</a>',
 ])
 def test_a_handler_in_a_score_desc_lands_no_handler_on_the_page(
     tmp_path: pathlib.Path,
     payload: str,
 ) -> None:
-    """An event handler in a score desc is not an attribute of any tag."""
+    """An event handler in a score desc is not an attribute of any tag.
+
+    The handler is refused on a tag documentation is allowed to write
+    (``a``) as well as on tags it is not (``img``, ``svg``).  Only the
+    first exercises the attribute check: the others never reach it,
+    because the tag itself is already outside the vocabulary -- so
+    without the anchor, a resource writing ``<a href="#"
+    onclick="...">`` would land a live handler on the page and nothing
+    here would notice.
+    """
     page = render_doc_page(tmp_path, f"DESC{payload}")
 
     assert event_handler_attributes(page) == []
