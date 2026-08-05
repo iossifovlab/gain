@@ -60,6 +60,23 @@ emptied it instead. Such a clause is now handed back to the caller and
 re-asked of each resource the statement yields, which the indexed path already
 materialises in full.
 
+*Amended by gain#646:* label clauses are no longer pushed down at all. `#634`
+reached only the keys with no column; a key that **does** have a column was
+still settled out of the value the index recorded when it was built, which a
+curator's edit to the value makes wrong in both directions — a false negative
+on the live value, and, unlike `#634`, a false **positive** on the recorded
+one, returning a resource that does not satisfy the query. No post-filter
+repairs the first: it is a row the statement never yields. So the index now
+narrows by `contents MATCH`, by `type` and by the id glob, and **every**
+`LabelClause` is handed back to the caller and asked of the resource's own
+`meta.labels`. The two routes then agree on every resource the index knows
+about, whatever it recorded for a label.
+
+The rest of the decision stands. Absence still reads as `""` — that is what
+`matches_in` does for a key the resource lacks, exactly as the index's `""`
+did. Not restating the comparisons in SQL stands too, and is now moot for
+labels and load-bearing only for the id glob, which keeps its scalar function.
+
 The half of the decision that accepts the empty string stands, and needs no
 column: a clause that matches `""` is a tautology under this grammar — a value
 must be at least one character, so `in` can never accept `""`, and the only
@@ -122,13 +139,29 @@ materialisation, which the side table above would enable.
   The collision is refused at index-build time instead, so a name in
   `GR_INDEX_NON_LABEL_COLUMNS` can never also be a label and the column has
   one meaning.
+
+  *Amended by gain#646:* the enumeration now matters only at index-build
+  time. "A clause on one of them must not be answered out of the column that
+  shares its name" was a statement about the read path, which no longer
+  answers any label clause out of any column — a clause naming a field is
+  asked of the resource's `meta.labels` like every other, and holds for no
+  resource, since the build refuses such a label. The refusal above stays
+  necessary: it is what keeps the *column* unambiguous for the filters that
+  are still answered out of the index.
 - **A published index is untrusted input on this path.** The read path
   deserializes whatever `.CONTENTS.sqlite3.gz` the repository serves, so the
   vetting `#464` added to the index *build* guarantees nothing here. Column
-  names are re-checked against `INDEX_COLUMN_RE` before one is spliced, and
-  the identifier is quoted as well. Without both, a crafted column name
-  reached through a label key — the grammar admits parentheses — bypassed the
-  id glob and the type filter.
+  names were re-checked against `INDEX_COLUMN_RE` before one was spliced, and
+  the identifier quoted as well. Without both, a crafted column name reached
+  through a label key — the grammar admits parentheses — bypassed the id glob
+  and the type filter.
+
+  *Amended by gain#646:* no label key is spliced into the statement any more,
+  so there is nothing on this path for a crafted column name to reach and the
+  read-path re-check is gone with it. The index-*build* vetting stays — it
+  answers `#464` and `#542`, which this does not make redundant — and the test
+  that publishes a hostile column stays too, now pinning that such a key
+  simply names a label no resource carries.
 - The Python path remains, and is the only one that works on a repository
   with no `.CONTENTS.sqlite3.gz`. A query-only search still never opens the
   index. The two are pinned against each other by a differential test rather
@@ -139,11 +172,21 @@ materialisation, which the side table above would enable.
   construction and it could not see a divergence that only a stale index
   produces. It now also runs against a repository whose index was published
   before one of its labels.
-- **The routes agree only up to what the index knows.** A published index is
-  a separate artefact from the resources, and nothing forces it to be current.
-  A label *value* edited since the index was built is still answered out of
-  the recorded value on the indexed route and out of the resource on the
-  Python route — gain#646, open, and not closed by #634, which reaches only
-  the keys the index has no column for at all. A resource added since the
-  index was built is not returned by the indexed route at all; that one is
-  inherent, since only the index can answer a `search_term`.
+
+  *Extended by gain#646:* an index predating a label *key* is only half of
+  stale. The differential also runs against one published before a label
+  *value* was edited, over clauses naming both the live value and the
+  recorded one — the second direction being the one that catches a resource
+  returned that does not satisfy the query.
+- **The routes agree for every resource the index knows about.** A published
+  index is a separate artefact from the resources, and nothing forces it to be
+  current, so the qualification is not idle: a resource added since the index
+  was built is not returned by the indexed route at all. That much is
+  inherent, since only the index can answer a `search_term`, and rebuilding
+  with `grr_manage` is what closes it. What gain#646 settles is narrower than
+  staleness as a whole: a *label* clause is read from the resource on both
+  routes. `search_term` and `resource_type` both route through the index and
+  are still answered out of the values it recorded, so a `meta.description`
+  or a `type` edited since the build reads as it was then — the same
+  false-negative/false-positive pair, in the two filters that only the index
+  can serve.

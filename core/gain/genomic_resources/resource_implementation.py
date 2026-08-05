@@ -329,12 +329,15 @@ class GenomicResourceImplementation(ABC):
         # through (gain#542).
         #
         # Unconditional on purpose -- do NOT narrow this to "only when the
-        # repository also holds a score resource".  The query translator
-        # subtracts these names on every search, so a label spelled like
-        # one of them is unanswerable whatever else the repository holds;
-        # and the index's columns are the union across the repository, so
-        # whether the collision exists would otherwise depend on which
-        # other resources happen to be present.
+        # repository also holds a score resource".  The column such a label
+        # would need is already the field's, so one row cannot record both
+        # whatever else the repository holds; and the index's columns are
+        # the union across the repository, so whether the collision exists
+        # would otherwise depend on which other resources happen to be
+        # present.  Note this is about what can be *indexed*, not about
+        # what a query can ask: since gain#646 no label key reaches the
+        # search statement at all, so a label spelled like a field is
+        # answered from the resource's own `meta.labels` on both routes.
         validate_index_columns(
             res.resource_id,
             (*sorted(GR_INDEX_NON_LABEL_COLUMNS), *labels.keys()),
