@@ -17,8 +17,9 @@ and then either
 * calls :meth:`MetaMixin.append_meta_into` after delegating the config
   writing to a ``setup_*`` helper (the reference-genome path).
 
-Both are no-ops when neither :meth:`MetaMixin.with_meta` nor
-:meth:`MetaMixin.with_labels` was called, so a builder that does not use
+Both are no-ops until one of :meth:`MetaMixin.with_meta`,
+:meth:`MetaMixin.with_labels`, :meth:`MetaMixin.with_raw_labels` or
+:meth:`MetaMixin.with_raw_meta` is called, so a builder that does not use
 them realizes byte-identical output.
 
 It lives in its own module (like :mod:`.score_specs`) so the builder DSL can
@@ -41,16 +42,29 @@ from gain.genomic_resources.testing.score_specs import ResourceValidationError
 class MetaMixin:
     """Immutable ``meta:`` state shared by every resource builder.
 
-    A frozen dataclass carrying the three ``meta:`` fields, so a builder
-    that mixes it in gains ``with_meta``/``with_labels`` -- and the
-    rendering behind them -- without redeclaring either.  All three fields
-    default to ``None``, which is what keeps the block absent from the
-    rendered config unless it was asked for.
+    A frozen dataclass carrying the ``meta:`` fields, so a builder that
+    mixes it in gains ``with_meta``/``with_labels`` -- and the rendering
+    behind them -- without redeclaring either.  Nothing is declared by
+    default, which is what keeps the block absent from the rendered
+    config unless it was asked for.
+
+    A value and a *declared* flag rather than a value alone: ``labels:``
+    and ``meta:`` can each be declared as an explicit YAML ``null``, and
+    that renders differently from not declaring them at all -- the one
+    emits the key with nothing after it, the other emits no key.  The
+    flag carries that distinction, so the value field holds exactly what
+    the caller passed and stays comparable, copyable and picklable.
     """
 
     meta_summary: str | None = None
     meta_description: str | None = None
-    meta_labels: dict[str, Any] | None = None
+    # ``Any``, not ``dict[str, Any] | None``: `meta.labels` is free-form
+    # YAML and ``with_raw_labels`` exists to declare whatever it allows.
+    meta_labels: Any = None
+    meta_labels_declared: bool = False
+    #: The whole ``meta:`` block, when ``with_raw_meta`` replaced it.
+    meta_raw: Any = None
+    meta_raw_declared: bool = False
 
     def with_meta(
         self, *, summary: str | None = None, description: str | None = None,
@@ -85,7 +99,45 @@ class MetaMixin:
         ``with_chrom_mapping`` precedent) and is deep-copied, so neither the
         mapping nor a mutable value inside it stays shared with the caller.
         """
-        return dataclasses.replace(self, meta_labels=copy.deepcopy(labels))
+        return self.with_raw_labels(labels)
+
+    def with_raw_labels(self, labels: Any) -> Self:
+        """Emit ``labels:`` as an arbitrary YAML value, mapping or not.
+
+        ``meta.labels`` is free-form YAML, so what a curator writes there
+        is not necessarily a mapping -- a scalar, a list and an explicit
+        ``null`` are all things a resource can carry, and each one has to
+        be expressible for the readers of ``meta.labels`` to be tested
+        against it (gain#654).  :meth:`with_labels` takes keyword
+        arguments and therefore only ever builds a mapping; this is its
+        sibling for everything else, ``with_raw_labels(None)`` being the
+        explicit ``labels: null`` spelling.  The value REPLACES any
+        previously declared one and is deep-copied, on the same terms.
+        """
+        return dataclasses.replace(
+            self,
+            meta_labels=copy.deepcopy(labels),
+            meta_labels_declared=True,
+        )
+
+    def with_raw_meta(self, meta: Any) -> Self:
+        """Emit the whole ``meta:`` block as an arbitrary YAML value.
+
+        ``meta:`` is as free-form as the ``labels:`` inside it, so a
+        resource can declare it as a scalar or a list too, and a reader of
+        ``meta.labels`` has to be tested against that shape as well
+        (gain#654).  Where :meth:`with_raw_labels` replaces one field,
+        this replaces the block: whatever is passed becomes the value of
+        ``meta:`` verbatim, and any ``summary``/``description``/``labels``
+        declared alongside it is not rendered.  ``with_raw_meta(None)`` is
+        the explicit ``meta: null`` spelling, as ``with_raw_labels(None)``
+        is for the field.  Deep-copied on the same terms as its sibling.
+        """
+        return dataclasses.replace(
+            self,
+            meta_raw=copy.deepcopy(meta),
+            meta_raw_declared=True,
+        )
 
     def render_meta(self) -> str:
         """Render the ``meta:`` block, or ``""`` when nothing was declared.
@@ -94,12 +146,16 @@ class MetaMixin:
         carrying a colon, a newline or leading whitespace stays the string
         it was authored as.
         """
+        if self.meta_raw_declared:
+            return yaml.safe_dump(
+                {"meta": self.meta_raw},
+                default_flow_style=False, sort_keys=False)
         meta: dict[str, Any] = {}
         if self.meta_summary is not None:
             meta["summary"] = self.meta_summary
         if self.meta_description is not None:
             meta["description"] = self.meta_description
-        if self.meta_labels is not None:
+        if self.meta_labels_declared:
             meta["labels"] = self.meta_labels
         if not meta:
             return ""
