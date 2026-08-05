@@ -103,50 +103,100 @@ def _check_allele_arity(
         count, expected)
 
 
+def _reports_empty_elements(meta: Any) -> bool:
+    """Whether an absent element of this field can be called malformed.
+
+    Only in a ``String`` field.  There pysam decodes the spec's own
+    missing-value token ``.`` to the literal string ``'.'`` and reserves
+    ``None`` for an element the row declared and did not supply, so a
+    ``None`` is malformed data and can be reported as such.
+
+    Every other type collapses the two: ``AF=0.5,.`` and ``AF=0.5,`` both
+    decode to ``(0.5, None)``, and so does a whole-field ``AF=.``.  A report
+    there would call a spec-legal row malformed and send the resource's
+    author to a locus with nothing wrong at it, on data where a missing
+    element is ordinary -- so the empty element is dropped, silently.
+    """
+    return bool(meta.type == "String")
+
+
+def _report_empty_element(
+    record: Record, score_def: GenomicScoreDef,
+) -> None:
+    """Report this field's empty element, once per field per table.
+
+    The flag is ``score_def.empty_element_warned`` -- the field's own, not a
+    share of the arity check's, so an arity report and an empty-element
+    report cannot silence each other.  Why once, and why the message names
+    the field and the locus, is #289's reasoning unchanged: see
+    :func:`_check_allele_arity`.
+    """
+    if score_def.empty_element_warned:
+        return
+    score_def.empty_element_warned = True
+    logger.warning(
+        "INFO field %s of %s:%s carries an empty element; the VCF row is "
+        "malformed and an element with no value of its own contributes "
+        "nothing to the value read. Reported once per table.",
+        score_def.score_id, record[CHROM], record[POS_BEGIN])
+
+
+def _report_no_value(
+    record: Record, score_def: GenomicScoreDef,
+) -> None:
+    """Report a field present with no value at all, once per table.
+
+    ``ORIGIN=`` names the key and supplies nothing after the ``=``, which
+    pysam decodes to the empty tuple -- no element to be empty, so
+    :func:`_report_empty_element` never sees it, and the score reads null.
+
+    Shares that function's flag: both say one thing about one field -- it
+    declared a value it does not carry -- and a reader needs to hear it once.
+    """
+    if score_def.empty_element_warned:
+        return
+    score_def.empty_element_warned = True
+    logger.warning(
+        "INFO field %s of %s:%s is present but carries no value at all; the "
+        "VCF row is malformed and the score reads as null. Reported once "
+        "per table.",
+        score_def.score_id, record[CHROM], record[POS_BEGIN])
+
+
 def _drop_empty_elements(
-    record: Record, score_def: GenomicScoreDef, value: tuple,
+    record: Record, score_def: GenomicScoreDef, value: tuple, meta: Any,
 ) -> tuple:
     """Return ``value`` without its empty elements, reporting the first row.
 
     An element of a multi-valued INFO field is EMPTY when the row declares it
     and supplies nothing -- ``ORIGIN=1,``, ``ORIGIN=a,,b``, ``ORIGIN=,b`` --
-    and pysam decodes such an element as ``None``.  That is malformed under
-    the VCF spec, and nothing rejects it: not pysam, not resource load.  The
-    read answers it by the rule #256 and #289 settled for the per-allele
-    shapes -- no value, no score -- so the element contributes nothing to the
-    joined value.  (A tuple left with no elements at all is turned into a
-    null by the caller, the only place that knows what the join would
-    otherwise have produced.)
+    and pysam decodes such an element as ``None``.  Nothing rejects it:
+    not pysam, not resource load.  The read answers it by the rule #256 and
+    #289 settled for the per-allele shapes -- no value, no score -- so the
+    element contributes nothing to the joined value.  (A tuple left with no
+    elements at all is turned into a null by the caller, the only place that
+    knows what the join would otherwise have produced.)
 
     ``None`` is the whole test, deliberately: this is NOT a falsy filter.  A
     ``String`` field's ``.`` decodes as the literal string ``'.'`` and is a
     value dbSNP's ``CAF``/``TOPMED`` carry meaningfully, ``'0'`` is a value,
     and ``''`` is a value; only an element pysam decoded as absent is one.
-    (In a numeric field ``.`` IS the spec's missing value and pysam decodes it
-    to ``None`` too -- the same nothing, dropped for the same reason.)
 
-    **Reported once per field per table**, through
-    ``score_def.empty_element_warned`` -- its own flag, not the arity check's,
-    so the two cannot silence each other.  Why once, and why the message
-    names the field and the locus, is #289's reasoning unchanged: see
-    :func:`_check_allele_arity`.
+    Dropping is unconditional; REPORTING is not, and
+    :func:`_reports_empty_elements` says which fields have earned it.
 
-    The membership test comes FIRST, before the flag -- the reverse of that
-    check's order.  It is the only work a WELL-FORMED table pays here (one
-    C-level scan of a tuple that has to be walked to be joined anyway) and it
-    returns the tuple itself, so the common shape allocates nothing; testing
-    the flag first would put an attribute read in front of every well-formed
-    record to save one on the malformed ones.
+    The membership test comes FIRST, before both the type test and the flag
+    -- the reverse of the arity check's order.  It is the only work a
+    WELL-FORMED table pays here (one C-level scan of a tuple that has to be
+    walked to be joined anyway) and it returns the tuple itself, so the
+    common shape allocates nothing; testing the flag first would put an
+    attribute read in front of every well-formed record to save one on the
+    malformed ones.
     """
     if None not in value:
         return value
-    if not score_def.empty_element_warned:
-        score_def.empty_element_warned = True
-        logger.warning(
-            "INFO field %s of %s:%s carries an empty element; the VCF row is "
-            "malformed and an element with no value of its own contributes "
-            "nothing to the value read. Reported once per table.",
-            score_def.score_id, record[CHROM], record[POS_BEGIN])
+    if _reports_empty_elements(meta):
+        _report_empty_element(record, score_def)
     return tuple(element for element in value if element is not None)
 
 
@@ -181,16 +231,27 @@ def extract_vcf_value(
     * anything else -- handed to ``parse_value``, which joins it on '|'
       through the ``converter`` ``parse_vcf_scoredefs`` installed.
 
-    **Every shape that is not per-allele has its EMPTY elements dropped
-    first** (#630), by :func:`_drop_empty_elements`.  ``ORIGIN=1,`` declares a
-    value it does not carry; pysam decodes that element as ``None``, and
-    joining it was the one operation whose outcome depended on nothing but
-    the field's declared ``Type`` -- ``"|".join`` raised ``TypeError`` here
-    and took the whole fetch, while the ``converter``'s ``map(str, ...)``
-    silently annotated the text ``'3|None'`` for every other type.  The drop
-    is done HERE, once, for both -- this is the layer that still has the
-    record, so it is the only one that can name the row it reports, and it
-    leaves the ``converter`` a tuple that cannot contain a ``None``.
+    **An EMPTY element contributes nothing, whatever the shape** (#630).
+    ``ORIGIN=1,`` declares a value it does not carry, and pysam decodes that
+    element as ``None``.  Joining one was the operation whose outcome
+    depended on nothing but the field's declared ``Type`` -- ``"|".join``
+    raised ``TypeError`` here and took the whole fetch, while the
+    ``converter``'s ``map(str, ...)`` silently annotated the text
+    ``'3|None'`` for every other type -- so the non-per-allele shapes drop
+    their empty elements through :func:`_drop_empty_elements` before either
+    join sees one, and a tuple left with nothing reads null rather than the
+    ``''`` a join of nothing produces.  The drop is done HERE, once, for
+    both joins: this is the layer that still has the record, so it is the
+    only one that can name the row it reports, and it leaves the
+    ``converter`` a tuple that cannot contain a ``None``.
+
+    The per-allele shapes need no drop -- an empty element they select is
+    already the null they give an allele with no value of its own -- but
+    they REPORT it, because the row is malformed either way and the arity
+    check cannot see it: ``ALT=T,G  S=d1,`` carries one value per allele and
+    trips nothing, while its second allele reads null for want of a value
+    the row said it had.  Which fields can say that of a ``None`` at all is
+    :func:`_reports_empty_elements`.
 
     **Neither per-allele selection trusts the tuple to be the right length**
     (#289).  Nothing rejects a row whose value count does not match its ALT
@@ -247,6 +308,8 @@ def extract_vcf_value(
             if allele_index >= len(value):
                 return None
             value = value[allele_index]
+            if value is None and _reports_empty_elements(meta):
+                _report_empty_element(record, score_def)
         elif number == "R":
             _check_allele_arity(record, score_def, number, len(value))
             # Get reference allele value if ALT is '.'
@@ -254,17 +317,19 @@ def extract_vcf_value(
             if index >= len(value):
                 return None
             value = value[index]
+            if value is None and _reports_empty_elements(meta):
+                _report_empty_element(record, score_def)
         else:
             # Not per-allele: every element of this tuple contributes to one
             # joined value, so an empty one has to go before either join sees
-            # it.  (The per-allele branches above need no drop -- an empty
-            # element they select is already the null they give an allele
-            # with no value of its own.)
-            value = _drop_empty_elements(record, score_def, value)
+            # it.
+            value = _drop_empty_elements(record, score_def, value, meta)
             if not value:
                 # Nothing left to join, and a join of nothing is ``''`` --
                 # a present, aggregatable, bin-able value.  A field carrying
                 # no value at all reads as the null an absent key does.
+                if _reports_empty_elements(meta):
+                    _report_no_value(record, score_def)
                 return None
             if number == "." and meta.type == "String":
                 value = "|".join(value)
