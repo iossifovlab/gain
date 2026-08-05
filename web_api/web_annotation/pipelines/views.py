@@ -574,9 +574,23 @@ class PipelineValidation(AsyncAnnotationBaseView):
         3 * AnnotationMixin.VALIDATE_POOL_WORKERS
     )
 
-    # Advertised on the 503. The queue this sheds against is drained by
-    # validation builds, so a second is the order of the wait a client should
-    # expect -- and the editor's own retry is a keystroke away regardless.
+    # Advertised on the 503. A hint, NOT a prediction -- it is a fixed number
+    # and the wait it describes is not.
+    #
+    # Measured against the containerised stack: with builds fast enough that
+    # nothing accumulates, a saturated pool is serving again inside two
+    # seconds, and a second is about right. With a slow build (5 s injected,
+    # 80 concurrent) the same shed took 63 s to clear -- and that is the
+    # regime in which shedding actually happens, so the honest reading is
+    # that this under-promises exactly when it matters.
+    #
+    # Kept at a second deliberately. Being wrong here is cheap in the
+    # direction it is wrong: the refusal is decided from `size()` before any
+    # pool work, so a client that takes the hint literally and retries buys
+    # another refusal for almost nothing, and the editor revalidates on the
+    # next keystroke regardless. Deriving it from queue depth would need a
+    # per-task cost this endpoint does not measure; #666 is where the cost
+    # itself gets addressed.
     SHED_RETRY_AFTER_SECONDS: ClassVar[int] = 1
 
     @classmethod
