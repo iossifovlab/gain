@@ -49,6 +49,13 @@ tight identifier bucket is a lockout denial-of-service, since anyone who knows
 an address could burn that user's budget. That axis catches distributed
 spraying; it is not the primary limit.
 
+The two axes only stay independent because the dual-keyed views derive from
+``FirstRefusalThrottledAPIView``: DRF would otherwise charge the per-address
+bucket for requests the per-IP bucket has already refused, and the lockout
+the generous rate exists to avoid would be back. The per-IP axis is also
+address-keyed for authenticated requests, not user-keyed -- see
+``ClientIpRateThrottle``.
+
 Throttle state lives in Django's default ``LocMemCache``: it is per-process
 and wiped on every redeploy. That is only sound because production runs a
 single daphne process (iossifovlab/gain#150) -- scaling to replicas would
@@ -66,8 +73,43 @@ from django.core.validators import validate_email
 from rest_framework.exceptions import APIException
 from rest_framework.permissions import SAFE_METHODS
 from rest_framework.throttling import SimpleRateThrottle, UserRateThrottle
+from rest_framework.views import APIView
 
 from web_annotation.utils import get_ip_from_request
+
+
+class FirstRefusalThrottledAPIView(APIView):
+    """An APIView whose throttle check stops at the first refusal.
+
+    DRF's ``APIView.check_throttles`` calls ``allow_request`` on every
+    configured throttle and only raises once all of them have run, while
+    ``SimpleRateThrottle`` records a hit in its bucket for every request it
+    allows. A throttle listed after another therefore charges its bucket for
+    a request the earlier one has already refused.
+
+    On the dual-keyed endpoints that turns the deliberately generous
+    per-address axis into a lockout denial-of-service. One host can POST
+    thirty logins a minute carrying a victim's address: its own per-IP bucket
+    refuses twenty of them, but all thirty land in the per-address bucket, so
+    the owner of that address is refused login -- from every address, for as
+    long as the attacker keeps going. The 3x ratio between the two rates
+    bounds nothing here, because the attacker is not paying the per-IP rate
+    while spending the identifier budget. On ``/api/forgotten_password`` it
+    is worse still: nine POSTs an hour, only three of them served, cost the
+    victim the password reset for the rest of the hour.
+
+    So the first throttle to refuse ends the check and nothing after it is
+    charged. The views list the per-IP axis first, which is the order that
+    makes a refusal cost the refused client's own bucket and no one else's.
+    The reported ``Retry-After`` becomes the first refusing throttle's wait
+    rather than the longest across all of them -- the wait for the bucket the
+    client is actually sitting behind.
+    """
+
+    def check_throttles(self, request: Any) -> None:
+        for throttle in self.get_throttles():
+            if not throttle.allow_request(request, self):
+                self.throttled(request, throttle.wait())
 
 
 class SessionScopedUserRateThrottle(UserRateThrottle):
@@ -77,6 +119,17 @@ class SessionScopedUserRateThrottle(UserRateThrottle):
         if request.user and request.user.is_authenticated:
             return cast("str | None", super().get_cache_key(request, view))
 
+        return self.get_session_or_ip_cache_key(request, view)
+
+    def get_session_or_ip_cache_key(
+        self, request: Any, view: Any,
+    ) -> str | None:
+        """Key a request by session under e2e, otherwise by address.
+
+        The branch DRF takes for an anonymous request -- and the only branch
+        ``ClientIpRateThrottle`` ever takes, whether or not the request
+        carries a session (see there).
+        """
         if getattr(settings, "E2E_SESSION_SCOPED_THROTTLE", False):
             session = getattr(request, "session", None)
             session_key = getattr(session, "session_key", None)
@@ -119,7 +172,24 @@ class ClientIpRateThrottle(SessionScopedUserRateThrottle):
     DRF's own ``get_ident``, which reads the whole header when no hop count is
     configured -- would let a client be budgeted under one address and
     rate-limited under another.
+
+    Unlike the base class, this takes the session/IP path *unconditionally*:
+    an authenticated request is keyed by address too, never by user id. The
+    per-user bucket the base class inherits from DRF is a quota on work a
+    logged-in user asks for; nothing on the authentication surface is that.
+    Login, register and forgotten_password all install
+    ``WebAnnotationAuthentication``, and DRF authenticates before it checks
+    throttles, so a request carrying a valid session cookie arrives here
+    already authenticated -- and a per-user bucket would hand it a private
+    budget outside the address bucket entirely. An attacker who registers
+    and logs into N accounts would get N independent login budgets from one host
+    and could spray N times faster, with the identifier axis catching none of
+    it (spraying is one attempt per victim address). "Per client IP" has to
+    bind for everyone, session or no session.
     """
+
+    def get_cache_key(self, request: Any, view: Any) -> str | None:
+        return self.get_session_or_ip_cache_key(request, view)
 
     def get_ip_cache_key(
         self, request: Any, view: Any,  # noqa: ARG002

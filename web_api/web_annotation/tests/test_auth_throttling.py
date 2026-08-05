@@ -134,6 +134,97 @@ def test_login_is_rate_limited_per_submitted_email_across_ips(
 
 
 @pytest.mark.django_db
+def test_a_login_refused_by_the_ip_axis_does_not_charge_the_identifier(
+    anonymous_client: Client,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """A refused request must not spend the victim's identifier budget.
+
+    The two axes are only safe together if the generous one cannot be
+    emptied from behind the tight one. If a request the per-IP bucket
+    already refused still counts against the per-address bucket, one host
+    can keep a named account's bucket permanently full -- ten of its
+    requests a minute are served and the other twenty are 429s that still
+    charge -- and the real owner is refused login from every address. That
+    is the lockout denial-of-service the generous identifier rate exists to
+    avoid.
+    """
+    mocker.patch.dict(
+        LoginRateThrottle.THROTTLE_RATES,
+        {"auth_login": "1/minute", "auth_login_identifier": "3/minute"},
+    )
+
+    attacker = [
+        _login(anonymous_client, "user@example.com", ip="198.51.100.9")
+        for _ in range(3)
+    ]
+    victim = _login(anonymous_client, "user@example.com", ip="203.0.113.77")
+
+    assert attacker == [400, 429, 429]
+    assert victim == 400
+
+
+@pytest.mark.django_db
+def test_a_reset_refused_by_the_ip_axis_does_not_charge_the_identifier(
+    anonymous_client: Client,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Same lockout, and worse: reset budgets are hourly.
+
+    Nine POSTs an hour from one host -- three served, six already refused --
+    would exhaust the per-address reset bucket and leave the owner of that
+    address unable to ask for a reset from anywhere for the rest of the
+    hour.
+    """
+    mocker.patch.dict(
+        PasswordResetRateThrottle.THROTTLE_RATES,
+        {
+            "auth_password_reset": "1/hour",
+            "auth_password_reset_identifier": "3/hour",
+        },
+    )
+
+    attacker = [
+        _forgotten_password(
+            anonymous_client, "user@example.com", ip="198.51.100.9")
+        for _ in range(3)
+    ]
+    victim = _forgotten_password(
+        anonymous_client, "user@example.com", ip="203.0.113.77")
+
+    assert attacker == [200, 429, 429]
+    assert victim == 200
+
+
+@pytest.mark.django_db
+def test_the_ip_axis_binds_a_client_that_holds_a_session(
+    user_client: Client,
+    admin_client: Client,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """A session must not buy a private login bucket.
+
+    Login authenticates before DRF checks throttles, so a request carrying a
+    valid session cookie arrives at the throttle already authenticated. If
+    the per-IP throttle then keys such a request by user id -- as DRF's
+    UserRateThrottle does -- one host can register and log into N accounts
+    and password-spray at N times the per-IP rate, none of it charged to its
+    address. The identifier axis catches none of that: spraying is one
+    attempt per victim address. So the two sessions here share the one
+    address bucket, and the second request is refused.
+    """
+    mocker.patch.dict(
+        LoginRateThrottle.THROTTLE_RATES, {"auth_login": "1/minute"},
+    )
+
+    first = _login(user_client, "victim-one@example.com", ip="198.51.100.7")
+    second = _login(admin_client, "victim-two@example.com", ip="198.51.100.7")
+
+    assert first == 400
+    assert second == 429
+
+
+@pytest.mark.django_db
 def test_identifier_axis_does_not_disclose_account_existence(
     anonymous_client: Client,
     mocker: pytest_mock.MockerFixture,
