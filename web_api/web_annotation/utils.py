@@ -9,9 +9,12 @@ from django.contrib.auth import password_validation
 from django.contrib.sessions.models import Session
 from django.core.exceptions import ValidationError
 from django.db.models import ObjectDoesNotExist
+from django.http import HttpRequest
 from django.utils.translation import gettext_lazy
 from django.views.decorators.debug import sensitive_variables
 from rest_framework.request import Request
+from rest_framework.settings import api_settings
+from rest_framework.throttling import BaseThrottle
 
 from web_annotation.mail import send_email
 from web_annotation.models import (
@@ -324,7 +327,27 @@ def bytes_to_readable(raw_bytes: int) -> str:
     return result
 
 
-def get_ip_from_request(request: Request) -> str:
+def get_ip_from_request(request: HttpRequest | Request) -> str:
+    """Derive the client IP of ``request``, honouring the trusted-hop count.
+
+    This is the ONE place the web API interprets ``X-Forwarded-For``
+    (iossifovlab/gain#667): both the anonymous quota key
+    (``WebAnnotationAnonymousUser.ip``) and DRF's throttle bucket must agree,
+    or a client can be budgeted under one address and rate-limited under
+    another.
+
+    A configured hop count defers to DRF's own ``BaseThrottle.get_ident``
+    rather than reimplementing it, which is what keeps the two consumers on
+    the same address. See the ``GPFWA_NUM_PROXIES`` block in
+    ``settings_default`` for what each value of the hop count means.
+
+    ``NUM_PROXIES`` unset keeps the pre-#667 behaviour verbatim -- the LEFTMOST
+    entry, which is client-controlled. That is deliberate: #667 only makes the
+    rule configurable, #660 owns choosing the deployed hop count.
+    """
+    if api_settings.NUM_PROXIES is not None:
+        return str(BaseThrottle().get_ident(request))
+
     x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
     if x_forwarded_for:
         ip = x_forwarded_for.split(",")[0]

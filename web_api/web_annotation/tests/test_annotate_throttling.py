@@ -18,11 +18,15 @@ def _request(
     user_pk: int | None = None,
     session_key: str | None = None,
     ip: str = "10.0.0.1",
+    x_forwarded_for: str | None = None,
 ) -> Any:
     """Build a stand-in request exposing what the throttle key reads."""
     user = SimpleNamespace(is_authenticated=authenticated, pk=user_pk)
     session = SimpleNamespace(session_key=session_key)
-    return SimpleNamespace(user=user, session=session, META={"REMOTE_ADDR": ip})
+    meta = {"REMOTE_ADDR": ip}
+    if x_forwarded_for is not None:
+        meta["HTTP_X_FORWARDED_FOR"] = x_forwarded_for
+    return SimpleNamespace(user=user, session=session, META=meta)
 
 
 def test_anon_distinct_sessions_get_distinct_buckets(
@@ -58,6 +62,27 @@ def test_anon_same_session_shares_one_bucket(
     key2 = throttle.get_cache_key(_request(session_key="sess-A"), view=None)
 
     assert key1 == key2
+
+
+def test_session_scoped_bucket_ignores_forwarded_for(
+    settings: SettingsWrapper,
+) -> None:
+    # The session-keyed e2e branch reads no address at all, so configuring a
+    # trusted-hop count (iossifovlab/gain#667) leaves it alone: one session is
+    # one bucket however the header varies.
+    settings.E2E_SESSION_SCOPED_THROTTLE = True
+    settings.REST_FRAMEWORK = {**settings.REST_FRAMEWORK, "NUM_PROXIES": 1}
+    throttle = AnnotateUserRateThrottle()
+
+    key_a = throttle.get_cache_key(
+        _request(session_key="sess-A", x_forwarded_for="a, 10.0.0.1"),
+        view=None)
+    key_b = throttle.get_cache_key(
+        _request(session_key="sess-A", x_forwarded_for="b, c, 203.0.113.7"),
+        view=None)
+
+    assert key_a == "throttle_user_sess-A"
+    assert key_b == key_a
 
 
 def test_flag_off_keys_anonymous_by_ip_like_userratethrottle(

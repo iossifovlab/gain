@@ -8,6 +8,7 @@ from web_annotation.models import (
     UserWrapper,
     WebAnnotationAnonymousUser,
 )
+from web_annotation.utils import get_ip_from_request
 
 
 class WebAnnotationAuthentication(SessionAuthentication):
@@ -30,7 +31,7 @@ class WebAnnotationAuthentication(SessionAuthentication):
         assert session_id is not None
 
         if successful_auth is None:
-            ip = self.get_ip_from_request(request)
+            ip = get_ip_from_request(request)
             anonymous_user = WebAnnotationAnonymousUser(session_id, ip=ip)
             return (anonymous_user, None)
 
@@ -39,14 +40,6 @@ class WebAnnotationAuthentication(SessionAuthentication):
             raise exceptions.AuthenticationFailed("User type not recognized")
 
         return (UserWrapper(user, session_id), None)
-
-    def get_ip_from_request(self, request: HttpRequest) -> str:
-        x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
-        if x_forwarded_for:
-            ip = x_forwarded_for.split(",")[0]
-        else:
-            ip = request.META.get("REMOTE_ADDR")
-        return str(ip)
 
 
 class RequiredSessionAuthentication(SessionAuthentication):
