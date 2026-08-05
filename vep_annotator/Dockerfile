@@ -10,9 +10,16 @@ FROM ${PYTHON_IMAGE}
 COPY --from=ghcr.io/astral-sh/uv:0.11.3 /uv /uvx /usr/local/bin/
 
 # Build deps required by transitive gain-core dependencies (pyBigWig).
+#
+# libhdf5-dev + pkg-config are for h5py, which arrives through
+# `gain-core` -> `anndata` and ships no cp314 wheel before 3.15.0, so the
+# 3.14 cell builds it from its sdist. See core/Dockerfile for why the lock
+# cannot move past h5py 3.14.0, and when these can come back out.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         libcurl4-openssl-dev \
+        libhdf5-dev \
+        pkg-config \
         git \
         wget \
         tar \
