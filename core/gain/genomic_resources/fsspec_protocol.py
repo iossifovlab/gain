@@ -55,6 +55,7 @@ from gain.genomic_resources.repository import (
     ReadWriteRepositoryProtocol,
     ResourceFileState,
     ResourceScan,
+    SearchIndexUnavailableError,
     escape_unsafe_characters,
     is_generated_info_page,
     is_gr_id_token,
@@ -1109,8 +1110,9 @@ class FsspecReadOnlyProtocol(
         sqlite_filepath = os.path.join(
             self._fetch_url, GR_SQLITE_META_FILE_NAME)
         if not self.filesystem.exists(sqlite_filepath):
-            raise ValueError(
-                "Repository contents SQLite metadata DB not found!")
+            raise SearchIndexUnavailableError(
+                self.proto_id,
+                "Repository contents SQLite metadata DB not found")
 
         connection = apsw.Connection(":memory:")
         with self.filesystem.open(

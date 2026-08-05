@@ -56,9 +56,12 @@ _Avoid_: schema, index fields
 **Non-label column**:
 An index column that names a field of the resource rather than a label —
 `full_id`, `id`, `type`, `description`, `summary`, and an implementation's
-contributions such as `score_ids`. Enumerated as
-`GR_INDEX_NON_LABEL_COLUMNS`, and the only part of a
-**column vocabulary** guaranteed present in every GRR.
+contributions such as `score_ids`. Enumerated as `GR_INDEX_NON_LABEL_COLUMNS`.
+These are the *closest* thing to a portable **column vocabulary**, but none is
+unconditional: an index's columns are the union of what its resources
+contributed, so the score fields exist only where the GRR holds a score
+resource, and a GRR whose every resource failed to index has no `contents`
+table at all.
 _Avoid_: builtin column, system column
 
 ### Searching

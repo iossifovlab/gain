@@ -10,6 +10,7 @@ from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceProtocolRepo,
+    SearchIndexUnavailableError,
 )
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
@@ -703,23 +704,28 @@ def test_merge_index_columns_refuses_a_field_spelled_two_ways() -> None:
 
 def test_searching_a_repository_whose_index_holds_nothing(
     tmp_path: pathlib.Path,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     # Every resource rejected leaves an index with no searchable fields at
-    # all -- newly reachable from ordinary bad YAML.  Searching it must
-    # come back empty and say why, not raise SQLite's "no such table".
+    # all -- newly reachable from ordinary bad YAML.  Searching it must say
+    # why, rather than leak SQLite's "no such table".
+    #
+    # It must also not answer with an empty result: this repository has not
+    # applied the filter, and coming back empty is indistinguishable from
+    # having applied it and matched nothing.  A group repository needs that
+    # distinction to tell a child that matched nothing from one that was
+    # never searched (ADR 0012).
     proto = build_grr(tmp_path, {
         "evil": {"cell-type": "liver"},
     })
     assert _create_contents_db(proto) == {"evil"}
 
     repo = GenomicResourceProtocolRepo(proto)
-    with caplog.at_level(logging.WARNING):
-        assert list(repo.search_resources(resource_type="position_score")) == []
-        assert list(repo.search_resources(search_term="liver")) == []
 
-    assert any(
-        "index" in record.getMessage()
-        for record in caplog.records
-        if record.levelno == logging.WARNING
-    )
+    # Both filters route through the index, so both have to say so.
+    with pytest.raises(SearchIndexUnavailableError) as excinfo:
+        list(repo.search_resources(resource_type="position_score"))
+    assert "no resource could be indexed" in str(excinfo.value)
+
+    with pytest.raises(SearchIndexUnavailableError) as excinfo:
+        list(repo.search_resources(search_term="liver"))
+    assert "no resource could be indexed" in str(excinfo.value)
