@@ -89,6 +89,32 @@ One condition on one label inside a **resource query** — `key = value` or
 evaluates it, `matches` is the only definition of the comparison.
 _Avoid_: predicate, label filter
 
+### ann_data resources
+
+**Data matrix**:
+The `X` of an **ann_data resource** — the values, and effectively all of its
+bytes. A **matrix-free read** never materialises it.
+_Avoid_: the matrix, expression matrix (it is not always expression), counts
+
+**Axis table**:
+One of an ann_data resource's two per-axis tables — `obs`, one row per
+observation (cell), and `var`, one row per variable (feature). These are what
+the `describe_obs` / `describe_var` statistics summarise.
+_Avoid_: annotation (reserved for variant annotation), metadata, cell table
+
+**Feature type**:
+The value of an ann_data resource's `var["feature_types"]` — `Gene Expression`,
+`Peaks`, `Antibody Capture`, … A resource may carry several. Decides what a
+gene-expression-only read keeps.
+_Avoid_: modality, assay (which is a **label** key here)
+
+**Matrix-free read**:
+A read that materialises a resource's **axis tables** and its shape, but never
+its **data matrix**. What the statistics build uses; the reason its cost is the
+sidecars rather than the matrix.
+_Avoid_: lazy read (nothing is deferred — the matrix is never read), backed read
+(that is h5ad's on-disk `X`, a different thing)
+
 ## Relationships
 
 - A **group repository** has one or more **children**; each child is a **GRR**,
@@ -101,6 +127,11 @@ _Avoid_: predicate, label filter
   **column vocabulary**. A **resource query** contains **label clauses**, which
   bind it to nothing.
 - A **search term** and a **resource query** conjoin when both are supplied.
+- An **ann_data resource** is a **resource** whose content is one **data matrix**
+  and the two **axis tables** describing its axes; every row of `var` carries a
+  **feature type**, and one resource may hold several.
+- A **matrix-free read** yields the **axis tables** and the shape and nothing
+  else. It is the only read the statistics build needs.
 
 ## Example dialogue
 
@@ -150,3 +181,11 @@ _Avoid_: predicate, label filter
   answer (a missing column, a missing index) from one *nobody* can answer (a
   malformed **search term**). Under ADR 0012 the first is a skipped **child**
   and the second is an error.
+
+- **"Annotation" means two unrelated things once an ann_data resource is
+  involved** — resolved: variant annotation (the pipeline, the annotators)
+  versus an ann_data **axis table**. AnnData's own vocabulary calls `obs` and
+  `var` annotations, which is where the collision comes from; in this repo only
+  the first is *annotation*, and the second is an **axis table**. The `ann_data`
+  implementation predates this entry and still says "annotation table" in
+  places.
