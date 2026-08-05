@@ -172,18 +172,19 @@ Resolving such a hit through the resource dict raised `KeyError` and took
 search down for the whole repository — the same shape again — so
 `search_resources` now skips an unresolvable row with a warning.
 
-### Known gap, out of scope: symlinks
+### Accepted gap: symlinks
 
 Containment is enforced on the *name*, and a symlink moves the escape into
 the *resolution*. A resource containing `sneak.txt -> /outside/secret.txt`
-has a perfectly contained name and still reads out of the GRR root, on a
-local `file` protocol — confirmed by execution. It is reachable in principle
-rather than theoretical: the mirrors grr-sync maintains are git clones, and
-git carries symlinks.
+has a perfectly contained name and still reads — and writes, and deletes —
+out of the GRR root, on a local `file` protocol. Confirmed by execution.
 
 Nothing here addresses that, and this ADR should not be read as claiming
-otherwise. Closing it means resolving each name against the resource root
-before opening it (or refusing to follow links at all), which is a different
-mechanism at a different layer — one that has to be reasoned about
-per-backend, since only `file` has symlinks at all. It is tracked as
-gain#483.
+otherwise. Nothing is going to: the gap was **accepted** in
+[0013](0013-symlink-resolution-is-not-contained.md), on the ground that a
+GRR resource is trusted by authorship and the escape is strictly weaker than
+the code execution gain#572 already accepts by design.
+
+Read 0013 before proposing a resolution check here. One was designed,
+implemented, reviewed and abandoned, and it records why — including why
+partial containment is worse than none.
