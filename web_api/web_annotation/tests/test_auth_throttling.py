@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import hashlib
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -381,6 +382,51 @@ def test_rendering_the_reset_form_does_not_spend_the_mail_budget(
 
     assert renders == [200, 200, 200, 200]
     assert posts == [200, 200, 429]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("method", ["GET", "HEAD", "OPTIONS"])
+def test_a_safe_method_carrying_an_email_cannot_lock_that_mailbox_out(
+    anonymous_client: Client,
+    mocker: pytest_mock.MockerFixture,
+    method: str,
+) -> None:
+    """A safe method must be exempt on *both* axes, or it is a free lockout.
+
+    The per-IP throttle exempts safe methods so a page render cannot spend
+    the mail budget. If the per-address throttle does not exempt them too,
+    the exemption is the attack: DRF parses ``request.data`` on a GET
+    whenever the body is non-empty, so a bodied GET keys and charges the
+    victim's per-address bucket while the exempt per-IP axis records nothing
+    -- an unbounded, repeatable lockout of any known address at no cost.
+
+    The per-IP rate is patched wide open so that the identifier axis is the
+    only bucket that could refuse anything here.
+    """
+    mocker.patch.dict(
+        PasswordResetRateThrottle.THROTTLE_RATES,
+        {"auth_password_reset": "1000/hour"},
+    )
+    mocker.patch.dict(
+        PasswordResetIdentifierRateThrottle.THROTTLE_RATES,
+        {"auth_password_reset_identifier": "2/hour"},
+    )
+
+    probes = [
+        int(anonymous_client.generic(
+            method,
+            FORGOTTEN_PASSWORD,
+            data=json.dumps({"email": "user@example.com"}),
+            content_type="application/json",
+            REMOTE_ADDR="203.0.113.9",
+        ).status_code)
+        for _ in range(5)
+    ]
+    victim = _forgotten_password(
+        anonymous_client, "user@example.com", ip="10.0.0.55")
+
+    assert 429 not in probes
+    assert victim == 200
 
 
 @pytest.mark.django_db
