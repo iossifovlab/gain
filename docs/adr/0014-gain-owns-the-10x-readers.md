@@ -168,6 +168,27 @@ Acceptance is a **one-time run against the eight real resources** — 0.19 GB
 to 3.79 GB, far too large to be fixtures — byte-comparing all three
 statistics files between gain's reader and scanpy's, recorded in the PR body.
 
+### How it lands, and the one ordering constraint
+
+Three changes, in order:
+
+1. **The two statistics defects alone** — the leaked `backed at` path, and
+   `calc_statistics_hash` recording the hardcoded `"h5ad"` fallback instead
+   of the format the loader actually derives from the file suffix. Small,
+   independent of the reader work, and correcting a hash that is wrong for
+   every resource whose config omits `format:` — which, in the surveyed GRR,
+   is all eight.
+2. **The `10x_mtx` reader and the matrix-free read.** This is what unblocks
+   the resource that cannot currently be repaired at all.
+3. **The `10x_h5` reader, its test fixture, and the removal of scanpy.**
+
+**scanpy does not leave before the golden fixtures and the drift test
+exist.** That is the whole of ADR 0001's lesson — *"a second implementation
+of an existing computation needs its equivalence mechanized **before** it is
+optimized, because the failure mode is silent and the test suite you already
+have will not see it"* — and here the oracle itself is what is being removed,
+so there is no recovering it afterwards by re-reading the old code.
+
 ## Why it is scoped this way
 
 **No version in the statistics hash.** `calc_statistics_hash` covers inputs
