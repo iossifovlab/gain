@@ -50,11 +50,13 @@ dependencies = [
 dynamic = ["version"]
 
 [project.optional-dependencies]
-# The two 10x formats of an ``ann_data`` resource are read through scanpy,
+# The ``10x_h5`` format of an ``ann_data`` resource is read through scanpy,
 # which pulls in a large scientific stack for a reader that most GRRs never
-# reach.  It stays an extra so an ``h5ad`` resource -- the common case --
-# loads with anndata alone; ann_data_resource imports it lazily and reports
-# its absence as a config error.
+# reach.  It stays an extra so every other format loads without it:
+# ``h5ad`` goes to anndata directly and ``10x_mtx`` is read by gain itself
+# (ADR 0014).  ann_data_resource imports it lazily and reports its absence
+# as a config error.  The extra goes away with the last reader that needs
+# it, which is step 3 of that ADR.
 ann_data_10x = [
     "scanpy>=1.11",
 ]

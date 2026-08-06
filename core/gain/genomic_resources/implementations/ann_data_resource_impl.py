@@ -13,8 +13,8 @@ from markdown2 import markdown
 from gain import logging
 from gain.genomic_resources.ann_data_resource import (
     is_10x_matrix_name,
-    open_ann_data_from_resource,
-    resolve_10x_sidecars,
+    load_ann_data_from_resource,
+    resolve_10x_layout,
     resolve_ann_data_format,
 )
 from gain.genomic_resources.repository import GenomicResource
@@ -66,8 +66,8 @@ class AnnDataResourceImplementation(
         # in the loader, so this and the read path cannot drift apart.
         wanted = {file_name}
         if is_10x_matrix_name(file_name):
-            wanted |= resolve_10x_sidecars(
-                self.resource.get_manifest(), file_name)
+            wanted |= resolve_10x_layout(
+                self.resource.get_manifest(), file_name).sidecars
 
         return self._manifest_names(wanted)
 
@@ -172,31 +172,46 @@ class AnnDataResourceImplementation(
 
     @staticmethod
     def _stats_for_ann_data(resource: GenomicResource) -> None:
-        # Through the context manager, not the bare loader: a backed read
-        # holds an open h5py file, and a repo sweep builds one of these per
-        # resource.
-        with open_ann_data_from_resource(resource) as ann_data:
-            for table, statistic in (
-                (ann_data.obs, _DESCRIBE_OBS_STATISTIC),
-                (ann_data.var, _DESCRIBE_VAR_STATISTIC),
-            ):
-                described = \
-                    AnnDataResourceImplementation._describe_annotations(table)
-                if described is None:
-                    continue
+        # ``matrix_free`` because not one statistic here reads the data
+        # matrix -- ``_gen_repr`` skips X and ``describe`` reads the axis
+        # tables -- so the read that does not materialise it writes the
+        # same bytes for a fraction of the memory.
+        ann_data = load_ann_data_from_resource(resource, matrix_free=True)
+        try:
+            AnnDataResourceImplementation._write_stats(resource, ann_data)
+        finally:
+            # An h5ad is read backed, and this runs once per resource in a
+            # repo sweep, so the handle is closed here rather than left to
+            # a garbage collection that may never come (gain#480).  A 10x
+            # read is in memory and has no handle.
+            if ann_data.isbacked:
+                ann_data.file.close()
 
-                with resource.proto.open_raw_file(
-                    resource, statistic, mode="wt",
-                ) as outfile:
-                    described.to_csv(outfile)
+    @staticmethod
+    def _write_stats(
+        resource: GenomicResource, ann_data: ad.AnnData,
+    ) -> None:
+        """Write the three describe statistics of an already-open AnnData."""
+        for table, statistic in (
+            (ann_data.obs, _DESCRIBE_OBS_STATISTIC),
+            (ann_data.var, _DESCRIBE_VAR_STATISTIC),
+        ):
+            described = \
+                AnnDataResourceImplementation._describe_annotations(table)
+            if described is None:
+                continue
 
             with resource.proto.open_raw_file(
-                resource, _DESCRIBE_ANN_DATA_STATISTIC, mode="wt",
+                resource, statistic, mode="wt",
             ) as outfile:
-                print(
-                    AnnDataResourceImplementation._describe_ann_data(
-                        ann_data),
-                    file=outfile)
+                described.to_csv(outfile)
+
+        with resource.proto.open_raw_file(
+            resource, _DESCRIBE_ANN_DATA_STATISTIC, mode="wt",
+        ) as outfile:
+            print(
+                AnnDataResourceImplementation._describe_ann_data(ann_data),
+                file=outfile)
 
     def create_statistics_build_tasks(
         self, **kwargs: Any,  # noqa: ARG002

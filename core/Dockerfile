@@ -58,9 +58,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Optional gain-core extras, as uv flags -- e.g.
 # `--build-arg UV_SYNC_EXTRAS="--extra ann-data-10x"`. Empty by default, so
 # the main CI image is unchanged: scanpy is the ann_data_10x extra and pulls
-# in numba, llvmlite, scikit-learn and statsmodels for two readers most GRRs
-# never touch. Only the integration image asks for it, to run the test that
-# pins scanpy's 10x layout rule against the real reader.
+# in numba, llvmlite, scikit-learn and statsmodels for one reader most GRRs
+# never touch. Only the integration image asks for it, to run the tests that
+# compare gain's own 10x reader against the live scanpy one.
 #
 # `--directory core` because the extra is declared on the gain-core member,
 # and `--extra` resolves against the project uv is pointed at rather than

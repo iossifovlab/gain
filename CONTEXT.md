@@ -115,6 +115,27 @@ sidecars rather than the matrix.
 _Avoid_: lazy read (nothing is deferred — the matrix is never read), backed read
 (that is h5ad's on-disk `X`, a different thing)
 
+**Sidecar** (of a 10x resource):
+One of the two non-matrix members of the matrix-market **triple** — the
+barcodes and the feature table. The config names only the matrix, so the
+sidecars are *resolved*, and they are statistics inputs: editing the barcodes
+has to invalidate the build the way editing the matrix does.
+
+**Triple layout**:
+Which names a 10x **triple**'s three members carry. **Two independent axes,
+and conflating them is what made an uncompressed CellRanger v3 resource
+unreadable:**
+- *generation* — v2 calls the feature table `genes.tsv` and it has no
+  **feature type** column; v3 calls it `features.tsv` and it does. Decided by
+  probing for `genes.tsv`, which is what scanpy itself does.
+- *compression* — whether the members are gzipped. CellRanger v3 gzips them;
+  STARsolo writes the same v3 layout in plain text.
+
+A resource states its own layout, so it is resolved from the manifest and is
+never a config key.
+_Avoid_: "the v3 layout" for the compressed one specifically — that is a v3
+layout that happens to be gzipped
+
 ## Relationships
 
 - A **group repository** has one or more **children**; each child is a **GRR**,
