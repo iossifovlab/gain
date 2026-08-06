@@ -181,17 +181,18 @@ pipeline {
             steps {
                 // Build from the repo root so the workspace manifests and
                 // uv.lock are in the build context (see core/Dockerfile).
-                // --extra ann-data-10x: the integration tier is the only
-                // place scanpy is installed. gain reads the 10x triple
-                // itself now (ADR 0014), so tests/integration holds that
-                // reader against the one it replaced -- every parameter,
-                // and all three layouts (v2 genes.tsv, v3 features.tsv.gz,
-                // v3 uncompressed). A failure there means upstream moved
-                // and someone has to decide; it does NOT mean gain
-                // regressed, which the small tier owns. The main CI image
-                // builds without the arg and stays scanpy-free.
+                // --group scanpy-drift: the integration tier is the only
+                // place scanpy is installed. gain reads BOTH 10x formats
+                // itself now (ADR 0014), so tests/integration holds those
+                // readers against the ones they replaced -- every
+                // parameter, the triple's three layouts (v2 genes.tsv, v3
+                // features.tsv.gz, v3 uncompressed) and the h5. A failure
+                // there means upstream moved and someone has to decide; it
+                // does NOT mean gain regressed, which the small tier owns.
+                // The main CI image builds without the arg and stays
+                // scanpy-free.
                 sh 'docker build -f core/Dockerfile \
-                        --build-arg UV_SYNC_EXTRAS="--extra ann-data-10x" \
+                        --build-arg UV_SYNC_FLAGS="--group scanpy-drift" \
                         -t ${IMAGE_TAG} .'
             }
         }

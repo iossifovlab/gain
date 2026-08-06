@@ -8,7 +8,9 @@ import anndata as ad
 
 from gain import logging
 from gain.genomic_resources.ann_data_10x import (
+    parse_10x_h5_parameters,
     parse_10x_mtx_parameters,
+    read_10x_h5,
     read_10x_mtx,
 )
 from gain.genomic_resources.fsspec_protocol import _strip_url_userinfo
@@ -187,25 +189,6 @@ def resolve_ann_data_format(config: Mapping[str, Any]) -> str:
     return _FALLBACK_FORMAT
 
 
-def _import_scanpy() -> Any:
-    """Import scanpy on demand, reporting its absence as a config error.
-
-    scanpy is an optional extra (``gain-core[ann_data_10x]``) and pulls in
-    a large scientific stack, so only the one format still read through it
-    -- ``10x_h5`` -- may ask for it.  ``h5ad`` goes to anndata directly and
-    ``10x_mtx`` is read by gain itself (ADR 0014).
-    """
-    # pylint: disable=import-outside-toplevel
-    try:
-        import scanpy
-    except ImportError as exc:
-        raise ValueError(
-            "the 10x_h5 ann_data format needs scanpy, which is not "
-            "installed; install the gain-core[ann_data_10x] extra") from exc
-
-    return scanpy
-
-
 def _local_file_path(resource: GenomicResource, file_name: str) -> str:
     """Return the local path of ``file_name``, fetching it if cached.
 
@@ -274,11 +257,11 @@ def load_ann_data_from_resource(
     ``obs`` and ``var``.  Reading the real matrix costs about 10 GB on the
     largest 10x resource to write 221 bytes of statistics.
 
-    It is honoured only where it means something.  ``h5ad`` ignores it --
-    ``backed="r"`` already keeps ``X`` off the heap, and reproducing
-    anndata's repr for an arbitrary h5ad would mean reimplementing its
-    reader for no memory benefit (ADR 0014).  ``10x_h5`` ignores it too,
-    for now.
+    It is honoured only where it means something.  Both 10x formats
+    honour it; ``h5ad`` ignores it -- ``backed="r"`` already keeps ``X``
+    off the heap, and reproducing anndata's repr for an arbitrary h5ad
+    would mean reimplementing its reader for no memory benefit (ADR
+    0014).
     """
     if resource is None:
         raise ValueError("missing resource: None")
@@ -331,7 +314,12 @@ def load_ann_data_from_resource(
                 params, resource.resource_id),
             matrix_free=matrix_free)
     elif file_format == "10x_h5":
-        result = _import_scanpy().read_10x_h5(file_path, **params)
+        result = read_10x_h5(
+            file_path,
+            resource_id=resource.resource_id,
+            parameters=parse_10x_h5_parameters(
+                params, resource.resource_id),
+            matrix_free=matrix_free)
     else:
         logger.error(
             "unknown format %s for the ann_data %s",

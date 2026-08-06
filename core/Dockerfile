@@ -55,22 +55,23 @@ COPY core/ ./core/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --package gain-core --group dev --frozen
 
-# Optional gain-core extras, as uv flags -- e.g.
-# `--build-arg UV_SYNC_EXTRAS="--extra ann-data-10x"`. Empty by default, so
-# the main CI image is unchanged: scanpy is the ann_data_10x extra and pulls
-# in numba, llvmlite, scikit-learn and statsmodels for one reader most GRRs
-# never touch. Only the integration image asks for it, to run the tests that
-# compare gain's own 10x reader against the live scanpy one.
+# Extra gain-core dependency groups, as uv flags -- e.g.
+# `--build-arg UV_SYNC_FLAGS="--group scanpy-drift"`. Empty by default, so
+# the main CI image is unchanged: scanpy pulls in numba, llvmlite,
+# scikit-learn and statsmodels, and gain no longer uses it for anything
+# (ADR 0014). Only the integration image asks for it, to run the tests
+# that hold gain's own 10x readers against the ones they replaced.
 #
-# `--directory core` because the extra is declared on the gain-core member,
-# and `--extra` resolves against the project uv is pointed at rather than
-# against `--package`: run from the workspace root it fails with "Extra
-# `ann-data-10x` is not defined in the project's optional-dependencies".
-ARG UV_SYNC_EXTRAS=""
+# `--directory core` because the group is declared on the gain-core
+# member, and `--group` resolves against the project uv is pointed at
+# rather than against `--package`: run from the workspace root it fails
+# with "Group `scanpy-drift` is not defined in the project's
+# dependency-groups".
+ARG UV_SYNC_FLAGS=""
 RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ -n "${UV_SYNC_EXTRAS}" ]; then \
+    if [ -n "${UV_SYNC_FLAGS}" ]; then \
         uv sync --directory core --package gain-core --group dev --frozen \
-            ${UV_SYNC_EXTRAS}; \
+            ${UV_SYNC_FLAGS}; \
     fi
 
 ENV PATH="/workspace/.venv/bin:$PATH"

@@ -49,18 +49,6 @@ dependencies = [
 ]
 dynamic = ["version"]
 
-[project.optional-dependencies]
-# The ``10x_h5`` format of an ``ann_data`` resource is read through scanpy,
-# which pulls in a large scientific stack for a reader that most GRRs never
-# reach.  It stays an extra so every other format loads without it:
-# ``h5ad`` goes to anndata directly and ``10x_mtx`` is read by gain itself
-# (ADR 0014).  ann_data_resource imports it lazily and reports its absence
-# as a config error.  The extra goes away with the last reader that needs
-# it, which is step 3 of that ADR.
-ann_data_10x = [
-    "scanpy>=1.11",
-]
-
 [project.urls]
 Homepage = "https://github.com/IossifovLab/gain"
 
@@ -129,6 +117,18 @@ chrom_mapping = "gain.annotation.chrom_mapping_annotator:build_chrom_mapping_ann
 debug_annotator = "gain.annotation.debug_annotator:build_annotator"
 
 [dependency-groups]
+# scanpy is no longer a runtime dependency of anything: gain reads both
+# 10x formats itself (ADR 0014).  It is kept as a TEST-only dependency of
+# the integration image, which is the one tier that holds gain's readers
+# against the ones they replaced -- a red there means upstream moved and
+# someone has to decide, not that gain regressed.  It is a dependency
+# group rather than an optional-dependency because installing it no
+# longer enables anything: ``pip install gain-core[ann_data_10x]`` would
+# now pull numba, llvmlite, scikit-learn and statsmodels for no gain at
+# all.
+scanpy_drift = [
+    "scanpy>=1.11",
+]
 dev = [
     "coverage",
     "mypy==1.15.0",

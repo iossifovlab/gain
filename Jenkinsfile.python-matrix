@@ -218,7 +218,7 @@ pipeline {
                                             // grr-seqpipe, a single-threaded
                                             // run so workers don't race to
                                             // populate that cache, and the
-                                            // ann-data-10x extra its scanpy
+                                            // scanpy-drift group its scanpy
                                             // test imports. None of that is
                                             // here, and none of it is a
                                             // Python-version signal.

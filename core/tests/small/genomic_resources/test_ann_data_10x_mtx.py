@@ -2,9 +2,10 @@
 """gain's own reader for the 10x Matrix Market triple.
 
 Every test here runs in the small tier, where scanpy is deliberately absent
--- it is the optional ``gain-core[ann_data_10x]`` extra.  That absence is
-the point: these assert what gain reads, not that gain called somebody
-else.  The live comparison against scanpy lives in
+-- it is installed only by the integration image's ``scanpy-drift``
+dependency group.  That absence is the point: these assert what gain reads,
+not that gain called somebody else.  The live comparison against scanpy
+lives in
 ``tests/integration/test_ann_data_10x_layout.py``, which answers a
 different question (did upstream move?) in the one tier that installs it.
 """
