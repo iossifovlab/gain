@@ -88,10 +88,10 @@ def test_reports_an_absent_scanpy_as_a_config_error(
     # ``10x_h5`` is the one format still read through the optional extra.
     # Its absence is a misconfigured resource, not an internal import
     # failure, so it is reported as one -- naming the extra that fixes it.
-    # Declared rather than realized: the builder cannot write a 10x h5
-    # (#707), and the read never gets as far as the bytes.
+    # The file is realized rather than merely declared, so that scanpy's
+    # absence is the ONLY reason the read cannot proceed.
     resource = (
-        an_ann_data().with_declared_format("10x_h5").build_resource(tmp_path)
+        an_ann_data().with_format("10x_h5").build_resource(tmp_path)
     )
     monkeypatch.setattr(ann_data_resource, "_import_scanpy", _raise_import)
 

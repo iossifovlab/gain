@@ -136,6 +136,16 @@ never a config key.
 _Avoid_: "the v3 layout" for the compressed one specifically — that is a v3
 layout that happens to be gzipped
 
+**Feature-barcode matrix** / **probe-barcode matrix**:
+The two kinds of 10x HDF5 (`10x_h5`) file, told apart by whether the features
+carry a `gene_id` dataset. A feature-barcode file's **features** are measured
+directly; a probe-barcode file's are probes, each *targeting* a gene, so the
+gene id and the probe id are two different things and a read reports both.
+**Every `10x_h5` resource we have is feature-barcode**, and the other kind is
+refused rather than read (ADR 0014).
+_Avoid_: calling either "the 10x h5 format" — the distinction is the whole
+reason a read of one is not a read of the other
+
 ## Relationships
 
 - A **group repository** has one or more **children**; each child is a **GRR**,

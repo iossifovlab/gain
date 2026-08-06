@@ -212,16 +212,42 @@ kinds out when they are not exercised in production. That reasoning does not
 transfer: two `10x_h5` resources exist, they have the identical eager-read
 defect, and excluding them would leave a known out-of-memory failure in
 place rather than leaving a safe slow path in place. gain's test builder
-cannot realize a `10x_h5` fixture today (`_ANN_DATA_FORMATS = ("h5ad",
-"10x_mtx")`); teaching it to is part of this work, not a reason to defer.
+could not realize a `10x_h5` fixture when this was written; teaching it to
+was part of the work, not a reason to defer (#707).
+
+### The `10x_h5` fixture realizes one layout, and the reader refuses the rest
+
+`read_10x_h5` handles three shapes gain's resources do not have: the legacy
+file whose root carries genome-named groups instead of a single `matrix`
+group, the probe-barcode `var` branch (keyed on a `gene_id` dataset), and
+multi-genome files with the `genome` selector that filters them. Both real
+resources were inspected before the fixture was written, and both are the
+same modern single-`matrix`-group, feature-barcode, one-genome file. So the
+builder realizes that one layout and nothing else.
+
+The alternative — reimplementing all three branches against fixtures no
+resource corresponds to — buys coverage of shapes we would have no way to
+verify, since the equivalence mechanism here is a fixture and there is no
+real file to build one from. That is the same reasoning ADR 0001 used to
+leave unexercised kinds out, applied one level down.
+
+**This is only safe because the reader refuses what it does not support.**
+A file whose root is not `matrix`, or one carrying a `gene_id` dataset,
+must raise a config error naming the resource and what was found — not
+read it as something else. The cost is deliberate and accepted: a future
+GRR that adds a legacy 10x h5 gets a clear error where scanpy would have
+read it, and the fix is to widen the builder and the reader together, with
+that file as the fixture.
 
 ## Consequences
 
 - **gain owns 10x format semantics permanently** — `var_names`,
-  `make_unique`, `gex_only`, the CellRanger v2 legacy layouts, and for h5 the
-  probe-barcode vs feature-barcode `var` branch and the legacy `genome`
-  selector. Some of that is years of accumulated upstream edge-case handling,
-  and the golden fixtures are the whole of what keeps it honest.
+  `make_unique`, `gex_only` and the CellRanger v2 legacy layouts for the
+  triple; for h5, the feature-barcode `var` branch only. Some of that is
+  years of accumulated upstream edge-case handling, and the golden fixtures
+  are the whole of what keeps it honest. The h5 shapes deliberately left
+  out — probe-barcode, legacy root-genome groups, the `genome` selector —
+  are refused rather than mis-read; see above.
 - **The `ann_data_10x` extra stops gating a runtime capability.** A 10x
   resource becomes readable with plain `gain-core`, and the
   "install the `gain-core[ann_data_10x]` extra" error disappears. scanpy is
