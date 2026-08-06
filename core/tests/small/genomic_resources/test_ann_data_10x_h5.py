@@ -41,8 +41,9 @@ _DESCRIBE_ANN_DATA = "statistics/describe_ann_data.txt"
 # entries -- about 605 MB of ``data`` and 1.2 GB of ``indices``.
 _MATRIX_DATASETS = ("data", "indices", "indptr")
 
-# The group a modern 10x h5 is built round, and what a reader probes for.
+# The two groups a modern 10x h5 is built round.
 _MATRIX_GROUP = "matrix"
+_FEATURES_GROUP = "features"
 
 # A CellRanger-ARC multiome shape -- two feature types, one of which
 # ``gex_only`` drops.  ONE genome, which is what both real resources are.
@@ -138,9 +139,10 @@ def test_var_carries_the_named_fields_then_the_rest(
 def test_a_10x_read_has_no_per_cell_annotation(
     tmp_path: pathlib.Path,
 ) -> None:
-    # 10x carries barcodes and nothing else about a cell, so ``obs`` has
-    # an index and no columns -- which is what makes ``describe`` of it an
-    # empty frame the statistics build declines to write.
+    # Absent a ``filtered_barcodes`` flag -- which neither real resource
+    # has -- 10x says nothing about a cell but its barcode, so ``obs``
+    # has an index and no columns.  That is what makes ``describe`` of it
+    # an empty frame the statistics build declines to write.
     resource = (
         an_ann_data().with_format("10x_h5").build_resource(tmp_path)
     )
@@ -367,6 +369,52 @@ def test_a_full_read_of_that_same_file_cannot_succeed(
         load_ann_data_from_resource(resource)
 
 
+def _add_filtered_barcodes(path: pathlib.Path) -> None:
+    """Add the per-cell flag CellRanger's cell-calling runs write.
+
+    A boolean dataset beside ``barcodes``, marking which of them the
+    caller kept.  The builder does not realize it -- no resource we have
+    carries one -- so it is written here directly.
+    """
+    with h5py.File(path, "r+") as h5:
+        h5[_MATRIX_GROUP].create_dataset(
+            "filtered_barcodes", data=np.array([True, False, True]))
+
+
+def test_a_filtered_barcodes_flag_becomes_a_cell_annotation(
+    tmp_path: pathlib.Path,
+) -> None:
+    # scanpy read this into ``obs``, so a resource carrying one has
+    # statistics that describe it -- a ``describe_obs.csv``, and an
+    # ``obs:`` line in ``describe_ann_data.txt``.  Dropping it would be
+    # exactly the silent mis-read ADR 0014 exists to prevent: not
+    # reproduced, and not refused either.
+    resource, path = _realize(an_ann_data(), tmp_path)
+    _add_filtered_barcodes(path)
+
+    ann_data = load_ann_data_from_resource(resource)
+
+    assert list(ann_data.obs.columns) == ["filtered_barcodes"]
+    assert ann_data.obs["filtered_barcodes"].dtype == bool
+    assert list(ann_data.obs["filtered_barcodes"]) == [True, False, True]
+
+
+def test_the_filtered_barcodes_flag_survives_a_matrix_free_read(
+    tmp_path: pathlib.Path,
+) -> None:
+    # It is a per-cell annotation, not part of the count matrix, so the
+    # read that stands in for the full one has to carry it -- otherwise
+    # the statistics of such a resource would depend on which read built
+    # them.
+    resource, path = _realize(an_ann_data(), tmp_path)
+    _add_filtered_barcodes(path)
+    _delete_the_counts(path)
+
+    ann_data = load_ann_data_from_resource(resource, matrix_free=True)
+
+    assert list(ann_data.obs["filtered_barcodes"]) == [True, False, True]
+
+
 def _make_legacy(path: pathlib.Path) -> None:
     """Rewrite the file as the CellRanger v2 per-genome layout."""
     with h5py.File(path, "r+") as h5:
@@ -376,15 +424,29 @@ def _make_legacy(path: pathlib.Path) -> None:
 def _make_probe_barcode(path: pathlib.Path) -> None:
     """Add the dataset that identifies a probe-barcode matrix."""
     with h5py.File(path, "r+") as h5:
-        features = h5[f"{_MATRIX_GROUP}/features"]
+        features = h5[f"{_MATRIX_GROUP}/{_FEATURES_GROUP}"]
         features.create_dataset(
             "gene_id", data=features["id"][()])
+
+
+def _make_probe_barcode_off_position(path: pathlib.Path) -> None:
+    """Put the probe marker where 10x does NOT, but a reader still sees it.
+
+    The reference reader flattens the whole ``matrix`` group into one
+    namespace before looking for ``gene_id``, so it selects the
+    probe-barcode branch from here too.  A refusal that probed only the
+    direct children of ``features`` would read this file instead.
+    """
+    with h5py.File(path, "r+") as h5:
+        matrix = h5[_MATRIX_GROUP]
+        matrix.create_dataset(
+            "gene_id", data=matrix[f"{_FEATURES_GROUP}/id"][()])
 
 
 def _drop_the_features(path: pathlib.Path) -> None:
     """Remove the feature table entirely."""
     with h5py.File(path, "r+") as h5:
-        del h5[f"{_MATRIX_GROUP}/features"]
+        del h5[f"{_MATRIX_GROUP}/{_FEATURES_GROUP}"]
 
 
 @pytest.mark.parametrize(
@@ -394,6 +456,9 @@ def _drop_the_features(path: pathlib.Path) -> None:
             _make_legacy, "no 'matrix' group", id="legacy-per-genome-layout"),
         pytest.param(
             _make_probe_barcode, "probe-barcode", id="probe-barcode-matrix"),
+        pytest.param(
+            _make_probe_barcode_off_position, "probe-barcode",
+            id="probe-barcode-marker-off-position"),
         pytest.param(
             _drop_the_features, "no 'features' group", id="no-feature-table"),
     ],
@@ -432,7 +497,7 @@ def test_the_statistics_are_the_ones_scanpy_used_to_build(
     copy that survives its removal, and the two agreeing is what says the
     replacement landed without moving the output.
     """
-    resource, _path = _realize(
+    resource, path = _realize(
         an_ann_data().with_var(_MULTIOME_FEATURES), tmp_path)
 
     impl = AnnDataResourceImplementation(resource)
@@ -455,7 +520,15 @@ def test_the_statistics_are_the_ones_scanpy_used_to_build(
         "top,ENSG001,Gene Expression,GRCh38,chr1:1-99\n"
         "freq,1,3,3,1\n"
     )
-    # 10x carries no per-cell annotation at all, so describing ``obs``
+    # This resource carries no per-cell annotation, so describing ``obs``
     # yields an empty frame, which the implementation declines to write.
-    assert _DESCRIBE_OBS not in {
-        entry.name for entry in resource.get_manifest()}
+    #
+    # Asserted against the DIRECTORY, not the manifest: a statistics
+    # build does not refresh the manifest, so `_DESCRIBE_VAR not in
+    # get_manifest()` would pass too -- for a file this very test has
+    # just read.  Naming the whole expected set also makes an ADDED
+    # statistic a failure, which is how a silently-read extra obs
+    # column would show up here.
+    assert sorted(
+        entry.name for entry in (path.parent / "statistics").iterdir()
+    ) == ["describe_ann_data.txt", "describe_var.csv"]

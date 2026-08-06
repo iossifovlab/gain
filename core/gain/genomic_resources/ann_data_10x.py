@@ -12,7 +12,7 @@ import dataclasses
 import gzip
 import types
 import warnings
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import Any
 
 import h5py
@@ -60,6 +60,10 @@ _GENOME_COLUMN = "genome"
 # The dataset whose PRESENCE identifies a probe-barcode matrix, in which
 # ``id`` names the probe rather than the gene.
 _PROBE_ID_DATASET = "gene_id"
+
+# The one per-cell annotation 10x writes beside the barcodes, marking
+# which of them CellRanger's cell calling kept.
+_FILTERED_BARCODES = "filtered_barcodes"
 
 # ``parameters:`` is a surface gain defines, not a passthrough to somebody
 # else's signature.  A key is in exactly one of these three sets, and the
@@ -396,6 +400,29 @@ def _h5_matrix(h5: h5py.File, resource_id: str) -> h5py.Group:
     return h5[_MATRIX_GROUP]
 
 
+def _contains_dataset(group: h5py.Group, wanted: str) -> bool:
+    """Return whether ``wanted`` names a dataset anywhere under ``group``.
+
+    Recursive because the reference reader flattens the whole ``matrix``
+    group into one namespace before looking, so a dataset that sits a
+    level off where 10x puts it still selects its branch there.  A probe
+    of the direct children only would refuse a narrower set of files
+    than the reader being replaced, which for a REFUSAL means quietly
+    reading something it declined to.
+    """
+    return any(
+        isinstance(member, h5py.Dataset) and name == wanted
+        for name, member in _walk(group))
+
+
+def _walk(group: h5py.Group) -> Iterator[tuple[str, Any]]:
+    """Yield every ``(name, member)`` under ``group``, depth first."""
+    for name, member in group.items():
+        yield name, member
+        if isinstance(member, h5py.Group):
+            yield from _walk(member)
+
+
 def _h5_features(matrix: h5py.Group, resource_id: str) -> h5py.Group:
     """Return the feature table, refusing the probe-barcode variant.
 
@@ -410,14 +437,13 @@ def _h5_features(matrix: h5py.Group, resource_id: str) -> h5py.Group:
             f"the ann_data {resource_id} is a 10x h5 with no "
             f"{_FEATURES_GROUP!r} group, so it describes no variables")
 
-    features = matrix[_FEATURES_GROUP]
-    if _PROBE_ID_DATASET in features:
+    if _contains_dataset(matrix, _PROBE_ID_DATASET):
         raise ValueError(
-            f"the ann_data {resource_id} is a probe-barcode 10x h5 -- its "
-            f"features carry a {_PROBE_ID_DATASET!r} dataset -- and gain "
+            f"the ann_data {resource_id} is a probe-barcode 10x h5 -- it "
+            f"carries a {_PROBE_ID_DATASET!r} dataset -- and gain "
             f"reads the feature-barcode layout only")
 
-    return features
+    return matrix[_FEATURES_GROUP]
 
 
 def _read_x(matrix: h5py.Group, *, matrix_free: bool) -> csr_matrix:
@@ -432,7 +458,12 @@ def _read_x(matrix: h5py.Group, *, matrix_free: bool) -> csr_matrix:
     at once.
 
     With ``matrix_free`` the shape is all that is read: ``shape`` is two
-    integers, and the three datasets it describes are never opened.
+    integers, and the three datasets it describes are never opened --
+    not even for their dtype, which is why the empty matrix is always
+    ``float32`` rather than mirroring the stored one.  Every 10x file
+    stores ``int32`` and therefore reads back ``float32`` anyway, and
+    no statistic depends on the dtype; keeping the counts untouched is
+    worth more than matching a dtype nothing reads.
     """
     n_cols, n_rows = matrix["shape"][()]
 
@@ -455,8 +486,10 @@ def _keep_genome(
 ) -> AnnData:
     """Keep only the features of ``genome``, refusing an absent one.
 
-    Applied BEFORE the feature-type filter, so a resource asking for both
-    gets the same features whichever order it thinks they compose in.
+    Applied before the feature-type filter, as in the reader this
+    replaces.  The two are independent masks over ``var`` and commute,
+    so the order does not decide which features survive -- it decides
+    which complaint a doubly-wrong resource hears first.
     """
     if _GENOME_COLUMN not in ann_data.var.columns:
         raise ValueError(
@@ -475,6 +508,26 @@ def _keep_genome(
         warnings.filterwarnings(
             "ignore", r".*names are not unique", UserWarning)
         return ann_data[:, genomes == genome].copy()
+
+
+def _read_obs(matrix: h5py.Group) -> dict[str, np.ndarray]:
+    """Build the cell table from the barcodes and what sits beside them.
+
+    10x normally says nothing about a cell but its barcode.  The one
+    exception is ``filtered_barcodes``, which CellRanger's cell-calling
+    runs write to mark the barcodes they kept -- a per-cell annotation,
+    so a resource carrying one describes it in its statistics.  It is
+    read on the matrix-free path too: it is one boolean per cell, not
+    part of the count matrix, and a statistic that depended on which
+    read produced it would not be a statistic of the resource.
+    """
+    obs: dict[str, np.ndarray] = {
+        "obs_names": matrix["barcodes"][()].astype(str),
+    }
+    if _FILTERED_BARCODES in matrix:
+        obs[_FILTERED_BARCODES] = matrix[_FILTERED_BARCODES][()].astype(bool)
+
+    return obs
 
 
 def _read_var(features: h5py.Group) -> dict[str, np.ndarray]:
@@ -535,7 +588,7 @@ def read_10x_h5(
 
         ann_data = AnnData(
             _read_x(matrix, matrix_free=matrix_free),
-            obs={"obs_names": matrix["barcodes"][()].astype(str)},
+            obs=_read_obs(matrix),
             var=_read_var(_h5_features(matrix, resource_id)),
         )
 

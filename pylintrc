@@ -410,11 +410,11 @@ ignored-classes=optparse.Values,thread._local,_thread._local
 # (useful for modules/projects where namespaces are manipulated during runtime
 # and thus existing member attributes cannot be deduced by static analysis). It
 # supports qualified module names, as well as Unix pattern matching.
-# scanpy is the optional gain-core[ann_data_10x] extra -- it is imported
-# lazily by ann_data_resource and is absent from the lint environment, so
-# without this every run reports E0401 on a dependency we deliberately do
-# not install.
-ignored-modules=scanpy
+# scanpy is imported by nothing gain ships -- gain reads both 10x formats
+# itself (ADR 0014). The only importers left are the two drift tests under
+# core/tests/integration, which pylint does not lint, so there is nothing
+# left to ignore here.
+ignored-modules=
 
 # Show a hint with possible names when a member name was not found. The aspect
 # of finding the hint is based on edit distance.
