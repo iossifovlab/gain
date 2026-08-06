@@ -6,14 +6,17 @@ h5py -- it has no scanpy.  This asserts the thing that makes those bytes
 worth writing: that the reader they exist to feed accepts them, and
 produces the AnnData the fixture claims to describe.
 
-**This has to exist before scanpy is removed** (ADR 0014).  gain does not
-read ``10x_h5`` itself yet, so today the loader below reaches scanpy and
-these are fixture-validity tests.  When gain's own reader lands they
-become the drift test for it, unchanged -- which is the point of writing
-them at the loader rather than at scanpy.
+**This had to exist before scanpy was removed** (ADR 0014), and it did:
+it was written while gain still read ``10x_h5`` through scanpy, when
+these were fixture-validity tests.  gain's own reader landed in #712 and
+they became the drift test for it, unchanged -- which is the point of
+having written them at the loader rather than at scanpy.  A red here now
+means upstream moved and someone has to decide; it does NOT mean gain
+regressed, which the small tier owns
+(``tests/small/genomic_resources/test_ann_data_10x_h5.py``).
 
 Runs in the downstream ``gain-core-integration`` job, the one tier that
-installs the ``gain-core[ann_data_10x]`` extra.  The main suite excludes
+installs the ``scanpy-drift`` dependency group.  The main suite excludes
 this directory by path, so no marker is needed.
 """
 import pathlib
@@ -188,6 +191,30 @@ def test_the_statistics_scanpy_builds_are_recorded_here(
     # yields an empty frame, which the implementation declines to write.
     assert _DESCRIBE_OBS not in {
         entry.name for entry in resource.get_manifest()}
+
+
+def test_the_matrix_free_read_describes_what_scanpy_reads(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The claim the statistics build rests on, against the real oracle.
+
+    The small tier compares the matrix-free read to gain's own full read,
+    which would stay green if both drifted together.  This compares it to
+    scanpy's -- the read the stored statistics of both real ``10x_h5``
+    resources were actually built from.
+    """
+    resource, path = _realize(
+        an_ann_data().with_var(_MULTIOME_FEATURES), tmp_path)
+    theirs = _scanpy_read(path)
+
+    lean = load_ann_data_from_resource(resource, matrix_free=True)
+
+    assert str(lean) == str(theirs)
+    assert lean.var.equals(theirs.var)
+    assert list(lean.obs_names) == list(theirs.obs_names)
+    # And the one thing it deliberately does NOT reproduce.
+    assert lean.X.nnz == 0
+    assert theirs.X.nnz > 0
 
 
 def test_the_loader_reads_a_10x_h5_resource(tmp_path: pathlib.Path) -> None:
