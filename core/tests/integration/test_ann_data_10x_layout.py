@@ -14,7 +14,7 @@ that scanpy's semantics and gain's have parted company, which is worth
 knowing deliberately rather than discovering from a re-annotated study.
 
 Runs in the downstream ``gain-core-integration`` job, the one tier that
-installs the ``gain-core[ann_data_10x]`` extra.  The main suite excludes
+installs the ``scanpy-drift`` dependency group.  The main suite excludes
 this directory by path, so no marker is needed.
 """
 import pathlib

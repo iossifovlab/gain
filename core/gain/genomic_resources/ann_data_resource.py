@@ -189,25 +189,6 @@ def resolve_ann_data_format(config: Mapping[str, Any]) -> str:
     return _FALLBACK_FORMAT
 
 
-def _import_scanpy() -> Any:
-    """Import scanpy on demand, reporting its absence as a config error.
-
-    scanpy is an optional extra (``gain-core[ann_data_10x]``) and pulls in
-    a large scientific stack, so only the one format still read through it
-    -- ``10x_h5`` -- may ask for it.  ``h5ad`` goes to anndata directly and
-    ``10x_mtx`` is read by gain itself (ADR 0014).
-    """
-    # pylint: disable=import-outside-toplevel
-    try:
-        import scanpy
-    except ImportError as exc:
-        raise ValueError(
-            "the 10x_h5 ann_data format needs scanpy, which is not "
-            "installed; install the gain-core[ann_data_10x] extra") from exc
-
-    return scanpy
-
-
 def _local_file_path(resource: GenomicResource, file_name: str) -> str:
     """Return the local path of ``file_name``, fetching it if cached.
 

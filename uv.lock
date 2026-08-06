@@ -1278,11 +1278,6 @@ dependencies = [
     { name = "tqdm" },
 ]
 
-[package.optional-dependencies]
-ann-data-10x = [
-    { name = "scanpy" },
-]
-
 [package.dev-dependencies]
 dev = [
     { name = "coverage" },
@@ -1302,6 +1297,9 @@ dev = [
     { name = "types-psutil" },
     { name = "types-pyyaml" },
     { name = "types-tqdm" },
+]
+scanpy-drift = [
+    { name = "scanpy" },
 ]
 
 [package.metadata]
@@ -1333,10 +1331,8 @@ requires-dist = [
     { name = "python-box", specifier = ">=7.1" },
     { name = "pyyaml", specifier = ">=6" },
     { name = "s3fs", specifier = ">=2026.2" },
-    { name = "scanpy", marker = "extra == 'ann-data-10x'", specifier = ">=1.11" },
     { name = "tqdm", specifier = ">=4.66" },
 ]
-provides-extras = ["ann-data-10x"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1358,6 +1354,7 @@ dev = [
     { name = "types-pyyaml" },
     { name = "types-tqdm" },
 ]
+scanpy-drift = [{ name = "scanpy", specifier = ">=1.11" }]
 
 [[package]]
 name = "gain-demo-annotator"
