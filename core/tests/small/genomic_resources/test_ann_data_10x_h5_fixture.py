@@ -36,6 +36,7 @@ _MULTIOME_FEATURES = """
     gene     gene_name  feature_type      genome  interval
     ENSG001  ACTB       Gene||Expression  GRCh38  chr1:1-99
     ENSG002  GAPDH      Gene||Expression  GRCh38  chr1:200-299
+    ENSG003  MT-ND1     Gene||Expression  GRCh38  NA
     PEAK001  chr1:1-99  Peaks             GRCh38  chr1:1-99
     PEAK002  chr2:1-99  Peaks             GRCh38  chr2:1-99
 """
@@ -211,7 +212,8 @@ def test_more_than_one_feature_type_is_expressible(
 
     with h5py.File(path, "r") as h5:
         assert _strings(h5["matrix/features/feature_type"]) == [
-            "Gene Expression", "Gene Expression", "Peaks", "Peaks"]
+            "Gene Expression", "Gene Expression", "Gene Expression",
+            "Peaks", "Peaks"]
 
 
 def test_the_per_feature_metadata_may_be_authored(
@@ -227,7 +229,7 @@ def test_the_per_feature_metadata_may_be_authored(
 
     with h5py.File(path, "r") as h5:
         assert _strings(h5["matrix/features/interval"]) == [
-            "chr1:1-99", "chr1:200-299", "chr1:1-99", "chr2:1-99"]
+            "chr1:1-99", "chr1:200-299", "NA", "chr1:1-99", "chr2:1-99"]
 
     path = _realize(
         an_ann_data().with_format("10x_h5").with_var(_MOUSE_FEATURES),
@@ -262,6 +264,28 @@ def test_the_triple_only_options_are_refused(
     # equivalent h5ad guard exists to prevent.
     with pytest.raises(ResourceValidationError, match="single file"):
         builder.build_resource(tmp_path)
+
+
+def test_an_authored_na_interval_is_realized_verbatim(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Both real files carry a literal ``NA`` interval for their 13
+    # mitochondrial genes, which have no locus in the reference.  The
+    # authored block has to reach the file as written: pandas reads
+    # ``NA`` as a MISSING VALUE by default, which would realize the
+    # string ``nan`` and quietly make the fixture unlike the real thing.
+    features = """
+        gene     gene_name  interval
+        ENSG001  ACTB       chr1:1-99
+        ENSG002  MT-ND1     NA
+    """
+
+    path = _realize(
+        an_ann_data().with_format("10x_h5").with_var(features), tmp_path)
+
+    with h5py.File(path, "r") as h5:
+        assert _strings(h5["matrix/features/interval"]) == [
+            "chr1:1-99", "NA"]
 
 
 def test_a_probe_barcode_var_block_is_refused(

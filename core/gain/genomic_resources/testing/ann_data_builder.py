@@ -226,12 +226,20 @@ class AnnDataBuilder(MetaMixin):
 
 
 def _parse_block(data: str) -> pd.DataFrame:
-    """Parse an authored whitespace block, first column as the index."""
+    """Parse an authored whitespace block, first column as the index.
+
+    ``keep_default_na=False`` so the block means what it says: pandas
+    otherwise reads ``NA``, ``NULL``, ``N/A`` and a dozen more spellings
+    as a missing value, and a 10x realization would write ``nan`` where
+    the author asked for ``NA`` -- which is the literal both real files
+    carry for their mitochondrial genes.
+    """
     lines = [
         line for line in convert_to_tab_separated(data).split("\n") if line
     ]
     frame = pd.read_csv(
-        io.StringIO("".join(f"{line}\n" for line in lines)), sep="\t")
+        io.StringIO("".join(f"{line}\n" for line in lines)), sep="\t",
+        keep_default_na=False)
     return frame.set_index(frame.columns[0])
 
 
@@ -525,8 +533,8 @@ def _build_ann_data_content(builder: AnnDataBuilder) -> dict[str, Any]:
             or builder.prefix):
         raise ResourceValidationError(
             "with_legacy_layout, with_uncompressed_layout and with_prefix "
-            "describe the 10x matrix-market triple; a "
-            f"{builder.file_format} is a single file with none of them")
+            f"describe the 10x matrix-market triple; {builder.file_format} "
+            "realizes a single file, which has none of them")
 
     if builder.file_format == "h5ad":
         content: dict[str, Any] = {_realized_filename(builder): _render_h5ad(

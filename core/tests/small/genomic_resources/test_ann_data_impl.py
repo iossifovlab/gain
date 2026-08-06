@@ -247,6 +247,21 @@ def test_files_lists_the_whole_ten_x_triple(
         "matrix.mtx.gz", "barcodes.tsv.gz", "features.tsv.gz"}
 
 
+def test_files_lists_only_the_h5_of_a_10x_h5_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A 10x h5 carries the barcodes and the feature table INSIDE it, so
+    # unlike the triple it has no sidecars to resolve.  Worth stating,
+    # because both are "10x": the sidecar resolution keys on the matrix
+    # NAME, and a resolver that keyed on the format instead would go
+    # looking for barcodes.tsv next to a file that never has one.
+    resource = (
+        an_ann_data().with_format("10x_h5").build_resource(tmp_path)
+    )
+
+    assert AnnDataResourceImplementation(resource).files == {"matrix.h5"}
+
+
 def test_files_lists_the_legacy_ten_x_triple(
     tmp_path: pathlib.Path,
 ) -> None:

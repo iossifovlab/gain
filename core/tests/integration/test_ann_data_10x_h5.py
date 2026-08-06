@@ -25,14 +25,24 @@ import scanpy
 from gain.genomic_resources.ann_data_resource import (
     load_ann_data_from_resource,
 )
+from gain.genomic_resources.implementations.ann_data_resource_impl import (
+    AnnDataResourceImplementation,
+)
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing.ann_data_builder import (
     AnnDataBuilder,
     an_ann_data,
 )
 from gain.genomic_resources.testing.builders import a_grr
+from gain.task_graph.cli_tools import task_graph_run
+from gain.task_graph.graph import TaskGraph
+from gain.task_graph.sequential_executor import SequentialExecutor
 
 _RESOURCE_ID = "single_cell/matrix"
+
+_DESCRIBE_OBS = "statistics/describe_obs.csv"
+_DESCRIBE_VAR = "statistics/describe_var.csv"
+_DESCRIBE_ANN_DATA = "statistics/describe_ann_data.txt"
 
 # A CellRanger-ARC multiome shape -- two feature types, one of which
 # ``gex_only`` drops.  ONE genome, including for the peaks, which is what
@@ -42,6 +52,7 @@ _MULTIOME_FEATURES = """
     gene     gene_name  feature_type      genome  interval
     ENSG001  ACTB       Gene||Expression  GRCh38  chr1:1-99
     ENSG002  GAPDH      Gene||Expression  GRCh38  chr1:200-299
+    ENSG003  MT-ND1     Gene||Expression  GRCh38  NA
     PEAK001  chr1:1-99  Peaks             GRCh38  chr1:1-99
     PEAK002  chr2:1-99  Peaks             GRCh38  chr2:1-99
 """
@@ -109,10 +120,11 @@ def test_the_var_table_is_the_shape_the_stored_statistics_have(
 @pytest.mark.parametrize(
     ("params", "expected_var_names"),
     [
-        pytest.param({}, ["ACTB", "GAPDH"], id="gex-only-by-default"),
+        pytest.param(
+            {}, ["ACTB", "GAPDH", "MT-ND1"], id="gex-only-by-default"),
         pytest.param(
             {"gex_only": False},
-            ["ACTB", "GAPDH", "chr1:1-99", "chr2:1-99"],
+            ["ACTB", "GAPDH", "MT-ND1", "chr1:1-99", "chr2:1-99"],
             id="all-feature-types"),
     ],
 )
@@ -130,6 +142,52 @@ def test_gex_only_filters_the_realized_feature_types(
     ann_data = _scanpy_read(path, **params)
 
     assert list(ann_data.var_names) == expected_var_names
+
+
+def test_the_statistics_scanpy_builds_are_recorded_here(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The golden record gain's own reader has to reproduce.
+
+    The statistics of both real ``10x_h5`` resources were built by
+    scanpy, and a reader replacing it has to produce them byte for byte
+    or every deployed resource silently changes when it is rebuilt.
+    Once scanpy is gone there is no re-deriving what it produced, so
+    this pins it WHILE the oracle is still installed -- which is the
+    ordering constraint ADR 0014 turns on.
+
+    The content below is derived by hand from the authored block, not
+    captured from a run: three of the five features survive ``gex_only``,
+    their feature type and genome are constant, and the mitochondrial
+    gene's interval is the literal ``NA`` both real files carry.
+    """
+    resource, _path = _realize(
+        an_ann_data().with_var(_MULTIOME_FEATURES), tmp_path)
+
+    impl = AnnDataResourceImplementation(resource)
+    graph = TaskGraph()
+    graph.add_tasks(impl.create_statistics_build_tasks())
+    task_graph_run(graph, SequentialExecutor())
+
+    assert resource.get_file_content(_DESCRIBE_ANN_DATA) == (
+        # The MULTIPLICATION SIGN is anndata's, and this is a byte-exact
+        # record of what it wrote -- an ASCII "x" here would assert
+        # something no resource in any GRR contains.
+        "AnnData object with n_obs × n_vars = 3 × 3\n"  # noqa: RUF001
+        "    var: 'gene_ids', 'feature_types', 'genome', 'interval'\n"
+        "    layers: None (.X)\n"
+    )
+    assert resource.get_file_content(_DESCRIBE_VAR) == (
+        ",gene_ids,feature_types,genome,interval\n"
+        "count,3,3,3,3\n"
+        "unique,3,1,1,3\n"
+        "top,ENSG001,Gene Expression,GRCh38,chr1:1-99\n"
+        "freq,1,3,3,1\n"
+    )
+    # 10x carries no per-cell annotation at all, so describing ``obs``
+    # yields an empty frame, which the implementation declines to write.
+    assert _DESCRIBE_OBS not in {
+        entry.name for entry in resource.get_manifest()}
 
 
 def test_the_loader_reads_a_10x_h5_resource(tmp_path: pathlib.Path) -> None:
