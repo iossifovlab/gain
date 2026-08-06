@@ -1,8 +1,13 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import gzip
 import json
 import pathlib
 
+import h5py
 import pytest
+from gain.genomic_resources.ann_data_resource import (
+    load_ann_data_from_resource,
+)
 from gain.genomic_resources.implementations.ann_data_resource_impl import (
     AnnDataResourceImplementation,
 )
@@ -57,6 +62,79 @@ def test_statistics_task_writes_the_describe_tables(
     assert resource.file_exists(DESCRIBE_ANN_DATA)
     assert "cell_type" in resource.get_file_content(DESCRIBE_OBS)
     assert "gene_name" in resource.get_file_content(DESCRIBE_VAR)
+
+
+class TestTheStatisticsOfATenXResource:
+    """Built without materialising the matrix, and identical either way.
+
+    The statistics are 221 bytes describing the two axis tables and the
+    shape.  Reading the matrix to produce them costs about 10 GB on the
+    benchmark GRR's largest 10x resource, which is why ``resource-repair``
+    cannot finish on it at all.
+    """
+
+    @staticmethod
+    def _ten_x(tmp_path: pathlib.Path) -> GenomicResource:
+        return (
+            an_ann_data().with_format("10x_mtx").build_resource(tmp_path)
+        )
+
+    def test_they_describe_what_the_full_read_describes(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        # The equivalence stated against the read itself rather than
+        # against a recorded expectation, so it cannot be satisfied by
+        # updating a fixture.
+        resource = self._ten_x(tmp_path)
+
+        build_statistics(resource)
+
+        assert resource.get_file_content(DESCRIBE_ANN_DATA) == \
+            f"{load_ann_data_from_resource(resource)}\n"
+        assert "gene_name" not in resource.get_file_content(DESCRIBE_VAR)
+        assert "gene_ids" in resource.get_file_content(DESCRIBE_VAR)
+
+    def test_they_are_built_without_reading_the_matrix(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        # A matrix whose size line is honest and whose body is absent: the
+        # full read fails on it outright, so a build that succeeds is one
+        # that never went past the header.
+        resource = self._ten_x(tmp_path)
+        matrix = next(tmp_path.rglob("matrix.mtx.gz"))
+        header = gzip.decompress(matrix.read_bytes()).split(b"\n")[:3]
+        matrix.write_bytes(gzip.compress(b"\n".join([*header, b""])))
+
+        build_statistics(resource)
+
+        # ``var`` is real -- it comes from the feature table, which is read
+        # in full either way; it is only X that is a stand-in.  There is no
+        # ``describe_obs.csv``: a 10x read's ``obs`` is barcodes and no
+        # columns, which the implementation declines to describe.
+        assert resource.get_file_content(DESCRIBE_ANN_DATA).startswith(
+            f"AnnData object with n_obs {TIMES} n_vars = 3 {TIMES} 4")
+        assert "ENSG001" in resource.get_file_content(DESCRIBE_VAR)
+        assert not resource.file_exists(DESCRIBE_OBS)
+
+
+def test_the_statistics_build_leaves_no_h5ad_handle_open(
+    resource: GenomicResource,
+) -> None:
+    # An h5ad is read ``backed="r"``, which holds an open h5py file, and
+    # the loader hands that handle to its caller on purpose.  This task is
+    # the caller that runs once per resource in a repo sweep, so it is the
+    # one that has to close -- relying on a garbage collection that may
+    # never come is gain#480's shape.
+    #
+    # Counted through h5py rather than asserted on an AnnData, because the
+    # build never hands one back: what matters is that no handle survives
+    # it, not which object held it.
+    before = h5py.h5f.get_obj_count(h5py.h5f.OBJ_ALL, h5py.h5f.OBJ_FILE)
+
+    build_statistics(resource)
+
+    assert h5py.h5f.get_obj_count(
+        h5py.h5f.OBJ_ALL, h5py.h5f.OBJ_FILE) == before
 
 
 def test_statistics_task_skips_an_annotation_table_with_no_columns(

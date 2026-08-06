@@ -1,13 +1,16 @@
 """Loading helpers for ``ann_data`` genomic resources."""
 
-import contextlib
-import os
-from collections.abc import Iterator, Mapping
+import dataclasses
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import anndata as ad
 
 from gain import logging
+from gain.genomic_resources.ann_data_10x import (
+    parse_10x_mtx_parameters,
+    read_10x_mtx,
+)
 from gain.genomic_resources.fsspec_protocol import _strip_url_userinfo
 from gain.genomic_resources.repository import (
     GenomicResource,
@@ -17,11 +20,10 @@ from gain.genomic_resources.repository import (
 
 logger = logging.getLogger(__name__)
 
-# The 10x matrix-market triple is addressed by directory plus a shared
-# prefix, so the matrix member is what the config names and the suffix is
-# what identifies it.  Longest first -- ``matrix.mtx.gz`` also ends with
-# neither of the plain-text spellings, but keeping the order explicit means
-# a future ``.mtx.bz2`` cannot silently match the wrong branch.
+# The config names the matrix member of a 10x triple, and one of these
+# suffixes is what identifies it as one.  Longest first -- keeping the
+# order explicit means a future ``.mtx.bz2`` cannot silently match the
+# wrong branch.
 _MTX_SUFFIXES = ("matrix.mtx.gz", "matrix.mtx")
 
 # Suffix -> the format assumed when the config does not spell one out.
@@ -34,38 +36,20 @@ _SUFFIX_TO_DEFAULT_FORMAT = {
 _FALLBACK_FORMAT = "h5ad"
 
 
-def mtx_file_to_dir_and_prefix(mtx_file_name: str) -> tuple[str, str | None]:
-    """Split a 10x matrix file name into its directory and shared prefix.
-
-    ``scanpy.read_10x_mtx`` takes the directory holding the
-    ``barcodes``/``features``/``matrix`` triple plus the prefix the three
-    share, and spells "no prefix" as ``None`` rather than ``""`` -- so an
-    empty prefix is normalised to ``None`` here.
-    """
-    dirname = os.path.dirname(mtx_file_name)
-    basename = os.path.basename(mtx_file_name)
-    for suffix in _MTX_SUFFIXES:
-        if basename.endswith(suffix):
-            prefix = basename[:-len(suffix)]
-            break
-    else:
-        raise ValueError(
-            f"not a 10x matrix file name: {mtx_file_name}; expected a name "
-            f"ending in one of {', '.join(_MTX_SUFFIXES)}")
-
-    # ``os.path.dirname`` of a bare name is ``""``, which scanpy does not
-    # read as the working directory the way ``"."`` does.
-    return dirname or ".", prefix or None
-
-
-# The two 10x layouts, keyed by the sidecar whose presence identifies each.
 # CellRanger v2 ships the triple as plain text and calls the feature table
-# ``genes.tsv``; v3 gzips all three and calls it ``features.tsv.gz``.
+# ``genes.tsv``, which carries no feature type; v3 calls it ``features.tsv``
+# and adds one.  Gzipping is a third, independent axis: CellRanger v3 gzips
+# all three members, STARsolo writes the same v3 layout uncompressed.
 _LEGACY_SIDECARS = ("barcodes.tsv", "genes.tsv")
-_CURRENT_SIDECARS = ("barcodes.tsv.gz", "features.tsv.gz")
+_CURRENT_SIDECARS = ("barcodes.tsv", "features.tsv")
 
-# What ``scanpy.read_10x_mtx`` itself probes for to tell the layouts apart.
+# What ``scanpy.read_10x_mtx`` itself probes for to tell v2 from v3.
 _LEGACY_MARKER = "genes.tsv"
+
+# What is probed for to tell a compressed v3 triple from a plain one.  The
+# gzipped spelling is the default because it is what CellRanger writes, so
+# a resource missing its feature table reports the name it ought to have.
+_CURRENT_MARKER = "features.tsv"
 
 
 def is_10x_matrix_name(file_name: str) -> bool:
@@ -74,58 +58,106 @@ def is_10x_matrix_name(file_name: str) -> bool:
 
 
 def _mtx_prefix(file_name: str) -> str:
-    """Return the shared prefix of a 10x matrix member's name."""
-    dirname, prefix = mtx_file_to_dir_and_prefix(file_name)
-    head = "" if dirname == "." else f"{dirname}/"
-    return f"{head}{prefix or ''}"
+    """Return what a 10x triple's three members share, as a resource name.
 
-
-def _sidecars_for_layout(prefix: str, *, legacy: bool) -> set[str]:
-    names = _LEGACY_SIDECARS if legacy else _CURRENT_SIDECARS
-    return {f"{prefix}{name}" for name in names}
-
-
-def resolve_10x_sidecars(manifest: Manifest, file_name: str) -> set[str]:
-    """Return the sidecars of the 10x matrix ``file_name``, per the manifest.
-
-    The layout is decided the way ``scanpy.read_10x_mtx`` decides it -- by
-    asking whether a ``genes.tsv`` sits beside the matrix -- with the
-    manifest standing in for scanpy's filesystem probe.  Resolution is
-    manifest-driven for the same reason the tabix index is: the manifest is
-    already loaded and is protocol-agnostic, whereas probing costs a
-    network round trip per candidate on http and s3.
+    The matrix member's name minus its ``matrix.mtx[.gz]`` suffix, so any
+    directory stays attached and the sidecars are named by appending to
+    this.  ``data/sample1_matrix.mtx.gz`` shares ``data/sample1_``; a bare
+    ``matrix.mtx.gz`` shares nothing and yields ``""``.
     """
-    prefix = _mtx_prefix(file_name)
-    legacy = f"{prefix}{_LEGACY_MARKER}" in manifest
-    return _sidecars_for_layout(prefix, legacy=legacy)
+    for suffix in _MTX_SUFFIXES:
+        if file_name.endswith(suffix):
+            return file_name[:-len(suffix)]
+
+    raise ValueError(
+        f"not a 10x matrix file name: {file_name}; expected a name "
+        f"ending in one of {', '.join(_MTX_SUFFIXES)}")
 
 
-def resolve_10x_sidecars_for_read(
+@dataclasses.dataclass(frozen=True)
+class TenXMtxLayout:
+    """The three members of a 10x matrix-market triple, by resource name.
+
+    Which names the triple carries is a question about the resource, and
+    resolving it once here is what keeps the read, the statistics inputs
+    and the cache prefetch from each answering it differently.
+    """
+
+    barcodes: str
+    features: str
+    legacy: bool
+
+    @property
+    def sidecars(self) -> set[str]:
+        """Return the two non-matrix members."""
+        return {self.barcodes, self.features}
+
+
+def _resolve_layout(
+    prefix: str, contains: Callable[[str], bool],
+) -> TenXMtxLayout:
+    """Resolve a triple's layout by asking ``contains`` about candidates.
+
+    Two independent questions, in order: v2 or v3, which the presence of a
+    ``genes.tsv`` answers exactly as scanpy's own probe does; and then, for
+    v3 only, gzipped or not.  ``compressed`` is therefore never a config
+    key -- the resource already states the answer, and a config that
+    disagreed with it could only be wrong.
+    """
+    if contains(f"{prefix}{_LEGACY_MARKER}"):
+        barcodes, features = _LEGACY_SIDECARS
+        return TenXMtxLayout(
+            f"{prefix}{barcodes}", f"{prefix}{features}", legacy=True)
+
+    barcodes, features = _CURRENT_SIDECARS
+    suffix = "" if contains(f"{prefix}{_CURRENT_MARKER}") else ".gz"
+    return TenXMtxLayout(
+        f"{prefix}{barcodes}{suffix}", f"{prefix}{features}{suffix}",
+        legacy=False)
+
+
+def resolve_10x_layout(manifest: Manifest, file_name: str) -> TenXMtxLayout:
+    """Return the layout of the 10x matrix ``file_name``, per the manifest.
+
+    Resolution is manifest-driven for the same reason the tabix index is:
+    the manifest is already loaded and is protocol-agnostic, whereas
+    probing costs a network round trip per candidate on http and s3.
+
+    This and :func:`resolve_10x_layout_for_read` are the pair, and they
+    differ only in where the answer comes from -- exactly as
+    :func:`resolve_tabix_index_filename` and its ``_for_read`` twin do.
+    A caller that only wants the two names takes ``.sidecars``.
+    """
+    return _resolve_layout(
+        _mtx_prefix(file_name), lambda name: name in manifest)
+
+
+def resolve_10x_layout_for_read(
     resource: GenomicResource, file_name: str,
-) -> set[str]:
-    """Return the sidecars to read ``file_name`` with, never building.
+) -> TenXMtxLayout:
+    """Return the layout to read ``file_name`` with, never building.
 
     Shaped like :func:`resolve_tabix_index_filename_for_read`, and for the
     same reason: a read must stay a pure read, and
     :meth:`GenomicResource.get_manifest` would *build* -- md5-scanning the
     whole resource and writing state files -- for a resource that carries
     no ``.MANIFEST`` (gain#430).  With no manifest at hand, falls back to
-    probing the resource for the legacy marker, which is literally
-    scanpy's own test.
+    probing the resource itself for the same two markers.
     """
     manifest = resource.get_loaded_manifest()
     if manifest is not None:
-        return resolve_10x_sidecars(manifest, file_name)
+        return resolve_10x_layout(manifest, file_name)
 
-    prefix = _mtx_prefix(file_name)
-    legacy = False
-    try:
-        legacy = resource.file_exists(f"{prefix}{_LEGACY_MARKER}")
-    except OSError:
-        logger.debug(
-            "unable to probe the 10x layout of %s in resource %s",
-            file_name, resource.resource_id, exc_info=True)
-    return _sidecars_for_layout(prefix, legacy=legacy)
+    def probe(name: str) -> bool:
+        try:
+            return resource.file_exists(name)
+        except OSError:
+            logger.debug(
+                "unable to probe for %s in resource %s",
+                name, resource.resource_id, exc_info=True)
+            return False
+
+    return _resolve_layout(_mtx_prefix(file_name), probe)
 
 
 def resolve_ann_data_format(config: Mapping[str, Any]) -> str:
@@ -158,26 +190,96 @@ def resolve_ann_data_format(config: Mapping[str, Any]) -> str:
 def _import_scanpy() -> Any:
     """Import scanpy on demand, reporting its absence as a config error.
 
-    scanpy is an optional extra (``gain-core[ann_data_10x]``) -- it is
-    needed only by the two 10x formats and pulls in a large scientific
-    stack, so an ``ann_data`` resource in ``h5ad`` form must stay loadable
-    without it.
+    scanpy is an optional extra (``gain-core[ann_data_10x]``) and pulls in
+    a large scientific stack, so only the one format still read through it
+    -- ``10x_h5`` -- may ask for it.  ``h5ad`` goes to anndata directly and
+    ``10x_mtx`` is read by gain itself (ADR 0014).
     """
     # pylint: disable=import-outside-toplevel
     try:
         import scanpy
     except ImportError as exc:
         raise ValueError(
-            "the 10x ann_data formats need scanpy, which is not installed; "
-            "install the gain-core[ann_data_10x] extra") from exc
+            "the 10x_h5 ann_data format needs scanpy, which is not "
+            "installed; install the gain-core[ann_data_10x] extra") from exc
 
     return scanpy
 
 
+def _local_file_path(resource: GenomicResource, file_name: str) -> str:
+    """Return the local path of ``file_name``, fetching it if cached.
+
+    Asking for the url is what triggers a caching protocol's fetch, so this
+    is also how a member is brought on disk before a reader that bypasses
+    the protocol -- pandas and scipy both take paths -- is handed it.
+
+    A file the resource cannot produce is reported the way every other
+    misconfigured ``ann_data`` is, as a ``ValueError`` naming the resource.
+    The fetch raises an ``OSError`` that names a path and nothing else, and
+    all three members of a 10x triple come through here, so an incomplete
+    triple would otherwise surface as a bare filesystem error with no clue
+    which resource it came from.
+    """
+    try:
+        file_url = resource.get_file_url(file_name)
+    except OSError as exc:
+        logger.exception(
+            "unable to read %s of the ann_data %s",
+            file_name, resource.resource_id)
+        raise ValueError(
+            f"cannot read {file_name} of the ann_data "
+            f"{resource.resource_id}: {exc}") from exc
+
+    if not file_url.startswith("file://"):
+        # ``get_file_url`` returns the credential-BEARING fetch url on
+        # purpose -- aiohttp and htslib read URL-embedded basic auth
+        # straight off the url string -- so every user-visible rendering of
+        # it has to drop the ``user:pass@`` userinfo first (#608).  The
+        # unredacted url keeps driving the scheme test and the local path
+        # below, which are internal.
+        display_url = _strip_url_userinfo(file_url)
+        logger.error(
+            "ann_data resources can only be loaded from a file:// url, "
+            "and not from %s for the ann_data %s",
+            display_url, resource.resource_id)
+        raise ValueError(
+            f"cannot load the url {display_url} "
+            f"for the ann_data {resource.resource_id}")
+
+    return file_url[len("file://"):]
+
+
 def load_ann_data_from_resource(
     resource: GenomicResource | None,
+    *,
+    matrix_free: bool = False,
 ) -> ad.AnnData:
-    """Load an AnnData from an ``ann_data`` genomic resource."""
+    """Load an AnnData from an ``ann_data`` genomic resource.
+
+    **The caller owns the file handle.**  An ``h5ad`` is read
+    ``backed="r"`` -- the default, and what keeps a multi-gigabyte ``X``
+    out of a dask worker -- which leaves an open h5py file behind for as
+    long as the AnnData lives.  A repo sweep that loads one per resource
+    and relies on a garbage collection that may never come is gain#480's
+    shape, so a caller that loads in a loop closes with
+    ``ann_data.file.close()`` when ``ann_data.isbacked``.  A 10x read is
+    in memory and has no handle.
+
+    ``matrix_free`` asks for a read that does not materialise the data
+    matrix.  **The resulting ``X`` IS NOT THE RESOURCE'S DATA** -- it is an
+    all-zero matrix of the right shape.  Everything else is built by the
+    same code as an ordinary read, so both axis tables, the shape and the
+    feature-type filter are identical, which is what lets the statistics
+    build use it: ``AnnData._gen_repr`` skips ``X`` and ``describe`` reads
+    ``obs`` and ``var``.  Reading the real matrix costs about 10 GB on the
+    largest 10x resource to write 221 bytes of statistics.
+
+    It is honoured only where it means something.  ``h5ad`` ignores it --
+    ``backed="r"`` already keeps ``X`` off the heap, and reproducing
+    anndata's repr for an arbitrary h5ad would mean reimplementing its
+    reader for no memory benefit (ADR 0014).  ``10x_h5`` ignores it too,
+    for now.
+    """
     if resource is None:
         raise ValueError("missing resource: None")
 
@@ -201,24 +303,7 @@ def load_ann_data_from_resource(
     file_format = resolve_ann_data_format(config)
     params = dict(config.get("parameters", {}))
 
-    file_url = resource.get_file_url(file_name)
-    if not file_url.startswith("file://"):
-        # ``get_file_url`` returns the credential-BEARING fetch url on
-        # purpose -- aiohttp and htslib read URL-embedded basic auth
-        # straight off the url string -- so every user-visible rendering of
-        # it has to drop the ``user:pass@`` userinfo first (#608).  The
-        # unredacted url keeps driving the scheme test and the local path
-        # below, which are internal.
-        display_url = _strip_url_userinfo(file_url)
-        logger.error(
-            "ann_data resources can only be loaded from a file:// url, "
-            "and not from %s for the ann_data %s",
-            display_url, resource.resource_id)
-        raise ValueError(
-            f"cannot load the url {display_url} "
-            f"for the ann_data {resource.resource_id}")
-
-    file_path = file_url[len("file://"):]
+    file_path = _local_file_path(resource, file_name)
 
     result: Any
     if file_format == "h5ad":
@@ -231,28 +316,20 @@ def load_ann_data_from_resource(
         params.setdefault("backed", "r")
         result = ad.read_h5ad(file_path, **params)
     elif file_format == "10x_mtx":
-        # scanpy reads the barcodes and the feature table straight off the
-        # filesystem, bypassing the protocol entirely, so on a caching GRR
-        # they have to be on disk before it is called.  Asking for each
-        # sidecar's url is what triggers the fetch -- a caching protocol
-        # refreshes the file it is asked to name.  Only the matrix member
-        # used to be named, and a lazy load (as against an explicit
-        # grr_manage prefetch) then found the sidecars missing.
-        #
-        # Failing to fetch one is logged rather than raised: an incomplete
-        # triple is scanpy's error to report, and it names the member and
-        # the directory, which an OSError from the fetch does not.
-        for sidecar in sorted(
-                resolve_10x_sidecars_for_read(resource, file_name)):
-            try:
-                resource.get_file_url(sidecar)
-            except OSError:
-                logger.debug(
-                    "unable to fetch the 10x sidecar %s of resource %s",
-                    sidecar, resource.resource_id, exc_info=True)
-        dirname, prefix = mtx_file_to_dir_and_prefix(file_path)
-        result = _import_scanpy().read_10x_mtx(
-            dirname, prefix=prefix, **params)
+        # The two sidecars are read by pandas, which takes a path and
+        # bypasses the protocol entirely, so on a caching GRR they have to
+        # be on disk first -- which is what asking for their local path
+        # does, a caching protocol refreshing the file it is asked to name.
+        layout = resolve_10x_layout_for_read(resource, file_name)
+        result = read_10x_mtx(
+            file_path,
+            _local_file_path(resource, layout.barcodes),
+            _local_file_path(resource, layout.features),
+            resource_id=resource.resource_id,
+            legacy=layout.legacy,
+            parameters=parse_10x_mtx_parameters(
+                params, resource.resource_id),
+            matrix_free=matrix_free)
     elif file_format == "10x_h5":
         result = _import_scanpy().read_10x_h5(file_path, **params)
     else:
@@ -273,32 +350,6 @@ def load_ann_data_from_resource(
             f"{type(result).__name__}, not an AnnData")
 
     return result
-
-
-@contextlib.contextmanager
-def open_ann_data_from_resource(
-    resource: GenomicResource | None,
-) -> Iterator[ad.AnnData]:
-    """Open an AnnData from a resource and close it on exit.
-
-    The preferred entry point, and the one the statistics build uses.
-    ``backed="r"`` -- the default, and what keeps a multi-gigabyte X out of
-    a dask worker -- leaves an open h5py file behind for as long as the
-    AnnData lives.  A repo sweep that opens one per resource and relies on
-    a garbage collection that may never come is gain#480's shape, so
-    ownership is explicit here, in the spirit of ``with score.open()``.
-
-    :func:`load_ann_data_from_resource` remains for a caller that wants to
-    keep the handle; that caller owns the close.
-    """
-    ann_data = load_ann_data_from_resource(resource)
-    try:
-        yield ann_data
-    finally:
-        # A config may turn ``backed`` off, and an in-memory AnnData has no
-        # file manager to close.
-        if ann_data.isbacked:
-            ann_data.file.close()
 
 
 def load_ann_data_from_resource_id(

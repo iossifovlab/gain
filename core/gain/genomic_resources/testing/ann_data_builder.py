@@ -88,6 +88,7 @@ class AnnDataBuilder(MetaMixin):
     drop_var_columns: bool = False
     file_format: str = "h5ad"
     legacy_layout: bool = False
+    uncompressed_layout: bool = False
     prefix: str = ""
     declared_format: str | None = None
     omit_format_key: bool = False
@@ -104,7 +105,14 @@ class AnnDataBuilder(MetaMixin):
         return dataclasses.replace(self, obs_data=data)
 
     def with_var(self, data: str) -> AnnDataBuilder:
-        """Author the ``var`` (per-gene) table as a whitespace block."""
+        """Author the ``var`` (per-gene) table as a whitespace block.
+
+        Two column names are conventional, because a 10x feature table is
+        positional and this block is what has to fill it: ``gene_name`` is
+        the gene symbol and ``feature_type`` is the feature type.  Both are
+        optional -- see :func:`_feature_table` for what stands in.  An
+        ``h5ad`` realization carries them as ordinary ``var`` columns.
+        """
         return dataclasses.replace(self, var_data=data)
 
     def without_obs_columns(self) -> AnnDataBuilder:
@@ -132,6 +140,16 @@ class AnnDataBuilder(MetaMixin):
                 f"realize {list(_ANN_DATA_FORMATS)}. To DECLARE an "
                 f"unrealizable format, use with_declared_format")
         return dataclasses.replace(self, file_format=file_format)
+
+    def with_uncompressed_layout(self) -> AnnDataBuilder:
+        """Realize the v3 triple as plain text -- the STARsolo layout.
+
+        ``matrix.mtx``/``barcodes.tsv``/``features.tsv``, with the same
+        three-column feature table v3 always has.  This is NOT the legacy
+        layout: it still carries feature types, so ``gex_only`` still has
+        something to filter on.
+        """
+        return dataclasses.replace(self, uncompressed_layout=True)
 
     def with_legacy_layout(self) -> AnnDataBuilder:
         """Realize the 10x triple in the CellRanger v2 layout.
@@ -260,6 +278,28 @@ def _render_matrix_market(n_genes: int, n_cells: int) -> str:
     return "".join(f"{line}\n" for line in lines)
 
 
+def _feature_table(var: pd.DataFrame) -> list[tuple[str, str, str]]:
+    """Return the authored ``var`` as 10x ``(id, symbol, type)`` rows.
+
+    A 10x feature table is positional, so the authored block names the
+    three fields by convention rather than by position: the INDEX is the
+    gene id, a ``gene_name`` column is the symbol, and a ``feature_type``
+    column is the feature type.  Either column may be absent -- the symbol
+    then repeats the id, as it does in real data with no symbol, and the
+    type is ``Gene Expression``, which is what makes the bare builder a
+    resource ``gex_only`` does not filter.
+    """
+    def column(name: str, default: pd.Index) -> list[str]:
+        values = var[name] if name in var.columns else default
+        return [str(value) for value in values]
+
+    ids = [str(gene_id) for gene_id in var.index]
+    symbols = column("gene_name", var.index)
+    types = column(
+        "feature_type", pd.Index(["Gene Expression"] * len(var)))
+    return list(zip(ids, symbols, types, strict=True))
+
+
 def _render_10x_triple(builder: AnnDataBuilder) -> dict[str, Any]:
     """Realize the authored annotations as a 10x Matrix Market triple.
 
@@ -268,17 +308,18 @@ def _render_10x_triple(builder: AnnDataBuilder) -> dict[str, Any]:
     does -- a triple that is only half-written would let a wrong answer
     look right.  v3 gzips all three members and ships a three-column
     ``features.tsv.gz``; v2 ships plain text and a two-column
-    ``genes.tsv``.
+    ``genes.tsv``, which carries no feature type at all.
     """
     obs, var = _annotation_frames(builder)
     prefix = builder.prefix
 
     barcodes = "".join(f"{barcode}\n" for barcode in obs.index)
     matrix = _render_matrix_market(len(var), len(obs))
+    features_table = _feature_table(var)
 
     if builder.legacy_layout:
         genes = "".join(
-            f"{gene_id}\t{gene_id}\n" for gene_id in var.index)
+            f"{gene_id}\t{symbol}\n" for gene_id, symbol, _ in features_table)
         return {
             f"{prefix}{_MTX_V2_FILENAME}": matrix,
             f"{prefix}barcodes.tsv": barcodes,
@@ -286,7 +327,18 @@ def _render_10x_triple(builder: AnnDataBuilder) -> dict[str, Any]:
         }
 
     features = "".join(
-        f"{gene_id}\t{gene_id}\tGene Expression\n" for gene_id in var.index)
+        f"{gene_id}\t{symbol}\t{feature_type}\n"
+        for gene_id, symbol, feature_type in features_table)
+
+    if builder.uncompressed_layout:
+        # STARsolo's spelling of v3: the same three-column feature table,
+        # no gzip anywhere.
+        return {
+            f"{prefix}{_MTX_V2_FILENAME}": matrix,
+            f"{prefix}barcodes.tsv": barcodes,
+            f"{prefix}features.tsv": features,
+        }
+
     return {
         f"{prefix}{_MTX_V3_FILENAME}": gzip.compress(matrix.encode()),
         f"{prefix}barcodes.tsv.gz": gzip.compress(barcodes.encode()),
@@ -300,7 +352,8 @@ def _realized_filename(builder: AnnDataBuilder) -> str:
         return builder.filename
     if builder.file_format == "h5ad":
         return _H5AD_FILENAME
-    matrix = _MTX_V2_FILENAME if builder.legacy_layout else _MTX_V3_FILENAME
+    plain = builder.legacy_layout or builder.uncompressed_layout
+    matrix = _MTX_V2_FILENAME if plain else _MTX_V3_FILENAME
     return f"{builder.prefix}{matrix}"
 
 
@@ -311,11 +364,18 @@ def _build_ann_data_content(builder: AnnDataBuilder) -> dict[str, Any]:
     (``GRRBuilder``) annotates it with the resource id, so messages here
     stay id-free.
     """
-    if builder.file_format == "h5ad" and (
-            builder.legacy_layout or builder.prefix):
+    if builder.legacy_layout and builder.uncompressed_layout:
         raise ResourceValidationError(
-            "with_legacy_layout and with_prefix describe the 10x triple; "
-            "an h5ad is a single file with neither")
+            "with_legacy_layout and with_uncompressed_layout are two "
+            "different layouts; a triple is realized in one of them")
+
+    if builder.file_format == "h5ad" and (
+            builder.legacy_layout or builder.uncompressed_layout
+            or builder.prefix):
+        raise ResourceValidationError(
+            "with_legacy_layout, with_uncompressed_layout and with_prefix "
+            "describe the 10x triple; an h5ad is a single file with none "
+            "of them")
 
     if builder.file_format == "h5ad":
         content: dict[str, Any] = {_realized_filename(builder): _render_h5ad(

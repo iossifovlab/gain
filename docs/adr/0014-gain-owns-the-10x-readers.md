@@ -1,8 +1,12 @@
 # 14. gain owns the 10x readers, and the statistics build never reads the data matrix
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-08-05
-- **Issues:** to be filed — see [Follow-ups](#follow-ups)
+- **Issues:** [#703](https://github.com/iossifovlab/gain/issues/703) (the two
+  statistics defects), [#708](https://github.com/iossifovlab/gain/issues/708)
+  (the `10x_mtx` reader and the matrix-free read); follow-ups
+  [#706](https://github.com/iossifovlab/gain/issues/706),
+  [#707](https://github.com/iossifovlab/gain/issues/707)
 
 ## Context
 
@@ -254,6 +258,22 @@ One detail from it is load-bearing and easy to get wrong: the repr's
 `layers: None (.X)` line requires `X` to be a real sparse matrix of the right
 shape with zero non-zeros. With `X=None` the line disappears and the
 statistic is not byte-identical.
+
+### What the shipped reader measured
+
+Step 2 was then run against the two real `10x_mtx` resources — the ones
+`resource-repair` could not finish at all — with gain's own reader and no
+scanpy installed, byte-comparing all three statistics against the stored
+ones scanpy had produced:
+
+| resource | shape | `X.nnz` | wall | peak RSS | statistics |
+| --- | --- | --- | --- | --- | --- |
+| `liu2026Multiomics/T183_b4_Brain_PCW19` | 884,736 × 38,705 | 0 | 8.7 s | 413 MB | identical |
+| `liu2026Multiomics/T410_b13_Eye_PCW13` | 884,736 × 38,705 | 0 | 11.3 s | 485 MB | identical |
+
+Against a 9.31 GiB worker limit and a build that previously could not
+complete. Neither resource writes a `describe_obs.csv` — a 10x read's `obs`
+is barcodes and no columns, which the implementation declines to describe.
 
 ## Follow-ups
 

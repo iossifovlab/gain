@@ -75,7 +75,7 @@ of one decision will drift.
 | [0011](0011-deprecate-cnv-collection-vocabulary.md) | The `cnv_collection` configuration vocabulary is deprecated, removed in 2027.1.0 | accepted |
 | [0012](0012-group-search-skips-a-child-that-cannot-answer.md) | A group repository skips a child that cannot answer a search, and fails only when none can | accepted |
 | [0013](0013-symlink-resolution-is-not-contained.md) | Symlink resolution inside a resource is not contained | accepted |
-| [0014](0014-gain-owns-the-10x-readers.md) | gain owns the 10x readers, and the statistics build never reads the data matrix | proposed |
+| [0014](0014-gain-owns-the-10x-readers.md) | gain owns the 10x readers, and the statistics build never reads the data matrix | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > "Numbers are never reused" is a rule about not re-issuing a *retired* number;
