@@ -57,6 +57,10 @@ _NAMED_FEATURE_DATASETS = frozenset(
 # The per-feature metadata the ``genome`` parameter selects on.
 _GENOME_COLUMN = "genome"
 
+# The dataset whose PRESENCE identifies a probe-barcode matrix, in which
+# ``id`` names the probe rather than the gene.
+_PROBE_ID_DATASET = "gene_id"
+
 # ``parameters:`` is a surface gain defines, not a passthrough to somebody
 # else's signature.  A key is in exactly one of these three sets, and the
 # message a rejected one produces says which and why.
@@ -373,9 +377,47 @@ def parse_10x_h5_parameters(
     )
 
 
-def _h5_matrix(h5: h5py.File) -> h5py.Group:
-    """Return the single ``matrix`` group a modern 10x h5 is built round."""
+def _h5_matrix(h5: h5py.File, resource_id: str) -> h5py.Group:
+    """Return the single ``matrix`` group a modern 10x h5 is built round.
+
+    A file that has none is the legacy CellRanger v2 layout, whose root
+    carries a group per genome instead.  gain refuses it rather than
+    guessing (ADR 0014): no resource we have is one, so the builder
+    realizes no fixture for it, and a reader with no fixture is a reader
+    with no way of knowing it got it right.
+    """
+    if _MATRIX_GROUP not in h5:
+        raise ValueError(
+            f"the ann_data {resource_id} is a 10x h5 with no "
+            f"{_MATRIX_GROUP!r} group, so it is the legacy per-genome "
+            f"layout, which gain does not read; its root carries "
+            f"{', '.join(sorted(h5))}")
+
     return h5[_MATRIX_GROUP]
+
+
+def _h5_features(matrix: h5py.Group, resource_id: str) -> h5py.Group:
+    """Return the feature table, refusing the probe-barcode variant.
+
+    A ``gene_id`` dataset is what identifies a probe-barcode matrix, in
+    which ``id`` means the probe and ``gene_id`` the gene -- so reading
+    it as a feature-barcode file would silently index the variables by
+    the wrong thing.  Out of scope for the same reason the legacy layout
+    is, and refused for the same reason.
+    """
+    if _FEATURES_GROUP not in matrix:
+        raise ValueError(
+            f"the ann_data {resource_id} is a 10x h5 with no "
+            f"{_FEATURES_GROUP!r} group, so it describes no variables")
+
+    features = matrix[_FEATURES_GROUP]
+    if _PROBE_ID_DATASET in features:
+        raise ValueError(
+            f"the ann_data {resource_id} is a probe-barcode 10x h5 -- its "
+            f"features carry a {_PROBE_ID_DATASET!r} dataset -- and gain "
+            f"reads the feature-barcode layout only")
+
+    return features
 
 
 def _read_x(matrix: h5py.Group, *, matrix_free: bool) -> csr_matrix:
@@ -489,12 +531,12 @@ def read_10x_h5(
     parameters = parameters if parameters is not None else TenXH5Parameters()
 
     with h5py.File(file_path, "r") as h5:
-        matrix = _h5_matrix(h5)
+        matrix = _h5_matrix(h5, resource_id)
 
         ann_data = AnnData(
             _read_x(matrix, matrix_free=matrix_free),
             obs={"obs_names": matrix["barcodes"][()].astype(str)},
-            var=_read_var(matrix[_FEATURES_GROUP]),
+            var=_read_var(_h5_features(matrix, resource_id)),
         )
 
     if parameters.genome is not None:

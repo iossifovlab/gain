@@ -12,6 +12,7 @@ import pathlib
 from typing import Any
 
 import h5py
+import numpy as np
 import pytest
 from gain.genomic_resources.ann_data_resource import (
     load_ann_data_from_resource,
@@ -39,6 +40,9 @@ _DESCRIBE_ANN_DATA = "statistics/describe_ann_data.txt"
 # read must never touch.  On the largest real resource they are 151,320,994
 # entries -- about 605 MB of ``data`` and 1.2 GB of ``indices``.
 _MATRIX_DATASETS = ("data", "indices", "indptr")
+
+# The group a modern 10x h5 is built round, and what a reader probes for.
+_MATRIX_GROUP = "matrix"
 
 # A CellRanger-ARC multiome shape -- two feature types, one of which
 # ``gex_only`` drops.  ONE genome, which is what both real resources are.
@@ -71,6 +75,36 @@ def test_reads_a_10x_h5_without_scanpy(tmp_path: pathlib.Path) -> None:
         [5.0, 8.0, 11.0, 14.0],
         [6.0, 9.0, 12.0, 15.0],
     ]
+
+
+def test_the_counts_come_back_as_float32(tmp_path: pathlib.Path) -> None:
+    # CellRanger stores counts as int32 and scanpy handed back float32,
+    # so every consumer of a 10x resource has been given floats.  Pinned
+    # because nothing else here can see it: an int32 and a float32 matrix
+    # of the same counts compare equal element-wise and describe
+    # themselves identically, so a dropped conversion is invisible to
+    # every other assertion in this file.
+    resource = (
+        an_ann_data().with_format("10x_h5").build_resource(tmp_path)
+    )
+
+    ann_data = load_ann_data_from_resource(resource)
+
+    assert ann_data.X.dtype == np.float32
+
+
+def test_a_matrix_free_read_matches_that_dtype(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The empty matrix stands in for the real one, so it has to be the
+    # same kind of matrix -- otherwise the statistics build describes
+    # something the full read would not produce.
+    resource, path = _realize(an_ann_data(), tmp_path)
+    _delete_the_counts(path)
+
+    ann_data = load_ann_data_from_resource(resource, matrix_free=True)
+
+    assert ann_data.X.dtype == np.float32
 
 
 def test_var_carries_the_named_fields_then_the_rest(
@@ -166,6 +200,118 @@ def test_dropping_features_says_what_went(
     assert "2 of its 5 features are dropped: Peaks (2)" in caplog.text
 
 
+class TestParameters:
+    """``parameters:`` is a surface gain defines, not a passthrough.
+
+    The h5 read takes fewer knobs than the triple's, because the file
+    answers for itself what the triple needs telling: it names its own
+    features, so there is no ``var_names`` choice and nothing to make
+    unique.  A key that used to reach ``scanpy.read_10x_h5`` and has no
+    meaning here is reported rather than quietly ignored.
+    """
+
+    def test_an_unknown_key_is_reported_with_what_is_accepted(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        resource = (
+            an_ann_data()
+            .with_format("10x_h5")
+            .with_parameters({"gex_onyl": True})
+            .build_resource(tmp_path)
+        )
+
+        with pytest.raises(ValueError, match="unknown 10x_h5 parameter") \
+                as excinfo:
+            load_ann_data_from_resource(resource)
+
+        assert "gex_onyl" in str(excinfo.value)
+        assert "gain accepts genome, gex_only" in str(excinfo.value)
+
+    def test_a_triple_only_key_is_not_silently_accepted(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        # ``var_names`` is a real knob -- of the OTHER 10x reader.  An h5
+        # names its own features, so honouring it here would mean
+        # inventing behaviour scanpy never had.
+        resource = (
+            an_ann_data()
+            .with_format("10x_h5")
+            .with_parameters({"var_names": "gene_ids"})
+            .build_resource(tmp_path)
+        )
+
+        with pytest.raises(ValueError, match="unknown 10x_h5 parameter"):
+            load_ann_data_from_resource(resource)
+
+    def test_refuses_reading_off_repository_bytes(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        # ``backup_url`` downloads the file from an arbitrary URL when it
+        # is not on disk.  Refused on principle: a resource that can
+        # silently read bytes that are not in the manifest, not hashed
+        # and not served by the repository is not a resource.
+        resource = (
+            an_ann_data()
+            .with_format("10x_h5")
+            .with_parameters({"backup_url": "https://example.org/m.h5"})
+            .build_resource(tmp_path)
+        )
+
+        with pytest.raises(ValueError, match="is refused") as excinfo:
+            load_ann_data_from_resource(resource)
+
+        assert "not in the manifest" in str(excinfo.value)
+
+    def test_gex_only_must_be_a_boolean(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        # yaml's ``gex_only: "false"`` is a non-empty string, which is
+        # true -- the opposite of what the author meant.
+        resource = (
+            an_ann_data()
+            .with_format("10x_h5")
+            .with_parameters({"gex_only": "false"})
+            .build_resource(tmp_path)
+        )
+
+        with pytest.raises(ValueError, match="must be true or false"):
+            load_ann_data_from_resource(resource)
+
+    def test_a_genome_the_file_carries_selects_its_features(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        # Our resources carry one genome, so naming it selects
+        # everything.  What is being pinned is that the key is honoured
+        # at all rather than ignored.
+        resource = (
+            an_ann_data()
+            .with_format("10x_h5")
+            .with_parameters({"genome": "GRCh38"})
+            .build_resource(tmp_path)
+        )
+
+        ann_data = load_ann_data_from_resource(resource)
+
+        assert list(ann_data.var_names) == [
+            "ACTB", "GAPDH", "MALAT1", "XIST"]
+
+    def test_a_genome_the_file_does_not_carry_is_reported(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        resource = (
+            an_ann_data()
+            .with_format("10x_h5")
+            .with_parameters({"genome": "hg19"})
+            .build_resource(tmp_path)
+        )
+
+        with pytest.raises(ValueError, match="which its file does not carry") \
+                as excinfo:
+            load_ann_data_from_resource(resource)
+
+        assert "available: GRCh38" in str(excinfo.value)
+
+
 def _realize(
     builder: AnnDataBuilder, tmp_path: pathlib.Path,
 ) -> tuple[GenomicResource, pathlib.Path]:
@@ -189,7 +335,7 @@ def _delete_the_counts(path: pathlib.Path) -> None:
     """
     with h5py.File(path, "r+") as h5:
         for name in _MATRIX_DATASETS:
-            del h5[f"matrix/{name}"]
+            del h5[f"{_MATRIX_GROUP}/{name}"]
 
 
 def test_a_matrix_free_read_does_not_touch_the_counts(
@@ -219,6 +365,58 @@ def test_a_full_read_of_that_same_file_cannot_succeed(
 
     with pytest.raises(KeyError):
         load_ann_data_from_resource(resource)
+
+
+def _make_legacy(path: pathlib.Path) -> None:
+    """Rewrite the file as the CellRanger v2 per-genome layout."""
+    with h5py.File(path, "r+") as h5:
+        h5.move(_MATRIX_GROUP, "GRCh38")
+
+
+def _make_probe_barcode(path: pathlib.Path) -> None:
+    """Add the dataset that identifies a probe-barcode matrix."""
+    with h5py.File(path, "r+") as h5:
+        features = h5[f"{_MATRIX_GROUP}/features"]
+        features.create_dataset(
+            "gene_id", data=features["id"][()])
+
+
+def _drop_the_features(path: pathlib.Path) -> None:
+    """Remove the feature table entirely."""
+    with h5py.File(path, "r+") as h5:
+        del h5[f"{_MATRIX_GROUP}/features"]
+
+
+@pytest.mark.parametrize(
+    ("damage", "expected"),
+    [
+        pytest.param(
+            _make_legacy, "no 'matrix' group", id="legacy-per-genome-layout"),
+        pytest.param(
+            _make_probe_barcode, "probe-barcode", id="probe-barcode-matrix"),
+        pytest.param(
+            _drop_the_features, "no 'features' group", id="no-feature-table"),
+    ],
+)
+def test_refuses_a_layout_it_does_not_read(
+    tmp_path: pathlib.Path,
+    damage: Any,
+    expected: str,
+) -> None:
+    # gain reads ONE of the shapes ``scanpy.read_10x_h5`` handles -- the
+    # modern single-``matrix``-group feature-barcode file, which is what
+    # both real resources are (ADR 0014).  The others are refused by
+    # name rather than read as something they are not, because there is
+    # no real file to build a fixture from and therefore no way to know
+    # a guess was right.  The resource is named, because a bare h5py
+    # KeyError says nothing about which resource in a repo sweep it was.
+    resource, path = _realize(an_ann_data(), tmp_path)
+    damage(path)
+
+    with pytest.raises(ValueError, match=expected) as excinfo:
+        load_ann_data_from_resource(resource)
+
+    assert _RESOURCE_ID in str(excinfo.value)
 
 
 def test_the_statistics_are_the_ones_scanpy_used_to_build(
