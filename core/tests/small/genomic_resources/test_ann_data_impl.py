@@ -494,6 +494,28 @@ def test_statistics_hash_records_the_suffix_derived_format(
     assert payload["config"]["format"] == "10x_mtx"
 
 
+def test_statistics_hash_records_the_suffix_derived_10x_h5_format(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The ``.h5`` suffix, which no test pinned until now -- and it is the
+    # one every deployed ann_data resource depends on, because not one of
+    # them declares ``format:``.  Dropping the mapping would resolve both
+    # real ``10x_h5`` resources to the ``h5ad`` fallback: they would be
+    # read by the wrong reader, and their hash would record the wrong
+    # format while their bytes were unchanged.
+    resource = (
+        an_ann_data()
+        .with_format("10x_h5")
+        .without_format_key()
+        .build_resource(tmp_path)
+    )
+
+    payload = json.loads(
+        AnnDataResourceImplementation(resource).calc_statistics_hash())
+
+    assert payload["config"]["format"] == "10x_h5"
+
+
 def test_statistics_hash_records_a_declared_format_over_the_suffix(
     tmp_path: pathlib.Path,
 ) -> None:
