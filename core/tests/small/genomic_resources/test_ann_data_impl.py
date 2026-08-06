@@ -247,6 +247,21 @@ def test_files_lists_the_whole_ten_x_triple(
         "matrix.mtx.gz", "barcodes.tsv.gz", "features.tsv.gz"}
 
 
+def test_files_lists_only_the_h5_of_a_10x_h5_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A 10x h5 carries the barcodes and the feature table INSIDE it, so
+    # unlike the triple it has no sidecars to resolve.  Worth stating,
+    # because both are "10x": the sidecar resolution keys on the matrix
+    # NAME, and a resolver that keyed on the format instead would go
+    # looking for barcodes.tsv next to a file that never has one.
+    resource = (
+        an_ann_data().with_format("10x_h5").build_resource(tmp_path)
+    )
+
+    assert AnnDataResourceImplementation(resource).files == {"matrix.h5"}
+
+
 def test_files_lists_the_legacy_ten_x_triple(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -492,6 +507,28 @@ def test_statistics_hash_records_the_suffix_derived_format(
         AnnDataResourceImplementation(resource).calc_statistics_hash())
 
     assert payload["config"]["format"] == "10x_mtx"
+
+
+def test_statistics_hash_records_the_suffix_derived_10x_h5_format(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The ``.h5`` suffix, which no test pinned until now -- and it is the
+    # one every deployed ann_data resource depends on, because not one of
+    # them declares ``format:``.  Dropping the mapping would resolve both
+    # real ``10x_h5`` resources to the ``h5ad`` fallback: they would be
+    # read by the wrong reader, and their hash would record the wrong
+    # format while their bytes were unchanged.
+    resource = (
+        an_ann_data()
+        .with_format("10x_h5")
+        .without_format_key()
+        .build_resource(tmp_path)
+    )
+
+    payload = json.loads(
+        AnnDataResourceImplementation(resource).calc_statistics_hash())
+
+    assert payload["config"]["format"] == "10x_h5"
 
 
 def test_statistics_hash_records_a_declared_format_over_the_suffix(

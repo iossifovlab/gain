@@ -82,16 +82,41 @@ def test_format_defaults_to_the_suffix(tmp_path: pathlib.Path) -> None:
     assert load_ann_data_from_resource(resource).shape == (3, 4)
 
 
+def test_a_h5_suffix_routes_the_read_to_the_10x_h5_reader(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path,
+) -> None:
+    # Not one resource in the surveyed GRR declares ``format:``, so the
+    # ``.h5`` suffix is the whole of what sends the two real ``10x_h5``
+    # resources to the right reader.  Asserted here rather than only in
+    # the integration tier, which the main build does not run.
+    #
+    # scanpy's absence is what makes the routing observable without it:
+    # only the ``10x_h5`` branch asks for scanpy, so this message can be
+    # reached no other way.  Resolving to the ``h5ad`` fallback instead
+    # would hand a 10x h5 to anndata and fail differently.
+    resource = (
+        an_ann_data()
+        .with_format("10x_h5")
+        .without_format_key()
+        .build_resource(tmp_path)
+    )
+    monkeypatch.setattr(ann_data_resource, "_import_scanpy", _raise_import)
+
+    assert "format" not in resource.get_config()
+    with pytest.raises(ValueError, match="ann_data_10x"):
+        load_ann_data_from_resource(resource)
+
+
 def test_reports_an_absent_scanpy_as_a_config_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path,
 ) -> None:
     # ``10x_h5`` is the one format still read through the optional extra.
     # Its absence is a misconfigured resource, not an internal import
     # failure, so it is reported as one -- naming the extra that fixes it.
-    # Declared rather than realized: the builder cannot write a 10x h5
-    # (#707), and the read never gets as far as the bytes.
+    # The file is realized rather than merely declared, so that scanpy's
+    # absence is the ONLY reason the read cannot proceed.
     resource = (
-        an_ann_data().with_declared_format("10x_h5").build_resource(tmp_path)
+        an_ann_data().with_format("10x_h5").build_resource(tmp_path)
     )
     monkeypatch.setattr(ann_data_resource, "_import_scanpy", _raise_import)
 
