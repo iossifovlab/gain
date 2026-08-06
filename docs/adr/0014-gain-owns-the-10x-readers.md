@@ -307,4 +307,5 @@ is barcodes and no columns, which the implementation declines to describe.
   peaks are restored on purpose and the record says so.
 - File the package-wide gap: `calc_statistics_hash` cannot express a change
   in the code that computes the statistics, only in their inputs.
-- Teach the test builder to realize a `10x_h5` resource.
+- ~~Teach the test builder to realize a `10x_h5` resource.~~ Done in #707,
+  in the one layout our resources have — see above.

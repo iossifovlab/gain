@@ -21,20 +21,32 @@ from gain.genomic_resources.testing.ann_data_builder import (
     AnnDataBuilder,
     an_ann_data,
 )
+from gain.genomic_resources.testing.builders import a_grr
 from gain.genomic_resources.testing.score_specs import (
     ResourceValidationError,
 )
 from scipy.sparse import csr_matrix
 
 # A CellRanger-ARC multiome shape: two feature types, and per-feature
-# metadata authored rather than defaulted.  ``||`` is the authored block's
-# escape for a space.
+# metadata authored rather than defaulted.  ONE genome, including for the
+# peaks -- which is what both real resources are, and a second genome
+# would realize the multi-genome file ADR 0014 puts out of scope.  ``||``
+# is the authored block's escape for a space.
 _MULTIOME_FEATURES = """
-    gene     gene_name  feature_type      genome   interval
-    ENSG001  ACTB       Gene||Expression  GRCh38   chr1:1-99
-    ENSG002  GAPDH      Gene||Expression  GRCh38   chr1:200-299
-    PEAK001  chr1:1-99  Peaks             GRCh38m  chr1:1-99
-    PEAK002  chr2:1-99  Peaks             GRCh38m  chr2:1-99
+    gene     gene_name  feature_type      genome  interval
+    ENSG001  ACTB       Gene||Expression  GRCh38  chr1:1-99
+    ENSG002  GAPDH      Gene||Expression  GRCh38  chr1:200-299
+    PEAK001  chr1:1-99  Peaks             GRCh38  chr1:1-99
+    PEAK002  chr2:1-99  Peaks             GRCh38  chr2:1-99
+"""
+
+# One genome still, but not the default one -- which is what makes an
+# authored ``genome`` column distinguishable from the value that stands
+# in for it.
+_MOUSE_FEATURES = """
+    gene     gene_name  genome
+    ENSM001  Actb       mm39
+    ENSM002  Gapdh      mm39
 """
 
 
@@ -52,10 +64,17 @@ def _strings(dataset: h5py.Dataset) -> list[str]:
 
 
 def test_realizes_a_single_h5_file(tmp_path: pathlib.Path) -> None:
-    path = _realize(an_ann_data().with_format("10x_h5"), tmp_path)
+    # One file, unlike the triple: everything a 10x h5 carries is inside
+    # it, so there is nothing to resolve and nothing to keep in step.
+    resource = an_ann_data().with_format("10x_h5").build_resource(tmp_path)
+    path = tmp_path / resource.get_config()["file"]
 
     assert path.name == "matrix.h5"
     assert path.is_file()
+    # Through the manifest rather than the directory, which also carries
+    # the protocol's own bookkeeping.
+    assert sorted(entry.name for entry in resource.get_manifest()) == [
+        "genomic_resource.yaml", "matrix.h5"]
 
 
 def test_the_file_is_the_modern_single_matrix_group_layout(
@@ -72,10 +91,14 @@ def test_the_file_is_the_modern_single_matrix_group_layout(
 
 
 @pytest.mark.parametrize(
-    "dataset", ["barcodes", "data", "indices", "indptr", "shape"])
-def test_the_matrix_group_carries_the_datasets_a_read_requires(
+    "dataset",
+    ["barcodes", "data", "indices", "indptr", "shape", "features"])
+def test_the_matrix_group_carries_the_members_a_read_requires(
     tmp_path: pathlib.Path, dataset: str,
 ) -> None:
+    # Each of these is a read that fails outright when it is missing --
+    # the five datasets with "missing one or more required datasets", and
+    # the features group with "10x h5 has no features group".
     path = _realize(an_ann_data().with_format("10x_h5"), tmp_path)
 
     with h5py.File(path, "r") as h5:
@@ -196,18 +219,22 @@ def test_the_per_feature_metadata_may_be_authored(
 ) -> None:
     # ``genome`` and ``interval`` follow the same authoring convention as
     # ``gene_name`` and ``feature_type``: a column of the ``var`` block,
-    # defaulted when absent.
+    # defaulted when absent.  Both authored values differ from what stands
+    # in for them, so this cannot pass by accident.
     path = _realize(
         an_ann_data().with_format("10x_h5").with_var(_MULTIOME_FEATURES),
         tmp_path)
 
     with h5py.File(path, "r") as h5:
-        features = h5["matrix/features"]
-
-        assert _strings(features["genome"]) == [
-            "GRCh38", "GRCh38", "GRCh38m", "GRCh38m"]
-        assert _strings(features["interval"]) == [
+        assert _strings(h5["matrix/features/interval"]) == [
             "chr1:1-99", "chr1:200-299", "chr1:1-99", "chr2:1-99"]
+
+    path = _realize(
+        an_ann_data().with_format("10x_h5").with_var(_MOUSE_FEATURES),
+        tmp_path / "mouse")
+
+    with h5py.File(path, "r") as h5:
+        assert _strings(h5["matrix/features/genome"]) == ["mm39", "mm39"]
 
 
 @pytest.mark.parametrize(
@@ -237,6 +264,55 @@ def test_the_triple_only_options_are_refused(
         builder.build_resource(tmp_path)
 
 
+def test_a_probe_barcode_var_block_is_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    # ``gene_id`` is what a reader keys the probe-barcode branch on, and
+    # that branch is deliberately not realized.  Dropping the column
+    # silently would hand a feature-barcode file to a test that asked for
+    # the other kind -- and it would pass, because the file is valid.
+    probe_features = """
+        gene     gene_name  gene_id
+        PROBE01  ACTB       ENSG001
+        PROBE02  GAPDH      ENSG002
+    """
+
+    with pytest.raises(ResourceValidationError, match="probe-barcode"):
+        (
+            an_ann_data()
+            .with_format("10x_h5")
+            .with_var(probe_features)
+            .build_resource(tmp_path)
+        )
+
+
+def test_it_composes_into_a_multi_resource_repo(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Every builder has to compose the same way, and the ann_data ones
+    # reach the filesystem through a content dict rather than by writing
+    # files themselves -- so a format that realized bytes correctly but
+    # returned them in a shape ``GRRBuilder`` could not place would still
+    # pass every assertion above.
+    repo = (
+        a_grr()
+        .with_resource("single_cell/matrix", an_ann_data().with_format(
+            "10x_h5"))
+        .with_resource("single_cell/triple", an_ann_data().with_format(
+            "10x_mtx"))
+        .build_repo(tmp_path)
+    )
+
+    resource = repo.get_resource("single_cell/matrix")
+
+    assert resource.get_type() == "ann_data"
+    assert resource.get_config()["file"] == "matrix.h5"
+    assert "matrix.h5" in {
+        entry.name for entry in resource.get_manifest()}
+    with h5py.File(tmp_path / "single_cell/matrix" / "matrix.h5", "r") as h5:
+        assert "matrix" in h5
+
+
 def test_the_realized_file_may_be_renamed(tmp_path: pathlib.Path) -> None:
     # Unlike the triple, which is addressed by prefix, a 10x h5 is a
     # single file -- so ``with_file`` renames it, as it does an h5ad.  The
@@ -261,10 +337,10 @@ def test_the_two_10x_formats_of_one_builder_carry_the_same_matrix(
     # 1-indexed; the h5 buffers are already barcodes x features.
     builder = an_ann_data()
     h5_path = _realize(builder.with_format("10x_h5"), tmp_path / "as_h5")
-    mtx_dir = tmp_path / "as_mtx"
-    builder.with_format("10x_mtx").build_resource(mtx_dir)
+    mtx_path = _realize(
+        builder.with_format("10x_mtx"), tmp_path / "as_mtx")
 
-    with gzip.open(mtx_dir / "matrix.mtx.gz", "rb") as stream:
+    with gzip.open(mtx_path, "rb") as stream:
         # ``spmatrix=False`` asks for the sparse ARRAY outright; the
         # default is mid-migration and warns.
         from_mtx = scipy.io.mmread(stream, spmatrix=False).todense().T

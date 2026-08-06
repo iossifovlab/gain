@@ -141,8 +141,9 @@ The two kinds of 10x HDF5 (`10x_h5`) file, told apart by whether the features
 carry a `gene_id` dataset. A feature-barcode file's **features** are measured
 directly; a probe-barcode file's are probes, each *targeting* a gene, so the
 gene id and the probe id are two different things and a read reports both.
-**Every `10x_h5` resource we have is feature-barcode**, and the other kind is
-refused rather than read (ADR 0014).
+**Every `10x_h5` resource we have is feature-barcode**, and gain's own reader
+is to refuse the other kind rather than read it (ADR 0014) — today the format
+still goes to scanpy, which reads both.
 _Avoid_: calling either "the 10x h5 format" — the distinction is the whole
 reason a read of one is not a read of the other
 

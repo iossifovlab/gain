@@ -69,6 +69,10 @@ _TENX_H5_FILENAME = "matrix.h5"
 # its generation, its compression and its shared prefix -- do not apply.
 _SINGLE_FILE_FORMATS = ("h5ad", "10x_h5")
 
+# What a reader keys the probe-barcode 10x h5 on, and therefore what an
+# authored ``var`` block naming it is asking for.
+_PROBE_ID_COLUMN = "gene_id"
+
 # The first column of an authored block is the index -- cell barcodes for
 # obs, gene ids for var -- and the rest are annotation columns.
 _DEFAULT_OBS_DATA = """
@@ -434,6 +438,17 @@ def _render_10x_h5(builder: AnnDataBuilder) -> bytes:
     import h5py
 
     obs, var = _annotation_frames(builder)
+
+    if _PROBE_ID_COLUMN in var.columns:
+        # A ``gene_id`` dataset is exactly what a reader keys the
+        # probe-barcode branch on, and that branch is out of scope (ADR
+        # 0014).  Realizing the column silently would hand back a
+        # feature-barcode file to a test that asked for the other kind.
+        raise ResourceValidationError(
+            f"a {_PROBE_ID_COLUMN!r} column asks for a probe-barcode 10x "
+            "h5, which this builder does not realize; it writes the "
+            "feature-barcode layout, the one our resources have")
+
     n_cells, n_genes = len(obs), len(var)
 
     # Dense, so every cell's row holds every gene, in gene order.
@@ -450,9 +465,12 @@ def _render_10x_h5(builder: AnnDataBuilder) -> bytes:
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = pathlib.Path(tmp_dir) / "realized.h5"
         with h5py.File(path, "w") as h5:
-            # Read by nothing -- ``read_10x_h5`` probes for the group, not
-            # for these -- but they are what a real file carries, and a
-            # fixture that omits them is not the file it claims to be.
+            # Read by nothing -- ``read_10x_h5`` probes for the ``matrix``
+            # group, not for these.  The three that identify the file are
+            # written because a fixture claiming to be a CellRanger file
+            # should say so; the run-specific ones a real file also
+            # carries (``chemistry_description``, ``library_ids``,
+            # ``original_gem_groups``) are not, having nothing to say.
             h5.attrs["filetype"] = "matrix"
             h5.attrs["version"] = 2
             h5.attrs["software_version"] = "cellranger-arc-2.0.0"

@@ -35,13 +35,15 @@ from gain.genomic_resources.testing.builders import a_grr
 _RESOURCE_ID = "single_cell/matrix"
 
 # A CellRanger-ARC multiome shape -- two feature types, one of which
-# ``gex_only`` drops.  ``||`` is the authored block's escape for a space.
+# ``gex_only`` drops.  ONE genome, including for the peaks, which is what
+# both real resources are; a second genome would realize the multi-genome
+# file ADR 0014 puts out of scope.  ``||`` escapes a space.
 _MULTIOME_FEATURES = """
-    gene     gene_name  feature_type      genome   interval
-    ENSG001  ACTB       Gene||Expression  GRCh38   chr1:1-99
-    ENSG002  GAPDH      Gene||Expression  GRCh38   chr1:200-299
-    PEAK001  chr1:1-99  Peaks             GRCh38m  chr1:1-99
-    PEAK002  chr2:1-99  Peaks             GRCh38m  chr2:1-99
+    gene     gene_name  feature_type      genome  interval
+    ENSG001  ACTB       Gene||Expression  GRCh38  chr1:1-99
+    ENSG002  GAPDH      Gene||Expression  GRCh38  chr1:200-299
+    PEAK001  chr1:1-99  Peaks             GRCh38  chr1:1-99
+    PEAK002  chr2:1-99  Peaks             GRCh38  chr2:1-99
 """
 
 
@@ -132,13 +134,16 @@ def test_gex_only_filters_the_realized_feature_types(
 
 def test_the_loader_reads_a_10x_h5_resource(tmp_path: pathlib.Path) -> None:
     # Through the resource, which is how gain reaches the bytes: the
-    # config's ``file:`` names the h5, the ``.h5`` suffix resolves the
-    # format with no ``format:`` key needed, and ``parameters:`` is the
-    # resource's spelling of the read's arguments.
+    # config's ``file:`` names the h5, and ``parameters:`` is the
+    # resource's spelling of the read's arguments.  ``format:`` is left
+    # OUT, so the ``.h5`` suffix is what has to resolve the format --
+    # which is the shape both real configs have.
     resource, path = _realize(
         an_ann_data().with_var(_MULTIOME_FEATURES)
+        .without_format_key()
         .with_parameters({"gex_only": False}),
         tmp_path)
+    assert "format" not in resource.get_config()
 
     ours = load_ann_data_from_resource(resource)
 
