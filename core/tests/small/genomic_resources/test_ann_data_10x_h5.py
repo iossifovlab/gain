@@ -32,7 +32,6 @@ from gain.task_graph.sequential_executor import SequentialExecutor
 
 _RESOURCE_ID = "single_cell/matrix"
 
-_DESCRIBE_OBS = "statistics/describe_obs.csv"
 _DESCRIBE_VAR = "statistics/describe_var.csv"
 _DESCRIBE_ANN_DATA = "statistics/describe_ann_data.txt"
 
