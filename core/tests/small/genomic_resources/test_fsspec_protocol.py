@@ -9,10 +9,7 @@ from typing import Any, cast
 
 import pysam
 import pytest
-from gain.genomic_resources.cli import (
-    UnsupportedDvcDirectoryOutputError,
-    collect_dvc_entries,
-)
+from gain.genomic_resources.dvc import UnsupportedDvcDirectoryOutputError
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
     build_fsspec_protocol,
@@ -22,6 +19,7 @@ from gain.genomic_resources.repository import (
     GR_CONTENTS_FILE_NAME,
     GR_MANIFEST_FILE_NAME,
     ReadWriteRepositoryProtocol,
+    collect_dvc_entries,
 )
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
@@ -883,9 +881,9 @@ def test_gitignore_dvc_managed_directory_is_not_exempted() -> None:
     #
     # The scan therefore never describes a `dvc add <dir>` output — and it
     # must not be left at that, or the directory's data would go unmanifested
-    # and unverified. `cli.collect_dvc_entries` sees the same `bigdir.dvc`
-    # and REFUSES the resource, failing the command (gain#255); see
-    # `test_cli_dvc_manifest.py`.
+    # and unverified. `repository.collect_dvc_entries` sees the same
+    # `bigdir.dvc` and REFUSES the resource, failing the command (gain#255);
+    # see `test_cli_dvc_manifest.py`.
     #
     # `bigdir.dvc` is a REALISTIC `dvc add <dir>` pointer whose single out has
     # `path: bigdir` (a `.dir` md5 + total size), exactly as DVC writes for a
@@ -1227,11 +1225,11 @@ PREFIXED_SCORES_DVC_CONTENT = (
 def test_gitignore_dvc_pointer_with_prefixed_out_path_matches_cli() -> None:
     # A `.dvc` whose `outs[].path` is directory-prefixed (`sub/scores.bw`)
     # must be classified IDENTICALLY by the scanner and by
-    # `cli.collect_dvc_entries` (gain#209 review finding #3). cli matches
-    # `out["path"] == os.path.basename(<datafile-stem>)`, i.e.
-    # `"sub/scores.bw" == "scores.bw"` -> False, so cli does NOT treat this
-    # as a DVC data file. The scanner therefore must NOT exempt the bare
-    # gitignored `scores.bw` either; the two DVC code paths agree.
+    # `repository.collect_dvc_entries` (gain#209 review finding #3). The
+    # collector matches `out["path"] == os.path.basename(<datafile-stem>)`,
+    # i.e. `"sub/scores.bw" == "scores.bw"` -> False, so it does NOT treat
+    # this as a DVC data file. The scanner therefore must NOT exempt the
+    # bare gitignored `scores.bw` either; the two DVC code paths agree.
     proto = build_inmemory_test_protocol({
         "res": {
             GR_CONF_FILE_NAME: "",

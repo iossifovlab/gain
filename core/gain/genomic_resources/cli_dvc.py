@@ -1,10 +1,13 @@
-"""What ``grr_manage`` refuses about a ``.dvc`` sidecar.
+"""What ``grr_manage`` refuses about a ``.dvc`` sidecar, before it starts.
 
 Its own module because the refusal has two gates that must say the same
 thing: this pre-flight, which runs before a command touches the
 repository, and the manifest builder's own check in
-``cli.collect_dvc_entries``, which is what makes a manifest impossible to
-build from a sidecar GAIn cannot verify (#255, #284).
+``repository.collect_dvc_entries``, which is what makes a manifest
+impossible to build from a sidecar GAIn cannot verify (#255, #284). The
+error they raise and the message they say it with live below both, in
+``dvc`` and ``repository``, so the builder's gate does not depend on the
+CLI layer (#721); this module keeps the pre-flight.
 """
 from __future__ import annotations
 
@@ -15,54 +18,17 @@ from typing import cast
 from gain import logging
 from gain.genomic_resources.cli_errors import RESOURCE_ERRORS
 from gain.genomic_resources.dvc import (
+    UnsupportedDvcDirectoryOutputError,
     is_dvc_directory_out,
     parse_dvc_pointer_out,
 )
 from gain.genomic_resources.repository import (
     GenomicResource,
     ReadWriteRepositoryProtocol,
-    escape_unsafe_characters,
+    dvc_directory_output_message,
 )
 
 logger = logging.getLogger("grr_manage")
-
-
-class UnsupportedDvcDirectoryOutputError(Exception):
-    """A resource declares a ``dvc add <dir>`` output, which GAIn refuses.
-
-    Raised by :func:`refuse_dvc_directory_outputs` and by
-    ``cli.collect_dvc_entries``, and turned into a non-zero exit by
-    ``cli.cli_manage`` (#255).
-    """
-
-
-def dvc_directory_output_message(
-    resource_id: str, entry_name: str, filename: str,
-) -> str:
-    """Say why a ``dvc add <dir>`` output is refused, and what to do.
-
-    One text for both gates -- the pre-flight and the manifest builder --
-    so what the user is told cannot depend on which of them saw the
-    sidecar first (#284).
-
-    Every name here is untrusted GRR content and this message is a refusal
-    report, so the names are escaped for the same reason the sibling
-    warnings in ``cli.collect_dvc_entries`` are (gain#642).
-    """
-    resource_id = escape_unsafe_characters(resource_id)
-    entry_name = escape_unsafe_characters(entry_name)
-    filename = escape_unsafe_characters(filename)
-    return (
-        f"resource <{resource_id}> has a 'dvc add <dir>' output: "
-        f"the '.dvc' file <{entry_name}> describes the directory "
-        f"<{filename}>. 'dvc add <dir>' outputs are not supported by "
-        f"GAIn: the '.dir' md5 sum such a sidecar declares is the "
-        f"hash of a DVC cache object, not of any file in the "
-        f"resource, so GAIn can never verify it against the bytes it "
-        f"serves. DVC-manage the individual files instead: run 'dvc "
-        f"add <file>' on each file of <{filename}> (and remove "
-        f"<{entry_name}>)."
-    )
 
 
 def refuse_dvc_directory_outputs(
@@ -71,7 +37,7 @@ def refuse_dvc_directory_outputs(
 ) -> None:
     """Refuse a ``dvc add <dir>`` output before the command writes anything.
 
-    The gate in ``cli.collect_dvc_entries`` fires where ONE resource's
+    The gate in ``repository.collect_dvc_entries`` fires where ONE resource's
     manifest is built, which is far too late for a command that spans a
     repository: by then the resources ordered before the offender have
     their ``.MANIFEST`` and ``.grr`` state written, and ``*-stats`` /
@@ -89,7 +55,7 @@ def refuse_dvc_directory_outputs(
 
     A sidecar this pass cannot read or cannot parse is not its business:
     it asks one question -- does any sidecar describe a directory? -- and
-    ``cli.collect_dvc_entries`` remains the one place that reports an
+    ``repository.collect_dvc_entries`` remains the one place that reports an
     unusable sidecar, so a run does not warn about it twice. Neither is a
     resource whose files cannot even be LISTED -- an unreadable directory,
     a DVC cache this run may not traverse, a remote store that fails to

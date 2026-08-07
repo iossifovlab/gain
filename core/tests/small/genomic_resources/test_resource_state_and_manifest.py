@@ -5,14 +5,17 @@ import pathlib
 import textwrap
 
 import pytest
-from gain.genomic_resources.cli import collect_dvc_entries
-from gain.genomic_resources.dvc import DvcContentDriftError
+from gain.genomic_resources.dvc import (
+    DvcContentDriftError,
+    UnsupportedDvcDirectoryOutputError,
+)
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GenomicResource,
     Manifest,
     ReadWriteRepositoryProtocol,
     ResourceScan,
+    collect_dvc_entries,
 )
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
@@ -297,3 +300,126 @@ def test_build_update_manifest_keeps_the_sidecar_of_a_changed_file(
 
     assert manifest[filename].md5 == prebuild_entries[filename].md5
     assert manifest[filename].size == 3_000_000_000
+
+
+def test_get_manifest_fallback_takes_dvc_files_from_their_sidecars(
+    proto_fixture: ReadWriteRepositoryProtocol,
+) -> None:
+    """A manifest built as a FALLBACK trusts sidecars like any other (#721).
+
+    `get_manifest` on a resource that never had a `.MANIFEST` builds one
+    implicitly - a repository walk (`.CONTENTS`, info pages) is what asks
+    for it. That build has no CLI frame above it to collect the sidecars,
+    and it must not hash the DVC-managed bytes the sidecars describe.
+    """
+    res = proto_fixture.get_resource("one")
+
+    manifest = proto_fixture.get_manifest(res)
+
+    assert manifest["b.big"].md5 == "bbbb"
+    assert manifest["b.big"].size == 3_000_000_000
+
+
+def test_content_file_takes_a_manifest_less_resource_from_its_sidecars(
+    proto_fixture: ReadWriteRepositoryProtocol,
+) -> None:
+    """The repository-wide walk never hashes a manifest-less neighbor (#721).
+
+    Every stats-family command ends by rebuilding the repo-wide
+    `.CONTENTS`, which walks EVERY resource - not only the selected one.
+    A neighbor that never had a `.MANIFEST` must be described from its
+    sidecars, not by reading its DVC-managed bytes.
+    """
+    content = proto_fixture.build_content_file()
+
+    one = next(c for c in content if c["id"] == "one")
+    entries = {e["name"]: e for e in one["manifest"]}
+    assert entries["b.big"]["md5"] == "bbbb"
+    assert entries["sub/a.big"]["md5"] == "aaaa"
+
+
+def test_get_manifest_fallback_keeps_pointer_only_entry(
+    proto_fixture: ReadWriteRepositoryProtocol,
+) -> None:
+    """The fallback build merges sidecar-only files, like any other (#721).
+
+    In a `.dvc`-only clone the data file is not on disk at all; its
+    sidecar is the ONLY possible source of a manifest entry, so dropping
+    it would unpublish the file from the repository index.
+    """
+    res = proto_fixture.get_resource("one")
+
+    manifest = proto_fixture.get_manifest(res)
+
+    assert manifest["c.big"].md5 == "cccc"
+    assert manifest["c.big"].size == 3_000_000_000
+
+
+def test_get_manifest_fallback_refuses_a_dvc_directory_output(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """The `dvc add <dir>` gate holds on the fallback path too (#284, #721).
+
+    A manifest must never be built from a sidecar GAIn cannot verify,
+    whoever asks for it - including the repository walk that builds a
+    missing manifest implicitly.
+    """
+    path = tmp_path_factory.mktemp("fallback_refuses_dir_output")
+    setup_directories(path, {
+        "dirres": {
+            GR_CONF_FILE_NAME: "",
+            "bigdir.dvc": textwrap.dedent("""
+                outs:
+                - md5: 68b329da9893e34099c7d8ad5cb9c940.dir
+                  size: 6
+                  nfiles: 2
+                  path: bigdir
+            """),
+        },
+    })
+    proto = build_filesystem_test_protocol(path, repair=False)
+    res = proto.get_resource("dirres")
+
+    with pytest.raises(UnsupportedDvcDirectoryOutputError):
+        proto.get_manifest(res)
+
+
+def test_content_file_omits_a_manifest_less_dvc_directory_output(
+    tmp_path_factory: pytest.TempPathFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The repo-index walk skips a refused NEIGHBOR; the walk goes on (#721).
+
+    #284 refuses to BUILD a manifest from a sidecar GAIn cannot verify.
+    For a resource the walk meets - as opposed to one a command selected -
+    the refusal is that resource's failure alone: the index omits it,
+    with a report, and the healthy resources are still published
+    (the gain#503 shape).
+    """
+    path = tmp_path_factory.mktemp("content_file_omits_dir_output")
+    setup_directories(path, {
+        "good": {GR_CONF_FILE_NAME: "", "data.txt": "alabala"},
+        "dirres": {
+            GR_CONF_FILE_NAME: "",
+            "bigdir.dvc": textwrap.dedent("""
+                outs:
+                - md5: 68b329da9893e34099c7d8ad5cb9c940.dir
+                  size: 6
+                  nfiles: 2
+                  path: bigdir
+            """),
+        },
+    })
+    proto = build_filesystem_test_protocol(path, repair=False)
+
+    with caplog.at_level(logging.WARNING):
+        content = proto.build_content_file()
+
+    ids = [entry["id"] for entry in content]
+    assert "good" in ids
+    assert "dirres" not in ids
+    assert any(
+        "dirres" in record.getMessage()
+        for record in caplog.records
+        if record.levelno >= logging.WARNING
+    )
