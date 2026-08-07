@@ -29,8 +29,10 @@ from urllib.parse import quote
 from gain.genomic_resources.histogram import (
     Histogram,
     HistogramConfig,
+    HistogramError,
     NumberHistogram,
     load_histogram,
+    truncated_histogram_filename,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_implementation import (
@@ -120,7 +122,9 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
             return filename
         return f"statistics/histogram_{score_id}.json"
 
-    def get_score_histogram(self, score_id: str) -> Histogram:
+    def get_score_histogram(
+        self, score_id: str, *, truncated: bool = False,
+    ) -> Histogram:
         """Return defined histogram for a score.
 
         A score may declare a categorical (or null) histogram just as readily
@@ -128,8 +132,45 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
         union.  Callers that need numeric-only attributes
         (``bars``/``bins``/``min_value``/...) must narrow with
         ``isinstance(hist, NumberHistogram)`` first.
+
+        With ``truncated=True`` a truncated sidecar is acceptable: when one
+        exists (categorical histograms past ``UNIQUE_VALUES_LIMIT`` have
+        one), it is returned instead of the full histogram, so the caller
+        never reads the full values file.  Without a sidecar the full
+        histogram is returned either way.
         """
         hist_filename = self.get_histogram_filename(score_id)
+        sidecar_filename = truncated_histogram_filename(hist_filename)
+        if sidecar_filename in self.resource.get_manifest():
+            if truncated:
+                # A summary is acceptable, never required: a manifested
+                # sidecar whose file is unreadable falls back to the full
+                # histogram instead of degrading to a NullHistogram.
+                if self.resource.file_exists(sidecar_filename):
+                    return load_histogram(self.resource, sidecar_filename)
+                return load_histogram(self.resource, hist_filename)
+            try:
+                full_exists = self.resource.file_exists(hist_filename)
+            except Exception as exc:
+                # On caching protocols the existence probe itself fetches
+                # the file, so a missing remote blob surfaces here.
+                raise HistogramError(
+                    f"full histogram <{hist_filename}> of resource "
+                    f"<{self.resource.resource_id}> could not be read "
+                    f"while its truncated sidecar exists; pull the "
+                    f"resource data (dvc pull) or load with "
+                    f"truncated=True",
+                ) from exc
+            if not full_exists:
+                # A sidecar without its full file is a DVC-tracked
+                # histogram whose blob is not pulled -- not a resource
+                # without statistics.
+                raise HistogramError(
+                    f"full histogram <{hist_filename}> of resource "
+                    f"<{self.resource.resource_id}> is absent while its "
+                    f"truncated sidecar exists; pull the resource data "
+                    f"(dvc pull) or load with truncated=True",
+                )
         return load_histogram(self.resource, hist_filename)
 
     def get_histogram_image_filename(self, score_id: str) -> str:

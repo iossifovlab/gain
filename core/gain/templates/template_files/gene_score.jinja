@@ -43,7 +43,7 @@
                     {% endif %}
                 </td>
 
-                {% set hist = score.get_score_histogram(score_id) %}
+                {% set hist = score.get_score_histogram(score_id, truncated=True) %}
                 <td>
                 {% if hist %}
                     <div class="histogram">

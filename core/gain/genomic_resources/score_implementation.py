@@ -23,12 +23,15 @@ from abc import abstractmethod
 from typing import Any
 
 from gain.genomic_resources.histogram import (
+    CategoricalHistogram,
     Histogram,
     plot_histogram,
+    truncated_histogram_filename,
 )
 from gain.genomic_resources.repository import (
     GR_INDEX_SCORE_FIELDS,
     GenomicResource,
+    ReadWriteRepositoryProtocol,
 )
 from gain.genomic_resources.resource_implementation import (
     GenomicResourceImplementation,
@@ -91,12 +94,31 @@ class ScoreImplementationBase(
         """
         proto = resource.proto
         for score_id, histogram in histograms.items():
+            hist_filename = score.get_histogram_filename(score_id)
             with proto.open_raw_file(
                 resource,
-                score.get_histogram_filename(score_id),
+                hist_filename,
                 mode="wt",
             ) as outfile:
                 outfile.write(histogram.serialize())
+            sidecar_filename = truncated_histogram_filename(hist_filename)
+            if (
+                isinstance(histogram, CategoricalHistogram)
+                and histogram.unique_values
+                    > CategoricalHistogram.UNIQUE_VALUES_LIMIT
+            ):
+                with proto.open_raw_file(
+                    resource,
+                    sidecar_filename,
+                    mode="wt",
+                ) as outfile:
+                    outfile.write(histogram.serialize_truncated())
+            elif proto.file_exists(resource, sidecar_filename):
+                # A sidecar from an earlier build whose histogram has since
+                # shrunk below the limit (or stopped being categorical)
+                # would otherwise be served as current by truncated= loads.
+                assert isinstance(proto, ReadWriteRepositoryProtocol)
+                proto.delete_resource_file(resource, sidecar_filename)
             score_def = score.score_definitions[score_id]
             plot_histogram(
                 resource,
