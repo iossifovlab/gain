@@ -134,6 +134,11 @@ replacing scanpy's wrappers, not anndata's own reader.
 
 ### `gex_only` keeps scanpy's default, and says so
 
+> **Superseded by [ADR 0015](0015-a-10x-read-returns-the-whole-resource.md).**
+> The byte-compatibility this clause bought was load-bearing only while the
+> readers were being replaced; once they were gain's, the default flipped to
+> `false` and the follow-up below became moot.
+
 The default stays `True`, so the change is byte-identical on every existing
 resource. **The defect is the silence, not the default:** a read that drops
 features now logs a warning naming the feature types and counts. Whether
@@ -303,8 +308,10 @@ is barcodes and no columns, which the implementation declines to describe.
 
 ## Follow-ups
 
-- Add `gex_only: false` to the two `zemke2024Epigenetic` configs, so the
-  peaks are restored on purpose and the record says so.
+- ~~Add `gex_only: false` to the two `zemke2024Epigenetic` configs, so the
+  peaks are restored on purpose and the record says so.~~ Moot —
+  [ADR 0015](0015-a-10x-read-returns-the-whole-resource.md) made the whole
+  resource the default read.
 - File the package-wide gap: `calc_statistics_hash` cannot express a change
   in the code that computes the statistics, only in their inputs.
 - ~~Teach the test builder to realize a `10x_h5` resource.~~ Done in #707,

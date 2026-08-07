@@ -155,11 +155,12 @@ def test_a_10x_read_has_no_per_cell_annotation(
     ("parameters", "expected_var_names"),
     [
         pytest.param(
-            {}, ["ACTB", "GAPDH", "MT-ND1"], id="gex-only-by-default"),
+            {}, ["ACTB", "GAPDH", "MT-ND1", "chr1:1-99", "chr2:1-99"],
+            id="whole-resource-by-default"),
         pytest.param(
-            {"gex_only": False},
-            ["ACTB", "GAPDH", "MT-ND1", "chr1:1-99", "chr2:1-99"],
-            id="all-feature-types"),
+            {"gex_only": True},
+            ["ACTB", "GAPDH", "MT-ND1"],
+            id="gene-expression-on-request"),
     ],
 )
 def test_gex_only_filters_the_feature_types(
@@ -167,8 +168,8 @@ def test_gex_only_filters_the_feature_types(
     parameters: dict[str, Any],
     expected_var_names: list[str],
 ) -> None:
-    # The default is scanpy's and stays, so every existing resource keeps
-    # the feature count its stored statistics record.
+    # A default read returns the whole resource (ADR 0015); filtering a
+    # multiome down to its genes is opt-in curation, stated in the config.
     resource = (
         an_ann_data()
         .with_format("10x_h5")
@@ -185,20 +186,25 @@ def test_gex_only_filters_the_feature_types(
 def test_dropping_features_says_what_went(
     tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    # The defect ADR 0014 names is the SILENCE, not the default: a
-    # multiome resource read with ``gex_only`` on loses three quarters of
-    # its features, and scanpy said nothing about it.
+    # A config asking for the filter states its intent, so the drop is
+    # reported as plain forensics, at info -- what a log reader needs is
+    # what shape the data took and why.
     resource = (
         an_ann_data()
         .with_format("10x_h5")
         .with_var(_MULTIOME_FEATURES)
+        .with_parameters({"gex_only": True})
         .build_resource(tmp_path)
     )
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.INFO):
         load_ann_data_from_resource(resource)
 
     assert "2 of its 5 features are dropped: Peaks (2)" in caplog.text
+    assert [
+        record.levelno for record in caplog.records
+        if "gex_only" in record.getMessage()
+    ] == [logging.INFO]
 
 
 class TestParameters:
@@ -483,18 +489,18 @@ def test_refuses_a_layout_it_does_not_read(
     assert _RESOURCE_ID in str(excinfo.value)
 
 
-def test_the_statistics_are_the_ones_scanpy_used_to_build(
+def test_the_statistics_of_a_default_build_are_pinned(
     tmp_path: pathlib.Path,
 ) -> None:
     """The golden record, in the tier that runs on every commit.
 
-    Both real ``10x_h5`` resources have statistics scanpy built, and this
-    reader has to keep producing them byte for byte or every deployed
-    resource silently changes the next time it is rebuilt.  The same
-    bytes are asserted in ``tests/integration/test_ann_data_10x_h5.py``,
-    which had to be written while scanpy was still installed; this is the
-    copy that survives its removal, and the two agreeing is what says the
-    replacement landed without moving the output.
+    These bytes are what a statistics build writes for a multiome
+    resource with no ``parameters:`` block, and they must never change
+    without a deliberate rebuild of every deployed resource's statistics.
+    They describe all five features: a default read returns the whole
+    resource (ADR 0015), so the record last moved -- from the three
+    features scanpy's ``gex_only`` default kept -- with the
+    ``grr_manage -f`` reprocess that flip was shipped with.
     """
     resource, path = _realize(
         an_ann_data().with_var(_MULTIOME_FEATURES), tmp_path)
@@ -508,16 +514,16 @@ def test_the_statistics_are_the_ones_scanpy_used_to_build(
         # The MULTIPLICATION SIGN is anndata's, and this is a byte-exact
         # record of what it wrote -- an ASCII "x" here would assert
         # something no resource in any GRR contains.
-        "AnnData object with n_obs × n_vars = 3 × 3\n"  # noqa: RUF001
+        "AnnData object with n_obs × n_vars = 3 × 5\n"  # noqa: RUF001
         "    var: 'gene_ids', 'feature_types', 'genome', 'interval'\n"
         "    layers: None (.X)\n"
     )
     assert resource.get_file_content(_DESCRIBE_VAR) == (
         ",gene_ids,feature_types,genome,interval\n"
-        "count,3,3,3,3\n"
-        "unique,3,1,1,3\n"
+        "count,5,5,5,5\n"
+        "unique,5,2,1,4\n"
         "top,ENSG001,Gene Expression,GRCh38,chr1:1-99\n"
-        "freq,1,3,3,1\n"
+        "freq,1,3,5,2\n"
     )
     # This resource carries no per-cell annotation, so describing ``obs``
     # yields an empty frame, which the implementation declines to write.
