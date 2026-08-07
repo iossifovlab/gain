@@ -9,6 +9,7 @@ from __future__ import annotations
 from cerberus.schema import SchemaError
 
 from gain import logging
+from gain.genomic_resources.histogram import HistogramError
 
 logger = logging.getLogger("grr_manage")
 
@@ -16,7 +17,10 @@ logger = logging.getLogger("grr_manage")
 # for more reasons than being absent -- a symlink loop, a target whose
 # parent is not a directory, a DVC cache this run may not traverse. Each is
 # a fault of the RESOURCE, and each used to abort the whole run (gain#503).
-RESOURCE_ERRORS = (ValueError, SchemaError, OSError)
+# `HistogramError` is the same tier: a histogram of THIS resource that is
+# absent (an unpulled DVC blob) or unreadable, whose message carries the
+# file to `dvc pull`.
+RESOURCE_ERRORS = (ValueError, SchemaError, OSError, HistogramError)
 
 
 def report_resource_failure(

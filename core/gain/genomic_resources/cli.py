@@ -1,9 +1,14 @@
 """Provides CLI for management of genomic resources repositories."""
+# Over the 1500-line ceiling only while `repo-fix-histograms` lives here --
+# a one-shot migration scheduled for removal end of 2026 (gain#719).
+# Remove this pragma together with the command.
+# pylint: disable=too-many-lines
 import argparse
 import copy
 import dataclasses
 import fnmatch
 import gzip
+import json
 import operator
 import os
 import pathlib
@@ -37,6 +42,11 @@ from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
     build_fsspec_protocol,
 )
+from gain.genomic_resources.histogram import (
+    CategoricalHistogram,
+    HistogramError,
+    truncated_histogram_filename,
+)
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
@@ -45,6 +55,7 @@ from gain.genomic_resources.repository import (
     GR_STATISTICS_INDEX_FILE_NAME,
     GenomicResource,
     GenomicResourceRepo,
+    Manifest,
     ManifestEntry,
     ReadOnlyRepositoryProtocol,
     ReadWriteRepositoryProtocol,
@@ -390,6 +401,23 @@ def _configure_resource_info_subparser(
     TaskGraphCli.add_arguments(
         parser, use_commands=False, task_progress_mode=False,
     )
+
+
+def _configure_repo_fix_histograms_subparser(
+        subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser(
+        "repo-fix-histograms",
+        help="One-shot migration: writes missing "
+        "'histogram_<score>_truncated.json' sidecars for oversized "
+        "categorical histograms. Scheduled for removal end of 2026.",
+        description="One-shot migration: writes missing "
+        "'histogram_<score>_truncated.json' sidecars for oversized "
+        "categorical histograms and refreshes each fixed resource's "
+        "manifest. Statistics are never recomputed: 'stats_hash' and "
+        "histogram images are left untouched. "
+        "Scheduled for removal end of 2026.")
+    _add_repository_resource_parameters_group(parser, use_resource=False)
+    VerbosityConfiguration.set_arguments(parser)
 
 
 def collect_dvc_entries(
@@ -1110,6 +1138,141 @@ def _run_repo_info_command(
     return dataclasses.replace(result, failed=frozenset(failed))
 
 
+def _fix_one_histogram(
+        proto: ReadWriteRepositoryProtocol,
+        res: GenomicResource,
+        manifest: Manifest,
+        hist_filename: str) -> bool:
+    """Bring one full histogram's truncated sidecar up to date.
+
+    Returns whether the resource needs a manifest refresh for this file.
+    A full histogram whose content is absent (a DVC-tracked blob that is
+    not pulled) raises a ``HistogramError`` naming the file.
+    """
+    sidecar_filename = truncated_histogram_filename(hist_filename)
+    full_exists = proto.file_exists(res, hist_filename)
+    if proto.file_exists(res, sidecar_filename):
+        settled = (
+            # The full histogram is a DVC-tracked blob that is not
+            # pulled: nothing left to migrate, and no timestamp to
+            # compare against.
+            not full_exists
+            or proto.get_resource_file_timestamp(res, sidecar_filename)
+            >= proto.get_resource_file_timestamp(res, hist_filename))
+        if settled:
+            # A settled sidecar missing from the manifest was written by
+            # an interrupted run whose manifest pass never happened: the
+            # file is fine, but it only counts once the manifest lists it.
+            return sidecar_filename not in manifest
+    if not full_exists:
+        raise HistogramError(
+            f"full histogram <{hist_filename}> of resource "
+            f"<{res.resource_id}> is absent; pull the resource "
+            f"data (dvc pull) and re-run")
+    with proto.open_raw_file(res, hist_filename, mode="rt") as infile:
+        hist_data = json.loads(infile.read())
+    if hist_data.get("config", {}).get("type") != "categorical":
+        return _drop_stale_sidecar(proto, res, sidecar_filename)
+    histogram = CategoricalHistogram.from_dict(hist_data)
+    if histogram.unique_values <= CategoricalHistogram.UNIQUE_VALUES_LIMIT:
+        return _drop_stale_sidecar(proto, res, sidecar_filename)
+    with proto.open_raw_file(res, sidecar_filename, mode="wt") as outfile:
+        outfile.write(histogram.serialize_truncated())
+    logger.info(
+        "wrote <%s> for resource <%s>", sidecar_filename, res.resource_id)
+    return True
+
+
+def _drop_stale_sidecar(
+        proto: ReadWriteRepositoryProtocol,
+        res: GenomicResource,
+        sidecar_filename: str) -> bool:
+    """Delete a sidecar its histogram no longer justifies, if present.
+
+    Reached only for a sidecar already known to be stale: a histogram
+    that is now within the limit or no longer categorical would see its
+    sidecar deleted by a fresh statistics build too.  Returns whether
+    anything was deleted.
+    """
+    if not proto.file_exists(res, sidecar_filename):
+        return False
+    proto.delete_resource_file(res, sidecar_filename)
+    logger.info(
+        "deleted stale <%s> of resource <%s>",
+        sidecar_filename, res.resource_id)
+    return True
+
+
+def _fix_resource_histograms(
+        proto: ReadWriteRepositoryProtocol,
+        res: GenomicResource) -> tuple[bool, list[Exception]]:
+    """Write the truncated sidecars one resource is missing.
+
+    Returns whether anything was written -- so the caller knows whose
+    manifests to refresh -- together with the per-histogram failures.
+    The two are independent: a histogram that cannot be fixed does not
+    take the sidecars this run already wrote for the same resource out
+    of the manifest refresh.
+    """
+    wrote = False
+    errors: list[Exception] = []
+    manifest = res.get_manifest()
+    for entry in manifest:
+        hist_filename = entry.name
+        if not fnmatch.fnmatch(hist_filename, "statistics/histogram_*.json"):
+            continue
+        if hist_filename.endswith("_truncated.json"):
+            continue
+        try:
+            wrote = _fix_one_histogram(
+                proto, res, manifest, hist_filename) or wrote
+        except Exception as err:  # noqa: BLE001
+            errors.append(err)
+    return wrote, errors
+
+
+def _run_repo_fix_histograms_command(
+        proto: ReadWriteRepositoryProtocol,
+        resources: Sequence[GenomicResource]) -> CommandResult:
+    """Write missing truncated histogram sidecars across ``resources``.
+
+    A one-shot migration for repositories whose statistics were built
+    before truncated sidecars existed; scheduled for removal end of 2026.
+    Statistics are never recomputed -- sidecars are derived from the
+    stored full histograms, so ``stats_hash`` and the histogram images
+    are left untouched.  A resource whose full histogram cannot be read
+    fails on its own; the remaining resources are still fixed.
+    """
+    failed: set[str] = set()
+    fixed: list[GenomicResource] = []
+    for res in resources:
+        try:
+            wrote, errors = _fix_resource_histograms(proto, res)
+        except Exception as err:  # noqa: BLE001
+            # The resource's manifest itself could not be read.
+            wrote, errors = False, [err]
+        if wrote:
+            fixed.append(res)
+        for fix_error in errors:
+            report_resource_failure(
+                fix_error, "skipping histogram fix for", res.resource_id)
+        if errors:
+            failed.add(res.resource_id)
+    if fixed:
+        # The sidecars are new files in these resources, so their
+        # manifests have to be rebuilt (the same second pass repo-stats
+        # runs after writing statistics).
+        manifest_outcome = _run_repo_manifest_command_internal(
+            proto, fixed, dry_run=False, force=True, use_dvc=True)
+        failed |= set(manifest_outcome.failed)
+    if fixed or failed:
+        # A settled repository stays byte- and mtime-identical: the
+        # contents file is republished only when something changed.
+        assert isinstance(proto, FsspecReadWriteProtocol)
+        _build_content_file(proto, frozenset(failed))
+    return CommandResult(failed=frozenset(failed))
+
+
 def _write_resource_file_if_changed(
         proto: ReadWriteRepositoryProtocol,
         res: GenomicResource,
@@ -1155,7 +1318,8 @@ def _do_resource_info_command(
 # -- is shared, so it is written once (see _run_management_command and
 # _exit_with).
 _REPO_COMMANDS = frozenset({
-    "repo-manifest", "repo-stats", "repo-info", "repo-repair"})
+    "repo-manifest", "repo-stats", "repo-info", "repo-repair",
+    "repo-fix-histograms"})
 _RESOURCE_COMMANDS = frozenset({
     "resource-manifest", "resource-stats",
     "resource-info", "resource-repair"})
@@ -1186,6 +1350,7 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
     _configure_resource_info_subparser(commands_parser)
     _configure_repo_repair_subparser(commands_parser)
     _configure_resource_repair_subparser(commands_parser)
+    _configure_repo_fix_histograms_subparser(commands_parser)
     args = parser.parse_args(cli_args)
     VerbosityConfiguration.set(args)
 
@@ -1270,6 +1435,8 @@ def _run_management_command(
         if command.endswith("-repair"):
             return _run_repo_repair_command(
                 repo, proto, resources, **kwargs)
+        if command == "repo-fix-histograms":
+            return _run_repo_fix_histograms_command(proto, resources)
         # Never fall through: repair is destructive, and a command name
         # added to _REPO_COMMANDS/_RESOURCE_COMMANDS but not handled here
         # would otherwise silently run a full repair.

@@ -880,8 +880,14 @@ class CategoricalHistogram(Statistic):
         """
         values: dict[str | int, int]
         if self.config.value_order:
+            # A JSON round-trip stringifies the counter's keys while the
+            # config may order the values by their original (e.g. int)
+            # keys, so a histogram loaded back from disk falls back to
+            # the stringified key -- it must serialize the same counts a
+            # live one does.
             values = {
-                key: self._counter[key] for key in self.config.value_order}
+                key: self._counter.get(key, self._counter.get(str(key), 0))
+                for key in self.config.value_order}
         elif self.config.displayed_values_percent is not None:
             values = dict(self._counter.most_common(len(self.display_values)))
         else:
