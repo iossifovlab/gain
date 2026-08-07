@@ -74,13 +74,46 @@ def a_repo_built_without_the_sidecar(tmp_path: pathlib.Path) -> bytes:
     """
     a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
-    sidecar_path = tmp_path / "statistics" / "histogram_cell_truncated.json"
+    sidecar_path = (
+        tmp_path / "statistics" / "truncated" / "histogram_cell.json")
     expected = sidecar_path.read_bytes()
     sidecar_path.unlink()
     cli_manage(["repo-manifest", "-R", str(tmp_path)])
     manifest = (tmp_path / ".MANIFEST").read_text()
-    assert "histogram_cell_truncated" not in manifest
+    assert "truncated/histogram_cell" not in manifest
     return expected
+
+
+def test_fix_histograms_migrates_a_score_named_cell_truncated(
+        tmp_path: pathlib.Path) -> None:
+    """A score id ending in ``_truncated`` is migrated like any other.
+
+    Its full histogram is ``statistics/histogram_cell_truncated.json`` --
+    with sidecars in their own directory that name is unambiguous, so no
+    filename filter may skip it.
+    """
+    data_rows = "\n".join(
+        f"1 {10 + i} {10 + i} v{i:03d}"
+        for i in range(CATEGORIES_PAST_LIMIT))
+    (
+        a_position_score()
+        .with_score("cell_truncated", "str")
+        .with_histogram({"type": "categorical", "value_order": []})
+        .with_data("chrom pos_begin pos_end cell_truncated\n" + data_rows)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    sidecar_path = (
+        tmp_path / "statistics" / "truncated"
+        / "histogram_cell_truncated.json")
+    expected_sidecar = sidecar_path.read_bytes()
+    sidecar_path.unlink()
+    cli_manage(["repo-manifest", "-R", str(tmp_path)])
+
+    cli_manage(["repo-fix-histograms", "-R", str(tmp_path)])
+
+    assert sidecar_path.read_bytes() == expected_sidecar
 
 
 def test_fix_histograms_writes_the_missing_sidecar(
@@ -89,7 +122,7 @@ def test_fix_histograms_writes_the_missing_sidecar(
 
     cli_manage(["repo-fix-histograms", "-R", str(tmp_path)])
 
-    sidecar_path = tmp_path / "statistics" / "histogram_cell_truncated.json"
+    sidecar_path = tmp_path / "statistics" / "truncated" / "histogram_cell.json"
     assert sidecar_path.read_bytes() == expected_sidecar
 
 
@@ -100,7 +133,7 @@ def test_fix_histograms_manifests_the_written_sidecar(
     cli_manage(["repo-fix-histograms", "-R", str(tmp_path)])
 
     manifest = (tmp_path / ".MANIFEST").read_text()
-    assert "statistics/histogram_cell_truncated.json" in manifest
+    assert "statistics/truncated/histogram_cell.json" in manifest
 
 
 def test_fix_histograms_never_touches_statistics_outputs(
@@ -123,7 +156,7 @@ def test_fix_histograms_regenerates_a_stale_sidecar(
         tmp_path: pathlib.Path) -> None:
     a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
-    sidecar_path = tmp_path / "statistics" / "histogram_cell_truncated.json"
+    sidecar_path = tmp_path / "statistics" / "truncated" / "histogram_cell.json"
     expected_sidecar = sidecar_path.read_bytes()
     full_path = tmp_path / "statistics" / "histogram_cell.json"
     sidecar_path.write_bytes(b'{"stale": true}')
@@ -140,13 +173,13 @@ def test_fix_histograms_manifests_an_orphaned_up_to_date_sidecar(
     # The state an interrupted run leaves behind: the sidecar was
     # written, but the manifest pass never ran.
     expected_sidecar = a_repo_built_without_the_sidecar(tmp_path)
-    sidecar_path = tmp_path / "statistics" / "histogram_cell_truncated.json"
+    sidecar_path = tmp_path / "statistics" / "truncated" / "histogram_cell.json"
     sidecar_path.write_bytes(expected_sidecar)
 
     cli_manage(["repo-fix-histograms", "-R", str(tmp_path)])
 
     manifest = (tmp_path / ".MANIFEST").read_text()
-    assert "statistics/histogram_cell_truncated.json" in manifest
+    assert "statistics/truncated/histogram_cell.json" in manifest
 
 
 def test_fix_histograms_deletes_a_stale_sidecar_of_a_small_histogram(
@@ -157,7 +190,9 @@ def test_fix_histograms_deletes_a_stale_sidecar_of_a_small_histogram(
     a_categorical_score(tmp_path, CATEGORIES_WITHIN_LIMIT)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
     full_path = tmp_path / "statistics" / "histogram_cell.json"
-    sidecar_path = tmp_path / "statistics" / "histogram_cell_truncated.json"
+    sidecar_path = (
+        tmp_path / "statistics" / "truncated" / "histogram_cell.json")
+    sidecar_path.parent.mkdir(exist_ok=True)
     sidecar_path.write_bytes(b'{"stale": true}')
     stale_mtime = full_path.stat().st_mtime - 60
     os.utime(sidecar_path, (stale_mtime, stale_mtime))
@@ -167,7 +202,7 @@ def test_fix_histograms_deletes_a_stale_sidecar_of_a_small_histogram(
 
     assert not sidecar_path.exists()
     manifest = (tmp_path / ".MANIFEST").read_text()
-    assert "histogram_cell_truncated" not in manifest
+    assert "truncated/histogram_cell" not in manifest
 
 
 def test_fix_histograms_matches_a_fresh_build_for_int_value_order(
@@ -187,7 +222,7 @@ def test_fix_histograms_matches_a_fresh_build_for_int_value_order(
         .build_resource(tmp_path)
     )
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
-    sidecar_path = tmp_path / "statistics" / "histogram_cell_truncated.json"
+    sidecar_path = tmp_path / "statistics" / "truncated" / "histogram_cell.json"
     expected_sidecar = sidecar_path.read_bytes()
     # Guard the oracle: a fresh build carries the real counts, so an
     # all-zero derived sidecar cannot sneak through byte-equality.
@@ -231,8 +266,8 @@ def a_dvc_only_full_histogram(
               size: {len(content)}
         """))
     full_path.unlink()
-    (resource_dir / "statistics"
-     / f"histogram_{score_id}_truncated.json").unlink()
+    (resource_dir / "statistics" / "truncated"
+     / f"histogram_{score_id}.json").unlink()
 
 
 def test_fix_histograms_manifests_what_it_wrote_despite_a_failure(
@@ -253,7 +288,7 @@ def test_fix_histograms_manifests_what_it_wrote_despite_a_failure(
         .build_resource(tmp_path)
     )
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
-    (tmp_path / "statistics" / "histogram_aaa_truncated.json").unlink()
+    (tmp_path / "statistics" / "truncated" / "histogram_aaa.json").unlink()
     a_dvc_only_full_histogram(tmp_path, "zzz")
     cli_manage(["repo-manifest", "-R", str(tmp_path)])
 
@@ -261,9 +296,10 @@ def test_fix_histograms_manifests_what_it_wrote_despite_a_failure(
         cli_manage(["repo-fix-histograms", "-R", str(tmp_path)])
 
     assert exc_info.value.code != 0
-    assert (tmp_path / "statistics" / "histogram_aaa_truncated.json").exists()
+    assert (
+        tmp_path / "statistics" / "truncated" / "histogram_aaa.json").exists()
     manifest = (tmp_path / ".MANIFEST").read_text()
-    assert "statistics/histogram_aaa_truncated.json" in manifest
+    assert "statistics/truncated/histogram_aaa.json" in manifest
 
 
 def test_fix_histograms_reports_the_unpulled_full_and_continues(
@@ -282,7 +318,7 @@ def test_fix_histograms_reports_the_unpulled_full_and_continues(
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
     a_dvc_only_full_histogram(tmp_path / "scores" / "broken")
     fixable_sidecar = (tmp_path / "scores" / "fixable" / "statistics"
-                       / "histogram_cell_truncated.json")
+                       / "truncated" / "histogram_cell.json")
     fixable_sidecar.unlink()
     cli_manage(["repo-manifest", "-R", str(tmp_path)])
     caplog.clear()

@@ -408,10 +408,12 @@ def _configure_repo_fix_histograms_subparser(
     parser = subparsers.add_parser(
         "repo-fix-histograms",
         help="One-shot migration: writes missing "
-        "'histogram_<score>_truncated.json' sidecars for oversized "
-        "categorical histograms. Scheduled for removal end of 2026.",
+        "'statistics/truncated/histogram_<score>.json' sidecars for "
+        "oversized categorical histograms. "
+        "Scheduled for removal end of 2026.",
         description="One-shot migration: writes missing "
-        "'histogram_<score>_truncated.json' sidecars for oversized "
+        "'statistics/truncated/histogram_<score>.json' sidecars for "
+        "oversized "
         "categorical histograms and refreshes each fixed resource's "
         "manifest. Statistics are never recomputed: 'stats_hash' and "
         "histogram images are left untouched. "
@@ -1220,8 +1222,9 @@ def _fix_resource_histograms(
     for entry in manifest:
         hist_filename = entry.name
         if not fnmatch.fnmatch(hist_filename, "statistics/histogram_*.json"):
-            continue
-        if hist_filename.endswith("_truncated.json"):
+            # Sidecars live under statistics/truncated/ and are never
+            # matched: a score id may itself end in "_truncated", so its
+            # full histogram must be walked like any other.
             continue
         try:
             wrote = _fix_one_histogram(
