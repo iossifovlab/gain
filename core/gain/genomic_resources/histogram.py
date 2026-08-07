@@ -642,6 +642,10 @@ class CategoricalHistogram(Statistic):
         self,
         config: CategoricalHistogramConfig,
         counter: dict[str | int, int] | None = None,
+        *,
+        truncated: bool = False,
+        unique_values: int | None = None,
+        total_count: int | None = None,
     ):
         super().__init__(
             "categorical_histogram",
@@ -654,6 +658,10 @@ class CategoricalHistogram(Statistic):
             self._counter = Counter(counter)
         else:
             self._counter = Counter()
+
+        self.truncated = truncated
+        self._unique_values = unique_values
+        self._total_count = total_count
 
         self.y_log_scale = config.y_log_scale
 
@@ -740,6 +748,11 @@ class CategoricalHistogram(Statistic):
         """Merge with other histogram."""
         assert isinstance(other, CategoricalHistogram)
         assert self.config == other.config
+        if self.truncated or other.truncated:
+            raise HistogramError(
+                "Can not merge a truncated categorical histogram sidecar; "
+                "merge needs the full histogram values.",
+            )
         # pylint: disable=protected-access
         self._counter += other._counter  # noqa: SLF001
         if not self.enforce_type and \
@@ -753,8 +766,39 @@ class CategoricalHistogram(Statistic):
         return dict(self._counter)
 
     @property
+    def unique_values(self) -> int:
+        """Number of distinct values, across truncation.
+
+        On a truncated instance this is the distinct-value count of the full
+        histogram the sidecar was derived from, not the length of the top-N
+        counter it carries.
+        """
+        if self._unique_values is not None:
+            return self._unique_values
+        return len(self._counter)
+
+    @property
+    def total_count(self) -> int:
+        """Sum of all value counts, across truncation.
+
+        On a truncated instance this is the total of the full histogram the
+        sidecar was derived from, not the sum of the top-N counter it carries.
+        """
+        if self._total_count is not None:
+            return self._total_count
+        return sum(self._counter.values())
+
+    @property
     def display_values(self) -> dict[str | int, int]:
-        """Return categorical histogram display values in order."""
+        """Return categorical histogram display values in order.
+
+        A truncated instance carries exactly the values its config selected
+        for display at serialization time, so they are returned verbatim --
+        re-running the selection against the truncated counter would compute
+        percentages and orderings against the wrong totals.
+        """
+        if self.truncated:
+            return dict(self._counter)
         values = {}
         if self.config.value_order:
             for key in self.config.value_order:
@@ -801,7 +845,14 @@ class CategoricalHistogram(Statistic):
         return values
 
     def values_domain(self) -> str:
-        return ", ".join(str(k) for k in self.display_values)
+        """Render the displayed values, noting truncation when present."""
+        domain = ", ".join(str(k) for k in self.display_values)
+        if self.truncated and len(self._counter) < self.unique_values:
+            return (
+                f"{domain} "
+                f"(top {len(self._counter)} of {self.unique_values} values)"
+            )
+        return domain
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -812,10 +863,49 @@ class CategoricalHistogram(Statistic):
     def serialize(self) -> str:
         return json.dumps(self.to_dict(), indent=2)
 
+    def serialize_truncated(self) -> str:
+        """Serialize the truncated sidecar form of this histogram.
+
+        The sidecar carries the config, the values this histogram's config
+        selects for display, and the ``unique_values``/``total_count``
+        totals of the full histogram, marked with ``"truncated": true``.  It
+        is the small, always-readable companion of a full histogram whose
+        values file may be absent from a checkout (DVC-tracked, not pulled).
+
+        The carried values follow the display selection so the sidecar
+        renders what the full histogram would: every ``value_order`` key
+        with its real count for an ordered config, the values covering
+        ``displayed_values_percent`` for a percent config, and the
+        ``displayed_values_count`` most common values otherwise.
+        """
+        values: dict[str | int, int]
+        if self.config.value_order:
+            values = {
+                key: self._counter[key] for key in self.config.value_order}
+        elif self.config.displayed_values_percent is not None:
+            values = dict(self._counter.most_common(len(self.display_values)))
+        else:
+            top = self.config.displayed_values_count \
+                or DEFAULT_DISPLAYED_VALUES_COUNT
+            values = dict(self._counter.most_common(top))
+        return json.dumps({
+            "config": self.config.to_dict(),
+            "values": values,
+            "truncated": True,
+            "unique_values": self.unique_values,
+            "total_count": self.total_count,
+        }, indent=2)
+
     @staticmethod
     def from_dict(data: dict[str, Any]) -> CategoricalHistogram:
         config = CategoricalHistogramConfig.from_dict(data["config"])
-        return CategoricalHistogram(config, data.get("values"))
+        return CategoricalHistogram(
+            config,
+            data.get("values"),
+            truncated=data.get("truncated", False),
+            unique_values=data.get("unique_values"),
+            total_count=data.get("total_count"),
+        )
 
     @staticmethod
     def deserialize(content: str) -> CategoricalHistogram:
@@ -1011,6 +1101,16 @@ def load_histogram(
         return NullHistogram(NullHistogramConfig(
             "Failed to deserialize histogram.",
         ))
+
+
+def truncated_histogram_filename(histogram_filename: str) -> str:
+    """Return the truncated-sidecar filename for a histogram filename.
+
+    ``statistics/histogram_cell.json`` maps to
+    ``statistics/histogram_cell_truncated.json``.
+    """
+    root, _, ext = histogram_filename.rpartition(".")
+    return f"{root}_truncated.{ext}"
 
 
 def save_histogram(

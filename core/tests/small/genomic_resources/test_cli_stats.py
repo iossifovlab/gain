@@ -1,6 +1,8 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import json
 import os
 import pathlib
+import shutil
 import textwrap
 from typing import Any
 
@@ -8,14 +10,19 @@ import pytest
 import pytest_mock
 from gain.genomic_resources import register_implementation
 from gain.genomic_resources.cli import cli_manage
+from gain.genomic_resources.genomic_scores import build_score_from_resource
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
+    HistogramError,
     NumberHistogram,
 )
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_SQLITE_META_FILE_NAME,
     GenomicResource,
+)
+from gain.genomic_resources.repository_factory import (
+    build_resource_implementation,
 )
 from gain.genomic_resources.resource_implementation import (
     GenomicResourceImplementation,
@@ -572,6 +579,258 @@ def test_stats_categorical(tmp_path: pathlib.Path) -> None:
     assert stat_hist.display_values["value1"] == 2
     assert stat_hist.display_values["value2"] == 2
     assert stat_hist.display_values["value3"] == 1
+
+
+CATEGORIES_PAST_LIMIT = CategoricalHistogram.UNIQUE_VALUES_LIMIT + 50
+CATEGORIES_WITHIN_LIMIT = 50
+
+
+def a_categorical_score(
+    tmp_path: pathlib.Path,
+    unique_values: int,
+    histogram: dict[str, Any] | None = None,
+) -> None:
+    """Realize a tabix position score with distinct per-position str values."""
+    data_rows = "\n".join(
+        f"1 {10 + i} {10 + i} v{i:03d}"
+        for i in range(unique_values))
+    (
+        a_position_score()
+        .with_score("cell", "str")
+        .with_histogram(
+            histogram or {"type": "categorical", "value_order": []})
+        .with_data("chrom pos_begin pos_end cell\n" + data_rows)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+def a_categorical_score_past_limit(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Realize a tabix position score with 150 distinct str values."""
+    a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT)
+
+
+def drop_everything_but_statistics(tmp_path: pathlib.Path) -> None:
+    """Remove the resource's files so a smaller twin can be realized."""
+    for entry in tmp_path.iterdir():
+        if entry.name == "statistics":
+            continue
+        if entry.is_dir():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+
+
+def test_stats_categorical_past_limit_writes_truncated_sidecar(
+        tmp_path: pathlib.Path) -> None:
+    a_categorical_score_past_limit(tmp_path)
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    sidecar = json.loads(
+        (tmp_path / "statistics" / "histogram_cell_truncated.json")
+        .read_text())
+    assert sidecar["truncated"] is True
+    assert sidecar["unique_values"] == CATEGORIES_PAST_LIMIT
+    assert sidecar["total_count"] == CATEGORIES_PAST_LIMIT
+    assert len(sidecar["values"]) == 20
+
+
+def test_stats_categorical_past_limit_keeps_full_histogram_format(
+        tmp_path: pathlib.Path) -> None:
+    a_categorical_score_past_limit(tmp_path)
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    full = json.loads(
+        (tmp_path / "statistics" / "histogram_cell.json").read_text())
+    assert set(full) == {"config", "values"}
+    assert len(full["values"]) == CATEGORIES_PAST_LIMIT
+
+
+def test_stats_categorical_past_limit_manifests_the_sidecar(
+        tmp_path: pathlib.Path) -> None:
+    a_categorical_score_past_limit(tmp_path)
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    manifest = (tmp_path / ".MANIFEST").read_text()
+    assert "statistics/histogram_cell_truncated.json" in manifest
+
+
+def test_stats_categorical_within_limit_writes_no_sidecar(
+        tmp_path: pathlib.Path) -> None:
+    (
+        a_position_score()
+        .with_score("cell", "str")
+        .with_histogram({"type": "categorical", "value_order": []})
+        .with_data("""
+            chrom  pos_begin  pos_end  cell
+            1      10         10       value1
+            1      17         17       value2
+        """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert (tmp_path / "statistics" / "histogram_cell.json").exists()
+    assert not (
+        tmp_path / "statistics" / "histogram_cell_truncated.json").exists()
+
+
+def test_get_score_histogram_truncated_reads_the_sidecar(
+        tmp_path: pathlib.Path) -> None:
+    a_categorical_score_past_limit(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    score = build_score_from_resource(
+        build_filesystem_test_repository(tmp_path).get_resource(""))
+
+    hist = score.get_score_histogram("cell", truncated=True)
+
+    assert isinstance(hist, CategoricalHistogram)
+    assert hist.truncated
+    assert hist.unique_values == CATEGORIES_PAST_LIMIT
+    assert len(hist.raw_values) == 20
+
+
+def test_get_score_histogram_truncated_falls_back_to_the_full_file(
+        tmp_path: pathlib.Path) -> None:
+    (
+        a_position_score()
+        .with_score("cell", "str")
+        .with_histogram({"type": "categorical", "value_order": []})
+        .with_data("""
+            chrom  pos_begin  pos_end  cell
+            1      10         10       value1
+            1      17         17       value2
+        """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    score = build_score_from_resource(
+        build_filesystem_test_repository(tmp_path).get_resource(""))
+
+    hist = score.get_score_histogram("cell", truncated=True)
+
+    assert isinstance(hist, CategoricalHistogram)
+    assert not hist.truncated
+    assert hist.raw_values == {"value1": 1, "value2": 1}
+
+
+def test_get_score_histogram_truncated_is_a_noop_for_number_histograms(
+        tmp_path: pathlib.Path) -> None:
+    (
+        a_position_score()
+        .with_score("score", "float")
+        .with_data("""
+            chrom  pos_begin  pos_end  score
+            1      10         10       0.1
+            1      17         17       0.4
+        """)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    score = build_score_from_resource(
+        build_filesystem_test_repository(tmp_path).get_resource(""))
+
+    hist = score.get_score_histogram("score", truncated=True)
+
+    assert isinstance(hist, NumberHistogram)
+
+
+def test_get_score_histogram_truncated_falls_back_when_sidecar_missing(
+        tmp_path: pathlib.Path) -> None:
+    a_categorical_score_past_limit(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    score = build_score_from_resource(
+        build_filesystem_test_repository(tmp_path).get_resource(""))
+    # Prime the manifest cache while the sidecar is still manifested, then
+    # remove the file: the sidecar is now listed but unreadable.
+    score.get_score_histogram("cell", truncated=True)
+    (tmp_path / "statistics" / "histogram_cell_truncated.json").unlink()
+
+    hist = score.get_score_histogram("cell", truncated=True)
+
+    assert isinstance(hist, CategoricalHistogram)
+    assert not hist.truncated
+    assert len(hist.raw_values) == CATEGORIES_PAST_LIMIT
+
+
+def test_get_score_histogram_default_raises_when_full_values_absent(
+        tmp_path: pathlib.Path) -> None:
+    a_categorical_score_past_limit(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    (tmp_path / "statistics" / "histogram_cell.json").unlink()
+    score = build_score_from_resource(
+        build_filesystem_test_repository(tmp_path).get_resource(""))
+
+    with pytest.raises(HistogramError, match="histogram_cell"):
+        score.get_score_histogram("cell")
+
+
+def test_get_score_histogram_default_wraps_existence_probe_errors(
+        tmp_path: pathlib.Path,
+        mocker: pytest_mock.MockerFixture) -> None:
+    a_categorical_score_past_limit(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    score = build_score_from_resource(
+        build_filesystem_test_repository(tmp_path).get_resource(""))
+    mocker.patch.object(
+        score.resource, "file_exists",
+        side_effect=OSError("connection failed"))
+
+    with pytest.raises(HistogramError, match="histogram_cell"):
+        score.get_score_histogram("cell")
+
+
+def test_get_score_histogram_truncated_survives_absent_full_values(
+        tmp_path: pathlib.Path) -> None:
+    a_categorical_score_past_limit(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    (tmp_path / "statistics" / "histogram_cell.json").unlink()
+    score = build_score_from_resource(
+        build_filesystem_test_repository(tmp_path).get_resource(""))
+
+    hist = score.get_score_histogram("cell", truncated=True)
+
+    assert isinstance(hist, CategoricalHistogram)
+    assert hist.truncated
+
+
+def test_stats_rebuild_below_limit_removes_the_stale_sidecar(
+        tmp_path: pathlib.Path) -> None:
+    a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    drop_everything_but_statistics(tmp_path)
+    a_categorical_score(tmp_path, CATEGORIES_WITHIN_LIMIT)
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert not (
+        tmp_path / "statistics" / "histogram_cell_truncated.json").exists()
+    assert "histogram_cell_truncated.json" not in (
+        tmp_path / ".MANIFEST").read_text()
+
+
+def test_info_pages_render_without_the_full_histogram_values(
+        tmp_path: pathlib.Path) -> None:
+    a_categorical_score_past_limit(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    (tmp_path / "statistics" / "histogram_cell.json").unlink()
+    impl = build_resource_implementation(
+        build_filesystem_test_repository(tmp_path).get_resource(""))
+
+    info = impl.get_info()
+    statistics_info = impl.get_statistics_info()
+
+    assert f"top 20 of {CATEGORIES_PAST_LIMIT} values" in info
+    assert "histogram_cell.png" in statistics_info
 
 
 def test_contents_db_not_rebuilt_when_contents_unchanged(

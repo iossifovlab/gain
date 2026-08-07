@@ -54,7 +54,7 @@
                 {% endif %}
             </td>
             <td style="text-align: center">
-                {% set hist = impl.score.get_score_histogram(score_id) %}
+                {% set hist = impl.score.get_score_histogram(score_id, truncated=True) %}
                 {%- if hist.type != 'null_histogram' %}
                 {% set hist_image_file = impl.score.get_histogram_image_filename(score_id) %}
                 <img src="{{ hist_image_file }}"

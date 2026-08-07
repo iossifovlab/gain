@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import json
 from typing import Any
 
 import pytest
@@ -224,3 +225,108 @@ def test_categorical_histogram_number_of_displayed_values_int_populated(
     populate_categorical_histogram_with_int(hist)
 
     assert hist.display_values == expected_bars
+
+
+def a_big_categorical_histogram(
+    unique_values: int = 150,
+) -> CategoricalHistogram:
+    """A histogram past UNIQUE_VALUES_LIMIT: value000..valueNNN, count i+1."""
+    hist = CategoricalHistogram(
+        CategoricalHistogramConfig(displayed_values_count=5))
+    for i in range(unique_values):
+        hist.add_value(f"value{i:03d}", count=i + 1)
+    return hist
+
+
+def test_truncated_sidecar_roundtrip_carries_totals() -> None:
+    hist = a_big_categorical_histogram(unique_values=150)
+
+    sidecar = CategoricalHistogram.deserialize(hist.serialize_truncated())
+
+    assert sidecar.truncated
+    assert sidecar.unique_values == 150
+    assert sidecar.total_count == sum(range(1, 151))
+    assert sidecar.raw_values == {
+        "value149": 150,
+        "value148": 149,
+        "value147": 148,
+        "value146": 147,
+        "value145": 146,
+    }
+    assert sidecar.config == hist.config
+
+
+@pytest.mark.parametrize("truncated_side", ["self", "other"])
+def test_merging_a_truncated_histogram_raises(truncated_side: str) -> None:
+    full = a_big_categorical_histogram()
+    sidecar = CategoricalHistogram.deserialize(full.serialize_truncated())
+    left, right = (sidecar, full) if truncated_side == "self" \
+        else (full, sidecar)
+
+    with pytest.raises(HistogramError, match="truncated"):
+        left.merge(right)
+
+
+def test_truncated_histogram_values_domain_reports_totals() -> None:
+    hist = a_big_categorical_histogram(unique_values=150)
+    sidecar = CategoricalHistogram.deserialize(hist.serialize_truncated())
+
+    domain = sidecar.values_domain()
+
+    assert "value149" in domain
+    assert "top 5 of 150 values" in domain
+
+
+def test_full_histogram_values_domain_is_unchanged() -> None:
+    hist = a_big_categorical_histogram(unique_values=150)
+
+    domain = hist.values_domain()
+
+    assert "of 150 values" not in domain
+
+
+def test_percent_config_sidecar_carries_the_displayed_values() -> None:
+    config = CategoricalHistogramConfig(
+        displayed_values_count=None, displayed_values_percent=95.0)
+    hist = CategoricalHistogram(config)
+    for i in range(150):
+        hist.add_value(f"value{i:03d}", count=i + 1)
+
+    sidecar = CategoricalHistogram.deserialize(hist.serialize_truncated())
+
+    displayed_by_full = set(hist.display_values) - {"Other"}
+    assert displayed_by_full <= set(sidecar.raw_values)
+
+
+def test_truncated_histogram_display_values_are_not_recomputed() -> None:
+    config = CategoricalHistogramConfig(
+        displayed_values_count=None, displayed_values_percent=95.0)
+    hist = CategoricalHistogram(config)
+    for i in range(150):
+        hist.add_value(f"value{i:03d}", count=i + 1)
+
+    sidecar = CategoricalHistogram.deserialize(hist.serialize_truncated())
+
+    assert sidecar.display_values == sidecar.raw_values
+
+
+def test_value_order_config_sidecar_renders_like_the_full_histogram() -> None:
+    order: list[str | int] = [f"value{i:03d}" for i in range(150)]
+    config = CategoricalHistogramConfig(value_order=order)
+    hist = CategoricalHistogram(config)
+    for i in range(150):
+        hist.add_value(f"value{i:03d}", count=i + 1)
+
+    sidecar = CategoricalHistogram.deserialize(hist.serialize_truncated())
+
+    assert sidecar.raw_values == hist.raw_values
+    assert sidecar.display_values == hist.display_values
+    assert sidecar.values_domain() == hist.values_domain()
+
+
+def test_full_histogram_serialization_has_no_truncation_fields() -> None:
+    hist = a_big_categorical_histogram()
+
+    data = json.loads(hist.serialize())
+
+    assert set(data) == {"config", "values"}
