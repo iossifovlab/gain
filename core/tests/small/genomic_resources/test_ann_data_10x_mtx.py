@@ -141,73 +141,16 @@ _MULTIOME_FEATURES = """
 """
 
 
-def test_gex_only_drops_the_other_feature_types_by_default(
+def test_a_default_read_keeps_every_feature_type(
     tmp_path: pathlib.Path,
 ) -> None:
+    # A default read returns the whole resource (ADR 0015).  Filtering a
+    # multiome down to its genes is a curation call, and it is made in the
+    # resource's config with ``gex_only: true`` -- never by omission.
     resource = (
         an_ann_data()
         .with_format("10x_mtx")
         .with_var(_MULTIOME_FEATURES)
-        .build_resource(tmp_path)
-    )
-
-    ann_data = load_ann_data_from_resource(resource)
-
-    assert ann_data.shape == (3, 2)
-    assert list(ann_data.var_names) == ["ACTB", "GAPDH"]
-
-
-def test_dropping_feature_types_is_reported(
-    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
-) -> None:
-    # The default is scanpy's and stays, so existing resources are read
-    # identically -- but discarding 76% of a resource without saying so is
-    # what made the benchmark GRR's two multiome resources look like
-    # gene-expression ones.  Whether that is right is a curation call, and
-    # it cannot be made by someone who was never told.
-    #
-    # Through a repo rather than ``build_resource``, which gives a resource
-    # the EMPTY id -- an ``id in caplog.text`` assertion would then hold
-    # against any message at all.
-    repo = (
-        a_grr()
-        .with_resource(
-            "brain/multiome",
-            an_ann_data().with_format("10x_mtx").with_var(_MULTIOME_FEATURES))
-        .build_repo(tmp_path)
-    )
-    resource = repo.get_resource("brain/multiome")
-
-    with caplog.at_level(logging.WARNING):
-        load_ann_data_from_resource(resource)
-
-    assert "brain/multiome" in caplog.text
-    assert "gex_only" in caplog.text
-    assert "Peaks (2)" in caplog.text
-    assert "2 of its 4 features" in caplog.text
-
-
-def test_a_single_feature_type_is_not_reported(
-    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
-) -> None:
-    # Nothing is dropped, so there is nothing to say.  A warning on every
-    # ordinary resource is a warning nobody reads.
-    resource = (
-        an_ann_data().with_format("10x_mtx").build_resource(tmp_path)
-    )
-
-    with caplog.at_level(logging.WARNING):
-        load_ann_data_from_resource(resource)
-
-    assert "gex_only" not in caplog.text
-
-
-def test_gex_only_may_be_turned_off(tmp_path: pathlib.Path) -> None:
-    resource = (
-        an_ann_data()
-        .with_format("10x_mtx")
-        .with_var(_MULTIOME_FEATURES)
-        .with_parameters({"gex_only": False})
         .build_resource(tmp_path)
     )
 
@@ -216,6 +159,96 @@ def test_gex_only_may_be_turned_off(tmp_path: pathlib.Path) -> None:
     assert ann_data.shape == (3, 4)
     assert list(ann_data.var["feature_types"]) == [
         "Gene Expression", "Gene Expression", "Peaks", "Peaks"]
+
+
+def test_dropping_feature_types_is_reported(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The filter runs only when a config asks for it, so dropping features
+    # is stated intent -- reported as plain forensics, at info, with no
+    # advice: what a log reader needs is what shape the data took and why.
+    #
+    # Through a repo rather than ``build_resource``, which gives a resource
+    # the EMPTY id -- an ``id in caplog.text`` assertion would then hold
+    # against any message at all.
+    repo = (
+        a_grr()
+        .with_resource(
+            "brain/multiome",
+            an_ann_data()
+            .with_format("10x_mtx")
+            .with_var(_MULTIOME_FEATURES)
+            .with_parameters({"gex_only": True}))
+        .build_repo(tmp_path)
+    )
+    resource = repo.get_resource("brain/multiome")
+
+    with caplog.at_level(logging.INFO):
+        load_ann_data_from_resource(resource)
+
+    assert "brain/multiome" in caplog.text
+    assert "gex_only" in caplog.text
+    assert "Peaks (2)" in caplog.text
+    assert "2 of its 4 features" in caplog.text
+    assert [
+        record.levelno for record in caplog.records
+        if "gex_only" in record.getMessage()
+    ] == [logging.INFO]
+    assert "Set 'gex_only" not in caplog.text
+
+
+def test_a_default_read_reports_nothing(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Nothing is filtered, so there is nothing to say -- a multiome read
+    # whole is just the resource, not an event.
+    resource = (
+        an_ann_data()
+        .with_format("10x_mtx")
+        .with_var(_MULTIOME_FEATURES)
+        .build_resource(tmp_path)
+    )
+
+    with caplog.at_level(logging.INFO):
+        load_ann_data_from_resource(resource)
+
+    assert "gex_only" not in caplog.text
+
+
+def test_a_single_feature_type_is_not_reported(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    # ``gex_only`` on a resource that is all gene expression drops
+    # nothing, so there is nothing to say.  A report on every ordinary
+    # resource is a report nobody reads.
+    resource = (
+        an_ann_data()
+        .with_format("10x_mtx")
+        .with_parameters({"gex_only": True})
+        .build_resource(tmp_path)
+    )
+
+    with caplog.at_level(logging.INFO):
+        load_ann_data_from_resource(resource)
+
+    assert "gex_only" not in caplog.text
+
+
+def test_gex_only_keeps_the_gene_expression_features_only(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        an_ann_data()
+        .with_format("10x_mtx")
+        .with_var(_MULTIOME_FEATURES)
+        .with_parameters({"gex_only": True})
+        .build_resource(tmp_path)
+    )
+
+    ann_data = load_ann_data_from_resource(resource)
+
+    assert ann_data.shape == (3, 2)
+    assert list(ann_data.var_names) == ["ACTB", "GAPDH"]
 
 
 class TestTheParameterSurface:
@@ -300,7 +333,6 @@ def test_reads_an_uncompressed_current_layout_triple(
         .with_format("10x_mtx")
         .with_uncompressed_layout()
         .with_var(_MULTIOME_FEATURES)
-        .with_parameters({"gex_only": False})
         .build_resource(tmp_path)
     )
 
@@ -347,12 +379,14 @@ class TestTheMatrixFreeRead:
     def test_it_describes_the_resource_identically(
         self, tmp_path: pathlib.Path,
     ) -> None:
-        # The multiome fixture on purpose: gex_only subsets both axes, so
-        # this covers the filter as well as the plain read.
+        # The multiome fixture with the filter ON, on purpose: gex_only
+        # subsets both axes, so this covers the filter as well as the
+        # plain read.
         resource = (
             an_ann_data()
             .with_format("10x_mtx")
             .with_var(_MULTIOME_FEATURES)
+            .with_parameters({"gex_only": True})
             .build_resource(tmp_path)
         )
         full = load_ann_data_from_resource(resource)

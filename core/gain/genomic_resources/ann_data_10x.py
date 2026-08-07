@@ -98,7 +98,7 @@ class TenXMtxParameters:
 
     var_names: str = _BY_SYMBOL
     make_unique: bool = True
-    gex_only: bool = True
+    gex_only: bool = False
 
 
 def _check_bool(
@@ -178,7 +178,7 @@ def parse_10x_mtx_parameters(
             "make_unique", parameters.get("make_unique", True), resource_id,
             file_format="10x_mtx"),
         gex_only=_check_bool(
-            "gex_only", parameters.get("gex_only", True), resource_id,
+            "gex_only", parameters.get("gex_only", False), resource_id,
             file_format="10x_mtx"),
     )
 
@@ -188,11 +188,11 @@ def _keep_gene_expression(
 ) -> AnnData:
     """Drop every feature that is not gene expression, saying what went.
 
-    ``gex_only`` defaults to ``True``, which is scanpy's default and what
-    every existing resource was built with, so the filter itself is not the
-    problem -- its silence was.  A CellRanger-ARC resource carries chromatin
-    peaks in the same feature table, and reading one as though it held only
-    genes discards most of it without a word.
+    Reached only when a resource sets ``gex_only: true`` -- the filter is
+    opt-in curation, never a default (ADR 0015) -- so the drop is stated
+    intent and the report is plain forensics: an info line naming the
+    feature types and counts, for the log reader who did not write the
+    config.
     """
     feature_types = ann_data.var["feature_types"]
     dropped = feature_types != _GENE_EXPRESSION
@@ -200,10 +200,9 @@ def _keep_gene_expression(
         breakdown = ", ".join(
             f"{name} ({count})"
             for name, count in feature_types[dropped].value_counts().items())
-        logger.warning(
+        logger.info(
             "gex_only is on for the ann_data %s, so %d of its %d features "
-            "are dropped: %s. Set 'gex_only: false' in the resource's "
-            "parameters to keep them.",
+            "are dropped: %s",
             resource_id, int(dropped.sum()), len(feature_types), breakdown)
 
     with warnings.catch_warnings():
@@ -355,7 +354,7 @@ class TenXH5Parameters:
     ``var_names`` choice to make and nothing to make unique.
     """
 
-    gex_only: bool = True
+    gex_only: bool = False
     genome: str | None = None
 
 
@@ -375,7 +374,7 @@ def parse_10x_h5_parameters(
 
     return TenXH5Parameters(
         gex_only=_check_bool(
-            "gex_only", parameters.get("gex_only", True), resource_id,
+            "gex_only", parameters.get("gex_only", False), resource_id,
             file_format="10x_h5"),
         genome=genome,
     )

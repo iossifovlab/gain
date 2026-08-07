@@ -203,9 +203,9 @@ def test_more_than_one_feature_type_is_expressible(
     tmp_path: pathlib.Path,
 ) -> None:
     # Both real ``10x_h5`` resources are CellRanger-ARC multiome files
-    # carrying Gene Expression AND Peaks, and their stored statistics are
-    # post-filter -- so a fixture that cannot express a second feature
-    # type cannot make ``gex_only`` observable at all.
+    # carrying Gene Expression AND Peaks -- so a fixture that cannot
+    # express a second feature type cannot make ``gex_only`` observable
+    # at all.
     path = _realize(
         an_ann_data().with_format("10x_h5").with_var(_MULTIOME_FEATURES),
         tmp_path)

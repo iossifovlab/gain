@@ -89,14 +89,20 @@ def _assert_same_read(ours: ad.AnnData, theirs: ad.AnnData) -> None:
         pytest.param(
             an_ann_data().with_prefix("sample1_"),
             {"prefix": "sample1_"}, id="prefixed"),
+        # ``gex_only`` is explicit wherever a multiome is read: its
+        # DEFAULT is the one axis where the two readers deliberately
+        # disagree -- gain reads the whole resource, scanpy filters
+        # (ADR 0015) -- so only the filter itself is held against scanpy.
         pytest.param(
-            an_ann_data().with_var(_MULTIOME_FEATURES), {}, id="gex-only"),
+            an_ann_data().with_var(_MULTIOME_FEATURES),
+            {"gex_only": True}, id="gex-only"),
         pytest.param(
             an_ann_data().with_var(_MULTIOME_FEATURES),
             {"gex_only": False}, id="all-feature-types"),
         pytest.param(
             an_ann_data().with_var(_MULTIOME_FEATURES),
-            {"make_unique": False}, id="duplicate-symbols-kept"),
+            {"make_unique": False, "gex_only": False},
+            id="duplicate-symbols-kept"),
         pytest.param(
             an_ann_data(), {"var_names": "gene_ids"}, id="by-gene-id"),
     ],
@@ -129,12 +135,13 @@ def test_the_matrix_free_read_describes_what_scanpy_reads(
 
     The small tier compares the matrix-free read to gain's own full read,
     which would stay green if both drifted together.  This compares it to
-    scanpy's -- the read every existing statistic in every deployed GRR was
-    actually built from.
+    scanpy's, told explicitly to read the whole resource -- the defaults
+    of the two readers diverge on purpose (ADR 0015), and what is held
+    here is the read, not the default.
     """
     resource, directory = _realize(
         an_ann_data().with_var(_MULTIOME_FEATURES), tmp_path)
-    theirs = _scanpy_read(directory)
+    theirs = _scanpy_read(directory, gex_only=False)
 
     lean = load_ann_data_from_resource(resource, matrix_free=True)
 
