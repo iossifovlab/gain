@@ -69,7 +69,15 @@ import pysam
 import yaml
 
 from gain import logging
-from gain.genomic_resources.dvc import DvcContentDrift, DvcContentDriftError
+from gain.genomic_resources.dvc import (
+    DvcContentDrift,
+    DvcContentDriftError,
+    UnsupportedDvcDirectoryOutputError,
+    dvc_sidecar_target,
+    is_dvc_directory_out,
+    is_dvc_sidecar,
+    parse_dvc_pointer_out,
+)
 from gain.genomic_resources.resource_query import LabelClause, ResourceQuery
 from gain.genomic_resources.resource_types import equivalent_resource_types
 
@@ -1866,8 +1874,8 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
            object, so the sidecar describes the file GAIn serves. Keeping
            state to mean "GAIn hashed these bytes" is what makes rule 1
            meaningful; and re-reading the sidecar costs nothing, since
-           ``cli.collect_dvc_entries`` parses every sidecar of the resource
-           on every manifest command anyway;
+           :func:`collect_dvc_entries` parses every sidecar of the resource
+           on every manifest build anyway;
         3. otherwise, the file's content, and the resulting state is saved
            -- unless ``save_state`` is off (see below).
 
@@ -2133,7 +2141,11 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         try:
             manifest = self.load_manifest(resource)
         except FileNotFoundError:
-            manifest = self.build_manifest(resource)
+            # The fallback build has no CLI frame above it to collect the
+            # sidecars, and building without them hashes every DVC-managed
+            # byte a sidecar already describes (#721).
+            manifest = self.build_manifest(
+                resource, collect_dvc_entries(self, resource))
         else:
             # A BUILT manifest is a scan of the resource directory
             # and is contained by construction; only a LOADED one
@@ -2301,6 +2313,137 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
     @abc.abstractmethod
     def build_content_file(self) -> list[dict[str, Any]]:
         """Build the content of the repository (i.e '.CONTENTS.json' file)."""
+
+
+def dvc_directory_output_message(
+    resource_id: str, entry_name: str, filename: str,
+) -> str:
+    """Say why a ``dvc add <dir>`` output is refused, and what to do.
+
+    One text for both gates -- ``cli_dvc``'s pre-flight and the manifest
+    builder -- so what the user is told cannot depend on which of them saw
+    the sidecar first (#284).
+
+    Every name here is untrusted GRR content and this message is a refusal
+    report, so the names are escaped for the same reason the sibling
+    warnings in :func:`collect_dvc_entries` are (gain#642).
+    """
+    resource_id = escape_unsafe_characters(resource_id)
+    entry_name = escape_unsafe_characters(entry_name)
+    filename = escape_unsafe_characters(filename)
+    return (
+        f"resource <{resource_id}> has a 'dvc add <dir>' output: "
+        f"the '.dvc' file <{entry_name}> describes the directory "
+        f"<{filename}>. 'dvc add <dir>' outputs are not supported by "
+        f"GAIn: the '.dir' md5 sum such a sidecar declares is the "
+        f"hash of a DVC cache object, not of any file in the "
+        f"resource, so GAIn can never verify it against the bytes it "
+        f"serves. DVC-manage the individual files instead: run 'dvc "
+        f"add <file>' on each file of <{filename}> (and remove "
+        f"<{entry_name}>)."
+    )
+
+
+def collect_dvc_entries(
+        proto: ReadWriteRepositoryProtocol,
+        res: GenomicResource) -> dict[str, ManifestEntry]:
+    """Collect manifest entries defined by .dvc files.
+
+    A ``.dvc`` file that cannot be read, does not parse as a pointer for the
+    data file it sits next to, or declares no usable md5 sum and size is
+    skipped with a warning - never propagated into the manifest, and never
+    allowed to abort the command. `.dvc` sidecars are read on every
+    ``grr_manage`` run, and the repository scan that produced this entry has
+    already tolerated the very same content (see
+    ``FsspecReadWriteProtocol._is_dvc_managed_leaf``); the two classify
+    identically because both delegate to
+    :func:`dvc.parse_dvc_pointer_out`.
+
+    A *well-formed* sidecar for a ``dvc add <dir>`` output is a different
+    matter: it is not ignored, it is REFUSED. GAIn cannot verify a ``.dir``
+    md5 sum - it hashes a DVC cache object, not any file GAIn can read - so
+    writing it into the manifest would be a false clean bill of health, and
+    quietly skipping the directory would leave its data unmanifested and
+    unverified. Either way the resource would be certified without its
+    content ever being checked, so the command fails instead (#255). This is
+    the gate every ``grr_manage`` subcommand that builds or checks a
+    manifest passes through -- and, since #721, the fallback build a
+    repository walk triggers -- and it applies whether or not the
+    directory is materialised. It is kept even though
+    ``cli_dvc.refuse_dvc_directory_outputs`` refuses such a resource
+    before any command reaches this function: a manifest must never be
+    built from a sidecar GAIn cannot verify, whoever asks for it (#284).
+
+    An entry is produced for every readable sidecar. Every materialised
+    file's entry is consulted by
+    :meth:`ReadWriteRepositoryProtocol._update_manifest_entry_and_state` -
+    the sidecar IS the md5 sum of the file it describes - and the entries
+    for files the scan did not yield are merged by
+    :meth:`ReadWriteRepositoryProtocol._merge_unscanned_dvc_entries` (#373).
+
+    Lives beside the manifest builder, not in the CLI, because the builder
+    itself must reach it: a manifest built as a FALLBACK - a repository
+    walk meeting a resource that never had a ``.MANIFEST`` - has no CLI
+    frame above it to collect the sidecars, and building without them
+    hashes every DVC-managed byte the sidecar already describes (#721).
+
+    Raises:
+        UnsupportedDvcDirectoryOutputError: the resource has a ``dvc add
+            <dir>`` output.
+    """
+    result = {}
+    manifest = proto.collect_resource_entries(res)
+    for entry in manifest:
+        if not is_dvc_sidecar(entry.name):
+            continue
+        filename = dvc_sidecar_target(entry.name)
+        basename = os.path.basename(filename)
+
+        try:
+            with proto.open_raw_file(res, entry.name, "rb") as infile:
+                content = cast(bytes, infile.read())
+        except (OSError, ValueError):
+            logger.warning(
+                "unable to read the '.dvc' file <%s> of <%s>; ignoring it",
+                escape_unsafe_characters(entry.name),
+                escape_unsafe_characters(res.resource_id))
+            continue
+
+        out = parse_dvc_pointer_out(content, basename)
+        if out is None:
+            logger.warning(
+                "the '.dvc' file <%s> of <%s> is not a dvc pointer for <%s>; "
+                "ignoring it",
+                escape_unsafe_characters(entry.name),
+                escape_unsafe_characters(res.resource_id),
+                escape_unsafe_characters(filename))
+            continue
+
+        if is_dvc_directory_out(out):
+            raise UnsupportedDvcDirectoryOutputError(
+                dvc_directory_output_message(
+                    res.resource_id, entry.name, filename))
+
+        md5 = out.get("md5")
+        size = out.get("size")
+        if not isinstance(md5, str) or not isinstance(size, int):
+            logger.warning(
+                "the '.dvc' file <%s> of <%s> declares no usable md5 sum and "
+                "size for <%s>; ignoring it",
+                escape_unsafe_characters(entry.name),
+                escape_unsafe_characters(res.resource_id),
+                escape_unsafe_characters(filename))
+            continue
+
+        if filename not in manifest:
+            logger.info(
+                "filling manifest of <%s> with entry for <%s> based on "
+                "dvc data only",
+                res.resource_id, filename)
+
+        result[filename] = ManifestEntry(filename, size, md5)
+
+    return result
 
 
 class GenomicResourceRepo(abc.ABC):

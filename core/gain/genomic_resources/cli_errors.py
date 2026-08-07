@@ -9,6 +9,7 @@ from __future__ import annotations
 from cerberus.schema import SchemaError
 
 from gain import logging
+from gain.genomic_resources.dvc import UnsupportedDvcDirectoryOutputError
 from gain.genomic_resources.histogram import HistogramError
 
 logger = logging.getLogger("grr_manage")
@@ -20,7 +21,17 @@ logger = logging.getLogger("grr_manage")
 # `HistogramError` is the same tier: a histogram of THIS resource that is
 # absent (an unpulled DVC blob) or unreadable, whose message carries the
 # file to `dvc pull`.
-RESOURCE_ERRORS = (ValueError, SchemaError, OSError, HistogramError)
+# `UnsupportedDvcDirectoryOutputError` too: a `dvc add <dir>` output is a
+# fault of the one resource that declares it. The pre-flight
+# (`cli_dvc.refuse_dvc_directory_outputs`) still refuses a whole run before
+# it writes anything; this tier is for the paths with no pre-flight above
+# them -- `list` builds a missing manifest on demand and can now meet the
+# refusal (#721) -- where one refused resource must not truncate the
+# report on the healthy ones. (The repository-index walk handles the same
+# refusal itself, in `_manifest_for_repository_index`.)
+RESOURCE_ERRORS = (
+    ValueError, SchemaError, OSError, HistogramError,
+    UnsupportedDvcDirectoryOutputError)
 
 
 def report_resource_failure(

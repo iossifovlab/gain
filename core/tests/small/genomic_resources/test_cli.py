@@ -3,6 +3,7 @@ import argparse
 import logging
 import os
 import pathlib
+import textwrap
 
 import pytest
 import pytest_mock
@@ -210,6 +211,49 @@ def test_cli_list_survives_a_resource_whose_labels_are_not_a_mapping(
         "scores/broken" in record.getMessage() and "str" in record.getMessage()
         for record in caplog.records
         if record.levelno == logging.WARNING
+    )
+
+
+def test_cli_list_survives_a_manifest_less_dvc_directory_output(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A ``dvc add <dir>`` resource must not truncate the listing (#721).
+
+    Listing builds a missing manifest on demand, and since the fallback
+    build collects the sidecars it can now meet the #284 refusal. That
+    refusal is the RESOURCE's fault: reported and skipped, never raised -
+    a raise truncates the listing at whatever sorted first (gain#503).
+    """
+    setup_directories(tmp_path, {
+        "aaa": {GR_CONF_FILE_NAME: "", "data.txt": "alabala"},
+        "dirres": {
+            GR_CONF_FILE_NAME: "",
+            "bigdir.dvc": textwrap.dedent("""
+                outs:
+                - md5: 68b329da9893e34099c7d8ad5cb9c940.dir
+                  size: 6
+                  nfiles: 2
+                  path: bigdir
+            """),
+        },
+        "zzz": {GR_CONF_FILE_NAME: "", "data.txt": "alabala"},
+    })
+    capsys.readouterr()
+
+    with caplog.at_level(logging.WARNING):
+        cli_manage(["list", "-R", str(tmp_path)])
+
+    out, err = capsys.readouterr()
+    assert err == ""
+    assert "aaa" in out
+    assert "zzz" in out
+    assert "dirres" not in out
+    assert any(
+        "dirres" in record.getMessage()
+        for record in caplog.records
+        if record.levelno >= logging.WARNING
     )
 
 

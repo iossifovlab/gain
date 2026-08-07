@@ -48,7 +48,7 @@ def parse_dvc_pointer_out(
     Parsing NEVER raises. This is the single place a ``.dvc`` file is
     interpreted, so that the repository scan
     (``_is_dvc_managed_leaf``, which must never abort on stray content) and
-    ``grr_manage``'s ``collect_dvc_entries`` cannot classify the same sidecar
+    ``repository.collect_dvc_entries`` cannot classify the same sidecar
     differently (#251).
 
     Args:
@@ -137,3 +137,13 @@ def is_dvc_directory_out(out: dict[str, Any]) -> bool:
     if isinstance(md5, str) and md5.endswith(".dir"):
         return True
     return "nfiles" in out
+
+
+class UnsupportedDvcDirectoryOutputError(Exception):
+    """A resource declares a ``dvc add <dir>`` output, which GAIn refuses.
+
+    Raised by ``cli_dvc.refuse_dvc_directory_outputs`` and by
+    ``repository.collect_dvc_entries``, and turned into a non-zero exit by
+    ``cli.cli_manage`` (#255). Defined here, below both, so that the
+    manifest builder's gate does not depend on the CLI layer (#721).
+    """

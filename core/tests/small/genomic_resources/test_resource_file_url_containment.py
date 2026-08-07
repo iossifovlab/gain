@@ -23,7 +23,6 @@ from gain.genomic_resources.cached_repository import (
 from gain.genomic_resources.cli import (
     _create_contents_db,
     cli_manage,
-    collect_dvc_entries,
 )
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
@@ -37,6 +36,7 @@ from gain.genomic_resources.repository import (
     GenomicResourceProtocolRepo,
     Manifest,
     ResourceFileState,
+    collect_dvc_entries,
     escape_unsafe_characters,
     report_uncontained_manifest_entries,
     validate_resource_id,

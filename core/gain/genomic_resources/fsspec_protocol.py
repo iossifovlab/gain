@@ -40,7 +40,11 @@ from filelock import FileLock
 from markdown2 import markdown
 
 from gain import logging
-from gain.genomic_resources.dvc import DVC_SUFFIX, parse_dvc_pointer_out
+from gain.genomic_resources.dvc import (
+    DVC_SUFFIX,
+    UnsupportedDvcDirectoryOutputError,
+    parse_dvc_pointer_out,
+)
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
@@ -1447,17 +1451,18 @@ class FsspecReadWriteProtocol(
            supported: GAIn cannot verify the ``.dir`` md5 sum of a
            ``dvc add <dir>`` output against anything it can read, so it
            refuses such a resource outright rather than describe it -- see
-           ``cli.collect_dvc_entries``, which fails the command on the
-           sidecar (gain#255). The directory itself stays out of the scan.
+           ``repository.collect_dvc_entries``, which fails the command on
+           the sidecar (gain#255). The directory itself stays out of the
+           scan.
         2. a sibling ``<name>.dvc`` exists in this directory and is a regular
            file (a *directory* literally named ``<name>.dvc`` is not a
            pointer and must not be opened).
         3. that ``<name>.dvc`` parses as a well-formed DVC pointer -- a dict
            with an ``outs`` list of dicts -- that declares ``name`` as one of
            its outputs (``out["path"] == name``). Both this test and
-           ``cli.collect_dvc_entries`` delegate to
+           ``repository.collect_dvc_entries`` delegate to
            :func:`dvc.parse_dvc_pointer_out`, so the scanner and the
-           cli cannot classify the same sidecar differently.
+           manifest builder cannot classify the same sidecar differently.
 
         Parsing NEVER raises: a binary/non-UTF-8 ``.dvc`` (read in binary and
         handed to ``yaml.safe_load`` as bytes, so no UnicodeDecodeError), a
@@ -2047,7 +2052,24 @@ class FsspecReadWriteProtocol(
                 return self.load_manifest(res)
             except FileNotFoundError:
                 return None
-        return res.get_manifest()
+        try:
+            return res.get_manifest()
+        except UnsupportedDvcDirectoryOutputError as err:
+            # The walk met a manifest-less `dvc add <dir>` resource the
+            # command never selected, and the fallback build refused it
+            # (#284, via #721's sidecar collection). That is THIS
+            # resource's failure alone: it is left out of the index, with
+            # a report, and the walk goes on -- one refused resource must
+            # not unpublish the healthy ones (the gain#503 shape). A
+            # committed manifest, had it one, would have been loaded
+            # above the refusal, so there is nothing older to fall back
+            # to here.
+            # The refusal message is complete on its own; a traceback
+            # would only bury it, hence `error`, not `exception`.
+            logger.error(  # noqa: TRY400
+                "not publishing <%s> in the repository index: %s",
+                res.resource_id, err)
+            return None
 
     def build_content_file(
         self, failed: frozenset[str] = frozenset(),
